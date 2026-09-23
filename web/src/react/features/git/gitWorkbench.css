@@ -1,7 +1,7 @@
 .git-workbench {
   height: 100%;
   overflow: auto;
-  padding: 28px 32px;
+  padding: 56px 32px 28px;
   color: var(--foreground);
   font-size: 13px;
 }
@@ -106,21 +106,10 @@
   background: var(--accent, #3569d4);
 }
 .mr-toolbar {
+  justify-content: flex-end;
   border-bottom: 1px solid var(--border, #d9dce3);
   padding-bottom: 12px;
   margin-bottom: 24px;
-}
-.mr-tabs {
-  display: flex;
-  gap: 5px;
-}
-.mr-tabs button {
-  border-color: transparent;
-  background: transparent;
-}
-.mr-tabs button[aria-current] {
-  color: var(--accent, #3569d4);
-  background: color-mix(in srgb, var(--accent, #3569d4) 10%, transparent);
 }
 .mr-root-select {
   display: flex;
@@ -488,7 +477,7 @@
 }
 @media (max-width: 850px) {
   .git-workbench {
-    padding: 20px 16px;
+    padding: 56px 16px 20px;
   }
   .mr-detail-columns {
     grid-template-columns: 1fr;
@@ -525,6 +514,46 @@
 @media (max-width: 850px) {
   .mr-form footer {
     bottom: -18px;
+  }
+}
+
+/* Controls hosted in the Wiki-style secondary island, not the page body. */
+.git-island-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.git-island-views {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.git-island-view-select {
+  display: none;
+}
+.git-island-toolbar .wh-divider {
+  margin-inline: 3px;
+}
+@media (max-width: 760px) {
+  .git-island-views {
+    display: none;
+  }
+  .git-island-view-select {
+    display: block;
+    max-width: 100px;
+    border: none;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.08);
+    color: var(--foreground);
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  .git-island-action-label {
+    display: none;
+  }
+  .git-island-toolbar .wh-pill-btn {
+    width: 26px;
+    padding-inline: 0;
   }
 }
 

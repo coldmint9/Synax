@@ -150,7 +150,7 @@ export class SkillInstallService {
     );
 
     const { skillRegistry } = await import('./skill-registry.js');
-    return skillRegistry.getSummary(skillId);
+    return skillRegistry.getSummary(skillId, undefined, true, true);
   }
 
   uninstall(skillId: string): void {

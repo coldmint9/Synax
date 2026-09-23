@@ -10,6 +10,8 @@ import { reviewOperation, type OperationReview } from "./operation-approval.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { AgentNotFoundError, AgentPermissionError } from "./runtime-errors.js";
 import { appendAlwaysPermissionRule } from "./session-permissions.js";
+import { grantProjectTool, grantedToolId } from "./project-tool-grants.js";
+import { runtimeTransaction } from "./runtime-transaction.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { matchWildcard } from "./wildcard.js";
 import {
@@ -150,14 +152,36 @@ function defaultDecision(input: PermissionRequestInput): {
   return { action: "ask", reason: "High-risk action requires approval." };
 }
 
+/** A project grant may satisfy asks, never a deny (including a parent's inherited deny). */
+export function isProjectToolGrantDenied(
+  input: PermissionRequestInput,
+  shellCommand?: string,
+): boolean {
+  const shell = shellCommand !== undefined;
+  const checked = shell
+    ? { ...input, category: "shell" as const, internalGate: "shell" as const }
+    : input;
+  if (defaultDecision(checked).action === "deny") return true;
+  const patterns = shell
+    ? parseBashInvocations(shellCommand).flatMap((invocation) =>
+        [invocation.pattern, invocation.risk, "*"])
+    : [input.pattern ?? "*"];
+  return (input.rules ?? []).some((rule) => rule.action === "deny" &&
+    patterns.some((pattern) => matches(rule, { ...checked, pattern })));
+}
+
 export function resolvePermissionDecision(
   input: PermissionRequestInput,
   review: OperationReview | null = reviewOperation(input),
 ): { action: PermissionAction; reason: string } {
-  const rule = [...(input.rules ?? [])]
-    .reverse()
-    .find((candidate) => matches(candidate, input));
+  const matching = (input.rules ?? []).filter((candidate) => matches(candidate, input));
+  const rule = matching.at(-1);
   const fallback = defaultDecision(input);
+  if (grantedToolId(input)) {
+    if (isProjectToolGrantDenied(input))
+      return { action: "deny", reason: "An explicit permission restriction denies this tool." };
+    return { action: "allow", reason: "Project-wide tool approval." };
+  }
   const decision = {
     action: rule?.action ?? fallback.action,
     reason: rule?.reason ?? fallback.reason,
@@ -167,9 +191,11 @@ export function resolvePermissionDecision(
     : decision;
 }
 
-function reviewReplies(metadata?: Record<string, unknown>): string[] {
+function reviewReplies(metadata?: Record<string, unknown>, toolCallId?: string | null): string[] {
   const supported = metadata?.allowedReplies;
-  return ['once', 'reject'].filter(reply => !Array.isArray(supported) || supported.includes(reply));
+  const choices = !metadata?.source && toolCallId && typeof metadata?.toolId === 'string'
+    ? ['once', 'always', 'reject'] : ['once', 'reject'];
+  return choices.filter(reply => !Array.isArray(supported) || supported.includes(reply));
 }
 
 export class PermissionPolicy {
@@ -234,9 +260,13 @@ export class PermissionPolicy {
       ...input,
       metadata: { ...input.metadata, command: input.command },
     });
-    const action =
+    const granted = grantedToolId(input);
+    const explicitDenial = granted && isProjectToolGrantDenied(input, input.command);
+    const action = explicitDenial ? "deny" : granted ? "allow" :
       baseAction === "deny" ? baseAction : (review?.action ?? baseAction);
     const reason =
+      explicitDenial ? "An explicit permission restriction denies this tool." :
+      granted ? "Project-wide tool approval." :
       baseAction === "deny"
         ? matched.reason
         : (review?.reason ?? matched.reason);
@@ -264,8 +294,11 @@ export class PermissionPolicy {
         command: input.command,
         invocations,
         ...(review
-          ? { approvalPaths: review.paths, allowedReplies: reviewReplies(input.metadata) }
+          ? { approvalPaths: review.paths, allowedReplies: reviewReplies(input.metadata, input.toolCallId) }
           : {}),
+        ...(granted && action === "allow" ? { projectToolGrant: true } : {}),
+        ...(!review && action === "ask" && !input.metadata?.source
+          ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
   }
@@ -273,6 +306,7 @@ export class PermissionPolicy {
   evaluate(input: PermissionRequestInput): PermissionDecision {
     const review = reviewOperation(input);
     const { action, reason } = resolvePermissionDecision(input, review);
+    const granted = grantedToolId(input);
     const now = nowIso();
     return this.store.appendPermission({
       id: makeRuntimeId("pd"),
@@ -293,8 +327,11 @@ export class PermissionPolicy {
       metadata: {
         ...input.metadata,
         ...(review
-          ? { approvalPaths: review.paths, allowedReplies: reviewReplies(input.metadata) }
+          ? { approvalPaths: review.paths, allowedReplies: reviewReplies(input.metadata, input.toolCallId) }
           : {}),
+        ...(granted && action === "allow" ? { projectToolGrant: true } : {}),
+        ...(!review && action === "ask" && !input.metadata?.source
+          ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
   }
@@ -327,31 +364,31 @@ export class PermissionPolicy {
         400,
       );
     }
-    const action: PermissionAction = reply === "reject" ? "deny" : "allow";
-    const updated = this.store.updatePermission(sessionId, permissionId, {
-      action,
-      userReply: reply,
-      resolvedAt: nowIso(),
-      reason: message ? `${decision.reason} ${message}` : decision.reason,
-    });
-    if (reply === "always" && persistRule) {
-      const pattern = decision.patterns[0] ?? "*";
-      const gate =
-        decision.internalGate === "none"
-          ? decision.coarseCategory
-          : decision.internalGate;
-      appendAlwaysPermissionRule(sessionId, {
-        gate,
-        pattern,
+    return runtimeTransaction(() => {
+      const action: PermissionAction = reply === "reject" ? "deny" : "allow";
+      const toolId = decision.metadata?.toolId;
+      if (reply === "always" && persistRule && typeof toolId === "string") {
+        const toolCall = decision.toolCallId && this.store.getToolCall(sessionId, decision.toolCallId);
+        if (!toolCall || toolCall.toolId !== toolId || decision.metadata?.source)
+          throw new AgentPermissionError("Project approval requires a registered native tool call.", 400);
+        grantProjectTool(sessionId, toolId, permissionId);
+      }
+      const updated = this.store.updatePermission(sessionId, permissionId, {
         action,
-        reason: updated.reason,
+        userReply: reply,
+        resolvedAt: nowIso(),
+        reason: message ? `${decision.reason} ${message}` : decision.reason,
       });
-      this.store.updateSession(sessionId, {
-        pendingResumeToken: decision.resumeToken ?? null,
-        updatedAt: nowIso(),
-      });
-    }
-    return updated;
+      if (reply === "always" && persistRule && typeof toolId !== "string") {
+        const pattern = decision.patterns[0] ?? "*";
+        const gate = decision.internalGate === "none"
+          ? decision.coarseCategory : decision.internalGate;
+        appendAlwaysPermissionRule(sessionId, {
+          gate, pattern, action, reason: updated.reason,
+        });
+      }
+      return updated;
+    });
   }
 
   list(sessionId: string): PermissionDecision[] {

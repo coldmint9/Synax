@@ -241,6 +241,7 @@ export interface RuntimeEvent {
 }
 
 export interface AgentRuntimeMessage {
+  historyProjection?: { omittedFields: string[] };
   contentParts?: RuntimeContentPart[];
   id: string;
   sessionId: string;
@@ -440,6 +441,7 @@ export interface SessionCacheUsage {
 export interface SessionStats {
   cache?: SessionCacheUsage;
   roundCount?: number;
+  /** Legacy estimates, ignored by usage displays. New servers return null. */
   contextComposition?: ContextComposition | null;
   work?: {
     id: string;
@@ -455,6 +457,7 @@ export interface SessionStats {
   } | null;
   context?: {
     inputTokens: number | null;
+    /** "estimate" is accepted only for legacy responses and is never displayed. */
     source?: "provider" | "estimate" | null;
     stale?: boolean;
     requestId: string | null;
@@ -637,6 +640,13 @@ export interface SessionInvocationUsageResponse {
   totalCalls: number;
 }
 
+export interface ProjectToolGrant {
+  projectId: string;
+  toolId: string;
+  permissionId: string;
+  createdAt: string;
+}
+
 export interface SessionCapabilities {
   backend?: {
     id: BackendId;
@@ -719,6 +729,25 @@ async function requestBlob(
 export interface SessionSearchResponse {
   items: Array<{ session: AgentSession; snippet: string }>;
   hasMore: boolean;
+}
+
+export interface HistoryWindowState {
+  revision: number;
+  epoch: number;
+  cursor?: string;
+  olderCursor?: string;
+  hasEarlier: boolean;
+  latest: boolean;
+  detailsTruncated: boolean;
+}
+export interface HistoryWindowResponse {
+  messages: AgentRuntimeMessage[];
+  runs: AgentRun[];
+  steps: AgentRunStep[];
+  toolCalls: ToolCallRecord[];
+  events: RuntimeEvent[];
+  permissions: PermissionDecision[];
+  historyWindow: HistoryWindowState;
 }
 
 export const agentRuntimeApi = {
@@ -861,6 +890,14 @@ export const agentRuntimeApi = {
       `/sessions/clear-inactive`,
       { method: "POST", body: JSON.stringify({ projectId }) },
     ),
+  messageContentPage: (sessionId: string, messageId: string, cursor = 0, revision?: number) =>
+    request<{ text: string; next?: number; revision: number }>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`),
+  historyWindow: (sessionId: string, cursor?: string) =>
+    request<HistoryWindowResponse>(`/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
+  upgradeHistory: (sessionId: string) =>
+    request<{ upgraded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/history/upgrade`, {
+      method: "POST", body: JSON.stringify({ acknowledgeCheckpointReset: true }),
+    }),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -884,6 +921,15 @@ export const agentRuntimeApi = {
   listEvents: (sessionId: string, after?: string) =>
     request<{ items: RuntimeEvent[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/events${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
+  listProjectToolGrants: (projectId: string) =>
+    request<{ items: ProjectToolGrant[] }>(
+      `/projects/${encodeURIComponent(projectId)}/tool-grants`,
+    ),
+  revokeProjectToolGrant: (projectId: string, toolId: string) =>
+    request<{ revoked: boolean }>(
+      `/projects/${encodeURIComponent(projectId)}/tool-grants/${encodeURIComponent(toolId)}`,
+      { method: "DELETE" },
     ),
   listPermissions: (sessionId: string) =>
     request<{ items: PermissionDecision[] }>(

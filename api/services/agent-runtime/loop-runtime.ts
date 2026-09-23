@@ -1,7 +1,9 @@
+import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
 } from "./visualization-integration.js";
+import { isVisualizationIntent } from "./visualization-intent.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -744,7 +746,13 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
+        rebuildSessionFileReads(
+          sessionId,
+          filterHistoryFileReads(
+            sessionId,
+            this.store.listRecentToolCalls(sessionId),
+          ),
+        );
 
         let clearingActivated = false;
 
@@ -835,7 +843,7 @@ export class AgentLoopRuntime {
           }
 
           const history = this.store
-            .listMessages(sessionId)
+            .listRecentMessages(sessionId)
             .filter(
               (message) =>
                 message.role === "user" || message.role === "assistant",
@@ -858,28 +866,32 @@ export class AgentLoopRuntime {
             runId: run.id,
             stepIndex: step.index,
           });
-          for await (const event of this.generateStep({
-            sessionId,
-            stepId: step.id,
-            prompt: currentPrompt,
-            input,
-            profile,
-            context,
-            history,
-            previousParts: previousStepParts,
-            previousToolCalls,
-            stepIndex: step.index,
-            maxSteps: convergenceThreshold,
-            converging: shouldConverge(step.index, convergenceThreshold),
-            blockedByPermission: pendingPermission?.userReply === "reject",
-            previousStepUsage: previousStep?.metadata?.usage as
-              | Record<string, unknown>
-              | undefined,
-            abortSignal: runAbortSignal,
-            clearingActivated,
-            contextLimit: runContextLimit,
-            outputReserve: runOutputReserve,
-          })) {
+          for await (const event of coalesceLoopDeltas(
+            (stepSignal) =>
+              this.generateStep({
+                sessionId,
+                stepId: step.id,
+                prompt: currentPrompt,
+                input,
+                profile,
+                context,
+                history,
+                previousParts: previousStepParts,
+                previousToolCalls,
+                stepIndex: step.index,
+                maxSteps: convergenceThreshold,
+                converging: shouldConverge(step.index, convergenceThreshold),
+                blockedByPermission: pendingPermission?.userReply === "reject",
+                previousStepUsage: previousStep?.metadata?.usage as
+                  | Record<string, unknown>
+                  | undefined,
+                abortSignal: stepSignal,
+                clearingActivated,
+                contextLimit: runContextLimit,
+                outputReserve: runOutputReserve,
+              }),
+            runAbortSignal,
+          )) {
             if (inputQueueService.getForceInjectId(sessionId)) {
               stepForceInjectRequested = true;
               break;
@@ -2090,7 +2102,7 @@ export class AgentLoopRuntime {
     getRawSqlite().transaction(() => {
       workRuntime.persistTerminal(work, run.id);
       message = this.store
-        .listMessages(sessionId)
+        .listRecentMessages(sessionId)
         .find(
           (m) =>
             m.metadata.purpose === "work_result" &&
@@ -2106,7 +2118,8 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
-    if(work.status === "completed" && message) persistInlineVisualization(message);
+    if (work.status === "completed" && message)
+      persistInlineVisualization(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2218,7 +2231,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
-    if(completed)persistInlineVisualization(message);
+    if (completed) persistInlineVisualization(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }
@@ -2531,6 +2544,7 @@ export class AgentLoopRuntime {
     }
 
     const selectedReferences = activeTurnReferences(input.sessionId);
+    const visualizationIntent = isVisualizationIntent(userRequest);
     const turnSkillIds = [
       ...new Set([
         ...session.skillIds,
@@ -2542,13 +2556,26 @@ export class AgentLoopRuntime {
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
     });
+    const autoVisualizeSkill = visualizationIntent
+      ? skillCandidates.find(
+          (skill) =>
+            skill.name.toLowerCase() === "visualize" ||
+            skill.id.toLowerCase().endsWith("/visualize"),
+        )
+      : undefined;
     const activeSkillIds = new Set(turnSkillIds);
+    if (autoVisualizeSkill) activeSkillIds.add(autoVisualizeSkill.id);
     const skillsSection =
       allowedTools.some((tool) => tool.id === "skill.load") &&
       skillCandidates.length > 0
         ? [
             "## Available skills",
-            "Skills selected for this turn are loaded by the runtime through skill.load; check their tool results for success or failure. For other selected skills, or when a description matches the task, call skill.load as needed. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            "Skills selected for this turn must be loaded with skill.load before authoring. Check the tool result for success or failure. Other skills may be loaded when their descriptions match the task. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
+            ...(visualizationIntent
+              ? [
+                  `Visual preview intent detected. Load ${autoVisualizeSkill?.id ?? "the visualize skill"} now, then produce one conversation preview instead of only describing it. Do not implement production files unless the user separately asks for that.`,
+                ]
+              : []),
             ...skillCandidates.map((skill) => {
               return JSON.stringify({
                 id: skill.id,
@@ -2607,6 +2634,7 @@ export class AgentLoopRuntime {
       projectRulesSection,
       skillsSection,
       selectedReferencesSection: selectedReferences?.content,
+      visualizationIntent,
     });
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders
@@ -2643,6 +2671,9 @@ export class AgentLoopRuntime {
       mode: workflowMode(session),
     });
     const tailReminders = [
+      input.history.some(message => message.metadata.historyWindowTruncated)
+        ? "Earlier conversation is outside the bounded context window. Do not assume it was empty; consult the retained work summary or context references when needed."
+        : "",
       buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",
       synaxAgent.buildRuntimeStateSection(session) ?? "",
@@ -2657,7 +2688,7 @@ export class AgentLoopRuntime {
       currentStep.metadata,
       tailReminders,
       this.store
-        .listMessages(input.sessionId)
+        .listRecentMessages(input.sessionId)
         .filter(
           (message) =>
             message.runId === currentStep.runId &&
@@ -2717,7 +2748,7 @@ export class AgentLoopRuntime {
     projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
       systemMessageContents: projection.systemMessageContents,
-      toolCalls: this.store.listToolCalls(input.sessionId),
+      toolCalls: this.store.listRecentToolCalls(input.sessionId),
     };
     if (projection.compacted)
       yield {

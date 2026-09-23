@@ -1,0 +1,859 @@
+{
+  "scope": "version-core-soak-only",
+  "endToEndAccepted": false,
+  "timestamp": "2026-09-22T18:57:07.979Z",
+  "operations": 10000,
+  "rollbacks": 2000,
+  "durationMs": 27926.825624999998,
+  "retainedCheckpointsVerified": 3,
+  "forkVerified": true,
+  "maintenance": {
+    "calls": 20002,
+    "removed": 29981,
+    "bytes": 17939794,
+    "remaining": false,
+    "maxCallMs": 62.18504100000064
+  },
+  "peakObjects": 31,
+  "peakObjectBytes": 27575,
+  "memory": {
+    "peakRss": 162070528,
+    "peakHeap": 34084320,
+    "processMaxRssKiB": 158272
+  },
+  "final": {
+    "objects": {
+      "objects": 20,
+      "bytes": 15463
+    },
+    "metadata": {
+      "bytes": 676428,
+      "limit": 67108864
+    },
+    "disk": {
+      "databaseBytes": 389120,
+      "walBytes": 4181832,
+      "shmBytes": 32768,
+      "sqliteAllocatedBytes": 389120,
+      "freePageBytes": 49152
+    }
+  },
+  "samples": [
+    {
+      "operation": 100,
+      "objects": 27,
+      "objectBytes": 22795,
+      "metadataBytes": 9478,
+      "databaseBytes": 135168,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 200,
+      "objects": 27,
+      "objectBytes": 22789,
+      "metadataBytes": 16065,
+      "databaseBytes": 167936,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 300,
+      "objects": 26,
+      "objectBytes": 21683,
+      "metadataBytes": 22785,
+      "databaseBytes": 167936,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 400,
+      "objects": 27,
+      "objectBytes": 22794,
+      "metadataBytes": 29505,
+      "databaseBytes": 172032,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 500,
+      "objects": 28,
+      "objectBytes": 23983,
+      "metadataBytes": 36225,
+      "databaseBytes": 172032,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 600,
+      "objects": 28,
+      "objectBytes": 23993,
+      "metadataBytes": 42945,
+      "databaseBytes": 176128,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 700,
+      "objects": 25,
+      "objectBytes": 20530,
+      "metadataBytes": 49665,
+      "databaseBytes": 176128,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 800,
+      "objects": 25,
+      "objectBytes": 20532,
+      "metadataBytes": 56385,
+      "databaseBytes": 176128,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 900,
+      "objects": 28,
+      "objectBytes": 23987,
+      "metadataBytes": 63105,
+      "databaseBytes": 176128,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 1000,
+      "objects": 27,
+      "objectBytes": 23648,
+      "metadataBytes": 69825,
+      "databaseBytes": 180224,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 1100,
+      "objects": 28,
+      "objectBytes": 23991,
+      "metadataBytes": 76567,
+      "databaseBytes": 180224,
+      "walBytes": 4165352
+    },
+    {
+      "operation": 1200,
+      "objects": 29,
+      "objectBytes": 25174,
+      "metadataBytes": 83308,
+      "databaseBytes": 188416,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1300,
+      "objects": 23,
+      "objectBytes": 18063,
+      "metadataBytes": 90048,
+      "databaseBytes": 192512,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1400,
+      "objects": 29,
+      "objectBytes": 25182,
+      "metadataBytes": 96788,
+      "databaseBytes": 192512,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1500,
+      "objects": 24,
+      "objectBytes": 19210,
+      "metadataBytes": 103528,
+      "databaseBytes": 200704,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1600,
+      "objects": 28,
+      "objectBytes": 24851,
+      "metadataBytes": 110405,
+      "databaseBytes": 200704,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1700,
+      "objects": 24,
+      "objectBytes": 19210,
+      "metadataBytes": 117008,
+      "databaseBytes": 208896,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1800,
+      "objects": 29,
+      "objectBytes": 25180,
+      "metadataBytes": 123748,
+      "databaseBytes": 208896,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 1900,
+      "objects": 23,
+      "objectBytes": 18102,
+      "metadataBytes": 130488,
+      "databaseBytes": 212992,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2000,
+      "objects": 26,
+      "objectBytes": 21762,
+      "metadataBytes": 137228,
+      "databaseBytes": 212992,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2100,
+      "objects": 25,
+      "objectBytes": 20411,
+      "metadataBytes": 143968,
+      "databaseBytes": 217088,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2200,
+      "objects": 30,
+      "objectBytes": 26370,
+      "metadataBytes": 150708,
+      "databaseBytes": 217088,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2300,
+      "objects": 24,
+      "objectBytes": 19300,
+      "metadataBytes": 157448,
+      "databaseBytes": 221184,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2400,
+      "objects": 30,
+      "objectBytes": 26377,
+      "metadataBytes": 164188,
+      "databaseBytes": 221184,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2500,
+      "objects": 25,
+      "objectBytes": 20406,
+      "metadataBytes": 170928,
+      "databaseBytes": 221184,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2600,
+      "objects": 26,
+      "objectBytes": 21601,
+      "metadataBytes": 177668,
+      "databaseBytes": 221184,
+      "walBytes": 4173592
+    },
+    {
+      "operation": 2700,
+      "objects": 25,
+      "objectBytes": 20402,
+      "metadataBytes": 184408,
+      "databaseBytes": 221184,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 2800,
+      "objects": 26,
+      "objectBytes": 21599,
+      "metadataBytes": 191148,
+      "databaseBytes": 221184,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 2900,
+      "objects": 26,
+      "objectBytes": 21598,
+      "metadataBytes": 197888,
+      "databaseBytes": 221184,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3000,
+      "objects": 24,
+      "objectBytes": 19338,
+      "metadataBytes": 204628,
+      "databaseBytes": 225280,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3100,
+      "objects": 26,
+      "objectBytes": 21605,
+      "metadataBytes": 211505,
+      "databaseBytes": 225280,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3200,
+      "objects": 23,
+      "objectBytes": 18183,
+      "metadataBytes": 218108,
+      "databaseBytes": 225280,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3300,
+      "objects": 27,
+      "objectBytes": 22798,
+      "metadataBytes": 224848,
+      "databaseBytes": 237568,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3400,
+      "objects": 26,
+      "objectBytes": 21599,
+      "metadataBytes": 231588,
+      "databaseBytes": 237568,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3500,
+      "objects": 27,
+      "objectBytes": 22791,
+      "metadataBytes": 238328,
+      "databaseBytes": 237568,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3600,
+      "objects": 27,
+      "objectBytes": 22791,
+      "metadataBytes": 245068,
+      "databaseBytes": 237568,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3700,
+      "objects": 27,
+      "objectBytes": 22788,
+      "metadataBytes": 251808,
+      "databaseBytes": 245760,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3800,
+      "objects": 24,
+      "objectBytes": 19342,
+      "metadataBytes": 258548,
+      "databaseBytes": 245760,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 3900,
+      "objects": 22,
+      "objectBytes": 16866,
+      "metadataBytes": 265288,
+      "databaseBytes": 249856,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4000,
+      "objects": 26,
+      "objectBytes": 21686,
+      "metadataBytes": 272028,
+      "databaseBytes": 249856,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4100,
+      "objects": 27,
+      "objectBytes": 22799,
+      "metadataBytes": 278768,
+      "databaseBytes": 253952,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4200,
+      "objects": 26,
+      "objectBytes": 21676,
+      "metadataBytes": 285508,
+      "databaseBytes": 253952,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4300,
+      "objects": 28,
+      "objectBytes": 23988,
+      "metadataBytes": 292248,
+      "databaseBytes": 253952,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4400,
+      "objects": 28,
+      "objectBytes": 23983,
+      "metadataBytes": 298988,
+      "databaseBytes": 253952,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4500,
+      "objects": 28,
+      "objectBytes": 23983,
+      "metadataBytes": 305728,
+      "databaseBytes": 258048,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4600,
+      "objects": 29,
+      "objectBytes": 25183,
+      "metadataBytes": 312605,
+      "databaseBytes": 258048,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4700,
+      "objects": 27,
+      "objectBytes": 23653,
+      "metadataBytes": 319208,
+      "databaseBytes": 262144,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4800,
+      "objects": 26,
+      "objectBytes": 21731,
+      "metadataBytes": 325948,
+      "databaseBytes": 262144,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 4900,
+      "objects": 29,
+      "objectBytes": 25179,
+      "metadataBytes": 332688,
+      "databaseBytes": 266240,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5000,
+      "objects": 23,
+      "objectBytes": 18061,
+      "metadataBytes": 339428,
+      "databaseBytes": 266240,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5100,
+      "objects": 29,
+      "objectBytes": 25177,
+      "metadataBytes": 346168,
+      "databaseBytes": 266240,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5200,
+      "objects": 24,
+      "objectBytes": 19208,
+      "metadataBytes": 352908,
+      "databaseBytes": 274432,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5300,
+      "objects": 30,
+      "objectBytes": 26376,
+      "metadataBytes": 359648,
+      "databaseBytes": 274432,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5400,
+      "objects": 24,
+      "objectBytes": 19212,
+      "metadataBytes": 366388,
+      "databaseBytes": 278528,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5500,
+      "objects": 30,
+      "objectBytes": 26378,
+      "metadataBytes": 373128,
+      "databaseBytes": 278528,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5600,
+      "objects": 25,
+      "objectBytes": 20408,
+      "metadataBytes": 379868,
+      "databaseBytes": 286720,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5700,
+      "objects": 25,
+      "objectBytes": 21430,
+      "metadataBytes": 386608,
+      "databaseBytes": 286720,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5800,
+      "objects": 25,
+      "objectBytes": 20409,
+      "metadataBytes": 393348,
+      "databaseBytes": 286720,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 5900,
+      "objects": 30,
+      "objectBytes": 26366,
+      "metadataBytes": 400088,
+      "databaseBytes": 290816,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6000,
+      "objects": 26,
+      "objectBytes": 21602,
+      "metadataBytes": 406828,
+      "databaseBytes": 294912,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6100,
+      "objects": 24,
+      "objectBytes": 21082,
+      "metadataBytes": 413436,
+      "databaseBytes": 294912,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6200,
+      "objects": 26,
+      "objectBytes": 21601,
+      "metadataBytes": 420308,
+      "databaseBytes": 294912,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6300,
+      "objects": 26,
+      "objectBytes": 21605,
+      "metadataBytes": 427048,
+      "databaseBytes": 299008,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6400,
+      "objects": 24,
+      "objectBytes": 19293,
+      "metadataBytes": 433788,
+      "databaseBytes": 299008,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6500,
+      "objects": 25,
+      "objectBytes": 20451,
+      "metadataBytes": 440528,
+      "databaseBytes": 299008,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6600,
+      "objects": 26,
+      "objectBytes": 21597,
+      "metadataBytes": 447268,
+      "databaseBytes": 303104,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6700,
+      "objects": 24,
+      "objectBytes": 19334,
+      "metadataBytes": 454008,
+      "databaseBytes": 303104,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6800,
+      "objects": 26,
+      "objectBytes": 21604,
+      "metadataBytes": 460748,
+      "databaseBytes": 307200,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 6900,
+      "objects": 27,
+      "objectBytes": 22787,
+      "metadataBytes": 467488,
+      "databaseBytes": 307200,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7000,
+      "objects": 27,
+      "objectBytes": 22799,
+      "metadataBytes": 474228,
+      "databaseBytes": 315392,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7100,
+      "objects": 27,
+      "objectBytes": 22796,
+      "metadataBytes": 480968,
+      "databaseBytes": 315392,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7200,
+      "objects": 26,
+      "objectBytes": 21640,
+      "metadataBytes": 487708,
+      "databaseBytes": 319488,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7300,
+      "objects": 24,
+      "objectBytes": 19380,
+      "metadataBytes": 494448,
+      "databaseBytes": 319488,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7400,
+      "objects": 27,
+      "objectBytes": 22787,
+      "metadataBytes": 501188,
+      "databaseBytes": 327680,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7500,
+      "objects": 27,
+      "objectBytes": 22795,
+      "metadataBytes": 507928,
+      "databaseBytes": 327680,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7600,
+      "objects": 20,
+      "objectBytes": 16305,
+      "metadataBytes": 514536,
+      "databaseBytes": 339968,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7700,
+      "objects": 26,
+      "objectBytes": 21683,
+      "metadataBytes": 521408,
+      "databaseBytes": 339968,
+      "walBytes": 4177712
+    },
+    {
+      "operation": 7800,
+      "objects": 23,
+      "objectBytes": 18023,
+      "metadataBytes": 528148,
+      "databaseBytes": 344064,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 7900,
+      "objects": 28,
+      "objectBytes": 23983,
+      "metadataBytes": 534888,
+      "databaseBytes": 344064,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8000,
+      "objects": 23,
+      "objectBytes": 18065,
+      "metadataBytes": 541628,
+      "databaseBytes": 344064,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8100,
+      "objects": 28,
+      "objectBytes": 23986,
+      "metadataBytes": 548368,
+      "databaseBytes": 344064,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8200,
+      "objects": 28,
+      "objectBytes": 23988,
+      "metadataBytes": 555108,
+      "databaseBytes": 348160,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8300,
+      "objects": 29,
+      "objectBytes": 25180,
+      "metadataBytes": 561848,
+      "databaseBytes": 348160,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8400,
+      "objects": 24,
+      "objectBytes": 20192,
+      "metadataBytes": 568588,
+      "databaseBytes": 348160,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8500,
+      "objects": 29,
+      "objectBytes": 25184,
+      "metadataBytes": 575328,
+      "databaseBytes": 348160,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8600,
+      "objects": 29,
+      "objectBytes": 25174,
+      "metadataBytes": 582068,
+      "databaseBytes": 352256,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8700,
+      "objects": 24,
+      "objectBytes": 19257,
+      "metadataBytes": 588808,
+      "databaseBytes": 352256,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8800,
+      "objects": 29,
+      "objectBytes": 25182,
+      "metadataBytes": 595548,
+      "databaseBytes": 352256,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 8900,
+      "objects": 22,
+      "objectBytes": 16948,
+      "metadataBytes": 602288,
+      "databaseBytes": 364544,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9000,
+      "objects": 30,
+      "objectBytes": 26381,
+      "metadataBytes": 609028,
+      "databaseBytes": 364544,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9100,
+      "objects": 24,
+      "objectBytes": 19210,
+      "metadataBytes": 615768,
+      "databaseBytes": 368640,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9200,
+      "objects": 30,
+      "objectBytes": 26373,
+      "metadataBytes": 622645,
+      "databaseBytes": 368640,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9300,
+      "objects": 25,
+      "objectBytes": 20406,
+      "metadataBytes": 629248,
+      "databaseBytes": 376832,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9400,
+      "objects": 27,
+      "objectBytes": 22955,
+      "metadataBytes": 635988,
+      "databaseBytes": 376832,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9500,
+      "objects": 23,
+      "objectBytes": 18107,
+      "metadataBytes": 642728,
+      "databaseBytes": 380928,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9600,
+      "objects": 31,
+      "objectBytes": 27564,
+      "metadataBytes": 649468,
+      "databaseBytes": 380928,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9700,
+      "objects": 26,
+      "objectBytes": 21604,
+      "metadataBytes": 656208,
+      "databaseBytes": 385024,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9800,
+      "objects": 29,
+      "objectBytes": 26041,
+      "metadataBytes": 662948,
+      "databaseBytes": 385024,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 9900,
+      "objects": 26,
+      "objectBytes": 21599,
+      "metadataBytes": 669688,
+      "databaseBytes": 389120,
+      "walBytes": 4181832
+    },
+    {
+      "operation": 10000,
+      "objects": 26,
+      "objectBytes": 21601,
+      "metadataBytes": 676428,
+      "databaseBytes": 389120,
+      "walBytes": 4181832
+    }
+  ],
+  "environment": {
+    "node": "v22.23.2",
+    "cpu": "Apple M4",
+    "platform": "darwin",
+    "execArgv": [
+      "--max-old-space-size=128",
+      "--import",
+      "tsx"
+    ]
+  },
+  "notes": [
+    "Only version-core operations; no runtime/UI/file compensation/legacy migration acceptance.",
+    "Reader pins survive root switches; three historical checkpoint pins plus one fork are retained and verified.",
+    "Idempotency results intentionally remain and consume a finite metadata budget; immutable content, not all control metadata, is expected to plateau.",
+    "Disk footprint includes allocated/freelist/WAL/SHM; releasing logical bytes does not promise immediate filesystem shrink."
+  ]
+}

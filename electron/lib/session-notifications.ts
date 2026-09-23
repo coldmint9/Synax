@@ -127,7 +127,12 @@ export class SessionNotifications {
       const notification = new Notification({
         title: payload.title,
         body: payload.body,
-        icon: this.icon,
+        // macOS already supplies the app identity for native notifications.
+        // Passing the app icon here creates a second logo in the expanded banner.
+        // Keep the explicit icon on Windows and Linux.
+        ...(process.platform === "darwin"
+          ? { actions: [{ type: "button" as const, text: "回复" }] }
+          : { icon: this.icon }),
       });
       const target: SessionNotificationTarget = {
         projectId: payload.projectId,
@@ -138,7 +143,7 @@ export class SessionNotifications {
         if (this.active.get(payload.sessionId) === notification)
           this.active.delete(payload.sessionId);
       };
-      notification.on("click", () => {
+      const activate = () => {
         if (
           !this.enabled ||
           this.active.get(payload.sessionId) !== notification
@@ -147,7 +152,10 @@ export class SessionNotifications {
         void this.activate(target).catch(() => {
           console.warn("[notifications] Could not activate the session window");
         });
-      });
+      };
+      notification.on("click", activate);
+      // The macOS action button uses the same navigation as clicking the notice.
+      notification.on("action", activate);
       notification.on("close", remove);
       notification.on("failed", () => {
         remove();

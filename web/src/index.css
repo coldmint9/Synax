@@ -86,7 +86,6 @@
   --animate-ripple-pulse: ripple-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-origin-breathe: origin-breathe 3s ease-in-out infinite;
   --animate-wave-ripple: wave-ripple 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
-  --animate-thinking-bounce: thinking-bounce 0.9s ease-in-out infinite;
   --animate-bot-glow: bot-glow 2s ease-in-out infinite;
 }
 
@@ -304,19 +303,6 @@
     opacity: 0.8;
   }
 }
-@keyframes thinking-dots {
-  0%,
-  20% {
-    content: "·";
-  }
-  40% {
-    content: "··";
-  }
-  60%,
-  100% {
-    content: "···";
-  }
-}
 @keyframes node-shake {
   0%,
   100% {
@@ -416,17 +402,6 @@
     opacity: 0;
   }
   to {
-    opacity: 1;
-  }
-}
-@keyframes thinking-bounce {
-  0%,
-  40% {
-    transform: translateY(0);
-    opacity: 0.3;
-  }
-  20% {
-    transform: translateY(-6px);
     opacity: 1;
   }
 }
@@ -1105,9 +1080,10 @@
   .workbench-shell[data-has-project="false"] .workbench-header {
     --island-center-offset: 0px;
   }
-  /* Settings has no session sidebar. Match the Work island's viewport
-     position without inheriting its horizontal content-column offset. */
-  .workbench-shell[data-active-panel="settings"] .workbench-header {
+  /* Git and Settings have no session sidebar. Center their island on the
+     full viewport rather than the Work conversation column. */
+  .workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"])
+    .workbench-header {
     --island-center-offset: 0px;
     top: var(--workbench-island-top);
   }
@@ -1466,17 +1442,8 @@
     display: flex;
     align-items: center;
   }
-  .wh-tabs .tabs__list-container {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-  }
-  /* Let the selected pill shadow/focus ring fit inside the scrollport.
-     Negative margins preserve the header's existing height and tab position. */
-  .wh-tabs .tabs__list-container__scroller {
-    padding-block: 6px;
-    margin-block: -6px;
-  }
+  /* The three header tabs fit without HeroUI's scroll container. Its
+     overflow chevron could cover the Git label during Wiki/Git switches. */
   .wh-tabs .tabs__list {
     background: transparent !important;
     border: none !important;
@@ -3710,6 +3677,16 @@
 }
 .agent-dock-composer-inline {
   width: 100%;
+  container: composer-inline / inline-size;
+}
+/* Leave room for draft text and the optimization action in narrow input pills. */
+@container composer-inline (max-width: 32rem) {
+  .agent-permission-cycle > span {
+    display: none;
+  }
+  .agent-model-picker-trigger {
+    max-width: 6rem;
+  }
 }
 .agent-dock-composer-inline .agent-dock-composer-input {
   box-sizing: border-box;
@@ -6681,3 +6658,22 @@
 }
 .settings-file-opener { width: 180px; max-width: 100%; }
 .settings-opener-status { display: block; margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--muted); }
+
+/* Context menus use the same compact geometry in Web light and dark themes. */
+.synax-context-menu {
+  border-radius: 12px;
+  padding: 4px;
+}
+.synax-context-menu .menu-item {
+  min-height: 28px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .synax-context-menu,
+  .synax-context-menu .menu-item {
+    animation: none !important;
+    transition: none !important;
+  }
+}

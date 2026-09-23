@@ -53,7 +53,7 @@ beforeEach(() => {
   });
 });
 
-it("renders a sent message and three waiting dots before the request completes, without waiting for history", async () => {
+it("renders a sent message and the thinking grid before the request completes, without waiting for history", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
     () =>
@@ -69,13 +69,13 @@ it("renders a sent message and three waiting dots before the request completes, 
       .sendSessionMessage("s1", { message: "Immediate message" });
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
   await act(async () => {
     finish({ run, reused: false });
     await sending;
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
 });
 
 it("deduplicates an SSE confirmation arriving before the POST response and keeps identical earlier messages", async () => {

@@ -76,7 +76,8 @@ describe("TurnBody", () => {
       <TurnBody turn={emptyTurn} entryId="entry-1" isStreaming />,
     );
 
-    expect(container.querySelectorAll("[data-thinking-dot]")).toHaveLength(3);
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
 
   it("does not show the thinking dots for an empty completed turn", () => {

@@ -21,7 +21,7 @@ import {
   GitCommit,
   List,
   RefreshCw,
-  Undo2,
+  MoreHorizontal,
 } from "lucide-react";
 import type {
   EnvironmentChangeStatus,
@@ -43,8 +43,9 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SubagentControls } from "./SubagentControls";
 import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
-import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useLocale } from "../../../hooks/useLocale";
+import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
+import { fileContextEntries, sourceContextEntries } from "./workspaceContextMenus";
 import type { I18nKey } from "../../../lib/i18n";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -278,7 +279,7 @@ function RepositoryProjectCard({
   reload: () => void | Promise<void>;
   changedFilesView: "tree" | "flat";
   onChangedFilesView: (view: "tree" | "flat") => void;
-  onRevert?: (file: SessionEnvironmentFile) => void;
+  onRevert?: (file: SessionEnvironmentFile, rootId?: string) => void;
   revertingPaths?: ReadonlySet<string>;
 }) {
   const { t } = useLocale();
@@ -356,6 +357,10 @@ function RepositoryProjectCard({
               onOpen={openDiff}
               onRevert={onRevert}
               revertingPaths={revertingPaths}
+              sessionId={sessionId}
+              rootId={repository.rootId}
+              rootName={repository.name}
+              workspacePath={repository.workspacePath}
             />
           ) : (
             changedFiles.map((file) => (
@@ -364,7 +369,11 @@ function RepositoryProjectCard({
                 file={file}
                 onOpen={() => openDiff(file.path)}
                 onRevert={onRevert}
-                reverting={revertingPaths?.has(file.path) ?? false}
+                reverting={revertingPaths?.has(`${repository.rootId}:${file.path}`) ?? false}
+                sessionId={sessionId}
+                rootId={repository.rootId}
+                rootName={repository.name}
+                workspacePath={repository.workspacePath}
               />
             ))
           )}
@@ -379,15 +388,13 @@ function WorkspaceFilesDashboardPanel({
   repositories,
   inputSources = [],
   outputFiles = [],
-  copiedPath,
-  onCopyPath,
+  workspacePath,
 }: {
   sessionId: string;
   repositories: SessionEnvironmentRepository[];
   inputSources?: SessionEnvironmentInputSource[];
   outputFiles?: string[];
-  copiedPath: string | null;
-  onCopyPath: (path: string) => void;
+  workspacePath?: string;
 }) {
   const fileRepositories =
     repositories.length > 0
@@ -398,6 +405,7 @@ function WorkspaceFilesDashboardPanel({
             name: "Workspace",
             inputSources,
             outputFiles,
+            workspacePath: workspacePath ?? "",
           },
         ];
   const files = fileRepositories.flatMap((repository) => ({
@@ -408,11 +416,13 @@ function WorkspaceFilesDashboardPanel({
         source,
         rootId: repository.rootId,
         rootName: repository.name,
+        workspacePath: repository.workspacePath,
       })),
     outputs: (repository.outputFiles ?? []).map((path) => ({
       path,
       rootId: repository.rootId,
       rootName: repository.name,
+      workspacePath: repository.workspacePath,
     })),
   }));
   const inputs = files.flatMap((item) => item.inputs);
@@ -425,16 +435,15 @@ function WorkspaceFilesDashboardPanel({
       storageKey={`${sessionId}:files`}
       inputCount={inputs.length}
       outputCount={outputs.length}
-      inputs={inputs.map(({ source, rootId, rootName }) => (
+      inputs={inputs.map(({ source, rootId, rootName, workspacePath }) => (
         <InputSourceRow
           key={`${rootId}:${source.kind}:${source.toolCallId ?? source.assetId ?? source.label}`}
           source={source}
           rootName={rootName}
-          copied={copiedPath === source.label}
+          workspacePath={workspacePath}
           onOpen={() =>
             openWorkspaceInputSource(sessionId, source, rootId, rootName)
           }
-          onCopy={() => onCopyPath(source.label)}
         />
       ))}
       outputs={
@@ -474,7 +483,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     providedEnvironment === undefined ? owned.environment : providedEnvironment;
   const loading = providedLoading ?? owned.loading;
   const reload = providedReload ?? owned.reload;
-  const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">(
     "flat",
   );
@@ -502,24 +510,24 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       );
     else openWorkspaceDiff(sessionId, filePath);
   };
-  const copiedTimer = useRef<number | null>(null);
 
   const [revertingPaths, setRevertingPaths] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
 
   const revertFile = useCallback(
-    async (file: SessionEnvironmentFile) => {
+    async (file: SessionEnvironmentFile, rootId?: string) => {
       if (!sessionId) return;
       const confirmMessage = file.untracked
         ? t("workspaceRevertUntrackedConfirm", { file: fileName(file.path) })
         : t("workspaceRevertConfirm", { file: fileName(file.path) });
       if (!window.confirm(confirmMessage)) return;
-      setRevertingPaths((current) => new Set(current).add(file.path));
+      const key = `${rootId ?? "primary"}:${file.path}`;
+      setRevertingPaths((current) => new Set(current).add(key));
       try {
         await agentRuntimeApi.restoreSessionFile(sessionId, {
           path: file.path,
-          ...(repository ? { rootId: repository.rootId } : {}),
+          ...(rootId ? { rootId } : {}),
         });
         await reload();
       } catch (error) {
@@ -531,27 +539,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       } finally {
         setRevertingPaths((current) => {
           const next = new Set(current);
-          next.delete(file.path);
+          next.delete(key);
           return next;
         });
       }
     },
-    [sessionId, repository, reload, t],
-  );
-
-  const copyPath = useCallback(async (filePath: string) => {
-    // Only claim success when the write actually landed.
-    if (!(await copyTextToClipboard(filePath))) return;
-    setCopiedPath(filePath);
-    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopiedPath(null), 1200);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
-    },
-    [],
+    [sessionId, reload, t],
   );
 
   const changedFiles = repositoryEnvironment?.changedFiles ?? [];
@@ -594,7 +587,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               reload={reload}
               changedFilesView={changedFilesView}
               onChangedFilesView={setChangedFilesView}
-              onRevert={(file) => void revertFile(file)}
+              onRevert={(file, rootId) => void revertFile(file, rootId)}
               revertingPaths={revertingPaths}
             />
           </DashboardPanel>
@@ -603,8 +596,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
           <WorkspaceFilesDashboardPanel
             sessionId={sessionId}
             repositories={repositories}
-            copiedPath={copiedPath}
-            onCopyPath={(path) => void copyPath(path)}
+            workspacePath={environment.workspacePath}
           />
         </DashboardPanel>
         {subagents.length > 0 && (
@@ -795,8 +787,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                       key={repository?.rootId}
                       directory={changedFileTree}
                       onOpen={openDiff}
-                      onRevert={(file) => void revertFile(file)}
+                      onRevert={(file, rootId) => void revertFile(file, rootId)}
                       revertingPaths={revertingPaths}
+                      sessionId={sessionId}
+                      rootId={repository?.rootId}
+                      rootName={repository?.name}
+                      workspacePath={repositoryEnvironment?.workspacePath}
                     />
                   ) : (
                     changedFiles.map((file) => (
@@ -804,8 +800,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                         key={`${file.status}:${file.path}`}
                         file={file}
                         onOpen={() => openDiff(file.path)}
-                        onRevert={(revertTarget) => void revertFile(revertTarget)}
-                        reverting={revertingPaths.has(file.path)}
+                        onRevert={(revertTarget, rootId) => void revertFile(revertTarget, rootId)}
+                        reverting={revertingPaths.has(`${repository?.rootId ?? "primary"}:${file.path}`)}
+                        sessionId={sessionId}
+                        rootId={repository?.rootId}
+                        rootName={repository?.name}
+                        workspacePath={repositoryEnvironment?.workspacePath}
                       />
                     ))
                   )}
@@ -819,8 +819,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               repositories={repositories}
               inputSources={environment.inputSources}
               outputFiles={environment.outputFiles}
-              copiedPath={copiedPath}
-              onCopyPath={(path) => void copyPath(path)}
+              workspacePath={environment.workspacePath}
             />
           </DashboardPanel>
 
@@ -882,28 +881,24 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
 });
 
-function ChangedFileTree({
-  directory,
-  onOpen,
-  depth = 0,
-  onRevert,
-  revertingPaths,
-}: {
+interface ChangeRowContext {
+  sessionId: string;
+  rootId?: string;
+  rootName?: string;
+  workspacePath?: string;
+  onRevert?: (file: SessionEnvironmentFile, rootId?: string) => void;
+  revertingPaths?: ReadonlySet<string>;
+}
+
+function ChangedFileTree({ directory, onOpen, depth = 0, ...context }: {
   directory: ChangedFileDirectory;
   onOpen: (path: string) => void;
   depth?: number;
-  onRevert?: (file: SessionEnvironmentFile) => void;
-  revertingPaths?: ReadonlySet<string>;
-}) {
+} & ChangeRowContext) {
   return (
     <>
       {directory.directories.map((child) => (
-        <ChangedFileFolder
-          key={child.path}
-          directory={child}
-          onOpen={onOpen}
-          depth={depth}
-        />
+        <ChangedFileFolder key={child.path} directory={child} onOpen={onOpen} depth={depth} {...context} />
       ))}
       {directory.files.map((file) => (
         <ChangedFileRow
@@ -911,26 +906,21 @@ function ChangedFileTree({
           file={file}
           depth={depth}
           onOpen={() => onOpen(file.path)}
-          onRevert={onRevert}
-          reverting={revertingPaths?.has(file.path) ?? false}
+          reverting={context.revertingPaths?.has(`${context.rootId ?? "primary"}:${file.path}`) ?? false}
+          {...context}
         />
       ))}
     </>
   );
 }
 
-function ChangedFileFolder({
-  directory,
-  onOpen,
-  depth,
-}: {
+function ChangedFileFolder({ directory, onOpen, depth, ...context }: {
   directory: ChangedFileDirectory;
   onOpen: (path: string) => void;
   depth: number;
-}) {
+} & ChangeRowContext) {
   const [expanded, setExpanded] = useState(true);
   const FolderIcon = expanded ? FolderOpen : Folder;
-
   return (
     <div className="ws-tree-directory" data-directory-path={directory.path}>
       <button
@@ -945,13 +935,9 @@ function ChangedFileFolder({
         <FolderIcon size={12} className="ws-tree-folder-icon" />
         <span>{directory.name}</span>
       </button>
-      {expanded ? (
-        <ChangedFileTree
-          directory={directory}
-          onOpen={onOpen}
-          depth={depth + 1}
-        />
-      ) : null}
+      {expanded && (
+        <ChangedFileTree directory={directory} onOpen={onOpen} depth={depth + 1} {...context} />
+      )}
     </div>
   );
 }
@@ -971,11 +957,23 @@ function RepositoryCard({
 }) {
   const { t } = useLocale();
   const [commitOpen, setCommitOpen] = useState(false);
+  const [branchRequest, setBranchRequest] = useState(0);
   const changedCount = environment.changedFiles.length;
   const unavailable = repository && repository.status !== "ready";
+  const menu = useContextMenu(() => ({
+    label: repository?.name ?? environment.branch,
+    entries: [
+      { type: "action", id: "refresh", label: t("workspaceRefresh"), disabled: loading, run: () => reload() },
+      { type: "action", id: "branch", label: t("contextSwitchBranch"), disabled: Boolean(loading || unavailable), restoreFocus: false, run: () => setBranchRequest((value) => value + 1) },
+      { type: "separator" },
+      { type: "action", id: "commit", label: t("workspaceCommitPush"), disabled: Boolean(loading || unavailable || changedCount === 0), restoreFocus: false, run: () => setCommitOpen(true) },
+    ],
+  }));
   return (
     <section
       className={embedded ? "ws-project-repository" : "ws-card ws-card--repo"}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       {repository && !embedded && (
         <div className="ws-repo-project">
@@ -989,6 +987,7 @@ function RepositoryCard({
           sessionId={environment.sessionId}
           rootId={repository?.rootId}
           branch={environment.branch}
+          openRequest={branchRequest}
           disabled={loading || unavailable}
           onSwitched={() => void reload()}
         />
@@ -1077,137 +1076,79 @@ function SubagentRow({
   );
 }
 
-function ChangedFileRow({
-  file,
-  onOpen,
-  depth = 0,
-  onRevert,
-  reverting = false,
-}: {
+function ChangedFileRow({ file, onOpen, depth = 0, onRevert, reverting = false, sessionId, rootId, rootName, workspacePath }: {
   file: SessionEnvironmentFile;
   onOpen: () => void;
   depth?: number;
-  onRevert?: (file: SessionEnvironmentFile) => void;
   reverting?: boolean;
-}) {
+} & Omit<ChangeRowContext, "revertingPaths">) {
   const { t } = useLocale();
   const meta = CHANGE_META[file.status] ?? CHANGE_META.unknown;
   const name = fileName(file.path);
   const hasStats = file.additions > 0 || file.deletions > 0;
+  const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
+    t, path: file.path, workspacePath, onDiff: onOpen,
+    onOpen: () => openWorkspaceFile(sessionId, file.path, null, rootId, rootName),
+    canOpenFile: file.status !== "deleted", canRevert: Boolean(onRevert),
+    onRevert: () => onRevert?.(file, rootId), busy: reverting,
+  }) }));
 
   return (
-    <div
-      className="ws-row"
-      style={{ paddingLeft: `${6 + depth * 14}px` }}
-    >
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        title={file.path}
-        onClick={onOpen}
-      >
+    <div className="ws-row" style={{ paddingLeft: `${6 + depth * 14}px` }} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" title={file.path} onClick={onOpen} aria-haspopup="menu">
         <FileTypeIcon path={file.path} size={11} />
-        <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>
-          {meta.letter}
-        </span>
-        <span className="ws-row-main ws-row-main--file">
-          <span className="ws-row-file">{name}</span>
-        </span>
-        {hasStats ? (
-          <span className="ws-row-diff ws-mono">
-            {file.additions > 0 ? (
-              <span className="text-success">+{file.additions}</span>
-            ) : null}
-            {file.deletions > 0 ? (
-              <span className="text-danger">-{file.deletions}</span>
-            ) : null}
-          </span>
-        ) : null}
+        <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>{meta.letter}</span>
+        <span className="ws-row-main ws-row-main--file"><span className="ws-row-file">{name}</span></span>
+        {hasStats && <span className="ws-row-diff ws-mono">
+          {file.additions > 0 && <span className="text-success">+{file.additions}</span>}
+          {file.deletions > 0 && <span className="text-danger">-{file.deletions}</span>}
+        </span>}
       </button>
-      {onRevert ? (
-        <button
-          type="button"
-          className="ws-icon-button"
-          aria-label={t("workspaceRevertFile")}
-          title={t("workspaceRevertFile")}
-          disabled={reverting}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRevert(file);
-          }}
-        >
-          <Undo2 size={11} className={reverting ? "animate-spin" : ""} />
-        </button>
-      ) : null}
+      <button type="button" className="ws-icon-button" aria-label={t("contextMoreActions")} aria-haspopup="menu" onClick={(event) => menu.openFromAnchor(event.currentTarget)}>
+        <MoreHorizontal size={12} />
+      </button>
     </div>
   );
 }
 
-function OutputFiles({
-  files,
-  onOpen,
-}: {
-  files: Array<{ path: string; rootId: string; rootName: string }>;
-  onOpen: (file: { path: string; rootId: string; rootName: string }) => void;
+function OutputFileRow({ file, onOpen }: {
+  file: { path: string; rootId: string; rootName: string; workspacePath: string };
+  onOpen: () => void;
 }) {
   const { t } = useLocale();
-  if (!files.length) return null;
-  return files.map((file) => (
-    <button
-      key={`${file.rootId}:${file.path}`}
-      type="button"
-      className="ws-row"
-      title={file.path}
-      onClick={() => onOpen(file)}
-    >
-      <FileTypeIcon path={file.path} size={11} />
-      <span className="ws-row-main">
-        <span className="ws-row-file">{fileName(file.path)}</span>
-        <span className="ws-row-sub">
-          {file.rootName} ·{" "}
-          {file.path.includes("/")
-            ? file.path.slice(0, file.path.lastIndexOf("/"))
-            : t("workspaceRootDirectory")}
-        </span>
-      </span>
-    </button>
-  ));
+  const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
+    t, path: file.path, workspacePath: file.workspacePath, onOpen,
+  }) }));
+  return <button type="button" className="ws-row" title={file.path} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
+    <FileTypeIcon path={file.path} size={11} />
+    <span className="ws-row-main">
+      <span className="ws-row-file">{fileName(file.path)}</span>
+      <span className="ws-row-sub">{file.rootName} · {file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : t("workspaceRootDirectory")}</span>
+    </span>
+  </button>;
 }
 
-function InputSourceRow({
-  source,
-  rootName,
-  copied,
-  onOpen,
-  onCopy,
-}: {
+function OutputFiles({ files, onOpen }: {
+  files: Array<{ path: string; rootId: string; rootName: string; workspacePath: string }>;
+  onOpen: (file: { path: string; rootId: string; rootName: string }) => void;
+}) {
+  return files.map((file) => <OutputFileRow key={`${file.rootId}:${file.path}`} file={file} onOpen={() => onOpen(file)} />);
+}
+
+function InputSourceRow({ source, rootName, workspacePath, onOpen }: {
   source: SessionEnvironmentInputSource;
   rootName: string;
-  copied: boolean;
+  workspacePath: string;
   onOpen: () => void;
-  onCopy: () => void;
 }) {
+  const { t } = useLocale();
   const label = source.path ? fileName(source.path) : source.label;
-
-  return (
-    <button
-      type="button"
-      className="ws-row"
-      title={source.label}
-      onClick={onOpen}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        onCopy();
-      }}
-    >
-      <FileTypeIcon path={source.path ?? source.label} size={11} />
-      <span className="ws-row-main ws-row-main--file">
-        <span className="ws-row-file">{label}</span>
-        <span className="ws-row-sub">
-          {rootName} · {source.kind}
-        </span>
-      </span>
-      {copied ? <Check size={11} className="ws-row-icon text-success" /> : null}
-    </button>
-  );
+  const menu = useContextMenu(() => ({ label: source.label, entries: sourceContextEntries({
+    t, label: source.label, path: source.kind === "file" ? source.path : undefined,
+    workspacePath: source.kind === "file" ? workspacePath : undefined, onOpen,
+  }) }));
+  return <button type="button" className="ws-row" title={source.label} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
+    <FileTypeIcon path={source.path ?? source.label} size={11} />
+    <span className="ws-row-main ws-row-main--file"><span className="ws-row-file">{label}</span><span className="ws-row-sub">{rootName} · {source.kind}</span></span>
+  </button>;
 }

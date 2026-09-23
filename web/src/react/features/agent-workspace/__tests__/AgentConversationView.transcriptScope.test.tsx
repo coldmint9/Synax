@@ -25,6 +25,8 @@ vi.mock("../SessionStaticTimeline", () => ({
 const session = {
   id: "session-inline-visualization",
   projectId: "project-1",
+  parentSessionId: null,
+  childSessionIds: [],
   status: "completed",
   profileId: "synax",
   title: "Artifact preview",
@@ -32,6 +34,20 @@ const session = {
 } as AgentSession;
 
 describe("AgentConversationView transcript scope", () => {
+  it("does not render the history window controls", () => {
+    render(
+      <AgentConversationView
+        session={session}
+        steps={[]}
+        toolCalls={[]}
+        messages={[]}
+      />,
+    );
+
+    expect(screen.queryByText("Bounded history window")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Older" })).toBeNull();
+  });
+
   it("provides its session id to transcript-rendered inline visualizations", () => {
     render(
       <AgentConversationView

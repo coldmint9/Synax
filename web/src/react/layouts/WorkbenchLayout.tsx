@@ -22,6 +22,7 @@ import { resolveSessionsEntryPath } from "../features/agent-workspace/sessionLas
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
 import { WorkbenchIslandProvider } from "./WorkbenchIsland";
+import { GitToolbarProvider } from "../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../components/ToastContainer";
 import WikiPage from "../pages/WikiPage";
@@ -29,6 +30,14 @@ import SessionsPage from "../pages/SessionsPage";
 import { SessionEnvironmentProvider } from "../features/agent-workspace/SessionEnvironmentContext";
 
 export default function WorkbenchLayout() {
+  return (
+    <GitToolbarProvider>
+      <WorkbenchLayoutContent />
+    </GitToolbarProvider>
+  );
+}
+
+function WorkbenchLayoutContent() {
   const { projectId: routeProjectId = "" } = useParams();
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const currentProjectId = useShellStore((s) => s.currentProjectId);

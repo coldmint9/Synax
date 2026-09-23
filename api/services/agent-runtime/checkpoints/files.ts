@@ -1,3 +1,4 @@
+import { reserveExternalBytes } from "./resource-admission.js";
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
@@ -93,11 +94,15 @@ export class CheckpointFiles {
       target = this.blobPath(hash);
     await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     if (await fs.stat(target).catch(() => null)) return hash;
+    const release = await reserveExternalBytes(this.directory, bytes.length);
+    let committed = false;
     const temporary = `${target}.${randomUUID()}.tmp`;
     try {
       await fs.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
       await fs.rename(temporary, target);
+      committed = true;
     } finally {
+      release(committed);
       await fs.unlink(temporary).catch(() => {});
     }
     return hash;
@@ -114,12 +119,15 @@ export class CheckpointFiles {
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
     let output: import("node:fs/promises").FileHandle | undefined,
-      temporary: string | undefined;
+      temporary: string | undefined,
+      release: ((committed?: boolean) => void) | undefined,
+      committed = false;
     try {
       const before = await handle.stat();
       if (!before.isFile())
         throw new Error("Only ordinary files can be recorded.");
       if (persist) {
+        release = await reserveExternalBytes(this.directory, before.size);
         await fs.mkdir(path.join(this.directory, "blobs"), {
           recursive: true,
           mode: 0o700,
@@ -131,11 +139,14 @@ export class CheckpointFiles {
         );
         output = await fs.open(temporary, "wx", 0o600);
       }
+      let totalRead = 0;
       const hash = createHash("sha256"),
         buffer = Buffer.allocUnsafe(FILE_BUFFER_BYTES);
       for (;;) {
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
         if (!bytesRead) break;
+        totalRead += bytesRead;
+        if (totalRead > before.size) throw new Error("File grew during snapshot; write cancelled.");
         const chunk = buffer.subarray(0, bytesRead);
         hash.update(chunk);
         if (output) {
@@ -155,11 +166,14 @@ export class CheckpointFiles {
         output = undefined;
         const target = this.blobPath(value);
         await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-        if (!(await fs.stat(target).catch(() => null)))
+        if (!(await fs.stat(target).catch(() => null))) {
           await fs.rename(temporary, target);
+          committed = true;
+        }
       }
       return value;
     } finally {
+      release?.(committed);
       await output?.close();
       await handle.close();
       if (temporary) await fs.unlink(temporary).catch(() => {});

@@ -1,6 +1,6 @@
 /* Native titlebar islands must not float over modal surfaces. Keep the
    library's overlay level so nested select menus retain their portal order. */
-body:has(.modal__backdrop, .dialog-overlay) .workbench-header {
+body:has(.modal__backdrop, .drawer__backdrop, .dialog-overlay) .workbench-header {
   z-index: 30;
 }
 /* A dialog's available space is the viewport, never the size of its form.

@@ -1,0 +1,10 @@
+
+ RUN  v4.1.6 /Users/mint/.codex/worktrees/e508/Synax
+
+Core benchmark: 1000 entries, 20 switches/forks, payload 256 bytes
+Core benchmark: 1000 entries, 20 switches/forks, payload 256 bytes
+
+ Test Files  22 passed (22)
+      Tests  138 passed (138)
+   Start at  05:17:37
+   Duration  81.14s (transform 798ms, setup 0ms, import 6.23s, tests 73.64s, environment 1ms)

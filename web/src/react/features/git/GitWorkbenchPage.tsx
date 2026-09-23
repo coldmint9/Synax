@@ -20,6 +20,7 @@ import {
   type MergeRequestInput,
 } from "../../../lib/api/gitMr";
 import { MergeRequestForm } from "./MergeRequestForm";
+import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
@@ -168,39 +169,8 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   );
   return (
     <main className="git-workbench">
-      <header className="mr-page-header">
-        <div>
-          <h1>
-            <GitMerge size={23} />
-            Git 工作台
-          </h1>
-          <p className="mr-muted">在独立工作树中准备、审阅和验证本地合并。</p>
-        </div>
-        <div className="mr-actions">
-          <button
-            disabled={busy || loading}
-            aria-label="刷新 Git 工作台"
-            onClick={() =>
-              void perform(async () => {
-                setRefreshVersion((value) => value + 1);
-              })
-            }
-          >
-            <RefreshCw size={16} />
-            刷新
-          </button>
-          <button
-            className="mr-primary"
-            disabled={loading || branchLoading || !workspace}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus size={16} />
-            新建 MR
-          </button>
-        </div>
-      </header>
-      <div className="mr-toolbar">
-        <nav aria-label="Git 视图" className="mr-tabs">
+      <GitToolbarContent>
+        <nav aria-label="Git 视图" className="git-island-views">
           {(
             [
               ["requests", "合并请求"],
@@ -211,6 +181,8 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           ).map(([id, label]) => (
             <button
               key={id}
+              type="button"
+              className={`wh-pill-btn ${view === id ? "wh-pill-btn--soft" : ""}`}
               aria-current={view === id ? "page" : undefined}
               onClick={() => setView(id)}
             >
@@ -218,6 +190,55 @@ function GitWorkbench({ projectId }: { projectId: string }) {
             </button>
           ))}
         </nav>
+        <select
+          className="git-island-view-select"
+          aria-label="Git 视图"
+          value={view}
+          onChange={(event) => setView(event.target.value as View)}
+        >
+          <option value="requests">合并请求</option>
+          <option value="branches">分支</option>
+          <option value="presets">预设</option>
+          <option value="history">运行记录</option>
+        </select>
+        <span className="wh-divider" aria-hidden="true" />
+        <button
+          type="button"
+          className="wh-pill-btn wh-pill-btn--neutral"
+          disabled={busy || loading}
+          aria-label="刷新 Git 工作台"
+          title="刷新 Git 工作台"
+          onClick={() =>
+            void perform(async () => {
+              setRefreshVersion((value) => value + 1);
+            })
+          }
+        >
+          <RefreshCw size={14} />
+          <span className="git-island-action-label">刷新</span>
+        </button>
+        <button
+          type="button"
+          className="wh-pill-btn wh-pill-btn--primary"
+          disabled={loading || branchLoading || !workspace}
+          onClick={() => setCreateOpen(true)}
+          aria-label="新建 MR"
+          title="新建 MR"
+        >
+          <Plus size={14} />
+          <span className="git-island-action-label">新建 MR</span>
+        </button>
+      </GitToolbarContent>
+      <header className="mr-page-header">
+        <div>
+          <h1>
+            <GitMerge size={23} />
+            Git 工作台
+          </h1>
+          <p className="mr-muted">在独立工作树中准备、审阅和验证本地合并。</p>
+        </div>
+      </header>
+      <div className="mr-toolbar">
         <label className="mr-root-select">
           仓库
           <select

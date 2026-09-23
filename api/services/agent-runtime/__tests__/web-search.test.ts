@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebSearchConfig } from "../../../lib/config/config-types.js";
-import { parseJsonResults, searchWithConfig } from "../tools/web-search.js";
+import {
+  parseJsonResults,
+  searchBatchWithConfig,
+  searchWithConfig,
+  webSearchTool,
+} from "../tools/web-search.js";
 import { resolveWebSearchAuthorization } from "../../web-search/oauth.js";
 
 function config(local: Partial<WebSearchConfig["local"]>): WebSearchConfig {
@@ -105,5 +110,118 @@ describe("configured local web search engines", () => {
         }),
       ),
     ).resolves.toEqual({ "X-Search-Key": "Token custom-key" });
+  });
+});
+
+describe("batched concurrent web search", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const ddgoConfig = config({ engine: "duckduckgo", auth: { type: "none" } });
+  const html = (title: string) =>
+    `<html><body><div class="result"><a class="result__a" href="https://example.com/${title}">${title}</a><div class="result__snippet">s-${title}</div></div></body></html>`;
+
+  it("requires exactly one of query or queries", () => {
+    const schema = webSearchTool.inputSchema!;
+    expect(
+      schema.safeParse({ query: "a" }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ queries: ["a", "b"] }).success).toBe(true);
+    expect(
+      schema.safeParse({ query: "a", queries: ["b"] }).success,
+    ).toBe(false);
+    expect(schema.safeParse({}).success).toBe(false);
+  });
+
+  it("starts every batched query before any resolves and merges annotated results", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(
+      (input: string | URL | Request) =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const argsList = [
+      { query: "alpha", limit: 5 },
+      { query: "beta", limit: 5 },
+      { query: "gamma", limit: 5 },
+    ];
+    const batchPromise = searchBatchWithConfig(argsList, ddgoConfig);
+
+    // All three requests are in flight before any resolution: concurrent.
+    expect(resolvers.length).toBe(3);
+
+    // Resolve out of start order; merged output must still follow input order.
+    resolvers[2]!(
+      new Response(html("gamma"), {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    resolvers[0]!(
+      new Response(html("alpha"), {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    resolvers[1]!(
+      new Response(html("beta"), {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+
+    const batch = await batchPromise;
+    expect(batch.failures).toEqual([]);
+    expect(batch.providers).toEqual(["DuckDuckGo"]);
+    expect(batch.merged.map((hit) => hit.query)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect(batch.merged.map((hit) => hit.title)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect(batch.batches.map((entry) => entry.resultCount)).toEqual([1, 1, 1]);
+  });
+
+  it("isolates per-query failures and only throws when every query fails", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const query = new URL(url).searchParams.get("q") ?? "";
+      if (query.startsWith("blocked"))
+        return new Response("captcha", { status: 429 });
+      return new Response(html(query), {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const batch = await searchBatchWithConfig(
+      [
+        { query: "blocked", limit: 5 },
+        { query: "ok", limit: 5 },
+      ],
+      ddgoConfig,
+    );
+    expect(batch.failures.map((failure) => failure.query)).toEqual([
+      "blocked",
+    ]);
+    expect(batch.failures[0]!.error).toContain("429");
+    expect(batch.merged.map((hit) => hit.query)).toEqual(["ok"]);
+
+    await expect(
+      searchBatchWithConfig(
+        [
+          { query: "blocked", limit: 5 },
+          { query: "blocked-too", limit: 5 },
+        ],
+        ddgoConfig,
+      ),
+    ).rejects.toThrow(/429/);
   });
 });

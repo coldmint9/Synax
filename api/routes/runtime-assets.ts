@@ -13,8 +13,14 @@ runtimeAssetRoutes.onError((error, c) => {
   const mapped = toHttpError(error);
   return c.json(mapped.body, mapped.status as 400);
 });
+let activeUploads = 0;
 runtimeAssetRoutes.post(
   "/",
+  async (c, next) => {
+    if (activeUploads >= 2) return c.json({ error: "Media uploads are busy; retry shortly.", code: "MEDIA_BUSY" }, 429);
+    activeUploads++;
+    try { await next(); } finally { activeUploads--; }
+  },
   bodyLimit({
     maxSize: MAX_FILE_BYTES + 1024 * 1024,
     onError: (c) =>

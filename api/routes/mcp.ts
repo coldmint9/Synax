@@ -1,21 +1,12 @@
+import { resolveProjectWorkDir } from '../services/agent-runtime/tools/workspace.js'
 import { Hono } from 'hono'
-import * as z from 'zod/v4'
+import { mcpExtensionSchema } from '../services/extensions/schemas.js'
 import { mcpClientManager } from '../services/mcp/mcp-client-manager.js'
 import type { McpServerConfig } from '../lib/config/config-types.js'
 
 export const mcpRoutes = new Hono()
 
-const mcpServerInputSchema = z
-  .object({
-    id: z.string().min(1).max(128),
-    name: z.string().min(1).max(256),
-    command: z.string().min(1).max(1024),
-    args: z.array(z.string().min(1).max(1024)).max(64).optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    cwd: z.string().min(1).max(4096).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict()
+const mcpServerInputSchema = mcpExtensionSchema
 
 mcpRoutes.post('/test', async (c) => {
   let body: unknown
@@ -30,6 +21,8 @@ mcpRoutes.post('/test', async (c) => {
   }
   const config: McpServerConfig = parsed.data
   try {
+    const projectId = c.req.query('projectId')
+    if (projectId && config.transport !== 'http' && !config.cwd) config.cwd = resolveProjectWorkDir(projectId)
     const result = await mcpClientManager.probe(config)
     return c.json(result, result.ok ? 200 : 400)
   } catch (err) {

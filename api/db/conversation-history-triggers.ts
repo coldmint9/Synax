@@ -36,6 +36,27 @@ export function installConversationHistoryTriggers(
         : `${alias}.id`;
     const session = (alias: string) =>
       `${alias}.${table === "agent_runtime_sessions" ? "id" : "session_id"}`;
+    // A stopped source may not change while its current state is copied across
+    // short transactions. Enforced in SQLite, including writes from other APIs.
+    for (const [operation, alias] of [["INSERT", "NEW"], ["UPDATE", "OLD"], ["DELETE", "OLD"]]) {
+      const trigger = `conversation_migration_${table}_${operation.toLowerCase()}`;
+      db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+      db.exec(`CREATE TRIGGER ${trigger} BEFORE ${operation} ON ${table}
+        WHEN EXISTS(SELECT 1 FROM conversation_v3_migrations WHERE session_id=${session(alias)} AND state='copying')
+        BEGIN SELECT RAISE(ABORT,'HISTORY_MIGRATION_BUSY'); END;`);
+      const forkCopy = `conversation_fork_copy_${table}_${operation.toLowerCase()}`;
+      db.exec(`DROP TRIGGER IF EXISTS ${forkCopy}`);
+      db.exec(`CREATE TRIGGER ${forkCopy} BEFORE ${operation} ON ${table}
+        WHEN EXISTS(SELECT 1 FROM conversation_history_operations WHERE session_id=${session(alias)} AND state='fork_preparing' AND json_extract(payload_json,'$.kind')='simple-fork')
+        BEGIN SELECT RAISE(ABORT,'HISTORY_FORK_BUSY'); END;`);
+      if (operation !== "DELETE") {
+        const deleting = `conversation_deleting_${table}_${operation.toLowerCase()}`;
+        db.exec(`DROP TRIGGER IF EXISTS ${deleting}`);
+        db.exec(`CREATE TRIGGER ${deleting} BEFORE ${operation} ON ${table}
+          WHEN EXISTS(SELECT 1 FROM conversation_v3_deletions WHERE session_id=${session(alias)})
+          BEGIN SELECT RAISE(ABORT,'HISTORY_SESSION_DELETED'); END;`);
+      }
+    }
     const match = (a: string, b: string) =>
       compound
         ? `${a}.asset_id=${b}.asset_id AND ${a}.session_id=${b}.session_id`

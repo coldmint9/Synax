@@ -1,0 +1,7 @@
+{
+  "scope": "real-native-loop-with-provider-fixture",
+  "providerDeltas": 1000,
+  "persistedDeltaEvents": 16,
+  "deltaUndoEntries": 16,
+  "finalContentBytes": 1000
+}

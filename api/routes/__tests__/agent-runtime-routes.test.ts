@@ -434,6 +434,31 @@ describe("GET /sessions projected-status pagination", () => {
     });
   });
 
+  it("automatically stops a running session before deleting its history", async () => {
+    const { agentSessionRuntime } = await import(
+      "../../services/agent-runtime/session-runtime.js",
+    );
+    const { agentRuntimeRoutes } = await import("../agent-runtime.js");
+    const session = agentSessionRuntime.create({
+      projectId: "p1",
+      workDir: process.cwd(),
+      profileId: "explorer",
+      prompt: "Delete while running",
+    });
+
+    const response = await agentRuntimeRoutes.request(
+      `http://localhost/sessions/${session.id}`,
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      deletedSessionIds: [session.id],
+    });
+    expect(agentRuntimeStore.tryGetSession(session.id)).toBeUndefined();
+  });
+
   it("filters and pages by projected status without dropping counts", async () => {
     seed();
     const { agentRuntimeRoutes } = await import("../agent-runtime.js");
