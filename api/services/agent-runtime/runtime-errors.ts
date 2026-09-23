@@ -1,3 +1,4 @@
+import { VersionStoreError } from "./checkpoints/version-store/limits.js";
 export class AgentRuntimeError extends Error {
   constructor(
     message: string,
@@ -35,6 +36,10 @@ export class AgentProviderNotConfiguredError extends AgentRuntimeError {
 
 export function toRuntimeError(error: unknown): AgentRuntimeError {
   if (error instanceof AgentRuntimeError) return error;
+  if(error instanceof VersionStoreError){
+    const status=error.code.includes("BUDGET")||error.code.includes("SIZE")?413:error.code.includes("MISSING")||error.code.includes("NOT_FOUND")?404:409;
+    return new AgentRuntimeError(error.message,error.code,status);
+  }
   if (error instanceof Error) return new AgentRuntimeError(error.message);
   return new AgentRuntimeError(String(error));
 }

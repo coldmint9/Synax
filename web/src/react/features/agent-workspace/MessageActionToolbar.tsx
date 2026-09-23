@@ -10,6 +10,7 @@ interface Props {
   text: string;
   disabledReason?: string | null;
   rollbackDisabled?: boolean;
+  rollbackDisabledReason?: string;
   busy?: boolean;
   onEdit?: () => void;
   onFork?: () => void;
@@ -20,6 +21,7 @@ export function MessageActionToolbar({
   text,
   disabledReason,
   rollbackDisabled,
+  rollbackDisabledReason,
   busy,
   onEdit,
   onFork,
@@ -110,11 +112,12 @@ export function MessageActionToolbar({
             <RotateCcw size={15} />,
             onRollback,
             Boolean(disabledReason || busy || !onRollback || rollbackDisabled),
-            rollbackDisabled && !disabledReason
-              ? zh
-                ? "已经位于此处，没有后续内容"
-                : "Already at this checkpoint"
-              : unavailable,
+            rollbackDisabledReason ??
+              (rollbackDisabled && !disabledReason
+                ? zh
+                  ? "已经位于此处，没有后续内容"
+                  : "Already at this checkpoint"
+                : unavailable),
           )}
         </>
       )}

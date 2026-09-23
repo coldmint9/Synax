@@ -1,3 +1,8 @@
+import {
+  appendOnlySession,
+  versionRepository,
+  versionedSession,
+} from "./version-runtime/bridge.js";
 import { ensureHistoryAccess } from "./retention.js";
 import { emitRuntimeBusEvent } from "../runtime-bus-bridge.js";
 import { randomUUID } from "node:crypto";
@@ -7,7 +12,8 @@ import { historyError } from "./guards.js";
 import { captureHistoryBoundary, type HistoryBoundary } from "./state.js";
 
 export interface CheckpointPayload {
-  version: 2;
+  version: 2 | 3;
+  versionId?: string;
   boundary: HistoryBoundary;
 }
 export interface ConversationCheckpoint {
@@ -46,6 +52,15 @@ function fromRow(row: CheckpointRow): ConversationCheckpoint {
   };
 }
 export function listCheckpoints(sessionId: string): ConversationCheckpoint[] {
+  if (versionedSession(sessionId)) {
+    const page = versionRepository().checkpoints(sessionId);
+    if (page.next)
+      throw historyError(
+        "Checkpoint pagination required.",
+        "HISTORY_PAGE_REQUIRED",
+      );
+    return page.items;
+  }
   return (
     getRawSqlite()
       .prepare(
@@ -58,6 +73,8 @@ export function getCheckpoint(
   sessionId: string,
   id: string,
 ): ConversationCheckpoint {
+  if (versionedSession(sessionId))
+    return versionRepository().checkpoint(sessionId, id);
   const row = getRawSqlite()
     .prepare(
       "SELECT * FROM conversation_checkpoints WHERE id=? AND session_id=?",
@@ -81,6 +98,7 @@ export function mutationCursor(): number {
 }
 export function nativeCheckpointSession(sessionId: string): boolean {
   const session = agentRuntimeStore.getSession(sessionId);
+  if (appendOnlySession(sessionId)) return false;
   const backend = session.sessionMetadata?.backend as
     | { id?: string }
     | undefined;
@@ -94,6 +112,15 @@ export async function captureCheckpoint(
   omitRunId?: string,
 ): Promise<ConversationCheckpoint | null> {
   if (!nativeCheckpointSession(sessionId)) return null;
+  if (versionedSession(sessionId))
+    return versionRepository().capture(
+      sessionId,
+      kind,
+      messageId,
+      stepId,
+      mutationCursor(),
+      omitRunId,
+    );
   const db = getRawSqlite();
   const checkpoint = db.transaction(() => {
     const previous = db
@@ -134,6 +161,36 @@ export async function captureCompletedReply(
   sessionId: string,
   stepId?: string,
 ): Promise<void> {
+  if (appendOnlySession(sessionId)) return;
+  if (versionedSession(sessionId)) {
+    const message = versionRepository().last(
+      sessionId,
+      "messages",
+      ["id", "role", "stepId", "metadata"],
+      stepId ? { field: "stepId", value: stepId } : undefined,
+    );
+    if (
+      !message ||
+      message.role !== "assistant" ||
+      (stepId && message.stepId !== stepId) ||
+      (message.metadata as Record<string, unknown>)?.partial
+    )
+      return;
+    if (
+      message.stepId &&
+      !["completed", "blocked"].includes(
+        agentRuntimeStore.getRunStep(String(message.stepId)).status,
+      )
+    )
+      return;
+    await captureCheckpoint(
+      sessionId,
+      "reply",
+      String(message.id),
+      message.stepId ? String(message.stepId) : null,
+    );
+    return;
+  }
   if (!nativeCheckpointSession(sessionId)) return;
   const message = getRawSqlite()
     .prepare(

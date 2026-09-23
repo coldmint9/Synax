@@ -1,3 +1,4 @@
+import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
@@ -744,7 +745,13 @@ export class AgentLoopRuntime {
           pendingResume = null;
         }
 
-        rebuildSessionFileReads(sessionId, filterHistoryFileReads(sessionId, this.store.listToolCalls(sessionId)));
+        rebuildSessionFileReads(
+          sessionId,
+          filterHistoryFileReads(
+            sessionId,
+            this.store.listRecentToolCalls(sessionId),
+          ),
+        );
 
         let clearingActivated = false;
 
@@ -835,7 +842,7 @@ export class AgentLoopRuntime {
           }
 
           const history = this.store
-            .listMessages(sessionId)
+            .listRecentMessages(sessionId)
             .filter(
               (message) =>
                 message.role === "user" || message.role === "assistant",
@@ -858,28 +865,32 @@ export class AgentLoopRuntime {
             runId: run.id,
             stepIndex: step.index,
           });
-          for await (const event of this.generateStep({
-            sessionId,
-            stepId: step.id,
-            prompt: currentPrompt,
-            input,
-            profile,
-            context,
-            history,
-            previousParts: previousStepParts,
-            previousToolCalls,
-            stepIndex: step.index,
-            maxSteps: convergenceThreshold,
-            converging: shouldConverge(step.index, convergenceThreshold),
-            blockedByPermission: pendingPermission?.userReply === "reject",
-            previousStepUsage: previousStep?.metadata?.usage as
-              | Record<string, unknown>
-              | undefined,
-            abortSignal: runAbortSignal,
-            clearingActivated,
-            contextLimit: runContextLimit,
-            outputReserve: runOutputReserve,
-          })) {
+          for await (const event of coalesceLoopDeltas(
+            (stepSignal) =>
+              this.generateStep({
+                sessionId,
+                stepId: step.id,
+                prompt: currentPrompt,
+                input,
+                profile,
+                context,
+                history,
+                previousParts: previousStepParts,
+                previousToolCalls,
+                stepIndex: step.index,
+                maxSteps: convergenceThreshold,
+                converging: shouldConverge(step.index, convergenceThreshold),
+                blockedByPermission: pendingPermission?.userReply === "reject",
+                previousStepUsage: previousStep?.metadata?.usage as
+                  | Record<string, unknown>
+                  | undefined,
+                abortSignal: stepSignal,
+                clearingActivated,
+                contextLimit: runContextLimit,
+                outputReserve: runOutputReserve,
+              }),
+            runAbortSignal,
+          )) {
             if (inputQueueService.getForceInjectId(sessionId)) {
               stepForceInjectRequested = true;
               break;
@@ -2090,7 +2101,7 @@ export class AgentLoopRuntime {
     getRawSqlite().transaction(() => {
       workRuntime.persistTerminal(work, run.id);
       message = this.store
-        .listMessages(sessionId)
+        .listRecentMessages(sessionId)
         .find(
           (m) =>
             m.metadata.purpose === "work_result" &&
@@ -2106,7 +2117,8 @@ export class AgentLoopRuntime {
           "work_result",
         );
     })();
-    if(work.status === "completed" && message) persistInlineVisualization(message);
+    if (work.status === "completed" && message)
+      persistInlineVisualization(message);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2218,7 +2230,7 @@ export class AgentLoopRuntime {
       metadata: { goalStatus: goal?.status },
       createdAt: nowIso(),
     });
-    if(completed)persistInlineVisualization(message);
+    if (completed) persistInlineVisualization(message);
     yield { type: "message", message };
     yield completed
       ? { type: "run_completed", run: finished, message }
@@ -2643,6 +2655,9 @@ export class AgentLoopRuntime {
       mode: workflowMode(session),
     });
     const tailReminders = [
+      input.history.some(message => message.metadata.historyWindowTruncated)
+        ? "Earlier conversation is outside the bounded context window. Do not assume it was empty; consult the retained work summary or context references when needed."
+        : "",
       buildRuntimeEnvironment(input.sessionId, session.projectId),
       workRuntime.prompt(input.sessionId) ?? "",
       synaxAgent.buildRuntimeStateSection(session) ?? "",
@@ -2657,7 +2672,7 @@ export class AgentLoopRuntime {
       currentStep.metadata,
       tailReminders,
       this.store
-        .listMessages(input.sessionId)
+        .listRecentMessages(input.sessionId)
         .filter(
           (message) =>
             message.runId === currentStep.runId &&
@@ -2717,7 +2732,7 @@ export class AgentLoopRuntime {
     projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
       systemMessageContents: projection.systemMessageContents,
-      toolCalls: this.store.listToolCalls(input.sessionId),
+      toolCalls: this.store.listRecentToolCalls(input.sessionId),
     };
     if (projection.compacted)
       yield {

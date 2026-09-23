@@ -1,0 +1,4 @@
+ Test Files  40 passed (40)
+      Tests  318 passed (318)
+   Start at  11:15:25
+   Duration  42.38s (transform 1.06s, setup 0ms, import 16.02s, tests 23.94s, environment 2ms)

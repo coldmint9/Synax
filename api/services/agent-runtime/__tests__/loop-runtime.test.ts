@@ -1,3 +1,4 @@
+import { clearVersionSessionFixture } from "./version-session-fixture.js";
 import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
@@ -42,6 +43,27 @@ function makeStream(events: MockStreamEvent[]) {
       yield* events;
     })(),
   };
+}
+
+// Node's structuredClone rejects URL objects used by real media model parts.
+// Preserve their type in the fixture instead of making media turns fail in the mock.
+function cloneRequestValue<T>(value: T): T {
+  if (value instanceof URL) return new URL(value.href) as T;
+  if (Array.isArray(value))
+    return value.map((item) => cloneRequestValue(item)) as T;
+  if (
+    value &&
+    typeof value === "object" &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  )
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        cloneRequestValue(item),
+      ]),
+    ) as T;
+  return structuredClone(value);
 }
 
 const capturedRequests: Array<{
@@ -174,7 +196,7 @@ async function* mockStreamLoopModelStep(input: {
   }
   if (input.request)
     capturedRequests.push({
-      messages: structuredClone(input.request.messages),
+      messages: cloneRequestValue(input.request.messages),
       reasoningEffort: input.request.reasoningEffort,
       tools: [
         ...((input.tools as { activeTools?: string[] }).activeTools ?? []),
@@ -389,6 +411,419 @@ describe("agentLoopRuntime", () => {
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
   });
 
+  it("persists bounded delta bursts instead of one event and undo entry per provider token", async () => {
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    queueMockStep(
+      makeStream([
+        ...Array.from({ length: 1000 }, () => ({
+          type: "text-delta" as const,
+          text: "x",
+        })),
+        { type: "finish-step", finishReason: "stop", usage: {} },
+        { type: "finish", finishReason: "stop", totalUsage: {} },
+      ]),
+    );
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Produce token bursts",
+      }),
+    );
+    const deltas = agentRuntimeStore
+      .listEvents(session.id)
+      .filter((event) => event.type === "message_delta");
+    expect(deltas.map((event) => event.payload.delta).join("")).toBe(
+      "x".repeat(1000),
+    );
+    expect(deltas.length).toBeLessThan(100);
+    expect(
+      chunks
+        .filter((chunk) => chunk.type === "message_delta")
+        .map((chunk) => (chunk as { delta: string }).delta)
+        .join(""),
+    ).toBe("x".repeat(1000));
+    expect(agentRuntimeStore.listMessages(session.id).at(-1)?.content).toBe(
+      "x".repeat(1000),
+    );
+    if (process.env.SYNAX_NATIVE_BURST_REPORT) {
+      const { getRawSqlite } = await import("../../../db/index.js");
+      const undo = getRawSqlite()
+        .prepare(
+          "SELECT count(*) AS count FROM conversation_history_journal WHERE session_id=? AND table_name='agent_runtime_events' AND record_key IN (SELECT id FROM agent_runtime_events WHERE session_id=? AND type='message_delta')",
+        )
+        .get(session.id, session.id) as { count: number };
+      fs.writeFileSync(
+        process.env.SYNAX_NATIVE_BURST_REPORT,
+        JSON.stringify(
+          {
+            scope: "real-native-loop-with-provider-fixture",
+            providerDeltas: 1000,
+            persistedDeltaEvents: deltas.length,
+            deltaUndoEntries: undo.count,
+            finalContentBytes: 1000,
+          },
+          null,
+          2,
+        ),
+        { flag: "wx" },
+      );
+    }
+  });
+
+  it.each(["full", "boundary"])("executes Native turns on versioned history and continues on the retained branch after rollback (%s)", async (mode) => {
+    vi.stubEnv("SYNAX_VERSION_HISTORY", mode === "full" ? "legacy" : "boundary");
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory, previewHistory } =
+      await import("../checkpoints/operations.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      if (mode === "full") initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(makeTextStep("Retained native answer."));
+      const first = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "First native question",
+        }),
+      );
+      expect(first.some((chunk) => chunk.type === "done")).toBe(true);
+      const checkpoint = listCheckpoints(session.id).find(
+        (cp) => cp.kind === "reply",
+      )!;
+      expect(checkpoint.payload.version).toBe(3);
+      queueMockStep(makeTextStep("Discarded native answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Discarded native question",
+        }),
+      );
+      const discarded = agentRuntimeStore.listRuns(session.id)[0];
+      const preview = await previewHistory(session.id, checkpoint.id, false);
+      await applyHistory(session.id, {
+        checkpointId: checkpoint.id,
+        revision: preview.revision,
+        requestId: "native-undo",
+        action: "rollback",
+        includeFiles: false,
+      });
+      expect(
+        agentRuntimeStore
+          .listMessages(session.id)
+          .map((row) => row.content)
+          .join("\n"),
+      ).not.toContain("Discarded native");
+      expect(() => agentRuntimeStore.getRun(discarded.id)).toThrow(
+        /not found|resource/i,
+      );
+      queueMockStep(makeTextStep("New branch answer."));
+      const next = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "New branch question",
+        }),
+      );
+      expect(next.some((chunk) => chunk.type === "done")).toBe(true);
+      const transcript = agentRuntimeStore
+        .listMessages(session.id)
+        .map((row) => row.content)
+        .join("\n");
+      expect(transcript).toContain("Retained native answer.");
+      expect(transcript).toContain("New branch answer.");
+      expect(transcript).not.toContain("Discarded native");
+      expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(2);
+    } finally {
+      clearVersionSessionFixture(session.id);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("continues a shared-worktree fork without creating rollback checkpoints", async () => {
+    const { forkSimpleConversation } = await import("../checkpoints/simple-fork.js");
+    const { versionRepository } = await import("../checkpoints/version-runtime/bridge.js");
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    let forkId: string | undefined;
+    try {
+      queueMockStep(makeTextStep("Source answer."));
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Source question" }));
+      const repo = versionRepository();
+      const cp = repo.checkpoints(session.id).items.find(cp => cp.kind === "reply")!;
+      const result = await forkSimpleConversation(session.id, cp.id, repo.head(session.id).revision, "continue-fork", "reuse_worktree");
+      forkId = result.sessionId;
+      queueMockStep(makeTextStep("Fork answer."));
+      const chunks = await collectChunks(agentLoopRuntime.streamRun(forkId, { message: "Continue in the fork" }));
+      expect(chunks.some(chunk => chunk.type === "done")).toBe(true);
+      expect(agentRuntimeStore.listMessages(forkId).map(message => message.content).join("\n")).toContain("Fork answer.");
+      expect(repo.checkpoints(forkId).items).toEqual([]);
+      expect(repo.count(forkId, "work")).toBe(0);
+      expect(agentRuntimeStore.listMessages(session.id).map(message => message.content).join("\n")).not.toContain("Fork answer.");
+    } finally {
+      if (forkId) clearVersionSessionFixture(forkId);
+      clearVersionSessionFixture(session.id);
+    }
+  });
+
+  it("uses Native admission and scoped tool/part history in a versioned read-tool turn", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-v3-read-tool-"),
+    );
+    fs.writeFileSync(
+      path.join(directory, "input.txt"),
+      "versioned file content",
+    );
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: directory,
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(
+        makeToolStep({
+          message: "Reading.",
+          toolName: "file_read",
+          toolCallId: "read-v3",
+          args: { path: "input.txt" },
+        }),
+      );
+      queueMockStep(makeTextStep("Read complete."));
+      const accepted = acceptRuntimeRun(
+        session.id,
+        { message: "Read input.txt" },
+        "admitted-v3",
+      );
+      const chunks = await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Read input.txt",
+          acceptedRunId: accepted.run.id,
+        }),
+      );
+      expect(chunks.some((chunk) => chunk.type === "tool_result")).toBe(true);
+      expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
+      const steps = agentRuntimeStore.listRunSteps(accepted.run.id);
+      expect(steps).toHaveLength(2);
+      expect(
+        agentRuntimeStore.listRunParts(steps[0].id).map((part) => part.kind),
+      ).toEqual(["text", "tool_call", "tool_result"]);
+      expect(
+        agentRuntimeStore.listRunToolCalls(accepted.run.id)[0].status,
+      ).toBe("completed");
+      expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
+        "completed",
+      );
+    } finally {
+      clearVersionSessionFixture(session.id);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs a versioned Native turn under coordinator leases and journals its completion", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { RunCoordinator } = await import("../run-coordinator.js");
+    const { runtimeJournal } = await import("../runtime-journal.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      workDir: process.cwd(),
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    const coordinator = new RunCoordinator({
+      execute: (id, _mode, input, signal) =>
+        agentLoopRuntime.streamRun(id, input, signal),
+      interrupt: async () => {},
+    });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      queueMockStep(makeTextStep("Coordinated version answer."));
+      const accepted = coordinator.submit(
+        session.id,
+        { message: "Run with leases" },
+        "native-coordinator",
+      );
+      await coordinator.waitForIdle();
+      expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
+        "completed",
+      );
+      expect(
+        runtimeJournal
+          .read(session.id)
+          .some((row) => row.chunk.type === "done"),
+      ).toBe(true);
+      expect(
+        agentRuntimeStore.getRun(accepted.run.id).metadata.executionLease,
+      ).toMatchObject({ closed: true });
+      expect(
+        agentRuntimeStore.listRuns(session.id)[0].metadata.executionLease,
+      ).toBeUndefined();
+    } finally {
+      await coordinator.waitForIdle();
+      clearVersionSessionFixture(session.id);
+    }
+  });
+
+  it("atomically edits the first versioned input and admits one idempotent Native replacement run", async () => {
+    const { initializeVersionNative } =
+      await import("../checkpoints/version-runtime/bridge.js");
+    const { listCheckpoints } = await import("../checkpoints/store.js");
+    const { applyHistory, previewHistory } =
+      await import("../checkpoints/operations.js");
+    const { getRawSqlite } = await import("../../../db/index.js");
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "synax-edit-files-"),
+    );
+    const file = path.join(directory, "edited.txt");
+    fs.writeFileSync(file, "before edit");
+    const { withCheckpointMutation } =
+      await import("../checkpoints/mutations.js");
+    const session = agentSessionRuntime.create({
+      ...executorInput,
+      prompt: "Original question",
+      workDir: directory,
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "completed" });
+    try {
+      initializeVersionNative(
+        agentRuntimeStore.getSession(session.id),
+        agentRuntimeStore.listEvents(session.id),
+        session.contextSnapshotId
+          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+          : undefined,
+      );
+      const { createAsset, sessionHasAsset } =
+        await import("../media-assets.js");
+      const attachment = await createAsset(
+        session.projectId,
+        "edit-note.txt",
+        Buffer.from("attached note"),
+        "text/plain",
+      );
+      const originalParts: import("../content-parts.js").RuntimeContentPart[] =
+        [
+          { type: "text", text: "Original question" },
+          { type: "file", assetId: attachment.id },
+        ];
+      const original = acceptRuntimeRun(
+        session.id,
+        { message: "Original question", contentParts: originalParts },
+        "original-v3",
+      );
+      queueMockStep(makeTextStep("Original answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          message: "Original question",
+          contentParts: originalParts,
+          acceptedRunId: original.run.id,
+        }),
+      );
+      await withCheckpointMutation(
+        session.id,
+        () => fs.promises.writeFile(file, "original branch write"),
+        false,
+        [file],
+      );
+      const checkpoint = listCheckpoints(session.id).find(
+        (cp) => cp.kind === "input",
+      )!;
+      const preview = await previewHistory(session.id, checkpoint.id, false);
+      const request = {
+        checkpointId: checkpoint.id,
+        revision: preview.revision,
+        requestId: "edit-v3",
+        action: "edit" as const,
+        message: "Replacement question",
+        includeFiles: true,
+      };
+      const { VersionResources } =
+        await import("../checkpoints/version-store/resources.js");
+      const { versionRepository } =
+        await import("../checkpoints/version-runtime/bridge.js");
+      const resources = new VersionResources(getRawSqlite()),
+        budget = resources.metadata(),
+        before = versionRepository().head(session.id),
+        beforeRuns = agentRuntimeStore
+          .listRuns(session.id)
+          .map((run) => run.id);
+      resources.setMetadataLimit(budget.bytes + 4096);
+      await expect(
+        applyHistory(session.id, {
+          ...request,
+          requestId: "budget-failure",
+          message: "x".repeat(50000),
+        }),
+      ).rejects.toThrow(/budget/i);
+      expect(versionRepository().head(session.id)).toEqual(before);
+      expect(
+        agentRuntimeStore.listRuns(session.id).map((run) => run.id),
+      ).toEqual(beforeRuns);
+      resources.setMetadataLimit(budget.limit);
+      const edited = await applyHistory(session.id, request);
+      expect(edited.runId).toBeTruthy();
+      expect(edited.input?.contentParts).toEqual([
+        { type: "text", text: "Replacement question" },
+        { type: "file", assetId: attachment.id },
+      ]);
+      expect(sessionHasAsset(session.id, attachment.id)).toBe(true);
+      expect(fs.readFileSync(file, "utf8")).toBe("before edit");
+      expect(await applyHistory(session.id, request)).toEqual(edited);
+      expect(
+        agentRuntimeStore.listRuns(session.id).map((run) => run.id),
+      ).toEqual([edited.runId]);
+      expect(agentRuntimeStore.getSession(session.id).prompt).toBe(
+        "Replacement question",
+      );
+      await expect(
+        applyHistory(session.id, { ...request, message: "Conflicting retry" }),
+      ).rejects.toThrow(/request|different/i);
+      queueMockStep(makeTextStep("Replacement answer."));
+      await collectChunks(
+        agentLoopRuntime.streamRun(session.id, {
+          ...edited.input,
+          acceptedRunId: edited.runId,
+        }),
+      );
+      expect(
+        agentRuntimeStore.listMessages(session.id).map((row) => row.content),
+      ).toEqual(["Replacement question", "Replacement answer."]);
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain(
+        "Original question",
+      );
+      expect(JSON.stringify(capturedRequests.at(-1)?.messages)).not.toContain(
+        "Original answer.",
+      );
+      expect(await applyHistory(session.id, request)).toEqual(edited);
+    } finally {
+      clearVersionSessionFixture(session.id);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("captures native input and reply boundaries and restores the exact earlier turn", async () => {
     const { listCheckpoints } = await import("../checkpoints/store.js");
     const { applyHistory } = await import("../checkpoints/operations.js");
@@ -437,43 +872,66 @@ describe("agentLoopRuntime", () => {
     }
   });
 
-  it("completes a media-only response and persists its attachment for the timeline", async () => {
-    const { createAsset, readAsset } = await import("../media-assets.js");
-    const session = agentSessionRuntime.create({
-      ...executorInput,
-      workDir: process.cwd(),
-    });
-    const bytes = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-      "base64",
-    );
-    const asset = await createAsset(
-      session.projectId,
-      "output.png",
-      bytes,
-      "image/png",
-    );
-    queueMockStep(makeTextStep(""), {
-      contentParts: [{ type: "image", assetId: asset.id }],
-    });
-    const chunks = await collectChunks(
-      agentLoopRuntime.streamRun(session.id, { message: "Generate an image." }),
-    );
-    expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
-    expect(agentRuntimeStore.listRuns(session.id)[0].status).toBe("completed");
-    expect(
-      agentRuntimeStore
-        .listMessages(session.id)
-        .some(
-          (message) =>
-            message.role === "assistant" &&
-            message.contentParts?.some(
-              (part) => part.type === "image" && part.assetId === asset.id,
+  it.each([false, true])(
+    "completes a media-only response and retains its attachment (versioned=%s)",
+    async (versioned) => {
+      const { createAsset, readAsset } = await import("../media-assets.js");
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        workDir: process.cwd(),
+      });
+      if (versioned) {
+        const { initializeVersionNative } =
+          await import("../checkpoints/version-runtime/bridge.js");
+        agentRuntimeStore.updateSession(session.id, { status: "completed" });
+        initializeVersionNative(
+          agentRuntimeStore.getSession(session.id),
+          agentRuntimeStore.listEvents(session.id),
+          session.contextSnapshotId
+            ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+            : undefined,
+        );
+      }
+      try {
+        const bytes = Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+          "base64",
+        );
+        const asset = await createAsset(
+          session.projectId,
+          "output.png",
+          bytes,
+          "image/png",
+        );
+        queueMockStep(makeTextStep(""), {
+          contentParts: [{ type: "image", assetId: asset.id }],
+        });
+        const chunks = await collectChunks(
+          agentLoopRuntime.streamRun(session.id, {
+            message: "Generate an image.",
+          }),
+        );
+        expect(chunks.some((chunk) => chunk.type === "done")).toBe(true);
+        expect(agentRuntimeStore.listRuns(session.id)[0].status).toBe(
+          "completed",
+        );
+        expect(
+          agentRuntimeStore
+            .listMessages(session.id)
+            .some(
+              (message) =>
+                message.role === "assistant" &&
+                message.contentParts?.some(
+                  (part) => part.type === "image" && part.assetId === asset.id,
+                ),
             ),
-        ),
-    ).toBe(true);
-    expect(await readAsset(asset.id)).toEqual(bytes);
-  });
+        ).toBe(true);
+        expect(await readAsset(asset.id)).toEqual(bytes);
+      } finally {
+        if (versioned) clearVersionSessionFixture(session.id);
+      }
+    },
+  );
 
   it("uses the durable accepted Run instead of allocating a second Native Run", async () => {
     queueMockStep(makeTextStep("Accepted task finished."));
@@ -1279,84 +1737,107 @@ describe("agentLoopRuntime", () => {
       ).toBe(forced);
     },
   );
-  it("suspends for a form, resumes, then offers a one-time execute-or-cancel plan choice", async () => {
-    ensureSynaxAgentRegistered();
-    const questions = [
-      { id: "scope", type: "text", label: "Scope?", required: true },
-    ];
-    const plan = {
-      title: "Small plan",
-      objective: "Implement a bounded change",
-      steps: [
-        {
-          id: "s1",
-          title: "Implement",
-          description: "Do the approved work",
-          dependsOn: [],
-          expectedFiles: [],
-        },
-      ],
-      acceptanceCriteria: ["The behavior is verified"],
-      assumptions: [],
-      risks: [],
-    };
-    queueMockStep(
-      makeToolStep({
-        toolName: "human_ask",
-        toolCallId: "ask-1",
-        args: { title: "Clarify scope", questions },
-      }),
-    );
-    queueMockStep(
-      makeToolStep({
-        toolName: "plan_propose",
-        toolCallId: "plan-1",
-        args: plan,
-      }),
-    );
-    const session = agentSessionRuntime.create({
-      projectId: "project-alpha",
-      profileId: "synax",
-      prompt: "Plan a bounded implementation",
-      sessionMetadata: { mode: "plan" },
-    });
-    await collectChunks(agentLoopRuntime.streamRun(session.id, {}));
-    const [run] = agentLoopRuntime.listRuns(session.id);
-    expect(run.status).toBe("waiting_input");
-    const first = interactionService.pending(session.id)!;
-    expect(first.kind).toBe("clarification");
-    interactionService.reply(session.id, first.id, {
-      revision: first.revision,
-      action: "submit",
-      answers: { scope: "Only the API" },
-    });
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
-    expect(
-      agentRuntimeStore.getToolCall(session.id, first.toolCallId).outputRef,
-    ).toMatchObject({ answers: { scope: "Only the API" } });
-    const parts = agentRuntimeStore.listRunParts(first.stepId);
-    expect(
-      parts.filter(
-        (p) => p.kind === "tool_result" && p.toolCallId === first.toolCallId,
-      ),
-    ).toHaveLength(1);
-    const approval = interactionService.pending(session.id)!;
-    expect(approval.kind).toBe("plan_approval");
-    expect(
-      agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
-    ).toEqual(["human.ask", "plan.propose"]);
-    interactionService.reply(session.id, approval.id, {
-      revision: approval.revision,
-      action: "cancel",
-    });
-    await agentLoopRuntime.resumeRun(session.id);
-    expect(interactionService.pending(session.id)).toBeNull();
-    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "completed",
-      sessionMetadata: { mode: "plan", plan: { status: "saved", revision: 1 } },
-    });
-  });
+  it.each([false, true])(
+    "suspends for a form and resumes a one-time plan choice (versioned=%s)",
+    async (versioned) => {
+      ensureSynaxAgentRegistered();
+      const questions = [
+        { id: "scope", type: "text", label: "Scope?", required: true },
+      ];
+      const plan = {
+        title: "Small plan",
+        objective: "Implement a bounded change",
+        steps: [
+          {
+            id: "s1",
+            title: "Implement",
+            description: "Do the approved work",
+            dependsOn: [],
+            expectedFiles: [],
+          },
+        ],
+        acceptanceCriteria: ["The behavior is verified"],
+        assumptions: [],
+        risks: [],
+      };
+      queueMockStep(
+        makeToolStep({
+          toolName: "human_ask",
+          toolCallId: "ask-1",
+          args: { title: "Clarify scope", questions },
+        }),
+      );
+      queueMockStep(
+        makeToolStep({
+          toolName: "plan_propose",
+          toolCallId: "plan-1",
+          args: plan,
+        }),
+      );
+      const session = agentSessionRuntime.create({
+        projectId: "project-alpha",
+        profileId: "synax",
+        prompt: "Plan a bounded implementation",
+        sessionMetadata: { mode: "plan" },
+      });
+      if (versioned) {
+        const { initializeVersionNative } =
+          await import("../checkpoints/version-runtime/bridge.js");
+        agentRuntimeStore.updateSession(session.id, { status: "completed" });
+        initializeVersionNative(
+          agentRuntimeStore.getSession(session.id),
+          agentRuntimeStore.listEvents(session.id),
+          session.contextSnapshotId
+            ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+            : undefined,
+        );
+      }
+      try {
+        await collectChunks(agentLoopRuntime.streamRun(session.id, {}));
+        const [run] = agentLoopRuntime.listRuns(session.id);
+        expect(run.status).toBe("waiting_input");
+        const first = interactionService.pending(session.id)!;
+        expect(first.kind).toBe("clarification");
+        interactionService.reply(session.id, first.id, {
+          revision: first.revision,
+          action: "submit",
+          answers: { scope: "Only the API" },
+        });
+        await agentLoopRuntime.resumeRun(session.id);
+        expect(agentLoopRuntime.listRuns(session.id)).toHaveLength(1);
+        expect(
+          agentRuntimeStore.getToolCall(session.id, first.toolCallId).outputRef,
+        ).toMatchObject({ answers: { scope: "Only the API" } });
+        const parts = agentRuntimeStore.listRunParts(first.stepId);
+        expect(
+          parts.filter(
+            (p) =>
+              p.kind === "tool_result" && p.toolCallId === first.toolCallId,
+          ),
+        ).toHaveLength(1);
+        const approval = interactionService.pending(session.id)!;
+        expect(approval.kind).toBe("plan_approval");
+        expect(
+          agentRuntimeStore.listToolCalls(session.id).map((c) => c.toolId),
+        ).toEqual(["human.ask", "plan.propose"]);
+        interactionService.reply(session.id, approval.id, {
+          revision: approval.revision,
+          action: "cancel",
+        });
+        await agentLoopRuntime.resumeRun(session.id);
+        expect(interactionService.pending(session.id)).toBeNull();
+        expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+          status: "completed",
+          sessionMetadata: {
+            mode: "plan",
+            plan: { status: "saved", revision: 1 },
+          },
+        });
+      } finally {
+        if (versioned) clearVersionSessionFixture(session.id);
+      }
+    },
+  );
 
   it("rejects an entire mixed interaction batch before a write can execute", async () => {
     ensureSynaxAgentRegistered();

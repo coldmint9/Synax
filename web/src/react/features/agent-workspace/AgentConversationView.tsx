@@ -1,3 +1,5 @@
+import { useAgentSessionStore } from "./state/agentSessionStore";
+import { HistoryWindowControls } from "./HistoryWindowControls";
 import { SessionHistoryProvider } from "./SessionHistoryContext";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { memo } from "react";
@@ -51,6 +53,7 @@ export const AgentConversationView = memo(function AgentConversationView({
   scrollRootRef,
 }: Props) {
   const { t } = useLocale();
+  const historicalPage = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow?.latest === false : false);
 
   const isRunning =
     session?.status === "running" && Boolean(session.activeRunId);
@@ -117,6 +120,7 @@ export const AgentConversationView = memo(function AgentConversationView({
             ))
           : null}
 
+        <HistoryWindowControls session={session} />
         <SessionStaticTimeline
           unifiedLive={unifiedLive}
           session={session}
@@ -130,7 +134,7 @@ export const AgentConversationView = memo(function AgentConversationView({
           onExpandChild={onExpandChild}
           scrollRootRef={scrollRootRef}
         />
-        {liveTurn}
+        {!historicalPage && liveTurn}
 
         {isResumable ? (
           <Card

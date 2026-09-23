@@ -17,6 +17,8 @@ export const EMPTY_STREAMING_BUFFERS: StreamingLiveBuffers = {
   pendingToolCalls: [],
 };
 
+const LIVE_TEXT_CHARS = 64 * 1024;
+const boundedText = (text: string) => text.length <= LIVE_TEXT_CHARS ? text : "[Earlier live preview omitted; final message is retained]\n" + text.slice(-LIVE_TEXT_CHARS);
 function toolCallsToBlocks(toolCalls: ToolCallRecord[]): TurnContentBlock[] {
   if (toolCalls.length === 0) return [];
   const views = toolCalls.map(toolCallRecordToView);
@@ -31,7 +33,7 @@ function flushThinking(state: StreamingLiveBuffers): StreamingLiveBuffers {
   return {
     ...state,
     blocks: [
-      ...state.blocks,
+      ...state.blocks.slice(-31),
       { type: "thinking", content: state.pendingThinking },
     ],
     pendingThinking: "",
@@ -42,7 +44,7 @@ function flushText(state: StreamingLiveBuffers): StreamingLiveBuffers {
   if (!state.pendingText.trim()) return state;
   return {
     ...state,
-    blocks: [...state.blocks, { type: "text", content: state.pendingText }],
+    blocks: [...state.blocks.slice(-31), { type: "text", content: state.pendingText }],
     pendingText: "",
   };
 }
@@ -51,7 +53,7 @@ function flushToolCalls(state: StreamingLiveBuffers): StreamingLiveBuffers {
   if (state.pendingToolCalls.length === 0) return state;
   return {
     ...state,
-    blocks: [...state.blocks, ...toolCallsToBlocks(state.pendingToolCalls)],
+    blocks: [...state.blocks.slice(-31), ...toolCallsToBlocks(state.pendingToolCalls)],
     pendingToolCalls: [],
   };
 }
@@ -65,7 +67,7 @@ export function applyThoughtDelta(
   if (next.pendingToolCalls.length > 0) {
     next = flushToolCalls(next);
   }
-  return { ...next, pendingThinking: next.pendingThinking + delta };
+  return { ...next, pendingThinking: boundedText(next.pendingThinking + delta) };
 }
 
 export function applyMessageDelta(
@@ -75,7 +77,7 @@ export function applyMessageDelta(
   if (!delta) return state;
   let next = flushToolCalls(state);
   next = flushThinking(next);
-  return { ...next, pendingText: next.pendingText + delta };
+  return { ...next, pendingText: boundedText(next.pendingText + delta) };
 }
 
 export function applyToolCall(
@@ -87,7 +89,7 @@ export function applyToolCall(
   if (next.pendingText.trim()) next = flushText(next);
   return {
     ...next,
-    pendingToolCalls: [...next.pendingToolCalls, toolCall],
+    pendingToolCalls: [...next.pendingToolCalls.slice(-31), toolCall],
   };
 }
 

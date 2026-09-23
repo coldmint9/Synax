@@ -22,13 +22,13 @@ export function searchSessions(
   const sql = `WITH hits AS (
     SELECT s.id, s.updated_at, ${excerpt("agent_search_sessions")} AS snippet, 0 AS priority
     FROM agent_search_sessions JOIN agent_runtime_sessions s ON s.rowid = agent_search_sessions.rowid
-    WHERE s.project_id = ? AND s.parent_session_id IS NULL AND ${hit("agent_search_sessions")}
+    WHERE NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=s.id) AND s.project_id = ? AND s.parent_session_id IS NULL AND ${hit("agent_search_sessions")}
     UNION ALL
     SELECT s.id, s.updated_at, ${excerpt("agent_search_messages")} AS snippet, 1 AS priority
     FROM agent_search_messages
     JOIN agent_runtime_messages m ON m.rowid = agent_search_messages.rowid
     JOIN agent_runtime_sessions s ON s.id = m.session_id
-    WHERE s.project_id = ? AND s.parent_session_id IS NULL AND ${hit("agent_search_messages")}
+    WHERE NOT EXISTS(SELECT 1 FROM conversation_v3_heads h WHERE h.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=s.id) AND s.project_id = ? AND s.parent_session_id IS NULL AND ${hit("agent_search_messages")}
   ), ranked AS (
     SELECT *, row_number() OVER (PARTITION BY id ORDER BY priority, snippet) AS position FROM hits
   ) SELECT id, snippet FROM ranked WHERE position = 1 ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`;
