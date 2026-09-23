@@ -34,7 +34,11 @@ describe("macOS DMG install help", () => {
     expect(instructions).toContain("先");
     expect(instructions).toContain("/Applications/Synax.app");
     expect(instructions).toContain("安装后运行.command");
-    expect(fs.statSync(commandPath).mode & 0o111).not.toBe(0);
+    // Windows preserves the file contents but does not expose Unix executable
+    // mode bits, while the DMG maker runs only on macOS. Keep the mode check on
+    // the platform where it protects the shipped artifact.
+    if (process.platform !== "win32")
+      expect(fs.statSync(commandPath).mode & 0o111).not.toBe(0);
     execFileSync("bash", ["-n", commandPath]);
     const command = fs.readFileSync(commandPath, "utf8");
     expect(command).toContain('if [[ ! -d "/Applications/Synax.app" ]]');
