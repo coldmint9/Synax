@@ -20,6 +20,8 @@ export interface AsyncCommandOptions {
   signal?: AbortSignal;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Use an explicit environment without inheriting API/provider credentials. */
+  inheritEnv?: boolean;
   /** Hard wall-clock limit; the process group is killed when exceeded. */
   timeoutMs?: number;
   /** Bytes kept for stdout/stderr before the rest is dropped. */
@@ -140,6 +142,7 @@ export function runCommand(
     const child = spawnOwnedProcess(command, args, {
       cwd: options.cwd,
       env: options.env,
+      inheritEnv: options.inheritEnv,
       shell: options.shell ?? false,
       stdin: options.stdin === undefined ? "ignore" : "pipe",
     });

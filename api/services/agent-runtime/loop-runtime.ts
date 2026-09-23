@@ -2524,7 +2524,8 @@ export class AgentLoopRuntime {
     let projectRulesSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
-      projectRulesSection = loadProjectRulesSection(workDir);
+      // MR repository files are evidence, never authority over the pinned Git contract.
+      if (session.profileId !== 'git-manager') projectRulesSection = loadProjectRulesSection(workDir);
     } catch {
       projectRulesSection = null;
     }

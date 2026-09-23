@@ -87,6 +87,18 @@ npm run dev:web   # Web only, port 5173
 
 Set these in the shell that launches the development scripts.
 
+## Local Git merge requests
+
+Open **Git** from an imported project's header to create a local MR. Select a target and one or more ordered sources, using merge commits, per-source squash, or fast-forward-only. Synax prepares the entire batch in an isolated worktree before updating the local target.
+
+- Conflicts use the same file viewer as sessions: three-way comparison, per-line choices, direct edits, undo/redo, and persisted drafts/decisions.
+- Configure checks as an executable, JSON argument array and timeout. One-click presets can apply the candidate after every check passes. Checks execute project code; configure only trusted commands.
+- Updating a checked-out target requires explicit opt-in when creating the MR and a clean, idle target worktree. Stale branches and file revisions are rejected.
+- The optional Git Manager uses the configured model to inspect the bound MR and propose patches for review. It cannot directly publish branches or push. Manual MR works without a model.
+- Failed/interrupted operations can be reconciled and resumed. Cancellation preserves the candidate worktree and drafts. Local records live under the Synax data directory's `git-mr` folder.
+
+Automation currently means manually triggered one-click presets, not scheduled runs. Unsupported structural conflicts, such as submodules, stop explicitly for external resolution. The feature does not push or delete source branches. Tracked `.DS_Store` files and merges from test/beta into feature branches are rejected.
+
 ## License
 
 [MIT](./LICENSE)

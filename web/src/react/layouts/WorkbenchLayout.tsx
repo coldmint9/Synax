@@ -158,6 +158,7 @@ export default function WorkbenchLayout() {
   const activePanel: ActivityPanel | null = (() => {
     const path = location.pathname;
     if (path.includes("/sessions")) return "sessions";
+    if (path.includes("/git")) return "git";
     if (path.includes("/wiki")) return "wiki";
     if (path === "/settings" || path.includes("/settings")) return "settings";
     return null;
@@ -181,6 +182,7 @@ export default function WorkbenchLayout() {
       : "global";
 
   const panelRoutes: Record<ActivityPanel, string> = {
+    git: `/projects/${effectiveProjectId}/git`,
     wiki: `/projects/${effectiveProjectId}/wiki`,
     sessions: resolveSessionsEntryPath(effectiveProjectId),
     search: `/projects/${effectiveProjectId}/wiki`,

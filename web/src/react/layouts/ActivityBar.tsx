@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  GitMerge,
   Bot,
   Search,
   Settings2,
@@ -11,6 +12,7 @@ import { useShellStore } from "../state/shellStore";
 import { useLocale } from "../../hooks/useLocale";
 
 export type ActivityPanel =
+  | "git"
   | "wiki"
   | "sessions"
   | "search"
@@ -39,6 +41,7 @@ export function ActivityBar({
     icon: typeof BookOpen;
     label: string;
   }[] = [
+    { id: "git", icon: GitMerge, label: "Git" },
     { id: "wiki", icon: BookOpen, label: "Wiki" },
     { id: "sessions", icon: Bot, label: t("titlebarAgent") },
     { id: "search", icon: Search, label: t("appSearch") },
@@ -50,7 +53,11 @@ export function ActivityBar({
     label: string;
   }[] = [{ id: "settings", icon: Settings2, label: t("appSettings") }];
 
-  const projectPanels: Set<ActivityPanel> = new Set(["wiki", "sessions"]);
+  const projectPanels: Set<ActivityPanel> = new Set([
+    "wiki",
+    "sessions",
+    "git",
+  ]);
 
   return (
     <div className="activity-bar">

@@ -31,6 +31,7 @@ export function controlToolError(
   const workError = workRuntime.toolError(session.id, tool.id, args);
   if (workError) return workError;
   const root = controlRoot(session);
+  if (root.profileId === 'git-manager' && tool.id === 'human.ask' && !session.parentSessionId) return null;
   if (!isSynaxProfile(root.profileId))
     return CONTROL_TOOLS.has(tool.id) && tool.id !== "work.checkpoint"
       ? "Human/goal controls are only available in native Synax sessions."

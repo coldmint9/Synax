@@ -1,3 +1,4 @@
+import { ensureGitMrProfileRegistered } from './git/profile.js';
 import { agentRuntimeStore } from './session-store.js';
 import { ensureWikiProfileRegistered } from '../wiki/wiki-loop-profile.js';
 import { ensurePlanProfileRegistered, PLAN_GENERATOR_LEGACY_ID, PLAN_PLANNER_PROFILE_ID } from '../wiki/wiki-plan-profile.js';
@@ -17,6 +18,7 @@ export function bootstrapAgentChildForSession(sessionId: string): void {
   if (!session) return;
 
   const { profileId } = session;
+  if (profileId === 'git-manager') ensureGitMrProfileRegistered();
   if (profileId.startsWith(WIKI_PROFILE_PREFIX) || profileId === 'wiki-generator') {
     ensureWikiProfileRegistered();
   }

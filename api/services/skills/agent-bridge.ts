@@ -1,3 +1,5 @@
+import { listGitSkills, loadGitSkill } from '../agent-runtime/git/skills.js';
+import { assertGitMrBinding } from '../agent-runtime/git/binding.js';
 import fs from "node:fs";
 import type { AgentProfileKind } from "../agent-runtime/contracts.js";
 import { permissionPolicy } from "../agent-runtime/permission-policy.js";
@@ -12,6 +14,7 @@ export const skillAgentBridge = {
     projectId: string;
     activeSkillIds: string[];
   }): SkillSummary[] {
+    if (input.profileId === 'git-manager') return listGitSkills();
     return skillRegistry
       .listSummaries({
         profileId: input.profileId,
@@ -39,6 +42,10 @@ export const skillAgentBridge = {
     profileKind: AgentProfileKind;
   }): SkillDetail {
     const session = agentSessionRuntime.get(input.sessionId);
+    if (session.profileId === 'git-manager') {
+      assertGitMrBinding(session.id);
+      return loadGitSkill(input.skillId);
+    }
     const summary = skillRegistry.getSummary(input.skillId, session.projectId);
     if (
       summary.appliesTo.length > 0 &&

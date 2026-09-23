@@ -1,3 +1,5 @@
+import { assertGitMrBinding } from './git/binding.js';
+import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
 import { WIKI_AGENT_READ_TOOL_IDS } from '../wiki/wiki-agent-tool-provider.js';
 import { controlRoot, workflowMode } from './workflow-mode.js';
@@ -48,6 +50,10 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
+  if (session.profileId === 'git-manager') {
+    try { assertGitMrBinding(session.id); } catch { return false; }
+    return (GIT_MANAGER_TOOL_IDS as readonly string[]).includes(tool.id);
+  }
   const root = controlRoot(session);
   const mode = workflowMode(session);
   if (['work.checkpoint', 'goal.finish', 'verification.run'].includes(tool.id)) {

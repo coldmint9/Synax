@@ -68,6 +68,9 @@ export class AgentSessionRuntime {
           "Cannot create a subagent while its ancestor is stopped or stopping.",
         );
     }
+    if (input.profileId === 'git-manager' && input.backendId && input.backendId !== 'native') {
+      throw new AgentValidationError('Git manager requires the scoped native tool runtime.');
+    }
     validateBackendTurnInput(input.backendId ?? "native", input);
     const profile = this.profiles.assertCanStart(input.profileId, {
       parentSessionId: input.parentSessionId,

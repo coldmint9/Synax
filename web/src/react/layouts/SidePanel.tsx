@@ -15,6 +15,7 @@ export function SidePanel({ activePanel, open, position, onClose, onFlipPosition
   const { t } = useLocale()
 
   const panelTitles: Record<ActivityPanel, string> = {
+    git: 'Git',
     wiki: 'Wiki',
     sessions: t('titlebarAgent'),
     search: t('panelSearch'),
