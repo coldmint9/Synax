@@ -56,6 +56,24 @@ describe("message action toolbar", () => {
       "true",
     );
   });
+  it("allows fork independently when rollback needs the running session to stop", () => {
+    const onFork = vi.fn();
+    const onRollback = vi.fn();
+    render(
+      <MessageActionToolbar
+        role="assistant"
+        text="completed reply"
+        disabledReason="Stop first"
+        forkDisabledReason={null}
+        onFork={onFork}
+        onRollback={onRollback}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fork from here" }));
+    fireEvent.click(screen.getByRole("button", { name: "Roll back to here" }));
+    expect(onFork).toHaveBeenCalledOnce();
+    expect(onRollback).not.toHaveBeenCalled();
+  });
   it("shows exactly the actions appropriate for each role", () => {
     const onEdit = vi.fn();
     render(<MessageActionToolbar role="user" text="hello" onEdit={onEdit} />);

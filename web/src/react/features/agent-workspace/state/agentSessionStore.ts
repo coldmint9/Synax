@@ -3,6 +3,7 @@ import type { RuntimeContentPart } from "../../../../lib/api/runtimeMedia";
 import type { TurnReference } from "../../../../lib/api/agentRuntime";
 import type { BackendId } from "../../../../lib/api/agentRuntime";
 import { create } from "zustand";
+import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
 import { usePendingSubmissionStore } from "./pendingSubmissionStore";
 import {
   agentRuntimeApi,
@@ -183,6 +184,7 @@ export interface SessionDetailCacheEntry {
   sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
   historyWindow?: HistoryWindowState;
+  historyPagesLoaded?: boolean;
 }
 
 let activeSessionsRefresh: {
@@ -199,6 +201,8 @@ let activeDetailRefresh: {
   promise: Promise<void>;
   again: boolean;
 } | null = null;
+let activeOlderHistory: { sessionId: string; promise: Promise<void> } | null = null;
+
 let activeTranscriptRefresh: {
   sessionId: string;
   promise: Promise<void>;
@@ -532,7 +536,7 @@ export interface AgentSessionStoreState {
   ) => void;
   openPanel: (sessionId: string) => void;
   closePanel: () => void;
-  navigateHistory: (cursor?: string) => Promise<void>;
+  loadOlderHistory: () => Promise<void>;
   refreshDetail: (options?: { joinPending?: boolean }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
@@ -1151,41 +1155,91 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       set({ panelOpen: false });
     },
 
+    loadOlderHistory: async () => {
+      const sessionId = get().selectedSessionId;
+      if (!sessionId) return;
+      const initial = get().sessionDetailCache[sessionId];
+      const cursor = initial?.historyWindow?.olderCursor;
+      if (!cursor || activeOlderHistory?.sessionId === sessionId) return;
+      const promise = (async () => {
+        let pages;
+        let rebuilt = false;
+        try {
+          pages = [await agentRuntimeApi.historyWindow(sessionId, cursor)];
+        } catch (error) {
+          if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
+          // Cursors are tied to an immutable tree root. If new messages have
+          // arrived, walk the new root until we rejoin the oldest loaded row.
+          const oldestId = initial.messages[0]?.id;
+          let latest = await agentRuntimeApi.historyWindow(sessionId);
+          if (latest.historyWindow.epoch !== initial.historyWindow?.epoch) {
+            await get().refreshDetail();
+            return;
+          }
+          pages = [latest];
+          rebuilt = true;
+          while (
+            latest.historyWindow.olderCursor &&
+            (!oldestId || !latest.messages.some((message) => message.id === oldestId))
+          ) {
+            latest = await agentRuntimeApi.historyWindow(
+              sessionId,
+              latest.historyWindow.olderCursor,
+            );
+            pages.push(latest);
+          }
+          if (latest.historyWindow.olderCursor) {
+            pages.push(
+              await agentRuntimeApi.historyWindow(sessionId, latest.historyWindow.olderCursor),
+            );
+          }
+        }
+        if (get().selectedSessionId !== sessionId) return;
+        set((state) => {
+          const current = state.sessionDetailCache[sessionId];
+          if (
+            !current?.historyWindow ||
+            current.historyWindow.epoch !== pages[0].historyWindow.epoch ||
+            (!rebuilt && current.historyWindow.olderCursor !== cursor)
+          ) return state;
+          const base: SessionDetailCacheEntry = rebuilt
+            ? {
+                ...pages[0],
+                sessionStats: current.sessionStats,
+                sessionTodos: current.sessionTodos,
+                sessionInvocationUsage: current.sessionInvocationUsage,
+                cachedAt: Date.now(),
+              }
+            : current;
+          const entry = (rebuilt ? pages.slice(1) : pages).reduce(prependHistory, base);
+          return {
+            messages: entry.messages,
+            runs: entry.runs,
+            steps: entry.steps,
+            toolCalls: entry.toolCalls,
+            events: entry.events,
+            permissions: entry.permissions,
+            sessionDetailCache: trimSessionDetailCache({
+              ...state.sessionDetailCache,
+              [sessionId]: entry,
+            }),
+          };
+        });
+      })();
+      activeOlderHistory = { sessionId, promise };
+      try {
+        await promise;
+      } finally {
+        if (activeOlderHistory?.promise === promise) activeOlderHistory = null;
+      }
+    },
     /**
      * Refresh the selected session's detail.
      *
      * Profile-critical data (stats, todos, invocation usage) is applied as
      * soon as each response lands, and the heavier transcript queries (events,
-     * messages, tool calls) are applied in the background. Previously everything
-     * was committed in a single batch, so one slow query (the event log can take
-     * seconds on long runs) froze the whole side panel.
+     * messages, tool calls) are applied in the background.
      */
-    navigateHistory: async (cursor) => {
-      const sessionId = get().selectedSessionId;
-      if (!sessionId) return;
-      const epoch = ++detailRefreshEpoch;
-      set({ detailLoading: true });
-      try {
-        const window = await agentRuntimeApi.historyWindow(sessionId, cursor).catch(error => {
-          if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
-          return agentRuntimeApi.historyWindow(sessionId);
-        });
-        if (get().selectedSessionId !== sessionId || detailRefreshEpoch !== epoch) return;
-        const entry: SessionDetailCacheEntry = {
-          ...window, sessionStats: get().sessionStats, sessionTodos: get().sessionTodos,
-          sessionInvocationUsage: get().sessionInvocationUsage, cachedAt: Date.now(),
-        };
-        set(state => ({
-          runs: entry.runs, steps: entry.steps, events: entry.events, messages: entry.messages,
-          toolCalls: entry.toolCalls, permissions: entry.permissions,
-          detailLoading: false, detailError: null,
-          sessionDetailCache: trimSessionDetailCache({ ...state.sessionDetailCache, [sessionId]: entry }),
-        }));
-      } catch (error) {
-        if (get().selectedSessionId === sessionId && detailRefreshEpoch === epoch)
-          set({ detailLoading: false, detailError: String(error) });
-      }
-    },
     refreshDetail: async (options) => {
       const targetSessionId = get().selectedSessionId;
       const targetProjectId = get().projectId;
@@ -1317,7 +1371,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
             const transcriptSource = versioned
-              ? agentRuntimeApi.historyWindow(targetSessionId, cachedEntry?.historyWindow?.cursor)
+              ? agentRuntimeApi.historyWindow(targetSessionId)
                   .catch(error => {
                     if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
                     return agentRuntimeApi.historyWindow(targetSessionId);
@@ -1380,28 +1434,33 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     historyWindow: "historyWindow" in messagesRes ? messagesRes.historyWindow : undefined,
                   };
 
-                  set((s) => ({
-                    detailLoading: false,
-                    detailError: null,
-                    runs: cacheEntry.runs,
-                    steps: cacheEntry.steps,
-                    events: cacheEntry.events,
-                    messages: cacheEntry.messages,
-                    toolCalls: cacheEntry.toolCalls,
-                    permissions: cacheEntry.permissions,
-                    sessionDetailCache: trimSessionDetailCache({
-                      ...s.sessionDetailCache,
-                      [targetSessionId]: cacheEntry,
-                    }),
-                    ...(preserveLive
-                      ? {}
-                      : {
-                          streamingRetry: null,
-                          streamingStepId: null,
-                          streamingLive: EMPTY_STREAMING_BUFFERS,
-                          streamingCompletedSteps: [],
-                        }),
-                  }));
+                  set((s) => {
+                    const merged = versioned
+                      ? mergeRefreshedHistory(s.sessionDetailCache[targetSessionId], cacheEntry)
+                      : cacheEntry;
+                    return {
+                      detailLoading: false,
+                      detailError: null,
+                      runs: merged.runs,
+                      steps: merged.steps,
+                      events: merged.events,
+                      messages: merged.messages,
+                      toolCalls: merged.toolCalls,
+                      permissions: merged.permissions,
+                      sessionDetailCache: trimSessionDetailCache({
+                        ...s.sessionDetailCache,
+                        [targetSessionId]: merged,
+                      }),
+                      ...(preserveLive
+                        ? {}
+                        : {
+                            streamingRetry: null,
+                            streamingStepId: null,
+                            streamingLive: EMPTY_STREAMING_BUFFERS,
+                            streamingCompletedSteps: [],
+                          }),
+                    };
+                  });
 
                   const session = get().sessions.find(
                     (s) => s.id === targetSessionId,

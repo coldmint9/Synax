@@ -19,10 +19,11 @@ import {
   previewSimpleFork,
 } from "../checkpoints/simple-fork.js";
 import { captureCheckpoint } from "../checkpoints/store.js";
-import { applyHistory, checkpointSummary } from "../checkpoints/operations.js";
+import { applyHistory, checkpointSummary, previewHistory } from "../checkpoints/operations.js";
 import { createAsset, sessionHasAsset, readAsset } from "../media-assets.js";
 import { runCommand } from "../tools/exec-async.js";
 import { withCheckpointMutation } from "../checkpoints/mutations.js";
+import { historyEpoch } from "../checkpoints/guards.js";
 let sourceId: string, root: string;
 const worktrees: string[] = [];
 async function git(args: string[]) {
@@ -114,7 +115,7 @@ it("copies only the chosen prefix, reuses attachment/text payloads and enforces 
   const repo = versionRepository();
   const cp = repo.capture(sourceId, "reply", "kept", null, 0);
   message("future");
-  const revision = repo.head(sourceId).revision;
+  const revision = historyEpoch(sourceId);
   const result = await forkSimpleConversation(
     sourceId,
     cp.id,
@@ -182,7 +183,7 @@ it("copies only the chosen prefix, reuses attachment/text payloads and enforces 
   const second = await forkSimpleConversation(
     target.id,
     `message:${cloned.id}`,
-    repo.head(target.id).revision,
+    historyEpoch(target.id),
     "again",
     "reuse_worktree",
   );
@@ -210,6 +211,30 @@ it("copies only the chosen prefix, reuses attachment/text payloads and enforces 
       .get(target.id),
   ).toBeUndefined();
 });
+it("forks a completed reply while the source continues to run and append messages", async () => {
+  message("chosen");
+  const repo = versionRepository();
+  const cp = repo.capture(sourceId, "reply", "chosen", null, 0);
+  store.updateSession(sourceId, { status: "running" });
+  const summary = checkpointSummary(sourceId);
+  expect(summary.stopRequired).toBe(true);
+  expect(summary.forkReason).toBeNull();
+  await expect(previewHistory(sourceId, cp.id, false)).rejects.toMatchObject({
+    code: "HISTORY_SESSION_BUSY",
+  });
+  const preview = await previewSimpleFork(sourceId, cp.id, "reuse_worktree");
+  message("newer");
+  const result = await forkSimpleConversation(
+    sourceId,
+    cp.id,
+    preview.revision,
+    "live-fork",
+    "reuse_worktree",
+  );
+  expect(store.listMessages(result.sessionId).map((row) => row.content)).toEqual(["chosen"]);
+  expect(store.getSession(sourceId).status).toBe("running");
+});
+
 it("creates an independent worktree at captured HEAD, never copies dirty workspace files", async () => {
   for (let i = 0; i < 19; i++) message(`prefix-${i}`);
   message("reply");
@@ -276,7 +301,7 @@ it("cleans unpublished readers after a worktree failure and permits a reuse fall
       forkSimpleConversation(
         sourceId,
         cp.id,
-        repo.head(sourceId).revision,
+        historyEpoch(sourceId),
         "fail-worktree",
         "new_worktree",
       ),
@@ -292,7 +317,7 @@ it("cleans unpublished readers after a worktree failure and permits a reuse fall
     const result = await forkSimpleConversation(
       sourceId,
       cp.id,
-      repo.head(sourceId).revision,
+      historyEpoch(sourceId),
       "reuse-fallback",
       "reuse_worktree",
     );

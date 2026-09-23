@@ -4,6 +4,7 @@ import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 import {
   agentRuntimeApi as api,
   type AgentSession,
+  type HistoryWindowResponse,
   type SessionStats,
 } from "../../../../lib/api/agentRuntime";
 vi.mock("../../../../lib/api/sessionLiveClient", () => ({
@@ -52,6 +53,126 @@ afterEach(() => {
   vi.restoreAllMocks();
   store.setState(store.getInitialState());
 });
+describe("versioned transcript refresh", () => {
+  it("loads the latest page instead of retaining a previously cached history cursor", async () => {
+    const versionedSession = {
+      ...session,
+      sessionMetadata: { historyStorage: 3 },
+    } as AgentSession;
+    const window = {
+      messages: [], runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+      historyWindow: {
+        revision: 1, epoch: 1, cursor: "latest-page", hasEarlier: true,
+        latest: true, detailsTruncated: false,
+      },
+    } satisfies HistoryWindowResponse;
+    store.setState({
+      sessions: [versionedSession],
+      sessionDetailCache: {
+        [session.id]: {
+          runs: [], steps: [], events: [], messages: [], toolCalls: [], permissions: [],
+          sessionStats: null, sessionTodos: [], sessionInvocationUsage: null,
+          cachedAt: Date.now(),
+          historyWindow: { ...window.historyWindow, cursor: "old-page", latest: false },
+        } as never,
+      },
+    });
+    const fetchWindow = vi.spyOn(api, "historyWindow").mockResolvedValue(window);
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(fetchWindow).toHaveBeenCalledWith(session.id));
+    expect(fetchWindow).not.toHaveBeenCalledWith(session.id, "old-page");
+    await vi.waitFor(() =>
+      expect(store.getState().sessionDetailCache[session.id].historyWindow?.latest).toBe(true),
+    );
+  });
+});
+
+describe("loaded history across refreshes", () => {
+  it("keeps browsed older pages when the latest window refreshes in the same epoch", async () => {
+    const versioned = { ...session, sessionMetadata: { historyStorage: 3 } } as AgentSession;
+    const older = { id: "old", content: "old" } as never;
+    const recent = { id: "recent", content: "recent" } as never;
+    store.setState({
+      sessions: [versioned],
+      sessionDetailCache: {
+        [session.id]: {
+          messages: [older, recent], runs: [], steps: [], toolCalls: [], events: [],
+          permissions: [], sessionStats: null, sessionTodos: [], sessionInvocationUsage: null,
+          cachedAt: Date.now(), historyPagesLoaded: true,
+          historyWindow: { revision: 1, epoch: 1, olderCursor: "earliest-cursor",
+            hasEarlier: true, latest: true, detailsTruncated: false },
+        },
+      },
+    });
+    const response = {
+      messages: [recent, { id: "new", content: "new" } as never],
+      runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+      historyWindow: { revision: 2, epoch: 1, olderCursor: "newer-cursor",
+        hasEarlier: true, latest: true, detailsTruncated: false },
+    } satisfies HistoryWindowResponse;
+    vi.spyOn(api, "historyWindow").mockResolvedValue(response);
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages.map((m) => m.id)).toEqual([
+      "old", "recent", "new",
+    ]));
+    expect(store.getState().sessionDetailCache[session.id].historyWindow?.olderCursor).toBe("earliest-cursor");
+  });
+
+  it("restarts from the latest cursor if new messages have no overlap with loaded history", async () => {
+    const versioned = { ...session, sessionMetadata: { historyStorage: 3 } } as AgentSession;
+    store.setState({
+      sessions: [versioned],
+      sessionDetailCache: {
+        [session.id]: {
+          messages: [{ id: "old" } as never], runs: [], steps: [], toolCalls: [],
+          events: [], permissions: [], sessionStats: null, sessionTodos: [],
+          sessionInvocationUsage: null, cachedAt: Date.now(), historyPagesLoaded: true,
+          historyWindow: { revision: 1, epoch: 1, hasEarlier: false,
+            latest: true, detailsTruncated: false },
+        },
+      },
+    });
+    vi.spyOn(api, "historyWindow").mockResolvedValue({
+      messages: [{ id: "latest" } as never], runs: [], steps: [], toolCalls: [],
+      events: [], permissions: [],
+      historyWindow: { revision: 2, epoch: 1, olderCursor: "bridge", hasEarlier: true,
+        latest: true, detailsTruncated: false },
+    });
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages.map((m) => m.id)).toEqual(["latest"]));
+    expect(store.getState().sessionDetailCache[session.id].historyWindow?.olderCursor).toBe("bridge");
+  });
+
+  it("drops browsed pages when the history epoch changes", async () => {
+    const versioned = { ...session, sessionMetadata: { historyStorage: 3 } } as AgentSession;
+    store.setState({
+      sessions: [versioned],
+      sessionDetailCache: {
+        [session.id]: {
+          messages: [{ id: "discarded" } as never], runs: [], steps: [], toolCalls: [],
+          events: [], permissions: [], sessionStats: null, sessionTodos: [],
+          sessionInvocationUsage: null, cachedAt: Date.now(), historyPagesLoaded: true,
+          historyWindow: { revision: 1, epoch: 1, olderCursor: "old", hasEarlier: true,
+            latest: true, detailsTruncated: false },
+        },
+      },
+    });
+    vi.spyOn(api, "historyWindow").mockResolvedValue({
+      messages: [{ id: "replacement" } as never], runs: [], steps: [], toolCalls: [],
+      events: [], permissions: [],
+      historyWindow: { revision: 2, epoch: 2, hasEarlier: false, latest: true,
+        detailsTruncated: false },
+    });
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages.map((m) => m.id)).toEqual(["replacement"]));
+    expect(store.getState().sessionDetailCache[session.id].historyPagesLoaded).toBeUndefined();
+  });
+});
+
 describe("detail refresh freshness", () => {
   it("performs a trailing refresh when completion arrives during a running stats request", async () => {
     let resolve!: (value: SessionStats) => void;

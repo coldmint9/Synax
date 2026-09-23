@@ -18,6 +18,14 @@ beforeEach(() => {
   }));
 });
 describe("inline message editing", () => {
+  it("emphasizes the sent message without changing the edit field", () => {
+    const { container } = render(<UserMessageBlock messageId="user1" content="Original" />);
+    expect(container.querySelector(".session-user-message")).toHaveClass("font-semibold");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
+    expect(screen.getByRole("textbox")).not.toHaveClass("font-semibold");
+  });
+
   it("cancels without modifying the sent message", () => {
     render(<UserMessageBlock messageId="user1" content="Original" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
@@ -49,10 +57,10 @@ describe("inline message editing", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Edited");
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Save and resend" }),
+        screen.getByRole("button", { name: "Send" }),
       ).not.toBeDisabled(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save and resend" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() =>
       expect(screen.queryByRole("textbox")).not.toBeInTheDocument(),
     );
@@ -61,11 +69,11 @@ describe("inline message editing", () => {
     render(<UserMessageBlock messageId="user1" content="Original" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
     expect(
-      screen.getByRole("button", { name: "Save and resend" }),
+      screen.getByRole("button", { name: "Send" }),
     ).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "  " } });
     expect(
-      screen.getByRole("button", { name: "Save and resend" }),
+      screen.getByRole("button", { name: "Send" }),
     ).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "输入" },
