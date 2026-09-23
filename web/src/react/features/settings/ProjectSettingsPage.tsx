@@ -10,6 +10,7 @@ import type { I18nKey } from "../../../lib/i18n";
 import { SettingsCard } from "./components/SettingsCard";
 import { GitWorktreesSection } from "./components/GitWorktreesSection";
 import { ProjectReferencesSection } from "./components/ProjectReferencesSection";
+import { ProjectToolGrantsSection } from "./components/ProjectToolGrantsSection";
 
 function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
   const { t } = useLocale();
@@ -114,6 +115,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
           </div>
 
           <div className="space-y-8">
+            <ProjectToolGrantsSection projectId={projectId} />
             <ProjectReferencesSection projectId={projectId} />
             <ProviderTab
               settings={settings}

@@ -131,7 +131,25 @@ import {
   resolveGitWorkspaceSelection,
 } from "../services/git-workspaces.js";
 
+import { listProjectToolGrants, revokeProjectToolGrant } from "../services/agent-runtime/project-tool-grants.js";
+
 export const agentRuntimeRoutes = new Hono();
+agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
+  try {
+    return c.json({ items: listProjectToolGrants(c.req.param("projectId")) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
+  try {
+    const removed = revokeProjectToolGrant(c.req.param("projectId"), c.req.param("toolId"));
+    return removed ? c.json({ revoked: true }) : c.json({ error: "Tool grant not found." }, 404);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");

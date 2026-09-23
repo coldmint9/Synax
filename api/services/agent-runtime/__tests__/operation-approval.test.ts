@@ -50,7 +50,7 @@ const network = () =>
     metadata: { toolId: "webSearch", args: { query: "public documentation" } },
   });
 
-it("asks every time at external file/network boundaries, even with old blanket allow grants", async () => {
+it("keeps old blanket grants from bypassing boundary review without a tool grant", async () => {
   agentRuntimeStore.updateSessionMetadata(sessionId, {
     alwaysPermissionRules: [{ gate: "*", pattern: "*", action: "allow" }],
   });
@@ -68,9 +68,7 @@ it("asks every time at external file/network boundaries, even with old blanket a
     action: "ask",
     internalGate: "external_path",
   });
-  expect(() =>
-    permissionPolicy.reply(sessionId, first.permission!.id, "always"),
-  ).toThrow();
+  expect(first.permission?.metadata?.allowedReplies).toEqual(["once", "always", "reject"]);
   const approved = permissionPolicy.reply(
     sessionId,
     first.permission!.id,

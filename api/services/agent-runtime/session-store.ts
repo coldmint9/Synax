@@ -226,6 +226,7 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  "agent_project_tool_grants",
   "conversation_history_access",
   "conversation_history_tracking",
   "conversation_history_journal",

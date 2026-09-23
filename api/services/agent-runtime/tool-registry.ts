@@ -19,7 +19,7 @@ import { workRuntime } from "./work-runtime.js";
 import { workStore } from "./work-store.js";
 import { workspaceFingerprint } from "./work-fingerprint.js";
 import { withCommandSignal } from "./tools/exec-async.js";
-import { resolvePermissionDecision } from "./permission-policy.js";
+import { resolvePermissionDecision, isProjectToolGrantDenied } from "./permission-policy.js";
 import {
   specialistSpecSchema,
   buildSpecialistChildInput,
@@ -51,7 +51,8 @@ import {
   AgentPermissionError,
   AgentValidationError,
 } from "./runtime-errors.js";
-import { sandboxPolicy, withSandboxApproval } from "./sandbox/index.js";
+import { sandboxPolicy, withSandboxApproval, withProjectToolApproval } from "./sandbox/index.js";
+import { hasProjectToolGrant } from "./project-tool-grants.js";
 import { workspaceRoot } from "./tools/workspace.js";
 import { invalidateSessionEnvironment } from "./session-environment.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
@@ -878,8 +879,12 @@ export class ToolRegistry {
         permission.sessionId === sessionId &&
         permission.toolCallId === running.id &&
         Array.isArray(approvalPaths);
+      const projectGrant = permission?.metadata?.projectToolGrant === true ||
+        permission?.userReply === "always" && permission.metadata?.toolId === tool.id;
       const inApprovalScope = <T>(action: () => T): T =>
-        approved
+        projectGrant
+          ? withProjectToolApproval(sessionId, tool.id, action)
+          : approved
           ? withSandboxApproval(
               sessionId,
               approvalPaths.filter(
@@ -888,6 +893,23 @@ export class ToolRegistry {
               action,
             )
           : action();
+      const assertGrantCurrent = () => {
+        if (!projectGrant) return;
+        if (!hasProjectToolGrant(sessionId, tool.id))
+          throw new AgentPermissionError("Project-wide tool approval has been revoked.");
+        const current = this.store.getSession(sessionId);
+        if (isProjectToolGrantDenied({
+          sessionId,
+          category: tool.category,
+          internalGate: tool.internalGate,
+          pattern: tool.getPattern?.(args) ?? tool.patterns?.[0] ?? tool.id,
+          isSubSession: Boolean(current.parentSessionId),
+          rules: current.permissionRules,
+        }, (tool.id === "bash" || tool.id === "verification.run")
+          ? (args as { command?: string }).command : undefined))
+          throw new AgentPermissionError("An explicit permission restriction denies this tool.");
+      };
+      assertGrantCurrent();
       inApprovalScope(() =>
         sandboxPolicy.validateToolArgs(
           running.toolId,
@@ -921,6 +943,7 @@ export class ToolRegistry {
         abortSignal?.throwIfAborted();
         assertRuntimeExecutionCurrent();
         assertHistoryUnlocked(sessionId);
+        assertGrantCurrent();
         return inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
       };
       const checkpointMutation =
@@ -934,7 +957,7 @@ export class ToolRegistry {
         typeof (args as { path?: unknown }).path === "string"
       )
         undoPaths = [
-          resolveUndoPath((args as { path: string }).path, sessionId),
+          inApprovalScope(() => resolveUndoPath((args as { path: string }).path, sessionId)),
         ];
       if (tool.id === "file.patch")
         undoPaths = parseApplyPatchEnvelope((args as { patch: string }).patch)
@@ -942,7 +965,7 @@ export class ToolRegistry {
             hunk.path,
             ...("movePath" in hunk && hunk.movePath ? [hunk.movePath] : []),
           ])
-          .map((file) => resolveUndoPath(file, sessionId));
+          .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
       const result = checkpointMutation
         ? await withCheckpointMutation(sessionId, executeTool, false, undoPaths)
         : await executeTool();

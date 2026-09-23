@@ -415,6 +415,13 @@ export const agentRuntimeToolCalls = sqliteTable('agent_runtime_tool_calls', {
   error: text('error'),
 });
 
+export const agentProjectToolGrants = sqliteTable('agent_project_tool_grants', {
+  projectId: text('project_id').notNull(),
+  toolId: text('tool_id').notNull(),
+  permissionId: text('permission_id').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.projectId, table.toolId] })]);
+
 export const agentRuntimePermissions = sqliteTable('agent_runtime_permissions', {
   id: text('id').primaryKey(),
   sessionId: text('session_id').notNull(),
