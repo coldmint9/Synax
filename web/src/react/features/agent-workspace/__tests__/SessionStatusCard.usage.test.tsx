@@ -4,17 +4,16 @@ vi.mock("../../../../hooks/useLocale", () => ({
   useLocale: () => ({ locale: "zh" }),
 }));
 vi.mock("../useProviderNames", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../useProviderNames")>();
+  const actual = await importOriginal<typeof import("../useProviderNames")>();
   return {
     ...actual,
     // Keep the network off the unit-test path; the name mapping itself is
     // covered by useProviderNames.test.ts.
-    useProviderNames: () => [
-      { id: "custom-api:1789630765113", label: "智谱" },
-    ] as never,
+    useProviderNames: () =>
+      [{ id: "custom-api:1789630765113", label: "智谱" }] as never,
   };
 });
+import { contextUsage } from "../ContextCompositionBar";
 import { SessionStatusCard } from "../SessionWorkspace";
 import type {
   AgentSession,
@@ -37,9 +36,10 @@ const stats: SessionStats = {
   tokenUsage: { input: 403292, output: 275308, total: 403292 },
   context: {
     inputTokens: 403292,
+    source: "provider",
     requestId: "latest",
     measuredAt: "2026-09-13T13:00:00Z",
-    latestRequestUsageAvailable: false,
+    latestRequestUsageAvailable: true,
   },
   contextLimit: 1000000,
   contextUsedPercent: 40,
@@ -101,51 +101,37 @@ describe("SessionStatusCard usage boundaries", () => {
         todos={[]}
       />,
     );
-    expect(screen.getByText("暂无上下文组成记录")).toBeTruthy();
+    expect(screen.getByText("暂无供应商数据")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.queryByText("40%")).toBeNull();
   });
 
-  it("shows execution rounds and request composition instead of cumulative usage", () => {
+  it("shows provider input rather than estimated categories or cumulative usage", () => {
     const { container } = render(
-      <SessionStatusCard stats={stats} steps={[]} todos={[]} />,
+      <SessionStatusCard stats={stats} steps={[]} />,
     );
     expect(screen.getByText("运行轮次")).toBeTruthy();
     expect(screen.getByText("32")).toBeTruthy();
-    expect(screen.getByText("上下文组成")).toBeTruthy();
-    // The track is the whole 1M window and the measured request is 400K, so the
-    // four categories split the filled 40% instead of filling the track.
-    expect(
-      Array.from(
-        container.querySelectorAll<HTMLElement>("[data-context-category]"),
-      ).map((bar) => bar.style.width),
-    ).toEqual(["8%", "12%", "4%", "16%"]);
-    expect(screen.getByText(/400\.0K \/ 1M/)).toBeTruthy();
-    for (const label of [
-      "当前上下文",
-      "本会话累计",
-      "含子 Agent",
-      "记录不完整：8 个请求缺少 usage",
-      "上下文显示最近一次可用记录",
-    ]) {
-      expect(screen.queryByText(label)).toBeNull();
-    }
-    expect(screen.queryByText(/工作状态|确认交付或剩余工作/)).toBeNull();
+    expect(screen.getByText("上下文用量")).toBeTruthy();
+    expect(screen.getByText(/服务商实测 · 403\.3K \/ 1M/)).toBeTruthy();
+    expect(container.querySelector("[data-context-category]")).toBeNull();
+    expect(screen.queryByText("Tools")).toBeNull();
+    expect(screen.getByRole("img").firstElementChild).toHaveStyle({
+      width: "40.33%",
+    });
+    expect(screen.queryByText(/6\.3M/)).toBeNull();
   });
 
-  it("keeps the four categories proportional when the model window is unknown", () => {
-    const { container } = render(
+  it("shows measured tokens without inventing a percentage for an unknown window", () => {
+    render(
       <SessionStatusCard
         stats={{ ...stats, contextLimitKnown: false }}
         steps={[]}
-        todos={[]}
       />,
     );
-    expect(
-      Array.from(
-        container.querySelectorAll<HTMLElement>("[data-context-category]"),
-      ).map((bar) => bar.style.width),
-    ).toEqual(["20%", "30%", "10%", "40%"]);
+    expect(screen.getByText("服务商实测 · 403.3K")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.queryByText(/\/ 1M/)).toBeNull();
   });
   it("renders no elapsed time for a stale running step after the run has ended", () => {
     render(
@@ -173,93 +159,78 @@ describe("SessionStatusCard usage boundaries", () => {
 });
 
 describe("measured context and cache hit rate", () => {
-  it("keeps four colors without per-category usage captions", () => {
-    const composition = {
-      ...stats.contextComposition!,
-      version: 2 as const,
-      system: 100_000,
-      usage: { tools: 30_000, mcp: 20_000, skills: 30_000 },
-      total: 500_000,
-    };
+  it.each([undefined, "estimate"] as const)(
+    "ignores old composition and unverified %s totals",
+    (source) => {
+      const { container } = render(
+        <SessionStatusCard
+          stats={{
+            ...stats,
+            context: {
+              ...stats.context!,
+              source,
+              latestRequestUsageAvailable: false,
+            },
+          }}
+          steps={[]}
+        />,
+      );
+      expect(screen.getByText("暂无供应商数据")).toBeTruthy();
+      expect(screen.queryByText(/400\.0K|403\.3K/)).toBeNull();
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(container.querySelector("[data-context-category]")).toBeNull();
+    },
+  );
+
+  it("does not apportion provider totals to locally estimated categories", () => {
     const { container } = render(
       <SessionStatusCard
         stats={{
           ...stats,
-          contextComposition: composition,
-          context: {
-            ...stats.context!,
-            inputTokens: 500_000,
-            source: "estimate",
-          },
+          context: { ...stats.context!, inputTokens: 500000 },
         }}
         steps={[]}
       />,
     );
-    expect(screen.queryByText("系统/其他")).toBeNull();
-    expect(screen.getByText("160.0K")).toBeTruthy();
-    expect(
-      Array.from(
-        container.querySelectorAll<HTMLElement>("[data-context-category]"),
-      ).map((bar) => bar.style.width),
-    ).toEqual(["8%", "12%", "4%", "16%"]);
-    expect(container.querySelector("[data-context-usage]")).toBeNull();
-    expect(screen.queryByText(/基础 · 使用 · 占当前上下文/)).toBeNull();
-    expect(
-      screen.queryByText("使用明细将在下一次模型请求后更新"),
-    ).toBeNull();
-    expect(
-      screen.queryByText("四色显示分类占用；总量含系统提示等基础上下文。"),
-    ).toBeNull();
-    expect(screen.getByText(/500\.0K \/ 1M/)).toBeTruthy();
-    expect(
-      screen.getByTitle("当前输入中的用户内容、思考记录和助手纯文本回复"),
-    ).toBeTruthy();
+    expect(screen.getByText(/服务商实测 · 500\.0K \/ 1M/)).toBeTruthy();
+    expect(container.querySelector("[data-context-category]")).toBeNull();
+    expect(screen.queryByText(/≈/)).toBeNull();
+    expect(screen.getByRole("img").firstElementChild).toHaveStyle({
+      width: "50%",
+    });
   });
 
-  it("does not relabel old mixed message statistics as the new categories", () => {
+  it("shows provider zero rather than falling back to category estimates", () => {
+    render(
+      <SessionStatusCard
+        stats={{ ...stats, context: { ...stats.context!, inputTokens: 0 } }}
+        steps={[]}
+      />,
+    );
+    expect(screen.getByText(/服务商实测 · 0 \/ 1M/)).toBeTruthy();
+    expect(screen.getByTitle("最近请求上下文 Token").textContent).toBe("0");
+    expect(screen.getByRole("img").firstElementChild).toHaveStyle({
+      width: "0%",
+    });
+  });
+
+  it("clamps only the meter, never the provider total", () => {
     render(
       <SessionStatusCard
         stats={{
           ...stats,
-          contextComposition: {
-            ...stats.contextComposition!,
-            version: undefined,
-            system: undefined,
-          },
+          context: { ...stats.context!, inputTokens: 1500000 },
         }}
         steps={[]}
       />,
     );
-    expect(screen.queryByText("Tools")).toBeNull();
-    expect(
-      screen.getByText("旧记录未区分调用上下文；分类将在下一次模型请求后更新"),
-    ).toBeTruthy();
-    expect(screen.getByText(/400\.0K \/ 1M/)).toBeTruthy();
-  });
-  it("uses measured total and labels proportional categories as approximate", () => {
-    const { container } = render(
-      <SessionStatusCard
-        stats={{
-          ...stats,
-          context: {
-            ...stats.context!,
-            inputTokens: 500000,
-            source: "provider",
-            stale: false,
-            latestRequestUsageAvailable: true,
-          },
-        }}
-        steps={[]}
-        todos={[]}
-      />,
+    expect(screen.getByText(/服务商实测 · 1\.50M \/ 1M/)).toBeTruthy();
+    expect(screen.getByRole("img").getAttribute("aria-label")).toContain(
+      "150%",
     );
-    expect(screen.getByText(/服务商实测 · 500\.0K \/ 1M/)).toBeTruthy();
-    expect(
-      Array.from(
-        container.querySelectorAll<HTMLElement>("[data-context-category]"),
-      ).map((bar) => bar.style.width),
-    ).toEqual(["10%", "15%", "5%", "20%"]);
-    expect(screen.getByText("≈100.0K")).toBeTruthy();
+    expect(screen.getByRole("img").firstElementChild).toHaveStyle({
+      width: "100%",
+    });
   });
 
   it("shows CLI totals even without a composition snapshot", () => {
@@ -294,7 +265,12 @@ describe("measured context and cache hit rate", () => {
         todos={[]}
       />,
     );
-    expect(screen.getByText("最近一次可用记录；当前请求暂无数据")).toBeTruthy();
+    expect(
+      screen.getByText("上次请求的供应商数据；当前请求暂无数据"),
+    ).toBeTruthy();
+    expect(screen.getByTitle("上次请求上下文 Token").textContent).toBe(
+      "上次 · 403.3K",
+    );
   });
 
   it("does not present legacy totals as a verified cache measurement", () => {
@@ -306,10 +282,8 @@ describe("measured context and cache hit rate", () => {
 
   it("shows the context token total in the runtime status header", () => {
     render(<SessionStatusCard stats={stats} steps={[]} todos={[]} />);
-    const tokens = screen.getByTitle("当前上下文 Token");
-    // The fixture's latest sample is not provider-reported, so the header
-    // shows the composition estimate, not the raw 403.3K input tokens.
-    expect(tokens.textContent).toBe("400.0K");
+    const tokens = screen.getByTitle("最近请求上下文 Token");
+    expect(tokens.textContent).toBe("403.3K");
   });
 
   it("prefixes the LLM row with the provider display name", () => {
@@ -328,5 +302,25 @@ describe("measured context and cache hit rate", () => {
     );
     const row = screen.getByTitle("custom-api:1789630765113/glm-5.3");
     expect(row.textContent).toBe("智谱/glm-5.3");
+  });
+});
+
+describe("provider-only context selection", () => {
+  it.each([null, -1, NaN, Infinity, 1.5])(
+    "rejects invalid provider count %s",
+    (inputTokens) => {
+      expect(contextUsage({ ...stats.context!, inputTokens }).available).toBe(
+        false,
+      );
+    },
+  );
+  it("accepts a legacy sample only with explicit reported-usage availability", () => {
+    expect(
+      contextUsage({ ...stats.context!, source: undefined }),
+    ).toMatchObject({ available: true, total: 403292 });
+    expect(
+      contextUsage({ ...stats.context!, source: "estimate" }).available,
+    ).toBe(false);
+    expect(contextUsage(undefined).available).toBe(false);
   });
 });

@@ -52,7 +52,7 @@ export function runtimeProfileSummary(
   zh: boolean,
 ) {
   const current = STATES[status ?? stats?.status ?? "idle"] ?? STATES.idle;
-  const usage = contextUsage(stats?.contextComposition, stats?.context);
+  const usage = contextUsage(stats?.context);
   const available =
     usage.available && Number.isFinite(usage.total) && usage.total >= 0;
   const limit =
@@ -64,7 +64,7 @@ export function runtimeProfileSummary(
       : null;
   const percent =
     available && limit !== null ? (usage.total / limit) * 100 : null;
-  const stale = stats?.context?.stale === true;
+  const stale = available && stats?.context?.stale === true;
   const high = percent !== null && percent >= 85 && !stale;
   const hint =
     current.hint?.[zh ? 0 : 1] ??

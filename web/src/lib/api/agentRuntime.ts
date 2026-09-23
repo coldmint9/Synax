@@ -440,6 +440,7 @@ export interface SessionCacheUsage {
 export interface SessionStats {
   cache?: SessionCacheUsage;
   roundCount?: number;
+  /** Legacy estimates, ignored by usage displays. New servers return null. */
   contextComposition?: ContextComposition | null;
   work?: {
     id: string;
@@ -455,6 +456,7 @@ export interface SessionStats {
   } | null;
   context?: {
     inputTokens: number | null;
+    /** "estimate" is accepted only for legacy responses and is never displayed. */
     source?: "provider" | "estimate" | null;
     stale?: boolean;
     requestId: string | null;
