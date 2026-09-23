@@ -278,3 +278,23 @@ it("advertises the real visualization protocol even when Synax clears all profil
     buildLoopSystemPrompt({ ...base, specializedOutput: true }),
   ).not.toContain("Inline visualization host contract");
 });
+
+it("injects the auto-preview protocol only when visual intent is detected", () => {
+  const preview = buildLoopSystemPrompt({
+    ...base,
+    visualizationIntent: true,
+    availableToolIds: ["skill.load"],
+    skillsSection: '{"id":"project/visualize","name":"visualize"}',
+  });
+  expect(preview).toContain("visualize");
+  expect(preview).toContain("conversation preview");
+
+  const implementation = buildLoopSystemPrompt({
+    ...base,
+    visualizationIntent: false,
+    availableToolIds: ["skill.load"],
+    skillsSection: '{"id":"project/visualize","name":"visualize"}',
+  });
+  expect(implementation).toContain("visualize");
+  expect(implementation).not.toContain("Visual preview intent detected");
+});
