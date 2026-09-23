@@ -19,7 +19,7 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("grep.search fallback", () => {
+describe("rg fallback", () => {
   it("uses grep when bundled ripgrep cannot start", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "synax-grep-fallback-"));
     roots.push(root);

@@ -164,7 +164,7 @@ describe("buildInterleavedTurns", () => {
         }),
         makeToolCall({
           id: "tc-2",
-          toolId: "grep.search",
+          toolId: "rg",
           startedAt: "2026-01-01T00:00:02.100Z",
         }),
       ],

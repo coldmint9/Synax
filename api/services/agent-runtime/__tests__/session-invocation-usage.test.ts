@@ -62,11 +62,11 @@ describe('resolveSessionInvocationUsage', () => {
     const parent = agentSessionRuntime.create(executorInput);
     const child = agentSessionRuntime.create({ ...explorerSessionInput, parentSessionId: parent.id });
     const statuses: ToolCallStatus[] = ['pending', 'running', 'completed', 'compacted', 'failed', 'denied', 'cancelled'];
-    statuses.forEach((status, index) => appendCall({ sessionId: parent.id, id: `call-${index}`, toolId: 'grep.search', status }));
-    appendCall({ sessionId: child.id, id: 'child-call', toolId: 'grep.search' });
+    statuses.forEach((status, index) => appendCall({ sessionId: parent.id, id: `call-${index}`, toolId: 'rg', status }));
+    appendCall({ sessionId: child.id, id: 'child-call', toolId: 'rg' });
 
     expect(resolveSessionInvocationUsage(parent.id)).toMatchObject({
-      items: [{ kind: 'tool', id: 'grep.search', callCount: 7 }],
+      items: [{ kind: 'tool', id: 'rg', callCount: 7 }],
       totalCalls: 7,
     });
   });

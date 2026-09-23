@@ -1304,8 +1304,8 @@ describe("agentLoopRuntime", () => {
         {
           type: "tool-call",
           toolCallId: "call-3",
-          toolName: "file_glob",
-          input: { pattern: "*.txt" },
+          toolName: "rg",
+          input: { mode: "files", pattern: "*.txt" },
         },
         { type: "finish-step", finishReason: "tool-calls", usage: {} },
         { type: "finish", finishReason: "tool-calls", totalUsage: {} },
@@ -1336,7 +1336,7 @@ describe("agentLoopRuntime", () => {
     );
 
     const toolIds = allToolCalls.map((call) => call.toolId).sort();
-    expect(toolIds).toEqual(["file.glob", "file.list", "file.read"]);
+    expect(toolIds).toEqual(["rg", "file.list", "file.read"]);
 
     // Verify results are in model order (the order in allCalls)
     const [run] = agentLoopRuntime.listRuns(session.id);
@@ -1636,8 +1636,8 @@ describe("agentLoopRuntime", () => {
         {
           type: "tool-call",
           toolCallId: "call-c",
-          toolName: "file_glob",
-          input: { pattern: "*.txt" },
+          toolName: "rg",
+          input: { mode: "files", pattern: "*.txt" },
         },
         { type: "finish-step", finishReason: "tool-calls", usage: {} },
         { type: "finish", finishReason: "tool-calls", totalUsage: {} },

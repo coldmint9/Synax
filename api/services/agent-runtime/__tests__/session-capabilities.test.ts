@@ -32,8 +32,8 @@ describe('resolveSessionCapabilities', () => {
     expect(caps.tools.available.map((tool) => tool.id)).toEqual(
       expect.arrayContaining([
         'bash',
-        'file.glob',
-        'grep.search',
+        'rg',
+        'rg',
         'skill.load',
         'wiki.search_content',
         'wiki.search_batch',

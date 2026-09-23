@@ -21,7 +21,7 @@ async function main() {
   });
 
   const skills = skillRegistry.listSummaries({ profileId: 'explorer', projectId: planner.projectId });
-  const read = await toolRegistry.execute(explorer.id, 'file.glob', { pattern: 'api/services/agent-runtime/**/*.ts', limit: 10 });
+  const read = await toolRegistry.execute(explorer.id, 'rg', { mode: 'files', pattern: 'api/services/agent-runtime/**/*.ts', limit: 10 });
   const denied = permissionPolicy.evaluate({
     sessionId: explorer.id,
     category: 'write',

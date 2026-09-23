@@ -70,7 +70,7 @@ Analyze each Goal one by one:
 
 ### Phase 2 — Search and Verify
 Based on Phase 1 understanding and the source references listed above:
-1. Use grep.search to search for key symbols, types, function names
+1. Use rg to search for key symbols, types, function names
 2. Use file.read to read key code snippets when necessary (do not read entire files)
 3. Verify that the problems described in goals actually exist in the code
 4. Identify files that need modification and their dependencies

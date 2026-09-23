@@ -104,16 +104,15 @@ const TOOL_MESSAGES: Record<string, (args: LooseArgs) => { activity: string; pha
     }
   },
 
-  'file.glob': (args) => {
-    const pattern = str(args, 'pattern') ?? str(args, 'glob')
-    return {
-      activity: pattern ? `正在匹配文件: ${truncate(pattern, 40)}…` : '正在索引文件结构…',
-      phase: 'explore',
-    }
-  },
-
-  'grep.search': (args) => {
+  'rg': (args) => {
+    const mode = str(args, 'mode') ?? 'search'
     const pattern = str(args, 'pattern') ?? str(args, 'query')
+    if (mode === 'files') {
+      return {
+        activity: pattern ? `正在匹配文件: ${truncate(pattern, 40)}…` : '正在索引文件结构…',
+        phase: 'explore',
+      }
+    }
     if (pattern) {
       return { activity: `正在搜索 "${truncate(pattern, 40)}"…`, phase: 'explore', detail: truncate(pattern, 40) }
     }

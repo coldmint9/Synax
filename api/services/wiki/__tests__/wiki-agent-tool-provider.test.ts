@@ -41,7 +41,7 @@ describe('wikiAgentToolProvider', () => {
     ).toBe(true);
     expect(
       profileHasWikiAgentReadTools({
-        allowedCapabilities: ['bash', 'grep.search'],
+        allowedCapabilities: ['bash', 'rg'],
       } as never),
     ).toBe(false);
   });
@@ -73,7 +73,7 @@ describe('wikiAgentToolProvider', () => {
     mockTryGetSession.mockReturnValue({ projectId: 'proj-a', profileId: 'reviewer' });
     vi.mocked(profileService.maybeGet).mockReturnValue({
       id: 'reviewer',
-      allowedCapabilities: ['bash', 'grep.search'],
+      allowedCapabilities: ['bash', 'rg'],
     } as never);
 
     expect(wikiAgentToolProvider.getTools('ars_3')).toEqual([]);
