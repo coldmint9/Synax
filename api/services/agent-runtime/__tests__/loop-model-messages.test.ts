@@ -34,10 +34,12 @@ function createMockStore(data: {
 }) {
   return {
     listMessages: (sessionId: string) => data.messages ?? [],
+    listRecentMessages: (sessionId: string) => data.messages ?? [],
     listRuns: (sessionId: string) => data.runs ?? [],
     listRunSteps: (runId: string) =>
       (data.steps ?? []).filter((s) => s.runId === runId),
     listToolCalls: (sessionId: string) => data.toolCalls ?? [],
+    listRecentToolCalls: (sessionId: string) => data.toolCalls ?? [],
     listRunToolCalls: (runId: string) =>
       (data.toolCalls ?? []).filter((tc) => tc.runId === runId),
     listRunParts: (stepId: string) =>
@@ -74,6 +76,10 @@ describe("buildLoopModelMessages", () => {
     expect(systemMessageContents).toEqual(
       new Set([messages[0].content, runtimeReminder.content]),
     );
+    expect(messages.filter((message) => message.content === runtimeReminder.content)).toEqual([
+      { role: "system", content: runtimeReminder.content },
+    ]);
+    expect(messages.find((message) => message.content === userText)?.role).toBe("user");
     expect(systemMessageContents.has(userText)).toBe(false);
     expect(systemMessageContents.has("Answer")).toBe(false);
   });

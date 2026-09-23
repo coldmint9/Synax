@@ -220,6 +220,18 @@ export function acceptRuntimeRun(
   })();
 }
 
+/** Persist this identity on the input itself before any message event can be observed. */
+export function acceptedInputRequestId(
+  sessionId: string,
+  runId?: string,
+): string | undefined {
+  if (!runId) return undefined;
+  const run = agentRuntimeStore.getRun(runId);
+  if (run.sessionId !== sessionId)
+    throw new AgentValidationError("The accepted Run belongs to another session.");
+  return (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId;
+}
+
 export function activateAcceptedRun(
   sessionId: string,
   runId: string,

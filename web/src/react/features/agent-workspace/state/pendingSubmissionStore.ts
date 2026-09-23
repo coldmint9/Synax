@@ -48,13 +48,15 @@ export function projectPendingSubmission(
         (item.metadata?.runtime as { requestId?: string } | undefined)
           ?.requestId === pending.requestId,
     ) ?? pending.run;
-  const confirmed = Boolean(
-    run &&
-    messages.some(
-      (message) =>
-        message.role === "user" &&
-        (message.id === run.triggerMessageId || message.runId === run.id),
-    ),
+  // The persisted message can arrive before run_started or the POST reply.
+  // Match the submission, never its text: repeating the same prompt is valid.
+  const confirmed = messages.some(
+    (message) =>
+      message.role === "user" &&
+      message.sessionId === pending.message.sessionId &&
+      (message.metadata?.requestId === pending.requestId ||
+        (run &&
+          (message.id === run.triggerMessageId || message.runId === run.id))),
   );
   return {
     messages: confirmed ? messages : [...messages, pending.message],

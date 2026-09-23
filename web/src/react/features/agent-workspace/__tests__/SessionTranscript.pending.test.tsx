@@ -78,6 +78,29 @@ it("renders a sent message and the thinking grid before the request completes, w
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
 });
 
+it("shows one real message when it arrives before the run-start linkage and HTTP response", async () => {
+  let finish!: (result: { run: AgentRun; reused: boolean }) => void;
+  vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  render(<SessionTranscript />);
+  let sending!: Promise<void>;
+  act(() => {
+    sending = useAgentSessionStore.getState().sendSessionMessage("s1", { message: "我上一轮说了啥" });
+  });
+  const pending = usePendingSubmissionStore.getState().items.s1;
+  act(() => useAgentSessionStore.setState({
+    detailLoading: false,
+    messages: [{ ...pending.message, id: "persisted", runId: null, metadata: { requestId: pending.requestId } }],
+    runs: [],
+  }));
+  expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
+  expect(screen.getByRole("status")).toHaveTextContent("正在思考");
+  await act(async () => {
+    finish({ run, reused: false });
+    await sending;
+  });
+  expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
+});
+
 it("deduplicates an SSE confirmation arriving before the POST response and keeps identical earlier messages", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
