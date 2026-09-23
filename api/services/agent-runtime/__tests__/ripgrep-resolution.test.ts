@@ -24,65 +24,52 @@ function tempHome(): string {
 
 function writeRgStub(dir: string): string {
   fs.mkdirSync(dir, { recursive: true });
-  const bin = path.join(dir, "rg");
-  fs.writeFileSync(bin, '#!/bin/sh\necho "ripgrep 15.0.0-stub"\n');
-  fs.chmodSync(bin, 0o755);
+  const bin = path.join(dir, process.platform === "win32" ? "rg.cmd" : "rg");
+  fs.writeFileSync(
+    bin,
+    process.platform === "win32"
+      ? "@echo ripgrep 15.0.0-stub\r\n"
+      : '#!/bin/sh\necho "ripgrep 15.0.0-stub"\n',
+  );
+  if (process.platform !== "win32") fs.chmodSync(bin, 0o755);
   return bin;
 }
 
-describe.skipIf(process.platform === "win32")("ripgrep resolution", () => {
-  it("prefers the SYNAX_RG_PATH override even with a minimal PATH", async () => {
-    const home = tempHome();
-    const override = writeRgStub(path.join(home, "bin"));
-    const resolved = await resolveRipgrepBinary({
-      env: { PATH: "", SYNAX_RG_PATH: override },
-      homeDir: home,
-    });
-    expect(resolved).toBe(override);
-  });
-
-  it("resolves rg through PATH when it is installed there", async () => {
-    const home = tempHome();
-    const stubDir = path.join(home, "on-path");
-    writeRgStub(stubDir);
-    const previousPath = process.env.PATH;
-    process.env.PATH = stubDir;
-    try {
+describe("ripgrep resolution", () => {
+  it.skipIf(process.platform === "win32")(
+    "prefers the explicit SYNAX_RG_PATH override",
+    async () => {
+      const override = writeRgStub(path.join(tempHome(), "bin"));
       const resolved = await resolveRipgrepBinary({
-        env: { PATH: stubDir },
-        homeDir: tempHome(),
+        env: { SYNAX_RG_PATH: override },
+        packagedPath: path.join(tempHome(), "missing-rg"),
       });
-      expect(resolved).toBe("rg");
-    } finally {
-      process.env.PATH = previousPath;
-    }
+      expect(resolved).toBe(override);
+    },
+  );
+
+  it("uses the packaged binary even when PATH is empty", async () => {
+    const resolved = await resolveRipgrepBinary({ env: { PATH: "" } });
+    expect(resolved).toContain("@vscode/ripgrep-universal");
   });
 
-  it("falls back to ~/.cargo/bin/rg when PATH has no rg", async () => {
-    const home = tempHome();
-    const cargoRg = writeRgStub(path.join(home, ".cargo", "bin"));
-    // The `rg` PATH probe inherits the test process env, so clear it too.
-    const previousPath = process.env.PATH;
-    process.env.PATH = "";
-    try {
-      const resolved = await resolveRipgrepBinary({
-        env: { PATH: "" },
-        homeDir: home,
-      });
-      expect(resolved).toBe(cargoRg);
-    } finally {
-      process.env.PATH = previousPath;
-    }
-  });
-
-  it("skips an invalid SYNAX_RG_PATH instead of failing", async () => {
-    const home = tempHome();
-    const resolved = await resolveRipgrepBinary({
-      env: { PATH: "", SYNAX_RG_PATH: path.join(home, "missing", "rg") },
-      homeDir: home,
-    });
-    expect(resolved).not.toBe(path.join(home, "missing", "rg"));
-  });
+  it.skipIf(process.platform === "win32")(
+    "does not resolve a host rg from PATH",
+    async () => {
+      const hostRg = writeRgStub(path.join(tempHome(), "host"));
+      const previousPath = process.env.PATH;
+      process.env.PATH = path.dirname(hostRg);
+      try {
+        const resolved = await resolveRipgrepBinary({
+          env: { PATH: path.dirname(hostRg) },
+          packagedPath: path.join(tempHome(), "missing-rg"),
+        });
+        expect(resolved).toBeNull();
+      } finally {
+        process.env.PATH = previousPath;
+      }
+    },
+  );
 
   it("caches the process-wide resolution until reset", async () => {
     const first = resolveRipgrep();
