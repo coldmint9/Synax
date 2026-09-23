@@ -11,6 +11,7 @@ import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
 import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
+import { ContextMenuProvider } from "./components/context-menu/ContextMenuProvider";
 import { DesktopUpdateProvider } from "./features/updates/DesktopUpdateProvider";
 import { DesktopUpdatePanel } from "./features/updates/DesktopUpdateStatus";
 
@@ -34,6 +35,7 @@ export default function App() {
   const draftPreviewActive = useWikiStore((s) => s.draftPreviewActive);
 
   return (
+    <ContextMenuProvider>
     <DesktopUpdateProvider>
       <GlobalSessionSearch />
       <DesktopUpdatePanel />
@@ -94,5 +96,6 @@ export default function App() {
         />
       </div>
     </DesktopUpdateProvider>
+    </ContextMenuProvider>
   );
 }

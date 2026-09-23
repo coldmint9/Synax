@@ -4,6 +4,19 @@ const { contextBridge, ipcRenderer } =
 if (process.isMainFrame)
   contextBridge.exposeInMainWorld("electronAPI", {
     platform: process.platform,
+    showContextMenu: (request: unknown) => ipcRenderer.invoke("context-menu:show", request),
+    onContextMenuAction: (callback: (requestId: string, actionId: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, requestId: string, actionId: string) => callback(requestId, actionId);
+      ipcRenderer.on("context-menu:action", listener);
+      return () => ipcRenderer.removeListener("context-menu:action", listener);
+    },
+    onContextMenuClosed: (callback: (requestId: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, requestId: string) => callback(requestId);
+      ipcRenderer.on("context-menu:closed", listener);
+      return () => ipcRenderer.removeListener("context-menu:closed", listener);
+    },
+    revealWorkspaceFile: (workspacePath: string, relativePath: string) =>
+      ipcRenderer.invoke("context-menu:reveal", { workspacePath, relativePath }),
     showDesktopNotification: (payload: {
       id: string;
       projectId: string;

@@ -3,11 +3,19 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as testingRender,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
-import type { SessionEnvironment } from "../../../../lib/api/agentRuntime";
+import { MemoryRouter } from "react-router-dom";
+import { ContextMenuProvider } from "../../../components/context-menu/ContextMenuProvider";
+
+const render: typeof testingRender = (ui, options) => testingRender(ui, {
+  wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
+  ...options,
+});
+import { agentRuntimeApi, type SessionEnvironment } from "../../../../lib/api/agentRuntime";
 import { WorkspaceDashboard } from "../WorkspaceDashboard";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
@@ -112,7 +120,7 @@ describe("WorkspaceDashboard", () => {
     });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it("divides the snapshot into one card per component group", () => {
     const { container } = renderDashboard();
@@ -470,6 +478,9 @@ describe("WorkspaceDashboard", () => {
 
     fireEvent.click(screen.getByLabelText("刷新工作区"));
     expect(reload).toHaveBeenCalledTimes(1);
+    fireEvent.contextMenu(screen.getByLabelText("刷新工作区").closest(".ws-card--repo")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "刷新工作区" }));
+    expect(reload).toHaveBeenCalledTimes(2);
   });
 
   it("gives each repository its own collapsible project and keeps file tabs isolated", () => {
@@ -543,6 +554,24 @@ describe("WorkspaceDashboard", () => {
     expect(
       within(goneCard).getByRole("button", { name: "提交并推送" }),
     ).toBeDisabled();
+  });
+
+  it("restores the clicked Git file in its own repository in tree view", async () => {
+    const restore = vi.spyOn(agentRuntimeApi, "restoreSessionFile")
+      .mockResolvedValue({ rootId: "web", path: "notes.md", deleted: false });
+    const confirm = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    renderDashboard({ repositories: [
+      { ...environment, rootId: "api", name: "API", role: "primary", status: "ready", workspacePath: "/repos/api" },
+      { ...environment, rootId: "web", name: "Web", role: "reference", status: "ready", workspacePath: "/repos/web" },
+    ] });
+    fireEvent.click(screen.getAllByRole("button", { name: "目录视图" })[1]);
+    const webCard = screen.getByRole("button", { name: /^Web/ }).closest(".ws-project-card")!;
+    fireEvent.contextMenu(within(webCard).getByText("notes.md"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "回滚该文件的变更" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("session-1", { path: "notes.md", rootId: "web" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    restore.mockRestore();
   });
 
   it("remembers project folds after the workspace is reopened", () => {

@@ -6683,3 +6683,22 @@
 }
 .settings-file-opener { width: 180px; max-width: 100%; }
 .settings-opener-status { display: block; margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--muted); }
+
+/* Context menus use the same compact geometry in Web light and dark themes. */
+.synax-context-menu {
+  border-radius: 12px;
+  padding: 4px;
+}
+.synax-context-menu .menu-item {
+  min-height: 28px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .synax-context-menu,
+  .synax-context-menu .menu-item {
+    animation: none !important;
+    transition: none !important;
+  }
+}

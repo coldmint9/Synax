@@ -25,6 +25,8 @@ vi.mock("../SessionStaticTimeline", () => ({
 const session = {
   id: "session-inline-visualization",
   projectId: "project-1",
+  parentSessionId: null,
+  childSessionIds: [],
   status: "completed",
   profileId: "synax",
   title: "Artifact preview",
