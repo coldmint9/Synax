@@ -35,6 +35,16 @@ const message = (id: string, content = id) => ({
   createdAt: "now",
 });
 describe("runtime version repository", () => {
+  it("reads every retained runtime epoch after more than 256 history switches", () => {
+    db.prepare("UPDATE conversation_v3_heads SET boundary_only=1 WHERE session_id='s'").run();
+    for (let i = 0; i < 270; i++) {
+      const cp = repo.capture("s", "reply", `epoch-${i}`, null, 0);
+      repo.rollback("s", { checkpointId: cp.id, revision: repo.head("s").revision, requestId: `switch-${i}` });
+    }
+    const epochs = repo.runtimeEpochs("s").map(range => range.epoch);
+    expect(epochs).toEqual(Array.from({ length: 271 }, (_, i) => 271 - i));
+  }, 20_000);
+
   it("publishes messages and historical session fields and switches them back together", () => {
     repo.put("s", "messages", "a", message("a"));
     const cp = repo.capture("s", "reply", "a", null, 0);

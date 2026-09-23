@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../session-store.js', () => ({
-  agentRuntimeStore: { getSession: mocks.getSession, listToolCalls: mocks.listToolCalls },
+  agentRuntimeStore: { getSession: mocks.getSession, listMessages: () => [], listToolCalls: mocks.listToolCalls },
 }))
 vi.mock('../tools/workspace.js', () => ({ resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots }))
 vi.mock('../../llm-runtime/gateway.js', () => ({ generateGatewayTextResult: mocks.generateGatewayTextResult }))

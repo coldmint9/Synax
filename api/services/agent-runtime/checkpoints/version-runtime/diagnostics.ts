@@ -140,6 +140,64 @@ export function readDiagnostic(
     };
   });
 }
+/** Full branch-visible records for execution, separate from display previews. */
+export function listDiagnostics(
+  sessionId: string,
+  kind: string,
+  scope?: { field: string; value: string },
+): Record<string, unknown>[] {
+  return readVersionSnapshot(getRawSqlite(), () => {
+    const db = getRawSqlite();
+    const name = table(kind);
+    if (scope && !["runId", "stepId"].includes(scope.field))
+      throw new Error("Invalid detail scope.");
+    const filter = scope
+      ? ` AND t.${scope.field === "runId" ? "run_id" : "step_id"}=?`
+      : "";
+    const values = scope ? [scope.value] : [];
+    const items: Record<string, unknown>[] = [];
+    // Epochs and records are visited newest-first, then returned chronologically.
+    for (const range of versionRepository().runtimeEpochs(sessionId)) {
+      const rows = db
+        .prepare(
+          `SELECT t.* FROM conversation_v3_runtime_records r
+        JOIN ${name} t ON t.id=r.record_id AND t.session_id=r.session_id
+        WHERE r.session_id=? AND r.kind=? AND r.epoch=? AND r.sequence<=?${filter}
+        ORDER BY r.sequence DESC`,
+        )
+        .all(sessionId, kind, range.epoch, range.through, ...values) as Record<
+        string,
+        unknown
+      >[];
+      for (const row of rows)
+        items.push({
+          ...mapLegacyHistoryRow(name, row),
+          __synaxExecutionEpoch: range.epoch,
+        });
+    }
+    const head = db
+      .prepare(
+        "SELECT legacy_runtime FROM conversation_v3_heads WHERE session_id=?",
+      )
+      .get(sessionId) as { legacy_runtime: number };
+    if (head.legacy_runtime) {
+      const rows = db
+        .prepare(
+          `SELECT t.* FROM ${name} t WHERE t.session_id=?${filter}
+        AND NOT EXISTS(SELECT 1 FROM conversation_v3_runtime_records r
+          WHERE r.session_id=t.session_id AND r.kind=? AND r.record_id=t.id)
+        ORDER BY t.rowid DESC`,
+        )
+        .all(sessionId, ...values, kind) as Record<string, unknown>[];
+      for (const row of rows)
+        items.push({
+          ...mapLegacyHistoryRow(name, row),
+          __synaxExecutionEpoch: 0,
+        });
+    }
+    return items.reverse();
+  });
+}
 export function diagnosticPage(
   sessionId: string,
   kind: string,

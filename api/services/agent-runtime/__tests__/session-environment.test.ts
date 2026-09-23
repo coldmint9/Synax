@@ -7,9 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listToolCalls: vi.fn(),
-  listRecentToolCalls: vi.fn(),
   listMessages: vi.fn(),
-  listRecentMessages: vi.fn(),
   getToolCall: vi.fn(),
   resolveSessionWorkspaceRoots: vi.fn(),
 }));
@@ -85,9 +83,7 @@ beforeEach(() => {
     },
   ]);
   mocks.listToolCalls.mockReturnValue([]);
-  mocks.listRecentToolCalls.mockImplementation((...args: Parameters<typeof mocks.listToolCalls>) => mocks.listToolCalls(...args));
   mocks.listMessages.mockReturnValue([]);
-  mocks.listRecentMessages.mockImplementation((...args: Parameters<typeof mocks.listMessages>) => mocks.listMessages(...args));
   invalidateSessionEnvironment(sessionId);
 });
 

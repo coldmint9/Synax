@@ -1,5 +1,5 @@
 import { admitVersionGrowth } from "../resource-admission.js";
-import { diagnosticPage, isDiagnostic, readDiagnostic, trackDiagnostic } from "./diagnostics.js";
+import { listDiagnostics, isDiagnostic, readDiagnostic, trackDiagnostic } from "./diagnostics.js";
 import { retainVersionRecordAssets } from "./assets.js";
 import type { RuntimeContentPart } from "../../content-parts.js";
 import { assertBatchInput } from "./batch-input.js";
@@ -235,16 +235,10 @@ export function listVersionEntities<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      page = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId))
-        ? { ...diagnosticPage(sessionId, kind, { limit: 256, scope }), next: undefined }
-        : repo.page(sessionId, kind, { limit: 256, scope });
-    if (page.next)
-      throw new AgentRuntimeError(
-        "Execution history requires pagination.",
-        "HISTORY_PAGE_REQUIRED",
-        413,
-      );
-    return page.items.map((row) => ({
+      rows = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId))
+        ? listDiagnostics(sessionId, kind, scope)
+        : repo.list(sessionId, kind, scope);
+    return rows.map((row) => ({
       ...normalizeVersionEntity(kind, row, head.epoch),
       ...(row[key] === head.epoch
         ? currentControl(sessionId, kind, String(row.id), head.epoch)

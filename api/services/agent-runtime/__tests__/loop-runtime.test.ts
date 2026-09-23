@@ -677,56 +677,98 @@ describe("agentLoopRuntime", () => {
     }
   });
 
-  it("runs a versioned Native turn under coordinator leases and journals its completion", async () => {
-    const { initializeVersionNative } =
-      await import("../checkpoints/version-runtime/bridge.js");
-    const { RunCoordinator } = await import("../run-coordinator.js");
-    const { runtimeJournal } = await import("../runtime-journal.js");
-    const { getRawSqlite } = await import("../../../db/index.js");
-    const session = agentSessionRuntime.create({
-      ...executorInput,
-      workDir: process.cwd(),
-    });
-    agentRuntimeStore.updateSession(session.id, { status: "completed" });
-    const coordinator = new RunCoordinator({
-      execute: (id, _mode, input, signal) =>
-        agentLoopRuntime.streamRun(id, input, signal),
-      interrupt: async () => {},
-    });
-    try {
-      initializeVersionNative(
-        agentRuntimeStore.getSession(session.id),
-        agentRuntimeStore.listEvents(session.id),
-        session.contextSnapshotId
-          ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
-          : undefined,
+  it.each(["full", "boundary"])(
+    "runs consecutive versioned Native turns under coordinator leases (%s)",
+    async (mode) => {
+      vi.stubEnv(
+        "SYNAX_VERSION_HISTORY",
+        mode === "full" ? "legacy" : "boundary",
       );
-      queueMockStep(makeTextStep("Coordinated version answer."));
-      const accepted = coordinator.submit(
-        session.id,
-        { message: "Run with leases" },
-        "native-coordinator",
-      );
-      await coordinator.waitForIdle();
-      expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
-        "completed",
-      );
-      expect(
-        runtimeJournal
-          .read(session.id)
-          .some((row) => row.chunk.type === "done"),
-      ).toBe(true);
-      expect(
-        agentRuntimeStore.getRun(accepted.run.id).metadata.executionLease,
-      ).toMatchObject({ closed: true });
-      expect(
-        agentRuntimeStore.listRuns(session.id)[0].metadata.executionLease,
-      ).toBeUndefined();
-    } finally {
-      await coordinator.waitForIdle();
-      clearVersionSessionFixture(session.id);
-    }
-  });
+      const { initializeVersionNative } =
+        await import("../checkpoints/version-runtime/bridge.js");
+      const { RunCoordinator } = await import("../run-coordinator.js");
+      const { runtimeJournal } = await import("../runtime-journal.js");
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        workDir: process.cwd(),
+      });
+      agentRuntimeStore.updateSession(session.id, { status: "completed" });
+      const coordinator = new RunCoordinator({
+        execute: (id, _mode, input, signal) =>
+          agentLoopRuntime.streamRun(id, input, signal),
+        interrupt: async () => {},
+      });
+      try {
+        if (mode === "full")
+          initializeVersionNative(
+            agentRuntimeStore.getSession(session.id),
+            agentRuntimeStore.listEvents(session.id),
+            session.contextSnapshotId
+              ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
+              : undefined,
+          );
+        queueMockStep(makeTextStep("Coordinated version answer."));
+        const accepted = coordinator.submit(
+          session.id,
+          { message: "Run with leases" },
+          "native-coordinator",
+        );
+        await coordinator.waitForIdle();
+        expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe(
+          "completed",
+        );
+        expect(
+          runtimeJournal
+            .read(session.id)
+            .some((row) => row.chunk.type === "done"),
+        ).toBe(true);
+        expect(
+          agentRuntimeStore.getRun(accepted.run.id).metadata.executionLease,
+        ).toMatchObject({ closed: true });
+        expect(
+          agentRuntimeStore.listRuns(session.id)[0].metadata.executionLease,
+        ).toBeUndefined();
+        for (let i = 0; i < 270; i++)
+          agentRuntimeStore.appendMessage({
+            id: `long-history-${i}`,
+            sessionId: session.id,
+            runId: accepted.run.id,
+            stepId: null,
+            role: "assistant",
+            content: "Intermediate reasoning",
+            metadata: { type: "thinking" },
+            createdAt: "now",
+          });
+        queueMockStep(makeTextStep("Second coordinated answer."));
+        const next = coordinator.submit(
+          session.id,
+          { message: "Implement a different feature" },
+          "native-coordinator-second",
+        );
+        await coordinator.waitForIdle();
+        expect(agentRuntimeStore.getRun(next.run.id).status).toBe("completed");
+        expect(
+          agentRuntimeStore.getRun(next.run.id).metadata.executionLease,
+        ).toMatchObject({ closed: true });
+        expect(
+          capturedRequests
+            .at(-1)
+            ?.messages.filter((m) => m.role === "user")
+            .map((m) => m.content),
+        ).toEqual(["Run with leases", "Implement a different feature"]);
+        expect(
+          runtimeJournal
+            .read(session.id)
+            .some((row) => row.chunk.type === "run_failed"),
+        ).toBe(false);
+      } finally {
+        await coordinator.waitForIdle();
+        clearVersionSessionFixture(session.id);
+        vi.unstubAllEnvs();
+      }
+    },
+    20_000,
+  );
 
   it("atomically edits the first versioned input and admits one idempotent Native replacement run", async () => {
     const { initializeVersionNative } =

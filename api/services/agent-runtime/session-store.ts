@@ -1142,22 +1142,6 @@ export class AgentRuntimeStore {
     })();
   }
 
-  /** Model context is a bounded recent window; archival APIs remain explicit. */
-  listRecentMessages(sessionId: string): AgentRuntimeMessage[] {
-    if (!versionedSession(sessionId)) return this.listMessages(sessionId);
-    const page = versionRepository().page(sessionId, "messages", { reverse: true, preview: true, limit: 64 });
-    const items = page.items.reverse() as unknown as AgentRuntimeMessage[];
-    if (page.next && items[0]) items[0] = { ...items[0], metadata: { ...items[0].metadata, historyWindowTruncated: true } };
-    return items;
-  }
-
-  listRecentToolCalls(sessionId: string): ToolCallRecord[] {
-    if (!versionedSession(sessionId)) return this.listToolCalls(sessionId);
-    if (boundaryOnlySession(sessionId)) return diagnosticPage(sessionId, "tools", { limit: 64, preview: true }).items as unknown as ToolCallRecord[];
-    return versionRepository().page(sessionId, "tools", { reverse: true, preview: true, limit: 64 })
-      .items.reverse() as unknown as ToolCallRecord[];
-  }
-
   listMessages(sessionId: string): AgentRuntimeMessage[] {
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
@@ -1382,9 +1366,16 @@ export class AgentRuntimeStore {
   }
 
   updateRun(runId: string, patch: Partial<AgentRun>): AgentRun {
-    const current = this.getRun(runId);
-    const next = { ...current, ...patch };
-    return this.appendRun(next);
+    return getRawSqlite().transaction(() => {
+      const current = this.getRun(runId);
+      // Merge against live state under the writer lock. History projections
+      // omit executionLease/recovery and must not erase those control fields.
+      return this.appendRun({
+        ...current,
+        ...patch,
+        metadata: { ...current.metadata, ...patch.metadata },
+      });
+    })();
   }
 
   listRuns(sessionId: string): AgentRun[] {

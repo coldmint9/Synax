@@ -98,7 +98,7 @@ it("enables lightweight history by default and keeps runtime events/runs out of 
   store.updateSession(id, { resultSummary: "state-only update must not invalidate a message cursor" });
   const older = readHistoryWindow(id, first.historyWindow.olderCursor);
   expect(older.messages.map((m) => m.id)).toHaveLength(24);
-  expect(store.listRecentMessages(id)).toHaveLength(64);
+  expect(store.listMessages(id)).toHaveLength(320);
   message("m320");
   expect(() => readHistoryWindow(id, first.historyWindow.olderCursor)).toThrow(
     /changed/,
