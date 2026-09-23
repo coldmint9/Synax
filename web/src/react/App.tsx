@@ -11,6 +11,7 @@ import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
 import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
+import { WorkspaceFileMutationHost } from "./features/agent-workspace/WorkspaceFileMutationHost";
 import { ContextMenuProvider } from "./components/context-menu/ContextMenuProvider";
 import { DesktopUpdateProvider } from "./features/updates/DesktopUpdateProvider";
 import { DesktopUpdatePanel } from "./features/updates/DesktopUpdateStatus";
@@ -36,6 +37,7 @@ export default function App() {
 
   return (
     <ContextMenuProvider>
+    <WorkspaceFileMutationHost />
     <DesktopUpdateProvider>
       <GlobalSessionSearch />
       <DesktopUpdatePanel />

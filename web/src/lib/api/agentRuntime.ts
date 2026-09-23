@@ -1058,6 +1058,30 @@ export const agentRuntimeApi = {
         body: JSON.stringify(body),
       },
     ),
+  openSessionFileInSystemTerminal: (
+    sessionId: string,
+    body: { path: string; rootId?: string },
+  ) =>
+    request<{ ok: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file/system-terminal`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  trashSessionEnvironmentFile: (
+    sessionId: string,
+    body: { path: string; rootId?: string },
+  ) =>
+    request<{ sessionId: string; path: string; trashed: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file/trash`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  renameSessionEnvironmentFile: (
+    sessionId: string,
+    body: { path: string; newName: string; rootId?: string },
+  ) =>
+    request<{ sessionId: string; path: string; previousPath: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file/rename`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   restoreSessionFile: (
     sessionId: string,
     body: { path: string; rootId?: string },

@@ -417,12 +417,14 @@ function WorkspaceFilesDashboardPanel({
         rootId: repository.rootId,
         rootName: repository.name,
         workspacePath: repository.workspacePath,
+        sessionId,
       })),
     outputs: (repository.outputFiles ?? []).map((path) => ({
       path,
       rootId: repository.rootId,
       rootName: repository.name,
       workspacePath: repository.workspacePath,
+      sessionId,
     })),
   }));
   const inputs = files.flatMap((item) => item.inputs);
@@ -439,6 +441,8 @@ function WorkspaceFilesDashboardPanel({
         <InputSourceRow
           key={`${rootId}:${source.kind}:${source.toolCallId ?? source.assetId ?? source.label}`}
           source={source}
+          sessionId={sessionId}
+          rootId={rootId}
           rootName={rootName}
           workspacePath={workspacePath}
           onOpen={() =>
@@ -1087,7 +1091,7 @@ function ChangedFileRow({ file, onOpen, depth = 0, onRevert, reverting = false, 
   const name = fileName(file.path);
   const hasStats = file.additions > 0 || file.deletions > 0;
   const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
-    t, path: file.path, workspacePath, onDiff: onOpen,
+    t, path: file.path, workspacePath, sessionId, rootId, onDiff: onOpen,
     onOpen: () => openWorkspaceFile(sessionId, file.path, null, rootId, rootName),
     canOpenFile: file.status !== "deleted", canRevert: Boolean(onRevert),
     onRevert: () => onRevert?.(file, rootId), busy: reverting,
@@ -1112,12 +1116,12 @@ function ChangedFileRow({ file, onOpen, depth = 0, onRevert, reverting = false, 
 }
 
 function OutputFileRow({ file, onOpen }: {
-  file: { path: string; rootId: string; rootName: string; workspacePath: string };
+  file: { path: string; rootId: string; rootName: string; workspacePath: string; sessionId: string };
   onOpen: () => void;
 }) {
   const { t } = useLocale();
   const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
-    t, path: file.path, workspacePath: file.workspacePath, onOpen,
+    t, path: file.path, workspacePath: file.workspacePath, sessionId: file.sessionId, rootId: file.rootId, onOpen,
   }) }));
   return <button type="button" className="ws-row" title={file.path} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
     <FileTypeIcon path={file.path} size={11} />
@@ -1129,14 +1133,16 @@ function OutputFileRow({ file, onOpen }: {
 }
 
 function OutputFiles({ files, onOpen }: {
-  files: Array<{ path: string; rootId: string; rootName: string; workspacePath: string }>;
+  files: Array<{ path: string; rootId: string; rootName: string; workspacePath: string; sessionId: string }>;
   onOpen: (file: { path: string; rootId: string; rootName: string }) => void;
 }) {
   return files.map((file) => <OutputFileRow key={`${file.rootId}:${file.path}`} file={file} onOpen={() => onOpen(file)} />);
 }
 
-function InputSourceRow({ source, rootName, workspacePath, onOpen }: {
+function InputSourceRow({ source, rootName, workspacePath, sessionId, rootId, onOpen }: {
   source: SessionEnvironmentInputSource;
+  sessionId: string;
+  rootId: string;
   rootName: string;
   workspacePath: string;
   onOpen: () => void;
@@ -1145,7 +1151,7 @@ function InputSourceRow({ source, rootName, workspacePath, onOpen }: {
   const label = source.path ? fileName(source.path) : source.label;
   const menu = useContextMenu(() => ({ label: source.label, entries: sourceContextEntries({
     t, label: source.label, path: source.kind === "file" ? source.path : undefined,
-    workspacePath: source.kind === "file" ? workspacePath : undefined, onOpen,
+    workspacePath: source.kind === "file" ? workspacePath : undefined, sessionId, rootId, onOpen,
   }) }));
   return <button type="button" className="ws-row" title={source.label} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
     <FileTypeIcon path={source.path ?? source.label} size={11} />

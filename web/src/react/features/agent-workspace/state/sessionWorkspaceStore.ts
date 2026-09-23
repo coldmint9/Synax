@@ -70,6 +70,8 @@ interface SessionWorkspaceStoreState {
   showDashboard: (sessionId: string) => void;
   closeTab: (sessionId: string, id: string) => void;
   closeOthers: (sessionId: string, id: string) => void;
+  renameFileTabs: (sessionId: string, rootId: string | undefined, oldPath: string, newPath: string) => void;
+  closeFileTabs: (sessionId: string, rootId: string | undefined, path: string) => void;
   closeAll: (sessionId: string) => void;
   setTabDirty: (sessionId: string, id: string, dirty: boolean) => void;
   setPresentation: (
@@ -114,7 +116,7 @@ function patchSession(
 }
 
 export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
-  (set) => ({
+  (set, get) => ({
     sessions: {},
 
     openTab: (sessionId, tab) =>
@@ -182,6 +184,27 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
           };
         }),
       }));
+    },
+
+    renameFileTabs: (sessionId, rootId, oldPath, newPath) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) => {
+          const tabs = current.tabs.map((tab) => {
+            if ((tab.kind !== "file" && tab.kind !== "diff") || tab.rootId !== rootId || tab.path !== oldPath) return tab;
+            const title = tab.title.replace(oldPath.split(/[\\/]/).pop() ?? oldPath, newPath.split(/[\\/]/).pop() ?? newPath);
+            const next = { ...tab, path: newPath, title };
+            return { ...next, id: tabIdentity(next) };
+          });
+          const activeIndex = current.tabs.findIndex((tab) => tab.id === current.activeTabId);
+          return { ...current, tabs, activeTabId: activeIndex < 0 ? current.activeTabId : tabs[activeIndex].id };
+        }),
+      })),
+
+    closeFileTabs: (sessionId, rootId, path) => {
+      const tabs = get().sessions[sessionId]?.tabs.filter((tab) =>
+        (tab.kind === "file" || tab.kind === "diff") && tab.rootId === rootId && tab.path === path,
+      ) ?? [];
+      for (const tab of tabs) get().closeTab(sessionId, tab.id);
     },
 
     closeOthers: (sessionId, id) =>

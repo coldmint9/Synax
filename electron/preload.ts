@@ -17,6 +17,8 @@ if (process.isMainFrame)
     },
     revealWorkspaceFile: (workspacePath: string, relativePath: string) =>
       ipcRenderer.invoke("context-menu:reveal", { workspacePath, relativePath }),
+    copyWorkspaceFile: (workspacePath: string, relativePath: string) =>
+      ipcRenderer.invoke("context-menu:copy-file", { workspacePath, relativePath }),
     showDesktopNotification: (payload: {
       id: string;
       projectId: string;

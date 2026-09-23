@@ -50,6 +50,22 @@ describe("sessionWorkspaceStore", () => {
     });
   });
 
+  it("updates renamed file and diff tabs only within their owning repository", () => {
+    const store = useSessionWorkspaceStore.getState();
+    store.openTab("session-a", { kind: "file", title: "API / a.ts", path: "a.ts", rootId: "api" });
+    store.openTab("session-a", { kind: "diff", title: "API / a.ts", path: "a.ts", rootId: "api" });
+    store.openTab("session-a", { kind: "file", title: "Web / a.ts", path: "a.ts", rootId: "web" });
+    store.activateTab("session-a", "file@api:a.ts");
+    store.renameFileTabs("session-a", "api", "a.ts", "new.ts");
+    const workspace = useSessionWorkspaceStore.getState().sessions["session-a"];
+    expect(workspace.tabs.map((tab) => [tab.id, tab.path])).toEqual([
+      ["file@api:new.ts", "new.ts"], ["diff@api:new.ts", "new.ts"], ["file@web:a.ts", "a.ts"],
+    ]);
+    expect(workspace.activeTabId).toBe("file@api:new.ts");
+    store.closeFileTabs("session-a", "api", "new.ts");
+    expect(useSessionWorkspaceStore.getState().sessions["session-a"].tabs).toMatchObject([{ rootId: "web", path: "a.ts" }]);
+  });
+
   it("removes only the deleted sessions", () => {
     const store = useSessionWorkspaceStore.getState();
     store.openTab("keep", { kind: "file", title: "keep.ts", path: "keep.ts" });
