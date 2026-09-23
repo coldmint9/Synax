@@ -45,6 +45,9 @@ export interface ProviderConnection {
 }
 
 export interface McpServerConfig {
+  transport?: "stdio" | "http";
+  url?: string;
+  headers?: Record<string, string>;
   id: string;
   name: string;
   command: string;

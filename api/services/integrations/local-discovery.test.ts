@@ -105,7 +105,7 @@ describe('local integration discovery', () => {
     write(path.join(home, '.claude/skills/broken/SKILL.md'), 'No description')
     write(
       path.join(project, '.mcp.json'),
-      '{"mcpServers":{"remote":{"url":"https://example.test/mcp"}}}',
+      '{"mcpServers":{"remote":{"url":"https://example.test/mcp"},"legacy":{"type":"sse","url":"https://example.test/sse"}}}',
     )
     const custom = path.join(home, 'custom')
     write(path.join(custom, 'SKILL.md'), skill('custom'))
@@ -118,9 +118,9 @@ describe('local integration discovery', () => {
       extraDirectories: [custom],
     })
     expect(result.skills.map((s) => s.name)).toEqual(['custom'])
-    expect(result.mcp.servers.map((s) => s.server.name)).toEqual(['custom'])
+    expect(result.mcp.servers.map((s) => s.server.name)).toEqual(['custom', 'remote'])
     expect(result.mcp.servers[0].server.cwd).toBe(custom)
-    expect(result.mcp.unsupported[0].name).toBe('remote')
+    expect(result.mcp.unsupported[0].name).toBe('legacy')
     expect(result.locations.filter((s) => s.status === 'error')).toHaveLength(1)
   })
   it('copies the complete skill and prevents overwrites or arbitrary path imports', () => {

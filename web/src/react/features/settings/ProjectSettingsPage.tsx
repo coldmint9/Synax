@@ -1,10 +1,11 @@
 import { Button, ScrollShadow, Spinner, Typography } from "@heroui/react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
+import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
+import { ExtensionCenter } from "./extensions/ExtensionCenter";
 import { RefreshCw } from "lucide-react";
 import { useProjectSettings } from "./useProjectSettings";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../../hooks/useLocale";
-import { ProjectCapabilitiesSection } from "./integrations/ProjectCapabilitiesSection";
 import type { I18nKey } from "../../../lib/i18n";
 import { SettingsCard } from "./components/SettingsCard";
 import { GitWorktreesSection } from "./components/GitWorktreesSection";
@@ -12,11 +13,7 @@ import { ProjectReferencesSection } from "./components/ProjectReferencesSection"
 
 function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
   const { t } = useLocale();
-  return (
-    <SettingsCard title={t(titleKey)}>
-      <p className="settings-note">{t("settingsComingSoon")}</p>
-    </SettingsCard>
-  );
+  return <SettingsCard title={t(titleKey)}><p className="settings-note">{t("settingsComingSoon")}</p></SettingsCard>;
 }
 
 function ProviderTab(_props: {
@@ -56,6 +53,10 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
     useProjectSettings(projectId);
   const { globalConfig, providers } = useConfig(projectId);
   const { t } = useLocale();
+  const [params, setParams] = useSearchParams();
+  const selected = params.get('section') ?? 'skill';
+  const section: SettingsSection = ['general', 'tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'skill';
+  const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
 
   if (!projectId)
     return (
@@ -88,7 +89,8 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
   return (
     <ScrollShadow className="settings-scroll-viewport">
       <div className="settings-scroll-content">
-        <div className="mx-auto max-w-5xl px-6 pt-16 pb-16">
+        <SettingsFrame section={section} onSelect={select} projectId={projectId} projectMode>
+          {section !== "general" ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <>
           <div className="flex items-start justify-between gap-3 mb-8">
             <div>
               <Typography type="h5">{t("settingsProjectTitle")}</Typography>
@@ -119,13 +121,6 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
               providers={providers}
               onSave={(data) => patchSection("provider", data)}
             />
-            <ProjectCapabilitiesSection
-              projectId={projectId}
-              servers={settings.mcpServers}
-              onSave={async (servers) => {
-                await patchSection("mcp", { mcpServers: servers });
-              }}
-            />
             <GitWorktreesSection projectId={projectId} />
             <BasicsTab
               settings={settings}
@@ -144,7 +139,8 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
               onSave={(data) => patchSection("compliance", data)}
             />
           </div>
-        </div>
+          </>}
+        </SettingsFrame>
       </div>
     </ScrollShadow>
   );

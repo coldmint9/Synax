@@ -25,6 +25,7 @@ import { configRoutes } from "./routes/config.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { llmRoutes } from "./routes/llm.js";
 import { agentRuntimeRoutes } from "./routes/agent-runtime.js";
+import { extensionRoutes } from "./routes/extensions.js";
 import { skillsRoutes, skillSourcesRoutes } from "./routes/skills.js";
 import { wikiRoutes } from "./routes/wiki.js";
 import { logRoutes } from "./routes/logs.js";
@@ -78,6 +79,7 @@ app.use("*", async (c, next) => {
 // --- 路由 ---
 app.route("/api/projects", projectRoutes);
 app.route("/api/projects", projectSettingsRoutes);
+app.route("/api/projects", extensionRoutes);
 app.route("/api/acp", acpRoutes);
 app.route("/api/context", contextRoutes);
 app.route("/api/config", configRoutes);

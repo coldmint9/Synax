@@ -1,3 +1,4 @@
+import { extensionStore } from '../extensions/extension-store.js';
 import { effectiveTurnMcpIds } from '../agent-runtime/turn-reference-state.js';
 import { z } from 'zod/v4'
 import type {
@@ -85,7 +86,7 @@ class McpSessionToolProvider implements SessionToolProvider {
     const tools: RegisteredTool[] = []
     for (const serverId of serverIds) {
       const config = byId.get(serverId)
-      if (!config || config.enabled === false) continue
+      if (!config || config.enabled === false || !extensionStore.active(session.projectId, 'mcp', serverId)) continue
       for (const def of mcpClientManager.getCachedTools(serverId, session.projectId)) {
         tools.push(buildTool(serverId, def))
       }
