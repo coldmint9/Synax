@@ -14,12 +14,14 @@ export function RepositoryBranchPicker({
   branch,
   disabled,
   onSwitched,
+  openRequest,
 }: {
   sessionId: string;
   rootId?: string;
   branch: string;
   disabled?: boolean;
   onSwitched: () => void;
+  openRequest?: number;
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
@@ -64,6 +66,13 @@ export function RepositoryBranchPicker({
       if (request === generation.current) setLoading(false);
     }
   }
+  useEffect(() => {
+    if (!openRequest || disabled || switching) return;
+    setOpen(true);
+    setQuery("");
+    void load();
+  }, [openRequest]);
+
   async function select(name: string) {
     if (mutating.current || name === data?.current) return;
     const request = ++generation.current;

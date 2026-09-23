@@ -389,6 +389,9 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     vi.spyOn(configModule.configApi, "getTerminalShell").mockResolvedValue({
       defaultPath: "/bin/zsh",
     });
+    vi.spyOn(configModule.configApi, "listFileOpeners").mockResolvedValue({
+      apps: [],
+    });
     vi.spyOn(configModule.configApi, "discoverAcp").mockImplementation(
       mocks.discoverAcp,
     );
