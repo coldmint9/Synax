@@ -88,7 +88,7 @@ describe("SessionProfilePanel mini/detail", () => {
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.queryByText("120.0K")).toBeNull();
     expect(screen.queryByText("1:05")).toBeNull();
-    expect(screen.queryByText("上下文组成")).toBeNull();
+    expect(screen.queryByText("上下文用量")).toBeNull();
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "10.7");
   });
 
@@ -96,7 +96,7 @@ describe("SessionProfilePanel mini/detail", () => {
     const first = setup();
     fireEvent.click(screen.getByText("21.4K"));
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("上下文组成")).toBeInTheDocument();
+    expect(screen.getByText("上下文用量")).toBeInTheDocument();
     expect(screen.getAllByText("运行中")).toHaveLength(1);
     expect(
       localStorage.getItem("synax:workspace:disclosure:profile:runtime"),
@@ -105,7 +105,7 @@ describe("SessionProfilePanel mini/detail", () => {
     setup();
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(toggle());
-    expect(screen.queryByText("上下文组成")).toBeNull();
+    expect(screen.queryByText("上下文用量")).toBeNull();
   });
 
   it("shows invocation breakdown only in detail", () => {
@@ -177,8 +177,31 @@ describe("SessionProfilePanel mini/detail", () => {
     });
     expect(screen.queryByRole("meter")).toBeNull();
     expect(screen.queryByText("/ 200K")).toBeNull();
-    expect(screen.getByText("≈21.4K")).toBeInTheDocument();
+    expect(screen.queryByText(/21\.4K/)).toBeNull();
+    expect(screen.queryByText("上次上下文")).toBeNull();
+    expect(screen.getByTitle("暂无供应商数据")).toBeInTheDocument();
+    fireEvent.click(toggle());
+    expect(screen.getByText("暂无供应商数据")).toBeInTheDocument();
+  });
+
+  it("labels previous provider measurements without treating them as current usage", () => {
+    setup({
+      sessionStats: stats({
+        contextLimit: 22000,
+        context: {
+          ...stats().context!,
+          stale: true,
+          latestRequestUsageAvailable: false,
+        },
+      }),
+    });
+    expect(screen.getByText("21.4K")).toBeInTheDocument();
     expect(screen.getByText("上次上下文")).toBeInTheDocument();
+    expect(screen.queryByText(/上下文接近上限/)).toBeNull();
+    expect(screen.getByRole("meter")).toHaveAttribute(
+      "aria-valuetext",
+      expect.stringContaining("上次记录"),
+    );
   });
 
   it("distinguishes a measured zero from missing data", () => {
@@ -235,7 +258,7 @@ describe("SessionProfilePanel mini/detail", () => {
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Context")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Runtime details" }));
-    expect(screen.getByText("Context composition")).toBeInTheDocument();
+    expect(screen.getByText("Context usage")).toBeInTheDocument();
   });
 
   it("does not show an inspector without a session", () => {
