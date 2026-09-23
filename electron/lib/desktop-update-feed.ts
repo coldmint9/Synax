@@ -67,6 +67,10 @@ export async function findDesktopRelease(
   candidates.sort((a, b) =>
     compareVersions(b.tag_name.slice(1), a.tag_name.slice(1)),
   );
+  const newestEmptyCandidate =
+    candidates[0] && candidates[0].assets?.length === 0
+      ? candidates[0].tag_name.slice(1)
+      : null;
   for (const release of candidates) {
     const asset = release.assets?.find(
       (item) => item.name === desktopManifestName(platform, arch),
@@ -97,6 +101,11 @@ export async function findDesktopRelease(
         notes:
           typeof release.body === "string" ? release.body.slice(0, 20_000) : "",
       };
+  }
+  if (newestEmptyCandidate) {
+    throw new Error(
+      `Synax ${newestEmptyCandidate} has been published, but no downloadable ${platform}/${arch} update is available yet`,
+    );
   }
   return null;
 }

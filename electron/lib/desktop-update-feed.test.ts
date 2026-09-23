@@ -226,6 +226,27 @@ describe("desktop update feed", () => {
     expect(await findDesktopRelease("0.1.2", "win32", "x64")).toBeNull();
   });
 
+  it("does not report an asset-less stable release as the current version", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: URL) =>
+        new Response(
+          JSON.stringify(
+            url.pathname.endsWith(".json")
+              ? manifest
+              : [{ tag_name: "v0.4.1", assets: [] }],
+          ),
+        ),
+      ),
+    );
+
+    await expect(
+      findDesktopRelease("0.4.0", "darwin", "arm64"),
+    ).rejects.toThrow(
+      "Synax 0.4.1 has been published, but no downloadable darwin/arm64 update is available yet",
+    );
+  });
+
   it("rejects mismatched metadata and missing artifacts", async () => {
     const release = {
       tag_name: "v0.2.0",
