@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { toolRegistry } from '../tool-registry.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCallRecord, ToolCallStatus } from '../contracts.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { resolveSessionInvocationUsage } from '../session-invocation-usage.js';
@@ -38,6 +39,7 @@ function appendCall(input: {
 
 describe('resolveSessionInvocationUsage', () => {
   beforeEach(resetAgentRuntimeFixtures);
+  afterEach(() => vi.restoreAllMocks());
 
   it('normalizes tools, skills and MCP servers and sorts each group by usage', () => {
     const session = agentSessionRuntime.create(executorInput);
@@ -83,4 +85,14 @@ describe('resolveSessionInvocationUsage', () => {
       ]),
     );
   });
+  it('looks up labels once per distinct tool rather than once per invocation', () => {
+    const session = agentSessionRuntime.create(executorInput);
+    for (let i = 0; i < 149; i++) appendCall({ sessionId: session.id, id: `repeat-${i}`, toolId: i % 2 ? 'file.read' : 'rg' });
+    const lookup = vi.spyOn(toolRegistry, 'getForSession');
+    const result = resolveSessionInvocationUsage(session.id);
+    expect(result.totalCalls).toBe(149);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(result.items.map(item => item.callCount).sort()).toEqual([74, 75]);
+  });
+
 });

@@ -112,3 +112,17 @@ it("shows local errors while keeping the original textarea value", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("请配置模型");
   expect(screen.getByRole("textbox")).toHaveValue("Draft A");
 });
+it.each([false, true])(
+  "renders composer text with a bold weight (expanded=%s)",
+  (expanded) => {
+    render(
+      <AgentComposer
+        {...props}
+        sessionId={expanded ? undefined : "a"}
+        modeControl={expanded ? undefined : <span>Chat</span>}
+        defaultExpanded={expanded}
+      />,
+    );
+    expect(screen.getByRole("textbox")).toHaveClass("font-semibold");
+  },
+);

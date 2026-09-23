@@ -9,7 +9,7 @@ const HEALTH_PATH = '/api/health'
 const PROBE_INTERVAL_MS = 10_000
 const PROBE_TIMEOUT_MS = 5_000
 
-export type ApiReachability = 'unknown' | 'reachable' | 'unreachable'
+export type ApiReachability = 'unknown' | 'reachable' | 'degraded' | 'unreachable'
 
 interface ApiConnectivityState {
   browserOnline: boolean
@@ -19,7 +19,7 @@ interface ApiConnectivityState {
   recoveryVersion: number
 
   setBrowserOnline: (online: boolean) => void
-  markFailure: () => void
+  markFailure: (confirmed?: boolean) => void
   markSuccess: (resumed?: boolean) => void
   shouldSkipRequest: () => boolean
 }
@@ -33,19 +33,21 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
 
   setBrowserOnline: (online) => {
     set({ browserOnline: online })
-    if (!online) get().markFailure()
+    if (!online) get().markFailure(false)
   },
 
-  markFailure: () => {
+  markFailure: (confirmed = false) => {
     set(s => ({
-      apiReachable: 'unreachable',
+      apiReachable: confirmed || s.apiReachable === 'unreachable' ? 'unreachable' : 'degraded',
       failureCount: s.failureCount + 1,
       lastCheckedAt: Date.now(),
     }))
   },
 
-  markSuccess: (resumed = false) => {
-    const wasUnreachable = get().apiReachable === 'unreachable'
+  markSuccess: (_resumed = false) => {
+    const previousReachability = get().apiReachable
+    const wasUnreachable = ['unreachable', 'degraded'].includes(previousReachability)
+    const resumed = _resumed
     set(s => ({
       apiReachable: 'reachable',
       failureCount: 0,
@@ -59,8 +61,8 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
   },
 
   shouldSkipRequest: () => {
-    const { browserOnline, apiReachable } = get()
-    return !browserOnline || apiReachable === 'unreachable'
+    // navigator.onLine describes the network adapter, not this local runtime.
+    return get().apiReachable === 'unreachable'
   },
 }))
 
@@ -100,13 +102,13 @@ async function runHealthProbe(): Promise<boolean> {
       cache: 'no-store',
     })
     if (resp.ok) {
-      useApiConnectivityStore.getState().markSuccess(resumeRequested)
+      useApiConnectivityStore.getState().markSuccess(resumeRequested && useApiConnectivityStore.getState().apiReachable !== 'reachable')
       return true
     }
-    useApiConnectivityStore.getState().markFailure()
+    useApiConnectivityStore.getState().markFailure(true)
     return false
   } catch {
-    useApiConnectivityStore.getState().markFailure()
+    useApiConnectivityStore.getState().markFailure(true)
     return false
   } finally {
     clearTimeout(timer)
@@ -126,7 +128,7 @@ export function startApiConnectivityMonitor(): () => void {
 
   const onResume = () => {
     store.setBrowserOnline(navigator.onLine)
-    if (!navigator.onLine || Date.now() - lastResumeAt < 1000) return
+    if (Date.now() - lastResumeAt < 1000) return
     lastResumeAt = Date.now()
     void probeApiHealth(true)
   }
@@ -135,7 +137,7 @@ export function startApiConnectivityMonitor(): () => void {
   }
   const onOffline = () => {
     store.setBrowserOnline(false)
-    notifyConnectivityFailure('网络已断开，请检查连接')
+    void probeApiHealth()
   }
 
   window.addEventListener('online', onResume)
@@ -144,6 +146,9 @@ export function startApiConnectivityMonitor(): () => void {
   window.addEventListener('pageshow', onResume)
   document.addEventListener('visibilitychange', onVisibility)
 
+  const stopDegradedProbe = useApiConnectivityStore.subscribe((state, previous) => {
+    if (state.apiReachable === 'degraded' && previous.apiReachable !== 'degraded') void probeApiHealth()
+  })
   void probeApiHealth()
 
   probeTimer = setInterval(() => {
@@ -151,15 +156,16 @@ export function startApiConnectivityMonitor(): () => void {
     // Sleep may suspend timers without producing online or visibility events.
     const wasSuspended = now - lastTickAt > PROBE_INTERVAL_MS * 2
     lastTickAt = now
-    if (wasSuspended) {
+    if (wasSuspended && document.visibilityState === 'visible') {
       onResume()
-    } else if (useApiConnectivityStore.getState().apiReachable === 'unreachable') {
+    } else if (['unreachable', 'degraded'].includes(useApiConnectivityStore.getState().apiReachable)) {
       store.setBrowserOnline(navigator.onLine)
       void probeApiHealth()
     }
   }, PROBE_INTERVAL_MS)
 
   return () => {
+    stopDegradedProbe()
     window.removeEventListener('online', onResume)
     window.removeEventListener('offline', onOffline)
     window.removeEventListener('focus', onResume)

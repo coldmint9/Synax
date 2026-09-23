@@ -75,7 +75,7 @@ export function installRuntimeAccess(app: Hono, options: {
   }));
   app.post('/api/auth/session', c => {
     if (!desktopOrigin(c.req.header('Origin'))) setCookie(c, cookieName, token, {
-      httpOnly: true, sameSite: 'Strict', secure: new URL(c.req.url).protocol === 'https:', path: '/api', maxAge: 7 * 24 * 60 * 60,
+      httpOnly: true, sameSite: 'Strict', secure: new URL(c.req.url).protocol === 'https:' || (Boolean(c.req.header('Origin')?.startsWith('https://')) && trustedOrigin(c.req.header('Origin'), c)), path: '/api', maxAge: 7 * 24 * 60 * 60,
     });
     return c.json({ authenticated: true });
   });

@@ -1,3 +1,4 @@
+import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import type { RuntimeContentPart, InputModality } from "./runtimeMedia";
 export type { RuntimeContentPart } from "./runtimeMedia";
 export type BackendId =
@@ -1107,126 +1108,12 @@ export const agentRuntimeApi = {
     request<SessionInvocationUsageResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/invocation-usage`,
     ),
-  resumeStream: async (
-    sessionId: string,
-    body: StreamTurnRequest,
-    onChunk: (chunk: unknown) => void,
-  ): Promise<void> => {
-    const response = await apiFetch(
-      `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/resume/stream`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!response.ok || !response.body) {
-      let message = `Agent runtime resume stream error ${response.status}`;
-      let code: string | undefined;
-      try {
-        const b = (await response.json()) as { error?: string; code?: string };
-        code = b.code;
-        if (b.code) message = b.error ?? message;
-        else if (b.error) message = b.error;
-      } catch {
-        /* keep default message */
-      }
-      const appErr = createAppError(message, response.status, code);
-      handleError(appErr);
-      throw appErr;
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary >= 0) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const dataLine = frame
-          .split("\n")
-          .find((line) => line.startsWith("data: "));
-        if (dataLine) {
-          const raw = dataLine.slice(6);
-          if (raw === "[DONE]") return;
-          try {
-            onChunk(JSON.parse(raw) as unknown);
-          } catch {
-            onChunk(raw);
-          }
-        }
-        boundary = buffer.indexOf("\n\n");
-      }
-    }
-  },
-  streamTurn: async (
-    sessionId: string,
-    body: StreamTurnRequest,
-    onChunk: (chunk: unknown) => void,
-  ): Promise<void> => {
-    const response = await apiFetch(
-      `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/turns/stream`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!response.ok || !response.body) {
-      let message = `Agent runtime turn stream error ${response.status}`;
-      let code: string | undefined;
-      try {
-        const body = (await response.json()) as {
-          error?: string;
-          code?: string;
-        };
-        code = body.code;
-        if (body.code) message = body.error ?? message;
-        else if (body.error) message = body.error;
-      } catch {
-        /* keep default message */
-      }
-      const appErr = createAppError(message, response.status, code);
-      handleError(appErr);
-      throw appErr;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary >= 0) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const dataLine = frame
-          .split("\n")
-          .find((line) => line.startsWith("data: "));
-        if (dataLine) {
-          const raw = dataLine.slice(6);
-          if (raw === "[DONE]") return;
-          try {
-            onChunk(JSON.parse(raw) as unknown);
-          } catch {
-            onChunk(raw);
-          }
-        }
-        boundary = buffer.indexOf("\n\n");
-      }
-    }
-  },
+  // Submitting is a short idempotent HTTP request. Observing the accepted run
+  // shares the WS transport instead of holding another HTTP/1.1 connection.
+  resumeStream: (sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void) =>
+    submitAndObserveRun(sessionId, body, onChunk, "continue"),
+  streamTurn: (sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void) =>
+    submitAndObserveRun(sessionId, body, onChunk, "turn"),
 
   listInputQueue: (sessionId: string) =>
     apiRequest<{ items: QueuedInput[] }>(
@@ -1286,4 +1173,29 @@ export interface SessionGitBranches {
   rootId: string;
   current: string;
   branches: { name: string; current: boolean; occupied: boolean }[];
+}
+
+async function submitAndObserveRun(
+  sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void, mode: "turn" | "continue",
+): Promise<void> {
+  const { run } = await agentRuntimeApi.submitRun(sessionId, body, crypto.randomUUID(), mode);
+  await new Promise<void>((resolve, reject) => {
+    const source = new AuthenticatedEventSource(`${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream`);
+    let cursor = 0;
+    source.onmessage = event => {
+      if (event.data === "[DONE]") { source.close(); resolve(); return; }
+      const next = Number(event.lastEventId);
+      if (Number.isSafeInteger(next) && next > 0) {
+        if (next <= cursor) return;
+        cursor = next;
+      }
+      try { onChunk(JSON.parse(event.data)); }
+      catch (error) { source.close(); reject(error); }
+    };
+    source.onerror = () => {
+      if (source.readyState !== AuthenticatedEventSource.CLOSED) return;
+      const error = createAppError("Run observation is unavailable. Reload the session to recover its persisted result.", 503);
+      handleError(error); reject(error);
+    };
+  });
 }

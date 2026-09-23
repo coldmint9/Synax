@@ -1,37 +1,17 @@
-import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { remarkGithubAlerts } from '../../../lib/remark-github-alerts'
-import { MermaidBlock } from './MermaidBlock'
-import { ShikiCodeBlock } from './ShikiCodeBlock'
+import { MarkdownRenderer, sharedMarkdownComponents } from '../../components/markdown/MarkdownRenderer'
+import { renderMarkdownCodeBlock } from '../../components/markdown/MarkdownCodeBlock'
 import { WikiTreeBlock } from './WikiTreeBlock'
 import { WikiPlainCodeBlock } from './WikiPlainCodeBlock'
 import { isAsciiTree } from './wikiTreeDetect'
 
-const TREE_LANGUAGES = new Set(['tree', 'ascii', 'ascii-tree', 'directory-tree'])
-
 function renderCodeBlock(code: string, language?: string) {
-  if (language === 'mermaid') {
-    return <MermaidBlock code={code} />
-  }
-
-  if (language && !TREE_LANGUAGES.has(language) && !(language === 'text' || language === 'plaintext')) {
-    return <ShikiCodeBlock code={code} language={language} />
-  }
-
-  if (isAsciiTree(code) || (language && TREE_LANGUAGES.has(language))) {
-    return <WikiTreeBlock code={code} />
-  }
-
-  if (language === 'text' || language === 'plaintext') {
-    return <WikiPlainCodeBlock code={code} />
-  }
-
-  if (code.includes('\n')) {
-    return <WikiPlainCodeBlock code={code} />
-  }
-
-  return null
+  return renderMarkdownCodeBlock(code, language, {
+    isTree: isAsciiTree,
+    renderTree: code => <WikiTreeBlock code={code} />,
+    renderPlain: code => <WikiPlainCodeBlock code={code} />,
+  })
 }
 
 const ALERT_LABELS: Record<string, string> = {
@@ -43,6 +23,7 @@ const ALERT_LABELS: Record<string, string> = {
 }
 
 const markdownComponents: Components = {
+  ...sharedMarkdownComponents,
   blockquote({ className, children, ...props }) {
     const classes = String(className ?? '')
     const alertMatch = /markdown-alert-(\w+)/.exec(classes)
@@ -75,7 +56,7 @@ const markdownComponents: Components = {
     )
   },
   code({ className, children, ...props }) {
-    const match = /language-(\w+)/.exec(className ?? '')
+    const match = /language-([^\s]+)/.exec(className ?? '')
     const language = match?.[1]
     const code = String(children).replace(/\n$/, '')
 
@@ -92,8 +73,12 @@ const markdownComponents: Components = {
 
 export function WikiMarkdown({ content }: { content: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkGithubAlerts]} components={markdownComponents}>
-      {content}
-    </ReactMarkdown>
+    <MarkdownRenderer
+      content={content}
+      className="wiki-markdown"
+      conversationClass={false}
+      components={markdownComponents}
+      remarkPlugins={[remarkGithubAlerts]}
+    />
   )
 }

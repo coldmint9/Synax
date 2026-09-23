@@ -2,7 +2,7 @@
   "name": "synax",
   "productName": "Synax",
   "private": false,
-  "version": "0.4.2",
+  "version": "1.0.0",
   "license": "MIT",
   "author": "Synax",
   "description": "Local-first AI coding workspace",
@@ -63,7 +63,12 @@
     "test:wsl:smoke": "tsx scripts/wsl-smoke.ts",
     "test:visualize:web": "tsx scripts/visualization-web-e2e.ts",
     "test:visualize:desktop": "tsx scripts/visualization-native-smoke.ts",
-    "prebuild:electron": "node -e \"require('node:fs').rmSync('dist-electron', {recursive:true, force:true})\""
+    "prebuild:electron": "node -e \"require('node:fs').rmSync('dist-electron', {recursive:true, force:true})\"",
+    "start:web": "tsx scripts/start-web.ts",
+    "test:realtime:web": "tsx scripts/realtime-web-smoke.ts",
+    "storage:report": "tsx scripts/storage-maintenance.ts",
+    "storage:maintain": "tsx scripts/storage-maintenance.ts --apply",
+    "storage:compact": "tsx scripts/storage-maintenance.ts --compact"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

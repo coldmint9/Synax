@@ -514,7 +514,7 @@ export function AgentComposer({
             rows={
               isSessionComposer ? 2 : defaultExpanded && !isMultiline ? 4 : 1
             }
-            className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
+            className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] font-semibold leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
               isSessionComposer
                 ? "min-h-12 max-h-48"
                 : defaultExpanded && !isMultiline
@@ -582,7 +582,7 @@ export function AgentComposer({
             }
             disabled={disabled && !queueWhileGenerating}
             rows={1}
-            className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
+            className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] font-semibold leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
           {modeControl}
           {modelControl ?? (

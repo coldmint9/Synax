@@ -1,3 +1,4 @@
+import { ObservationTransport } from "../../realtime/observation-transport.js";
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,9 +22,12 @@ let cwd: string, server: Server, stopSockets: () => void, port: number;
 const clients: WebSocket[] = [];
 beforeEach(async () => {
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-terminal-socket-'));
-  const app = new Hono(); installRuntimeAccess(app, { dataRoot: DATA_ROOT }); app.route('/api/terminals', terminalRoutes);
+  const app = new Hono(); installRuntimeAccess(app, { dataRoot: DATA_ROOT, webOrigins: ['http://trusted.test'] }); app.route('/api/terminals', terminalRoutes);
+  const observations = new ObservationTransport(request => app.fetch(request));
+  app.route('/api/realtime', observations.routes);
   server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }) as Server;
-  stopSockets = attachTerminalSockets(server);
+  const stopTerminals = attachTerminalSockets(server), stopObservations = observations.attach(server);
+  stopSockets = () => { stopTerminals(); stopObservations(); };
   if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
   port = (server.address() as { port: number }).port;
 });
@@ -73,3 +77,15 @@ it('hosts worker-created services after their requesting worker has exited', asy
   await terminalManager.stop(started.processId);
   expect(terminalManager.get(started.processId).state).toBe('closed');
 }, 30000);
+
+it('shares the upgrade listener with authenticated realtime without killing either path', async () => {
+  const token = fs.readFileSync(path.join(DATA_ROOT, 'runtime-access-token'), 'utf8').trim();
+  const response = await fetch(`http://127.0.0.1:${port}/api/realtime/connection`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, Origin: 'http://trusted.test' } });
+  expect(response.status).toBe(200);
+  const { ticket } = await response.json() as { ticket: string };
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/api/realtime/socket`, { origin: 'http://trusted.test' }); clients.push(ws);
+  const ready = new Promise<any>(resolve => ws.once('message', data => resolve(JSON.parse(data.toString()))));
+  await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  ws.send(JSON.stringify({ type: 'attach', ticket }));
+  expect(await ready).toMatchObject({ type: 'ready', protocol: 1 });
+});

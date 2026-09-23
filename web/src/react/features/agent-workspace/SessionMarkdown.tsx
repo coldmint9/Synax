@@ -1,13 +1,10 @@
-import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { memo, useCallback, useMemo } from "react";
-import remarkGfm from "remark-gfm";
 import { parseFileLink, type FileLinkTarget } from "./fileLink";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
 import { useTranscriptSession } from "./SessionTranscriptContext";
-
-const REMARK_PLUGINS = [remarkGfm];
+import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
 
 interface Props {
   content: string;
@@ -76,10 +73,10 @@ export const SessionMarkdown = memo(function SessionMarkdown({
 }: Props) {
   const components = useMarkdownComponents();
   return (
-    <div className={`agent-conversation-copy ${className}`}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
-        {content}
-      </ReactMarkdown>
-    </div>
+    <MarkdownRenderer
+      content={content}
+      className={className}
+      components={components}
+    />
   );
 });

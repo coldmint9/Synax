@@ -410,3 +410,63 @@ describe("invocation usage live refresh", () => {
     );
   });
 });
+
+describe("inactive session page cache", () => {
+  const cachedEntry = (lastVisitedAt: number) => ({
+    runs: [],
+    steps: [],
+    events: [],
+    messages: [],
+    toolCalls: [],
+    permissions: [],
+    sessionStats: null,
+    sessionTodos: [],
+    sessionInvocationUsage: null,
+    cachedAt: 1,
+    lastVisitedAt,
+  });
+
+  it("reuses a completed page without fetching its transcript again", async () => {
+    const completed = { ...session, status: "completed" } as AgentSession;
+    vi.spyOn(api, "listInputQueue").mockResolvedValue({ items: [] });
+    store.setState({
+      panelOpen: false,
+      selectedSessionId: null,
+      sessions: [completed],
+      sessionDetailCache: { [completed.id]: cachedEntry(Date.now()) },
+    });
+    vi.mocked(api.listMessages).mockClear();
+
+    store.getState().openPanel(completed.id);
+    await Promise.resolve();
+
+    expect(api.listMessages).not.toHaveBeenCalled();
+    expect(store.getState().detailLoading).toBe(false);
+  });
+
+  it("retains the selected page plus the four most recently visited inactive pages", async () => {
+    const active = {
+      ...session,
+      id: "active",
+      status: "completed",
+    } as AgentSession;
+    store.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      sessionDetailCache: {
+        active: cachedEntry(0),
+        old: cachedEntry(1),
+        recent1: cachedEntry(2),
+        recent2: cachedEntry(3),
+        recent3: cachedEntry(4),
+        recent4: cachedEntry(5),
+      },
+    });
+
+    await store.getState().fetchSessionStats();
+
+    expect(Object.keys(store.getState().sessionDetailCache).sort()).toEqual(
+      ["active", "recent1", "recent2", "recent3", "recent4"].sort(),
+    );
+  });
+});

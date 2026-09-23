@@ -1,3 +1,4 @@
+import { ObservationTransport, OBSERVATION_SOCKET_PATH } from "./services/realtime/observation-transport.js";
 import { ensureGitMrProfileRegistered } from './services/agent-runtime/git/profile.js';
 import { startFileUndoRetention } from "./services/agent-runtime/checkpoints/retention.js";
 import { attachTerminalSockets } from "./services/terminals/terminal-socket.js";
@@ -53,6 +54,7 @@ import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permissi
 import { closeAllBrowserSessions } from "./services/agent-runtime/tools/browser/browser-manager.js";
 
 export const app = new Hono();
+const observations = new ObservationTransport(request => app.fetch(request));
 
 // --- 中间件 ---
 installRuntimeAccess(app, {
@@ -60,6 +62,8 @@ installRuntimeAccess(app, {
   webOrigins: [
     `http://localhost:${process.env.WEB_PORT ?? "5173"}`,
     `http://127.0.0.1:${process.env.WEB_PORT ?? "5173"}`,
+    `https://localhost:${process.env.WEB_PORT ?? "5173"}`,
+    `https://127.0.0.1:${process.env.WEB_PORT ?? "5173"}`,
   ],
   trustedHosts: process.env.SYNAX_TRUSTED_HOSTS?.split(",")
     .map((value) => value.trim())
@@ -78,6 +82,7 @@ app.use("*", async (c, next) => {
 });
 
 // --- 路由 ---
+app.route("/api/realtime", observations.routes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/projects", projectSettingsRoutes);
 app.route("/api/projects", extensionRoutes);
@@ -133,6 +138,7 @@ registerSessionTitleHooks();
 
 let httpServer: Server | undefined;
 let closeTerminalSockets: (() => void) | undefined;
+let closeObservationSockets: (() => void) | undefined;
 let shuttingDown = false;
 
 let stopFileUndoRetention = () => {};
@@ -217,12 +223,20 @@ function startServer(resumable: string[]): void {
     },
   ) as Server;
   closeTerminalSockets = attachTerminalSockets(httpServer);
+  closeObservationSockets = observations.attach(httpServer);
+  httpServer.on("upgrade", (request, socket) => {
+    try {
+      const pathname = new URL(request.url ?? "", "http://localhost").pathname;
+      if (pathname !== OBSERVATION_SOCKET_PATH && pathname !== "/api/terminals/socket") socket.destroy();
+    } catch { socket.destroy(); }
+  });
 }
 
 async function shutdownRuntime(): Promise<void> {
   stopFileUndoRetention();
   if (shuttingDown) return;
   shuttingDown = true;
+  closeObservationSockets?.();
   closeTerminalSockets?.();
   httpServer?.closeAllConnections();
   httpServer?.close();

@@ -1,3 +1,4 @@
+import { useWorkbenchPageActive } from "../../layouts/CachedWorkbenchPage";
 import { useEffect } from "react";
 import { useApiConnectivityStore } from "../../../lib/apiConnectivity";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -19,6 +20,7 @@ function isDocumentHidden(): boolean {
  * A shared poller joins pending profile/transcript requests rather than restarting them.
  */
 export function useSessionDetailPolling() {
+  const active = useWorkbenchPageActive();
   const projectId = useAgentSessionStore((s) => s.projectId);
   const apiReachable = useApiConnectivityStore((s) => s.apiReachable);
   const refreshDetail = useAgentSessionStore((s) => s.refreshDetail);
@@ -31,7 +33,7 @@ export function useSessionDetailPolling() {
   });
 
   useEffect(() => {
-    if (apiReachable === "unreachable") return;
+    if (!active || apiReachable === "unreachable") return;
     if (!panelOpen || !selectedSessionId) return;
     const isActive =
       selectedStatus === "running" ||
@@ -117,6 +119,7 @@ export function useSessionDetailPolling() {
     pollers.set(key, { users: 1, stop });
     return release;
   }, [
+    active,
     projectId,
     apiReachable,
     panelOpen,

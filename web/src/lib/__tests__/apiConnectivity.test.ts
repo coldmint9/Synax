@@ -72,7 +72,7 @@ describe("handleError connectivity", () => {
     const items = useNotificationStore.getState().notifications;
     expect(items).toHaveLength(1);
     expect(items[0]?.message).toContain("2 次请求失败");
-    expect(useApiConnectivityStore.getState().apiReachable).toBe("unreachable");
+    expect(useApiConnectivityStore.getState().apiReachable).toBe("degraded");
   });
 
   it("ignores intentional request cancellation", () => {
@@ -137,7 +137,7 @@ describe("connectivity monitor wake recovery", () => {
     vi.useRealTimers();
   });
 
-  it("probes and publishes one recovery for a burst of visible/focus/online events", async () => {
+  it("checks a burst of focus events without broadcasting a false recovery", async () => {
     stop = startApiConnectivityMonitor();
     await vi.advanceTimersByTimeAsync(0);
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -146,16 +146,17 @@ describe("connectivity monitor wake recovery", () => {
     window.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(0);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1);
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(0);
   });
 
-  it("detects timer suspension even without browser lifecycle events", async () => {
+  it("checks real timer suspension without reconnecting a healthy runtime", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     stop = startApiConnectivityMonitor();
     await vi.advanceTimersByTimeAsync(0);
     vi.setSystemTime(Date.now() + 60_000);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1);
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(0);
   });
 
   it("keeps retrying when the network is not ready at wake time", async () => {
@@ -188,6 +189,7 @@ describe("connectivity monitor wake recovery", () => {
           resolve = r;
         }),
     );
+    useApiConnectivityStore.setState({ apiReachable: "unreachable" });
     const first = probeApiHealth();
     const resumed = probeApiHealth(true);
     expect(resumed).toBe(first);
@@ -195,6 +197,25 @@ describe("connectivity monitor wake recovery", () => {
     await resumed;
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(useApiConnectivityStore.getState().recoveryVersion).toBe(1);
+  });
+
+  it("does not treat hidden-tab timer throttling as a wake event", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    stop = startApiConnectivityMonitor();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(Date.now() + 60_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(useApiConnectivityStore.getState().recoveryVersion).toBe(0);
+  });
+
+  it("does not block a reachable local server when the network adapter reports offline", async () => {
+    stop = startApiConnectivityMonitor();
+    await vi.advanceTimersByTimeAsync(0);
+    useApiConnectivityStore.getState().setBrowserOnline(false);
+    expect(useApiConnectivityStore.getState().shouldSkipRequest()).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useApiConnectivityStore.getState().apiReachable).toBe("reachable");
   });
 
   it("removes lifecycle listeners and timers on stop", async () => {

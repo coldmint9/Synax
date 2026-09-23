@@ -9,12 +9,7 @@ interface Subscription {
   onConnect?: ConnectHandler
 }
 
-const RECONNECT_BASE_MS = 2000
-const RECONNECT_MAX_MS = 30_000
-
 let es: AuthenticatedEventSource | null = null
-let retries = 0
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let subscribers = new Set<Subscription>()
 let currentProjectId: string | null = null
 
@@ -24,7 +19,6 @@ function connect(projectId: string) {
   es = new AuthenticatedEventSource(`/api/notifications/stream?projectId=${encodeURIComponent(projectId)}`)
 
   es.addEventListener(SseEventType.Connected, () => {
-    retries = 0
     for (const sub of subscribers) sub.onConnect?.()
   })
 
@@ -42,21 +36,10 @@ function connect(projectId: string) {
     })
   }
 
-  es.onerror = () => {
-    es?.close()
-    es = null
-    scheduleReconnect(projectId)
+  const source = es
+  source.onerror = () => {
+    if (source.readyState === AuthenticatedEventSource.CLOSED && es === source) es = null
   }
-}
-
-function scheduleReconnect(projectId: string) {
-  if (reconnectTimer) return
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** retries, RECONNECT_MAX_MS)
-  retries++
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    if (subscribers.size > 0) connect(projectId)
-  }, delay)
 }
 
 export function subscribe(projectId: string, sub: Subscription): () => void {
@@ -78,11 +61,6 @@ export function subscribe(projectId: string, sub: Subscription): () => void {
       es?.close()
       es = null
       currentProjectId = null
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
-      }
-      retries = 0
     }
   }
 }

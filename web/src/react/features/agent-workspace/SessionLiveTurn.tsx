@@ -13,6 +13,8 @@ import {
   type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
 
+const WORK_LOG_COLLAPSE_DELAY_MS = 420;
+
 function renderLiveSegments(
   blocks: TurnContentBlock[],
   isStreaming: boolean,
@@ -23,6 +25,9 @@ function renderLiveSegments(
     segment.type === "tool_round" ? segment.toolBlocks : [],
   );
   const answers = segments.filter((segment) => segment.type !== "tool_round");
+  const answerStarted = answers.some(
+    (segment) => segment.type === "text" && segment.markdown,
+  );
   const render = (segment: (typeof segments)[number], i: number) => {
     const live = isStreaming && segment === segments[segments.length - 1];
     if (segment.type === "thinking")
@@ -42,7 +47,12 @@ function renderLiveSegments(
           key={i}
           text={segment.content}
           isStreaming={live}
-          markdown={segment.markdown && !live}
+          startDelayMs={
+            isStreaming && answerStarted && segment.markdown
+              ? WORK_LOG_COLLAPSE_DELAY_MS
+              : 0
+          }
+          markdown={segment.markdown}
         />
       );
     return null;
@@ -54,7 +64,7 @@ function renderLiveSegments(
           <ToolCallRoundPanel
             toolBlocks={toolBlocks}
             maxHeight="none"
-            isStreaming={isStreaming}
+            isStreaming={isStreaming && !answerStarted}
           />
         )}
       </div>

@@ -198,6 +198,12 @@ export default memo(function SessionsPage() {
   const [historyReading, setHistoryReading] = useState(false);
   const agentSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const agentPanelOpen = useAgentSessionStore((s) => s.panelOpen);
+  const agentSessionStatus = useAgentSessionStore((s) => {
+    const id = s.selectedSessionId;
+    return id
+      ? s.sessions.find((session) => session.id === id)?.status
+      : undefined;
+  });
   const workspaceState = useSessionWorkspace(agentSessionId);
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId);
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
@@ -216,7 +222,14 @@ export default memo(function SessionsPage() {
     ],
   );
 
-  useSessionLiveStream(agentPanelOpen ? agentSessionId : null);
+  const liveSession =
+    agentPanelOpen &&
+    (agentSessionStatus === "running" ||
+      agentSessionStatus === "waiting_permission" ||
+      agentSessionStatus === "waiting_input")
+      ? agentSessionId
+      : null;
+  useSessionLiveStream(liveSession);
 
   const isNewDraft =
     listView === "sessions" && isNewSessionPath(location.pathname);

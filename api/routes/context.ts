@@ -1,3 +1,4 @@
+import { observationLifetime } from "../lib/observation-lifetime.js";
 // ---------------------------------------------------------------------------
 // api/routes/context.ts — 上下文管理系统路由
 //
@@ -567,44 +568,27 @@ contextRoutes.get('/sync', (c) => {
   if (!projectId) return c.json({ error: 'projectId required' }, 400);
 
   return streamSSE(c, async (stream) => {
-    let closed = false;
+    const lifetime = observationLifetime(c.req.raw.signal, stream);
     const onEvent = (event: SyncEvent) => {
-      if (closed) return;
+      if (lifetime.signal.aborted) return;
       stream
         .writeSSE({
           event: event.type,
           data: JSON.stringify(event),
           id: String(event.timestamp),
         })
-        .catch(() => {
-          closed = true;
-        });
+        .catch(lifetime.stop);
     };
     const unsubscribe = syncBus.subscribe(projectId, onEvent);
 
-    // 初次握手
-    await stream.writeSSE({ event: SseEventType.Ready, data: JSON.stringify({ projectId }) });
-
-    // 心跳（每 25s）防止代理断连
     const heartbeat = setInterval(() => {
-      if (closed) return;
-      stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(() => {
-        closed = true;
-      });
+      if (!lifetime.signal.aborted)
+        void stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(lifetime.stop);
     }, 25_000);
-
-    c.req.raw.signal.addEventListener('abort', () => {
-      closed = true;
-      clearInterval(heartbeat);
-      unsubscribe();
-    });
-
-    // keep stream open
-    await new Promise<void>((resolve) => {
-      c.req.raw.signal.addEventListener('abort', () => resolve(), { once: true });
-    });
-
-    clearInterval(heartbeat);
-    unsubscribe();
+    try {
+      if (lifetime.signal.aborted) return;
+      await stream.writeSSE({ event: SseEventType.Ready, data: JSON.stringify({ projectId }) });
+      await lifetime.ended;
+    } finally { clearInterval(heartbeat); unsubscribe(); lifetime.dispose(); }
   });
 });

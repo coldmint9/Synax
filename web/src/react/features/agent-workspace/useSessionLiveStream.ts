@@ -1,3 +1,4 @@
+import { useWorkbenchPageActive } from "../../layouts/CachedWorkbenchPage";
 import { useEffect, useRef } from "react";
 import {
   ensureSessionLiveSubscription,
@@ -7,6 +8,7 @@ import { useApiConnectivityStore } from "../../../lib/apiConnectivity";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 
 export function useSessionLiveStream(sessionId: string | null) {
+  const active = useWorkbenchPageActive();
   const apiReachable = useApiConnectivityStore((s) => s.apiReachable);
 
   const previous = useRef<{
@@ -18,7 +20,7 @@ export function useSessionLiveStream(sessionId: string | null) {
       previous.current?.sessionId === sessionId &&
       previous.current?.reachable === "unreachable";
     previous.current = { sessionId, reachable: apiReachable };
-    if (!sessionId) return;
+    if (!sessionId || !active) return;
     if (apiReachable === "unreachable") return;
 
     ensureSessionLiveSubscription(sessionId, (event) => {
@@ -37,5 +39,5 @@ export function useSessionLiveStream(sessionId: string | null) {
     return () => {
       releaseSessionLiveSubscription();
     };
-  }, [sessionId, apiReachable]);
+  }, [sessionId, apiReachable, active]);
 }

@@ -1,3 +1,4 @@
+import { useWorkbenchPageActive } from "../../layouts/CachedWorkbenchPage";
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -13,6 +14,7 @@ const pending = new Map<string, Promise<SessionEnvironment>>();
 
 /** Shared in-flight requests and a bounded stale-while-revalidate workspace cache. */
 export function useSessionEnvironment(sessionId: string | null) {
+  const active = useWorkbenchPageActive();
   const [snapshot, setSnapshot] = useState<{
     id: string;
     value: SessionEnvironment;
@@ -21,7 +23,7 @@ export function useSessionEnvironment(sessionId: string | null) {
   const generation = useRef(0);
 
   const reload = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || !active) return;
     const id = sessionId;
     const version = generation.current;
     setLoadingId(id);
@@ -56,11 +58,11 @@ export function useSessionEnvironment(sessionId: string | null) {
     } finally {
       if (generation.current === version) setLoadingId(null);
     }
-  }, [sessionId]);
+  }, [sessionId, active]);
 
   useEffect(() => {
     ++generation.current;
-    if (!sessionId) return;
+    if (!sessionId || !active) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
@@ -84,10 +86,10 @@ export function useSessionEnvironment(sessionId: string | null) {
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [sessionId, reload]);
+  }, [sessionId, reload, active]);
 
   const refreshAfterMutation = useCallback(() => {
-    if (!sessionId) return;
+    if (!sessionId || !active) return;
     const version = generation.current;
     // Do not join a pre-mutation read; refresh once that stale request settles.
     void Promise.resolve(pending.get(sessionId))
@@ -97,7 +99,7 @@ export function useSessionEnvironment(sessionId: string | null) {
         cache.delete(sessionId);
         void reload();
       });
-  }, [sessionId, reload]);
+  }, [sessionId, reload, active]);
   useWorkspaceRefresh(sessionId, refreshAfterMutation);
 
   const environment = sessionId

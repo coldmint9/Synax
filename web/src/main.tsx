@@ -5,6 +5,7 @@ import { BrowserRouter, useNavigate } from "react-router-dom";
 import { RouterProvider } from "@heroui/react";
 import App from "./react/App";
 import "./index.css";
+import "katex/dist/katex.min.css";
 import {
   hydrateShellPreferences,
   startShellAppearance,

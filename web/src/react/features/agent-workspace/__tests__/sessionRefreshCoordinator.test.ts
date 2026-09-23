@@ -1,0 +1,42 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { clearScheduledSessionRefresh, scheduleSessionRefresh, setSessionDetailsVisible, useAgentSessionStore } from '../state/agentSessionStore'
+vi.mock('../../../../lib/api/sessionLiveClient', () => ({ ensureSessionLiveSubscription: vi.fn(), releaseSessionLiveSubscription: vi.fn() }))
+const list = vi.fn(async () => {}), detail = vi.fn(async () => {}), usage = vi.fn(async () => {})
+beforeEach(() => {
+  vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+  clearScheduledSessionRefresh(); setSessionDetailsVisible(true)
+  list.mockClear(); detail.mockClear(); usage.mockClear()
+  useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState(), projectId: 'p', selectedSessionId: 's', refreshSessions: list, refreshDetail: detail, fetchSessionInvocationUsage: usage })
+})
+afterEach(() => { clearScheduledSessionRefresh(); setSessionDetailsVisible(true); vi.restoreAllMocks(); vi.useRealTimers() })
+it('merges global, live and Dock invalidations into one detail/profile refresh', async () => {
+  scheduleSessionRefresh('s', 'all', 7)
+  scheduleSessionRefresh('s', 'detail', 7)
+  scheduleSessionRefresh('s', 'detail')
+  scheduleSessionRefresh('s', 'usage')
+  await vi.advanceTimersByTimeAsync(1200)
+  expect(list).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce(); expect(usage).not.toHaveBeenCalled()
+  scheduleSessionRefresh('s', 'all', 7); await vi.advanceTimersByTimeAsync(1200)
+  expect(detail).toHaveBeenCalledOnce()
+})
+it('keeps hidden detail dirty and revalidates once when returning without losing list notifications', async () => {
+  setSessionDetailsVisible(false)
+  scheduleSessionRefresh('s', 'all'); await vi.advanceTimersByTimeAsync(1200)
+  expect(list).toHaveBeenCalledOnce(); expect(detail).not.toHaveBeenCalled()
+  setSessionDetailsVisible(true); await vi.advanceTimersByTimeAsync(0)
+  expect(detail).toHaveBeenCalledOnce()
+})
+it('does not refresh the wrong session/project after a delayed event', async () => {
+  scheduleSessionRefresh('s', 'all')
+  useAgentSessionStore.setState({ projectId: 'different', selectedSessionId: 'new' })
+  await vi.advanceTimersByTimeAsync(1200)
+  expect(list).not.toHaveBeenCalled(); expect(detail).not.toHaveBeenCalled()
+})
+it('does not issue expensive background-tab requests and catches up after visibility resumes', async () => {
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+  scheduleSessionRefresh('s', 'all'); await vi.advanceTimersByTimeAsync(3000)
+  expect(list).not.toHaveBeenCalled(); expect(detail).not.toHaveBeenCalled()
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+  setSessionDetailsVisible(true); await vi.advanceTimersByTimeAsync(0)
+  expect(list).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
+})

@@ -3080,6 +3080,129 @@
   @apply max-w-full rounded;
 }
 
+
+.feed-prose .markdown-image-trigger {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0.35rem 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.feed-prose .markdown-image-trigger:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+.feed-prose .markdown-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, 52rem);
+  max-height: min(32rem, 70vh);
+  object-fit: contain;
+  border-radius: 0.65rem;
+  box-shadow: 0 8px 24px hsl(var(--foreground-hsl) / 0.12);
+}
+.feed-prose .markdown-image-trigger--error::after {
+  content: "图片加载失败 / Image unavailable";
+  display: block;
+  padding: 0.75rem 1rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8rem;
+  background: hsl(var(--foreground-hsl) / 0.05);
+}
+.markdown-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: hsl(0 0% 0% / 0.78);
+  cursor: zoom-out;
+}
+.markdown-image-lightbox-frame {
+  position: relative;
+  max-width: min(96vw, 90rem);
+  max-height: 94vh;
+}
+.markdown-image-lightbox-image {
+  display: block;
+  max-width: 96vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 60px hsl(0 0% 0% / 0.45);
+  cursor: default;
+}
+.markdown-image-lightbox-close {
+  position: absolute;
+  top: -0.75rem;
+  right: -0.75rem;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid hsl(0 0% 100% / 0.35);
+  border-radius: 999px;
+  background: hsl(0 0% 0% / 0.62);
+  color: white;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.markdown-stream-pending {
+  @apply rounded-lg border border-primary/20 bg-primary/[0.05] p-2.5 my-2.5 overflow-x-auto;
+  white-space: pre-wrap;
+}
+.markdown-stream-pending code {
+  @apply font-mono text-[0.9em] leading-relaxed;
+}
+
+/* Mermaid and Shiki are shared by Wiki and transcript Markdown. */
+.agent-conversation-copy .wiki-mermaid {
+  max-width: 100%;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  overflow-x: auto;
+  border: 1px solid hsl(var(--primary) / 0.18);
+  border-radius: 0.65rem;
+  background: hsl(var(--primary) / 0.035);
+}
+.agent-conversation-copy .wiki-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+/* Shiki emits a dual-theme pre. Keep the same surface in transcript and Wiki. */
+.agent-conversation-copy .wiki-shiki-block,
+.agent-conversation-copy .wiki-shiki-block pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: 0.65rem;
+}
+.agent-conversation-copy .wiki-shiki-block pre {
+  margin: 0.625rem 0;
+  padding: 0.75rem;
+}
+.agent-conversation-copy .wiki-shiki-block .shiki,
+.agent-conversation-copy .wiki-shiki-block .shiki span {
+  color: var(--shiki-light) !important;
+  background-color: var(--shiki-light-bg) !important;
+}
+html.dark .agent-conversation-copy .wiki-shiki-block .shiki,
+html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+}
+.agent-conversation-copy .wiki-shiki-block .shiki span {
+  background-color: transparent !important;
+}
+
+
 .session-quick-toolbar {
   display: flex;
   align-items: center;

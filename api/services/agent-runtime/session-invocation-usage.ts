@@ -33,13 +33,13 @@ function readableId(id: string): string {
     .join(' ') || id;
 }
 
-function skillIdFromCall(call: ToolCallRecord): string | null {
+function skillIdFromCall(call: Pick<ToolCallRecord, "toolId" | "inputRef">): string | null {
   if (call.toolId !== 'skill.load' || !call.inputRef || typeof call.inputRef !== 'object') return null;
   const skillId = (call.inputRef as { skillId?: unknown }).skillId;
   return typeof skillId === 'string' && skillId.trim() ? skillId.trim() : null;
 }
 
-function mcpServerIdFromCall(call: ToolCallRecord): string | null {
+function mcpServerIdFromCall(call: Pick<ToolCallRecord, "toolId" | "category">): string | null {
   if (call.category !== 'mcp' || !call.toolId.startsWith('mcp.')) return null;
   const rest = call.toolId.slice('mcp.'.length);
   const separator = rest.indexOf('.');
@@ -56,51 +56,36 @@ function toolLabel(sessionId: string, toolId: string): string {
 
 export function resolveSessionInvocationUsage(sessionId: string): SessionInvocationUsageResponse {
   const session = agentRuntimeStore.getSession(sessionId);
-  const calls = agentRuntimeStore.listToolCalls(sessionId);
-  const mcpNames = new Map<string, string>();
-  try {
-    for (const server of getProjectSettings(session.projectId).mcpServers ?? []) {
-      mcpNames.set(server.id, server.name?.trim() || server.id);
-    }
-  } catch {
-    // Historical calls remain useful even when project settings are unavailable.
-  }
-
+  const calls = agentRuntimeStore.listToolInvocationRows(sessionId);
   const usage = new Map<string, SessionInvocationUsageItem>();
   for (const call of calls) {
     if (call.toolId === 'tools.invalid') continue;
-
-    let kind: SessionInvocationKind = 'tool';
-    let id = call.toolId;
-    let label: string;
-
-    const skillId = skillIdFromCall(call);
-    if (skillId) {
-      kind = 'skill';
-      id = skillId;
-      try {
-        label = skillRegistry.getSummary(skillId, session.projectId).label.trim() || skillId;
-      } catch {
-        label = skillId;
-      }
-    } else {
-      const serverId = mcpServerIdFromCall(call);
-      if (serverId) {
-        kind = 'mcp';
-        id = serverId;
-        label = mcpNames.get(serverId) ?? serverId;
-      } else {
-        label = toolLabel(sessionId, call.toolId);
-      }
-    }
-
+    const skillId = skillIdFromCall(call), serverId = mcpServerIdFromCall(call);
+    const kind: SessionInvocationKind = skillId ? 'skill' : serverId ? 'mcp' : 'tool';
+    const id = skillId ?? serverId ?? call.toolId;
     const key = `${kind}:${id}`;
     const existing = usage.get(key);
     if (existing) {
-      existing.callCount += 1;
+      existing.callCount++;
       if (call.startedAt > existing.lastCalledAt) existing.lastCalledAt = call.startedAt;
-    } else {
-      usage.set(key, { kind, id, label, callCount: 1, lastCalledAt: call.startedAt });
+    } else usage.set(key, { kind, id, label: '', callCount: 1, lastCalledAt: call.startedAt });
+  }
+
+  // Resolve each distinct identity once, not once per historical invocation.
+  // Skip project settings entirely for sessions without MCP calls.
+  const mcpNames = new Map<string, string>();
+  if ([...usage.values()].some(item => item.kind === 'mcp')) {
+    try {
+      for (const server of getProjectSettings(session.projectId).mcpServers ?? [])
+        mcpNames.set(server.id, server.name?.trim() || server.id);
+    } catch { /* Historical statistics survive removed project settings. */ }
+  }
+  for (const item of usage.values()) {
+    if (item.kind === 'tool') item.label = toolLabel(sessionId, item.id);
+    else if (item.kind === 'mcp') item.label = mcpNames.get(item.id) ?? item.id;
+    else {
+      try { item.label = skillRegistry.getSummary(item.id, session.projectId).label.trim() || item.id; }
+      catch { item.label = item.id; }
     }
   }
 

@@ -48,6 +48,41 @@ npm run dev:all
 
 `npm run dev` is an alias for the same script. The API listens on `3210` and the web development server on `5173`; then open [localhost:5173](http://localhost:5173).
 
+#### Production Web mode for everyday use (recommended)
+
+```bash
+npm run build
+npm run web:build
+npm run start:web
+```
+
+This serves the built frontend on port `5173` after the local runtime reports ready, with realtime observations on a shared WebSocket. Keep `dev:all` for development. Do not start two runtime owners for the same `DATA_ROOT`; set `SYNAX_API_ORIGIN=http://127.0.0.1:<port>` to explicitly attach to an existing compatible runtime instead.
+
+For HTTP/2, provide a TLS certificate for `localhost` that your browser trusts:
+
+```bash
+WEB_TLS_CERT=/absolute/path/localhost-cert.pem WEB_TLS_KEY=/absolute/path/localhost-key.pem npm run start:web
+```
+
+The TLS entry uses HTTP/2 for ordinary requests/assets and compatible HTTP/1.1 upgrades for WebSocket. Without certificates, HTTP/1.1 plus shared WebSocket is supported. The app never installs a root certificate, bypasses certificate validation, or relaxes authorization. When changing `WEB_PORT`, an independently started backend must allow the same origin port.
+
+#### Local storage maintenance (read-only by default)
+
+Inspect database pages, freelist, WAL, FTS, cache, replay, and process-receipt categories:
+
+```bash
+npm run storage:report
+```
+
+Maintenance is not automatic. Point it at a copy and stop the runtime first:
+
+```bash
+SYNAX_DB_PATH=/absolute/path/context.db npm run storage:maintain
+SYNAX_DB_PATH=/absolute/path/context.db npm run storage:compact
+```
+
+The command creates a consistent `VACUUM INTO` backup and refuses to overwrite an existing backup. It does not remove authoritative messages, events, billing, checkpoints, forks, undo records, or asset references. Never run mutating maintenance against a live `~/.synax/context.db`.
+
 #### Desktop (Electron)
 
 ```bash

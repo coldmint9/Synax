@@ -62,7 +62,7 @@ export function attachTerminalSockets(server: Server): () => void {
       value.trim(),
     ) ?? []),
   ]);
-  server.on("upgrade", (request, socket, head) => {
+  const upgrade = (request: import("node:http").IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
     let url: URL;
     try {
       url = new URL(request.url ?? "", `http://${request.headers.host}`);
@@ -70,8 +70,8 @@ export function attachTerminalSockets(server: Server): () => void {
       socket.destroy();
       return;
     }
+    if (url.pathname !== "/api/terminals/socket") return;
     if (
-      url.pathname !== "/api/terminals/socket" ||
       !hosts.has(url.hostname) ||
       sockets.clients.size >= 128
     ) {
@@ -81,7 +81,8 @@ export function attachTerminalSockets(server: Server): () => void {
     sockets.handleUpgrade(request, socket, head, (ws) =>
       sockets.emit("connection", ws, request),
     );
-  });
+  };
+  server.on("upgrade", upgrade);
   sockets.on("connection", (socket, request) => {
     let terminalId: string | undefined,
       unsubscribe = () => {},
@@ -204,6 +205,7 @@ export function attachTerminalSockets(server: Server): () => void {
     });
   });
   return () => {
+    server.off("upgrade", upgrade);
     for (const socket of sockets.clients) socket.terminate();
     sockets.close();
     tickets.clear();
