@@ -37,6 +37,46 @@ it("follows the explicit current model and never supplies tools", async () => {
   expect(request.messages[1]).toEqual({ role: "user", content: input.text });
   expect(signal).toBeInstanceOf(AbortSignal);
 });
+// These are prompt-contract tests, not live model quality evaluations.
+it("constrains short drafts to faithful copy-editing", async () => {
+  const draft = "做成可视化动态交互的页面";
+  await optimizeInput({ ...input, text: draft });
+  const { messages } = mocks.generate.mock.calls[0][0];
+  expect(messages).toHaveLength(2);
+  expect(messages[1]).toEqual({ role: "user", content: draft });
+  const prompt = messages[0].content;
+  expect(prompt).toContain("Make the smallest useful wording changes");
+  expect(prompt).toContain("Do not assess whether the task is ready to execute");
+  expect(prompt).toContain("Missing context is not missing user input");
+  expect(prompt).toContain(
+    "Do not add clarification questions, confirmation checklists, or placeholders",
+  );
+  expect(prompt).toContain(
+    "Preserve questions, uncertainties, placeholders, and requests for clarification already present in the draft",
+  );
+  expect(prompt).not.toContain("Mark genuinely missing essential information");
+});
+it("does not add confirmation templates to a short draft", async () => {
+  const draft = "做成可视化动态交互的页面";
+  mocks.generate.mockResolvedValue({
+    text: "请将【待确认：要展示的内容/数据】做成一个可视化、动态、可交互的页面。\n\n需确认：\n- 可视化的具体对象与数据来源",
+    finishReason: "stop",
+  });
+  expect(await optimizeInput({ ...input, text: `  ${draft}  ` })).toEqual({
+    text: draft,
+  });
+});
+it("preserves confirmation content that was already in the draft", async () => {
+  const draft = "做成可交互页面，数据源待确认。";
+  mocks.generate.mockResolvedValue({
+    text: "做成一个可交互的页面，数据源待确认。",
+    finishReason: "stop",
+  });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: "做成一个可交互的页面，数据源待确认。",
+  });
+});
+
 it("uses the saved override even for an external backend", async () => {
   mocks.config.mockReturnValue({
     inputOptimizationModel: "custom/fixed",
