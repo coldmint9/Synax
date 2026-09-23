@@ -1105,9 +1105,10 @@
   .workbench-shell[data-has-project="false"] .workbench-header {
     --island-center-offset: 0px;
   }
-  /* Settings has no session sidebar. Match the Work island's viewport
-     position without inheriting its horizontal content-column offset. */
-  .workbench-shell[data-active-panel="settings"] .workbench-header {
+  /* Git and Settings have no session sidebar. Center their island on the
+     full viewport rather than the Work conversation column. */
+  .workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"])
+    .workbench-header {
     --island-center-offset: 0px;
     top: var(--workbench-island-top);
   }
@@ -1466,17 +1467,8 @@
     display: flex;
     align-items: center;
   }
-  .wh-tabs .tabs__list-container {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-  }
-  /* Let the selected pill shadow/focus ring fit inside the scrollport.
-     Negative margins preserve the header's existing height and tab position. */
-  .wh-tabs .tabs__list-container__scroller {
-    padding-block: 6px;
-    margin-block: -6px;
-  }
+  /* The three header tabs fit without HeroUI's scroll container. Its
+     overflow chevron could cover the Git label during Wiki/Git switches. */
   .wh-tabs .tabs__list {
     background: transparent !important;
     border: none !important;
