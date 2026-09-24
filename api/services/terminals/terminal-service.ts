@@ -159,17 +159,9 @@ export async function startBackgroundTerminal(
       command,
       requestId,
     });
-  if (options.signal?.aborted) {
-    if (inWorker)
-      await fetch(
-        `${origin}/api/terminals/projects/${encodeURIComponent(terminal.projectId)}/${terminal.id}/stop`,
-        { method: "POST", headers: { Authorization: authorization! } },
-      );
-    else await terminalManager.stop(terminal.id);
-    throw Object.assign(new Error("Command cancelled."), {
-      name: "AbortError",
-    });
-  }
+  // A background service is detached once the terminal host has accepted it.
+  // The originating turn may be cancelled while this request is completing,
+  // but that must not stop a service the user explicitly asked to keep alive.
   return { processId: terminal.id, pid: terminal.pid! };
 }
 export type TerminalExecution = RuntimeExecutionContext;

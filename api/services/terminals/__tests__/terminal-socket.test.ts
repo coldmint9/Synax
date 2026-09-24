@@ -66,7 +66,7 @@ it('hosts worker-created services after their requesting worker has exited', asy
   const session = agentSessionRuntime.create({ projectId: 'worker-pty', profileId: 'synax', prompt: 'test', workDir: cwd });
   const source = new URL('../terminal-service.ts', import.meta.url).href;
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify('setInterval(()=>{},1000)')}`;
-  const script = `import { startBackgroundTerminal } from ${JSON.stringify(source)};const item=await startBackgroundTerminal(${JSON.stringify(session.id)},${JSON.stringify(command)},{cwd:${JSON.stringify(cwd)}});console.log(JSON.stringify(item));process.exit(0);`;
+  const script = `import { startBackgroundTerminal } from ${JSON.stringify(source)};const controller=new AbortController();const item=await startBackgroundTerminal(${JSON.stringify(session.id)},${JSON.stringify(command)},{cwd:${JSON.stringify(cwd)},signal:controller.signal});controller.abort();console.log(JSON.stringify(item));process.exit(0);`;
   const result = await promisify(execFile)(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script], {
     cwd: process.cwd(), timeout: 20000,
     env: { ...process.env, DATA_ROOT, SYNAX_AGENT_SESSION_CHILD: '1', SYNAX_TERMINAL_HOST_ORIGIN: `http://127.0.0.1:${port}`, LOG_LEVEL: 'error', HOME: cwd, ZDOTDIR: cwd },

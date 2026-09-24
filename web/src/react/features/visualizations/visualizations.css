@@ -11,12 +11,19 @@
   background: transparent;
 }
 .inline-visualization__error {
+  display: grid;
+  gap: 4px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--muted-foreground) 20%, transparent);
   border-radius: 10px;
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: 12px;
+}
+.inline-visualization__error strong {
+  color: var(--foreground);
+  font-size: 13px;
 }
 
 .inline-visualization[data-mode="wide"] {

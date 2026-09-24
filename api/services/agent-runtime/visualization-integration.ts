@@ -21,10 +21,11 @@ export interface InlineVisualizationMetadata {
   end: number;
 }
 
-/** Resolve one fragment once, then render from metadata only. No compilation or jobs. */
+/** Resolve one fragment once, then render from metadata only. No compilation or jobs.
+ * Once the assistant message exists, snapshotting is deliberately non-cancellable. */
 export function persistInlineVisualization(
   message: AgentRuntimeMessage,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): void {
   if (
     message.role !== "assistant" ||
@@ -34,7 +35,6 @@ export function persistInlineVisualization(
   )
     return;
   if (!hasVisualization(message.content)) return;
-  signal?.throwIfAborted();
   const persisted = store.getMessage(message.sessionId, message.id);
   if (
     !persisted ||
@@ -67,7 +67,6 @@ export function persistInlineVisualization(
       preview.error = visualizationReadError(error);
     }
   }
-  signal?.throwIfAborted();
   const hash = createHash("sha256")
     .update(message.content)
     .digest("hex")

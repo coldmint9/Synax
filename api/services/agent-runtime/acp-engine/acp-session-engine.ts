@@ -330,7 +330,7 @@ class AcpSessionEngine {
       const captured = await captureFileChanges(pooled.workDir, [], baseline);
       const stopReason = promptResult.stopReason ?? 'end_turn';
       const failed = stopReason !== 'end_turn' && stopReason !== 'max_tokens';
-      if (assistantMessage && stopReason === 'end_turn') persistInlineVisualization(assistantMessage, abortSignal);
+      if (assistantMessage && stopReason === 'end_turn') persistInlineVisualization(assistantMessage);
 
       const currentStep = agentRuntimeStore.getRunStep(step.id);
       const usage = mergeStepUsage(
