@@ -369,9 +369,23 @@ export interface SessionListResponse {
   countByStatus: Record<string, number>;
 }
 
-export interface DeleteSessionResult {
+export interface ArchiveSessionResult {
   ok: true;
-  deletedSessionIds: string[];
+  archiveBatchId: string;
+  archivedAt: string;
+  archivedSessionIds: string[];
+  parentId: string | null;
+}
+
+export interface SessionArchiveItem {
+  archiveBatchId: string;
+  rootSessionId: string;
+  title: string | null;
+  prompt: string;
+  projectId: string;
+  archivedAt: string;
+  sessionCount: number;
+  scheduledDeletionAt: string | null;
 }
 
 export interface SessionUsageTotals {
@@ -883,13 +897,34 @@ export const agentRuntimeApi = {
       body: JSON.stringify({ runId: runId ?? undefined }),
     }),
   deleteSession: (sessionId: string) =>
-    request<DeleteSessionResult>(`/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
+    request<ArchiveSessionResult>(`/sessions/${encodeURIComponent(sessionId)}/archive`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
   clearInactiveSessions: (projectId: string) =>
-    request<{ ok: true; deletedCount: number; deletedSessionIds: string[] }>(
-      `/sessions/clear-inactive`,
+    request<{ ok: true; archivedBatchCount: number; archivedCount: number; archivedSessionIds: string[] }>(
+      `/sessions/archive-inactive`,
       { method: "POST", body: JSON.stringify({ projectId }) },
+    ),
+  listSessionArchives: (query: { projectId?: string; q?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "")
+        qs.set(key, String(value));
+    });
+    return request<{ items: SessionArchiveItem[]; totalCount: number }>(
+      `/session-archives${qs.size ? `?${qs.toString()}` : ""}`,
+    );
+  },
+  restoreSessionArchive: (batchId: string) =>
+    request<{ ok: true; restoredSessionIds: string[] }>(
+      `/session-archives/${encodeURIComponent(batchId)}/restore`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+  permanentlyDeleteSessionArchive: (batchId: string) =>
+    request<{ ok: true; deletedSessionIds: string[] }>(
+      `/session-archives/${encodeURIComponent(batchId)}`,
+      { method: "DELETE" },
     ),
   messageContentPage: (sessionId: string, messageId: string, cursor = 0, revision?: number) =>
     request<{ text: string; next?: number; revision: number }>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`),

@@ -1,7 +1,8 @@
 import { Button, Modal } from "@heroui/react";
-import { Trash2 } from "lucide-react";
+import { Archive } from "lucide-react";
 import { useState } from "react";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
+import { useLocale } from "../../../hooks/useLocale";
 
 interface Props {
   isOpen: boolean;
@@ -16,22 +17,23 @@ export function SessionClearInactiveDialog({
   onClose,
   onCleared,
 }: Props) {
-  const [deleting, setDeleting] = useState(false);
+  const { locale, t } = useLocale();
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleClear = async () => {
+  const handleArchive = async () => {
     if (!projectId) return;
     setError(null);
-    setDeleting(true);
+    setArchiving(true);
     try {
-      const result = await agentRuntimeApi.clearInactiveSessions(projectId);
+      await agentRuntimeApi.clearInactiveSessions(projectId);
       onClose();
       onCleared();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to clear sessions");
-      console.error("[ClearInactive]", err);
+      setError(err instanceof Error ? err.message : t("sessionDeleteFailed"));
+      console.error("[ArchiveInactive]", err);
     } finally {
-      setDeleting(false);
+      setArchiving(false);
     }
   };
 
@@ -45,27 +47,29 @@ export function SessionClearInactiveDialog({
       <Modal.Container size="sm">
         <Modal.Dialog>
           <Modal.Header>
-            <Modal.Icon>
-              <Trash2 className="text-danger" size={18} />
-            </Modal.Icon>
-            <Modal.Heading>Clear Inactive Sessions</Modal.Heading>
+            <Modal.Icon><Archive size={18} /></Modal.Icon>
+            <Modal.Heading>{t("sessionClearInactive")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
-            <p>Delete all non-running sessions? This cannot be undone.</p>
-            {error && <p className="text-danger text-xs mt-2">{error}</p>}
+            <p>
+              {locale === "zh"
+                ? "归档当前工作区中所有未运行的会话？归档后的会话可在设置中恢复。"
+                : "Archive all non-running sessions in this workspace? Archived sessions can be restored from Settings."}
+            </p>
+            {error && <p className="mt-2 text-xs text-danger">{error}</p>}
           </Modal.Body>
           <Modal.Footer>
             <Button variant="ghost" onPress={onClose} size="sm">
-              Cancel
+              {t("commonCancel")}
             </Button>
             <Button
-              variant="danger"
-              onPress={handleClear}
-              isPending={deleting}
+              variant="primary"
+              onPress={handleArchive}
+              isPending={archiving}
               isDisabled={!projectId}
               size="sm"
             >
-              Clear Inactive
+              {locale === "zh" ? "全部归档" : "Archive all"}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

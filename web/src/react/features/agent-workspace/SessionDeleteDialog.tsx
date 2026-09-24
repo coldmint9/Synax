@@ -1,5 +1,5 @@
 import { Button, Modal } from "@heroui/react";
-import { Trash2 } from "lucide-react";
+import { Archive } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 
 interface Props {
@@ -29,7 +29,7 @@ export function SessionDeleteDialog({
         <Modal.Dialog>
           <Modal.Header>
             <Modal.Icon>
-              <Trash2 className="text-danger" size={18} />
+              <Archive size={18} />
             </Modal.Icon>
             <Modal.Heading>{t("sessionDelete")}</Modal.Heading>
           </Modal.Header>
@@ -38,10 +38,10 @@ export function SessionDeleteDialog({
           </Modal.Body>
           <Modal.Footer>
             <Button variant="ghost" onPress={onClose} size="sm">
-              Cancel
+              {t("commonCancel")}
             </Button>
             <Button
-              variant="danger"
+              variant="primary"
               onPress={onConfirm}
               isPending={isDeleting}
               size="sm"

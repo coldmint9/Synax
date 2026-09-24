@@ -104,6 +104,7 @@ export function createDefaultGlobalConfig(updatedBy = "system"): GlobalConfig {
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
     webSearch: createDefaultWebSearchConfig(),
+    sessionArchiveRetentionDays: 7,
     providerConnections: {
       "opencode-acp": {
         providerId: "opencode-acp",
@@ -180,6 +181,7 @@ export function createDefaultUserGlobalConfig(
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
     webSearch: createDefaultWebSearchConfig(),
+    sessionArchiveRetentionDays: 7,
     providerConnections: {},
     limits: {
       maxAgentsPerProject: 10,

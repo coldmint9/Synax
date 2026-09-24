@@ -16,6 +16,7 @@ import { WikiModelSettings } from "./components/WikiModelSettings";
 import { OpenConfigFile } from "./components/OpenConfigFile";
 import { WebSearchSettings } from "./components/WebSearchSettings";
 import { UpdateSettings } from "./components/UpdateSettings";
+import { SessionArchiveSettings } from "./components/SessionArchiveSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
@@ -24,7 +25,7 @@ export default function GlobalSettingsPage() {
   const projectId = useShellStore(state => state.currentProjectId);
   const [params, setParams] = useSearchParams();
   const selected = params.get('section') ?? 'general';
-  const section: SettingsSection = ['tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'general';
+  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'general';
   const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
 
   useEffect(() => {
@@ -48,7 +49,9 @@ export default function GlobalSettingsPage() {
     <ScrollShadow className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
-          {section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
+          {section === "archive" ? (
+            <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
+          ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
           <div className="mb-8">
             <Typography type="h5">{t("settingsSystemConfig")}</Typography>
             <Typography type="body-sm" color="muted" className="mt-1">

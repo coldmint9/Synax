@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Square, Trash2 } from "lucide-react";
+import { Archive, Square } from "lucide-react";
 import type { AgentSessionStatus } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -79,13 +79,13 @@ export function SubagentControls({
         )}
         <button
           type="button"
-          className="bui-task-open text-danger"
+          className="bui-task-open"
           disabled={pending !== null || status === "stopping"}
           aria-label={t("subSessionDestroy")}
           title={t("subSessionDestroy")}
           onClick={() => setConfirmDestroy(true)}
         >
-          <Trash2 size={11} aria-hidden="true" />
+          <Archive size={11} aria-hidden="true" />
         </button>
       </div>
       {error && (

@@ -22,7 +22,7 @@ vi.mock("../SessionDeleteDialog", () => ({
     isOpen ? (
       <div role="dialog">
         <button onClick={onConfirm} disabled={isDeleting}>
-          Confirm destroy
+          Confirm archive
         </button>
         <button onClick={onClose}>Cancel</button>
       </div>
@@ -42,11 +42,11 @@ describe("SubagentControls", () => {
       preferences: { ...state.preferences, locale: "en" },
     }));
   });
-  it("renders an icon-only destroy button with an accessible name and tooltip", () => {
+  it("renders an icon-only archive button with an accessible name and tooltip", () => {
     render(<SubagentControls {...props} />);
-    const button = screen.getByRole("button", { name: "Destroy subagent" });
+    const button = screen.getByRole("button", { name: "Archive subagent" });
     expect(button.textContent).toBe("");
-    expect(button.getAttribute("title")).toBe("Destroy subagent");
+    expect(button.getAttribute("title")).toBe("Archive subagent");
     expect(button.querySelector("svg")).not.toBeNull();
   });
   it("stops only the chosen subagent and keeps controls pending until the backend confirms", async () => {
@@ -63,20 +63,20 @@ describe("SubagentControls", () => {
       screen.getByRole("button", { name: "Stop subagent" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Destroy subagent" }),
+      screen.getByRole("button", { name: "Archive subagent" }),
     ).toBeDisabled();
     await act(async () => finish());
     expect(screen.queryByRole("button", { name: "Stop subagent" })).toBeNull();
     expect(actions.fetchChildSessions).toHaveBeenCalledWith("parent");
   });
-  it("requires the destroy dialog before deleting, and cancellation keeps the subagent", async () => {
+  it("requires the archive dialog before deleting, and cancellation keeps the subagent", async () => {
     render(<SubagentControls {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Destroy subagent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive subagent" }));
     expect(actions.deleteSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Destroy subagent" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm destroy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive subagent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm archive" }));
     await waitFor(() =>
       expect(actions.deleteSession).toHaveBeenCalledWith("child"),
     );
@@ -84,7 +84,7 @@ describe("SubagentControls", () => {
     // the awaited deletion finishes and React commits the resulting state.
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Destroy subagent" }),
+        screen.queryByRole("button", { name: "Archive subagent" }),
       ).toBeNull(),
     );
     expect(actions.cancelSessionRun).not.toHaveBeenCalled();
@@ -110,11 +110,11 @@ describe("SubagentControls", () => {
       ).toBeEnabled();
     },
   );
-  it("only offers destroy for a completed child", () => {
+  it("only offers archive for a completed child", () => {
     render(<SubagentControls {...props} status="completed" />);
     expect(screen.queryByRole("button", { name: "Stop subagent" })).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Destroy subagent" }),
+      screen.getByRole("button", { name: "Archive subagent" }),
     ).toBeEnabled();
   });
 });

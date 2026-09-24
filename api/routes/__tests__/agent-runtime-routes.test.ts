@@ -434,7 +434,7 @@ describe("GET /sessions projected-status pagination", () => {
     });
   });
 
-  it("automatically stops a running session before deleting its history", async () => {
+  it("automatically stops a running session before archiving it", async () => {
     const { agentSessionRuntime } = await import(
       "../../services/agent-runtime/session-runtime.js",
     );
@@ -455,8 +455,16 @@ describe("GET /sessions projected-status pagination", () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       deletedSessionIds: [session.id],
+      archivedSessionIds: [session.id],
     });
     expect(agentRuntimeStore.tryGetSession(session.id)).toBeUndefined();
+    expect(
+      agentRuntimeStore.listArchivedBatches().items.map((item) => item.rootSessionId),
+    ).toContain(session.id);
+    expect(agentRuntimeStore.restoreArchivedBatch(session.id)).toEqual([
+      session.id,
+    ]);
+    expect(agentRuntimeStore.getSession(session.id).id).toBe(session.id);
   });
 
   it("filters and pages by projected status without dropping counts", async () => {

@@ -50,15 +50,15 @@ describe('agentRuntimeApi', () => {
     )
   })
 
-  it('deletes sessions through the agent runtime base path', async () => {
-    mockJson({ ok: true, deletedSessionIds: ['ars_1'] })
+  it('archives sessions through the agent runtime base path', async () => {
+    mockJson({ ok: true, archiveBatchId: 'ars_1', archivedAt: '2026-09-23T00:00:00.000Z', archivedSessionIds: ['ars_1'], parentId: null })
 
     const result = await agentRuntimeApi.deleteSession('ars_1')
 
-    expect(result.deletedSessionIds).toEqual(['ars_1'])
+    expect(result.archivedSessionIds).toEqual(['ars_1'])
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      '/api/agent-runtime/sessions/ars_1',
-      expect.objectContaining({ method: 'DELETE' }),
+      '/api/agent-runtime/sessions/ars_1/archive',
+      expect.objectContaining({ method: 'POST' }),
     )
   })
 
