@@ -366,7 +366,14 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         },
       );
     }
-    return entries;
+    // Pending questions belong to the composer; retain resolved history and plan approvals.
+    // Filter after anchoring snapshots so tool activity keeps its original ordering.
+    return entries.filter(
+      (entry) =>
+        entry.kind !== "interaction" ||
+        entry.interaction.kind !== "clarification" ||
+        entry.interaction.status !== "pending",
+    );
   }, [
     runs,
     steps,
