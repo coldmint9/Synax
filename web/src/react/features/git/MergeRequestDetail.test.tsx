@@ -42,6 +42,7 @@ vi.mock("../../components/file-viewer/FileViewerDialog", () => ({
   ),
 }));
 import { gitMrApi } from "../../../lib/api/gitMr";
+import { AppError } from "../../../lib/appError";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 const request = {
   id: "mr",
@@ -81,9 +82,27 @@ const mount = () =>
     </MemoryRouter>,
   );
 describe("MR detail actions", () => {
+  it("shows the manual finalize path without offering an unconfigured check", async () => {
+    mount();
+    expect(
+      await screen.findByRole("button", { name: "更新本地目标" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "运行检查" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "未配置验证检查。请审阅候选变更，确认后可直接更新本地目标。",
+      ),
+    ).toBeInTheDocument();
+  });
   it("requires explicit local target confirmation and refreshes stale versions", async () => {
     vi.mocked(gitMrApi.action).mockRejectedValue(
-      new Error("MR changed; refresh and retry"),
+      new AppError("MR changed; refresh and retry.", {
+        level: "business",
+        code: "STALE_VERSION",
+        statusCode: 409,
+      }),
     );
     mount();
     fireEvent.click(
@@ -97,8 +116,34 @@ describe("MR detail actions", () => {
     await waitFor(() =>
       expect(gitMrApi.action).toHaveBeenCalledWith("p", "mr", "finalize", 4),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent("refresh");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "请确认刷新后的状态再重试",
+    );
     await waitFor(() => expect(screen.getByText(/v5/)).toBeInTheDocument());
+  });
+  it("explains an unconfigured check without suggesting a retry", async () => {
+    vi.mocked(gitMrApi.get).mockResolvedValue({
+      ...request,
+      checks: [
+        { id: "test", executable: "npm", args: ["test"], timeoutMs: 300000 },
+      ],
+    });
+    vi.mocked(gitMrApi.action).mockRejectedValue(
+      new AppError(
+        "No verification commands configured. Manual finalize remains available.",
+        {
+          level: "business",
+          code: "NO_CHECKS",
+          statusCode: 400,
+        },
+      ),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "运行检查" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "未配置验证检查。请审阅候选变更，确认后可直接更新本地目标。",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("重试");
   });
   it("blocks continuation until a real conflict has been saved and refreshed", async () => {
     vi.mocked(gitMrApi.get).mockResolvedValue({
@@ -172,12 +217,18 @@ it.each(["failed", "interrupted"] as const)(
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Candidate worktree diverged",
     );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(
+      "请确认刷新后的状态再重试",
+    );
   },
 );
 it("keeps check failures on the check rerun path", async () => {
   vi.mocked(gitMrApi.get).mockResolvedValue({
     ...request,
     status: "check_failed",
+    checks: [
+      { id: "test", executable: "npm", args: ["test"], timeoutMs: 300000 },
+    ],
   });
   mount();
   expect(await screen.findByRole("button", { name: "运行检查" })).toBeEnabled();

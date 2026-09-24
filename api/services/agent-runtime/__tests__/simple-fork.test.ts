@@ -24,6 +24,7 @@ import { createAsset, sessionHasAsset, readAsset } from "../media-assets.js";
 import { runCommand } from "../tools/exec-async.js";
 import { withCheckpointMutation } from "../checkpoints/mutations.js";
 import { historyEpoch } from "../checkpoints/guards.js";
+import { collectDeletedHistory } from "../checkpoints/version-runtime/deletion.js";
 let sourceId: string, root: string;
 const worktrees: string[] = [];
 async function git(args: string[]) {
@@ -71,6 +72,7 @@ afterEach(async () => {
     "conversation_v3_runtime_records",
     "conversation_v3_owned_versions",
     "conversation_v3_heads",
+    "conversation_v3_deletions",
   ])
     db.prepare(`DELETE FROM ${table}`).run();
   await fs.rm(root, { recursive: true, force: true });
@@ -328,4 +330,100 @@ it("cleans unpublished readers after a worktree failure and permits a reuse fall
   } finally {
     await fs.rename(path.join(root, ".git-saved"), path.join(root, ".git"));
   }
+});
+
+it("keeps the fork fully usable after the source keeps running and is deleted", async () => {
+  store.appendMessage({
+    id: "u1",
+    sessionId: sourceId,
+    runId: null,
+    stepId: null,
+    role: "user",
+    content: "u1",
+    metadata: {},
+    createdAt: new Date().toISOString(),
+  });
+  // UI classification markers live on session metadata; a fork must stay a
+  // first-class interactive session without inheriting wiki business links.
+  store.updateSession(sourceId, {
+    sessionMetadata: {
+      ...store.getSession(sourceId).sessionMetadata,
+      mode: "chat",
+      source: "agent-dock",
+      goalId: "wiki-goal",
+      documentId: "wiki-doc",
+    },
+  });
+  message("reply");
+  const repo = versionRepository(),
+    cp = repo.capture(sourceId, "reply", "reply", null, 0);
+  message("later");
+  const result = await forkSimpleConversation(
+    sourceId,
+    cp.id,
+    historyEpoch(sourceId),
+    "outlives-source",
+    "reuse_worktree",
+  );
+  const forkId = result.sessionId;
+  const forkMetadata = store.getSession(forkId).sessionMetadata as Record<
+    string,
+    unknown
+  >;
+  expect(forkMetadata.source).toBe("agent-dock");
+  expect(forkMetadata.mode).toBe("chat");
+  expect(forkMetadata.goalId).toBeUndefined();
+  expect(forkMetadata.documentId).toBeUndefined();
+
+  // The source continues on its own branch; the fork stays frozen at the anchor.
+  message("newest");
+  expect(store.listMessages(forkId).map((m) => m.content)).toEqual([
+    "u1",
+    "reply",
+  ]);
+  expect(store.listMessages(sourceId).map((m) => m.content)).toEqual([
+    "u1",
+    "reply",
+    "later",
+    "newest",
+  ]);
+
+  // Deleting the whole source conversation must not touch the fork.
+  expect(store.deleteSessionTree(sourceId)).toEqual([sourceId]);
+  for (let i = 0; i < 200; i++) {
+    collectDeletedHistory();
+    if (
+      !getRawSqlite()
+        .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
+        .get(sourceId)
+    )
+      break;
+  }
+  expect(
+    getRawSqlite()
+      .prepare("SELECT 1 FROM agent_runtime_sessions WHERE id=?")
+      .get(sourceId),
+  ).toBeUndefined();
+  expect(store.getSession(forkId).parentSessionId).toBeNull();
+  expect(store.listMessages(forkId).map((m) => m.content)).toEqual([
+    "u1",
+    "reply",
+  ]);
+  expect(store.listSessions({ limit: 100 }).map((s) => s.id)).toContain(forkId);
+  // ...and the fork keeps accepting new turns of its own.
+  store.appendMessage({
+    id: "fork-u2",
+    sessionId: forkId,
+    runId: null,
+    stepId: null,
+    role: "user",
+    content: "continue here",
+    metadata: {},
+    createdAt: new Date().toISOString(),
+  });
+  expect(store.listMessages(forkId).map((m) => m.content)).toEqual([
+    "u1",
+    "reply",
+    "continue here",
+  ]);
 });

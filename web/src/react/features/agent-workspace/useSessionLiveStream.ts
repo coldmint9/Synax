@@ -24,7 +24,7 @@ export function useSessionLiveStream(sessionId: string | null) {
     if (apiReachable === "unreachable") return;
 
     ensureSessionLiveSubscription(sessionId, (event) => {
-      useAgentSessionStore.getState().applyLiveEvent(event);
+      useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
     });
 
     // openPanel owns initial loading and cache freshness. Revalidating on every

@@ -178,6 +178,10 @@ async function cloneSession(
   const metadata: Record<string, unknown> = {};
   for (const key of [
     "mode",
+    // UI classification markers: without `source` the fork is not recognized as
+    // an interactive workspace session, so it never appears in the sessions
+    // list and renders without a composer.
+    "source",
     "userPrompt",
     "goalContent",
     "language",

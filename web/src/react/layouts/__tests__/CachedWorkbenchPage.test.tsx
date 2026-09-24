@@ -19,3 +19,19 @@ it('does no work before the first visit, pauses page work and retains the draft 
   expect(screen.getByLabelText('draft')).toHaveValue('unsent draft')
   expect(start).toHaveBeenCalledTimes(2)
 })
+
+it('unmounts the page when caching is disabled', () => {
+  const unmounted = vi.fn()
+  function Page() {
+    useEffect(() => unmounted, [])
+    return <div>live session</div>
+  }
+
+  const view = render(<CachedWorkbenchPage active cache={false}><Page /></CachedWorkbenchPage>)
+  expect(screen.getByText('live session')).toBeInTheDocument()
+  view.rerender(<CachedWorkbenchPage active={false} cache={false}><Page /></CachedWorkbenchPage>)
+  expect(unmounted).toHaveBeenCalledOnce()
+  expect(screen.queryByText('live session')).toBeNull()
+  view.rerender(<CachedWorkbenchPage active cache={false}><Page /></CachedWorkbenchPage>)
+  expect(screen.getByText('live session')).toBeInTheDocument()
+})

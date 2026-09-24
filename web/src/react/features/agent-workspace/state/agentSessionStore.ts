@@ -395,7 +395,7 @@ function patchSessionDetailCache(
 function ensureLiveStream(sessionId: string): void {
   if (useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
   ensureSessionLiveSubscription(sessionId, (event) => {
-    useAgentSessionStore.getState().applyLiveEvent(event);
+    useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
   });
 }
 
@@ -620,7 +620,7 @@ export interface AgentSessionStoreState {
   forceQueuedInput: (sessionId: string, itemId: string) => Promise<void>;
   setInputQueue: (sessionId: string, items: QueuedInput[]) => void;
   cancelSessionRun: (sessionId: string) => Promise<void>;
-  applyLiveEvent: (event: SessionLiveEvent) => void;
+  applyLiveEvent: (event: SessionLiveEvent, streamSessionId?: string) => void;
   patchSession: (sessionId: string, patch: Partial<AgentSession>) => boolean;
   markSessionRead: (sessionId: string) => void;
 }
@@ -1153,7 +1153,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     openPanel: (sessionId) => {
       if (isRuntimeResourceGone(sessionId)) return;
       const { panelOpen, selectedSessionId: prev } = get();
-      if (panelOpen && prev === sessionId) return;
+      const session = get().sessions.find((s) => s.id === sessionId);
+      const liveSession = isActiveSessionStatus(session?.status);
+      if (panelOpen && prev === sessionId && !liveSession) return;
 
       const isSwitch = prev !== sessionId;
       if (isSwitch) {
@@ -1163,8 +1165,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         activeTranscriptRefresh = null;
       }
       get().markSessionRead(sessionId);
-      const session = get().sessions.find((s) => s.id === sessionId);
-      const cached = get().sessionDetailCache[sessionId];
+      // Active sessions must always render from a fresh request. The live
+      // stream remains the fast path, but an old detail snapshot must not be
+      // restored when the conversation page is mounted again.
+      const cached = liveSession
+        ? undefined
+        : get().sessionDetailCache[sessionId];
       set((state) => ({
         panelOpen: true,
         detailLoading: !cached?.cachedAt,
@@ -1200,6 +1206,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (isSwitch) clearStreamingBuffers();
       if (isActiveSessionStatus(session?.status)) {
         ensureLiveStream(sessionId);
+      } else if (isSwitch) {
+        // Selection moved synchronously, but the live-subscription singleton
+        // still belongs to the previous session until its owning effect
+        // releases it. Drop it now: a stale stream must never render into the
+        // newly selected (inactive) session's transcript slot.
+        releaseSessionLiveSubscription();
       }
       if (!cached || isActiveSessionStatus(session?.status)) {
         void get().loadInputQueue(sessionId);
@@ -1321,8 +1333,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         activeTranscriptRefresh?.sessionId === targetSessionId
       )
         return activeTranscriptRefresh.promise;
+      const targetSession = get().sessions.find(
+        (session) => session.id === targetSessionId,
+      );
+      const targetSessionIsLive = isActiveSessionStatus(targetSession?.status);
       set({
-        detailLoading: !get().sessionDetailCache[targetSessionId]?.cachedAt,
+        detailLoading:
+          targetSessionIsLive ||
+          !get().sessionDetailCache[targetSessionId]?.cachedAt,
         detailError: null,
       });
       const refresh = {
@@ -1341,7 +1359,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               !isRuntimeResourceGone(targetSessionId) &&
               detailRefreshEpoch === epoch &&
               !refresh.again;
-            const cachedEntry = get().sessionDetailCache[targetSessionId];
+            const cachedEntry = targetSessionIsLive
+              ? undefined
+              : get().sessionDetailCache[targetSessionId];
             const versioned = get().sessions.find(session => session.id === targetSessionId)?.sessionMetadata?.historyStorage === 3;
             const knownEventId = !versioned && cachedEntry?.events?.length
               ? cachedEntry.events[cachedEntry.events.length - 1].id
@@ -1385,9 +1405,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((stats) => {
                   if (!isCurrent()) return;
                   set({ sessionStats: stats });
-                  patchSessionDetailCache(targetSessionId, {
-                    sessionStats: stats,
-                  });
+                  if (!isActiveSessionStatus(get().sessions.find(
+                    (session) => session.id === targetSessionId,
+                  )?.status)) {
+                    patchSessionDetailCache(targetSessionId, {
+                      sessionStats: stats,
+                    });
+                  }
                 })
                 .catch(() => {
                   /* stats are optional */
@@ -1397,9 +1421,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((todosRes) => {
                   if (!isCurrent()) return;
                   set({ sessionTodos: todosRes.items });
-                  patchSessionDetailCache(targetSessionId, {
-                    sessionTodos: todosRes.items,
-                  });
+                  if (!isActiveSessionStatus(get().sessions.find(
+                    (session) => session.id === targetSessionId,
+                  )?.status)) {
+                    patchSessionDetailCache(targetSessionId, {
+                      sessionTodos: todosRes.items,
+                    });
+                  }
                 })
                 .catch(() => {
                   /* todos are optional */
@@ -1409,9 +1437,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((usage) => {
                   if (!isCurrent()) return;
                   set({ sessionInvocationUsage: usage });
-                  patchSessionDetailCache(targetSessionId, {
-                    sessionInvocationUsage: usage,
-                  });
+                  if (!isActiveSessionStatus(get().sessions.find(
+                    (session) => session.id === targetSessionId,
+                  )?.status)) {
+                    patchSessionDetailCache(targetSessionId, {
+                      sessionInvocationUsage: usage,
+                    });
+                  }
                 })
                 .catch(() => {
                   /* retain the most recent successful usage snapshot */
@@ -1511,10 +1543,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       messages: merged.messages,
                       toolCalls: merged.toolCalls,
                       permissions: merged.permissions,
-                      sessionDetailCache: trimSessionDetailCache({
-                        ...s.sessionDetailCache,
-                        [targetSessionId]: merged,
-                      }, s.selectedSessionId),
+                      sessionDetailCache: preserveLive
+                        ? s.sessionDetailCache
+                        : trimSessionDetailCache({
+                            ...s.sessionDetailCache,
+                            [targetSessionId]: merged,
+                          }, s.selectedSessionId),
                       ...(preserveLive
                         ? {}
                         : {
@@ -1808,7 +1842,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
     },
 
-    applyLiveEvent: (event) => {
+    applyLiveEvent: (event, streamSessionId) => {
+      // Deltas, steps, retries and tool records carry no session id of their
+      // own: they belong to the session whose live stream delivered them. The
+      // subscription singleton can still be attached to a previous session
+      // while selection already moved (its releasing effect runs later), so a
+      // stale stream must never render into the newly selected transcript.
+      const streamVisible =
+        streamSessionId === undefined ||
+        streamSessionId === get().selectedSessionId;
       switch (event.type) {
         case "runtime_state": {
           get().patchSession(event.sessionId, event.patch);
@@ -1840,6 +1882,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         }
         case "step_started": {
+          if (!streamVisible) break;
           flushStreamingDeltas();
           const s = get();
           const hasContent =
@@ -1865,6 +1908,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         }
         case "retry_status": {
+          if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
           const reset =
             event.retry.phase === "waiting" ||
@@ -1878,14 +1922,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         }
         case "message_delta":
+          if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
           bufferStreamingDelta("text", event.delta);
           break;
         case "thought_delta":
+          if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
           bufferStreamingDelta("thinking", event.delta);
           break;
         case "tool_call": {
+          if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
           const isNewCall = !get().toolCalls.some(
             (call) => call.id === event.toolCall.id,
@@ -1899,6 +1946,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         }
         case "tool_result":
+          if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
           flushStreamingDeltas();
           set((s) => ({

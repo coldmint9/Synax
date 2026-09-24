@@ -589,6 +589,9 @@ describe("agentLoopRuntime", () => {
   });
 
   it("continues a shared-worktree fork without creating rollback checkpoints", async () => {
+    // The global vitest env keeps ordinary fixtures legacy; forking requires a
+    // Native versioned root, so opt this fixture into boundary history.
+    vi.stubEnv("SYNAX_VERSION_HISTORY", "boundary");
     const { forkSimpleConversation } = await import("../checkpoints/simple-fork.js");
     const { historyEpoch } = await import("../checkpoints/guards.js");
     const { versionRepository } = await import("../checkpoints/version-runtime/bridge.js");
@@ -611,6 +614,7 @@ describe("agentLoopRuntime", () => {
     } finally {
       if (forkId) clearVersionSessionFixture(forkId);
       clearVersionSessionFixture(session.id);
+      vi.unstubAllEnvs();
     }
   });
 

@@ -100,7 +100,7 @@ function renderTurnBlocks(
           text={segment.content}
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
           startDelayMs={
-            isStreaming && answerStarted && segment.markdown
+            isStreaming && answerStarted && segment.markdown && toolBlocks.length > 0
               ? WORK_LOG_COLLAPSE_DELAY_MS
               : 0
           }

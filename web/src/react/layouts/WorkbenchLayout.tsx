@@ -182,6 +182,14 @@ function WorkbenchLayoutContent() {
   })();
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
+  const selectedSessionStatus = useAgentSessionStore((s) => {
+    const id = s.selectedSessionId;
+    return id ? s.sessions.find((session) => session.id === id)?.status : undefined;
+  });
+  const cacheSessionsPage =
+    selectedSessionStatus !== "running" &&
+    selectedSessionStatus !== "waiting_permission" &&
+    selectedSessionStatus !== "waiting_input";
   const agentPanelOpen = useAgentSessionStore((s) => s.panelOpen);
   const workspaceState = useSessionWorkspace(selectedSessionId);
   const workspaceViewerOpen = Boolean(
@@ -282,12 +290,12 @@ function WorkbenchLayoutContent() {
           />
           <div className="workbench-island">
             <div className="island-body">
-              {/* Unvisited pages do no work; visited pages retain draft/selection state. */}
+              {/* Live sessions remount on return so they reload and resubscribe. */}
               {effectiveProjectId && <>
                 {wikiEnabled && <CachedWorkbenchPage key={`${effectiveProjectId}:wiki`} active={activePanel === "wiki"}>
                   <WikiPage projectId={effectiveProjectId} />
                 </CachedWorkbenchPage>}
-                <CachedWorkbenchPage key={`${effectiveProjectId}:sessions`} active={activePanel === "sessions"}>
+                <CachedWorkbenchPage key={`${effectiveProjectId}:sessions`} active={activePanel === "sessions"} cache={cacheSessionsPage}>
                   <SessionsPage />
                 </CachedWorkbenchPage>
               </>}

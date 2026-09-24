@@ -3160,6 +3160,13 @@
 .markdown-stream-pending code {
   @apply font-mono text-[0.9em] leading-relaxed;
 }
+/* Trailing partial line while a reply streams: visible immediately as plain
+   text, promoted into the parsed Markdown once its newline arrives. */
+.markdown-stream-tail {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* Mermaid and Shiki are shared by Wiki and transcript Markdown. */
 .agent-conversation-copy .wiki-mermaid {

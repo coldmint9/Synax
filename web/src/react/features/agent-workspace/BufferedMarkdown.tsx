@@ -2,17 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { SessionMarkdown } from "./SessionMarkdown";
 
 const LINE_TICK_MS = 32;
-const PARTIAL_LINE_IDLE_MS = 140;
 
 function useLineBufferedText(text: string, isStreaming: boolean): string {
   const targetRef = useRef(text);
   const visibleRef = useRef(isStreaming ? "" : text);
-  const changedAtRef = useRef(Date.now());
   const [visible, setVisible] = useState(visibleRef.current);
 
   useEffect(() => {
     targetRef.current = text;
-    changedAtRef.current = Date.now();
     if (!isStreaming) {
       visibleRef.current = text;
       setVisible(text);
@@ -34,14 +31,11 @@ function useLineBufferedText(text: string, isStreaming: boolean): string {
       const current = visibleRef.current;
       if (current === target) return;
 
-      const completeLineEnd = target.lastIndexOf("\n") + 1;
-      const idle = Date.now() - changedAtRef.current >= PARTIAL_LINE_IDLE_MS;
-      const next =
-        completeLineEnd > current.length
-          ? target.slice(0, completeLineEnd)
-          : idle
-            ? target
-            : current;
+      // Reveal everything received so far. Complete lines render as Markdown
+      // while the trailing partial line renders as plain text (see below), so
+      // a long paragraph streams character by character instead of waiting
+      // for its closing newline and dumping in one piece.
+      const next = target;
       if (next !== current) {
         visibleRef.current = next;
         setVisible(next);
@@ -72,6 +66,23 @@ function splitUnclosedFence(content: string): {
     : { stable: content, pending: "" };
 }
 
+/**
+ * The trailing line that has no newline yet. It stays visible as plain text
+ * while streaming so a partial paragraph is never hidden; once the newline
+ * lands the line joins the stable Markdown above it.
+ */
+function splitIncompleteLine(content: string): {
+  stable: string;
+  pending: string;
+} {
+  const lastNewline = content.lastIndexOf("\n");
+  if (lastNewline < 0) return { stable: "", pending: content };
+  return {
+    stable: content.slice(0, lastNewline + 1),
+    pending: content.slice(lastNewline + 1),
+  };
+}
+
 export function BufferedMarkdown({
   content,
   isStreaming,
@@ -99,17 +110,26 @@ export function BufferedMarkdown({
     released ? content : "",
     isStreaming && released,
   );
-  const { stable, pending } = isStreaming
-    ? splitUnclosedFence(visible)
-    : { stable: visible, pending: "" };
+  const fenceSplit = isStreaming ? splitUnclosedFence(visible) : null;
+  const fencePending = Boolean(fenceSplit && fenceSplit.pending);
+  const { stable, pending } = fencePending
+    ? fenceSplit!
+    : isStreaming
+      ? splitIncompleteLine(visible)
+      : { stable: visible, pending: "" };
 
   return (
     <>
       {stable && <SessionMarkdown content={stable} className={className} />}
-      {pending && (
+      {pending && fencePending && (
         <pre className="markdown-stream-pending agent-conversation-copy">
           <code>{pending}</code>
         </pre>
+      )}
+      {pending && !fencePending && (
+        <span className="markdown-stream-tail agent-conversation-copy">
+          {pending}
+        </span>
       )}
     </>
   );

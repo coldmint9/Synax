@@ -10,6 +10,7 @@ import {
   type MergeAction,
 } from "../../../lib/api/gitMr";
 import { FileViewerDialog } from "../../components/file-viewer/FileViewerDialog";
+import { AppError } from "../../../lib/appError";
 import { canFinalize, isRunning, isTerminal, statusLabels } from "./mergeUi";
 export function MergeRequestDetail({
   projectId,
@@ -69,8 +70,13 @@ export function MergeRequestDetail({
       await action();
       await refresh();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       setError(
-        `${err instanceof Error ? err.message : String(err)}。请刷新查看当前状态后重试。`,
+        err instanceof AppError && err.code === "NO_CHECKS"
+          ? "未配置验证检查。请审阅候选变更，确认后可直接更新本地目标。"
+          : err instanceof AppError && err.code === "STALE_VERSION"
+            ? `${message} 请确认刷新后的状态再重试。`
+            : message,
       );
       await refresh().catch(() => {});
     } finally {
@@ -150,11 +156,16 @@ export function MergeRequestDetail({
               {mr.agentSessionId ? "打开 Git Agent" : "请 Git Agent 协助"}
             </button>
           </div>
-          {mr.error && (
-            <p className="mr-error" role="alert">
-              {mr.error}
-            </p>
-          )}
+          {mr.error &&
+            !(
+              !mr.checks.length &&
+              mr.error ===
+                "No verification commands configured. Manual finalize remains available."
+            ) && (
+              <p className="mr-error" role="alert">
+                {mr.error}
+              </p>
+            )}
           {(["failed", "interrupted"] as string[]).includes(mr.status) && (
             <p className="mr-notice">
               本次执行保留了现场。恢复前会核对目标分支、候选工作树和执行记录；无法安全恢复时会保留现场并说明原因。
@@ -223,11 +234,12 @@ export function MergeRequestDetail({
                     : "继续合并"}
                 </button>
               )}
-              {(["ready", "check_failed"] as string[]).includes(mr.status) && (
-                <button disabled={!!busy} onClick={() => act("checks")}>
-                  {mr.checkResults.length ? "重新运行检查" : "运行检查"}
-                </button>
-              )}
+              {mr.checks.length > 0 &&
+                (["ready", "check_failed"] as string[]).includes(mr.status) && (
+                  <button disabled={!!busy} onClick={() => act("checks")}>
+                    {mr.checkResults.length ? "重新运行检查" : "运行检查"}
+                  </button>
+                )}
               {mr.status === "ready" && (
                 <button
                   className="mr-primary"
@@ -350,7 +362,9 @@ export function MergeRequestDetail({
             <section className="mr-card">
               <h2>验证结果</h2>
               {!mr.checks.length ? (
-                <p className="mr-muted">未配置检查。完成前请审阅候选变更。</p>
+                <p className="mr-muted">
+                  未配置验证检查。请审阅候选变更，确认后可直接更新本地目标。
+                </p>
               ) : (
                 mr.checks.map((check) => {
                   const result = [...mr.checkResults]
