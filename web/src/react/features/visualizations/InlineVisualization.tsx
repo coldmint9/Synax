@@ -158,9 +158,10 @@ function VisualizationInstance({
       aria-busy={!ready && !error}
     >
       {error ? (
-        <p className="inline-visualization__error" role="alert">
-          {error}
-        </p>
+        <div className="inline-visualization__error" role="alert">
+          <strong>预览不可用</strong>
+          <span>{error}</span>
+        </div>
       ) : (
         <div ref={container} />
       )}

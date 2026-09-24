@@ -75,13 +75,16 @@ it.each([
   persistInlineVisualization(m);
   expect(m.metadata.visualization).toBeUndefined();
 });
-it("rejects aborts and stale/deleted messages without resurrection", () => {
+it("finishes snapshot persistence even when the originating turn is aborted", () => {
   const m = message();
-  expect(() => persistInlineVisualization(m, AbortSignal.abort())).toThrow();
+  persistInlineVisualization(m, AbortSignal.abort());
+  expect(m.metadata.visualization).toMatchObject({
+    html: '<div id="demo">Hi</div>',
+  });
   persistInlineVisualization({ ...m, content: m.content + "stale" });
   expect(
     store.getMessage(sessionId, m.id)?.metadata.visualization,
-  ).toBeUndefined();
+  ).toMatchObject({ html: '<div id="demo">Hi</div>' });
   getRawSqlite()
     .prepare("DELETE FROM agent_runtime_messages WHERE id = ?")
     .run(m.id);

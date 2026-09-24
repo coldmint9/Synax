@@ -1357,7 +1357,7 @@ export class AgentLoopRuntime {
               modelResult.step.usage,
               modelResult.step.sources,
             );
-            persistInlineVisualization(assistantMessage, runAbortSignal);
+            persistInlineVisualization(assistantMessage);
             const completedStep = this.store.updateRunStep(step.id, {
               status: "completed",
               completedAt: nowIso(),
@@ -2116,7 +2116,6 @@ export class AgentLoopRuntime {
     const work = workStore.current(sessionId)!;
     let message: AgentRuntimeMessage | undefined;
     getRawSqlite().transaction(() => {
-      workRuntime.persistTerminal(work, run.id);
       message = this.store
         .listMessages(sessionId)
         .find(
@@ -2136,6 +2135,8 @@ export class AgentLoopRuntime {
     })();
     if (work.status === "completed" && message)
       persistInlineVisualization(message);
+    // Publish the terminal run/session state only after the reply snapshot is durable.
+    workRuntime.persistTerminal(work, run.id);
     const terminalRun = this.store.getRun(run.id);
     const eventType =
       work.status === "completed" ? "run_completed" : "run_failed";
@@ -2181,6 +2182,10 @@ export class AgentLoopRuntime {
         run.model,
         "round_handoff",
       );
+    })();
+    // Snapshot the reply before publishing the terminal run state.
+    persistInlineVisualization(message);
+    getRawSqlite().transaction(() => {
       finished = this.store.updateRun(run.id, {
         status: "completed",
         completedAt: nowIso(),
@@ -2198,7 +2203,6 @@ export class AgentLoopRuntime {
         blockedReason: null,
       });
     })();
-    persistInlineVisualization(message);
     const event = this.events.append({
       sessionId,
       type: "run_completed",
