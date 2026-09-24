@@ -1,7 +1,5 @@
 <div align="center">
 
-<img alt="Synax" src="web/public/synax-github-cover.png" />
-
 # Synax
 
 在本地用 Agent 写代码、整理项目文档。

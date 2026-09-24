@@ -1,7 +1,5 @@
 <div align="center">
 
-<img alt="Synax" src="web/public/synax-github-cover.png" />
-
 # Synax
 
 A local workspace for coding agents and codebase documentation.
