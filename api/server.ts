@@ -10,7 +10,10 @@ import type { Server } from "node:http";
 import { closeDb } from "./db/index.js";
 import { stopHostProcesses } from "./services/agent-runtime/process-ownership.js";
 import { acquireRuntimeHost } from "./services/agent-runtime/runtime-host.js";
-import { recoverRuntime } from "./services/agent-runtime/runtime-recovery.js";
+import {
+  isDurableRuntimeCheckpoint,
+  recoverRuntime,
+} from "./services/agent-runtime/runtime-recovery.js";
 import { runCoordinator } from "./services/agent-runtime/run-coordinator.js";
 import path from "node:path";
 import { installRuntimeAccess } from "./middleware/runtime-access.js";
@@ -246,6 +249,8 @@ async function shutdownRuntime(): Promise<void> {
   httpServer?.close();
   let failed = false;
   for (const id of runCoordinator.activeSessionIds()) {
+    const session = agentRuntimeStore.tryGetSession(id);
+    if (session && isDurableRuntimeCheckpoint(session.status)) continue;
     try {
       await runCoordinator.interrupt(id, "Runtime host is shutting down.");
     } catch (error) {
