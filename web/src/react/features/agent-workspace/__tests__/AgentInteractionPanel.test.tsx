@@ -241,6 +241,52 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
+  it("does not treat single-select bounds as option-value length", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Choose one",
+            questions: [
+              {
+                id: "scenario",
+                type: "single_select",
+                label: "Primary scenario",
+                required: true,
+                min: 1,
+                max: 1,
+                options: [
+                  {
+                    value: "remote_developer_machine",
+                    label: "Remote developer machine",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("radio", { name: "Remote developer machine" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        {
+          revision: 3,
+          action: "submit",
+          answers: { scenario: "remote_developer_machine" },
+        },
+      ),
+    );
+  });
+
   it.each(["codex", "claude-code"])(
     "loads and answers persisted questions for the %s native CLI backend",
     async (backendId) => {
