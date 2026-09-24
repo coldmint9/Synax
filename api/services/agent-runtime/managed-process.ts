@@ -54,7 +54,7 @@ export function spawnManagedProcess(command: string, args: string[], options: {
     stopping = (async () => {
       if (!child.pid) { await closed; return; }
       if (!grouped) {
-        const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
         await withDeadline(new Promise<void>((resolve, reject) => {
           killer.once('error', reject); killer.once('exit', () => resolve());
         }), options.stopTimeoutMs ?? 4000, 'Process-tree termination could not be confirmed.');

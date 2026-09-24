@@ -409,7 +409,9 @@ class SessionProcessManager {
       },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
       execArgv: isTs ? ["--import", "tsx/esm"] : [],
-    });
+      // Older @types/node releases omit this valid child-process option.
+      windowsHide: true,
+    } as Parameters<typeof fork>[2]);
 
     recordOwnedPid(processTicket.id, child.pid);
     child.once("close", () => releaseOwnedProcess(processTicket.id));

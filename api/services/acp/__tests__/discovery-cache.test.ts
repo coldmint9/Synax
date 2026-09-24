@@ -53,6 +53,21 @@ describe('discoverAcpProviders cache', () => {
     const third = await discoverAcpProviders(providers, 'opencode-acp')
     expect(third).toEqual(a)
   })
+
+  it('hides Windows command probes', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      await discoverAcpProviders([
+        { id: 'opencode-acp', label: 'OpenCode' },
+      ] as never[], 'opencode-acp')
+      expect(spawnMock).toHaveBeenCalledWith('cmd.exe', ['/c', 'where', 'opencode.cmd'], {
+        stdio: 'ignore', windowsHide: true,
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+    }
+  })
 })
 
 describe('discoverAcpProviders codex/pi adapters', () => {

@@ -173,7 +173,7 @@ function commandExists(meta: { commandName: string; windowsName: string }): Prom
     ? ['/c', 'where', meta.windowsName]
     : ['-lc', `command -v ${meta.commandName}`]
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: 'ignore' })
+    const child = spawn(command, args, { stdio: 'ignore', windowsHide: true })
     child.once('error', () => resolve(false))
     child.once('exit', (code) => resolve(code === 0))
   })

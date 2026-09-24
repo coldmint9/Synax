@@ -23,7 +23,7 @@ async function commandExists(commandName: string): Promise<boolean> {
     ? ['/c', 'where', commandName.endsWith('.cmd') ? commandName : `${commandName}.cmd`]
     : ['-lc', `command -v ${commandName}`]
   return new Promise((resolve) => {
-    const child = spawn(shell, args, { stdio: 'ignore' })
+    const child = spawn(shell, args, { stdio: 'ignore', windowsHide: true })
     child.once('error', () => resolve(false))
     child.once('exit', (code) => resolve(code === 0))
   })

@@ -176,7 +176,7 @@ export async function installedOpeners(): Promise<InstalledOpener[]> {
           const { stdout } = await run(
             process.platform === "win32" ? "where.exe" : "which",
             [candidate.bin],
-            { timeout: 2000 },
+            { timeout: 2000, windowsHide: true },
           );
           const cli = stdout.trim().split(/\r?\n/)[0];
           if (cli && !/\.(cmd|bat)$/i.test(cli))

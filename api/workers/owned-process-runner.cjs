@@ -12,6 +12,7 @@ function stop() {
   if (process.platform === "win32")
     spawn("taskkill", ["/PID", String(target.pid), "/T", "/F"], {
       stdio: "ignore",
+      windowsHide: true,
     });
   else {
     try {
@@ -37,6 +38,7 @@ process.once("message", (message) => {
     shell: message.shell === true,
     stdio: ["inherit", "inherit", "inherit"],
     detached: false,
+    windowsHide: true,
   });
   target.once("spawn", () => {
     if (process.connected) process.send({ type: "started" });
