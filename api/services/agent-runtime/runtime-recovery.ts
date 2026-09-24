@@ -13,6 +13,10 @@ import { nowIso } from "./runtime-ids.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
 
+export function isDurableRuntimeCheckpoint(status: string): boolean {
+  return status === "waiting_permission" || status === "waiting_input";
+}
+
 export async function recoverRuntime(
   hostId: string,
 ): Promise<{ reviewed: number; resumable: string[] }> {
@@ -63,7 +67,7 @@ export async function recoverRuntime(
         !session.parentSessionId &&
         !session.sessionMetadata?.runtimeControl &&
         !unknownProcesses.length &&
-        ["waiting_permission", "waiting_input"].includes(run.status);
+        isDurableRuntimeCheckpoint(run.status);
       if (safeCheckpoint) {
         agentRuntimeStore.updateSession(session.id, {
           status: normalizeAgentSessionStatus(run.status),

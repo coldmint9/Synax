@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { recoverRuntime, restoreUnlaunchedInput } from "../runtime-recovery.js";
+import {
+  isDurableRuntimeCheckpoint,
+  recoverRuntime,
+  restoreUnlaunchedInput,
+} from "../runtime-recovery.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import {
@@ -11,6 +15,42 @@ import os from "node:os";
 beforeEach(resetAgentRuntimeFixtures);
 
 describe("restart recovery decisions", () => {
+  it.each(["waiting_permission", "waiting_input"])(
+    "preserves %s as a durable checkpoint during shutdown",
+    (status) => {
+      expect(isDurableRuntimeCheckpoint(status)).toBe(true);
+    },
+  );
+
+  it("restores a waiting-input run after the host restarts", async () => {
+    const session = agentSessionRuntime.create({
+      ...plannerSessionInput,
+      workDir: os.tmpdir(),
+    });
+    const { run } = acceptRuntimeRun(
+      session.id,
+      { message: "Ask before editing" },
+      "ask",
+    );
+    agentRuntimeStore.updateRun(run.id, { status: "waiting_input" });
+    agentRuntimeStore.updateSession(session.id, {
+      status: "waiting_input",
+      activeRunId: run.id,
+      pendingResumeToken: "interaction:ask",
+    });
+
+    expect(await recoverRuntime("new-host")).toEqual({
+      reviewed: 0,
+      resumable: [],
+    });
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+      status: "waiting_input",
+      activeRunId: run.id,
+      pendingResumeToken: "interaction:ask",
+    });
+    expect(agentRuntimeStore.getRun(run.id).status).toBe("waiting_input");
+  });
+
   it("retains an unlaunched request for explicit continuation without automatically replaying it", async () => {
     const session = agentSessionRuntime.create({
       ...plannerSessionInput,
