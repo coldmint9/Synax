@@ -147,17 +147,25 @@ function tryResolveCandidate(
       : {}),
   };
 
+  const apiFormat = resolveProviderApiFormat({
+    providerId: parsed.providerId,
+    apiFormat: config.apiFormat,
+    modelId: parsed.modelId,
+    modelReasoning: modelDef.reasoning,
+  });
+  const resolvedProvider =
+    apiFormat === "openai-responses" &&
+    [parsed.providerId, parsed.modelId, config.baseUrl]
+      .some((value) => value?.toLowerCase().includes("deepseek"))
+      ? { ...provider, npm: "@ai-sdk/open-responses" }
+      : provider;
+
   return {
     model: `${parsed.providerId}/${parsed.modelId}`,
     providerId: parsed.providerId,
     modelId: parsed.modelId,
-    apiFormat: resolveProviderApiFormat({
-      providerId: parsed.providerId,
-      apiFormat: config.apiFormat,
-      modelId: parsed.modelId,
-      modelReasoning: modelDef.reasoning,
-    }),
-    provider,
+    apiFormat,
+    provider: resolvedProvider,
     modelDef,
     config,
   };

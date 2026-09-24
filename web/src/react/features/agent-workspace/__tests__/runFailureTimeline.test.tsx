@@ -34,6 +34,28 @@ const step: AgentRunStep = {
   metadata: {},
 };
 
+describe("model switches in the conversation", () => {
+  it("renders the persisted switch tip in the center", () => {
+    const { container } = render(
+      <TimelineEntryView
+        entry={{
+          id: "model-switch",
+          kind: "model_switch",
+          createdAt: "2026-09-24T00:00:00Z",
+          label: "gpt-6-astra → deepseek-v4-flash",
+          fromModel: "openai/gpt-6-astra",
+          toModel: "openai/deepseek-v4-flash",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "模型已从 gpt-6-astra 切换至 deepseek-v4-flash",
+    );
+    expect(container.firstElementChild).toHaveClass("justify-center");
+  });
+});
+
 describe("failed runs in the conversation", () => {
   it.each([true, false])(
     "shows an empty failed model call instead of a work log (fold=%s)",

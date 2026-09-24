@@ -40,7 +40,10 @@ export function resolveOpenAICompatibleProviderName(providerId: string): string 
  * - native SDK: package-specific key (e.g. `deepseek`)
  */
 export function resolveProviderOptionsNamespace(selection: ResolvedModelSelection): string {
-  if (selection.provider.npm === '@ai-sdk/openai-compatible') {
+  if (
+    selection.provider.npm === '@ai-sdk/openai-compatible' ||
+    selection.provider.npm === '@ai-sdk/open-responses'
+  ) {
     return selection.providerId
   }
   return NATIVE_PROVIDER_OPTIONS_KEYS[selection.provider.npm ?? ''] ?? selection.providerId
