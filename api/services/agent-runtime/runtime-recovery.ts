@@ -1,6 +1,8 @@
 import { hasInput } from "./content-parts.js";
 import { getRawSqlite } from "../../db/index.js";
 import { agentRuntimeStore } from "./session-store.js";
+import { interactionService } from "./interaction-service.js";
+import { permissionPolicy } from "./permission-policy.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { profileService } from "./profile-service.js";
 import {
@@ -15,6 +17,48 @@ import type { StreamTurnRequest } from "./contracts.js";
 
 export function isDurableRuntimeCheckpoint(status: string): boolean {
   return status === "waiting_permission" || status === "waiting_input";
+}
+
+type DurableCheckpoint = {
+  runId: string;
+  status: "waiting_permission" | "waiting_input";
+  pendingResumeToken: string;
+  blockedReason: string;
+};
+
+function findDurableCheckpoint(
+  sessionId: string,
+  runs: ReturnType<typeof agentRuntimeStore.listRuns>,
+): DurableCheckpoint | null {
+  const interaction = interactionService.pending(sessionId);
+  if (interaction) {
+    const run = runs.find((item) => item.id === interaction.runId);
+    if (run)
+      return {
+        runId: run.id,
+        status: "waiting_input",
+        pendingResumeToken: `interaction:${interaction.id}`,
+        blockedReason: interaction.request.title,
+      };
+  }
+  const permission = permissionPolicy
+    .list(sessionId)
+    .find(
+      (item) =>
+        item.action === "ask" &&
+        item.userReply === null &&
+        item.resolvedAt === null &&
+        item.runId,
+    );
+  if (!permission?.runId) return null;
+  const run = runs.find((item) => item.id === permission.runId);
+  if (!run || !permission.resumeToken) return null;
+  return {
+    runId: run.id,
+    status: "waiting_permission",
+    pendingResumeToken: permission.resumeToken,
+    blockedReason: permission.reason,
+  };
 }
 
 export async function recoverRuntime(
@@ -33,11 +77,17 @@ export async function recoverRuntime(
       limit: Number.MAX_SAFE_INTEGER,
     })) {
       const runs = agentRuntimeStore.listRuns(session.id);
-      const run = runs.find((item) =>
-        ["running", "queued", "waiting_permission", "waiting_input"].includes(
-          item.status,
-        ),
-      );
+      const checkpoint = findDurableCheckpoint(session.id, runs);
+      const checkpointRun = checkpoint
+        ? runs.find((item) => item.id === checkpoint.runId)
+        : undefined;
+      const run =
+        checkpointRun ??
+        runs.find((item) =>
+          ["running", "queued", "waiting_permission", "waiting_input"].includes(
+            item.status,
+          ),
+        );
       const unknownProcesses = unresolved.filter(
         (item) => item.session_id === session.id,
       );
@@ -68,6 +118,45 @@ export async function recoverRuntime(
         !session.sessionMetadata?.runtimeControl &&
         !unknownProcesses.length &&
         isDurableRuntimeCheckpoint(run.status);
+      const recoverableCheckpoint =
+        checkpoint &&
+        checkpointRun &&
+        native &&
+        !embedded &&
+        !session.parentSessionId;
+      if (recoverableCheckpoint) {
+        agentRuntimeStore.updateRun(run.id, {
+          status: checkpoint.status,
+          completedAt: null,
+          stopReason: null,
+        });
+        agentRuntimeStore.updateSession(session.id, {
+          status: checkpoint.status,
+          activeRunId: run.id,
+          pendingResumeToken: checkpoint.pendingResumeToken,
+          blockedReason: checkpoint.blockedReason,
+          resultSummary: null,
+          completedAt: null,
+          updatedAt: nowIso(),
+          ...(session.sessionMetadata?.runtimeControl
+            ? { sessionMetadata: { ...session.sessionMetadata, runtimeControl: null } }
+            : {}),
+        });
+        if (!unknownProcesses.length) {
+          const answeredPermission = db
+            .prepare(
+              "SELECT p.id FROM agent_runtime_permissions p JOIN agent_runtime_tool_calls t ON t.id=p.tool_call_id WHERE p.run_id=? AND p.user_reply IS NOT NULL AND t.status='pending' LIMIT 1",
+            )
+            .get(run.id);
+          const answeredInput = db
+            .prepare(
+              "SELECT id FROM agent_runtime_interactions WHERE run_id=? AND consumed_at IS NULL AND response_json IS NOT NULL LIMIT 1",
+            )
+            .get(run.id);
+          if (answeredPermission || answeredInput) resumable.push(session.id);
+        }
+        continue;
+      }
       if (safeCheckpoint) {
         agentRuntimeStore.updateSession(session.id, {
           status: normalizeAgentSessionStatus(run.status),
