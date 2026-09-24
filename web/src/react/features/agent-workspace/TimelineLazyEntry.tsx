@@ -62,6 +62,7 @@ export function getMeasuredFoldHeight(
  */
 export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
   if (entry.kind === "error") return 112;
+  if (entry.kind === "model_switch") return 28;
   if (entry.kind === "interaction")
     return entry.interaction.status === "pending" ? 320 : 100;
   if (entry.kind === "user") {

@@ -178,7 +178,10 @@ export async function executePipeline(
   // `response.reasoning_text.delta`, an event @ai-sdk/openai does not model: it
   // opens and closes reasoning parts with no text, so thinking never reaches the
   // agent loop. Recover it from the raw SSE payload the adapter forwards.
-  if (selection.apiFormat === "openai-responses") {
+  if (
+    selection.apiFormat === "openai-responses" &&
+    selection.provider.npm !== "@ai-sdk/open-responses"
+  ) {
     model = applyResponsesReasoningMiddleware(model);
   }
 
@@ -212,7 +215,8 @@ export async function executePipeline(
     request.providerOptions,
     thinkingStream.providerOptions,
     buildProtocolProviderOptions(selection, request),
-    ...(selection.apiFormat === "openai-responses"
+    ...(selection.apiFormat === "openai-responses" &&
+    selection.provider.npm !== "@ai-sdk/open-responses"
       ? [{ openai: { passThroughUnsupportedFiles: true } }]
       : []),
   );

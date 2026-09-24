@@ -13,6 +13,11 @@ import { WorkLogEntry } from "./WorkLogEntry";
  * on the wrapping `TimelineLazyEntry`, which is always in the DOM, so this
  * component must not repeat them.
  */
+function displayModelName(model: string): string {
+  const separator = model.indexOf("/");
+  return separator < 0 ? model : model.slice(separator + 1);
+}
+
 function SystemInjectionChip({ content }: { content: string }) {
   const chars = content.length;
   return (
@@ -60,6 +65,17 @@ export const TimelineEntryView = memo(function TimelineEntryView({
         <p className="mt-2 whitespace-pre-wrap break-words text-destructive">
           {entry.message}
         </p>
+      </div>
+    );
+  }
+  if (entry.kind === "model_switch") {
+    return (
+      <div className="flex justify-center" role="status">
+        <span className="rounded-full bg-secondary/60 px-3 py-1 text-[11px] text-muted-foreground">
+          {locale === "zh"
+            ? `模型已从 ${displayModelName(entry.fromModel)} 切换至 ${displayModelName(entry.toModel)}`
+            : `Model switched from ${displayModelName(entry.fromModel)} to ${displayModelName(entry.toModel)}`}
+        </span>
       </div>
     );
   }

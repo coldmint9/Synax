@@ -65,9 +65,8 @@ function responsesPayload() {
 }
 
 /**
- * Mirrors a DeepSeek gateway connection resolved to the native OpenAI
- * Responses provider: `custom-api:*` (openai-compatible) with
- * `apiFormat: 'openai-responses'`, model `deepseek-v4-flash`.
+ * Mirrors a DeepSeek gateway connection resolved to the Open Responses
+ * adapter with `apiFormat: 'openai-responses'`.
  */
 function deepSeekResponsesSelection(baseUrl: string, overrides?: {
   reasoning?: boolean
@@ -80,7 +79,7 @@ function deepSeekResponsesSelection(baseUrl: string, overrides?: {
     provider: {
       id: 'custom-api:deepseek',
       label: 'DeepSeek',
-      npm: '@ai-sdk/openai-compatible',
+      npm: '@ai-sdk/open-responses',
       env: [],
       supported: true,
       models: [],
@@ -135,7 +134,7 @@ describe('OpenAI Responses wire warnings for DeepSeek gateway models', () => {
       {
         id: 'custom-api:deepseek',
         label: 'DeepSeek',
-        npm: '@ai-sdk/openai-compatible',
+        npm: '@ai-sdk/open-responses',
         api: undefined,
       },
       {
@@ -209,17 +208,17 @@ describe('buildProtocolProviderOptions reasoning gating', () => {
     expect(buildProtocolProviderOptions(selection(false), { reasoningEffort: 'high' })).toBeUndefined()
     expect(buildProtocolProviderOptions(selection(false), {
       responseOptions: { reasoningSummary: 'auto', store: false },
-    })).toEqual({ openai: { store: false } })
+    })).toBeUndefined()
   })
 
   it('keeps reasoning options for reasoning models and forceReasoning overrides', () => {
     expect(buildProtocolProviderOptions(selection(true), { reasoningEffort: 'max' })).toEqual({
-      openai: { reasoningEffort: 'max', forceReasoning: true },
+      'custom-api:deepseek': { reasoningEffort: 'max' },
     })
     expect(buildProtocolProviderOptions(selection(false), {
       reasoningEffort: 'low',
       responseOptions: { forceReasoning: true },
-    })).toEqual({ openai: { reasoningEffort: 'low', forceReasoning: true } })
+    })).toEqual({ 'custom-api:deepseek': { reasoningEffort: 'low' } })
   })
 
   it('keeps thinking options off non-reasoning deepseek responses selections', () => {
@@ -227,7 +226,7 @@ describe('buildProtocolProviderOptions reasoning gating', () => {
       temperature: 0.3,
     })
     expect(buildThinkingStreamOptions(selection(true), { reasoningEffort: 'high' })).toEqual({
-      providerOptions: { openai: { reasoningEffort: 'high' } },
+      providerOptions: { 'custom-api:deepseek': { reasoningEffort: 'high' } },
       temperature: undefined,
     })
   })

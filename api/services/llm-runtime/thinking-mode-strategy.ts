@@ -121,7 +121,9 @@ function buildDeepSeekThinkingOptions(
     }
     return {
       providerOptions: {
-        openai: {
+        [selection.provider.npm === "@ai-sdk/open-responses"
+          ? resolveProviderOptionsNamespace(selection)
+          : "openai"]: {
           reasoningEffort: effort,
         },
       },

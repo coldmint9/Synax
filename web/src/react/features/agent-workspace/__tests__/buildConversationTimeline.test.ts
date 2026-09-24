@@ -153,6 +153,77 @@ describe("buildConversationTimeline", () => {
     }
   });
 
+  it("persists a model switch before the first reply from the new model", () => {
+    const runs = [
+      makeRun({ id: "run-gpt", triggerMessageId: "ask-gpt" }),
+      makeRun({
+        id: "run-deepseek",
+        triggerMessageId: "ask-deepseek",
+        startedAt: "2026-01-01T00:00:10.000Z",
+      }),
+    ];
+    const steps = [
+      makeStep({
+        id: "step-gpt",
+        runId: "run-gpt",
+        model: "openai/gpt-6-astra",
+      }),
+      makeStep({
+        id: "step-deepseek",
+        runId: "run-deepseek",
+        model: "openai/deepseek-v4-flash",
+        startedAt: "2026-01-01T00:00:11.000Z",
+      }),
+    ];
+    const messages = [
+      makeMessage({
+        id: "ask-gpt",
+        runId: "run-gpt",
+        content: "First",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+      makeMessage({
+        id: "reply-gpt",
+        runId: "run-gpt",
+        stepId: "step-gpt",
+        role: "assistant",
+        content: "First answer",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+      makeMessage({
+        id: "ask-deepseek",
+        runId: "run-deepseek",
+        content: "Continue",
+        createdAt: "2026-01-01T00:00:10.000Z",
+      }),
+      makeMessage({
+        id: "reply-deepseek",
+        runId: "run-deepseek",
+        stepId: "step-deepseek",
+        role: "assistant",
+        content: "Second answer",
+        createdAt: "2026-01-01T00:00:12.000Z",
+      }),
+    ];
+
+    const build = () =>
+      buildConversationTimeline(runs, steps, messages, []);
+    const timeline = build();
+
+    expect(timeline.map((entry) => entry.kind)).toEqual([
+      "user",
+      "agent",
+      "user",
+      "model_switch",
+      "agent",
+    ]);
+    expect(timeline[3]).toMatchObject({
+      fromModel: "openai/gpt-6-astra",
+      toModel: "openai/deepseek-v4-flash",
+    });
+    expect(build()[3]).toEqual(timeline[3]);
+  });
+
   it("falls back to timestamp ordering when runs are missing", () => {
     const timeline = buildConversationTimeline(
       [],

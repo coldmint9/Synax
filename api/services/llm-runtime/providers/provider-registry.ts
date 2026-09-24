@@ -23,6 +23,8 @@ const REGISTRY: Record<string, () => Promise<ProviderFactory>> = {
   "@ai-sdk/groq": async () => (await import("@ai-sdk/groq")).createGroq,
   "@ai-sdk/mistral": async () =>
     (await import("@ai-sdk/mistral")).createMistral,
+  "@ai-sdk/open-responses": async () =>
+    (await import("@ai-sdk/open-responses")).createOpenResponses,
   "@ai-sdk/openai": async () => (await import("@ai-sdk/openai")).createOpenAI,
   "@ai-sdk/openai-compatible": async () =>
     (await import("@ai-sdk/openai-compatible")).createOpenAICompatible,
@@ -59,6 +61,15 @@ export async function instantiateProvider(
     config.options,
   );
   const baseURL = config.baseUrl ?? provider.api;
+
+  if (provider.npm === "@ai-sdk/open-responses") {
+    return create({
+      name: config.providerId,
+      url: responsesEndpoint(baseURL),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    });
+  }
 
   if (provider.npm === "@ai-sdk/openai-compatible") {
     // The compatibility provider only exposes Chat Completions. For an
@@ -121,8 +132,10 @@ export function selectLanguageModel(
   if (apiFormat === "openai-responses") {
     if (typeof c.responses === "function")
       return (c.responses as Function)(modelId, modelOptions);
+    if (typeof client === "function")
+      return (client as Function)(modelId, modelOptions);
     throw new Error(
-      `Provider client cannot resolve Responses model '${modelId}': this connection has no native responses selector`,
+      `Provider client cannot resolve Responses model '${modelId}': this connection has no Responses selector`,
     );
   }
   if (apiFormat === "openai" && typeof c.chat === "function") {
@@ -173,4 +186,14 @@ function normalizeStringMap(value: unknown): Record<string, string> {
         typeof entry[1] === "string" && entry[1].trim().length > 0,
     ),
   );
+}
+
+function responsesEndpoint(baseUrl: string | undefined): string {
+  const normalized = (baseUrl ?? "https://api.openai.com/v1").replace(
+    /\/+$/,
+    "",
+  );
+  return normalized.endsWith("/responses")
+    ? normalized
+    : `${normalized}/responses`;
 }

@@ -92,6 +92,54 @@ describe('OpenAI Responses protocol wire format', () => {
     expect(requests[0].body).not.toHaveProperty('messages')
   })
 
+  it('passes stored reasoning_text back to DeepSeek Responses', async () => {
+    const { baseUrl, requests } = await startStubServer(responsesPayload('continued'))
+    const config: ResolvedProviderConfig = {
+      providerId: 'openai',
+      apiFormat: 'openai-responses',
+      baseUrl,
+      apiKey: 'sk-test',
+    }
+
+    const client = await instantiateProvider(providerFor('@ai-sdk/open-responses'), config)
+    const model = selectLanguageModel(client, 'deepseek-v4-flash', undefined, 'openai-responses')
+    await generateText({
+      model: model as Parameters<typeof generateText>[0]['model'],
+      messages: [
+        { role: 'user', content: 'first' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'reasoning',
+              text: 'stored thinking',
+              providerOptions: {
+                openai: {
+                  itemId: 'reasoning_1',
+                  reasoningContent: [{ type: 'reasoning_text', text: 'stored thinking' }],
+                },
+              },
+            },
+            { type: 'text', text: 'first answer' },
+          ],
+        },
+        { role: 'user', content: 'continue' },
+      ] as never,
+      maxRetries: 0,
+    })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].url).toBe('/v1/responses')
+    expect(requests[0].body).toMatchObject({
+      input: expect.arrayContaining([
+        expect.objectContaining({
+          type: 'reasoning',
+          content: [{ type: 'reasoning_text', text: 'stored thinking' }],
+        }),
+      ]),
+    })
+  })
+
   it('posts to /chat/completions when the connection protocol is openai', async () => {
     const { baseUrl, requests } = await startStubServer({
       id: 'chatcmpl_test',

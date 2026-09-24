@@ -32,6 +32,20 @@ export function buildProtocolProviderOptions(
   if (selection.apiFormat !== 'openai-responses') return undefined
 
   const options = request.responseOptions
+  if (selection.provider.npm === '@ai-sdk/open-responses') {
+    const provider: JSONObject = {}
+    const reasoningCapable = Boolean(options?.forceReasoning ?? selection.modelDef.reasoning)
+    if (request.reasoningEffort && reasoningCapable) {
+      provider.reasoningEffort = request.reasoningEffort
+    }
+    if (options?.reasoningSummary && reasoningCapable) {
+      provider.reasoningSummary = options.reasoningSummary
+    }
+    return Object.keys(provider).length > 0
+      ? { [selection.providerId]: provider }
+      : undefined
+  }
+
   const openai: JSONObject = {}
   // The provider ignores reasoning controls (with an AI SDK warning per call)
   // unless it classifies the model as reasoning, which requires forceReasoning

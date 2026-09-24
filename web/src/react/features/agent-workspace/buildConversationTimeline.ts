@@ -34,6 +34,14 @@ export type ConversationTimelineEntry =
     }
   | {
       id: string;
+      kind: "model_switch";
+      createdAt: string;
+      label: string;
+      fromModel: string;
+      toModel: string;
+    }
+  | {
+      id: string;
       kind: "user";
       createdAt: string;
       label: string;
@@ -236,8 +244,34 @@ function buildTimelineItems(
     });
   }
 
+  const modelSwitches = new Map<string, string>();
+  let previousModel: string | null = null;
+  for (const step of [...steps].sort(
+    (a, b) => toTimestamp(a.startedAt) - toTimestamp(b.startedAt),
+  )) {
+    if (!step.model) continue;
+    if (previousModel && previousModel !== step.model) {
+      modelSwitches.set(step.id, previousModel);
+    }
+    previousModel = step.model;
+  }
+
   for (const turn of agentTurns) {
     const step = stepById.get(turn.stepId);
+    const fromModel = modelSwitches.get(turn.stepId);
+    if (step?.model && fromModel) {
+      items.push({
+        timestamp: toTimestamp(step.startedAt),
+        entry: {
+          id: `model-switch-${step.id}`,
+          kind: "model_switch",
+          createdAt: step.startedAt,
+          label: `${fromModel} → ${step.model}`,
+          fromModel,
+          toModel: step.model,
+        },
+      });
+    }
     items.push({
       timestamp: step ? toTimestamp(step.startedAt) : 0,
       entry: agentEntry(turn, step),
