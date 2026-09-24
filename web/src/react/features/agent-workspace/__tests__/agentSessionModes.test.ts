@@ -306,6 +306,28 @@ describe("session mode boundaries", () => {
 });
 
 describe("durable interaction refresh races", () => {
+  it("shows the running state immediately after submitting an answer", async () => {
+    const waiting = { ...session, status: "waiting_input" as const, activeRunId: "r1" };
+    useAgentSessionStore.setState({
+      sessions: [waiting],
+      refreshSessions: vi.fn(async () => {}),
+    });
+    vi.spyOn(agentRuntimeApi, "replyInteraction").mockResolvedValue({
+      interaction: { ...interaction, status: "answered" },
+    });
+
+    await useAgentSessionStore.getState().replyInteraction("s1", "i1", {
+      revision: 1,
+      action: "submit",
+      answers: {},
+    });
+
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+      status: "running",
+      activeRunId: "r1",
+    });
+  });
+
   it("ignores an old GET after a reply has committed", async () => {
     let resolve!: (value: { interactions: AgentInteraction[] }) => void;
     vi.spyOn(agentRuntimeApi, "listInteractions").mockReturnValue(

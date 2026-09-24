@@ -65,16 +65,27 @@ describe("inline message editing", () => {
       expect(screen.queryByRole("textbox")).not.toBeInTheDocument(),
     );
   });
-  it("rejects empty and unchanged drafts and ignores IME submit", () => {
+  it("rejects empty drafts but allows unchanged drafts and ignores IME submit", async () => {
     render(<UserMessageBlock messageId="user1" content="Original" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
-    expect(
-      screen.getByRole("button", { name: "Send" }),
-    ).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "  " } });
     expect(
       screen.getByRole("button", { name: "Send" }),
     ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Original" },
+    });
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "edit",
+        expect.objectContaining({ id: "checkpoint" }),
+        "Original",
+      ),
+    );
+
+    request.mockReset();
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "输入" },
     });

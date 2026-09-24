@@ -7,6 +7,7 @@ import {
   usePendingSubmissionStore,
 } from "./state/pendingSubmissionStore";
 import { ThinkingIndicator } from "./ThinkingIndicator";
+import { hasDisplayableReasoning } from "./activityText";
 import { hasStreamingText } from "./streamingLiveBlocks";
 import { Skeleton } from "@heroui/react";
 import { useShallow } from "zustand/react/shallow";
@@ -99,6 +100,43 @@ export function SessionTranscript({
     );
     return persistedResponse || hasStreamingText(streamingLive) || completedResponse;
   }, [messages, pending?.requestId, responseRunId, steps, streamingCompletedSteps, streamingLive]);
+  const hasAssistantThinking = useMemo(() => {
+    const responseStepIds = new Set(
+      steps.filter((step) => step.runId === responseRunId).map((step) => step.id),
+    );
+    const persistedThinking = messages.some((message) => {
+      const isThinking =
+        message.metadata?.type === "thinking" || message.metadata?.kind === "thought";
+      return (
+        isThinking &&
+        hasDisplayableReasoning(message.content) &&
+        (message.runId === responseRunId ||
+          (message.stepId !== null && responseStepIds.has(message.stepId)) ||
+          (pending && message.metadata.requestId === pending.requestId))
+      );
+    });
+    return (
+      persistedThinking ||
+      streamingCompletedSteps.some((step) =>
+        step.blocks.some(
+          (block) =>
+            block.type === "thinking" && hasDisplayableReasoning(block.content),
+        ),
+      ) ||
+      streamingLive.blocks.some(
+        (block) =>
+          block.type === "thinking" && hasDisplayableReasoning(block.content),
+      ) ||
+      hasDisplayableReasoning(streamingLive.pendingThinking)
+    );
+  }, [
+    messages,
+    pending?.requestId,
+    responseRunId,
+    steps,
+    streamingCompletedSteps,
+    streamingLive,
+  ]);
   const runFinished = Boolean(
     responseRun && RUN_TERMINAL_STATUSES.includes(responseRun.status),
   );
@@ -106,6 +144,7 @@ export function SessionTranscript({
     session?.status !== "waiting_input" &&
     responseRun?.status !== "waiting_input" &&
     !hasAssistantText &&
+    !hasAssistantThinking &&
     !runFinished &&
     (Boolean(pending) || session?.status === "queued" || session?.status === "running");
   const latestRunStatus = useMemo(() => {

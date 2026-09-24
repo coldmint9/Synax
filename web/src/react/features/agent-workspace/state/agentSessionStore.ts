@@ -759,6 +759,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         interactionId,
         body,
       );
+      if (body.action === "submit") {
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === sessionId && session.status === "waiting_input"
+              ? { ...session, status: "running" }
+              : session,
+          ),
+        }));
+      }
       const current = get().interactionState;
       if (
         get().selectedSessionId === sessionId &&

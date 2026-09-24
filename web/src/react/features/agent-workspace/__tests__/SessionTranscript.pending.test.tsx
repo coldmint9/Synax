@@ -331,3 +331,23 @@ it("keeps the scrollport keyboard-accessible without rendering focus hints", () 
     screen.queryByText(/键盘滚动|Keyboard scrolling/),
   ).not.toBeInTheDocument();
 });
+
+it("hides the generic thinking placeholder after real thinking appears", () => {
+  const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
+  useAgentSessionStore.setState({
+    sessions: [session],
+    runs: [{ ...run, status: "running" }],
+    streamingStepId: "step-2",
+    streamingCompletedSteps: [
+      {
+        stepId: "step-1",
+        stepIndex: 1,
+        blocks: [{ type: "thinking", content: "Plan" }],
+      },
+    ],
+  });
+
+  render(<SessionTranscript />);
+
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+});
