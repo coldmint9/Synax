@@ -174,6 +174,26 @@ describe("durable cooperative work runtime", () => {
     expect(workStore.current(session.id)?.noProgressSteps).toBe(2);
   });
 
+  it("starts fresh work when continuing after a user-cancelled work item", () => {
+    const { session } = setup("Continue the cancelled task");
+    const cancelled = workStore.current(session.id)!;
+    cancelled.status = "cancelled";
+    cancelled.reason = "Stopped by user.";
+    workStore.save(cancelled);
+    store.updateSessionMetadata(session.id, {
+      manualStop: { at: nowIso(), reason: "Stopped by user." },
+    });
+
+    const next = nextRun(session.id, "继续");
+
+    expect(next.metadata.workId).not.toBe(cancelled.id);
+    expect(workStore.current(session.id)).toMatchObject({
+      status: "active",
+      reason: null,
+    });
+    expect(store.getSession(session.id).sessionMetadata?.manualStop).toBeNull();
+  });
+
   it("retains a completed result on continue without reopening work", async () => {
     const { session, run } = setup("Explain an already known fact");
     await workRuntime.complete(

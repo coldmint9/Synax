@@ -1880,6 +1880,9 @@ describe("agentLoopRuntime", () => {
         expect(run.status).toBe("waiting_input");
         const first = interactionService.pending(session.id)!;
         expect(first.kind).toBe("clarification");
+        await collectChunks(agentLoopRuntime.streamRun(session.id, {}, undefined, true));
+        expect(agentRuntimeStore.getSession(session.id).status).toBe("waiting_input");
+        expect(interactionService.pending(session.id)?.id).toBe(first.id);
         interactionService.reply(session.id, first.id, {
           revision: first.revision,
           action: "submit",
