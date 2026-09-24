@@ -403,6 +403,9 @@ textarea.agent-request-input {
   font-weight: 500;
   overflow-wrap: anywhere;
 }
+.agent-request-choice-copy .agent-request-markdown p {
+  margin-block: 0;
+}
 .agent-request-choice-recommended {
   flex: 0 0 auto;
   border: 1px solid hsl(var(--primary) / 0.22);
@@ -434,12 +437,50 @@ textarea.agent-request-input {
   transform: translateX(0);
 }
 .agent-request-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
   margin-bottom: 0.5rem;
   color: hsl(var(--foreground-hsl) / 0.88);
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+.agent-request-required {
+  color: hsl(var(--muted-foreground));
+}
+.agent-request-markdown {
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  overflow-wrap: anywhere;
+}
+.agent-request-markdown > :first-child {
+  margin-top: 0;
+}
+.agent-request-markdown > :last-child {
+  margin-bottom: 0;
+}
+.agent-request-markdown p {
+  margin-block: 0.25rem;
+}
+.agent-request-markdown code {
+  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border-radius: 0.3rem;
+  padding: 0.08rem 0.28rem;
+  background: hsl(var(--foreground-hsl) / 0.06);
+  color: hsl(var(--foreground-hsl) / 0.94);
+  font-size: 0.92em;
+}
+.agent-request-markdown ul,
+.agent-request-markdown ol {
+  margin-block: 0.35rem;
+  padding-left: 1.25rem;
+}
+.agent-request-markdown li + li {
+  margin-top: 0.2rem;
 }
 .agent-request-action {
   display: inline-flex;

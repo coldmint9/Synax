@@ -219,7 +219,7 @@ it("preserves reply DOM nodes when live content settles and another step starts"
 });
 
 it.each(["live", "snapshot"])(
-  "keeps a durable question after its %s tool activity before HTTP steps arrive",
+  "leaves pending questions in the composer and restores history after %s activity",
   (stage) => {
     store.setState({
       ...store.getInitialState(),
@@ -274,9 +274,29 @@ it.each(["live", "snapshot"])(
       />,
     );
     const text = container.textContent!;
-    expect(text.indexOf("ask-step")).toBeLessThan(
-      text.indexOf("interaction-question"),
-    );
-    expect(text.indexOf("ask-step")).toBeGreaterThanOrEqual(0);
+    expect(text).toContain("ask-step");
+    expect(text).not.toContain("interaction-question");
+
+    const current = store.getState().interactionState!;
+    for (const status of ["answered", "declined", "cancelled"] as const) {
+      act(() => store.setState({
+        interactionState: {
+          ...current,
+          items: current.items.map((item) => ({ ...item, status })),
+        },
+      }));
+      expect(container.textContent).toContain("interaction-question");
+      expect(container.textContent!.indexOf("ask-step")).toBeLessThan(
+        container.textContent!.indexOf("interaction-question"),
+      );
+    }
+    // Plan approvals still render inline while pending.
+    act(() => store.setState({
+      interactionState: {
+        ...current,
+        items: current.items.map((item) => ({ ...item, kind: "plan_approval" })),
+      },
+    }));
+    expect(container.textContent).toContain("interaction-question");
   },
 );

@@ -21,10 +21,22 @@ import {
 import { subscribe } from "../../../lib/api/runtimeEventBus";
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
 import { readSessionBackendId } from "./synaxSessionTypes";
 
 const inputClass = "agent-request-input";
 const buttonClass = "agent-request-action";
+
+function AskMarkdown({ content }: { content: string }) {
+  return (
+    <MarkdownRenderer
+      content={content}
+      className="agent-request-markdown"
+      conversationClass={false}
+    />
+  );
+}
+
 type Answers = NonNullable<AgentInteractionReply["answers"]>;
 
 function PlanDetails({
@@ -291,9 +303,9 @@ function InteractionForm({
                 <span className="agent-request-choice-index" aria-hidden="true">
                   {checked ? <Check size={15} /> : index + 1}
                 </span>
-                <span className="agent-request-choice-copy">
-                  {option.label}
-                </span>
+                <div className="agent-request-choice-copy">
+                  <AskMarkdown content={option.label} />
+                </div>
                 {question.recommended?.includes(option.value) && (
                   <span className="agent-request-choice-recommended">
                     {zh ? "推荐" : "Recommended"}
@@ -541,9 +553,9 @@ function InteractionForm({
               }
             >
               <legend className="agent-request-label">
-                {question.label}
+                <AskMarkdown content={question.label} />
                 {question.required ? (
-                  <span className="ml-1 text-muted-foreground">*</span>
+                  <span className="agent-request-required">*</span>
                 ) : null}
               </legend>
               {questionInput(question)}

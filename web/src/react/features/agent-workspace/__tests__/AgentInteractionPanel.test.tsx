@@ -241,6 +241,41 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
+  it("renders Markdown in question and option copy", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Markdown question",
+            questions: [
+              {
+                id: "mode",
+                type: "single_select",
+                label: "Use `remote-ssh` and **keep it private**?",
+                options: [
+                  { value: "ssh", label: "Use `SSH`" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const { container } = render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("radio", { name: "Use `SSH`" });
+    expect(container.querySelector(".agent-request-label code")).toHaveTextContent(
+      "remote-ssh",
+    );
+    expect(container.querySelector(".agent-request-label strong")).toHaveTextContent(
+      "keep it private",
+    );
+    expect(container.querySelector(".agent-request-choice-copy code")).toHaveTextContent(
+      "SSH",
+    );
+  });
+
   it("marks recommended options without selecting them", async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
       interactions: [
