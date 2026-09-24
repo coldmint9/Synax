@@ -134,6 +134,12 @@ export class RunCoordinator {
         409,
       );
     if (
+      session.status === "waiting_input" &&
+      interactionService.pending(sessionId) &&
+      !interactionService.ready(sessionId)
+    )
+      return;
+    if (
       session.sessionMetadata?.runtimeControl ||
       profileService.getForSession(session).executionHost === "embedded"
     ) {

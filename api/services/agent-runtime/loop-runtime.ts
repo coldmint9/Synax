@@ -369,10 +369,23 @@ export class AgentLoopRuntime {
         yield* this.streamRun(sessionId, input, abortSignal, false);
         return;
       }
-      if (!resume || !interactionService.ready(sessionId))
+      if (!resume) {
         throw new AgentValidationError(
           "Resolve the pending form before continuing.",
         );
+      }
+      if (!interactionService.ready(sessionId)) {
+        if (pending) {
+          logger.info(
+            { sessionId },
+            "Ignoring a stale resume while a human-input form is still pending",
+          );
+          return;
+        }
+        throw new AgentValidationError(
+          "No answered input checkpoint is available to resume.",
+        );
+      }
     }
     if (
       !input.acceptedRunId &&

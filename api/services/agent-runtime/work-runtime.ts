@@ -49,9 +49,23 @@ class WorkRuntime {
       for (const previous of store.listRuns(sessionId).filter(r => r.id !== run.id && !r.metadata.workId))
         store.updateRun(previous.id, { metadata: { workId: work.id } });
     }
-    if (!work || (TERMINAL.has(work.status) && user && hasContent && !continuing)) {
+    const startsNewWork =
+      !work ||
+      (TERMINAL.has(work.status) &&
+        user &&
+        hasContent &&
+        (work.status === 'cancelled' || !continuing));
+    if (startsNewWork) {
+      const wasCancelled = work?.status === 'cancelled';
       if (work && TERMINAL.has(work.status)) {
-        store.updateSessionMetadata(sessionId, { plan: null, goal: session.sessionMetadata?.mode === 'goal' ? { objective: text || 'Media input', status: 'planning' } : null });
+        store.updateSessionMetadata(sessionId, {
+          plan: null,
+          goal:
+            session.sessionMetadata?.mode === 'goal'
+              ? { objective: text || 'Media input', status: 'planning' }
+              : null,
+          ...(wasCancelled ? { manualStop: null } : {}),
+        });
       }
       const old = store.listRuns(sessionId).some(r => r.id !== run.id);
       const previousMessages = store.listMessages(sessionId).filter(m => m.role === 'user' && m.metadata.source !== 'system_injection' && !isWorkContinuation(m.content));
