@@ -36,6 +36,7 @@ import {
 import { nowIso } from "./runtime-ids.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { sessionHooks } from "./session-hooks.js";
+import { sessionLiveBus } from "./session-live-bus.js";
 import type {
   AgentContextBundle,
   AgentRun,
@@ -910,8 +911,10 @@ export class AgentRuntimeStore {
       );
       for (const id of archivedSessionIds) archive.run(archivedAt, root.id, id);
     })();
-    for (const id of archivedSessionIds)
-      emitRuntimeBusEvent({ type: "session_deleted", sessionId: id });
+    for (const id of archivedSessionIds) {
+      sessionLiveBus.cleanup(id);
+      emitRuntimeBusEvent({ type: "session_archived", sessionId: id });
+    }
     return { archiveBatchId: root.id, archivedAt, archivedSessionIds };
   }
 

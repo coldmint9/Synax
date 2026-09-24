@@ -29,6 +29,7 @@ function connect() {
     "session_input_queue_changed",
     "session_created",
     "session_deleted",
+    "session_archived",
   ];
 
   for (const type of eventTypes) {

@@ -5,6 +5,7 @@ export type RuntimeBusEventType =
   | "session_process_changed"
   | "session_created"
   | "session_deleted"
+  | "session_archived"
   | "session_checkpoint_changed"
   | "session_step_completed"
   | "session_input_queue_changed";

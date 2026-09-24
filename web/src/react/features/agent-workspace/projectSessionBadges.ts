@@ -147,6 +147,7 @@ export function useProjectSessionBadges(
         session_created: scheduleEventRefresh,
         session_changed: scheduleEventRefresh,
         session_deleted: scheduleEventRefresh,
+        session_archived: scheduleEventRefresh,
       },
     });
 

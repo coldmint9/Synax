@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { getRawSqlite } from "../../../db/index.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
+import { runtimeBus } from "../runtime-bus.js";
 import {
   plannerSessionInput,
   resetAgentRuntimeFixtures,
@@ -26,6 +27,26 @@ describe("session archives", () => {
   });
   afterAll(() => {
     process.env.SYNAX_VERSION_HISTORY = previousHistoryMode;
+  });
+
+  it("publishes archive events instead of deletion events", () => {
+    const { root, child } = createTree();
+    const events: string[] = [];
+    const unsubscribe = runtimeBus.subscribe((event) => {
+      if (event.sessionId === root.id || event.sessionId === child.id)
+        events.push(event.type);
+    });
+
+    try {
+      agentRuntimeStore.archiveSessionTree(root.id);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events).toEqual(
+      expect.arrayContaining(["session_archived", "session_archived"]),
+    );
+    expect(events).not.toContain("session_deleted");
   });
 
   it("hides a whole tree and restores its referenced data", () => {

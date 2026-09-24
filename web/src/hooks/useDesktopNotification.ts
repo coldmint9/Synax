@@ -129,6 +129,16 @@ export function useDesktopNotification(
             /* malformed SSE payload */
           }
         },
+        session_archived: (event) => {
+          try {
+            const { sessionId } = JSON.parse(event.data);
+            if (typeof sessionId !== "string") return;
+            tracker.remove(sessionId);
+            dismiss(sessionId);
+          } catch {
+            /* malformed SSE payload */
+          }
+        },
         session_changed: (event) => {
           let data: { sessionId?: unknown; patch?: Record<string, unknown> };
           try {
