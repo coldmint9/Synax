@@ -2,7 +2,7 @@
   "name": "synax",
   "productName": "Synax",
   "private": false,
-  "version": "1.0.1",
+  "version": "1.0.3",
   "license": "MIT",
   "author": "Synax",
   "description": "Local-first AI coding workspace",
