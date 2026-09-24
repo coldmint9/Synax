@@ -269,7 +269,7 @@ function InteractionForm({
                   type={multiple ? "checkbox" : "radio"}
                   name={id}
                   checked={checked}
-                  aria-label={option.label}
+                  aria-label={`${option.label}${question.recommended?.includes(option.value) ? ` (${zh ? "推荐" : "Recommended"})` : ""}`}
                   aria-describedby={common["aria-describedby"]}
                   onChange={(event) => {
                     if (multiple)
@@ -294,6 +294,11 @@ function InteractionForm({
                 <span className="agent-request-choice-copy">
                   {option.label}
                 </span>
+                {question.recommended?.includes(option.value) && (
+                  <span className="agent-request-choice-recommended">
+                    {zh ? "推荐" : "Recommended"}
+                  </span>
+                )}
                 <ChevronRight
                   size={18}
                   aria-hidden="true"
@@ -848,9 +853,11 @@ export function InteractionCard({
 export function AgentInteractionPanel({
   session,
   compact = false,
+  dock = false,
 }: {
   session: AgentSession;
   compact?: boolean;
+  dock?: boolean;
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
@@ -860,9 +867,8 @@ export function AgentInteractionPanel({
     (s) => s.refreshInteractions,
   );
   const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
-  // Compact hosts (the composer dock) render only the jump pill. The full card
-  // lives in the transcript, so the pill keeps tracking the target card after a
-  // click and falls back to reloading requests when the card is not mounted yet.
+  // Compact hosts render jump pills; the composer dock renders pending
+  // clarification cards in place of the free-text composer.
   const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
   const acp = readSessionBackendId(session).endsWith("-acp");
 
@@ -974,13 +980,21 @@ export function AgentInteractionPanel({
   const current = state?.sessionId === session.id ? state : null;
   const pending =
     current?.items.filter((item) => item.status === "pending") ?? [];
+  const dockPending = pending.filter((item) => item.kind === "clarification");
   const waiting = session.status === "waiting_input" || pending.length > 0;
   const items = current?.items ?? [];
-  if (!waiting && !current?.error && (compact || !items.length)) return null;
+  if (dock && !current?.error && !dockPending.length) return null;
+  if (
+    !dock &&
+    !waiting &&
+    !current?.error &&
+    (compact || !items.length)
+  )
+    return null;
   return (
     <section
       aria-label={zh ? "待处理请求" : "Agent requests"}
-      className="agent-controls-stack"
+      className={`agent-controls-stack${dock ? " agent-controls-stack--dock" : ""}`}
     >
       {current?.error && (
         <div role="alert" className="agent-interaction-error">
@@ -999,7 +1013,15 @@ export function AgentInteractionPanel({
           {zh ? "正在加载提问…" : "Loading requests…"}
         </p>
       )}
-      {compact
+      {dock
+        ? dockPending.map((item) => (
+            <InteractionCard
+              key={`${item.id}:${item.revision}`}
+              interaction={item}
+              disabled={session.status === "cancelled"}
+            />
+          ))
+        : compact
         ? pending.map((item) => {
             const jumping = jumpTargetId === item.id;
             return (

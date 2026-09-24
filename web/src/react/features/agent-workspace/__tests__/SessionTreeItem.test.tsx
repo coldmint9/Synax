@@ -84,6 +84,34 @@ describe("SessionTreeItem", () => {
     ).toBeTruthy();
   });
 
+  it("marks sessions that need user input", () => {
+    const { container } = render(
+      <SessionTreeItem
+        node={makeNode(makeSession({ status: "waiting_input" }))}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+
+    expect(container.querySelector(".session-list-needs-input")).toHaveTextContent(
+      "需要用户输入",
+    );
+  });
+
+  it("does not mark sessions that are not waiting for input", () => {
+    const { container } = render(
+      <SessionTreeItem
+        node={makeNode(makeSession({ status: "running" }))}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+
+    expect(container.querySelector(".session-list-needs-input")).toBeNull();
+  });
+
   it("does not show a spinner for completed sessions", () => {
     const { container } = render(
       <SessionTreeItem
@@ -186,7 +214,7 @@ describe("SessionTreeItem", () => {
     );
     fireEvent.click(container.querySelector(".session-list-expand")!);
     fireEvent.click(container.querySelector(".session-list-delete")!);
-    fireEvent.click(document.querySelector('[role="menuitem"][data-key="delete"]')!);
+    fireEvent.click(document.querySelector('[role="menuitem"][data-key="archive"]')!);
     expect(onToggleExpand).toHaveBeenCalledWith("sess-1");
     expect(onDelete).toHaveBeenCalledWith("sess-1");
     expect(onSelect).not.toHaveBeenCalled();

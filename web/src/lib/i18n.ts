@@ -586,6 +586,7 @@ const messages = {
     sessionSearch: "搜索会话…",
     sessionListSplitResize: "上下拖动调整会话列表与 Profile 的高度",
     sessionListTitle: "会话",
+    sessionNeedsUserInput: "需要用户输入",
     sessionWorkflowTitle: "Workflow 会话",
     sessionOpenWorkflows: "查看 Workflow 会话 ({count})",
     sessionBackToList: "返回会话",
@@ -1388,6 +1389,7 @@ const messages = {
     sessionListSplitResize:
       "Drag to resize the session list and profile panels",
     sessionListTitle: "Sessions",
+    sessionNeedsUserInput: "Needs your input",
     sessionWorkflowTitle: "Workflow sessions",
     sessionOpenWorkflows: "View workflow sessions ({count})",
     sessionBackToList: "Back to sessions",

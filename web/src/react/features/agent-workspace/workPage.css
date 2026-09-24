@@ -152,6 +152,21 @@
   font-weight: 500;
   line-height: 18px;
 }
+.work-page .session-list-needs-input {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.35rem;
+  border: 1px solid hsl(var(--primary) / 0.2);
+  border-radius: 999px;
+  padding: 0.12rem 0.42rem;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary) / 0.92);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 .work-page .session-list-preview {
   color: var(--work-muted);
   font-size: 10.5px;

@@ -403,6 +403,22 @@ textarea.agent-request-input {
   font-weight: 500;
   overflow-wrap: anywhere;
 }
+.agent-request-choice-recommended {
+  flex: 0 0 auto;
+  border: 1px solid hsl(var(--primary) / 0.22);
+  border-radius: 999px;
+  padding: 0.14rem 0.45rem;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary) / 0.95);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.agent-request-choice:has(.agent-request-choice-recommended) {
+  border-color: hsl(var(--primary) / 0.22);
+  background: hsl(var(--primary) / 0.045);
+}
 .agent-request-choice-arrow {
   flex: 0 0 auto;
   color: hsl(var(--muted-foreground) / 0.8);
@@ -529,6 +545,61 @@ textarea.agent-request-input {
   line-height: 1.5rem;
   overflow-y: auto;
 }
+.agent-composer-ask-switch {
+  display: grid;
+  min-width: 0;
+}
+.agent-composer-input-slot,
+.agent-composer-ask-slot {
+  grid-area: 1 / 1;
+  min-width: 0;
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease,
+    max-height 220ms ease;
+}
+.agent-composer-input-slot {
+  max-height: 24rem;
+  opacity: 1;
+  transform: translateY(0);
+  overflow: hidden;
+}
+.agent-composer-ask-slot {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.75rem);
+  overflow: hidden;
+}
+.agent-composer-ask-switch[data-ask-active="true"] .agent-composer-input-slot {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.75rem);
+}
+.agent-composer-ask-switch[data-ask-active="true"] .agent-composer-ask-slot {
+  max-height: 80rem;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.agent-controls-stack--dock {
+  gap: 0;
+}
+.agent-controls-stack--dock .session-inline-interaction {
+  scroll-margin-block: 1rem;
+}
+.agent-controls-stack--dock .agent-request-surface {
+  border: 0;
+  border-radius: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer-input-slot,
+  .agent-composer-ask-slot {
+    transition: none;
+  }
+}
+
 .agent-dock-composer-send[data-queue-ready="true"] {
   animation: composer-queue-pulse 1.8s ease-out infinite;
 }
