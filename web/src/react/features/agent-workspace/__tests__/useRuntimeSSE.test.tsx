@@ -3,14 +3,21 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useRuntimeSSE } from "../useRuntimeSSE";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import type { AgentSession } from "../../../../lib/api/agentRuntime";
-const bus = vi.hoisted(() => ({ changed: (_event: MessageEvent) => {} }));
+const bus = vi.hoisted(() => ({
+  changed: (_event: MessageEvent) => {},
+  archived: (_event: MessageEvent) => {},
+}));
 vi.mock("../../../../lib/api/runtimeEventBus", () => ({
   subscribe: ({
     events,
   }: {
-    events: { session_changed: (event: MessageEvent) => void };
+    events: {
+      session_changed: (event: MessageEvent) => void;
+      session_archived: (event: MessageEvent) => void;
+    };
   }) => {
     bus.changed = events.session_changed;
+    bus.archived = events.session_archived;
     return () => {};
   },
 }));
@@ -78,4 +85,31 @@ it("patches generated titles in place without reloading the list/transcript, but
   });
   expect(refreshSessions).toHaveBeenCalledTimes(1);
   expect(refreshDetail).toHaveBeenCalledTimes(1);
+});
+
+it("treats archive events as removal without a deleted-session error", () => {
+  const session = {
+    id: "archived",
+    projectId: "one",
+    status: "completed",
+    title: "archived",
+    activeRunId: null,
+    sessionMetadata: {},
+    updatedAt: "now",
+  } as AgentSession;
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    projectId: "one",
+    sessions: [session],
+    refreshSessions: vi.fn(async () => {}),
+  });
+  renderHook(useRuntimeSSE);
+
+  act(() =>
+    bus.archived({
+      data: JSON.stringify({ sessionId: session.id }),
+    } as MessageEvent),
+  );
+
+  expect(useAgentSessionStore.getState().sessions).toEqual([]);
 });

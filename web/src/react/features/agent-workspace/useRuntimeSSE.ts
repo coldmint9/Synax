@@ -71,6 +71,19 @@ export function useRuntimeSSE() {
         },
         session_created: () => scheduleSessionRefresh(null, "list"),
         session_deleted: () => scheduleSessionRefresh(null, "list"),
+        session_archived: (e) => {
+          let data: { sessionId?: unknown };
+          try {
+            data = JSON.parse(e.data);
+          } catch {
+            return;
+          }
+          if (typeof data.sessionId !== "string") return;
+          const { projectId, discardRemovedSessions } =
+            useAgentSessionStore.getState();
+          discardRemovedSessions([data.sessionId], projectId);
+          scheduleSessionRefresh(null, "list");
+        },
       },
     });
   }, [patchSession]);

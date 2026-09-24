@@ -5,8 +5,8 @@ import { useSessionList } from "./useSessionList";
 import { SessionListHeader } from "./SessionListHeader";
 import { SessionTimeGroups } from "./SessionTimeGroups";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
-import { SessionClearInactiveDialog } from "./SessionClearInactiveDialog";
 import { useLocale } from "../../../hooks/useLocale";
+import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import type { SessionListView } from "./sessionBuckets";
 import { getSessionDisplayTitle } from "./useSessionDisplayTitle";
 import { sessionsPath, workflowSessionsPath } from "./sessionRoutes";
@@ -44,7 +44,7 @@ export function SessionListPanel({
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [showClear, setShowClear] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return;
     void refresh({ joinPending: true });
@@ -63,6 +63,19 @@ export function SessionListPanel({
     list.openNewDraft();
   };
 
+  const handleArchiveInactive = async () => {
+    if (archiving) return;
+    setArchiving(true);
+    try {
+      await agentRuntimeApi.clearInactiveSessions(projectId);
+      await list.refresh();
+    } catch (err) {
+      console.error("[ArchiveInactive]", err);
+    } finally {
+      setArchiving(false);
+    }
+  };
+
   return (
     <div className="session-list-panel flex h-full min-h-0 flex-col">
       <div className="session-list-card session-list-card--sessions min-h-0">
@@ -73,7 +86,7 @@ export function SessionListPanel({
           hasGeneratedWiki={hasGeneratedWiki}
           searchQuery={list.searchQuery}
           onSearchChange={list.setSearchQuery}
-          onClearInactive={() => setShowClear(true)}
+          onClearInactive={() => void handleArchiveInactive()}
           onNewSession={handleNewSession}
           onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
           onBackToSessions={() => navigate(sessionsPath(projectId))}
@@ -143,14 +156,6 @@ export function SessionListPanel({
         }}
       />
 
-      <SessionClearInactiveDialog
-        isOpen={showClear}
-        projectId={projectId}
-        onClose={() => setShowClear(false)}
-        onCleared={() => {
-          void list.refresh();
-        }}
-      />
     </div>
   );
 }

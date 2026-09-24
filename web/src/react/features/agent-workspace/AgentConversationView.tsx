@@ -1,6 +1,5 @@
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionHistoryProvider } from "./SessionHistoryContext";
-import { HistoryTextReaders } from "./HistoryTextReader";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { memo } from "react";
 import { Chip, Card } from "@heroui/react";
@@ -52,7 +51,7 @@ export const AgentConversationView = memo(function AgentConversationView({
   submitting = false,
   scrollRootRef,
 }: Props) {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const historyWindow = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
   const historicalPage = historyWindow?.latest === false;
 
@@ -134,14 +133,6 @@ export const AgentConversationView = memo(function AgentConversationView({
           onExpandChild={onExpandChild}
           scrollRootRef={scrollRootRef}
         />
-        {session && historyWindow && (
-          <HistoryTextReaders
-            sessionId={session.id}
-            revision={historyWindow.revision}
-            messages={messages}
-            zh={locale === "zh"}
-          />
-        )}
         {!historicalPage && liveTurn}
 
         {isResumable ? (
