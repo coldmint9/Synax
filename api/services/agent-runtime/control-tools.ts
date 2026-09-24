@@ -21,7 +21,7 @@ export const humanAskTool: RegisteredTool = {
   id: "human.ask",
   label: "Ask the user",
   description:
-    "Ask up to five focused clarification questions as a durable form. This pauses execution until the user responds. Must be the only tool call in this step. Never ask for credentials.",
+    "Ask up to five focused clarification questions as a durable form. This pauses execution until the user responds. For select questions, optionally include recommended option values in question.recommended; recommend at most one for single_select and any number for multi_select. Must be the only tool call in this step. Never ask for credentials.",
   category: "task",
   internalGate: "none",
   mutability: "task",

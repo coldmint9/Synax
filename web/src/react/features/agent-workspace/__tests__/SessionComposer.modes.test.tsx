@@ -233,8 +233,14 @@ async function selectMode(mode: "plan" | "goal", prefix = "") {
 }
 
 async function expectModeUnavailable() {
-  const trigger = screen.getByRole("button", { name: "Add attachments, context or change mode" });
-  if ((trigger as HTMLButtonElement).disabled) {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    'button[aria-label="Add attachments, context or change mode"]',
+  );
+  if (!trigger) {
+    expect(document.querySelector('[data-ask-active="true"]')).not.toBeNull();
+    return;
+  }
+  if (trigger.disabled) {
     expect(trigger).toBeDisabled();
     return;
   }
@@ -484,13 +490,13 @@ describe("SessionComposer mode controls", () => {
         },
       ],
     });
-    renderComposer(session);
-    await screen.findByRole("button", { name: "Your input is needed" });
+    const { container } = renderComposer(session);
+    await screen.findByRole("textbox", { name: "Answer" });
     await expectModeUnavailable();
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeDisabled();
+    expect(container.querySelector('[data-ask-active="true"]')).not.toBeNull();
     expect(
-      screen.getByRole("button", { name: "Your input is needed" }),
-    ).toBeEnabled();
+      container.querySelector(".agent-composer-input-slot"),
+    ).toHaveAttribute("inert");
   });
 
   it("retains the existing mode and composer text when a safe idle switch is rejected by the server", async () => {

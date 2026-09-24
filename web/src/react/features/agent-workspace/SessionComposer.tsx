@@ -268,6 +268,11 @@ export function SessionComposer({
     currentInteractions?.items.filter((item) => item.status === "pending") ??
     [];
   const hasPendingInteractions = pendingInteractions.length > 0;
+  const pendingClarificationInteractions = pendingInteractions.filter(
+    (item) => item.kind === "clarification",
+  );
+  const hasPendingClarificationInteractions =
+    pendingClarificationInteractions.length > 0;
   const onlyPlanApprovalPending = Boolean(
     currentInteractions &&
     !currentInteractions.loading &&
@@ -921,7 +926,7 @@ export function SessionComposer({
           session={session}
         />
       )}
-      {session && (
+      {session && !hasPendingClarificationInteractions && (
         <AgentInteractionPanel
           key={`interactions-${session.id}`}
           session={session}
@@ -988,7 +993,23 @@ export function SessionComposer({
           data-has-media={hasMediaInput ? "true" : "false"}
           data-multiline="true"
         >
-          <div className="agent-dock-shell-content">{composer}</div>
+          <div
+            className="agent-dock-shell-content agent-composer-ask-switch"
+            data-ask-active={hasPendingClarificationInteractions ? "true" : "false"}
+          >
+            <div
+              className="agent-composer-input-slot"
+              aria-hidden={hasPendingClarificationInteractions}
+              inert={hasPendingClarificationInteractions ? true : undefined}
+            >
+              {composer}
+            </div>
+            {session && hasPendingClarificationInteractions && (
+              <div className="agent-composer-ask-slot">
+                <AgentInteractionPanel session={session} dock />
+              </div>
+            )}
+          </div>
         </div>
       </ComposerIsland>
     </div>

@@ -241,6 +241,40 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
+  it("marks recommended options without selecting them", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Choose modes",
+            questions: [
+              {
+                id: "mode",
+                type: "multi_select",
+                label: "Modes",
+                required: true,
+                options: [
+                  { value: "fast", label: "Fast" },
+                  { value: "safe", label: "Safe" },
+                  { value: "cheap", label: "Cheap" },
+                ],
+                recommended: ["fast", "safe"],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const { container } = render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("checkbox", { name: "Fast (Recommended)" });
+
+    expect(container.querySelectorAll(".agent-request-choice-recommended")).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: "Fast (Recommended)" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Safe (Recommended)" })).not.toBeChecked();
+  });
+
   it("does not treat single-select bounds as option-value length", async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
       interactions: [

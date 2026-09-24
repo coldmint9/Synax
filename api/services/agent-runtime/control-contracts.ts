@@ -19,6 +19,11 @@ export const humanQuestionSchema = z
       .min(1)
       .max(20)
       .optional(),
+    recommended: z
+      .array(z.string().min(1).max(200))
+      .min(1)
+      .max(20)
+      .optional(),
     allowOther: z.boolean().default(false),
     min: z.number().finite().optional(),
     max: z.number().finite().optional(),
@@ -37,6 +42,30 @@ export const humanQuestionSchema = z
         code: "custom",
         message: "Option values must be unique.",
       });
+    if (q.recommended) {
+      if (!q.type.endsWith("_select"))
+        ctx.addIssue({
+          code: "custom",
+          path: ["recommended"],
+          message: "Only select questions can have recommendations.",
+        });
+      if (q.type === "single_select" && q.recommended.length > 1)
+        ctx.addIssue({
+          code: "custom",
+          path: ["recommended"],
+          message: "Single select questions allow one recommendation.",
+        });
+      const optionValues = new Set(q.options?.map((o) => o.value));
+      if (
+        new Set(q.recommended).size !== q.recommended.length ||
+        q.recommended.some((value) => !optionValues.has(value))
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["recommended"],
+          message: "Recommended values must be unique option values.",
+        });
+    }
     if (q.min !== undefined && q.max !== undefined && q.min > q.max)
       ctx.addIssue({ code: "custom", message: "min must not exceed max." });
   });

@@ -78,6 +78,7 @@ export interface HumanQuestion {
   label: string;
   required?: boolean;
   options?: { value: string; label: string }[];
+  recommended?: string[];
   allowOther?: boolean;
   min?: number;
   max?: number;

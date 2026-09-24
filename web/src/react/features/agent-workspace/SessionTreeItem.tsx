@@ -106,6 +106,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
     isSessionUnread(session, state.readSessionMarkers),
   );
   const showStatusDot = session.status !== "completed" || unread;
+  const needsUserInput = session.status === "waiting_input";
   const menu = useContextMenu(() => ({
     label: title,
     entries: [
@@ -161,6 +162,11 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         </span>
         <span className="session-list-title" title={title}>
           <SearchHighlight text={title} query={node.searchQuery} />
+          {needsUserInput && (
+            <span className="session-list-needs-input">
+              {t("sessionNeedsUserInput")}
+            </span>
+          )}
         </span>
         <time
           className="session-list-time"
