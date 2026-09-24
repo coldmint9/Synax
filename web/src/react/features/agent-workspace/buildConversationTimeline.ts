@@ -508,20 +508,25 @@ function foldCompletedRounds(
   items: TimelineItem[],
   stepById: Map<string, AgentRunStep>,
   runStatusByStepId: Map<string, AgentRun["status"] | undefined>,
+  standaloneReplyIds: Set<string>,
 ): TimelineItem[] {
   const folded: TimelineItem[] = [];
   let index = 0;
 
   while (index < items.length) {
     const entry = items[index].entry;
-    if (entry.kind !== "agent") {
+    if (entry.kind !== "agent" || standaloneReplyIds.has(entry.id)) {
       folded.push(items[index]);
       index += 1;
       continue;
     }
 
     let end = index;
-    while (end < items.length && items[end].entry.kind === "agent") end += 1;
+    while (
+      end < items.length &&
+      items[end].entry.kind === "agent" &&
+      !standaloneReplyIds.has(items[end].entry.id)
+    ) end += 1;
 
     const round = items.slice(index, end) as AgentTimelineItem[];
     const complete = round.every((item) =>
@@ -581,8 +586,14 @@ export function buildConversationTimeline(
   const stepIds = new Set(steps.map((step) => step.id));
   const runIdsWithSteps = new Set(steps.map((step) => step.runId));
   const seenOrphans = new Set<string>();
+  const standaloneReplyIds = new Set<string>();
   for (const message of messages) {
     if (
+      message.role !== "assistant" ||
+      message.metadata?.partial ||
+      message.metadata?.type === "thinking" ||
+      message.metadata?.kind === "thought" ||
+      ["artifact_publisher", "artifact_request", "artifact_job"].includes(String(message.metadata?.source)) ||
       (message.stepId && stepIds.has(message.stepId)) ||
       (!message.stepId &&
         message.runId &&
@@ -590,16 +601,24 @@ export function buildConversationTimeline(
       seenOrphans.has(message.id)
     )
       continue;
-    const blocks = visualizationReplyParts(message);
-    if (!blocks.some((block) => block.type === "visualization")) continue;
+    const isForkReply = typeof message.metadata?.forkedFromMessageId === "string";
+    const blocks: TurnContentBlock[] = visualizationReplyParts(message);
+    if (!isForkReply && !blocks.some((block) => block.type === "visualization")) continue;
+    if (isForkReply && message.contentParts?.some((part) => part.type !== "text")) {
+      blocks.unshift({ type: "media", parts: message.contentParts, messageId: message.id });
+    }
+    if (!blocks.length) continue;
     seenOrphans.add(message.id);
+    // Forks intentionally have no execution steps. Their copied replies are
+    // transcript rows, so never fold them into a fabricated work log.
+    if (isForkReply) standaloneReplyIds.add(`reply-${message.id}`);
     items.push({
       timestamp: toTimestamp(message.createdAt),
       entry: {
         id: `reply-${message.id}`,
         kind: "agent",
         createdAt: message.createdAt,
-        label: "交互预览",
+        label: truncate(message.content) || (isForkReply ? "助手回复" : "交互预览"),
         turn: {
           stepId: `reply-${message.id}`,
           index: 0,
@@ -670,7 +689,7 @@ export function buildConversationTimeline(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return foldCompletedRounds(items, stepById, runStatusByStepId).map(
+  return foldCompletedRounds(items, stepById, runStatusByStepId, standaloneReplyIds).map(
     (item) => item.entry,
   );
 }

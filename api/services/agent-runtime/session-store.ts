@@ -35,7 +35,6 @@ import {
 } from "./acp-engine/acp-usage.js";
 import { nowIso } from "./runtime-ids.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
-import { sessionHooks } from "./session-hooks.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import type {
   AgentContextBundle,
@@ -628,7 +627,7 @@ export class AgentRuntimeStore {
   }
 
   updateSession(id: string, patch: Partial<AgentSession>): AgentSession {
-    const { current, next } = runtimeTransaction(() => {
+    const { next } = runtimeTransaction(() => {
       const current = this.getSession(id);
       const next = { ...current, ...patch };
       this.upsertSession(next);
@@ -650,19 +649,6 @@ export class AgentRuntimeStore {
         sessionId: id,
         patch: currentPatch,
       });
-      if (
-        patch.status &&
-        patch.status !== current.status &&
-        actual.status === patch.status
-      ) {
-        void sessionHooks.emit({
-          type: "session:status_changed",
-          sessionId: id,
-          from: current.status,
-          to: actual.status,
-          patch: currentPatch,
-        });
-      }
     };
     if (getRawSqlite().inTransaction)
       queueMicrotask(() => {
@@ -1194,6 +1180,7 @@ export class AgentRuntimeStore {
     });
     tx();
     for (const id of deleteIds) {
+      sessionLiveBus.cleanup(id);
       emitRuntimeBusEvent({ type: "session_deleted", sessionId: id });
     }
     void import("./checkpoints/gc.js")

@@ -1,6 +1,7 @@
 import type { LlmRetryState } from '../llm-runtime/retry-state.js';
 import { EventEmitter } from 'node:events';
 import type { ToolCallRecord } from './contracts.js';
+import { isSessionEventsQuiesced } from './runtime-event-quiesce.js';
 
 export type SessionLiveEvent =
   | { type: 'retry_status'; stepId: string; retry: LlmRetryState }
@@ -37,6 +38,8 @@ class SessionLiveBus {
   }
 
   emit(sessionId: string, event: SessionLiveEvent): void {
+    // A quiesced (tearing-down) session has no transcript left to stream to.
+    if (isSessionEventsQuiesced(sessionId)) return;
     const emitter = this.emitters.get(sessionId);
     const listenerCount = emitter?.listenerCount('event') ?? 0;
     if (listenerCount > 0) {

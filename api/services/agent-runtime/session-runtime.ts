@@ -366,7 +366,6 @@ export class AgentSessionRuntime {
 
   delete(sessionId: string): string[] {
     assertHistoryUnlocked(sessionId);
-    void sessionHooks.emit({ type: "session:deleted", sessionId });
     return this.store.deleteSessionTree(sessionId);
   }
 

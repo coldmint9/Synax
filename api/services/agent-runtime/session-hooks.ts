@@ -5,8 +5,6 @@ import { logger } from '../../lib/logger.js';
 
 export type SessionHookEvent =
   | { type: 'session:created'; session: AgentSession }
-  | { type: 'session:status_changed'; sessionId: string; from: string; to: string; patch: Record<string, unknown> }
-  | { type: 'session:deleted'; sessionId: string }
   | { type: 'run:started'; sessionId: string; runId: string }
   | { type: 'run:completed'; sessionId: string; runId: string; status: string }
   | { type: 'step:before'; sessionId: string; runId: string; stepIndex: number }
@@ -75,22 +73,17 @@ export const sessionHooks = new SessionHookRegistry();
 // ── Built-in bridge: forward lifecycle events to runtimeBus (SSE) ────────────
 
 import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
-import { sessionLiveBus } from './session-live-bus.js';
 
 sessionHooks.register({
   id: 'runtime-bus-bridge',
-  filter: { eventTypes: ['session:created', 'session:status_changed', 'session:deleted', 'step:after'] },
+  // Only lifecycle events without a store-side emitter are bridged here; the
+  // store relays `session_changed` / `session_deleted` / `session_archived`
+  // itself, so bridging them would double-emit on the bus.
+  filter: { eventTypes: ['session:created', 'step:after'] },
   handler: (event) => {
     switch (event.type) {
       case 'session:created':
         emitRuntimeBusEvent({ type: 'session_created', sessionId: event.session.id });
-        break;
-      case 'session:status_changed':
-        emitRuntimeBusEvent({ type: 'session_changed', sessionId: event.sessionId, patch: event.patch });
-        break;
-      case 'session:deleted':
-        emitRuntimeBusEvent({ type: 'session_deleted', sessionId: event.sessionId });
-        sessionLiveBus.cleanup(event.sessionId);
         break;
       case 'step:after':
         emitRuntimeBusEvent({ type: 'session_step_completed', sessionId: event.sessionId, runId: event.runId, stepIndex: event.stepIndex });

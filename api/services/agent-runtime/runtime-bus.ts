@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { allowsRuntimeBusEvent } from "./runtime-event-quiesce.js";
 
 export type RuntimeBusEventType =
   | "session_changed"
@@ -26,6 +27,7 @@ class RuntimeBus {
   }
 
   emit(event: RuntimeBusEvent): void {
+    if (!allowsRuntimeBusEvent(event)) return;
     this.emitter.emit("change", event);
   }
 

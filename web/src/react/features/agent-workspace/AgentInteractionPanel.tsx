@@ -20,7 +20,10 @@ import {
 } from "../../../lib/api/agentRuntime";
 import { subscribe } from "../../../lib/api/runtimeEventBus";
 import { useLocale } from "../../../hooks/useLocale";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import {
+  scheduleSessionRefresh,
+  useAgentSessionStore,
+} from "./state/agentSessionStore";
 import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
 import { readSessionBackendId } from "./synaxSessionTypes";
 
@@ -878,7 +881,6 @@ export function AgentInteractionPanel({
   const refreshInteractions = useAgentSessionStore(
     (s) => s.refreshInteractions,
   );
-  const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
   // Compact hosts render jump pills; the composer dock renders pending
   // clarification cards in place of the free-text composer.
   const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
@@ -898,26 +900,27 @@ export function AgentInteractionPanel({
 
   useEffect(() => {
     if (acp) return;
-    const refresh = () => {
-      void refreshInteractions(session.id);
-      void refreshSessions();
-    };
+    // Event-driven refreshes never fetch inline: they join the workspace's
+    // single coalescing scheduler, so a burst of runtime events — a running
+    // step, or the teardown of this very session — costs one trailing fetch
+    // instead of one per event. List reconciliation is useRuntimeSSE's job.
+    const schedule = () => scheduleSessionRefresh(session.id, "interactions");
     const onEvent = (event: MessageEvent) => {
       try {
         if (
           (JSON.parse(event.data) as { sessionId?: string }).sessionId ===
           session.id
         )
-          refresh();
+          schedule();
       } catch {
         /* Ignore malformed notifications; durable HTTP state is authoritative. */
       }
     };
     return subscribe({
-      onConnect: refresh,
+      onConnect: schedule,
       events: { session_changed: onEvent, session_step_completed: onEvent },
     });
-  }, [acp, session.id, refreshInteractions, refreshSessions]);
+  }, [acp, session.id]);
 
   const findInteractionTarget = useCallback((itemId: string) => {
     const card = document.getElementById(`interaction-${itemId}`);

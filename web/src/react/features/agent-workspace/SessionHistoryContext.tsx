@@ -24,6 +24,7 @@ import type {
   AgentRuntimeMessage,
   AgentSession,
 } from "../../../lib/api/agentRuntime";
+import { isRuntimeResourceGone } from "../../../lib/runtimeResourceRegistry";
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 
@@ -83,7 +84,9 @@ export function SessionHistoryProvider({
   const [forkMode, setForkMode] = useState<ForkWorkspaceMode>();
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
-      if (!sessionId) return;
+      // A removed or archived session owns no checkpoints; skip the doomed
+      // fetch instead of surfacing a NOT_FOUND the user never caused.
+      if (!sessionId || isRuntimeResourceGone(sessionId)) return;
       try {
         const result = await conversationHistoryApi.list(sessionId, signal);
         if (!signal?.aborted) {

@@ -62,7 +62,7 @@ export function claudeEnvironment(
     throw new Error(
       "Claude subscription OAuth tokens are not supported by this SDK integration.",
     );
-  env.CLAUDE_AGENT_SDK_CLIENT_APP = "synax/1.0.1";
+  env.CLAUDE_AGENT_SDK_CLIENT_APP = "synax/1.0.4";
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   const model =
     env.ANTHROPIC_MODEL ||

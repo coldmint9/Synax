@@ -32,6 +32,7 @@ import { listTurnReferenceOptions } from "../services/agent-runtime/turn-referen
 import { backendIdSchema } from "../services/agent-runtime/backends/backend-contracts.js";
 import { acknowledgeRuntimeRecovery } from "../services/agent-runtime/runtime-recovery.js";
 import {
+  AgentNotFoundError,
   AgentRuntimeError,
   AgentValidationError,
 } from "../services/agent-runtime/runtime-errors.js";
@@ -90,6 +91,7 @@ import { acpPermissionBridge } from "../services/agent-runtime/acp-engine/index.
 import { sessionUsesAcpEngine } from "../services/agent-runtime/acp-engine/index.js";
 import { ensureSessionTitleGenerated } from "../services/agent-runtime/session-title-service.js";
 import { runtimeBus } from "../services/agent-runtime/runtime-bus.js";
+import { withSessionEventsQuiesced } from "../services/agent-runtime/runtime-event-quiesce.js";
 import { sessionLiveBus } from "../services/agent-runtime/session-live-bus.js";
 import { logger } from "../lib/logger.js";
 import { getGlobalConfig } from "../lib/config/config-store.js";
@@ -170,7 +172,9 @@ for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
           )
           .get(id))
     )
-      return c.json({ error: "Session has been deleted.", code: "NOT_FOUND" }, 404);
+      // The canonical gone-error: clients recognize this exact shape as the
+      // terminal "session no longer exists" signal instead of a failure.
+      return runtimeError(c, new AgentNotFoundError(id));
     await next();
   });
 }
@@ -213,18 +217,24 @@ async function archiveSessionAfterShutdown(
 
   // Archiving is a lifecycle operation, not just a visibility mutation. Stop the
   // active runtime, ACP sessions, and every owned background process first;
-  // then mark the whole subtree stopped before hiding it.
-  await runCoordinator.interrupt(
-    sessionId,
-    "Session archived by user.",
-    undefined,
-    expectedRunId,
-  );
-  await closeAcpAgentSessions(sessionIds);
-  await stopSessionBackgroundProcesses(sessionIds);
-  agentSessionRuntime.cancel(sessionId);
+  // then mark the whole subtree stopped before hiding it. The shutdown pipeline
+  // runs inside a quiesce scope: its intermediate events (stopping flags,
+  // cancelled steps, interrupted runs) are dropped at the bus boundary and
+  // clients learn about the operation solely through the terminal
+  // `session_archived` events the archive itself emits.
+  return withSessionEventsQuiesced(sessionIds, async () => {
+    await runCoordinator.interrupt(
+      sessionId,
+      "Session archived by user.",
+      undefined,
+      expectedRunId,
+    );
+    await closeAcpAgentSessions(sessionIds);
+    await stopSessionBackgroundProcesses(sessionIds);
+    agentSessionRuntime.cancel(sessionId);
 
-  return { ...agentSessionRuntime.archive(sessionId), parentId };
+    return { ...agentSessionRuntime.archive(sessionId), parentId };
+  });
 }
 
 const inputOptimizationSchema = z.object({

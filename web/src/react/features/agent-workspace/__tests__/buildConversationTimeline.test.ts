@@ -65,6 +65,73 @@ function makeMessage(
 }
 
 describe("buildConversationTimeline", () => {
+  it.each([true, false])("keeps fork replies visible in order before and after continuing (fold=%s)", (foldWorkRuns) => {
+    const history = [
+      makeMessage({ id: "ask", runId: null, content: "Original ask" }),
+      ...["First reply", "Second reply"].map((content, index) => makeMessage({
+        id: `fork-${index}`,
+        role: "assistant",
+        runId: null,
+        content,
+        metadata: { forkedFromMessageId: `original-${index}` },
+        createdAt: `2026-01-01T00:00:0${index + 2}.000Z`,
+      })),
+    ];
+    const build = (continued: boolean) => buildConversationTimeline(
+      continued ? [makeRun()] : [],
+      continued ? [makeStep({ startedAt: "2026-01-01T00:00:05.000Z" })] : [],
+      [
+        ...history,
+        history[1], // A repeated history page must not duplicate a reply.
+        ...(continued ? [
+          makeMessage({ id: "follow-up", createdAt: "2026-01-01T00:00:04.000Z" }),
+          makeMessage({ id: "new-reply", role: "assistant", stepId: STEP_ID, content: "New reply", createdAt: "2026-01-01T00:00:06.000Z" }),
+        ] : []),
+      ], [], [], { foldWorkRuns },
+    );
+    for (const continued of [false, true]) {
+      const timeline = build(continued);
+      expect(timeline.map((entry) => entry.kind)).toEqual(
+        continued ? ["user", "agent", "agent", "user", "agent"] : ["user", "agent", "agent"],
+      );
+      expect(timeline.flatMap((entry) => entry.kind === "agent" ? entry.turn.blocks : [])
+        .filter((block) => block.type === "text").map((block) => block.content))
+        .toEqual(continued ? ["First reply", "Second reply", "New reply"] : ["First reply", "Second reply"]);
+      expect(build(continued)).toEqual(timeline); // Rebuilding after reload is stable.
+    }
+  });
+
+  it("renders attachment-only fork replies without inventing a work log", () => {
+    const contentParts = [{ type: "image" as const, assetId: "asset-image" }];
+    const timeline = buildConversationTimeline([], [], [makeMessage({
+      id: "fork-media", role: "assistant", runId: null, content: "", contentParts,
+      metadata: { forkedFromMessageId: "original-media" },
+    })], []);
+    expect(timeline).toMatchObject([{ kind: "agent", turn: {
+      blocks: [{ type: "media", messageId: "fork-media", parts: contentParts }],
+    } }]);
+  });
+
+  it("does not expose non-reply fork messages or duplicate step-backed replies", () => {
+    const hidden = [
+      { role: "system" as const }, { role: "tool" as const },
+      { metadata: { partial: true } }, { metadata: { type: "thinking" } },
+      { metadata: { kind: "thought" } }, { metadata: { source: "artifact_publisher" } },
+      { metadata: { source: "artifact_request" } }, { metadata: { source: "artifact_job" } },
+      { content: " " },
+    ].map((overrides, index) => makeMessage({
+      role: "assistant", runId: null, content: "Hidden", ...overrides, id: `hidden-${index}`,
+      metadata: { forkedFromMessageId: `original-${index}`, ...overrides.metadata },
+    }));
+    const reply = makeMessage({
+      id: "linked", role: "assistant", stepId: STEP_ID, content: "Only once",
+      metadata: { forkedFromMessageId: "original-linked" },
+    });
+    const timeline = buildConversationTimeline([makeRun()], [makeStep()], [...hidden, reply], []);
+    expect(timeline).toMatchObject([{ kind: "agent", turn: { blocks: [{ type: "text", content: "Only once" }] } }]);
+    expect(buildConversationTimeline([makeRun()], [makeStep()], [reply], [], [], { excludeStepId: STEP_ID })).toEqual([]);
+  });
+
   it("places user input before the linked agent turn", () => {
     const timeline = buildConversationTimeline(
       [makeRun()],

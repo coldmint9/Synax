@@ -402,7 +402,7 @@ function ensureLiveStream(sessionId: string): void {
 // One trailing refresh across the global bus, session stream, Dock and usage
 // events. Mutations still use immediate refreshDetail when their caller needs it.
 let liveDetailRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingRefresh: { projectId: string | null; list: boolean; detail: string | null; usage: string | null } | null = null;
+let pendingRefresh: { projectId: string | null; list: boolean; detail: string | null; usage: string | null; interactions: string | null } | null = null;
 let sessionDetailsVisible = true;
 const refreshRevisions = new Map<string, number>();
 
@@ -426,10 +426,12 @@ function flushScheduledSessionRefresh(): void {
   pendingRefresh = null;
   if (pending.detail && pending.detail === state.selectedSessionId) void state.refreshDetail();
   else if (pending.usage && pending.usage === state.selectedSessionId) void state.fetchSessionInvocationUsage();
+  if (pending.interactions && pending.interactions === state.selectedSessionId)
+    void state.refreshInteractions(pending.interactions);
 }
 export function scheduleSessionRefresh(
   sessionId: string | null,
-  target: "all" | "list" | "detail" | "usage" = "all",
+  target: "all" | "list" | "detail" | "usage" | "interactions" = "all",
   revision?: number,
 ): void {
   const state = useAgentSessionStore.getState();
@@ -440,17 +442,28 @@ export function scheduleSessionRefresh(
     if (refreshRevisions.size > 64) refreshRevisions.delete(refreshRevisions.keys().next().value!);
   }
   if (!pendingRefresh || pendingRefresh.projectId !== state.projectId)
-    pendingRefresh = { projectId: state.projectId, list: false, detail: null, usage: null };
+    pendingRefresh = { projectId: state.projectId, list: false, detail: null, usage: null, interactions: null };
   if (target === "all" || target === "list") pendingRefresh.list = true;
   if (sessionId && sessionId === state.selectedSessionId) {
     if (target === "all" || target === "detail") pendingRefresh.detail = sessionId;
     if (target === "usage") pendingRefresh.usage = sessionId;
-  } else if (sessionId && target !== "list" && state.sessionDetailCache[sessionId]) {
+    if (target === "interactions") pendingRefresh.interactions = sessionId;
+  } else if (
+    sessionId &&
+    target !== "list" &&
+    target !== "interactions" &&
+    state.sessionDetailCache[sessionId]
+  ) {
     const cached = state.sessionDetailCache[sessionId];
     useAgentSessionStore.setState({ sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: { ...cached, cachedAt: 0 } } });
   }
   if (!liveDetailRefreshTimer)
-    liveDetailRefreshTimer = setTimeout(flushScheduledSessionRefresh, target === "usage" ? 500 : 1200);
+    // Usage and interactions reconcile visible state, so they ride the fast
+    // tier; transcript-sized detail refreshes coalesce on the slower one.
+    liveDetailRefreshTimer = setTimeout(
+      flushScheduledSessionRefresh,
+      target === "usage" || target === "interactions" ? 500 : 1200,
+    );
 }
 function scheduleLiveRefreshDetail(): void {
   scheduleSessionRefresh(useAgentSessionStore.getState().selectedSessionId, "detail");
@@ -710,6 +723,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     refreshInteractions: async (sessionId) => {
       if (get().selectedSessionId !== sessionId) return;
+      // A removed or archived session owns no interactions; the fetch would
+      // only come back as a NOT_FOUND for a session the user already saw go.
+      if (isRuntimeResourceGone(sessionId)) return;
       const version = ++interactionRefreshVersion;
       const previous = get().interactionState;
       set({

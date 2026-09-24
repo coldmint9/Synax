@@ -8,6 +8,7 @@ import {
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { openWorkspaceDiff } from "./state/sessionWorkspaceStore";
+import { isRuntimeResourceGone } from "../../../lib/runtimeResourceRegistry";
 
 /** Poll cadence is a drift safety net only: write tool results invalidate the
  *  server cache, and the toolCalls upsert retriggers an immediate reload below. */
@@ -63,6 +64,9 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      // The poll can outlive a session teardown by a tick; never fetch for a
+      // session the removal registry already knows is gone.
+      if (isRuntimeResourceGone(sessionId)) return;
       try {
         const environment =
           await agentRuntimeApi.getSessionEnvironment(sessionId);
