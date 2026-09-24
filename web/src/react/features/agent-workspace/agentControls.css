@@ -353,6 +353,8 @@ textarea.agent-request-input {
   gap: 0.25rem;
 }
 .agent-request-choice {
+  /* Keep the hidden input inside its row when native focus scrolls it into view. */
+  position: relative;
   display: flex;
   min-height: 2.75rem;
   align-items: center;

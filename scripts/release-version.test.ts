@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const read = (file: string) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 const json = (file: string) => JSON.parse(read(file));
-const version = json("package.json").version;
+const version = read(".env.version").trim().replace("SYNAX_VERSION=", "");
 
 describe("software version consistency", () => {
   it("aligns application manifests and workspace lockfiles", () => {

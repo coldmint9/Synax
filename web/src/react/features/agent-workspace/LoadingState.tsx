@@ -34,11 +34,7 @@ const PATTERNS: Record<
   Drive: { delays: chevron, dur: 650, round: false },
   Dots: { delays: chevron, dur: 650, round: true },
   Orbit: { delays: orbit, dur: 950, round: false },
-  Thinking: {
-    delays: chevron.map((delay) => delay * 2),
-    dur: 2400,
-    round: false,
-  },
+  Thinking: { delays: chevron, dur: 1200, round: false },
 };
 
 function LoaderGrid({

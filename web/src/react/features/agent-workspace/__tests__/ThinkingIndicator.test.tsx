@@ -10,7 +10,7 @@ beforeEach(() => {
 });
 
 describe("ThinkingIndicator", () => {
-  it("shows a slow 3×3 pixel grid and visible Chinese thinking label", () => {
+  it("shows a fast 3×3 pixel grid and visible Chinese thinking label", () => {
     const { container } = render(<ThinkingIndicator />);
     const status = screen.getByRole("status");
     const cells = Array.from(status.querySelectorAll(".loading-state-cell"));
@@ -18,7 +18,7 @@ describe("ThinkingIndicator", () => {
     expect(status).toHaveTextContent("正在思考");
     expect(cells).toHaveLength(9);
     expect(status.querySelector('[aria-hidden="true"]')).toContainElement(cells[0] as HTMLElement);
-    expect(cells.every((cell) => (cell as HTMLElement).style.animation.includes("2400ms"))).toBe(true);
+    expect(cells.every((cell) => (cell as HTMLElement).style.animation.includes("1200ms"))).toBe(true);
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
 

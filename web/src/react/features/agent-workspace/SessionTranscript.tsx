@@ -7,7 +7,7 @@ import {
   usePendingSubmissionStore,
 } from "./state/pendingSubmissionStore";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { hasStreamingContent, hasStreamingText } from "./streamingLiveBlocks";
+import { hasStreamingText } from "./streamingLiveBlocks";
 import { Skeleton } from "@heroui/react";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -75,23 +75,21 @@ export function SessionTranscript({
     () => projectPendingSubmission(pending, runs, messages),
     [pending, runs, messages],
   );
+  const responseRunId = projected.run?.id ?? (pending ? null : session?.activeRunId);
+  const responseRun = projected.run ?? runs.find((run) => run.id === responseRunId);
   const hasAssistantText = useMemo(() => {
     const responseStepIds = new Set(
-      projected.run
-        ? steps
-            .filter((step) => step.runId === projected.run!.id)
-            .map((step) => step.id)
-        : [],
+      steps.filter((step) => step.runId === responseRunId).map((step) => step.id),
     );
     const persistedResponse = Boolean(
-      projected.run &&
+      responseRunId &&
         messages.some(
           (message) =>
             message.role === "assistant" &&
             Boolean(message.content.trim()) &&
-            (message.runId === projected.run!.id ||
+            (message.runId === responseRunId ||
               (message.stepId !== null && responseStepIds.has(message.stepId)) ||
-              message.metadata.requestId === pending?.requestId),
+              (pending && message.metadata.requestId === pending.requestId)),
         ),
     );
     const completedResponse = streamingCompletedSteps.some((step) =>
@@ -100,10 +98,16 @@ export function SessionTranscript({
       ),
     );
     return persistedResponse || hasStreamingText(streamingLive) || completedResponse;
-  }, [messages, pending?.requestId, projected.run, steps, streamingCompletedSteps, streamingLive]);
+  }, [messages, pending?.requestId, responseRunId, steps, streamingCompletedSteps, streamingLive]);
   const runFinished = Boolean(
-    projected.run && RUN_TERMINAL_STATUSES.includes(projected.run.status),
+    responseRun && RUN_TERMINAL_STATUSES.includes(responseRun.status),
   );
+  const showThinking =
+    session?.status !== "waiting_input" &&
+    responseRun?.status !== "waiting_input" &&
+    !hasAssistantText &&
+    !runFinished &&
+    (Boolean(pending) || session?.status === "queued" || session?.status === "running");
   const latestRunStatus = useMemo(() => {
     if (!sessionId) return undefined;
     for (let i = runs.length - 1; i >= 0; i -= 1) {
@@ -185,7 +189,7 @@ export function SessionTranscript({
                 </button>
               </div>
             )}
-            {loading && projected.messages.length === 0 && !showLiveBlock ? (
+            {loading && projected.messages.length === 0 && !showLiveBlock && !showThinking ? (
               <div
                 role="status"
                 className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4"
@@ -231,12 +235,7 @@ export function SessionTranscript({
                 unifiedLive={active}
                 submitting={Boolean(pending)}
                 scrollRootRef={scrollRef}
-                liveTurn={
-                  pending && !hasAssistantText && !runFinished &&
-                  (!showLiveBlock || hasStreamingContent(streamingLive)) ? (
-                    <ThinkingIndicator showLabel={false} />
-                  ) : undefined
-                }
+                liveTurn={showThinking ? <ThinkingIndicator /> : undefined}
               />
             )}
           </div>

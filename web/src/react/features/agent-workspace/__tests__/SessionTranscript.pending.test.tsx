@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import {
   agentRuntimeApi,
   type AgentRun,
+  type AgentSession,
 } from "../../../../lib/api/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { usePendingSubmissionStore } from "../state/pendingSubmissionStore";
@@ -70,12 +71,65 @@ it("renders a sent message and the thinking grid before the request completes, w
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(screen.getByText("正在思考")).toBeVisible();
   await act(async () => {
     finish({ run, reused: false });
     await sending;
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+
+  const session = { id: "s1", status: "waiting_input", activeRunId: run.id } as AgentSession;
+  act(() => useAgentSessionStore.setState({ sessions: [session] }));
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+
+  act(() => useAgentSessionStore.setState({ sessions: [{ ...session, status: "running" }] }));
+  expect(screen.getByText("正在思考")).toBeVisible();
+});
+
+it("shows the thinking placeholder for an already-running session without local pending state", () => {
+  const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
+  const previousReply = {
+    id: "old-reply",
+    sessionId: "s1",
+    runId: "previous-run",
+    stepId: null,
+    role: "assistant" as const,
+    content: "Earlier answer",
+    metadata: {},
+    createdAt: "",
+  };
+  useAgentSessionStore.setState({
+    sessions: [session],
+    runs: [{ ...run, status: "running" }],
+    messages: [],
+  });
+  const { container } = render(<SessionTranscript />);
+  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+
+  act(() => useAgentSessionStore.setState({ messages: [previousReply] }));
+  expect(screen.getByText("正在思考")).toBeVisible();
+  act(() => useAgentSessionStore.setState({ streamingStepId: "step-1" }));
+  expect(screen.getByText("正在思考")).toBeVisible();
+
+  act(() => useAgentSessionStore.setState({ runs: [{ ...run, status: "waiting_input" }] }));
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  act(() => useAgentSessionStore.setState({ runs: [{ ...run, status: "running" }] }));
+  expect(screen.getByText("正在思考")).toBeVisible();
+
+  act(() => useAgentSessionStore.setState({
+    runs: [],
+    messages: [{ ...previousReply, id: "new-reply", runId: run.id, content: "New answer" }],
+  }));
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+
+  act(() => useAgentSessionStore.setState({
+    runs: [{ ...run, status: "completed" }],
+    messages: [previousReply],
+  }));
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
 });
 
 it("shows one real message when it arrives before the run-start linkage and HTTP response", async () => {

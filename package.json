@@ -68,7 +68,10 @@
     "test:realtime:web": "tsx scripts/realtime-web-smoke.ts",
     "storage:report": "tsx scripts/storage-maintenance.ts",
     "storage:maintain": "tsx scripts/storage-maintenance.ts --apply",
-    "storage:compact": "tsx scripts/storage-maintenance.ts --compact"
+    "storage:compact": "tsx scripts/storage-maintenance.ts --compact",
+    "version:sync": "node scripts/release-version.mjs sync",
+    "version:patch": "node scripts/release-version.mjs patch",
+    "version:minor": "node scripts/release-version.mjs minor"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
