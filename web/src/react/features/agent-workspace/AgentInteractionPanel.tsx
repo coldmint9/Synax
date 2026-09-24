@@ -185,11 +185,14 @@ function InteractionForm({
         }
       }
       const size =
-        typeof value === "number"
+        question.type === "number" && typeof value === "number"
           ? value
-          : typeof value === "string" || Array.isArray(value)
+          : (question.type === "text" || question.type === "textarea") &&
+              typeof value === "string"
             ? value.length
-            : undefined;
+            : question.type === "multi_select" && Array.isArray(value)
+              ? value.length
+              : undefined;
       if (
         size !== undefined &&
         ((question.min !== undefined && size < question.min) ||
