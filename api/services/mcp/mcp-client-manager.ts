@@ -126,7 +126,7 @@ export class McpClientManager {
           throw new Error("The MCP project has no registered workspace. Set an explicit cwd.");
         transport = createMcpTransport(config, location ? workspaceLocationHostPath(location) : undefined);
         const client = new Client(
-          { name: "synax-host", version: "0.3.0" },
+          { name: "synax-host", version: "1.0.0" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -317,7 +317,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "0.3.0" },
+      { name: "synax-host-probe", version: "1.0.0" },
       { capabilities: {} },
     );
     try {

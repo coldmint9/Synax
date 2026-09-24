@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { agentRuntimeApi } from "../../../../lib/api/agentRuntime";
 import { subscribe } from "../../../../lib/api/runtimeEventBus";
 import { addSessionLiveListener } from "../../../../lib/api/sessionLiveClient";
-import { useAgentSessionStore } from "../state/agentSessionStore";
+import { useAgentSessionStore, scheduleSessionRefresh } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
 import {
   applyDockLiveEvent,
@@ -82,7 +82,7 @@ export function useAgentDockBridge(_projectId: string) {
 
           const selected = useAgentSessionStore.getState().selectedSessionId;
           if (selected === sessionId) {
-            void useAgentSessionStore.getState().refreshDetail();
+            scheduleSessionRefresh(sessionId, "detail");
           }
         },
         session_step_completed: (event) => {
@@ -90,7 +90,7 @@ export function useAgentDockBridge(_projectId: string) {
           if (data.sessionId !== sessionId) return;
           const selected = useAgentSessionStore.getState().selectedSessionId;
           if (selected === sessionId) {
-            void useAgentSessionStore.getState().refreshDetail();
+            scheduleSessionRefresh(sessionId, "detail");
           }
         },
       },

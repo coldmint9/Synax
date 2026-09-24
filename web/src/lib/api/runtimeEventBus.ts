@@ -9,12 +9,7 @@ interface Subscription {
   onConnect?: ConnectHandler;
 }
 
-const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS = 30_000;
-
 let es: AuthenticatedEventSource | null = null;
-let retries = 0;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let subscribers = new Set<Subscription>();
 
 function connect() {
@@ -23,7 +18,6 @@ function connect() {
   es = new AuthenticatedEventSource("/api/agent-runtime/events/stream");
 
   es.addEventListener("connected", () => {
-    retries = 0;
     for (const sub of subscribers) sub.onConnect?.();
   });
 
@@ -43,23 +37,11 @@ function connect() {
     });
   }
 
-  es.onerror = () => {
-    es?.close();
-    es = null;
-    useApiConnectivityStore.getState().markFailure();
-    scheduleReconnect();
+  const source = es;
+  source.onerror = () => {
+    // A stream failure is local; the shared transport owns physical reconnect.
+    if (source.readyState === AuthenticatedEventSource.CLOSED && es === source) es = null;
   };
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** retries, RECONNECT_MAX_MS);
-  retries++;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    if (subscribers.size > 0) connect();
-  }, delay);
 }
 
 export function subscribe(sub: Subscription): () => void {
@@ -70,11 +52,6 @@ export function subscribe(sub: Subscription): () => void {
     if (subscribers.size === 0) {
       es?.close();
       es = null;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      retries = 0;
     }
   };
 }

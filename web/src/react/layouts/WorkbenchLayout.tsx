@@ -1,6 +1,6 @@
 import type { SessionNotificationTarget } from "../../lib/notifications/sessionNotifications";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { lazy, useEffect, useState, useCallback, useRef } from "react";
 import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../lib/api/agentRuntime";
 import { projectApi } from "../../lib/api/project";
@@ -25,8 +25,10 @@ import { WorkbenchIslandProvider } from "./WorkbenchIsland";
 import { GitToolbarProvider } from "../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../components/ToastContainer";
-import WikiPage from "../pages/WikiPage";
-import SessionsPage from "../pages/SessionsPage";
+import { CachedWorkbenchPage } from "./CachedWorkbenchPage";
+import { setSessionDetailsVisible } from "../features/agent-workspace/state/agentSessionStore";
+const WikiPage = lazy(() => import("../pages/WikiPage"));
+const SessionsPage = lazy(() => import("../pages/SessionsPage"));
 import { SessionEnvironmentProvider } from "../features/agent-workspace/SessionEnvironmentContext";
 
 export default function WorkbenchLayout() {
@@ -92,6 +94,12 @@ function WorkbenchLayoutContent() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    const sync = () => setSessionDetailsVisible(location.pathname.includes("/sessions") && !document.hidden);
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!wikiEnabled && location.pathname.includes("/wiki")) {
@@ -274,33 +282,15 @@ function WorkbenchLayoutContent() {
           />
           <div className="workbench-island">
             <div className="island-body">
-              {/* Cached project pages — always mounted once project exists */}
-              {effectiveProjectId && (
-                <>
-                  {wikiEnabled && (
-                    <div
-                      className="absolute inset-0 flex flex-col"
-                      style={{
-                        visibility:
-                          activePanel === "wiki" ? "visible" : "hidden",
-                        zIndex: activePanel === "wiki" ? 1 : 0,
-                      }}
-                    >
-                      <WikiPage projectId={effectiveProjectId} />
-                    </div>
-                  )}
-                  <div
-                    className="absolute inset-0 flex flex-col"
-                    style={{
-                      visibility:
-                        activePanel === "sessions" ? "visible" : "hidden",
-                      zIndex: activePanel === "sessions" ? 1 : 0,
-                    }}
-                  >
-                    <SessionsPage />
-                  </div>
-                </>
-              )}
+              {/* Unvisited pages do no work; visited pages retain draft/selection state. */}
+              {effectiveProjectId && <>
+                {wikiEnabled && <CachedWorkbenchPage key={`${effectiveProjectId}:wiki`} active={activePanel === "wiki"}>
+                  <WikiPage projectId={effectiveProjectId} />
+                </CachedWorkbenchPage>}
+                <CachedWorkbenchPage key={`${effectiveProjectId}:sessions`} active={activePanel === "sessions"}>
+                  <SessionsPage />
+                </CachedWorkbenchPage>
+              </>}
               {/* Outlet for non-cached routes (welcome, settings) */}
               <div
                 className={

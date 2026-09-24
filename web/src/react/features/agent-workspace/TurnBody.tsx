@@ -37,6 +37,8 @@ function TranscriptVisualization({
     </Suspense>
   );
 }
+const WORK_LOG_COLLAPSE_DELAY_MS = 420;
+
 function sourceLabel(url: string): string {
   try {
     return new URL(url).hostname;
@@ -63,6 +65,12 @@ function renderTurnBlocks(
     (segment) =>
       segment.type !== "tool_round" &&
       (toolBlocks.length === 0 || segment.type !== "thinking"),
+  );
+  const answerStarted = answers.some(
+    (segment) =>
+      (segment.type === "text" && segment.markdown) ||
+      segment.type === "media" ||
+      segment.type === "visualization",
   );
   const render = (segment: (typeof segments)[number], i: number) => {
     if (segment.type === "visualization")
@@ -91,6 +99,11 @@ function renderTurnBlocks(
           key={i}
           text={segment.content}
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
+          startDelayMs={
+            isStreaming && answerStarted && segment.markdown
+              ? WORK_LOG_COLLAPSE_DELAY_MS
+              : 0
+          }
           markdown={segment.markdown}
         />
       );
@@ -142,7 +155,9 @@ function renderTurnBlocks(
           <ToolCallRoundPanel
             toolBlocks={toolBlocks}
             maxHeight="420px"
-            isStreaming={isWorking}
+            // Once the final answer starts, close the work log before the
+            // buffered Markdown renderer begins revealing answer lines.
+            isStreaming={isWorking && !answerStarted}
           />
         )}
       </div>
@@ -198,8 +213,17 @@ export function TurnBody({
           text={text}
           disabledReason={history?.reason || checkpoint?.reason || undefined}
           forkDisabledReason={history?.forkReason || checkpoint?.reason || null}
-          rollbackDisabled={checkpoint ? checkpoint.canRollback === false || (!checkpoint.hasLaterHistory && !history?.running) : false}
-          rollbackDisabledReason={checkpoint?.canRollback === false ? "分叉会话不支持回滚 / Forked conversations are append-only" : undefined}
+          rollbackDisabled={
+            checkpoint
+              ? checkpoint.canRollback === false ||
+                (!checkpoint.hasLaterHistory && !history?.running)
+              : false
+          }
+          rollbackDisabledReason={
+            checkpoint?.canRollback === false
+              ? "分叉会话不支持回滚 / Forked conversations are append-only"
+              : undefined
+          }
           busy={history?.busy}
           onFork={
             checkpoint?.available

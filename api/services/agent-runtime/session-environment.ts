@@ -154,18 +154,29 @@ export interface SessionEnvironmentFileMedia {
   bytes: Buffer;
 }
 
-async function git(
-  workspacePath: string,
-  args: string[],
-  input?: string,
-): Promise<string> {
-  const result = await runCommand("git", args, {
-    cwd: workspacePath,
-    maxBufferBytes: MAX_BUFFER,
-    stdin: input,
-    timeoutMs: 30_000,
-  });
-  return result.stdout;
+// Shared read-only Git probes: two sessions in the same worktree must not
+// launch the same five Git commands independently. Never cache mutating commands.
+const gitReads = new Map<string, { root: string; at: number; pending: boolean; bytes: number; value: Promise<string> }>();
+const GIT_CACHE_BYTES = 16 * 1024 * 1024;
+const sessionRoots = new Map<string, Set<string>>();
+async function git(workspacePath: string, args: string[], input?: string): Promise<string> {
+  const key = JSON.stringify([workspacePath, args, input]);
+  const previous = gitReads.get(key);
+  if (previous && (previous.pending || Date.now() - previous.at < 5000)) return previous.value;
+  const entry = { root: workspacePath, at: Date.now(), pending: true, bytes: 0, value: Promise.resolve("") };
+  entry.value = runCommand("git", args, { cwd: workspacePath, maxBufferBytes: MAX_BUFFER, stdin: input, timeoutMs: 30_000 })
+    .then(result => {
+      entry.at = Date.now(); entry.pending = false; entry.bytes = Buffer.byteLength(result.stdout);
+      let bytes = [...gitReads.values()].reduce((sum, item) => sum + item.bytes, 0);
+      for (const [oldKey, old] of gitReads) {
+        if (gitReads.size <= 128 && bytes <= GIT_CACHE_BYTES) break;
+        if (old.pending) continue;
+        gitReads.delete(oldKey); bytes -= old.bytes;
+      }
+      return result.stdout;
+    }, error => { if (gitReads.get(key) === entry) gitReads.delete(key); throw error; });
+  gitReads.delete(key); gitReads.set(key, entry);
+  return entry.value;
 }
 
 function assertRelativePath(relativePath: string): string {
@@ -445,16 +456,34 @@ export async function getSessionEnvironment(
   environmentInFlight.set(sessionId, task);
   try {
     const value = await task;
-    environmentCache.set(sessionId, { at: Date.now(), value });
+    if (environmentInFlight.get(sessionId) === task) {
+      environmentCache.delete(sessionId);
+      environmentCache.set(sessionId, { at: Date.now(), value });
+      if (environmentCache.size > 64) {
+        const oldest = environmentCache.keys().next().value!;
+        environmentCache.delete(oldest); sessionRoots.delete(oldest);
+      }
+    }
     return value;
   } finally {
-    environmentInFlight.delete(sessionId);
+    if (environmentInFlight.get(sessionId) === task) environmentInFlight.delete(sessionId);
   }
 }
 
 export function invalidateSessionEnvironment(sessionId: string): void {
-  environmentCache.delete(sessionId);
-  environmentInFlight.delete(sessionId);
+  const roots = new Set(sessionRoots.get(sessionId));
+  try {
+    const session = getSession(sessionId);
+    for (const root of resolveSessionWorkspaceRoots(sessionId, session.projectId))
+      roots.add(canonicalWorkspaceDirectory(workspaceRootHostPath(root)));
+  } catch { /* Session/root may already have been removed. */ }
+  environmentCache.delete(sessionId); environmentInFlight.delete(sessionId);
+  for (const [id, dependencies] of sessionRoots) {
+    if ([...dependencies].some(root => roots.has(root))) {
+      environmentCache.delete(id); environmentInFlight.delete(id);
+    }
+  }
+  for (const [key, entry] of gitReads) if (roots.has(entry.root)) gitReads.delete(key);
 }
 
 async function computeRepository(
@@ -484,6 +513,8 @@ async function computeRepository(
   } catch {
     return { ...empty, status: "missing" };
   }
+  const dependencies = sessionRoots.get(sessionId) ?? new Set<string>();
+  dependencies.add(workspacePath); sessionRoots.set(sessionId, dependencies);
   const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath);
   const outputFiles = [...edited].filter((relativePath) => {
     try {

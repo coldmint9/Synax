@@ -1,3 +1,4 @@
+import { useWorkbenchPageActive } from "../layouts/CachedWorkbenchPage";
 import { memo, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useWikiSnapshotListener } from '../../hooks/useWikiSnapshotListener'
@@ -7,7 +8,8 @@ import WikiWorkspace from '../features/wiki/WikiWorkspace'
 export default memo(function WikiPage({ projectId: propId }: { projectId?: string }) {
   const { projectId: routeId = '' } = useParams()
   const projectId = propId || routeId
-  useWikiSnapshotListener(projectId || null)
+  const active = useWorkbenchPageActive()
+  useWikiSnapshotListener(active ? projectId || null : null)
   const reset = useWikiStore(s => s.reset)
   const loadedRef = useRef<string | null>(null)
 

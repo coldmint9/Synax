@@ -1,7 +1,8 @@
-import { apiFetch } from './origin'
-import { useApiConnectivityStore } from '../apiConnectivity'
+import { subscribeObservation } from './realtime'
+import { getApiOrigin } from './originConfig'
 
-/** Fetch-based SSE works with desktop bearer credentials without putting secrets in URLs. */
+/** EventSource-compatible observer over the shared authenticated WebSocket.
+ * The server preserves SSE event names, IDs and snapshot semantics. */
 export class AuthenticatedEventSource {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -11,19 +12,36 @@ export class AuthenticatedEventSource {
   onopen: ((event: Event) => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   private readonly listeners = new Map<string, Set<(event: MessageEvent) => void>>()
-  private controller?: AbortController
-  private timer?: ReturnType<typeof setTimeout>
   private stopped = false
-  private attempts = 0
-  private lastId = ''
-  private readonly unsubscribeRecovery: () => void
+  private release?: () => void
   constructor(readonly url: string) {
-    this.unsubscribeRecovery = useApiConnectivityStore.subscribe((state, previous) => {
-      if (state.recoveryVersion !== previous.recoveryVersion && !state.shouldSkipRequest()) {
-        this.reconnect()
+    queueMicrotask(() => {
+      if (this.stopped) return
+      try {
+        const expected = getApiOrigin() || window.location.origin
+        const parsed = new URL(url, expected)
+        if (parsed.origin !== expected || !parsed.pathname.startsWith('/api/')) throw new Error('Invalid observation origin.')
+        this.release = subscribeObservation(`${parsed.pathname}${parsed.search}`, notice => {
+          if (this.stopped) return
+          if (notice.type === 'open') {
+            this.readyState = AuthenticatedEventSource.OPEN
+            this.onopen?.(new Event('open'))
+          } else if (notice.type === 'event') {
+            const event = new MessageEvent(notice.event, { data: notice.data, lastEventId: notice.lastEventId ?? '' })
+            if (notice.event === 'message') this.onmessage?.(event)
+            for (const listener of this.listeners.get(notice.event) ?? []) listener(event)
+          } else {
+            if (notice.type === 'error' && !notice.retryable) this.close()
+            else this.readyState = AuthenticatedEventSource.CONNECTING
+            // Observation failures are not proof that every HTTP endpoint is offline.
+            this.onerror?.(new Event('error'))
+          }
+        })
+      } catch {
+        this.close()
+        this.onerror?.(new Event('error'))
       }
     })
-    queueMicrotask(() => { if (!this.controller) void this.connect() })
   }
   addEventListener(type: string, listener: (event: MessageEvent) => void): void {
     const listeners = this.listeners.get(type) ?? new Set()
@@ -31,64 +49,9 @@ export class AuthenticatedEventSource {
   }
   removeEventListener(type: string, listener: (event: MessageEvent) => void): void { this.listeners.get(type)?.delete(listener) }
   close(): void {
-    this.stopped = true; this.readyState = AuthenticatedEventSource.CLOSED
-    if (this.timer) clearTimeout(this.timer)
-    this.unsubscribeRecovery()
-    this.controller?.abort()
-  }
-  private reconnect(): void {
-    if (this.stopped) return
-    if (this.timer) clearTimeout(this.timer)
-    this.controller?.abort()
-    this.readyState = AuthenticatedEventSource.CONNECTING
-    this.attempts = 0
-    void this.connect()
-  }
-  private frame(text: string): void {
-    let type = 'message'; const data: string[] = []
-    for (const line of text.split(/\r?\n/)) {
-      if (line.startsWith(':')) continue
-      const colon = line.indexOf(':'); const field = colon < 0 ? line : line.slice(0, colon)
-      let value = colon < 0 ? '' : line.slice(colon + 1); if (value.startsWith(' ')) value = value.slice(1)
-      if (field === 'event') type = value
-      if (field === 'data') data.push(value)
-      if (field === 'id' && !value.includes('\0')) this.lastId = value
-    }
-    if (!data.length) return
-    const event = new MessageEvent(type, { data: data.join('\n'), lastEventId: this.lastId })
-    if (type === 'message') this.onmessage?.(event)
-    for (const listener of this.listeners.get(type) ?? []) listener(event)
-  }
-  private async connect(): Promise<void> {
-    if (this.stopped) return
-    const controller = new AbortController()
-    this.controller = controller
-    const isCurrent = () => !this.stopped && this.controller === controller && !controller.signal.aborted
-    try {
-      const response = await apiFetch(this.url, { signal: controller.signal,
-        headers: { Accept: 'text/event-stream', ...(this.lastId ? { 'Last-Event-ID': this.lastId } : {}) } })
-      if (!isCurrent()) { await response.body?.cancel(); return }
-      if (!response.ok || !response.body) {
-        if ([401, 403, 404].includes(response.status)) { this.close(); this.onerror?.(new Event('error')); return }
-        throw new Error(`Runtime event stream failed (${response.status}).`)
-      }
-      this.readyState = AuthenticatedEventSource.OPEN; this.attempts = 0; this.onopen?.(new Event('open'))
-      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''
-      try {
-        while (isCurrent()) {
-          const { value, done } = await reader.read(); if (done) break
-          if (!isCurrent()) return
-          buffer += decoder.decode(value, { stream: true })
-          let match = /\r?\n\r?\n/.exec(buffer)
-          while (match) { this.frame(buffer.slice(0, match.index)); buffer = buffer.slice(match.index + match[0].length); match = /\r?\n\r?\n/.exec(buffer) }
-          if (buffer.length > 8 * 1024 * 1024) throw new Error('Runtime event frame exceeds the supported size.')
-        }
-      } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
-      if (isCurrent()) throw new Error('Runtime event stream disconnected.')
-    } catch {
-      if (!isCurrent()) return
-      this.readyState = AuthenticatedEventSource.CONNECTING; this.onerror?.(new Event('error'))
-      if (!this.stopped) this.timer = setTimeout(() => { void this.connect() }, Math.min(1000 * 2 ** this.attempts++, 15_000))
-    }
+    this.stopped = true
+    this.readyState = AuthenticatedEventSource.CLOSED
+    this.release?.(); this.release = undefined
+    this.listeners.clear()
   }
 }

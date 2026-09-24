@@ -169,8 +169,7 @@ export function isSessionUnread(
 }
 
 const SESSION_PAGE_SIZE = 20;
-const SESSION_DETAIL_CACHE_LIMIT = 16;
-const SESSION_DETAIL_CACHE_TTL_MS = 45_000;
+const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 4;
 
 export interface SessionDetailCacheEntry {
   runs: AgentRun[];
@@ -183,6 +182,7 @@ export interface SessionDetailCacheEntry {
   sessionTodos: TodoItem[];
   sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
+  lastVisitedAt?: number;
   historyWindow?: HistoryWindowState;
   historyPagesLoaded?: boolean;
 }
@@ -212,6 +212,7 @@ let interactionRefreshVersion = 0;
 
 function trimSessionDetailCache(
   cache: Record<string, SessionDetailCacheEntry>,
+  selectedSessionId?: string | null,
 ): Record<string, SessionDetailCacheEntry> {
   // Account UTF-16 retained payload without allocating JSON copies. Shared
   // objects may be over-counted across entries: conservative is preferable.
@@ -229,8 +230,19 @@ function trimSessionDetailCache(
   };
   const next: Record<string, SessionDetailCacheEntry> = {};
   let remaining = 16 * 1024 * 1024;
-  for (const key of Object.keys(cache).reverse().sort((a, b) => cache[b].cachedAt - cache[a].cachedAt)) {
-    if (Object.keys(next).length >= SESSION_DETAIL_CACHE_LIMIT) break;
+  const inactive = Object.keys(cache)
+    .filter((key) => key !== selectedSessionId)
+    .sort(
+      (a, b) =>
+        (cache[b].lastVisitedAt ?? cache[b].cachedAt) -
+        (cache[a].lastVisitedAt ?? cache[a].cachedAt),
+    )
+    .slice(0, SESSION_INACTIVE_PAGE_CACHE_LIMIT);
+  const keys =
+    selectedSessionId && cache[selectedSessionId]
+      ? [selectedSessionId, ...inactive]
+      : inactive;
+  for (const key of keys) {
     const size = measure(cache[key], remaining);
     if (size > remaining) continue;
     next[key] = cache[key];
@@ -369,13 +381,14 @@ function patchSessionDetailCache(
     sessionTodos: state.sessionTodos,
     sessionInvocationUsage: state.sessionInvocationUsage,
     cachedAt: 0,
+    lastVisitedAt: Date.now(),
   };
   useAgentSessionStore.setState((s) => ({
     sessionDetailCache: trimSessionDetailCache({
       ...s.sessionDetailCache,
       // Profile responses do not make an unfinished transcript fresh.
       [sessionId]: { ...existing, ...patch },
-    }),
+    }, s.selectedSessionId),
   }));
 }
 
@@ -386,35 +399,69 @@ function ensureLiveStream(sessionId: string): void {
   });
 }
 
-// --- Live-event refresh coalescing -----------------------------------------
-// Stream events arrive in bursts; each burst needs one trailing detail
-// refresh, not one per event. Polling stays as a low-frequency fallback.
-const LIVE_REFRESH_DEBOUNCE_MS = 1200;
+// One trailing refresh across the global bus, session stream, Dock and usage
+// events. Mutations still use immediate refreshDetail when their caller needs it.
 let liveDetailRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRefresh: { projectId: string | null; list: boolean; detail: string | null; usage: string | null } | null = null;
+let sessionDetailsVisible = true;
+const refreshRevisions = new Map<string, number>();
 
+export function clearScheduledSessionRefresh(): void {
+  if (liveDetailRefreshTimer) clearTimeout(liveDetailRefreshTimer);
+  liveDetailRefreshTimer = null; pendingRefresh = null; refreshRevisions.clear();
+}
+export function setSessionDetailsVisible(visible: boolean): void {
+  sessionDetailsVisible = visible;
+  if (pendingRefresh && !liveDetailRefreshTimer && !document.hidden)
+    liveDetailRefreshTimer = setTimeout(flushScheduledSessionRefresh, 0);
+}
+function flushScheduledSessionRefresh(): void {
+  liveDetailRefreshTimer = null;
+  const pending = pendingRefresh, state = useAgentSessionStore.getState();
+  if (!pending) return;
+  if (pending.projectId !== state.projectId) { pendingRefresh = null; return; }
+  if (typeof document !== "undefined" && document.hidden) return;
+  if (pending.list) { pending.list = false; void state.refreshSessions({ joinPending: true }); }
+  if (!sessionDetailsVisible) return;
+  pendingRefresh = null;
+  if (pending.detail && pending.detail === state.selectedSessionId) void state.refreshDetail();
+  else if (pending.usage && pending.usage === state.selectedSessionId) void state.fetchSessionInvocationUsage();
+}
+export function scheduleSessionRefresh(
+  sessionId: string | null,
+  target: "all" | "list" | "detail" | "usage" = "all",
+  revision?: number,
+): void {
+  const state = useAgentSessionStore.getState();
+  if (Number.isSafeInteger(revision) && sessionId) {
+    const key = `${state.projectId}:${sessionId}:${target}`;
+    if ((refreshRevisions.get(key) ?? -1) >= revision!) return;
+    refreshRevisions.set(key, revision!);
+    if (refreshRevisions.size > 64) refreshRevisions.delete(refreshRevisions.keys().next().value!);
+  }
+  if (!pendingRefresh || pendingRefresh.projectId !== state.projectId)
+    pendingRefresh = { projectId: state.projectId, list: false, detail: null, usage: null };
+  if (target === "all" || target === "list") pendingRefresh.list = true;
+  if (sessionId && sessionId === state.selectedSessionId) {
+    if (target === "all" || target === "detail") pendingRefresh.detail = sessionId;
+    if (target === "usage") pendingRefresh.usage = sessionId;
+  } else if (sessionId && target !== "list" && state.sessionDetailCache[sessionId]) {
+    const cached = state.sessionDetailCache[sessionId];
+    useAgentSessionStore.setState({ sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: { ...cached, cachedAt: 0 } } });
+  }
+  if (!liveDetailRefreshTimer)
+    liveDetailRefreshTimer = setTimeout(flushScheduledSessionRefresh, target === "usage" ? 500 : 1200);
+}
 function scheduleLiveRefreshDetail(): void {
-  if (liveDetailRefreshTimer) return;
-  liveDetailRefreshTimer = setTimeout(() => {
-    liveDetailRefreshTimer = null;
-    void useAgentSessionStore.getState().refreshDetail();
-  }, LIVE_REFRESH_DEBOUNCE_MS);
+  scheduleSessionRefresh(useAgentSessionStore.getState().selectedSessionId, "detail");
 }
-
-const INVOCATION_USAGE_REFRESH_DEBOUNCE_MS = 500;
-let invocationUsageRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-
 function scheduleInvocationUsageRefresh(): void {
-  if (invocationUsageRefreshTimer) return;
-  invocationUsageRefreshTimer = setTimeout(() => {
-    invocationUsageRefreshTimer = null;
-    void useAgentSessionStore.getState().fetchSessionInvocationUsage();
-  }, INVOCATION_USAGE_REFRESH_DEBOUNCE_MS);
+  scheduleSessionRefresh(useAgentSessionStore.getState().selectedSessionId, "usage");
+}
+function clearInvocationUsageRefresh(): void {
+  if (pendingRefresh) { pendingRefresh.usage = null; pendingRefresh.detail = null; }
 }
 
-function clearInvocationUsageRefresh(): void {
-  if (invocationUsageRefreshTimer) clearTimeout(invocationUsageRefreshTimer);
-  invocationUsageRefreshTimer = null;
-}
 
 function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   const index = items.findIndex((item) => item.id === next.id);
@@ -759,6 +806,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     setProjectId: (projectId) => {
       if (projectId === get().projectId) return;
+      clearScheduledSessionRefresh();
       activeSessionsRefresh = null;
       activeSessionsPage = null;
       activeDetailRefresh = null;
@@ -1108,17 +1156,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       get().markSessionRead(sessionId);
       const session = get().sessions.find((s) => s.id === sessionId);
       const cached = get().sessionDetailCache[sessionId];
-      const cacheFresh = Boolean(
-        cached &&
-        cached.cachedAt > 0 &&
-        Date.now() - cached.cachedAt < SESSION_DETAIL_CACHE_TTL_MS,
-      );
-
-      set({
+      set((state) => ({
         panelOpen: true,
         detailLoading: !cached?.cachedAt,
         detailError: null,
         selectedSessionId: sessionId,
+        sessionDetailCache: cached
+          ? {
+              ...state.sessionDetailCache,
+              [sessionId]: { ...cached, lastVisitedAt: Date.now() },
+            }
+          : state.sessionDetailCache,
         ...(isSwitch ? { interactionState: null } : {}),
         streamingRetry: null,
         streamingStepId: null,
@@ -1139,13 +1187,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           : isSwitch
             ? emptyDetailPayload()
             : {}),
-      });
+      }));
       if (isSwitch) clearStreamingBuffers();
-      ensureLiveStream(sessionId);
-      void get().loadInputQueue(sessionId);
+      if (isActiveSessionStatus(session?.status)) {
+        ensureLiveStream(sessionId);
+      }
+      if (!cached || isActiveSessionStatus(session?.status)) {
+        void get().loadInputQueue(sessionId);
+      }
 
-      const needsRefresh =
-        !cached || isActiveSessionStatus(session?.status) || !cacheFresh;
+      // Completed/failed/cancelled pages are immutable from the transcript
+      // perspective. Reuse their cached payload until an explicit refresh or
+      // a runtime mutation invalidates it; only active pages keep polling.
+      const needsRefresh = !cached?.cachedAt || isActiveSessionStatus(session?.status);
       if (needsRefresh) void get().refreshDetail();
     },
 
@@ -1222,7 +1276,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             sessionDetailCache: trimSessionDetailCache({
               ...state.sessionDetailCache,
               [sessionId]: entry,
-            }),
+            }, state.selectedSessionId),
           };
         });
       })();
@@ -1431,6 +1485,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     sessionTodos: get().sessionTodos,
                     sessionInvocationUsage: get().sessionInvocationUsage,
                     cachedAt: Date.now(),
+                    lastVisitedAt: Date.now(),
                     historyWindow: "historyWindow" in messagesRes ? messagesRes.historyWindow : undefined,
                   };
 
@@ -1450,7 +1505,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       sessionDetailCache: trimSessionDetailCache({
                         ...s.sessionDetailCache,
                         [targetSessionId]: merged,
-                      }),
+                      }, s.selectedSessionId),
                       ...(preserveLive
                         ? {}
                         : {
@@ -1772,7 +1827,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             }
           }
           if (event.refresh) scheduleLiveRefreshDetail();
-          if (terminal) void get().fetchSessionInvocationUsage();
+          if (terminal) scheduleInvocationUsageRefresh();
           break;
         }
         case "step_started": {

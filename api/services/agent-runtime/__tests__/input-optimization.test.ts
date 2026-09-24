@@ -87,6 +87,36 @@ it("retries a punctuation-only result with a paragraph rewrite correction", asyn
     "one natural, coherent paragraph",
   );
 });
+it("does not add confirmation templates to a short draft", async () => {
+  const draft = "做成可视化动态交互的页面";
+  mocks.generate.mockResolvedValue({
+    text: "请将【待确认：要展示的内容/数据】做成一个可视化、动态、可交互的页面。\n\n需确认：\n- 可视化的具体对象与数据来源",
+    finishReason: "stop",
+  });
+  expect(await optimizeInput({ ...input, text: `  ${draft}  ` })).toEqual({
+    text: draft,
+  });
+});
+it("retries a punctuation-only result with a paragraph rewrite correction", async () => {
+  mocks.generate
+    .mockResolvedValueOnce({ text: "只是改了标点。", finishReason: "stop" })
+    .mockResolvedValueOnce({
+      text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+      finishReason: "stop",
+    });
+  expect(
+    await optimizeInput({
+      ...input,
+      text: "我想把项目需求整理清楚，重点说明目标和约束。",
+    }),
+  ).toEqual({
+    text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+  expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
+    "one natural, coherent paragraph",
+  );
+});
 it("uses the saved override even for an external backend", async () => {
   mocks.config.mockReturnValue({
     inputOptimizationModel: "custom/fixed",

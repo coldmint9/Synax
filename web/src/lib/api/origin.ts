@@ -67,7 +67,7 @@ export async function apiFetch(
   } catch (error) {
     // Closing or replacing an observation stream is not a network outage.
     if (!init?.signal?.aborted)
-      useApiConnectivityStore.getState().markFailure();
+      useApiConnectivityStore.getState().markFailure(true);
     throw error;
   }
 }

@@ -29,6 +29,7 @@ vi.mock("../../../../../lib/api/agentRuntime", () => ({
 }));
 vi.mock("../../state/agentSessionStore", () => ({
   useAgentSessionStore: { getState: () => ({ selectedSessionId: null }) },
+  scheduleSessionRefresh: vi.fn(),
 }));
 vi.mock("../../state/agentDockStore", async () => {
   const { create } = await import("zustand");

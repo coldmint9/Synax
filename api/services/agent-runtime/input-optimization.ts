@@ -122,8 +122,7 @@ export async function optimizeInput(
       "INPUT_OPTIMIZATION_INCOMPLETE",
       422,
     );
-  // A prompt should prevent this, but keep the editor from turning a short
-  // request into a confirmation template if a provider ignores the contract.
+  // Keep the editor from introducing a confirmation questionnaire if a provider ignores the contract.
   if (addsUnrequestedConfirmationContent(input.text, text))
     return { text: input.text.trim() };
   return { text };

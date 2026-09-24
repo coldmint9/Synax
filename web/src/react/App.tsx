@@ -1,13 +1,14 @@
+import { PageLoading } from "./layouts/CachedWorkbenchPage";
 import { GlobalSessionSearch } from "./features/agent-workspace/GlobalSessionSearch";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
 import { WelcomeView } from "./layouts/WelcomeView";
-import AgentLoopTestPage from "./pages/AgentLoopTestPage";
-import GitWorkbenchPage from "./features/git/GitWorkbenchPage";
-import AboutPage from "./pages/AboutPage";
-import GlobalSettingsPage from "./features/settings/GlobalSettingsPage";
-import ProjectSettingsPage from "./features/settings/ProjectSettingsPage";
+const AgentLoopTestPage = lazy(() => import("./pages/AgentLoopTestPage"));
+const GitWorkbenchPage = lazy(() => import("./features/git/GitWorkbenchPage"));
+const AboutPage = lazy(() => import("./pages/AboutPage"));
+const GlobalSettingsPage = lazy(() => import("./features/settings/GlobalSettingsPage"));
+const ProjectSettingsPage = lazy(() => import("./features/settings/ProjectSettingsPage"));
 import { useElectronMenu } from "../lib/electron-menu";
 import { useWikiStore } from "./state/wikiStore";
 import { useTabKeyBehavior } from "../hooks/useTabKeyBehavior";
@@ -46,19 +47,19 @@ export default function App() {
           <Routes>
             <Route element={<WorkbenchLayout />}>
               <Route path="/" element={<WelcomeView />} />
-              <Route path="/settings" element={<GlobalSettingsPage />} />
-              <Route path="/about" element={<AboutPage />} />
+              <Route path="/settings" element={<Suspense fallback={<PageLoading />}><GlobalSettingsPage /></Suspense>} />
+              <Route path="/about" element={<Suspense fallback={<PageLoading />}><AboutPage /></Suspense>} />
               <Route
                 path="/projects/:projectId"
                 element={<Navigate to="sessions" replace />}
               />
               <Route
                 path="/projects/:projectId/git"
-                element={<GitWorkbenchPage />}
+                element={<Suspense fallback={<PageLoading />}><GitWorkbenchPage /></Suspense>}
               />
               <Route
                 path="/projects/:projectId/git/mr/:mrId"
-                element={<GitWorkbenchPage />}
+                element={<Suspense fallback={<PageLoading />}><GitWorkbenchPage /></Suspense>}
               />
               {/* wiki/sessions 由 WorkbenchLayout keep-alive 块渲染，路由仅用于 URL 匹配 */}
               <Route path="/projects/:projectId/wiki" element={null} />
@@ -78,10 +79,10 @@ export default function App() {
               />
               <Route
                 path="/projects/:projectId/settings"
-                element={<ProjectSettingsPage />}
+                element={<Suspense fallback={<PageLoading />}><ProjectSettingsPage /></Suspense>}
               />
             </Route>
-            <Route path="/agent-loop-test" element={<AgentLoopTestPage />} />
+            <Route path="/agent-loop-test" element={<Suspense fallback={<PageLoading />}><AgentLoopTestPage /></Suspense>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

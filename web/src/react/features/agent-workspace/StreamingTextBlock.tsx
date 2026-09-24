@@ -1,27 +1,35 @@
 import { hideVisualizationSource } from "./visualizationTranscript";
 import { memo } from "react";
-import { SessionMarkdown } from "./SessionMarkdown";
+import { BufferedMarkdown } from "./BufferedMarkdown";
 
 interface Props {
   text: string;
   isStreaming: boolean;
   markdown?: boolean;
+  startDelayMs?: number;
 }
 
 export const StreamingTextBlock = memo(function StreamingTextBlock({
   text,
   isStreaming,
   markdown = false,
+  startDelayMs = 0,
 }: Props) {
   text = hideVisualizationSource(text, isStreaming);
   if (!text && !isStreaming) return null;
 
-  return markdown && !isStreaming ? (
-    <SessionMarkdown
-      content={text}
-      className="agent-conversation-copy feed-prose"
-    />
-  ) : (
+  if (markdown) {
+    return (
+      <BufferedMarkdown
+        content={text}
+        isStreaming={isStreaming}
+        startDelayMs={startDelayMs}
+        className="feed-prose"
+      />
+    );
+  }
+
+  return (
     <div className="agent-conversation-copy leading-[1.75] text-foreground whitespace-pre-wrap">
       {text}
       {isStreaming && (

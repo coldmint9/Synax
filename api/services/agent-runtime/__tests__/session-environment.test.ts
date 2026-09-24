@@ -1,3 +1,4 @@
+import * as commands from "../tools/exec-async.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,6 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   invalidateSessionEnvironment(sessionId);
   fs.rmSync(workspace, { recursive: true, force: true });
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -472,4 +474,18 @@ it("attributes Codex and Claude file outputs from successful structured tool rec
   ]);
   const environment = await getSessionEnvironment(sessionId);
   expect(environment.outputFiles).toEqual(["docs/codex.md", "docs/claude.md"]);
+});
+
+it("shares Git probes across sessions in one worktree, and invalidates both after a write", async () => {
+  const run = vi.spyOn(commands, "runCommand");
+  mocks.getSession.mockImplementation((id: string) => ({ id, projectId: "project", childSessionIds: [] }));
+  await Promise.all([getSessionEnvironment(sessionId), getSessionEnvironment("same-worktree-other-session")]);
+  const statusCalls = () => run.mock.calls.filter(([command, args]) => command === "git" && args[0] === "status").length;
+  expect(statusCalls()).toBe(1);
+  write("new.txt", "new contents");
+  invalidateSessionEnvironment(sessionId);
+  const next = await getSessionEnvironment("same-worktree-other-session");
+  expect(next.changedFiles.some(file => file.path === "new.txt")).toBe(true);
+  expect(statusCalls()).toBe(2);
+  invalidateSessionEnvironment("same-worktree-other-session");
 });

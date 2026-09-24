@@ -32,7 +32,6 @@ export function sessionLiveStream(
     catch (error) { console.error('Invalid runtime stream record', error) }
   })
   es.onerror = (event) => {
-    useApiConnectivityStore.getState().markFailure()
     // CONNECTING is a recoverable observation failure; AuthenticatedEventSource reconnects and receives a fresh snapshot.
     if (es.readyState === AuthenticatedEventSource.CLOSED) { es.close(); onError?.(event) }
   }

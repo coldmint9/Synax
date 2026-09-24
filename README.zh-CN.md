@@ -48,6 +48,41 @@ npm run dev:all
 
 `npm run dev` 是同一脚本的别名。API 监听 `3210` 端口，Web 开发服务监听 `5173` 端口，然后打开 [localhost:5173](http://localhost:5173) 即可使用。
 
+#### 日常使用的 Web 生产模式（推荐）
+
+```bash
+npm run build
+npm run web:build
+npm run start:web
+```
+
+生产模式使用构建后的前端，等待本地运行服务 ready 后再监听 `5173`，实时订阅通过共享 WebSocket 传输。`dev:all` 仍用于开发。不要同时启动两个使用相同 `DATA_ROOT` 的运行服务；若已有兼容的运行服务，可通过 `SYNAX_API_ORIGIN=http://127.0.0.1:<端口>` 显式连接。
+
+如需 HTTP/2，为 `localhost` 配置浏览器信任的 TLS 证书，然后启动：
+
+```bash
+WEB_TLS_CERT=/绝对路径/localhost-cert.pem WEB_TLS_KEY=/绝对路径/localhost-key.pem npm run start:web
+```
+
+TLS 入口让普通请求和静态资源使用 HTTP/2，WebSocket 使用兼容的 HTTP/1.1 upgrade；无证书时仍支持 HTTP/1.1 + 共享 WebSocket。程序不会安装根证书、绕过证书验证或降低鉴权要求。更换 `WEB_PORT` 时，自行连接的后端也必须配置相同的允许来源端口。
+
+#### 本地存储维护（默认只读）
+
+查看数据库占用、freelist、WAL、FTS、缓存、回放和进程台账分类：
+
+```bash
+npm run storage:report
+```
+
+维护命令默认不会执行。使用 `SYNAX_DB_PATH` 指定副本并在运行服务完全停止后执行：
+
+```bash
+SYNAX_DB_PATH=/绝对路径/context.db npm run storage:maintain
+SYNAX_DB_PATH=/绝对路径/context.db npm run storage:compact
+```
+
+命令会先通过 `VACUUM INTO` 创建一致性备份，拒绝覆盖已有备份；不会清理权威消息、事件、计费、检查点、分叉、撤销或资源引用。不要对正在运行的 `~/.synax/context.db` 执行变更命令。
+
 #### 桌面端（Electron）
 
 ```bash

@@ -1,3 +1,4 @@
+import { observationLifetime } from "../lib/observation-lifetime.js";
 import { getRawSqlite } from "../db/index.js";
 import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-runtime/migrate.js";
 import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
@@ -782,7 +783,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", (c) => {
       .number()
       .int()
       .min(0)
-      .safeParse(c.req.query("after") ?? "0");
+      .safeParse(c.req.header("Last-Event-ID") ?? c.req.query("after") ?? "0");
     if (!after.success) return validationError(c, after.error);
     return observeRunResponse(c, sessionId, runId, after.data);
   } catch (error) {
@@ -1560,14 +1561,14 @@ agentRuntimeRoutes.post(
 // ============================== SSE 事件流 =======================
 agentRuntimeRoutes.get("/events/stream", (c) => {
   return streamSSE(c, async (stream) => {
-    let closed = false;
+    const lifetime = observationLifetime(c.req.raw.signal, stream);
 
     const onEvent = (event: {
       type: string;
       sessionId: string;
       patch?: Record<string, unknown>;
     }) => {
-      if (closed) return;
+      if (lifetime.signal.aborted) return;
       const current =
         event.patch &&
         ("status" in event.patch ||
@@ -1588,38 +1589,20 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
         : event;
       stream
         .writeSSE({ event: event.type, data: JSON.stringify(wire) })
-        .catch(() => {
-          closed = true;
-        });
+        .catch(lifetime.stop);
     };
 
     const unsubscribe = runtimeBus.subscribe(onEvent);
 
-    await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
-
     const heartbeat = setInterval(() => {
-      if (closed) return;
-      stream
-        .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
-        .catch(() => {
-          closed = true;
-        });
+      if (!lifetime.signal.aborted)
+        void stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(lifetime.stop);
     }, 25_000);
-
-    c.req.raw.signal.addEventListener("abort", () => {
-      closed = true;
-      clearInterval(heartbeat);
-      unsubscribe();
-    });
-
-    await new Promise<void>((resolve) => {
-      c.req.raw.signal.addEventListener("abort", () => resolve(), {
-        once: true,
-      });
-    });
-
-    clearInterval(heartbeat);
-    unsubscribe();
+    try {
+      if (lifetime.signal.aborted) return;
+      await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
+      await lifetime.ended;
+    } finally { clearInterval(heartbeat); unsubscribe(); lifetime.dispose(); }
   });
 });
 

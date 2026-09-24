@@ -1,3 +1,4 @@
+import { useWorkbenchPageActive } from "../../layouts/CachedWorkbenchPage";
 import { DialogOverlay } from "../../components/DialogOverlay";
 import {
   AlertCircle,
@@ -198,6 +199,7 @@ function FailedState({
 }
 
 export default function WikiWorkspace({ projectId }: { projectId: string }) {
+  const active = useWorkbenchPageActive();
   const { t, locale } = useLocale();
   const snapshot = useWikiStore((s) => s.snapshot);
   const selectedDocumentId = useWikiStore((s) => s.selectedDocumentId);
@@ -218,10 +220,10 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
   const loadProjectSnapshot = useWikiStore((s) => s.loadProjectSnapshot);
   const patchSnapshotStatus = useWikiStore((s) => s.patchSnapshotStatus);
 
-  useWikiRefreshListener(projectId);
+  useWikiRefreshListener(active ? projectId : null);
 
   const gen = useWikiGenerationEvents({
-    projectId,
+    projectId: active ? projectId : null,
     onReconnect: () => {
       void loadProjectSnapshot(projectId);
     },
@@ -335,13 +337,13 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
   // Load goals when projectId changes
   useEffect(() => {
-    if (projectId) void loadGoals(projectId);
-  }, [projectId, loadGoals]);
+    if (projectId && active) void loadGoals(projectId);
+  }, [projectId, loadGoals, active]);
 
   // Load drafts when panel opens
   useEffect(() => {
-    if (draftPanelOpen && projectId) void loadDrafts(projectId);
-  }, [draftPanelOpen, projectId, loadDrafts]);
+    if (draftPanelOpen && projectId && active) void loadDrafts(projectId);
+  }, [draftPanelOpen, projectId, loadDrafts, active]);
 
   // React to refresh task completion via SSE
   useEffect(() => {

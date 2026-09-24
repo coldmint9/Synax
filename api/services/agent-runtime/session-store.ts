@@ -1607,6 +1607,25 @@ export class AgentRuntimeStore {
       : mapToolCall(row);
   }
 
+  /** A usage badge does not need tool input/output evidence. Keep versioned
+   * visibility authoritative; legacy SQL can project only the aggregate fields. */
+  listToolInvocationRows(sessionId: string): Array<Pick<ToolCallRecord, "toolId" | "category" | "startedAt" | "inputRef">> {
+    if (versionedSession(sessionId)) {
+      return listVersionEntities<ToolCallRecord>(sessionId, "tools").map(call => ({
+        toolId: call.toolId, category: call.category, startedAt: call.startedAt,
+        inputRef: call.toolId === "skill.load" ? call.inputRef : null,
+      }));
+    }
+    const rows = getRawSqlite().prepare(`SELECT tool_id AS toolId, category, started_at AS startedAt,
+      CASE WHEN tool_id='skill.load' AND json_valid(input_ref_json)
+        THEN json_extract(input_ref_json,'$.skillId') ELSE NULL END AS skillId
+      FROM agent_runtime_tool_calls WHERE session_id=?`).all(sessionId) as Array<{
+        toolId: string; category: ToolCallRecord["category"]; startedAt: string; skillId: unknown;
+      }>;
+    return rows.map(row => ({ toolId: row.toolId, category: row.category, startedAt: row.startedAt,
+      inputRef: typeof row.skillId === "string" ? { skillId: row.skillId } : null }));
+  }
+
   listToolCalls(sessionId: string): ToolCallRecord[] {
     if (versionedSession(sessionId))
       return listVersionEntities<ToolCallRecord>(sessionId, "tools");

@@ -58,4 +58,17 @@ describe('runtime access boundary', () => {
     } })).status).toBe(403);
     expect(fs.statSync(path.join(root, 'runtime-access-token')).mode & 0o777).toBe(0o600);
   });
+  it('keeps cookies Secure for the explicitly trusted TLS gateway origin', async () => {
+    const secure = new Hono();
+    installRuntimeAccess(secure, { dataRoot: root, webOrigins: ['https://localhost:5173'] });
+    const response = await secure.request(`${url}/api/auth/session`, { method: 'POST', headers: {
+      Origin: 'https://localhost:5173', 'Sec-Fetch-Site': 'same-origin',
+    } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('set-cookie')).toContain('Secure');
+    expect((await secure.request(`${url}/api/auth/session`, { method: 'POST', headers: {
+      Origin: 'https://untrusted.invalid', 'Sec-Fetch-Site': 'same-origin',
+    } })).status).toBe(403);
+  });
+
 });
