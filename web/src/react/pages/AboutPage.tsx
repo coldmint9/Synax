@@ -8,7 +8,7 @@ import {
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../components/IconSurface";
 
-const VERSION = "1.0.1";
+const VERSION = "1.1.0";
 const REPO_URL = "https://github.com/coldmint9/Synax";
 const AUTHOR_URL = "https://github.com/coldmint9";
 

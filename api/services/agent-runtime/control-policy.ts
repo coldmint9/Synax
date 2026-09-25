@@ -15,6 +15,7 @@ export const CONTROL_TOOLS = new Set([
   "mode.switch",
   "goal.finish",
   "work.checkpoint",
+  "design.implement",
 ]);
 export function controlToolError(
   session: AgentSession,
@@ -78,6 +79,6 @@ export function validateControlBatch(
   calls: ReadonlyArray<{ toolId: string }>,
 ): string | null {
   return calls.length > 1 && calls.some((c) => CONTROL_TOOLS.has(c.toolId))
-    ? "Control tools (human.ask, plan.propose, plan.execute, mode.switch, goal.finish, work.checkpoint) must be the only call in a step. No tools in this batch were executed."
+    ? "Control tools (human.ask, plan.propose, plan.execute, mode.switch, goal.finish, work.checkpoint, design.implement) must be the only call in a step. No tools in this batch were executed."
     : null;
 }

@@ -1,6 +1,7 @@
 import { WebSearchResults, webSearchQuery } from "./WebSearchResults";
 import { MediaParts } from "../media/MediaParts";
 import { useState } from "react";
+import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
 import { Card, Chip } from "@heroui/react";
 import {
   Terminal,
@@ -58,6 +59,14 @@ export function EnhancedToolCallCard({ call }: Props) {
   const outputText = call.outputSummary ?? "";
   const isLong = outputText.length > 800;
   const chipColor = STATUS_COLOR[call.status] ?? "default";
+  const designPreviewContent =
+    call.toolId === "design.preview" &&
+    call.outputRef &&
+    typeof call.outputRef === "object" &&
+    "content" in call.outputRef &&
+    typeof call.outputRef.content === "string"
+      ? call.outputRef.content
+      : null;
 
   return (
     <Card
@@ -108,11 +117,18 @@ export function EnhancedToolCallCard({ call }: Props) {
       <MediaParts parts={call.contentParts} />
       {expanded && call.outputSummary && (
         <div className="bui-tool-card-output border-t border-border/40 px-3 pb-2.5 pt-2">
-          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {showFull || !isLong
-              ? outputText
-              : outputText.slice(0, 800) + "\n..."}
-          </pre>
+          {designPreviewContent ? (
+            <MarkdownRenderer
+              content={designPreviewContent}
+              className="feed-prose text-sm"
+            />
+          ) : (
+            <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+              {showFull || !isLong
+                ? outputText
+                : outputText.slice(0, 800) + "\n..."}
+            </pre>
+          )}
           {call.toolId === "webSearch" && (
             <WebSearchResults output={call.outputRef} />
           )}

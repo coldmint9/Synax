@@ -45,6 +45,7 @@ const PLAN_TOOLS = new Set([
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
+  'design.read', 'design.write', 'design.preview', 'design.transition', 'design.implement',
 ]);
 export function isPlanningReadTool(toolId: string): boolean {
   return PLAN_TOOLS.has(toolId);

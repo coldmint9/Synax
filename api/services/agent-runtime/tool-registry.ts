@@ -88,6 +88,7 @@ import {
   taskListTool,
 } from "./tools/task-tools.js";
 import { browserTools } from "./tools/browser/browser-tools.js";
+import { designTools } from "./design-tools.js";
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -129,6 +130,7 @@ export class ToolRegistry {
   ) {
     [
       ...controlTools,
+      ...designTools,
       ...workTools,
       verificationTool,
       bashTool,
