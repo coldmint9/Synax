@@ -65,7 +65,7 @@ venv/
 # Test
 coverage/
 tmp/
-
+.tmp/
 # Misc
 .qoder
 graphify-out/
@@ -121,3 +121,7 @@ reviews/
 # OS metadata remains ignored inside allowed CI directories.
 .DS_Store
 Thumbs.db
+.synax
+.codex
+/api/.data/
+.workbuddy
