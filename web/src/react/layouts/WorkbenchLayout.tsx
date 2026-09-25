@@ -44,6 +44,7 @@ function WorkbenchLayoutContent() {
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const currentProjectId = useShellStore((s) => s.currentProjectId);
   const setCurrentProjectId = useShellStore((s) => s.setCurrentProjectId);
+  const removingProjectIdRef = useRef<string | null>(null);
 
   const effectiveProjectId = routeProjectId || currentProjectId || "";
   const dockProjectRef = useRef(effectiveProjectId);
@@ -55,6 +56,13 @@ function WorkbenchLayoutContent() {
   }, [effectiveProjectId]);
 
   useEffect(() => {
+    if (
+      removingProjectIdRef.current &&
+      routeProjectId !== removingProjectIdRef.current
+    ) {
+      removingProjectIdRef.current = null;
+    }
+    if (removingProjectIdRef.current === routeProjectId) return;
     if (routeProjectId && routeProjectId !== currentProjectId) {
       setCurrentProjectId(routeProjectId);
     }
@@ -232,20 +240,29 @@ function WorkbenchLayoutContent() {
     async (projectId: string) => {
       const isCurrentProject = projectId === effectiveProjectId;
       if (isCurrentProject) {
+        removingProjectIdRef.current = projectId;
         unbindContext();
         setCurrentProjectId(null);
       }
-      await projectApi.deleteProject(projectId);
-      removeFromStore(projectId);
-      if (isCurrentProject) {
-        const remaining = useShellStore.getState().projects;
-        if (remaining.length > 0) {
-          navigate(resolveSessionsEntryPath(remaining[0].id), {
-            replace: true,
-          });
-        } else {
-          navigate("/", { replace: true });
+      try {
+        await projectApi.deleteProject(projectId);
+        removeFromStore(projectId);
+        if (isCurrentProject) {
+          const remaining = useShellStore.getState().projects;
+          if (remaining.length > 0) {
+            navigate(resolveSessionsEntryPath(remaining[0].id), {
+              replace: true,
+            });
+          } else {
+            navigate("/", { replace: true });
+          }
         }
+      } catch (error) {
+        if (isCurrentProject) {
+          removingProjectIdRef.current = null;
+          setCurrentProjectId(projectId);
+        }
+        throw error;
       }
     },
     [
