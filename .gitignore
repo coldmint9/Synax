@@ -92,7 +92,8 @@ dist-app/
 .superpowers/
 
 # Local tool state and hidden directories (CI configuration is part of the product).
-.*/
+ .*/
+/.worktrees/
 !/.github/
 !/.github/**
 
