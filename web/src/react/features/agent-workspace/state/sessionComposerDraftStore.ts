@@ -1,5 +1,6 @@
-import type { TurnReference } from "../../../../lib/api/agentRuntime";
+import type { AgentSessionMode, TurnReference } from "../../../../lib/api/agentRuntime";
 import { createScopedDraftState } from "../../media/scopedDraftState";
+import type { SynaxPermissionTier, SynaxWikiAttachMode } from "../synaxSessionTypes";
 
 export const sessionComposerText = createScopedDraftState<string>();
 export const sessionComposerReferences =
@@ -9,6 +10,12 @@ export const sessionComposerSubmitting = createScopedDraftState<boolean>();
 export const sessionComposerEditing = createScopedDraftState<boolean>();
 export const sessionComposerChangingMode = createScopedDraftState<boolean>();
 export const sessionComposerError = createScopedDraftState<string | null>();
+export const sessionComposerMode = createScopedDraftState<AgentSessionMode>();
+export const sessionComposerPermissionTier =
+  createScopedDraftState<SynaxPermissionTier>();
+export const sessionComposerWikiAttachMode =
+  createScopedDraftState<SynaxWikiAttachMode>();
+export const sessionComposerDocumentId = createScopedDraftState<string | null>();
 
 export function composerDraftScope(projectId: string, sessionId: string) {
   return JSON.stringify([projectId, sessionId]);
@@ -23,6 +30,10 @@ export function resetSessionComposerDrafts() {
     sessionComposerEditing,
     sessionComposerChangingMode,
     sessionComposerError,
+    sessionComposerMode,
+    sessionComposerPermissionTier,
+    sessionComposerWikiAttachMode,
+    sessionComposerDocumentId,
   ])
     state.reset();
 }

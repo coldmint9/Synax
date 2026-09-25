@@ -406,9 +406,9 @@ export function AgentComposer({
           value={permissionTier}
           onChange={onPermissionTierChange}
         />
+        {modeControl}
       </div>
       <div className="agent-dock-composer-settings contents">
-        {modeControl}
         {modelControl ?? (
           <ComposerModelPicker
             backendId={backendId}
@@ -547,6 +547,7 @@ export function AgentComposer({
             value={permissionTier}
             onChange={onPermissionTierChange}
           />
+          {modeControl}
           <textarea
             ref={textareaRef}
             value={content}
@@ -584,7 +585,6 @@ export function AgentComposer({
             rows={1}
             className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] font-semibold leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
           />
-          {modeControl}
           {modelControl ?? (
             <ComposerModelPicker
               backendId={backendId}

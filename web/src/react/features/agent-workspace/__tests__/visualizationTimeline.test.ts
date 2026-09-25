@@ -180,3 +180,27 @@ it("projects a real visualize file reference in place without showing its contro
     hideVisualizationSource("```text\n" + reference + "\n```", true),
   ).toContain(reference);
 });
+
+it("renders multiple persisted visualizations from a goal final summary", () => {
+  const marker = "[交互预览]";
+  const content = `目标已完成\n\n${marker}\n\n${marker}`;
+  const firstStart = content.indexOf(marker);
+  const secondStart = content.indexOf(marker, firstStart + marker.length);
+  const parts = visualizationReplyParts({
+    ...message,
+    content,
+    metadata: {
+      purpose: "work_result",
+      visualizations: [
+        { id: "final-1", html: "<button>One</button>", start: firstStart, end: firstStart + marker.length },
+        { id: "final-2", html: "<button>Two</button>", start: secondStart, end: secondStart + marker.length },
+      ],
+    },
+  });
+  expect(parts.filter((part) => part.type === "visualization")).toHaveLength(2);
+  expect(parts.map((part) => part.type)).toEqual([
+    "text",
+    "visualization",
+    "visualization",
+  ]);
+});

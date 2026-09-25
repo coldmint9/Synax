@@ -38,6 +38,33 @@ export function visualizationReplyParts(
     content.trim() ? [{ type: "text", content, messageId: message.id }] : [];
   if (message.role !== "assistant") return text(message.content);
   const fallback = () => text(hideVisualizationSource(message.content));
+  if (message.metadata.purpose === "work_result" &&
+      Array.isArray(message.metadata.visualizations) &&
+      !message.metadata.partial) {
+    const result: ReplyPart[] = [];
+    let cursor = 0;
+    for (const value of message.metadata.visualizations) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return fallback();
+      const item = value as Record<string, unknown>;
+      if (typeof item.id !== "string" || !item.id ||
+          (typeof item.html !== "string" && typeof item.error !== "string") ||
+          (typeof item.html === "string" && !item.html.trim()) ||
+          new TextEncoder().encode(item.html).length > 1_000_000 ||
+          !Number.isInteger(item.start) || !Number.isInteger(item.end)) return fallback();
+      const start = item.start as number, end = item.end as number;
+      if (start < cursor || end <= start || end > message.content.length ||
+          message.content.slice(start, end) !== "[交互预览]") return fallback();
+      result.push(...text(hideVisualizationSource(message.content.slice(cursor, start))));
+      result.push({ type: "visualization", messageId: message.id, reference: {
+        id: item.id,
+        html: item.html,
+        ...(typeof item.title === "string" ? { title: item.title.slice(0, 250) } : {}),
+        ...(item.mode === "wide" ? { mode: "wide" as const } : {}),
+      } });
+      cursor = end;
+    }
+    return [...result, ...text(hideVisualizationSource(message.content.slice(cursor)))];
+  }
   if (
     message.metadata.partial ||
     message.metadata.source !== "inline_visualization"
