@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComposerContextPicker } from "../ComposerContextPicker";
 import { agentRuntimeApi } from "../../../../lib/api/agentRuntime";
+import { useAgentSessionStore } from "../state/agentSessionStore";
 
 const props = {
   projectId: "p",
@@ -13,7 +14,10 @@ const props = {
   disabled: false,
   onOpen: vi.fn(),
 };
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  useAgentSessionStore.setState({ contextCompactionNotice: null });
+});
 async function open() {
   await userEvent.click(screen.getByRole("button", { name: "添加上下文" }));
   return screen.getByRole("button", { name: /强制压缩上下文/ });
@@ -32,6 +36,9 @@ describe("context menu manual compaction", () => {
       screen.getByRole("button", { name: /正在压缩上下文/ }),
     ).toBeDisabled();
     expect(compact).toHaveBeenCalledExactlyOnceWith("s");
+    expect(useAgentSessionStore.getState().contextCompactionNotice).toEqual({
+      status: "running",
+    });
     await act(async () => finish({ accepted: true, status: "compacting" }));
     expect(screen.getByRole("status")).toHaveTextContent("上下文压缩已开始");
     expect(props.onChange).not.toHaveBeenCalled();

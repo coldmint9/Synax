@@ -2343,6 +2343,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               messageCount: event.messageCount,
             },
           });
+          void get().fetchSessionStats();
           scheduleLiveRefreshDetail();
           break;
         case "context_compaction_failed":
