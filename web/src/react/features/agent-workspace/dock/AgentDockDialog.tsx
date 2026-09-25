@@ -43,7 +43,7 @@ export function AgentDockDialog({
   const runningIndex = isRunning && recent.length > 0 ? recent.length - 1 : -1;
 
   return (
-    <div className="agent-dock-dialog relative w-full rounded-2xl border border-white/55 bg-white/48 p-3.5 pb-3 shadow-lg backdrop-blur-xl dark:border-border/50 dark:bg-card/90">
+    <div className="agent-dock-dialog relative w-full rounded-2xl border border-border bg-overlay p-3.5 pb-3 shadow-overlay">
       {onOpenSession && (
         <button
           type="button"

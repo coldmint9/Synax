@@ -859,34 +859,6 @@
       linear-gradient(90deg, hsl(var(--border-hsl) / 0.45) 1px, transparent 1px);
   }
 
-  .liquid-glass {
-    background: hsl(var(--card) / 0.55);
-    -webkit-backdrop-filter: blur(18px) saturate(1.35);
-    backdrop-filter: blur(18px) saturate(1.35);
-    box-shadow:
-      0 8px 32px hsl(0 0% 0% / 0.12),
-      inset 0 1px 0 hsl(0 0% 100% / 0.22);
-  }
-
-  .toolbar-shell {
-    position: relative;
-  }
-
-  .toolbar-shell::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background:
-      radial-gradient(
-        120% 80% at 50% -20%,
-        hsl(0 0% 100% / 0.2),
-        transparent 60%
-      ),
-      linear-gradient(140deg, hsl(0 0% 100% / 0.08), transparent 55%);
-  }
-
   .workbench-shell {
     --workbench-island-top: 8px;
     display: flex;
@@ -942,19 +914,10 @@
     padding: 10px 0;
     gap: 4px;
     flex-shrink: 0;
-    background: hsl(var(--card) / 0.88);
-    -webkit-backdrop-filter: blur(16px) saturate(1.4);
-    backdrop-filter: blur(16px) saturate(1.4);
+    background: var(--surface);
     border: 1px solid hsl(var(--border-hsl) / 0.6);
     border-radius: 999px;
-    box-shadow:
-      0 2px 12px hsl(0 0% 0% / 0.08),
-      0 4px 24px hsl(0 0% 0% / 0.06);
-  }
-  .dark .activity-bar {
-    box-shadow:
-      0 2px 12px hsl(0 0% 0% / 0.28),
-      0 4px 24px hsl(0 0% 0% / 0.2);
+    box-shadow: var(--surface-shadow);
   }
 
   .ab-item {
@@ -1550,21 +1513,10 @@
   .wiki-panel {
     margin: 10px 0 10px 10px;
     border-radius: 14px;
-    border: 1px solid hsl(var(--border-hsl) / 0.55);
+    border: 1px solid var(--border);
     overflow: hidden;
-    background: hsl(var(--card) / 0.6);
-    -webkit-backdrop-filter: blur(12px) saturate(1.2);
-    backdrop-filter: blur(12px) saturate(1.2);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.18) inset,
-      0 4px 16px hsl(var(--wiki-shadow) / 0.06);
-  }
-  .dark .wiki-panel {
-    background: hsl(var(--card) / 0.5);
-    border-color: hsl(var(--border-hsl) / 0.45);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.04) inset,
-      0 4px 16px hsl(0 0% 0% / 0.2);
+    background: var(--surface);
+    box-shadow: var(--surface-shadow);
   }
 
   .wiki-panel-header {
@@ -1656,116 +1608,31 @@
     width: 320px;
     max-height: 400px;
     border-radius: 16px;
-    background: hsl(var(--card) / 0.82);
-    -webkit-backdrop-filter: blur(20px) saturate(1.5);
-    backdrop-filter: blur(20px) saturate(1.5);
-    border: 1px solid hsl(var(--border-hsl) / 0.3);
-    box-shadow:
-      0 8px 32px hsl(0 0% 0% / 0.15),
-      inset 0 1px 0 hsl(0 0% 100% / 0.1);
+    background: var(--overlay);
+    border: 1px solid var(--border);
+    box-shadow: var(--overlay-shadow);
     animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     z-index: 50;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
-  .dark .wiki-issue-popover {
-    background: hsl(var(--card) / 0.75);
-    box-shadow:
-      0 8px 32px hsl(0 0% 0% / 0.4),
-      inset 0 1px 0 hsl(0 0% 100% / 0.06);
-  }
-
-  .dark .liquid-glass {
-    background: hsl(var(--card) / 0.45);
-    box-shadow:
-      0 8px 32px hsl(0 0% 0% / 0.35),
-      inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
 
   .wiki-page-bg {
     background:
-      radial-gradient(
-        circle at top left,
-        hsl(var(--wiki-warm) / 0.55),
-        transparent 34%
-      ),
-      radial-gradient(
-        circle at top right,
-        hsl(var(--wiki-accent) / 0.52),
-        transparent 28%
-      ),
-      linear-gradient(
-        180deg,
-        hsl(var(--wiki-surface)) 0%,
-        var(--background) 45%,
-        var(--background) 100%
-      );
-  }
-  .dark .wiki-page-bg {
-    background:
-      radial-gradient(
-        circle at top left,
-        hsl(var(--wiki-warm) / 0.34),
-        transparent 34%
-      ),
-      radial-gradient(
-        circle at top right,
-        hsl(var(--wiki-accent) / 0.42),
-        transparent 28%
-      ),
-      linear-gradient(
-        180deg,
-        hsl(var(--wiki-surface)) 0%,
-        var(--background) 42%,
-        var(--background) 100%
-      );
+      var(--background);
   }
 
   .wiki-workbench-card {
-    border: 1px solid hsl(var(--border-hsl) / 0.72);
-    background: linear-gradient(
-      180deg,
-      hsl(var(--wiki-panel) / 0.94) 0%,
-      hsl(var(--card) / 0.86) 100%
-    );
-    box-shadow:
-      0 18px 42px hsl(var(--wiki-shadow) / 0.08),
-      0 1px 0 hsl(0 0% 100% / 0.22) inset;
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
-  }
-  .dark .wiki-workbench-card {
-    background: linear-gradient(
-      180deg,
-      hsl(var(--wiki-panel) / 0.96) 0%,
-      hsl(var(--card) / 0.88) 100%
-    );
-    box-shadow:
-      0 20px 48px hsl(0 0% 0% / 0.28),
-      0 1px 0 hsl(0 0% 100% / 0.04) inset;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--surface-shadow);
   }
 
   .wiki-reading-surface {
-    border: 1px solid hsl(var(--border-hsl) / 0.72);
-    background: linear-gradient(
-      180deg,
-      hsl(var(--wiki-panel) / 0.98) 0%,
-      hsl(var(--background-hsl) / 0.96) 100%
-    );
-    box-shadow:
-      0 24px 60px hsl(var(--wiki-shadow) / 0.08),
-      0 1px 0 hsl(0 0% 100% / 0.22) inset;
-  }
-  .dark .wiki-reading-surface {
-    background: linear-gradient(
-      180deg,
-      hsl(var(--wiki-panel) / 0.98) 0%,
-      hsl(var(--background-hsl) / 0.94) 100%
-    );
-    box-shadow:
-      0 24px 60px hsl(0 0% 0% / 0.34),
-      0 1px 0 hsl(0 0% 100% / 0.04) inset;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--surface-shadow);
   }
 
   .wiki-reading-copy {
@@ -2006,19 +1873,11 @@
     border-left: 2px solid hsl(var(--primary) / 0.6);
     color: var(--foreground);
     font-weight: 500;
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.7) inset,
-      0 3px 12px hsl(var(--wiki-shadow) / 0.08),
-      0 1px 3px hsl(var(--primary) / 0.06);
-    transform: translateY(-0.5px);
+    box-shadow: var(--surface-shadow);
   }
   .dark .list-row--active {
     background: hsl(var(--wiki-panel) / 0.72);
     border-left: 2px solid hsl(var(--primary) / 0.5);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.06) inset,
-      0 3px 12px hsl(0 0% 0% / 0.24),
-      0 1px 3px hsl(var(--primary) / 0.04);
   }
   .list-row--section {
     padding: 6px 10px;
@@ -2096,19 +1955,11 @@
     border-color: hsl(var(--border-hsl) / 0.55);
     color: var(--foreground);
     font-weight: 500;
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.7) inset,
-      0 4px 16px hsl(var(--wiki-shadow) / 0.1),
-      0 1px 4px hsl(0 0% 0% / 0.06);
-    transform: translateY(-1px);
+    box-shadow: var(--surface-shadow);
   }
   .dark .list-card--active {
     background: hsl(var(--wiki-panel) / 0.85);
     border-color: hsl(var(--border-hsl) / 0.6);
-    box-shadow:
-      0 1px 0 hsl(0 0% 100% / 0.06) inset,
-      0 4px 16px hsl(0 0% 0% / 0.28),
-      0 1px 4px hsl(0 0% 0% / 0.12);
   }
   .list-card--muted {
     opacity: 0.55;
@@ -2749,12 +2600,10 @@
   .icon-surface[data-tone="logo"] {
     background: hsl(var(--card));
     border-color: hsl(var(--border-hsl) / 0.65);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08);
   }
   .dark .icon-surface[data-tone="logo"] {
     background: hsl(var(--secondary));
     border-color: hsl(var(--border-hsl) / 0.75);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04);
   }
   .icon-logo-img {
     width: 1rem;
@@ -3253,9 +3102,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   height: 36px;
   padding: 0 0.75rem;
   border-bottom: 1px solid hsl(var(--border-hsl) / 0.6);
-  background: hsl(var(--card) / 0.85);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  backdrop-filter: blur(12px) saturate(1.2);
+  background: var(--surface);
   z-index: 30;
   flex-shrink: 0;
 }
@@ -4027,11 +3874,6 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   color: hsl(var(--muted-foreground) / 0.45);
 }
 
-.agent-dock-dialog {
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  backdrop-filter: blur(24px) saturate(1.6);
-}
-
 .agent-dock-dialog-permissions .agent-dock-approval--strip {
   border-bottom: none;
   padding: 0.125rem 0.25rem 0;
@@ -4207,20 +4049,11 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   width: min(24rem, 40vw);
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid hsl(var(--border-hsl) / 0.75);
-  background: hsl(var(--card));
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.7) inset,
-    0 12px 32px -12px hsl(var(--foreground-hsl) / 0.22),
-    0 2px 6px hsl(var(--foreground-hsl) / 0.06);
+  border: 1px solid var(--border);
+  background: var(--overlay);
+  box-shadow: var(--overlay-shadow);
   pointer-events: none;
   animation: session-nav-preview-in 220ms cubic-bezier(0.22, 0.9, 0.28, 1);
-}
-.dark .session-nav-preview {
-  background: hsl(var(--card));
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.06) inset,
-    0 14px 36px -14px hsl(0 0% 0% / 0.6);
 }
 @keyframes session-nav-preview-in {
   from {
@@ -4254,168 +4087,15 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   color: hsl(var(--muted-foreground));
 }
 
-/* Selection controls share the chosen accent and keep their neutral surfaces. */
-:root:not(.dark) {
-  --radio-track: #ffffff;
-  --radio-track-shadow:
-    0 1px 2px rgba(20, 32, 24, 0.06), 0 4px 12px rgba(20, 32, 24, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --radio-thumb-shadow:
-    0 2px 4px rgba(60, 84, 68, 0.28), 0 1px 2px rgba(60, 84, 68, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+/* HeroUI owns selection-control surfaces and checked/hover/focus states. */
+input[type="radio"] {
+  accent-color: var(--accent);
 }
 
-/* Native radios */
-:root:not(.dark) input[type="radio"] {
-  accent-color: var(--radio-accent-top);
-}
-
-/* Semantic radio segments (buttons with role="radio") */
-:root:not(.dark) [role="radio"]:not(:disabled) {
-  color: var(--radio-idle-text);
-}
-:root:not(.dark) [role="radio"][aria-checked="true"]:not(:disabled) {
-  color: var(--radio-accent-text);
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
-}
-
-/* HeroUI radio primitives (light mode only) */
-:root:not(.dark) .radio__control {
-  border-color: #dfe5df;
-  background: var(--radio-track);
-  box-shadow: 0 1px 2px rgba(20, 32, 24, 0.06);
-}
-:root:not(.dark) .radio[aria-checked="true"] .radio__control,
-:root:not(.dark) .radio[data-selected="true"] .radio__control {
-  border-color: transparent;
-  background: linear-gradient(
-    180deg,
-    var(--radio-accent-top),
-    var(--radio-accent-bottom)
-  );
-  box-shadow: var(--radio-thumb-shadow);
-}
-:root:not(.dark) .radio__indicator {
-  color: var(--radio-accent-text);
-  background: var(--radio-accent-text);
-}
-:root:not(.dark) .radio [data-slot="label"] {
-  color: var(--radio-idle-text);
-}
-:root:not(.dark) .radio[aria-checked="true"] [data-slot="label"] {
-  color: var(--radio-accent-text);
-}
-
-/* ---------------------------------------------------------------------------
-   Light mode is the base theme.
-   The Codex-neutral tokens in :root above are the single source of truth for
-   light mode; `.dark` overrides them. This block used to restate a second,
-   greener palette that shadowed the base tokens — it is intentionally gone so
-   there is exactly one place to change a colour.
-   ------------------------------------------------------------------------- */
-
-/* HeroUI selection controls reuse the accent palette in light mode. */
-:root:not(.dark) .switch {
-  --switch-control-bg: var(--default);
-  --switch-control-bg-hover: var(--default-hover);
-  --switch-control-bg-pressed: var(--default-hover);
-  --switch-control-bg-checked: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
-  --switch-control-bg-checked-hover: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--cx-accent-top) 92%, black),
-    color-mix(in srgb, var(--cx-accent-bottom) 92%, black)
-  );
-}
-:root:not(.dark) .switch__control {
-  border: 1px solid var(--border);
-  box-shadow:
-    0 1px 2px rgba(47, 61, 52, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.75);
-}
-:root:not(.dark) .switch__thumb {
-  background: #fff;
-  box-shadow:
-    0 2px 5px rgba(47, 61, 52, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-:root:not(.dark) .switch__thumb[aria-checked="true"] {
-  color: var(--cx-accent-ink);
-}
-
-:root:not(.dark) .checkbox__control {
-  border-color: var(--border);
-  background: #fff;
-}
-:root:not(.dark) .checkbox[data-selected="true"] .checkbox__control,
-:root:not(.dark) .checkbox[aria-checked="true"] .checkbox__control,
-:root:not(.dark) .checkbox[data-indeterminate="true"] .checkbox__control {
-  border-color: var(--cx-accent-bottom);
-  background: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
-  box-shadow:
-    0 2px 4px rgba(47, 61, 52, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.55);
-}
-:root:not(.dark) .checkbox[data-selected="true"] .checkbox__control::before,
-:root:not(.dark) .checkbox[aria-checked="true"] .checkbox__control::before {
-  background: transparent;
-}
-
-/* Select, ListBox and Dropdown geometry is owned by HeroUI v3. Theme
-   customisation stays in semantic tokens rather than internal component
-   selectors, so upgrades retain the official sizing and focus behavior. */
-
-/* Gradients cannot be used as background-color custom-property values; apply
-   the light-mode switch gradient explicitly to the track state. */
-:root:not(.dark) .switch[aria-checked="true"] .switch__control,
-:root:not(.dark) .switch[data-selected="true"] .switch__control {
-  background-color: var(--cx-accent-bottom);
-  background-image: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
-}
-:root:not(.dark) .switch[aria-checked="true"]:hover .switch__control,
-:root:not(.dark) .switch[data-selected="true"]:hover .switch__control,
-:root:not(.dark)
-  .switch[aria-checked="true"][data-hovered="true"]
-  .switch__control,
-:root:not(.dark)
-  .switch[data-selected="true"][data-hovered="true"]
-  .switch__control {
-  background-color: color-mix(in srgb, var(--cx-accent-bottom) 92%, black);
-  background-image: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--cx-accent-top) 92%, black),
-    color-mix(in srgb, var(--cx-accent-bottom) 92%, black)
-  );
-}
-:root:not(.dark) .switch[aria-checked="true"] .switch__thumb,
-:root:not(.dark) .switch[data-selected="true"] .switch__thumb {
-  background: #fff;
-  color: var(--cx-accent-ink);
-}
-
-/* Goal attachment badges and menu states use the same light Morandi-green
-   accent; remove the old amber/brown highlight from Wiki/MCP/Skill menus. */
+/* Attachment badges share the active accent without a material overlay. */
 :root:not(.dark) .agent-attach-badge {
-  background: linear-gradient(
-    180deg,
-    var(--cx-accent-top),
-    var(--cx-accent-bottom)
-  );
+  background: var(--accent);
   color: var(--cx-accent-ink);
-  box-shadow:
-    0 1px 3px rgba(47, 61, 52, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 /* Resizable/collapsible session side panels */
 .session-panel-resizer {
@@ -5517,24 +5197,10 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid hsl(var(--border-hsl) / 0.68);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: hsl(var(--card) / 0.74);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.62) inset,
-    0 9px 26px -18px hsl(var(--foreground-hsl) / 0.32),
-    0 2px 7px hsl(var(--foreground-hsl) / 0.05);
-  -webkit-backdrop-filter: blur(16px) saturate(1.2);
-  backdrop-filter: blur(16px) saturate(1.2);
-}
-
-.dark .session-list-card {
-  border-color: hsl(0 0% 100% / 0.1);
-  background: hsl(var(--card) / 0.64);
-  box-shadow:
-    0 1px 0 hsl(0 0% 100% / 0.08) inset,
-    0 12px 32px -20px hsl(0 0% 0% / 0.9),
-    0 2px 8px hsl(0 0% 0% / 0.26);
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
 }
 
 .session-list-card--sessions {
@@ -5549,7 +5215,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   flex: none;
   padding: 12px;
   border-bottom-color: hsl(var(--border-hsl) / 0.42);
-  background: linear-gradient(180deg, hsl(var(--card) / 0.5), transparent);
+  background: var(--surface);
 }
 
 .session-list-card--sessions .session-list-session-area {
@@ -5580,7 +5246,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   justify-content: space-between;
   padding: 9px 10px 7px;
   border-bottom: 1px solid hsl(var(--border-hsl) / 0.42);
-  background: linear-gradient(180deg, hsl(var(--card) / 0.5), transparent);
+  background: var(--surface);
 }
 
 .session-list-card--profile .session-profile-panel > .overflow-y-auto {
@@ -5932,10 +5598,8 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   margin: 56px 10px 10px;
   border: 1px solid hsl(var(--border-hsl) / 0.55);
   border-radius: 14px;
-  background: hsl(var(--card) / 0.8);
-  box-shadow:
-    0 10px 24px -20px hsl(var(--foreground-hsl) / 0.38),
-    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
 }
 
 .session-workspace-panel--content[data-fullscreen="true"] {
@@ -5985,19 +5649,10 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
 .ws-card {
   flex: 0 0 auto;
   overflow: hidden;
-  border: 1px solid hsl(var(--border-hsl) / 0.55);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: hsl(var(--card) / 0.62);
-  box-shadow:
-    0 10px 24px -20px hsl(var(--foreground-hsl) / 0.38),
-    0 2px 8px hsl(var(--foreground-hsl) / 0.06);
-}
-
-.dark .ws-card {
-  background: hsl(var(--card) / 0.68);
-  box-shadow:
-    0 12px 26px -20px hsl(0 0% 0% / 0.8),
-    0 2px 8px hsl(0 0% 0% / 0.2);
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
 }
 
 .ws-card-head {
@@ -6813,39 +6468,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   }
 }
 
-/* Settings controls: quiet flat surfaces, with a larger, easy-to-hit switch.
-   The popover class is explicit because Select portals leave the section. */
-:root .settings-section .switch .switch__control {
-  width: 40px;
-  height: 24px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--default);
-  box-shadow: none;
-}
-:root .settings-section .switch[data-selected="true"] .switch__control,
-:root .settings-section .switch[aria-checked="true"] .switch__control {
-  background: var(--accent);
-  box-shadow: none;
-}
-:root .settings-section .switch .switch__thumb {
-  width: 18px;
-  height: 18px;
-  margin-inline-start: 3px;
-  border: 0;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: none;
-}
-:root .settings-section .switch[data-selected="true"] .switch__thumb,
-:root .settings-section .switch[aria-checked="true"] .switch__thumb {
-  margin-inline-start: 19px;
-  box-shadow: none;
-}
-:root .settings-section .switch:has([data-focus-visible="true"]) .switch__control {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
+/* Compact settings layout; control materials are owned by HeroUI. */
 :root .settings-select .select__trigger {
   align-items: center;
   height: 30px;
@@ -6911,10 +6534,8 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   }
 }
 
-/* Neumorphic surfaces: keep cards and their controls on one tactile visual system. */
-.wh-pill,
-.session-list-card,
-.ws-card {
+/* Tactile surfaces belong only to islands, never shared cards or controls. */
+.wh-pill {
   border-color: hsl(var(--border-hsl) / 0.28);
   background: hsl(var(--background-hsl) / 0.94);
   box-shadow:
@@ -6924,9 +6545,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     inset -1px -1px 0 hsl(var(--foreground-hsl) / 0.04);
 }
 
-.dark .wh-pill,
-.dark .session-list-card,
-.dark .ws-card {
+.dark .wh-pill {
   border-color: hsl(0 0% 100% / 0.08);
   background: hsl(var(--background-hsl) / 0.94);
   box-shadow:
@@ -6936,12 +6555,9 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     inset -1px -1px 0 hsl(0 0% 0% / 0.14);
 }
 
-.wh-btn,
-.wh-pill-btn,
-.wh-goal-menu,
-.ws-card-collapse,
-.ws-view-toggle button,
-.session-list-display-mode-button {
+.wh-pill .wh-btn,
+.wh-pill .wh-pill-btn,
+.wh-pill .wh-goal-menu {
   background: hsl(var(--background-hsl) / 0.72);
   box-shadow:
     3px 3px 7px hsl(var(--foreground-hsl) / 0.12),
@@ -6953,92 +6569,50 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     transform 120ms ease;
 }
 
-.wh-btn:hover,
-.wh-pill-btn:hover:not(:disabled),
-.wh-goal-menu:hover,
-.ws-card-collapse:hover,
-.ws-view-toggle button:hover,
-.session-list-display-mode-button:hover {
+.wh-pill .wh-btn:hover,
+.wh-pill .wh-pill-btn:hover:not(:disabled),
+.wh-pill .wh-goal-menu:hover {
   background: hsl(var(--background-hsl) / 0.86);
   box-shadow:
     inset 2px 2px 5px hsl(var(--foreground-hsl) / 0.12),
     inset -2px -2px 5px hsl(var(--background-hsl) / 0.88);
 }
 
-.wh-btn:active,
-.wh-pill-btn:active:not(:disabled),
-.wh-goal-menu:active,
-.ws-card-collapse:active,
-.ws-view-toggle button:active,
-.session-list-display-mode-button:active {
+.wh-pill .wh-btn:active,
+.wh-pill .wh-pill-btn:active:not(:disabled),
+.wh-pill .wh-goal-menu:active {
   transform: translateY(1px);
   box-shadow:
     inset 3px 3px 6px hsl(var(--foreground-hsl) / 0.14),
     inset -3px -3px 6px hsl(var(--background-hsl) / 0.9);
 }
 
-.dark .wh-btn,
-.dark .wh-pill-btn,
-.dark .wh-goal-menu,
-.dark .ws-card-collapse,
-.dark .ws-view-toggle button,
-.dark .session-list-display-mode-button {
+.dark .wh-pill .wh-btn,
+.dark .wh-pill .wh-pill-btn,
+.dark .wh-pill .wh-goal-menu {
   background: hsl(var(--background-hsl) / 0.72);
   box-shadow:
     3px 3px 7px hsl(0 0% 0% / 0.35),
     -3px -3px 7px hsl(var(--foreground-hsl) / 0.06);
 }
 
-.dark .wh-btn:hover,
-.dark .wh-pill-btn:hover:not(:disabled),
-.dark .wh-goal-menu:hover,
-.dark .ws-card-collapse:hover,
-.dark .ws-view-toggle button:hover,
-.dark .session-list-display-mode-button:hover {
+.dark .wh-pill .wh-btn:hover,
+.dark .wh-pill .wh-pill-btn:hover:not(:disabled),
+.dark .wh-pill .wh-goal-menu:hover {
   background: hsl(var(--background-hsl) / 0.86);
   box-shadow:
     inset 2px 2px 5px hsl(0 0% 0% / 0.28),
     inset -2px -2px 5px hsl(var(--foreground-hsl) / 0.06);
 }
 
-.wh-btn.active,
-.wh-pill-btn--primary,
-.wh-pill-btn--soft,
-.dropdown__trigger[aria-expanded="true"] .wh-goal-menu,
-.wh-tabs .tabs__tab[aria-selected="true"] {
+.wh-pill .wh-btn.active,
+.wh-pill .wh-pill-btn--primary,
+.wh-pill .wh-pill-btn--soft,
+.wh-pill .dropdown__trigger[aria-expanded="true"] .wh-goal-menu,
+.wh-pill .wh-tabs .tabs__tab[aria-selected="true"] {
   background: hsl(var(--primary) / 0.12);
   color: hsl(var(--primary));
   box-shadow:
     inset 2px 2px 5px hsl(var(--primary) / 0.12),
     inset -2px -2px 5px hsl(var(--background-hsl) / 0.84);
-}
-
-.work-page .session-list-header .button,
-.work-page .session-workspace-sidebar--dock .ws-icon-button,
-.work-page .session-workspace-sidebar--dock .ws-card-toggle,
-.work-page .session-workspace-sidebar--dock .ws-card-collapse {
-  background: hsl(var(--background-hsl) / 0.72);
-  box-shadow:
-    3px 3px 7px hsl(var(--foreground-hsl) / 0.12),
-    -3px -3px 7px hsl(var(--background-hsl) / 0.88);
-}
-
-.work-page .session-list-header .button:hover,
-.work-page .session-workspace-sidebar--dock .ws-icon-button:hover,
-.work-page .session-workspace-sidebar--dock .ws-card-toggle:hover,
-.work-page .session-workspace-sidebar--dock .ws-card-collapse:hover {
-  background: hsl(var(--background-hsl) / 0.86);
-  box-shadow:
-    inset 2px 2px 5px hsl(var(--foreground-hsl) / 0.12),
-    inset -2px -2px 5px hsl(var(--background-hsl) / 0.88);
-}
-
-.dark .work-page .session-list-header .button,
-.dark .work-page .session-workspace-sidebar--dock .ws-icon-button,
-.dark .work-page .session-workspace-sidebar--dock .ws-card-toggle,
-.dark .work-page .session-workspace-sidebar--dock .ws-card-collapse {
-  background: hsl(var(--background-hsl) / 0.72);
-  box-shadow:
-    3px 3px 7px hsl(0 0% 0% / 0.35),
-    -3px -3px 7px hsl(var(--foreground-hsl) / 0.06);
 }

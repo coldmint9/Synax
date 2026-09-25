@@ -4,26 +4,16 @@
   --work-panel-radius: 12px;
   --work-line: hsl(var(--border-hsl) / 0.38);
   --work-muted: hsl(var(--muted-foreground));
-  --work-surface: hsl(var(--card));
+  --work-surface: var(--surface);
   --work-panel-edge: hsl(var(--border-hsl) / 0.28);
-  --work-shadow:
-    8px 8px 18px hsl(var(--foreground-hsl) / 0.12),
-    -8px -8px 18px hsl(var(--background-hsl) / 0.9),
-    inset 1px 1px 0 hsl(var(--background-hsl) / 0.72),
-    inset -1px -1px 0 hsl(var(--foreground-hsl) / 0.04);
 }
 :is(.work-page, .work-details-dialog) {
   font-size: 11px;
 }
 .dark :is(.workbench-shell, .work-page, .work-details-dialog) {
-  --work-surface: hsl(var(--card));
+  --work-surface: var(--surface);
   --work-panel-edge: hsl(0 0% 100% / 0.08);
   --work-line: hsl(0 0% 100% / 0.1);
-  --work-shadow:
-    8px 8px 18px hsl(0 0% 0% / 0.38),
-    -8px -8px 18px hsl(var(--foreground-hsl) / 0.06),
-    inset 1px 1px 0 hsl(0 0% 100% / 0.04),
-    inset -1px -1px 0 hsl(0 0% 0% / 0.14);
 }
 .work-page {
   --work-transcript-top-inset: 56px;
@@ -90,7 +80,7 @@
   background: var(--work-surface);
   border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
-  box-shadow: var(--work-shadow);
+  box-shadow: var(--surface-shadow);
 }
 .work-page .session-list-card--sessions .session-list-header {
   padding: 10px 9px 8px;
@@ -200,7 +190,7 @@
   border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
   background: var(--work-surface);
-  box-shadow: var(--work-shadow);
+  box-shadow: var(--surface-shadow);
 }
 :is(.work-page, .work-details-dialog) .workspace-dashboard {
   gap: 8px;
@@ -211,7 +201,7 @@
   border: 1px solid var(--work-panel-edge);
   border-radius: var(--work-panel-radius);
   background: var(--work-surface);
-  box-shadow: var(--work-shadow);
+  box-shadow: var(--surface-shadow);
 
   overflow: hidden;
 }
@@ -1131,7 +1121,7 @@
 
 /* Separate conversation, sidebar and elevated controls by color, without blur. */
 .dark .work-page .session-list-card--sessions {
-  --work-surface: var(--surface-secondary);
+  --work-surface: var(--surface);
   border-color: transparent;
 }
 .dark .work-page .session-list-item:hover,

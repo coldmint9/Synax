@@ -1,83 +1,37 @@
-/* Scope tokens to the portalled content, not the composer trigger. This keeps
-   the control theme-aware without changing other radio/selection controls. */
-.composer-effort-picker {
-  --effort-value: var(--radio-accent-text);
-  --effort-rail: #e3e4e4;
-  --effort-rail-border: #d1d3d3;
-  --effort-rail-shadow:
-    inset 0 1px 2px rgb(30 36 32 / 6%), 0 1px 1px rgb(30 36 32 / 4%);
-  --effort-fill-top: var(--radio-accent-top);
-  --effort-fill-bottom: var(--radio-accent-bottom);
-  --effort-fill-highlight: rgb(255 255 255 / 45%);
-  --effort-thumb: #fff;
-  --effort-thumb-shadow:
-    0 2px 5px rgb(43 54 47 / 22%), 0 0 0 1px rgb(43 54 47 / 8%),
-    inset 0 1px 0 rgb(255 255 255 / 95%);
-  --effort-dot: #aeb1b0;
-  --effort-dot-selected: var(--radio-accent-top);
-  --effort-station-hover: rgb(255 255 255 / 55%);
-  --effort-station-focus: rgb(47 61 52 / 18%);
-}
-
-.dark .composer-effort-picker {
-  --effort-value: var(--cx-accent-top);
-  --effort-rail: #10151d;
-  --effort-rail-border: #39434d;
-  --effort-rail-shadow:
-    inset 0 1px 3px rgb(0 0 0 / 30%), 0 1px 0 rgb(255 255 255 / 4%);
-  --effort-fill-top: #526b5c;
-  --effort-fill-bottom: #3f594a;
-  --effort-fill-highlight: rgb(255 255 255 / 10%);
-  --effort-thumb: #36443e;
-  --effort-thumb-shadow:
-    0 2px 5px rgb(0 0 0 / 35%), 0 0 0 1px rgb(185 205 191 / 35%),
-    inset 0 1px 0 rgb(255 255 255 / 12%);
-  --effort-dot: #aeb8b1;
-  --effort-dot-selected: var(--cx-accent-top);
-  --effort-station-hover: rgb(185 205 191 / 14%);
-  --effort-station-focus: rgb(185 205 191 / 30%);
-}
-
+/* Portalled controls use the same semantic surfaces as HeroUI, not island materials. */
 .composer-effort-value {
-  color: var(--effort-value);
+  color: var(--foreground);
 }
 
 .composer-effort-rail {
-  background: var(--effort-rail);
-  border: 1px solid var(--effort-rail-border);
-  box-shadow: var(--effort-rail-shadow);
+  background: var(--default);
+  border: 1px solid var(--border);
 }
 
 .composer-effort-fill {
-  background: linear-gradient(
-    180deg,
-    var(--effort-fill-top),
-    var(--effort-fill-bottom)
-  );
-  box-shadow: inset 0 1px 0 var(--effort-fill-highlight);
+  background: var(--accent);
 }
 
 .composer-effort-thumb {
-  background: var(--effort-thumb);
-  box-shadow: var(--effort-thumb-shadow);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--surface-shadow);
 }
 
 .composer-effort-station:hover {
-  background: var(--effort-station-hover);
+  background: var(--default-hover);
 }
 
-/* The app suppresses focus rings globally; retain a visible keyboard state
-   through a theme-aware surface instead. */
+/* Retain a visible keyboard state even with the app's global outline reset. */
 .composer-effort-station:focus-visible {
-  background: var(--effort-station-focus);
+  background: var(--default-hover);
+  box-shadow: 0 0 0 2px var(--focus);
 }
 
 .composer-effort-dot {
-  background: var(--effort-dot);
-  opacity: 0.9;
+  background: var(--muted);
 }
 
 .composer-effort-station[aria-checked="true"] .composer-effort-dot {
-  background: var(--effort-dot-selected);
-  opacity: 0.95;
+  background: var(--accent);
 }

@@ -14,27 +14,31 @@ function declarations(selector: string) {
 }
 
 describe("effort picker theme", () => {
-  it("overrides all appearance tokens on the portalled content in dark mode", () => {
-    const light = declarations(".composer-effort-picker");
-    const dark = declarations(".dark .composer-effort-picker");
-    expect(Object.keys(light).length).toBeGreaterThan(0);
-    expect(Object.keys(dark).sort()).toEqual(Object.keys(light).sort());
-    for (const token of Object.keys(light)) {
-      expect(dark[token], token).not.toBe(light[token]);
-    }
+  it("uses HeroUI surfaces in both themes without a separate material palette", () => {
+    expect(declarations(".composer-effort-rail").background).toBe(
+      "var(--default)",
+    );
+    expect(declarations(".composer-effort-fill").background).toBe("var(--accent)");
+    expect(declarations(".composer-effort-thumb")["box-shadow"]).toBe(
+      "var(--surface-shadow)",
+    );
+    expect(declarations(".dark .composer-effort-picker")).toEqual({});
   });
 
   it("uses theme tokens for hover, keyboard focus, and selected markers", () => {
     expect(declarations(".composer-effort-station:hover").background).toBe(
-      "var(--effort-station-hover)",
+      "var(--default-hover)",
     );
     expect(
       declarations(".composer-effort-station:focus-visible").background,
-    ).toBe("var(--effort-station-focus)");
+    ).toBe("var(--default-hover)");
+    expect(
+      declarations(".composer-effort-station:focus-visible")["box-shadow"],
+    ).toBe("0 0 0 2px var(--focus)");
     expect(
       declarations(
         '.composer-effort-station[aria-checked="true"] .composer-effort-dot',
       ).background,
-    ).toBe("var(--effort-dot-selected)");
+    ).toBe("var(--accent)");
   });
 });

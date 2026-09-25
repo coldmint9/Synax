@@ -134,7 +134,7 @@ export function ComposerEffortPicker({
             {modelText}
           </div>
 
-          {/* Compact slider: theme-aware green progress, raised thumb, and station dots. */}
+          {/* Compact slider: semantic accent fill, surface thumb, and station dots. */}
           <div
             role="radiogroup"
             aria-label={t("effortLabel")}

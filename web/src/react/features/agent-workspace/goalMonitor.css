@@ -1,21 +1,20 @@
 .goal-monitor {
   width: min(19rem, calc(100vw - 2rem));
-  color: hsl(var(--foreground-hsl) / 0.88);
-  border: 1px solid hsl(var(--border-hsl) / 0.45);
+  color: var(--overlay-foreground);
+  border: 1px solid var(--border);
   border-radius: .5rem;
-  background: hsl(var(--background-hsl) / 0.94);
-  box-shadow: 9px 9px 20px hsl(var(--foreground-hsl) / 0.14), -9px -9px 20px hsl(var(--background-hsl) / 0.92), inset 1px 1px 0 hsl(var(--background-hsl) / 0.72), inset -1px -1px 0 hsl(var(--foreground-hsl) / 0.05);
-  backdrop-filter: blur(18px);
+  background: var(--overlay);
+  box-shadow: var(--overlay-shadow);
 }
-.goal-monitor__control { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; min-height: 2rem; padding: .4rem .7rem; border: 0; border-radius: .6rem; color: var(--goal-monitor-color); background: hsl(var(--background-hsl)); box-shadow: 3px 3px 7px hsl(var(--foreground-hsl) / .12), -3px -3px 7px hsl(var(--background-hsl) / .9); font-size: .68rem; font-weight: 600; cursor: pointer; }
-.goal-monitor__control:hover:not(:disabled) { box-shadow: inset 2px 2px 5px hsl(var(--foreground-hsl) / .12), inset -2px -2px 5px hsl(var(--background-hsl) / .9); }
+.goal-monitor__control { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; min-height: 2rem; padding: .4rem .7rem; border: 0; border-radius: .6rem; color: var(--goal-monitor-color); background: var(--default); font-size: .68rem; font-weight: 600; cursor: pointer; }
+.goal-monitor__control:hover:not(:disabled) { background: var(--default-hover); }
 .goal-monitor__control:disabled { cursor: wait; opacity: .55; }
 .goal-monitor__header { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 3.25rem; padding: .65rem .75rem; border: 0; border-radius: inherit; background: transparent; color: inherit; text-align: left; }
-.goal-monitor__bezel { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .75rem; background: hsl(var(--background-hsl)); box-shadow: inset 3px 3px 7px hsl(var(--foreground-hsl) / .12), inset -3px -3px 7px hsl(var(--background-hsl) / .9); }
+.goal-monitor__bezel { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .75rem; background: var(--default); }
 .goal-monitor__heading { display: grid; min-width: 0; flex: 1; gap: .08rem; }
 .goal-monitor__heading strong { font-size: .78rem; font-weight: 600; }
 .goal-monitor__heading small { color: hsl(var(--muted-foreground)); font-size: .68rem; }
-.goal-monitor__lamp { width: .55rem; height: .55rem; border-radius: 999px; background: var(--goal-monitor-color, #6b7280); box-shadow: 0 0 0 3px hsl(var(--background-hsl) / .7), 0 0 12px var(--goal-monitor-color, #6b7280); }
+.goal-monitor__lamp { width: .55rem; height: .55rem; border-radius: 999px; background: var(--goal-monitor-color, #6b7280); }
 .goal-monitor[data-status="executing"] { --goal-monitor-color: #38a169; }
 .goal-monitor[data-status="completed"] { --goal-monitor-color: #2563eb; }
 .goal-monitor[data-status="waiting"] { --goal-monitor-color: #d97706; }
@@ -25,8 +24,8 @@
 .goal-monitor__body { display: grid; gap: .75rem; padding: 0 .85rem .9rem; }
 .goal-monitor__objective { max-height: 3.1rem; overflow: hidden; color: hsl(var(--foreground-hsl) / .92); font-size: .76rem; font-weight: 500; line-height: 1.4; }
 .goal-monitor__status-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: hsl(var(--muted-foreground)); font-size: .68rem; }
-.goal-monitor__track { height: .7rem; padding: .18rem; border-radius: 999px; background: hsl(var(--background-hsl)); box-shadow: inset 3px 3px 6px hsl(var(--foreground-hsl) / .13), inset -3px -3px 6px hsl(var(--background-hsl) / .9); }
-.goal-monitor__track span { display: block; height: 100%; border-radius: inherit; background: var(--goal-monitor-color); box-shadow: 0 0 8px var(--goal-monitor-color); transition: width 260ms ease; }
+.goal-monitor__track { height: .7rem; padding: .18rem; border-radius: 999px; background: var(--default); }
+.goal-monitor__track span { display: block; height: 100%; border-radius: inherit; background: var(--goal-monitor-color); transition: width 260ms ease; }
 .goal-monitor__section { display: grid; gap: .35rem; padding-top: .65rem; border-top: 1px solid hsl(var(--border-hsl) / .4); }
 .goal-monitor__section--criteria { height: 18rem; overflow-y: auto; align-content: start; padding: .75rem 0; }
 .goal-monitor__section-title { color: hsl(var(--muted-foreground)); font-size: .64rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
