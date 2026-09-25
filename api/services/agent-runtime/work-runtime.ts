@@ -79,18 +79,23 @@ class WorkRuntime {
         if (!r.metadata.workId) store.updateRun(r.id, { metadata: { workId: work.id } });
       }
     }
+    if (!work) throw new AgentValidationError('Unable to establish the active work checkpoint.');
     if (trigger && user && hasContent) {
       const fresh = !continuing && !work.requirements.some(r => r.messageId === trigger.id);
       if (fresh) work.requirements.push({ messageId: trigger.id, text, ...(trigger.contentParts ? { contentParts: trigger.contentParts } : {}) });
-      // A user turn is also the human decision a blocked work was waiting for, so plain
-      // continuations reopen it instead of bouncing off the status checks below.
-      if (fresh) {
+      // A new user turn reopens a blocked goal, including a bare continuation.
+      const goal = getGoalState(session.sessionMetadata);
+      const goalWasBlocked = usesGoalWorkflow(session) && goal?.status === 'blocked';
+      if (fresh || goalWasBlocked) {
         work.progressVersion++;
         work.noProgressSteps = 0;
         work.decisionFailures = 0;
-        if (work.status === 'waiting') work.status = 'active';
-        const goal = getGoalState(session.sessionMetadata);
-        if (usesGoalWorkflow(session) && goal?.status === 'blocked') store.updateSessionMetadata(sessionId, { goal: { ...goal, status: (session.sessionMetadata?.plan as { status?: string } | undefined)?.status === 'approved' ? 'executing' : 'planning', reason: undefined } });
+        if (work.status === 'waiting' || goalWasBlocked) {
+          work.status = 'active';
+          work.reason = null;
+          work.result = null;
+        }
+        if (goalWasBlocked) store.updateSessionMetadata(sessionId, { goal: { ...goal, status: (session.sessionMetadata?.plan as { status?: string } | undefined)?.status === 'approved' ? 'executing' : 'planning', reason: undefined } });
       }
     }
     if (work.status === 'waiting' && !interactionService.pending(sessionId)) {
@@ -345,8 +350,8 @@ class WorkRuntime {
     return result?.suspend ? result : { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
   }
 
-  /** A declared blocker parks the work on the human through the ordinary interaction
-   *  checkpoint (waiting + suspend), replacing the old self-dead 'blocked' status. */
+  /** A declared blocker ends the current round with a durable blocked conclusion.
+   *  The next user turn is the explicit decision to resume or redirect the goal. */
   reportBlocker(input: ToolExecutionInput, summary: string): ToolExecutionResult {
     const work = workStore.current(input.sessionId);
     if (!work) throw new AgentValidationError('No active work checkpoint.');
@@ -358,17 +363,10 @@ class WorkRuntime {
     const goal = getGoalState(session.sessionMetadata);
     if (usesGoalWorkflow(session) && goal && !session.parentSessionId)
       store.updateSessionMetadata(work.sessionId, { goal: { ...goal, status: 'blocked', reason: summary } });
-    const interaction = interactionService.request({
-      ...input,
-      runId: input.runId,
-      stepId: input.stepId,
-      kind: 'clarification',
-      request: {
-        title: `Blocked: ${summary.slice(0, 180)}`,
-        questions: [{ id: 'unblock', type: 'textarea', label: summary.slice(0, 4000), required: true }],
-      },
-    });
-    return { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [], suspend: { interactionId: interaction.id } };
+    work.reason = summary;
+    work.remaining = work.remaining.length ? work.remaining : [summary];
+    workStore.save(work);
+    return { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
   }
 
   persistTerminal(work: WorkRecord, runId: string): void {

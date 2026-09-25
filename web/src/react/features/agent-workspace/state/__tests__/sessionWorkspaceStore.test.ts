@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   EMPTY_SESSION_WORKSPACE,
+  openWorkspaceDiff,
+  openWorkspaceFile,
   openWorkspaceTab,
   useSessionWorkspaceStore,
 } from "../sessionWorkspaceStore";
@@ -35,6 +37,24 @@ describe("sessionWorkspaceStore", () => {
     ).toBe("dock");
   });
 
+  it("keeps file and diff titles concise while isolating same paths by root", () => {
+    openWorkspaceFile("session-a", "src/index.ts", null, "api", "API");
+    openWorkspaceDiff("session-a", "src/index.ts", "web", "Web");
+
+    expect(useSessionWorkspaceStore.getState().sessions["session-a"].tabs).toEqual([
+      expect.objectContaining({
+        id: "file@api:src/index.ts",
+        title: "index.ts",
+        rootId: "api",
+      }),
+      expect.objectContaining({
+        id: "diff@web:src/index.ts",
+        title: "index.ts",
+        rootId: "web",
+      }),
+    ]);
+  });
+
   it("leaves fullscreen when the last tab closes", () => {
     const store = useSessionWorkspaceStore.getState();
     store.openTab("session-a", { kind: "file", title: "a.ts", path: "a.ts" });
@@ -52,9 +72,9 @@ describe("sessionWorkspaceStore", () => {
 
   it("updates renamed file and diff tabs only within their owning repository", () => {
     const store = useSessionWorkspaceStore.getState();
-    store.openTab("session-a", { kind: "file", title: "API / a.ts", path: "a.ts", rootId: "api" });
-    store.openTab("session-a", { kind: "diff", title: "API / a.ts", path: "a.ts", rootId: "api" });
-    store.openTab("session-a", { kind: "file", title: "Web / a.ts", path: "a.ts", rootId: "web" });
+    store.openTab("session-a", { kind: "file", title: "a.ts", path: "a.ts", rootId: "api" });
+    store.openTab("session-a", { kind: "diff", title: "a.ts", path: "a.ts", rootId: "api" });
+    store.openTab("session-a", { kind: "file", title: "a.ts", path: "a.ts", rootId: "web" });
     store.activateTab("session-a", "file@api:a.ts");
     store.renameFileTabs("session-a", "api", "a.ts", "new.ts");
     const workspace = useSessionWorkspaceStore.getState().sessions["session-a"];

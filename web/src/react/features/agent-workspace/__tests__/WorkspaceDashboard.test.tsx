@@ -571,7 +571,18 @@ describe("WorkspaceDashboard", () => {
       "secondary",
       "secondary",
     ]);
-    expect(tabs[2].title).toBe("Web / BlockAsk.vue");
+    expect(tabs[0].title).toBe("BlockAsk.vue");
+    expect(tabs[2].title).toBe("BlockAsk.vue");
+    expect(
+      new Set(
+        [...pane.querySelectorAll<HTMLElement>(".ws-project-folder-icon")]
+          .map((element) => element.dataset.projectColor)
+          .filter(Boolean),
+      ).size,
+    ).toBeGreaterThan(1);
+    expect(
+      apiCard.querySelector(".ws-project-folder-icon")?.getAttribute("data-project-color"),
+    ).not.toBe("default");
     expect(within(goneCard).getByText("目录缺失")).toBeInTheDocument();
     expect(
       within(goneCard).getByRole("button", { name: "提交并推送" }),

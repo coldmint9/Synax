@@ -5729,6 +5729,34 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     color 120ms ease;
 }
 
+.workspace-tab-item[data-project-color]:not([data-project-color="default"]) {
+  box-shadow: inset 3px 0 0 var(--workspace-project-color);
+}
+
+.workspace-tab-item[data-project-color="blue"] {
+  --workspace-project-color: hsl(211 90% 52%);
+}
+
+.workspace-tab-item[data-project-color="teal"] {
+  --workspace-project-color: hsl(174 72% 38%);
+}
+
+.workspace-tab-item[data-project-color="amber"] {
+  --workspace-project-color: hsl(38 92% 46%);
+}
+
+.workspace-tab-item[data-project-color="rose"] {
+  --workspace-project-color: hsl(347 78% 54%);
+}
+
+.workspace-tab-item[data-project-color="violet"] {
+  --workspace-project-color: hsl(265 74% 58%);
+}
+
+.workspace-tab-item[data-project-color="green"] {
+  --workspace-project-color: hsl(145 62% 38%);
+}
+
 .workspace-tab-item--active {
   border-color: hsl(var(--primary) / 0.65);
   background:
@@ -5736,6 +5764,12 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     hsl(var(--card));
   color: hsl(var(--foreground-hsl));
   box-shadow: inset 0 -2px 0 hsl(var(--primary) / 0.75);
+}
+
+.workspace-tab-item--active[data-project-color]:not([data-project-color="default"]) {
+  box-shadow:
+    inset 3px 0 0 var(--workspace-project-color),
+    inset 0 -2px 0 hsl(var(--primary) / 0.75);
 }
 
 .workspace-tab-item--active .workspace-tab-main {

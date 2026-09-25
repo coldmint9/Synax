@@ -330,12 +330,12 @@ export function openWorkspaceFile(
   path: string,
   line: number | null = null,
   rootId?: string,
-  rootName?: string,
+  _rootName?: string,
 ): void {
   const name = path.split(/[\\/]/).pop() || path;
   openWorkspaceTab(sessionId, {
     kind: "file",
-    title: rootName ? `${rootName} / ${name}` : name,
+    title: name,
     path,
     line,
     ...(rootId ? { rootId } : {}),
@@ -346,15 +346,15 @@ export function openWorkspaceInputSource(
   sessionId: string,
   source: SessionEnvironmentInputSource,
   rootId?: string,
-  rootName?: string,
+  _rootName?: string,
 ): void {
   if (source.path) {
-    openWorkspaceFile(sessionId, source.path, null, rootId, rootName);
+    openWorkspaceFile(sessionId, source.path, null, rootId, _rootName);
     return;
   }
   openWorkspaceTab(sessionId, {
     kind: "input",
-    title: rootName ? `${rootName} / ${source.label}` : source.label,
+    title: source.label,
     inputSource: source,
     rootId,
   });
@@ -364,12 +364,12 @@ export function openWorkspaceDiff(
   sessionId: string,
   path: string,
   rootId?: string,
-  rootName?: string,
+  _rootName?: string,
 ): void {
   const name = path.split(/[\\/]/).pop() || path;
   openWorkspaceTab(sessionId, {
     kind: "diff",
-    title: rootName ? `${rootName} / ${name}` : name,
+    title: name,
     path,
     ...(rootId ? { rootId } : {}),
   });

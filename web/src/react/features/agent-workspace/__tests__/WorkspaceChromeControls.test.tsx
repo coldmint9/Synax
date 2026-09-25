@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render as testingRender, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ContextMenuProvider } from "../../../components/context-menu/ContextMenuProvider";
+import type { SessionEnvironment } from "../../../../lib/api/agentRuntime";
 
 const render: typeof testingRender = (ui, options) => testingRender(ui, {
   wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
@@ -10,11 +11,14 @@ const render: typeof testingRender = (ui, options) => testingRender(ui, {
 
 import { registerWorkspaceSaveHandler, useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
 
-const mocks = vi.hoisted(() => ({ reload: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  reload: vi.fn(),
+  environment: null as SessionEnvironment | null,
+}));
 
 vi.mock("../SessionEnvironmentContext", () => ({
   useSessionWorkspaceEnvironment: () => ({
-    environment: null,
+    environment: mocks.environment,
     loading: false,
     reload: mocks.reload,
   }),
@@ -45,6 +49,7 @@ describe("WorkspaceTabStrip", () => {
   beforeEach(() => {
     matchWideViewport();
     mocks.reload.mockReset();
+    mocks.environment = null;
     scrollIntoView.mockReset();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -86,6 +91,75 @@ describe("WorkspaceTabStrip", () => {
     expect(
       useSessionWorkspaceStore.getState().sessions["session-1"].activeTabId,
     ).toBe("diff:b.ts");
+  });
+
+  it("marks multi-project tabs with project colors without prefixing filenames", () => {
+    mocks.environment = {
+      sessionId: "session-1",
+      projectId: "api",
+      workspacePath: "/repos/api",
+      branch: "main",
+      headCommitSha: "head",
+      dirty: false,
+      additions: 0,
+      deletions: 0,
+      changedFiles: [],
+      agentChangedFiles: [],
+      inputSources: [],
+      subagents: [],
+      refreshedAt: "2026-09-25T00:00:00.000Z",
+      repositories: [
+        {
+          rootId: "api",
+          name: "API",
+          role: "primary",
+          status: "ready",
+          workspacePath: "/repos/api",
+          branch: "main",
+          headCommitSha: "head",
+          dirty: false,
+          additions: 0,
+          deletions: 0,
+          changedFiles: [],
+          agentChangedFiles: [],
+          inputSources: [],
+        },
+        {
+          rootId: "web",
+          name: "Web",
+          role: "reference",
+          status: "ready",
+          workspacePath: "/repos/web",
+          branch: "main",
+          headCommitSha: "head",
+          dirty: false,
+          additions: 0,
+          deletions: 0,
+          changedFiles: [],
+          agentChangedFiles: [],
+          inputSources: [],
+        },
+      ],
+    };
+    useSessionWorkspaceStore.setState({
+      sessions: {
+        "session-1": {
+          tabs: [
+            { id: "file@api:src/index.ts", kind: "file", title: "index.ts", path: "src/index.ts", rootId: "api" },
+            { id: "file@web:src/index.ts", kind: "file", title: "index.ts", path: "src/index.ts", rootId: "web" },
+          ],
+          activeTabId: "file@api:src/index.ts",
+          presentation: "dock",
+        },
+      },
+    });
+
+    const { container } = render(<WorkspaceTabStrip sessionId="session-1" />);
+    const colors = [...container.querySelectorAll<HTMLElement>(".workspace-tab-item")]
+      .map((item) => item.dataset.projectColor);
+    expect(screen.getAllByRole("tab", { name: "index.ts" })).toHaveLength(2);
+    expect(colors.every((color) => color && color !== "default")).toBe(true);
+    expect(new Set(colors).size).toBe(2);
   });
 
   it("returns to the conversation without discarding output tabs", () => {

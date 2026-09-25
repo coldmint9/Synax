@@ -1,22 +1,26 @@
 import type { ReactNode } from 'react'
 import { FolderCode, Pin } from 'lucide-react'
 import { useWorkspaceCopy } from './workspaceCopy'
+import { getProjectThemeColor } from '../agent-workspace/projectThemeColor'
 import './workspaceProjects.css'
 
 export function WorkspaceProjectRow({
   name,
   path,
+  projectId,
   primary,
   missing,
   children
 }: {
   name: string
   path: string
+  projectId?: string
   primary?: boolean
   missing?: boolean
   children?: ReactNode
 }) {
   const c = useWorkspaceCopy()
+  const projectColor = getProjectThemeColor(projectId)
   return (
     <div
       className="workspace-project-row"
@@ -24,7 +28,7 @@ export function WorkspaceProjectRow({
       data-missing={missing || undefined}
       role="listitem"
     >
-      <span className="workspace-project-icon">
+      <span className="workspace-project-icon" data-project-color={projectColor}>
         <FolderCode size={18} strokeWidth={1.5} />
       </span>
       <div className="workspace-project-text">

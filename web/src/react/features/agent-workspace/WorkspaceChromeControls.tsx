@@ -14,6 +14,7 @@ import { fileContextEntries } from "./workspaceContextMenus";
 import { handleError } from "../../../lib/errors";
 import type { SessionEnvironment } from "../../../lib/api/agentRuntime";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { getProjectThemeColor } from "./projectThemeColor";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
 import {
   useSessionWorkspace,
@@ -45,8 +46,15 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
   canCloseOthers: boolean;
 }) {
   const { t } = useLocale();
-  const root = environment?.repositories?.find((item) => item.rootId === tab.rootId)
-    ?? environment?.repositories?.find((item) => item.role === "primary");
+  const root = environment?.repositories?.find(
+    (item) => item.rootId === tab.rootId,
+  ) ?? (tab.rootId
+    ? undefined
+    : environment?.repositories?.find((item) => item.role === "primary"));
+  const projectColor =
+    environment?.repositories && environment.repositories.length > 1
+      ? getProjectThemeColor(root?.rootId ?? (tab.rootId ? null : environment.projectId))
+      : "default";
   const workspacePath = root?.workspacePath ?? environment?.workspacePath;
   const fileStatus = (root?.changedFiles ?? environment?.changedFiles)?.find((item) => item.path === tab.path)?.status;
   const fileExists = tab.kind === "file" || (tab.kind === "diff" && Boolean(fileStatus && fileStatus !== "deleted"));
@@ -57,7 +65,7 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
       ? [{ type: "separator" as const }, ...fileContextEntries({ t, path: tab.path, workspacePath, sessionId, rootId: tab.rootId, canOpenFile: fileExists })]
       : []),
   ] }));
-  return <div ref={active ? activeRef : undefined} className={`workspace-tab-item ${active ? "workspace-tab-item--active" : ""}`} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
+  return <div ref={active ? activeRef : undefined} className={`workspace-tab-item ${active ? "workspace-tab-item--active" : ""}`} data-project-color={projectColor} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
     <button type="button" role="tab" className="workspace-tab-main" aria-selected={active} title={tab.path ?? tab.title} onClick={activate} aria-haspopup="menu">
       {tabIcon(tab)}<span>{tab.title}</span>
     </button>

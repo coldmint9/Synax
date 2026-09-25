@@ -230,6 +230,14 @@
 :is(.work-page, .work-details-dialog) .ws-card-icon {
   color: var(--work-muted);
 }
+:is(.work-page, .work-details-dialog) .ws-project-folder-icon {
+  display: inline-flex;
+  color: inherit;
+}
+:is(.work-page, .work-details-dialog) .ws-project-option-top[data-project-color] {
+  border-radius: 6px;
+  padding: 2px 4px;
+}
 :is(.work-page, .work-details-dialog) .ws-card-title {
   font-size: 11px;
   font-weight: 500;

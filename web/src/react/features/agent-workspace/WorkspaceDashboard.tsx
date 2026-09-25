@@ -61,6 +61,7 @@ import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
+import { getProjectThemeColor } from "./projectThemeColor";
 
 const EMPTY_TODOS: import("../../../lib/api/agentRuntime").TodoItem[] = [];
 
@@ -290,6 +291,10 @@ function RepositoryProjectCard({
   );
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
   const hasProjectRecords = changedFiles.length > 0;
+  const projectColor =
+    (environment.repositories?.length ?? 0) > 1
+      ? getProjectThemeColor(repository.rootId)
+      : "default";
   const openDiff = (filePath: string) => {
     openWorkspaceDiff(sessionId, filePath, repository.rootId, repository.name);
   };
@@ -298,7 +303,14 @@ function RepositoryProjectCard({
     <WorkspaceCard
       className={`ws-project-card ${hasProjectRecords ? "ws-project-card--with-content" : "ws-project-card--status-only"}`}
       storageKey={`${sessionId}:${repository.rootId}:project`}
-      icon={<Folder size={13} />}
+      icon={
+        <span
+          className="ws-project-folder-icon"
+          data-project-color={projectColor}
+        >
+          <Folder size={13} />
+        </span>
+      }
       title={repository.name}
       count={changedFiles.length || undefined}
       toolbar={
@@ -693,7 +705,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                     aria-label={root.name}
                     onClick={() => selectRepository(sessionId, root.rootId)}
                   >
-                    <span className="ws-project-option-top">
+                    <span className="ws-project-option-top" data-project-color={getProjectThemeColor(root.rootId)}>
                       <Folder size={13} />
                       <strong title={root.name}>{root.name}</strong>
                       {root.role === "primary" && (

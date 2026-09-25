@@ -8,6 +8,7 @@ import { toolRegistry as agentToolRegistry } from "../tool-registry.js";
 import { workRuntime } from "../work-runtime.js";
 import { workStore } from "../work-store.js";
 import { inputQueueService } from "../input-queue-service.js";
+import { interactionService } from "../interaction-service.js";
 import { goalContinuationInput } from "../goal-continuation.js";
 import { workCheckpointTool } from "../tools/work-tools.js";
 import { TaskStore } from "../tools/task-tools.js";
@@ -172,6 +173,43 @@ describe("durable cooperative work runtime", () => {
     const next = nextRun(session.id, "继续");
     expect(next.metadata.workId).toBe(original.id);
     expect(workStore.current(session.id)?.noProgressSteps).toBe(2);
+  });
+
+  it.each(["Provide the missing detail", "继续"])('ends a blocked goal without a form and resumes on a new user turn: %s', message => {
+    const { session, run } = setup("Complete the goal");
+    store.updateSessionMetadata(session.id, {
+      mode: 'goal',
+      goal: { objective: 'Complete the goal', status: 'executing' },
+      plan: { status: 'approved', revision: 1, acceptanceCriteria: ['Goal checked'] },
+    });
+    const workId = workStore.current(session.id)!.id;
+    const result = workRuntime.reportBlocker(input(session.id, run.id, {}), 'Missing external input');
+    expect(result.suspend).toBeUndefined();
+    expect(interactionService.pending(session.id)).toBeNull();
+    expect(workStore.current(session.id)).toMatchObject({ status: 'active', reason: 'Missing external input' });
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: 'blocked' });
+
+    const next = nextRun(session.id, message);
+    expect(next.metadata.workId).toBe(workId);
+    expect(workStore.current(session.id)).toMatchObject({ status: 'active', reason: null, result: null });
+    expect(store.getSession(session.id).sessionMetadata).toMatchObject({
+      plan: { status: 'approved', revision: 1 },
+      goal: { status: 'executing' },
+    });
+  });
+
+  it('keeps an approved goal and its work when a user adds an instruction before acceptance', () => {
+    const { session } = setup('Complete the goal');
+    store.updateSessionMetadata(session.id, {
+      mode: 'goal', goal: { objective: 'Complete the goal', status: 'executing' },
+      plan: { status: 'approved', revision: 1, acceptanceCriteria: ['Goal checked'] },
+    });
+    const workId = workStore.current(session.id)!.id;
+    nextRun(session.id, 'Also check the edge case');
+    expect(workStore.current(session.id)?.id).toBe(workId);
+    expect(store.getSession(session.id).sessionMetadata).toMatchObject({
+      plan: { status: 'approved', revision: 1 }, goal: { status: 'executing' },
+    });
   });
 
   it("starts fresh work when continuing after a user-cancelled work item", () => {
