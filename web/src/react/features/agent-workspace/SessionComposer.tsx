@@ -9,6 +9,10 @@ import {
   sessionComposerEditing,
   sessionComposerChangingMode,
   sessionComposerError,
+  sessionComposerMode,
+  sessionComposerPermissionTier,
+  sessionComposerWikiAttachMode,
+  sessionComposerDocumentId,
 } from "./state/sessionComposerDraftStore";
 import { useWikiStore } from "../../state/wikiStore";
 import {
@@ -46,9 +50,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useId,
 } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   EMPTY_INPUT_QUEUE,
   useAgentSessionStore,
@@ -83,6 +86,7 @@ import type {
   QueuedInput,
 } from "../../../lib/api/agentRuntime";
 import { AgentInteractionPanel } from "./AgentInteractionPanel";
+import { SessionModePicker } from "./SessionModePicker";
 import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxDocumentId,
@@ -112,12 +116,10 @@ export function SessionComposer({
   const { t, locale } = useLocale();
   const zh = locale === "zh";
   const navigate = useNavigate();
-  const location = useLocation();
-  const composerInstance = useId();
   const sessionId = session?.id;
   const viewKey = composerDraftScope(
     projectId,
-    sessionId ?? `draft:${location.key}:${composerInstance}`,
+    sessionId ?? `draft:${projectId}`,
   );
   const [content, setContent] = sessionComposerText.useDraft(viewKey, () =>
     session ? "" : loadDraftComposer(projectId),
@@ -146,8 +148,7 @@ export function SessionComposer({
   const editLock = useRef<object | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [error, setError] = sessionComposerError.useDraft(viewKey, () => null);
-  const draftMode = useAgentSessionStore((s) => s.draftMode);
-  const setDraftMode = useAgentSessionStore((s) => s.setDraftMode);
+  const [draftMode, setDraftMode] = sessionComposerMode.useDraft(viewKey, () => "chat");
   const updateSessionMode = useAgentSessionStore((s) => s.updateSessionMode);
   const interactionState = useAgentSessionStore((s) => s.interactionState);
   const sendSessionMessage = useAgentSessionStore((s) => s.sendSessionMessage);
@@ -409,18 +410,17 @@ export function SessionComposer({
     (reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }),
     [setSelection],
   );
-  const draftPermissionTier = useAgentDockStore(
-    (s) => s.composerPermissionTier,
-  );
+  const [draftPermissionTier, setDraftPermissionTier] =
+    sessionComposerPermissionTier.useDraft(viewKey, () => "boundary");
   const permissionTier = session
     ? readSynaxPermissionTier(session.sessionMetadata)
     : draftPermissionTier;
-  const wikiAttachMode = useAgentDockStore((s) => s.composerWikiAttachMode);
-  const setWikiAttachMode = useAgentDockStore(
-    (s) => s.setComposerWikiAttachMode,
+  const [wikiAttachMode, setWikiAttachMode] =
+    sessionComposerWikiAttachMode.useDraft(viewKey, () => "auto");
+  const [documentId, setDocumentId] = sessionComposerDocumentId.useDraft(
+    viewKey,
+    () => null,
   );
-  const documentId = useAgentDockStore((s) => s.composerDocumentId);
-  const setDocumentId = useAgentDockStore((s) => s.setComposerDocumentId);
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const documents = useWikiStore((s) => s.documents);
   const loadProjectSnapshot = useWikiStore((s) => s.loadProjectSnapshot);
@@ -478,26 +478,13 @@ export function SessionComposer({
     if (wikiEnabled) void loadProjectSnapshot(projectId);
   }, [loadProjectSnapshot, projectId, wikiEnabled]);
 
-  useEffect(() => {
-    if (!session) return;
-    const tier = readSynaxPermissionTier(session.sessionMetadata);
-    // Local-only sync — do not call setPermissionTier (it PATCHes session and loops).
-    if (useAgentDockStore.getState().composerPermissionTier === tier) return;
-    useAgentDockStore.setState({ composerPermissionTier: tier });
-  }, [session?.id, session?.sessionMetadata]);
-
   const handlePermissionTierChange = useCallback(
     async (tier: SynaxPermissionTier) => {
       if (sessionId)
         await updateSessionPermissions(sessionId, { permissionTier: tier });
-      if (
-        !sessionId ||
-        useAgentSessionStore.getState().selectedSessionId === sessionId
-      ) {
-        useAgentDockStore.setState({ composerPermissionTier: tier });
-      }
+      if (!sessionId) setDraftPermissionTier(tier);
     },
-    [sessionId, updateSessionPermissions],
+    [sessionId, setDraftPermissionTier, updateSessionPermissions],
   );
 
   useEffect(() => {
@@ -807,6 +794,16 @@ export function SessionComposer({
       }
       modeControl={
         <div className="flex items-center gap-1">
+          <SessionModePicker
+            mode={acp ? "chat" : mode}
+            disabled={!modeEnabled}
+            description={
+              zh
+                ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
+                : "Mode and approval are independent; switching is disabled while busy or pending."
+            }
+            onChange={handleModeChange}
+          />
           {isDraft && (
             <GitWorkspacePicker
               projectId={projectId}

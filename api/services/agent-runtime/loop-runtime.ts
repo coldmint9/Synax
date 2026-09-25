@@ -2,6 +2,7 @@ import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
+  persistedVisualizationAppendix,
 } from "./visualization-integration.js";
 import { isVisualizationIntent } from "./visualization-intent.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
@@ -2114,6 +2115,45 @@ export class AgentLoopRuntime {
     run: AgentRun,
   ): AsyncGenerator<AgentRunStreamChunk> {
     const work = workStore.current(sessionId)!;
+    const session = this.store.getSession(sessionId);
+    const workRunIds = new Set(
+      this.store
+        .listRuns(sessionId)
+        .filter((item) => item.metadata.workId === work.id)
+        .map((item) => item.id),
+    );
+    const acceptedGoal = session.sessionMetadata?.mode === "goal" &&
+      getGoalState(session.sessionMetadata)?.status === "completed" &&
+      work.status === "completed";
+    const visualizationAppendix =
+      acceptedGoal
+        ? persistedVisualizationAppendix(
+            this.store.listMessages(sessionId),
+            workRunIds,
+          )
+        : { content: "", visualizations: [] };
+    const baseSummary = work.result ?? work.reason ?? "Work completed.";
+    const goalPrefix = [
+      "目标已完成",
+      "",
+      `结论：${baseSummary}`,
+      "",
+      "验证结果：",
+      ...(work.evidence.length
+        ? work.evidence.map((item) => `- ${item.criterion}：${item.summary}`)
+        : ["- 服务端验收证据已通过。"]),
+      "",
+      "未完成项：无",
+    ].join("\n");
+    const goalSummary =
+      acceptedGoal
+        ? `${goalPrefix}${visualizationAppendix.content}`
+        : baseSummary;
+    const finalVisualizations = visualizationAppendix.visualizations.map((item) => ({
+      ...item,
+      start: item.start + goalPrefix.length,
+      end: item.end + goalPrefix.length,
+    }));
     let message: AgentRuntimeMessage | undefined;
     getRawSqlite().transaction(() => {
       message = this.store
@@ -2121,19 +2161,35 @@ export class AgentLoopRuntime {
         .find(
           (m) =>
             m.metadata.purpose === "work_result" &&
-            m.content === (work.result ?? work.reason),
+            (acceptedGoal
+              ? m.metadata.goalFinalWorkId === work.id
+              : m.runId === run.id && m.content === baseSummary),
         );
       if (!message)
         message = this.finishAssistantMessage(
           sessionId,
           run.id,
           null,
-          work.result ?? work.reason ?? "Work completed.",
+          goalSummary,
           run.model,
           "work_result",
+          undefined,
+          undefined,
+          {
+            ...(acceptedGoal
+              ? {
+                  goalFinalWorkId: work.id,
+                  goalStatus: "completed",
+                  acceptanceEvidence: work.evidence,
+                  ...(finalVisualizations.length
+                    ? { visualizations: finalVisualizations }
+                    : {}),
+                }
+              : {}),
+          },
         );
     })();
-    if (work.status === "completed" && message)
+    if (work.status === "completed" && message && !visualizationAppendix.visualizations.length)
       persistInlineVisualization(message);
     // Publish the terminal run/session state only after the reply snapshot is durable.
     workRuntime.persistTerminal(work, run.id);
@@ -2228,6 +2284,32 @@ export class AgentLoopRuntime {
     const session = this.store.getSession(sessionId),
       goal = rootGoal(session).goal;
     const completed = goal?.status === "completed";
+    const work = workStore.current(sessionId);
+    if (completed && work?.status === "completed") {
+      yield* this.finishWorkRun(sessionId, run);
+      return;
+    }
+    const fallbackEvidence = completed ? goal?.acceptanceEvidence ?? [] : [];
+    const content = completed
+      ? [
+          "目标已完成", "", `结论：${reason}`, "", "验证结果：",
+          ...fallbackEvidence.map((item) => `- ${item.criterion}：${item.summary}`),
+          "", "未完成项：无",
+        ].join("\n")
+      : reason;
+    let message!: AgentRuntimeMessage;
+    getRawSqlite().transaction(() => {
+      message = this.store.listMessages(sessionId).find(
+        (item) => item.metadata.goalStateRunId === run.id ||
+          (completed && item.metadata.goalFinalRunId === run.id),
+      ) ?? this.finishAssistantMessage(
+        sessionId, run.id, null, content, run.model,
+        completed ? "goal_final_summary" : "goal_state",
+        undefined, undefined, completed
+          ? { goalStatus: "completed", goalFinalRunId: run.id, acceptanceEvidence: fallbackEvidence }
+          : { goalStatus: goal?.status, goalStateRunId: run.id },
+      );
+    })();
     const finished = this.store.updateRun(run.id, {
       status: completed ? "completed" : "blocked",
       completedAt: nowIso(),
@@ -2241,21 +2323,22 @@ export class AgentLoopRuntime {
       activeRunId: null,
       pendingResumeToken: null,
     });
-    const message = this.store.appendMessage({
-      id: makeRuntimeId("msg"),
-      sessionId,
-      runId: run.id,
-      stepId: null,
-      role: "assistant",
-      content: reason,
-      metadata: { goalStatus: goal?.status },
-      createdAt: nowIso(),
-    });
     if (completed) persistInlineVisualization(message);
+    const event = this.events.append({
+      sessionId,
+      type: completed ? "run_completed" : "run_failed",
+      summary: message.content,
+      payload: {
+        runId: run.id,
+        messageId: message.id,
+        goalStatus: goal?.status,
+        workCompleted: completed,
+      },
+    });
     yield { type: "message", message };
     yield completed
-      ? { type: "run_completed", run: finished, message }
-      : { type: "run_failed", run: finished, error: reason };
+      ? { type: "run_completed", run: finished, message, event }
+      : { type: "run_failed", run: finished, error: reason, event };
     yield { type: "done", sessionId, runId: run.id };
   }
 
@@ -3084,6 +3167,7 @@ export class AgentLoopRuntime {
     purpose: string,
     usage?: Record<string, unknown>,
     sources?: LoopStepModelResult["step"]["sources"],
+    metadata?: Record<string, unknown>,
   ): AgentRuntimeMessage {
     return this.store.appendMessage({
       id: makeRuntimeId("msg"),
@@ -3096,6 +3180,7 @@ export class AgentLoopRuntime {
         model,
         purpose,
         usage,
+        ...metadata,
         ...(sources?.length ? { sources } : {}),
       },
       createdAt: nowIso(),

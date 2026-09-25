@@ -16,6 +16,7 @@ import { AgentCommandRail } from "../features/agent-workspace/AgentCommandRail";
 import { SessionWorkspacePanel } from "../features/agent-workspace/SessionWorkspacePanel";
 import { SessionListPanel } from "../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../features/agent-workspace/SessionComposer";
+import { GoalMonitorPanel } from "../features/agent-workspace/GoalMonitorPanel";
 import { SessionPanelCollapseButton } from "../features/agent-workspace/SessionPanelCollapseButton";
 import { useSessionRouteSync } from "../features/agent-workspace/useSessionRouteSync";
 import {
@@ -204,6 +205,10 @@ export default memo(function SessionsPage() {
       ? s.sessions.find((session) => session.id === id)?.status
       : undefined;
   });
+  const goalSession = useAgentSessionStore((s) => {
+    const current = s.sessions.find((session) => session.id === s.selectedSessionId);
+    return current?.sessionMetadata?.mode === "goal" ? current : null;
+  });
   const workspaceState = useSessionWorkspace(agentSessionId);
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId);
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
@@ -376,6 +381,14 @@ export default memo(function SessionsPage() {
           insetRight={commandRailRight}
         />
       ) : null}
+      {showTranscript && goalSession && !workspaceFullscreen && (
+        <div
+          className="goal-monitor-position"
+          style={{ "--goal-monitor-right": wideWorkspace ? `${rightPanel.width + 16}px` : "1rem" } as React.CSSProperties}
+        >
+          <GoalMonitorPanel key={goalSession.id} sessionId={goalSession.id} />
+        </div>
+      )}
     </div>
   );
 });
