@@ -10,7 +10,9 @@ export type SessionLiveEvent =
   | { type: 'thought_delta'; stepId: string; delta: string }
   | { type: 'tool_call'; stepId: string; toolCall: ToolCallRecord }
   | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord }
-  | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number };
+  | { type: 'context_compaction_started' }
+  | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number }
+  | { type: 'context_compaction_failed'; error: string };
 
 const MAX_BUFFERED_EVENTS = 2000;
 

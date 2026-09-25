@@ -13,7 +13,7 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   maxSummaryTokens: 2000,
 };
 
-const COMPACTION_SYSTEM_PROMPT = `You are a conversation compressor. Summarize the following conversation history into a concise summary that preserves:
+export const COMPACTION_SYSTEM_PROMPT = `You are a conversation compressor. Summarize the following conversation history into a concise summary that preserves:
 1. The user's original goal and intent
 2. Key actions taken and their outcomes
 3. Important discoveries, file paths, variable names, and technical details
@@ -135,7 +135,7 @@ export async function compactMessages(
   return { messages: compactedMessages, record, didCompact: true };
 }
 
-function serializeMessagesForSummary(messages: ModelMessage[]): string {
+export function serializeMessagesForSummary(messages: ModelMessage[]): string {
   const lines: string[] = [];
   for (const message of messages) {
     const role = message.role.toUpperCase();

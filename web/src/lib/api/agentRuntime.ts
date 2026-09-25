@@ -768,12 +768,7 @@ export interface HistoryWindowResponse {
 
 export const agentRuntimeApi = {
   compactContext: (sessionId: string) =>
-    request<{
-      compacted: boolean;
-      originalTokens: number;
-      tokens: number;
-      reason: string;
-    }>(`/sessions/${encodeURIComponent(sessionId)}/context/compact`, {
+    request<{ accepted: true; status: "compacting" }>(`/sessions/${encodeURIComponent(sessionId)}/context/compact`, {
       method: "POST",
     }),
   searchSessions: (

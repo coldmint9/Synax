@@ -272,6 +272,29 @@ export function buildInterleavedTurns(
       }
     }
 
+    const compaction = step.metadata?.contextCompaction as
+      | {
+          compacted?: boolean;
+          originalTokens?: number;
+          projectedTokens?: number;
+        }
+      | undefined;
+    if (
+      compaction?.compacted &&
+      typeof compaction.originalTokens === "number" &&
+      typeof compaction.projectedTokens === "number"
+    ) {
+      items.push({
+        timestamp: new Date(step.completedAt ?? step.startedAt).getTime(),
+        block: {
+          type: "context_compacted",
+          originalTokens: compaction.originalTokens,
+          compressedTokens: compaction.projectedTokens,
+          messageCount: 0,
+        },
+      });
+    }
+
     items.sort((a, b) => a.timestamp - b.timestamp);
     const merged = mergeConsecutiveBlocks(items.map((i) => i.block));
     const blocks = groupParallelToolCalls(merged);

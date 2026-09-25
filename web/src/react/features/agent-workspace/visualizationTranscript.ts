@@ -46,10 +46,11 @@ export function visualizationReplyParts(
     for (const value of message.metadata.visualizations) {
       if (!value || typeof value !== "object" || Array.isArray(value)) return fallback();
       const item = value as Record<string, unknown>;
+      const html = typeof item.html === "string" ? item.html : undefined;
       if (typeof item.id !== "string" || !item.id ||
-          (typeof item.html !== "string" && typeof item.error !== "string") ||
-          (typeof item.html === "string" && !item.html.trim()) ||
-          new TextEncoder().encode(item.html).length > 1_000_000 ||
+          (!html && typeof item.error !== "string") ||
+          (html !== undefined && !html.trim()) ||
+          new TextEncoder().encode(html).length > 1_000_000 ||
           !Number.isInteger(item.start) || !Number.isInteger(item.end)) return fallback();
       const start = item.start as number, end = item.end as number;
       if (start < cursor || end <= start || end > message.content.length ||
@@ -57,7 +58,7 @@ export function visualizationReplyParts(
       result.push(...text(hideVisualizationSource(message.content.slice(cursor, start))));
       result.push({ type: "visualization", messageId: message.id, reference: {
         id: item.id,
-        html: item.html,
+        html,
         ...(typeof item.title === "string" ? { title: item.title.slice(0, 250) } : {}),
         ...(item.mode === "wide" ? { mode: "wide" as const } : {}),
       } });

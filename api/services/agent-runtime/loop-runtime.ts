@@ -51,6 +51,7 @@ import {
   projectWorkContext,
   evictedContextToolIds,
 } from "./context-projection.js";
+import { maybeLlmCompactContext } from "./llm-context-compaction.js";
 import { getRawSqlite } from "../../db/index.js";
 import { INVALID_TOOL_ID } from "./tool-invalid.js";
 import { interactionService } from "./interaction-service.js";
@@ -695,13 +696,23 @@ export class AgentLoopRuntime {
             typeof selection.modelDef.contextLimit === "number" &&
             selection.modelDef.contextLimit > 0
           ) {
-            runContextLimit = selection.modelDef.contextLimit;
-            // Persist the provider-configured window on the run: the usage bar
-            // (`GET /sessions/:id/stats`) must render the configured context size
-            // (e.g. the 1M toggle in provider settings) instead of whatever
-            // window the provider happens to report in its usage payload.
+            runContextLimit = Math.min(
+              selection.modelDef.contextLimit,
+              selection.modelDef.inputLimit ?? selection.modelDef.contextLimit,
+            );
+            // The provider may expose a smaller input budget than its total
+            // context window. Runtime admission must use the smaller limit.
             run = this.store.updateRun(run.id, {
-              metadata: { ...run.metadata, contextLimit: runContextLimit },
+              metadata: {
+                ...run.metadata,
+                contextLimit: runContextLimit,
+                ...(selection.modelDef.inputLimit
+                  ? { inputLimit: selection.modelDef.inputLimit }
+                  : {}),
+                ...(selection.modelDef.contextLimit !== runContextLimit
+                  ? { contextWindowLimit: selection.modelDef.contextLimit }
+                  : {}),
+              },
             });
           }
           runReasoningEffort =
@@ -2122,16 +2133,16 @@ export class AgentLoopRuntime {
         .filter((item) => item.metadata.workId === work.id)
         .map((item) => item.id),
     );
-    const acceptedGoal = session.sessionMetadata?.mode === "goal" &&
+    const acceptedGoal =
+      session.sessionMetadata?.mode === "goal" &&
       getGoalState(session.sessionMetadata)?.status === "completed" &&
       work.status === "completed";
-    const visualizationAppendix =
-      acceptedGoal
-        ? persistedVisualizationAppendix(
-            this.store.listMessages(sessionId),
-            workRunIds,
-          )
-        : { content: "", visualizations: [] };
+    const visualizationAppendix = acceptedGoal
+      ? persistedVisualizationAppendix(
+          this.store.listMessages(sessionId),
+          workRunIds,
+        )
+      : { content: "", visualizations: [] };
     const baseSummary = work.result ?? work.reason ?? "Work completed.";
     const goalPrefix = [
       "目标已完成",
@@ -2145,15 +2156,16 @@ export class AgentLoopRuntime {
       "",
       "未完成项：无",
     ].join("\n");
-    const goalSummary =
-      acceptedGoal
-        ? `${goalPrefix}${visualizationAppendix.content}`
-        : baseSummary;
-    const finalVisualizations = visualizationAppendix.visualizations.map((item) => ({
-      ...item,
-      start: item.start + goalPrefix.length,
-      end: item.end + goalPrefix.length,
-    }));
+    const goalSummary = acceptedGoal
+      ? `${goalPrefix}${visualizationAppendix.content}`
+      : baseSummary;
+    const finalVisualizations = visualizationAppendix.visualizations.map(
+      (item) => ({
+        ...item,
+        start: item.start + goalPrefix.length,
+        end: item.end + goalPrefix.length,
+      }),
+    );
     let message: AgentRuntimeMessage | undefined;
     getRawSqlite().transaction(() => {
       message = this.store
@@ -2189,7 +2201,11 @@ export class AgentLoopRuntime {
           },
         );
     })();
-    if (work.status === "completed" && message && !visualizationAppendix.visualizations.length)
+    if (
+      work.status === "completed" &&
+      message &&
+      !visualizationAppendix.visualizations.length
+    )
       persistInlineVisualization(message);
     // Publish the terminal run/session state only after the reply snapshot is durable.
     workRuntime.persistTerminal(work, run.id);
@@ -2289,26 +2305,48 @@ export class AgentLoopRuntime {
       yield* this.finishWorkRun(sessionId, run);
       return;
     }
-    const fallbackEvidence = completed ? goal?.acceptanceEvidence ?? [] : [];
+    const fallbackEvidence = completed ? (goal?.acceptanceEvidence ?? []) : [];
     const content = completed
       ? [
-          "目标已完成", "", `结论：${reason}`, "", "验证结果：",
-          ...fallbackEvidence.map((item) => `- ${item.criterion}：${item.summary}`),
-          "", "未完成项：无",
+          "目标已完成",
+          "",
+          `结论：${reason}`,
+          "",
+          "验证结果：",
+          ...fallbackEvidence.map(
+            (item) => `- ${item.criterion}：${item.summary}`,
+          ),
+          "",
+          "未完成项：无",
         ].join("\n")
       : reason;
     let message!: AgentRuntimeMessage;
     getRawSqlite().transaction(() => {
-      message = this.store.listMessages(sessionId).find(
-        (item) => item.metadata.goalStateRunId === run.id ||
-          (completed && item.metadata.goalFinalRunId === run.id),
-      ) ?? this.finishAssistantMessage(
-        sessionId, run.id, null, content, run.model,
-        completed ? "goal_final_summary" : "goal_state",
-        undefined, undefined, completed
-          ? { goalStatus: "completed", goalFinalRunId: run.id, acceptanceEvidence: fallbackEvidence }
-          : { goalStatus: goal?.status, goalStateRunId: run.id },
-      );
+      message =
+        this.store
+          .listMessages(sessionId)
+          .find(
+            (item) =>
+              item.metadata.goalStateRunId === run.id ||
+              (completed && item.metadata.goalFinalRunId === run.id),
+          ) ??
+        this.finishAssistantMessage(
+          sessionId,
+          run.id,
+          null,
+          content,
+          run.model,
+          completed ? "goal_final_summary" : "goal_state",
+          undefined,
+          undefined,
+          completed
+            ? {
+                goalStatus: "completed",
+                goalFinalRunId: run.id,
+                acceptanceEvidence: fallbackEvidence,
+              }
+            : { goalStatus: goal?.status, goalStateRunId: run.id },
+        );
     })();
     const finished = this.store.updateRun(run.id, {
       status: completed ? "completed" : "blocked",
@@ -2641,7 +2679,8 @@ export class AgentLoopRuntime {
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
       // MR repository files are evidence, never authority over the pinned Git contract.
-      if (session.profileId !== 'git-manager') projectRulesSection = loadProjectRulesSection(workDir);
+      if (session.profileId !== "git-manager")
+        projectRulesSection = loadProjectRulesSection(workDir);
     } catch {
       projectRulesSection = null;
     }
@@ -2817,8 +2856,10 @@ export class AgentLoopRuntime {
         })
       ).blocks,
     });
-    const projection = projectWorkContext({
+    const { projection } = await maybeLlmCompactContext({
       sessionId: input.sessionId,
+      projectId: session.projectId,
+      runId: input.stepId ? this.store.getRunStep(input.stepId).runId : null,
       toolSet,
       contextLimit,
       currentStepId: input.stepId,
@@ -2843,6 +2884,10 @@ export class AgentLoopRuntime {
         ) +
         toolComposition.total,
       model: input.input.model ?? undefined,
+      onCompactionStart: () =>
+        emitSessionLive(input.sessionId, {
+          type: "context_compaction_started",
+        }),
     });
     conversationMessages = projection.messages;
     projection.systemMessageContents.add(reminder.content);

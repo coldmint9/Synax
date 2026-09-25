@@ -108,6 +108,11 @@ async function readLatestHistoryWindow(
 
 const READ_MARKERS_KEY = "synax-session-read-markers";
 
+type ContextCompactionNotice =
+  | { status: "running" }
+  | { status: "completed"; originalTokens: number; compressedTokens: number; messageCount: number }
+  | { status: "failed"; error: string };
+
 export type SessionInputBody = {
   contentParts?: RuntimeContentPart[];
   references?: TurnReference[];
@@ -690,6 +695,7 @@ export interface AgentSessionStoreState {
     runId?: string;
     blocks: TurnContentBlock[];
   }>;
+  contextCompactionNotice: ContextCompactionNotice | null;
 
   inputQueues: Record<string, QueuedInput[]>;
 
@@ -783,6 +789,7 @@ type SessionDetailState = Pick<
   | "streamingStepId"
   | "streamingLive"
   | "streamingCompletedSteps"
+  | "contextCompactionNotice"
 >;
 
 function emptySessionDetailState(): SessionDetailState {
@@ -804,6 +811,7 @@ function emptySessionDetailState(): SessionDetailState {
     streamingStepId: null,
     streamingLive: EMPTY_STREAMING_BUFFERS,
     streamingCompletedSteps: [],
+    contextCompactionNotice: null,
   };
 }
 
@@ -864,6 +872,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     streamingStepId: null,
     streamingLive: EMPTY_STREAMING_BUFFERS,
     streamingCompletedSteps: [],
+    contextCompactionNotice: null,
     inputQueues: {},
 
     setDraftMode: (draftMode) => set({ draftMode }),
@@ -1168,6 +1177,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamingStepId: null,
         streamingLive: EMPTY_STREAMING_BUFFERS,
         streamingCompletedSteps: [],
+        contextCompactionNotice: null,
       });
     },
 
@@ -1365,6 +1375,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           streamingStepId: null,
           streamingLive: EMPTY_STREAMING_BUFFERS,
           streamingCompletedSteps: [],
+          contextCompactionNotice: null,
         } : {}),
         ...(cached
           ? {
@@ -2317,6 +2328,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             streamingLive: applyToolResult(s.streamingLive, event.toolCall),
             toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
+          break;
+        case "context_compaction_started":
+          if (!streamVisible) break;
+          set({ contextCompactionNotice: { status: "running" } });
+          break;
+        case "context_compacted":
+          if (!streamVisible) break;
+          set({
+            contextCompactionNotice: {
+              status: "completed",
+              originalTokens: event.originalTokens,
+              compressedTokens: event.compressedTokens,
+              messageCount: event.messageCount,
+            },
+          });
+          scheduleLiveRefreshDetail();
+          break;
+        case "context_compaction_failed":
+          if (!streamVisible) break;
+          set({ contextCompactionNotice: { status: "failed", error: event.error } });
           break;
       }
     },

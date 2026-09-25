@@ -120,13 +120,9 @@ export function ComposerContextPicker({
       const result = await agentRuntimeApi.compactContext(sessionId);
       if (request !== compactRequest.current) return;
       setCompactMessage(
-        result.compacted
-          ? zh
-            ? "上下文已压缩，原始会话记录仍保留"
-            : "Context compacted. Original conversation history is preserved."
-          : zh
-            ? "暂无可安全压缩的历史上下文"
-            : "No history can be safely compacted yet.",
+        zh
+          ? "上下文压缩已开始，完成后会在对话区提示"
+          : "Context compaction started. Completion will appear in the conversation.",
       );
     } catch (err) {
       if (request === compactRequest.current)

@@ -40,6 +40,7 @@ function useSessionTranscriptStatic() {
         streamingStepId: s.streamingStepId,
         streamingLive: s.streamingLive,
         streamingCompletedSteps: s.streamingCompletedSteps,
+        contextCompactionNotice: s.contextCompactionNotice,
       };
     }),
   );
@@ -68,6 +69,7 @@ export function SessionTranscript({
     streamingStepId,
     streamingLive,
     streamingCompletedSteps,
+    contextCompactionNotice,
   } = useSessionTranscriptStatic();
   const pending = usePendingSubmissionStore((state) =>
     sessionId ? state.items[sessionId] : undefined,
@@ -274,6 +276,7 @@ export function SessionTranscript({
                 unifiedLive={active}
                 submitting={Boolean(pending)}
                 scrollRootRef={scrollRef}
+                compactionNotice={contextCompactionNotice ?? undefined}
                 liveTurn={showThinking ? <ThinkingIndicator /> : undefined}
               />
             )}

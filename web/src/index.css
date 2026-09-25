@@ -1476,6 +1476,38 @@
   .wh-tabs .tabs__separator {
     display: none !important;
   }
+  .wh-goal-menu {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 999px;
+    color: hsl(var(--muted-foreground));
+    background: transparent;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .wh-goal-menu:hover,
+  .wh-goal-menu[data-pressed="true"] {
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+  }
+  .wh-goal-menu--icon {
+    padding: 0 7px;
+  }
+  .goal-monitor-menu {
+    padding: 0;
+  }
+  .dropdown__popover:has(.goal-monitor-menu) {
+    min-width: 0;
+    max-width: none;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+  }
 
   /* ── Wiki view mode tabs (文档/规划) ── */
   .wiki-view-tabs {
@@ -6877,4 +6909,136 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Neumorphic surfaces: keep cards and their controls on one tactile visual system. */
+.wh-pill,
+.session-list-card,
+.ws-card {
+  border-color: hsl(var(--border-hsl) / 0.28);
+  background: hsl(var(--background-hsl) / 0.94);
+  box-shadow:
+    8px 8px 18px hsl(var(--foreground-hsl) / 0.12),
+    -8px -8px 18px hsl(var(--background-hsl) / 0.9),
+    inset 1px 1px 0 hsl(var(--background-hsl) / 0.72),
+    inset -1px -1px 0 hsl(var(--foreground-hsl) / 0.04);
+}
+
+.dark .wh-pill,
+.dark .session-list-card,
+.dark .ws-card {
+  border-color: hsl(0 0% 100% / 0.08);
+  background: hsl(var(--background-hsl) / 0.94);
+  box-shadow:
+    8px 8px 18px hsl(0 0% 0% / 0.38),
+    -8px -8px 18px hsl(var(--foreground-hsl) / 0.06),
+    inset 1px 1px 0 hsl(0 0% 100% / 0.04),
+    inset -1px -1px 0 hsl(0 0% 0% / 0.14);
+}
+
+.wh-btn,
+.wh-pill-btn,
+.wh-goal-menu,
+.ws-card-collapse,
+.ws-view-toggle button,
+.session-list-display-mode-button {
+  background: hsl(var(--background-hsl) / 0.72);
+  box-shadow:
+    3px 3px 7px hsl(var(--foreground-hsl) / 0.12),
+    -3px -3px 7px hsl(var(--background-hsl) / 0.88);
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.wh-btn:hover,
+.wh-pill-btn:hover:not(:disabled),
+.wh-goal-menu:hover,
+.ws-card-collapse:hover,
+.ws-view-toggle button:hover,
+.session-list-display-mode-button:hover {
+  background: hsl(var(--background-hsl) / 0.86);
+  box-shadow:
+    inset 2px 2px 5px hsl(var(--foreground-hsl) / 0.12),
+    inset -2px -2px 5px hsl(var(--background-hsl) / 0.88);
+}
+
+.wh-btn:active,
+.wh-pill-btn:active:not(:disabled),
+.wh-goal-menu:active,
+.ws-card-collapse:active,
+.ws-view-toggle button:active,
+.session-list-display-mode-button:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 3px 3px 6px hsl(var(--foreground-hsl) / 0.14),
+    inset -3px -3px 6px hsl(var(--background-hsl) / 0.9);
+}
+
+.dark .wh-btn,
+.dark .wh-pill-btn,
+.dark .wh-goal-menu,
+.dark .ws-card-collapse,
+.dark .ws-view-toggle button,
+.dark .session-list-display-mode-button {
+  background: hsl(var(--background-hsl) / 0.72);
+  box-shadow:
+    3px 3px 7px hsl(0 0% 0% / 0.35),
+    -3px -3px 7px hsl(var(--foreground-hsl) / 0.06);
+}
+
+.dark .wh-btn:hover,
+.dark .wh-pill-btn:hover:not(:disabled),
+.dark .wh-goal-menu:hover,
+.dark .ws-card-collapse:hover,
+.dark .ws-view-toggle button:hover,
+.dark .session-list-display-mode-button:hover {
+  background: hsl(var(--background-hsl) / 0.86);
+  box-shadow:
+    inset 2px 2px 5px hsl(0 0% 0% / 0.28),
+    inset -2px -2px 5px hsl(var(--foreground-hsl) / 0.06);
+}
+
+.wh-btn.active,
+.wh-pill-btn--primary,
+.wh-pill-btn--soft,
+.dropdown__trigger[aria-expanded="true"] .wh-goal-menu,
+.wh-tabs .tabs__tab[aria-selected="true"] {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  box-shadow:
+    inset 2px 2px 5px hsl(var(--primary) / 0.12),
+    inset -2px -2px 5px hsl(var(--background-hsl) / 0.84);
+}
+
+.work-page .session-list-header .button,
+.work-page .session-workspace-sidebar--dock .ws-icon-button,
+.work-page .session-workspace-sidebar--dock .ws-card-toggle,
+.work-page .session-workspace-sidebar--dock .ws-card-collapse {
+  background: hsl(var(--background-hsl) / 0.72);
+  box-shadow:
+    3px 3px 7px hsl(var(--foreground-hsl) / 0.12),
+    -3px -3px 7px hsl(var(--background-hsl) / 0.88);
+}
+
+.work-page .session-list-header .button:hover,
+.work-page .session-workspace-sidebar--dock .ws-icon-button:hover,
+.work-page .session-workspace-sidebar--dock .ws-card-toggle:hover,
+.work-page .session-workspace-sidebar--dock .ws-card-collapse:hover {
+  background: hsl(var(--background-hsl) / 0.86);
+  box-shadow:
+    inset 2px 2px 5px hsl(var(--foreground-hsl) / 0.12),
+    inset -2px -2px 5px hsl(var(--background-hsl) / 0.88);
+}
+
+.dark .work-page .session-list-header .button,
+.dark .work-page .session-workspace-sidebar--dock .ws-icon-button,
+.dark .work-page .session-workspace-sidebar--dock .ws-card-toggle,
+.dark .work-page .session-workspace-sidebar--dock .ws-card-collapse {
+  background: hsl(var(--background-hsl) / 0.72);
+  box-shadow:
+    3px 3px 7px hsl(0 0% 0% / 0.35),
+    -3px -3px 7px hsl(var(--foreground-hsl) / 0.06);
 }

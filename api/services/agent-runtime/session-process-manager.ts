@@ -24,6 +24,10 @@ import { logger } from "../../lib/logger.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { agentRuntimeStore } from "./session-store.js";
+import {
+  assertSessionCanCompact,
+  type ContextCompactionResult,
+} from "./manual-context-compaction.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { runtimeBus } from "./runtime-bus.js";
 import {
@@ -34,6 +38,7 @@ import {
 const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
 const CHILD_READY_TIMEOUT_MS = AGENT_SESSION_CHILD_READY_TIMEOUT_MS;
+const CONTEXT_COMPACTION_TIMEOUT_MS = 5 * 60_000;
 
 type StreamQueueItem =
   | { kind: "chunk"; chunk: AgentRunStreamChunk }
@@ -77,10 +82,18 @@ interface ActiveStream {
   queue: StreamQueue;
 }
 
+interface ContextCompactionRequest {
+  requestId: string;
+  resolve: (result: ContextCompactionResult) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface SessionChildState {
   sessionId: string;
   child: ChildProcess;
   streams: Map<string, ActiveStream>;
+  compactions: Map<string, ContextCompactionRequest>;
 }
 
 function resolveAgentSessionRunnerPath(): string {
@@ -102,6 +115,7 @@ class SessionProcessManager {
   /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
   private readonly releasingChildren = new Set<string>();
   private readonly terminatingChildren = new Map<ChildProcess, string>();
+  private readonly pendingCompactions = new Set<string>();
 
   isSessionStreaming(sessionId: string): boolean {
     return this.activeMainStreams.has(sessionId);
@@ -198,9 +212,99 @@ class SessionProcessManager {
       if (
         state &&
         state.streams.size === 0 &&
+        state.compactions.size === 0 &&
         !hasBackgroundProcesses(sessionId, true)
       ) {
         this.releaseChild(sessionId, "Agent session stream finished.");
+      }
+    }
+  }
+
+  beginContextCompaction(sessionId: string): {
+    accepted: true;
+    status: "compacting";
+  } {
+    if (this.activeMainStreams.has(sessionId)) {
+      throw new AgentRuntimeError(
+        "Wait for the current run to finish before compacting context.",
+        "SESSION_BUSY",
+        409,
+      );
+    }
+    assertSessionCanCompact(sessionId);
+    if (this.pendingCompactions.has(sessionId)) {
+      throw new AgentRuntimeError(
+        "Context compaction is already running.",
+        "COMPACTION_BUSY",
+        409,
+      );
+    }
+    this.assertCanSpawnChild(sessionId);
+    this.pendingCompactions.add(sessionId);
+    logger.info({ sessionId }, "[context-compaction] started");
+    sessionLiveBus.emit(sessionId, { type: "context_compaction_started" });
+    void this.runContextCompaction(sessionId);
+    return { accepted: true, status: "compacting" };
+  }
+
+  private async runContextCompaction(sessionId: string): Promise<void> {
+    let request: ContextCompactionRequest | undefined;
+    try {
+      const state = await this.ensureChild(sessionId);
+      const requestId = randomUUID();
+      const result = await new Promise<ContextCompactionResult>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(
+              new AgentRuntimeError(
+                "Context compaction timed out.",
+                "COMPACTION_TIMEOUT",
+                504,
+              ),
+            ),
+          CONTEXT_COMPACTION_TIMEOUT_MS,
+        );
+        request = { requestId, resolve, reject, timer };
+        state.compactions.set(requestId, request);
+        state.child.send?.(
+          { type: "context:compact", requestId },
+          (error) => {
+            if (error) reject(error);
+          },
+        );
+      });
+      logger.info(
+        { sessionId, originalTokens: result.originalTokens, compressedTokens: result.tokens },
+        "[context-compaction] completed",
+      );
+      sessionLiveBus.emit(sessionId, {
+        type: "context_compacted",
+        stepId: "",
+        originalTokens: result.originalTokens,
+        compressedTokens: result.tokens,
+        messageCount: result.messageCount,
+      });
+    } catch (error) {
+      logger.error({ err: error, sessionId }, "[context-compaction] failed");
+      sessionLiveBus.emit(sessionId, {
+        type: "context_compaction_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (request) {
+        clearTimeout(request.timer);
+        const state = this.children.get(sessionId);
+        state?.compactions.delete(request.requestId);
+      }
+      this.pendingCompactions.delete(sessionId);
+      const state = this.children.get(sessionId);
+      if (
+        state &&
+        state.streams.size === 0 &&
+        state.compactions.size === 0 &&
+        !hasBackgroundProcesses(sessionId, true)
+      ) {
+        this.releaseChild(sessionId, "Context compaction finished.");
       }
     }
   }
@@ -420,6 +524,7 @@ class SessionProcessManager {
       sessionId,
       child,
       streams: new Map(),
+      compactions: new Map(),
     };
     this.children.set(sessionId, state);
 
@@ -462,6 +567,18 @@ class SessionProcessManager {
       }
       const current = this.children.get(sessionId);
       if (current?.child === child) {
+        for (const compaction of current.compactions.values()) {
+          clearTimeout(compaction.timer);
+          compaction.reject(
+            new AgentRuntimeError(
+              "Agent session child process exited.",
+              "CHILD_EXITED",
+              500,
+            ),
+          );
+        }
+        current.compactions.clear();
+        this.pendingCompactions.delete(sessionId);
         for (const stream of current.streams.values()) {
           stream.queue.push({
             kind: "error",
@@ -555,6 +672,7 @@ class SessionProcessManager {
       if (
         message.event.type === "session_process_changed" &&
         owner?.streams.size === 0 &&
+        owner.compactions.size === 0 &&
         !hasBackgroundProcesses(sessionId, true)
       ) {
         this.releaseChild(sessionId, "All background services have exited.");
@@ -566,6 +684,16 @@ class SessionProcessManager {
 
     const state = this.children.get(sessionId);
     if (!state) return;
+
+    if (message.type === "context:compact:done" || message.type === "context:compact:error") {
+      const request = state.compactions.get(message.requestId);
+      if (!request) return;
+      clearTimeout(request.timer);
+      state.compactions.delete(message.requestId);
+      if (message.type === "context:compact:done") request.resolve(message.result);
+      else request.reject(new AgentRuntimeError(message.error, "COMPACTION_FAILED", 500));
+      return;
+    }
 
     if (message.type === "stream:chunk") {
       maybeScheduleSessionTitleFromStreamChunk(sessionId, message.chunk);

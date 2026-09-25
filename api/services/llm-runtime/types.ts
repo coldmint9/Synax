@@ -27,6 +27,7 @@ export interface ModelsDevModel {
   tool_call?: boolean;
   limit?: {
     context?: number;
+    input?: number;
     output?: number;
   };
 }
@@ -49,6 +50,7 @@ export interface RuntimeModel {
   isDefault?: boolean;
   maxTokens?: number;
   contextLimit?: number;
+  inputLimit?: number;
   toolCall?: boolean;
   reasoning?: boolean;
 }

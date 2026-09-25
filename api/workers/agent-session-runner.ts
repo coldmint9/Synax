@@ -13,6 +13,7 @@ import { agentLoopRuntime } from "../services/agent-runtime/loop-runtime.js";
 import { agentRuntimeStore } from "../services/agent-runtime/session-store.js";
 import { bootstrapAgentChildForSession } from "../services/agent-runtime/agent-child-bootstrap.js";
 import { setSessionWorkspaceRoot } from "../services/agent-runtime/tools/workspace.js";
+import { compactSessionContextWithLlm } from "../services/agent-runtime/manual-context-compaction.js";
 
 const activeStreams = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
@@ -30,6 +31,25 @@ function pickGenerator(
       return agentLoopRuntime.streamContinue(sessionId, input, abortSignal);
     case "resume":
       return agentLoopRuntime.streamRun(sessionId, input, abortSignal, true);
+  }
+}
+
+async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
+  try {
+    const result = await compactSessionContextWithLlm(sessionId);
+    sendAgentSessionToParent({
+      type: "context:compact:done",
+      sessionId,
+      requestId,
+      result,
+    });
+  } catch (error) {
+    sendAgentSessionToParent({
+      type: "context:compact:error",
+      sessionId,
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -133,6 +153,12 @@ function main(): void {
       return;
     }
     if (!initialized) return;
+    if (message.type === "context:compact") {
+      const task = runContextCompaction(init.sessionId, message.requestId);
+      runningTasks.add(task);
+      void task.finally(() => runningTasks.delete(task));
+      return;
+    }
     if (message.type === "stream:start") {
       const task = runStream(
         init.sessionId,

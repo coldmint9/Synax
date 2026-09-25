@@ -523,7 +523,7 @@ describe("immutable runtime reminders", () => {
       ),
     ).toEqual(first);
   });
-  it("replays old reminders before their assistant response and excludes the in-flight reminder", () => {
+  it("keeps historical reminders out of the projected request", () => {
     const sessionId = fixture();
     for (let n = 1; n <= 6; n++) {
       const step = store.getRunStep(`step-${n}`);
@@ -562,7 +562,7 @@ describe("immutable runtime reminders", () => {
     });
     expect(compacted.compacted).toBe(true);
     expect(JSON.stringify(compacted.messages)).not.toContain("runtime-state-1");
-    expect(JSON.stringify(compacted.messages)).toContain("runtime-state-6");
+    expect(JSON.stringify(compacted.messages)).not.toContain("runtime-state-6");
   });
   it("replays equal-timestamp queued inputs at their captured consumption boundary", () => {
     const sessionId = fixture();

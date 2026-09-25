@@ -1,9 +1,9 @@
-import type { AgentSession } from './contracts.js';
-import { profileService } from './profile-service.js';
-import { resolveGatewaySelection } from '../llm-runtime/gateway.js';
-import { resolveSessionEngineModel } from './acp-engine/acp-engine-routing.js';
-import { isAcpModel } from './acp-engine/acp-model.js';
-import { logger } from '../../lib/logger.js';
+import type { AgentSession } from "./contracts.js";
+import { profileService } from "./profile-service.js";
+import { resolveGatewaySelection } from "../llm-runtime/gateway.js";
+import { resolveSessionEngineModel } from "./acp-engine/acp-engine-routing.js";
+import { isAcpModel } from "./acp-engine/acp-model.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * Provider-configured context window for a session's effective model.
@@ -16,7 +16,10 @@ import { logger } from '../../lib/logger.js';
  */
 
 const CACHE_TTL_MS = 15_000;
-const cache = new Map<string, { key: string; at: number; value: number | null }>();
+const cache = new Map<
+  string,
+  { key: string; at: number; value: number | null }
+>();
 
 export function resetSessionContextLimitCacheForTests(): void {
   cache.clear();
@@ -25,13 +28,15 @@ export function resetSessionContextLimitCacheForTests(): void {
 export async function resolveSessionConfiguredContextLimit(
   session: AgentSession,
 ): Promise<number | null> {
-  const backend = session.sessionMetadata?.backend as { id?: string } | undefined;
-  if (backend?.id && backend.id !== 'native') return null;
+  const backend = session.sessionMetadata?.backend as
+    | { id?: string }
+    | undefined;
+  if (backend?.id && backend.id !== "native") return null;
   const engineModel = resolveSessionEngineModel(session.id, {});
   if (isAcpModel(engineModel)) return null;
 
   const profile = profileService.tryGet(session.profileId);
-  const key = [session.projectId, engineModel ?? '', profile.kind].join('|');
+  const key = [session.projectId, engineModel ?? "", profile.kind].join("|");
   const cached = cache.get(session.id);
   if (cached && cached.key === key && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.value;
@@ -44,12 +49,22 @@ export async function resolveSessionConfiguredContextLimit(
       purpose: profile.kind,
       model: engineModel ?? undefined,
     });
-    const limit = selection.modelDef.contextLimit;
-    value = typeof limit === 'number' && limit > 0 ? limit : null;
+    const contextLimit = selection.modelDef.contextLimit;
+    const inputLimit = selection.modelDef.inputLimit ?? contextLimit;
+    value =
+      typeof contextLimit === "number" &&
+      contextLimit > 0 &&
+      typeof inputLimit === "number" &&
+      inputLimit > 0
+        ? Math.min(contextLimit, inputLimit)
+        : null;
   } catch (err) {
     logger.debug(
-      { sessionId: session.id, err: err instanceof Error ? err.message : String(err) },
-      '[session-context-limit] provider window unavailable',
+      {
+        sessionId: session.id,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "[session-context-limit] provider window unavailable",
     );
     value = null;
   }

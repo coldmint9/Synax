@@ -17,11 +17,17 @@ export function isImageGenerationModel(id: string): boolean {
 export function openAIModelContract(
   id: string,
 ): Partial<RuntimeModel> | undefined {
-  if (id === "gpt-5.6-sol" || id === "gpt-5.6") {
+  if (
+    id === "gpt-6-sol" ||
+    id === "gpt-5.6-sol" ||
+    id === "gpt-6" ||
+    id === "gpt-5.6"
+  ) {
     return {
       inputModalities: ["text", "image", "file"],
       outputModalities: ["text"],
       contextLimit: 1_050_000,
+      inputLimit: 922_000,
       maxTokens: 128_000,
       reasoning: true,
       toolCall: true,

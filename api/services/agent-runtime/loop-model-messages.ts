@@ -1,5 +1,8 @@
 import { resolveContextInputOwners } from "./context-input-boundaries.js";
-import { readRuntimeReminder, runtimeReminderMessage } from "./runtime-request-snapshot.js";
+import {
+  readRuntimeReminder,
+  runtimeReminderMessage,
+} from "./runtime-request-snapshot.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { modelContentParts } from "./media-assets.js";
 import type { ModelMessage, ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -14,8 +17,8 @@ import type { LoopToolSet } from "./loop-ai-tools.js";
 import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
 
-const MAX_TOOL_OUTPUT_TEXT = 12_000;
-const MAX_TOOL_OUTPUT_JSON = 12_000;
+const MAX_TOOL_OUTPUT_TEXT = 4_000;
+const MAX_TOOL_OUTPUT_JSON = 4_000;
 const MAX_TOOL_INPUT_JSON = 4_000;
 
 /**
@@ -114,6 +117,10 @@ export interface BuildMessagesOptions {
   snapshot?: LoopHistoryReader;
   /** Accounting only; never added to provider messages or cache fingerprints. */
   systemMessageContents?: Set<string>;
+  /** Runtime reminders are persisted for replay, but old copies need not be sent again. */
+  includeHistoricalRuntimeReminders?: boolean;
+  /** Hard cap for retained historical tool-result text in this request. */
+  toolOutputBudgetTokens?: number;
 }
 
 function systemMessage(content: string, contents?: Set<string>): ModelMessage {
@@ -145,6 +152,10 @@ export function buildLoopModelMessages(
   );
 
   const clearSet = buildClearSet(history, options.clearing);
+  const retainedToolOutputIds = retainRecentToolOutputs(
+    history.listToolCalls(),
+    options.toolOutputBudgetTokens,
+  );
 
   const messages: ModelMessage[] = [];
 
@@ -240,11 +251,35 @@ export function buildLoopModelMessages(
         options.currentStepId,
         options.summarizedInputIds,
         options.systemMessageContents,
+        options.includeHistoricalRuntimeReminders,
+        retainedToolOutputIds,
       ),
     );
   }
 
   return messages;
+}
+
+function retainRecentToolOutputs(
+  calls: readonly ToolCallRecord[],
+  budgetTokens?: number,
+): Set<string> | undefined {
+  if (budgetTokens === undefined) return undefined;
+  const budgetChars = Math.max(4_000, Math.floor(budgetTokens * 4));
+  let remaining = budgetChars;
+  const retained = new Set<string>();
+  for (const call of [...calls].reverse()) {
+    if (call.status !== "completed" && call.status !== "compacted") continue;
+    const size = Math.min(
+      MAX_TOOL_OUTPUT_TEXT,
+      JSON.stringify(call.outputRef ?? call.outputSummary ?? "").length,
+    );
+    if (size > remaining && retained.size > 0) continue;
+    retained.add(call.id);
+    remaining -= size;
+    if (remaining <= 0) break;
+  }
+  return retained;
 }
 
 function buildRunMessages(
@@ -257,6 +292,8 @@ function buildRunMessages(
   currentStepId?: string,
   summarizedInputIds?: Set<string>,
   systemMessageContents?: Set<string>,
+  includeHistoricalRuntimeReminders = true,
+  retainedToolOutputIds?: Set<string>,
 ): ModelMessage[] {
   const steps = history.listRunSteps(runId);
   const toolCalls = history.listRunToolCalls(runId);
@@ -331,7 +368,7 @@ function buildRunMessages(
     }
     inputs.forEach(appendInput);
     if (step.id === currentStepId) continue;
-    if (reminder) {
+    if (reminder && includeHistoricalRuntimeReminders) {
       systemMessageContents?.add(reminder.content);
       messages.push(runtimeReminderMessage(reminder));
     }
@@ -418,7 +455,10 @@ function buildRunMessages(
         return emittedToolCallIds.has(id);
       })
       .map((record) => {
-        const shouldClear = clearSet !== null && clearSet.has(record.id);
+        const shouldClear =
+          (clearSet !== null && clearSet.has(record.id)) ||
+          (retainedToolOutputIds !== undefined &&
+            !retainedToolOutputIds.has(record.id));
         return {
           type: "tool-result" as const,
           toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
@@ -562,7 +602,7 @@ function toToolResultOutput(
   if (typeof record.outputRef === "string") {
     return {
       type: "text",
-      value: trimToolText(record.outputRef),
+      value: trimToolText(record.outputRef, record),
     };
   }
 
@@ -571,19 +611,21 @@ function toToolResultOutput(
     if (serialized.length <= MAX_TOOL_OUTPUT_JSON) {
       return { type: "json", value: record.outputRef as never };
     }
-    return { type: "text", value: trimToolText(serialized) };
+    return { type: "text", value: trimToolText(serialized, record) };
   }
 
   return {
     type: "text",
-    value: trimToolText(record.outputSummary ?? ""),
+    value: trimToolText(record.outputSummary ?? "", record),
   };
 }
 
-function trimToolText(value: string): string {
-  return value.length > MAX_TOOL_OUTPUT_TEXT
-    ? `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}…`
-    : value;
+function trimToolText(value: string, record?: ToolCallRecord): string {
+  if (value.length <= MAX_TOOL_OUTPUT_TEXT) return value;
+  const reference = record
+    ? ` Full output retained; use context.read ${JSON.stringify({ kind: "tool", id: record.id })}.`
+    : "";
+  return `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}…${reference}`;
 }
 
 function toToolCallInput(

@@ -21,7 +21,6 @@ import {
 } from "../services/agent-runtime/checkpoints/guards.js";
 import { workRuntime } from "../services/agent-runtime/work-runtime.js";
 import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
-import { compactSessionContext } from "../services/agent-runtime/manual-context-compaction.js";
 import { searchSessions } from "../services/agent-runtime/session-search.js";
 import {
   validateInputMedia,
@@ -92,7 +91,8 @@ import { sessionUsesAcpEngine } from "../services/agent-runtime/acp-engine/index
 import { ensureSessionTitleGenerated } from "../services/agent-runtime/session-title-service.js";
 import { runtimeBus } from "../services/agent-runtime/runtime-bus.js";
 import { withSessionEventsQuiesced } from "../services/agent-runtime/runtime-event-quiesce.js";
-import { sessionLiveBus } from "../services/agent-runtime/session-live-bus.js";
+import { sessionLiveBus, type SessionLiveEvent } from "../services/agent-runtime/session-live-bus.js";
+import { sessionProcessManager } from "../services/agent-runtime/session-process-manager.js";
 import { logger } from "../lib/logger.js";
 import { getGlobalConfig } from "../lib/config/config-store.js";
 import { SseEventType } from "../lib/sse-events.js";
@@ -455,7 +455,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
 
 agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
   try {
-    return c.json(compactSessionContext(c.req.param("id")));
+    return c.json(sessionProcessManager.beginContextCompaction(c.req.param("id")), 202);
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1721,7 +1721,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
   return streamSSE(c, async (stream) => {
     let closed = false;
 
-    const onEvent = (event: { type: string; stepId: string }) => {
+    const onEvent = (event: SessionLiveEvent) => {
       if (closed) return;
       stream
         .writeSSE({ event: event.type, data: JSON.stringify(event) })

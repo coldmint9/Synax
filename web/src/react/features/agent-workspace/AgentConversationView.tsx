@@ -30,6 +30,10 @@ interface Props {
   excludeStepId?: string | null;
   unifiedLive?: boolean;
   submitting?: boolean;
+  compactionNotice?:
+    | { status: "running" }
+    | { status: "completed"; originalTokens: number; compressedTokens: number; messageCount: number }
+    | { status: "failed"; error: string };
   liveTurn?: React.ReactNode;
   /** Scroll container, forwarded so transcript entries can lazy-mount by viewport. */
   scrollRootRef?: React.RefObject<HTMLElement | null>;
@@ -49,6 +53,7 @@ export const AgentConversationView = memo(function AgentConversationView({
   liveTurn,
   unifiedLive = false,
   submitting = false,
+  compactionNotice,
   scrollRootRef,
 }: Props) {
   const { t } = useLocale();
@@ -101,6 +106,26 @@ export const AgentConversationView = memo(function AgentConversationView({
                 ) : null}
               </div>
             </div>
+          </div>
+        ) : null}
+
+        {compactionNotice ? (
+          <div
+            role={compactionNotice.status === "failed" ? "alert" : "status"}
+            className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] ${
+              compactionNotice.status === "failed"
+                ? "border-danger/20 bg-danger/5 text-danger"
+                : "border-warning/20 bg-warning/5 text-warning"
+            }`}
+          >
+            <Zap size={12} />
+            <span>
+              {compactionNotice.status === "running"
+                ? "正在压缩上下文…"
+                : compactionNotice.status === "failed"
+                  ? `上下文压缩失败：${compactionNotice.error}`
+                  : `上下文压缩完成：${compactionNotice.originalTokens.toLocaleString()} → ${compactionNotice.compressedTokens.toLocaleString()} tokens`}
+            </span>
           </div>
         ) : null}
 

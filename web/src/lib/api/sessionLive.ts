@@ -13,6 +13,9 @@ export type SessionLiveEvent =
   | { type: 'thought_delta'; stepId: string; delta: string }
   | { type: 'tool_call'; stepId: string; toolCall: ToolCallRecord }
   | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord }
+  | { type: 'context_compaction_started' }
+  | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number }
+  | { type: 'context_compaction_failed'; error: string }
 
 export function sessionLiveStream(
   sessionId: string,
@@ -31,6 +34,12 @@ export function sessionLiveStream(
     try { for (const projected of projector.record(JSON.parse(event.data) as RuntimeStreamRecord)) onEvent(projected) }
     catch (error) { console.error('Invalid runtime stream record', error) }
   })
+  for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed'] as const) {
+    es.addEventListener(type, (event: MessageEvent) => {
+      try { onEvent(JSON.parse(event.data) as SessionLiveEvent) }
+      catch (error) { console.error(`Invalid ${type} event`, error) }
+    })
+  }
   es.onerror = (event) => {
     // CONNECTING is a recoverable observation failure; AuthenticatedEventSource reconnects and receives a fresh snapshot.
     if (es.readyState === AuthenticatedEventSource.CLOSED) { es.close(); onError?.(event) }

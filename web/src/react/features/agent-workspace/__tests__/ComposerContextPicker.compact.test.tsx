@@ -20,19 +20,11 @@ async function open() {
 }
 describe("context menu manual compaction", () => {
   it("compacts once and reports completion without replacing attached context", async () => {
-    let finish!: (result: {
-      compacted: boolean;
-      originalTokens: number;
-      tokens: number;
-      reason: string;
-    }) => void;
+    let finish!: (result: { accepted: true; status: "compacting" }) => void;
     const compact = vi
       .spyOn(agentRuntimeApi, "compactContext")
       .mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
+        () => new Promise((resolve) => { finish = resolve; }),
       );
     render(<ComposerContextPicker {...props} />);
     await userEvent.click(await open());
@@ -40,15 +32,8 @@ describe("context menu manual compaction", () => {
       screen.getByRole("button", { name: /正在压缩上下文/ }),
     ).toBeDisabled();
     expect(compact).toHaveBeenCalledExactlyOnceWith("s");
-    await act(async () =>
-      finish({
-        compacted: true,
-        originalTokens: 2000,
-        tokens: 1000,
-        reason: "manual-compaction",
-      }),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("上下文已压缩");
+    await act(async () => finish({ accepted: true, status: "compacting" }));
+    expect(screen.getByRole("status")).toHaveTextContent("上下文压缩已开始");
     expect(props.onChange).not.toHaveBeenCalled();
   });
   it.each([
@@ -62,17 +47,12 @@ describe("context menu manual compaction", () => {
   it("reports no-op and API failures rather than claiming success", async () => {
     const compact = vi
       .spyOn(agentRuntimeApi, "compactContext")
-      .mockResolvedValueOnce({
-        compacted: false,
-        originalTokens: 10,
-        tokens: 10,
-        reason: "no-compressible-history",
-      })
+      .mockResolvedValueOnce({ accepted: true, status: "compacting" })
       .mockRejectedValueOnce(new Error("Session busy"));
     render(<ComposerContextPicker {...props} />);
     await userEvent.click(await open());
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "暂无可安全压缩",
+      "上下文压缩已开始",
     );
     await userEvent.click(
       screen.getByRole("button", { name: /强制压缩上下文/ }),

@@ -2,6 +2,7 @@ import type {
   AgentRunStreamChunk,
   StreamTurnRequest,
 } from "../../services/agent-runtime/contracts.js";
+import type { ContextCompactionResult } from "../../services/agent-runtime/manual-context-compaction.js";
 import {
   sessionLiveBus,
   type SessionLiveEvent,
@@ -31,7 +32,8 @@ export type AgentSessionParentMessage =
       sessionId: string;
       reason: string;
     }
-  | { type: "session:interrupt"; reason: string };
+  | { type: "session:interrupt"; reason: string }
+  | { type: "context:compact"; requestId: string };
 
 export type AgentSessionChildMessage =
   | {
@@ -59,6 +61,18 @@ export type AgentSessionChildMessage =
       sessionId: string;
       streamId: string;
       error: string;
+    }
+  | {
+      type: "context:compact:done";
+      sessionId: string;
+      requestId: string;
+      result: ContextCompactionResult;
+    }
+  | {
+      type: "context:compact:error";
+      sessionId: string;
+      requestId: string;
+      error: string;
     };
 
 export function isAgentSessionChildMessage(
@@ -74,7 +88,9 @@ export function isAgentSessionChildMessage(
     type === "runtime:event" ||
     type === "stream:chunk" ||
     type === "stream:done" ||
-    type === "stream:error"
+    type === "stream:error" ||
+    type === "context:compact:done" ||
+    type === "context:compact:error"
   );
 }
 
@@ -88,7 +104,8 @@ export function isAgentSessionParentMessage(
     type === "session:initialize" ||
     type === "stream:start" ||
     type === "stream:cancel" ||
-    type === "session:interrupt"
+    type === "session:interrupt" ||
+    type === "context:compact"
   );
 }
 
@@ -175,7 +192,9 @@ export function emitSessionLive(
   event: SessionLiveEvent,
 ): void {
   if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
-    // Live SSE is derived from stream:chunk on the API process (see session-process-manager).
+    // Stream chunks already carry completion events; forward only the start marker.
+    if (event.type === "context_compaction_started")
+      sendToParent({ type: "session:live", sessionId, event });
     return;
   }
   if (process.env.SYNAX_WIKI_JOB_CHILD === "1") {

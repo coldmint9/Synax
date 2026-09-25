@@ -4,12 +4,7 @@ import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
-import {
-  useState,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
 import {
   BookOpen,
@@ -24,6 +19,8 @@ import {
   Ellipsis,
   Download,
   RotateCcw,
+  ChevronDown,
+  Target,
 } from "lucide-react";
 import { useShellStore, type ProjectSummary } from "../state/shellStore";
 import { useWikiStore, type WikiViewMode } from "../state/wikiStore";
@@ -35,6 +32,7 @@ import {
   type ProjectSessionBadge,
 } from "../features/agent-workspace/projectSessionBadges";
 import { useSessionWorkspaceStore } from "../features/agent-workspace/state/sessionWorkspaceStore";
+import { GoalMonitorPanel } from "../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
 import { WorkbenchIsland } from "./WorkbenchIsland";
 import WikiSearchPanel from "../features/wiki/WikiSearchPanel";
@@ -520,6 +518,44 @@ function WikiToolbarPill({ visible }: { visible: boolean }) {
   );
 }
 
+function GoalToolbarPill({
+  sessionId,
+  visible,
+  iconOnly = false,
+}: {
+  sessionId: string | null;
+  visible: boolean;
+  iconOnly?: boolean;
+}) {
+  const { locale } = useLocale();
+  const label = locale === "zh" ? "目标" : "Goal";
+  return (
+    <ToolbarPill visible={visible && Boolean(sessionId)}>
+      {sessionId && (
+        <Dropdown>
+          <Dropdown.Trigger>
+            <button
+              type="button"
+              className={`wh-goal-menu ${iconOnly ? "wh-goal-menu--icon" : ""}`}
+              title={label}
+              aria-label={label}
+            >
+              <Target size={13} />
+              {!iconOnly && <span>{label}</span>}
+              <ChevronDown size={11} aria-hidden />
+            </button>
+          </Dropdown.Trigger>
+          <Dropdown.Popover placement="bottom start">
+            <div className="goal-monitor-menu">
+              <GoalMonitorPanel sessionId={sessionId} />
+            </div>
+          </Dropdown.Popover>
+        </Dropdown>
+      )}
+    </ToolbarPill>
+  );
+}
+
 export function WorkbenchHeader({
   chromeMode,
   activePanel,
@@ -563,6 +599,15 @@ export function WorkbenchHeader({
   }, [deleteTarget, deleting, onRemoveProject, confirmState]);
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
+  const goalSessionId = useAgentSessionStore((s) => {
+    const current = s.sessions.find(
+      (session) => session.id === s.selectedSessionId,
+    );
+    return current?.sessionMetadata?.mode === "goal" &&
+      current.sessionMetadata.goal
+      ? current.id
+      : null;
+  });
   useEffect(() => {
     if (chromeMode !== "workspaceFocus" || !selectedSessionId) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -659,6 +704,11 @@ export function WorkbenchHeader({
             </div>
 
             <WikiToolbarPill visible={activePanel === "wiki"} />
+            <GoalToolbarPill
+              sessionId={goalSessionId}
+              visible={hasProject && Boolean(goalSessionId)}
+              iconOnly={compact}
+            />
             <ToolbarPill visible={gitToolbarVisible}>
               <GitToolbarTarget />
             </ToolbarPill>

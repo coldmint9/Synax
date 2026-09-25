@@ -83,6 +83,11 @@ export function projectWorkContext(input: ContextProjectionInput): {
   const initialUserMessage = initialSessionMessageProjection(session);
   // One read-only snapshot per request; the candidate loop only reads history.
   const history = createLoopHistoryReader(store, input.sessionId);
+  const historicalStepCount = history
+    .listRuns()
+    .reduce((count, run) => count + history.listRunSteps(run.id).length, 0);
+  // ponytail: keep four reminders for cache continuity; use a summarized state checkpoint for more fidelity.
+  const includeHistoricalRuntimeReminders = historicalStepCount <= 4;
   const systemMessageContents = new Set<string>();
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
@@ -97,6 +102,8 @@ export function projectWorkContext(input: ContextProjectionInput): {
         currentStepId: input.currentStepId,
         snapshot: history,
         systemMessageContents,
+        includeHistoricalRuntimeReminders,
+        toolOutputBudgetTokens: Math.floor(input.contextLimit * 0.15),
       },
     );
     const tokens = count(messages);
@@ -208,6 +215,8 @@ export function projectWorkContext(input: ContextProjectionInput): {
       snapshot: history,
       clearing: input.clearing,
       systemMessageContents,
+      includeHistoricalRuntimeReminders,
+      toolOutputBudgetTokens: Math.floor(input.contextLimit * 0.15),
       excludedStepIds: excludedThrough(through),
       compactionSummary: summary,
       summarizedInputIds: summarizedInputIds(memory),
@@ -607,7 +616,7 @@ export const contextReferenceTool: RegisteredTool = {
         .find((c) => c.id === args.id);
     else if (args.kind === "message")
       value = sessions
-        .map((s) => args.id ? store.getMessage(s.id, args.id) : undefined)
+        .map((s) => (args.id ? store.getMessage(s.id, args.id) : undefined))
         .find(Boolean);
     else if (args.kind === "work" && args.id) {
       const work = workStore.get(args.id);

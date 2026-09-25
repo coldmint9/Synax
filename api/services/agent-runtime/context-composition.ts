@@ -8,6 +8,11 @@ export interface ContextComposition {
   /** v2 separates retained call context from conversational text. */
   version?: 2;
   tools: number;
+  toolDefinitions?: number;
+  toolCalls?: number;
+  toolResults?: number;
+  runtimeReminders?: number;
+  staticSystem?: number;
   mcp: number;
   skills: number;
   messages: number;
@@ -34,6 +39,11 @@ export async function measureContextComposition(input: {
   const result = {
     version: 2 as const,
     tools: 0,
+    toolDefinitions: 0,
+    toolCalls: 0,
+    toolResults: 0,
+    runtimeReminders: 0,
+    staticSystem: 0,
     mcp: 0,
     skills: 0,
     messages: 0,
@@ -90,7 +100,9 @@ export async function measureContextComposition(input: {
       inputSchema: await asSchema(tool.inputSchema).jsonSchema,
     };
     const category = toolCategory(name);
-    result[category] += count(JSON.stringify(definition));
+    const tokens = count(JSON.stringify(definition));
+    result[category] += tokens;
+    result.toolDefinitions += tokens;
   }
 
   // File/Wiki references share a prompt section. Skills now arrive through
@@ -132,24 +144,30 @@ export async function measureContextComposition(input: {
           text = text.slice(0, index) + text.slice(index + section.text.length);
         }
       }
-      addContent(textCategory(text), count(text));
+      const category = textCategory(text);
+      const tokens = count(text);
+      addContent(category, tokens);
+      if (category === "system") {
+        if (text.trimStart().startsWith("<system-reminder>"))
+          result.runtimeReminders += tokens;
+        else result.staticSystem += tokens;
+      }
       continue;
     }
     for (const part of message.content) {
       if (part.type === "text" || part.type === "reasoning") {
         addContent(textCategory(part.text), count(part.text));
       } else if (part.type === "tool-call") {
-        addContent(
-          toolCategory(part.toolName, part.toolCallId),
-          8 + count(part.toolName) + count(JSON.stringify(part.input ?? {})),
-        );
+        const tokens =
+          8 + count(part.toolName) + count(JSON.stringify(part.input ?? {}));
+        addContent(toolCategory(part.toolName, part.toolCallId), tokens);
+        result.toolCalls += tokens;
       } else if (part.type === "tool-result") {
         const output = part.output;
         const text = outputText(output);
-        addContent(
-          toolCategory(part.toolName, part.toolCallId),
-          8 + count(part.toolName) + count(text),
-        );
+        const tokens = 8 + count(part.toolName) + count(text);
+        addContent(toolCategory(part.toolName, part.toolCallId), tokens);
+        result.toolResults += tokens;
       }
       // Image/audio/file payloads are not text tokens. Do not tokenize base64 bytes
       // as if they were prompt text; provider-specific media billing is unavailable.

@@ -142,6 +142,7 @@ function toRuntimeProvider(provider: ModelsDevProvider): RuntimeProvider {
       label: model.name || model.id,
       maxTokens: model.limit?.output,
       contextLimit: model.limit?.context,
+      inputLimit: model.limit?.input,
       toolCall: model.tool_call,
       reasoning: model.reasoning,
       outputModalities: model.modalities?.output,
