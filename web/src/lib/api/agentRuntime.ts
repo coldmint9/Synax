@@ -113,7 +113,22 @@ export interface AgentGoalState {
   reason?: string;
 }
 
+export type DesignStatus =
+  | "draft"
+  | "review"
+  | "approved"
+  | "implementing"
+  | "completed";
+
+export interface SessionDesignMetadata {
+  relativePath: string;
+  revision: number;
+  status: DesignStatus;
+  updatedAt: string;
+}
+
 export interface AgentSessionMetadata extends Record<string, unknown> {
+  design?: SessionDesignMetadata | null;
   mode?: AgentSessionMode | "plan_node";
   plan?:
     | (AgentPlan & { revision: number; status: "draft" | "approved" | "saved" })

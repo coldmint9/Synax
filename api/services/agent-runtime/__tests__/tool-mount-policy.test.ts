@@ -20,6 +20,8 @@ function sessionWithMode(
 describe("tool mount policy", () => {
   it("keeps webSearch mounted in plan mode so explicitly requested research can run", () => {
     expect(isPlanningReadTool("webSearch")).toBe(true);
+    expect(isPlanningReadTool("design.write")).toBe(true);
+    expect(isPlanningReadTool("design.preview")).toBe(true);
 
     const webSearch = { id: "webSearch" };
     expect(isToolMountedForSession(sessionWithMode("chat"), webSearch)).toBe(

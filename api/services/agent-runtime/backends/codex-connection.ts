@@ -13,7 +13,7 @@ export const array = (value: unknown): unknown[] =>
 async function initialize(rpc: StdioRpc): Promise<string> {
   const result = object(
     await rpc.request("initialize", {
-      clientInfo: { name: "synax", title: "Synax", version: "1.0.4" },
+      clientInfo: { name: "synax", title: "Synax", version: "1.1.0" },
       capabilities: { experimentalApi: true },
     }),
   );
