@@ -6,6 +6,7 @@ import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useNotificationStore } from "../../state/notificationStore";
 import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
 import { useLocale } from "../../../hooks/useLocale";
+import { useShellStore } from "../../state/shellStore";
 import type { SessionTreeNode } from "./useSessionList";
 import {
   isSessionUnread,
@@ -15,10 +16,6 @@ import {
   resolveSessionUserInput,
   useSessionDisplayTitle,
 } from "./useSessionDisplayTitle";
-import {
-  isSessionPromptUserMessage,
-  isSystemInjectedMessage,
-} from "./buildConversationTimeline";
 
 const DOT: Record<string, string> = {
   running: "bg-run",
@@ -31,17 +28,6 @@ const DOT: Record<string, string> = {
   queued: "bg-muted-foreground/60",
   cancelled: "bg-muted-foreground/40",
 };
-
-type Translator = ReturnType<typeof useLocale>["t"];
-
-function relTime(iso: string, t: Translator): string {
-  const elapsed = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(elapsed)) return "";
-  const m = Math.max(0, Math.floor(elapsed / 60000));
-  if (m < 60) return t("timeMinutesAgo", { count: m });
-  if (m < 1440) return t("timeHoursAgo", { count: Math.floor(m / 60) });
-  return t("timeDaysAgo", { count: Math.floor(m / 1440) });
-}
 
 interface Props {
   node: SessionTreeNode;
@@ -62,12 +48,7 @@ function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
     for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
       const message = messages![i];
       if (message.sessionId !== session.id || !message.content.trim()) continue;
-      if (
-        message.role === "assistant" ||
-        (message.role === "user" &&
-          !isSessionPromptUserMessage(message) &&
-          !isSystemInjectedMessage(message))
-      )
+      if (message.role === "assistant")
         return message.content;
     }
     return "";
@@ -97,6 +78,9 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   onDelete,
 }: Props) {
   const { t } = useLocale();
+  const displayMode = useShellStore(
+    (state) => state.preferences.sessionListDisplayMode,
+  );
   const { session, depth, children } = node;
   const title = useSessionDisplayTitle(session);
   const hasKids = children.length > 0;
@@ -124,7 +108,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
 
   return (
     <div
-      className={`session-list-item${isSelected ? " session-list-item--active" : ""}${depth > 0 ? " session-list-item--child" : ""}`}
+      className={`session-list-item${isSelected ? " session-list-item--active" : ""}${depth > 0 ? " session-list-item--child" : ""}${displayMode === "title" ? " session-list-item--title-only" : ""}`}
       style={{ marginLeft: `${Math.min(depth, 4) * 12}px` }}
       data-unread={unread || undefined}
       onContextMenu={menu.onContextMenu}
@@ -168,13 +152,6 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             </span>
           )}
         </span>
-        <time
-          className="session-list-time"
-          dateTime={session.updatedAt}
-          title={new Date(session.updatedAt).toLocaleString()}
-        >
-          {relTime(session.updatedAt, t)}
-        </time>
         {node.searchSnippet !== undefined ? (
           <span
             className="session-list-preview session-list-preview--search"
@@ -185,9 +162,9 @@ export const SessionTreeItem = memo(function SessionTreeItem({
               query={node.searchQuery}
             />
           </span>
-        ) : (
+        ) : displayMode === "preview" ? (
           <SessionPreview session={session} />
-        )}
+        ) : null}
       </button>
       <button
         type="button"

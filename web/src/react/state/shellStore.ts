@@ -46,6 +46,7 @@ export interface ShellPreferences {
   wikiEnabled: boolean;
   /** Fold runs of activity-only agent turns into one work-log row. */
   sessionFoldWorkRuns: boolean;
+  sessionListDisplayMode: "title" | "preview";
 }
 
 export interface ProjectSearchFilter {
@@ -78,6 +79,9 @@ interface ShellState {
   setAgentFontSize: (fontSize: number) => void;
   setWikiEnabled: (enabled: boolean) => void;
   setSessionFoldWorkRuns: (value: boolean) => void;
+  setSessionListDisplayMode: (
+    value: ShellPreferences["sessionListDisplayMode"],
+  ) => void;
   addProject: (project: ProjectSummary) => void;
   setProjects: (projects: ProjectSummary[]) => void;
   removeProject: (projectId: string) => void;
@@ -139,6 +143,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
     agentFontSize: 14,
     wikiEnabled: false,
     sessionFoldWorkRuns: true,
+    sessionListDisplayMode: "preview",
   },
   currentProjectId: null,
   currentUser: {
@@ -214,6 +219,15 @@ export const useShellStore = create<ShellState>((set, get) => ({
   setSessionFoldWorkRuns: (value) => {
     set((state) => ({
       preferences: { ...state.preferences, sessionFoldWorkRuns: value },
+    }));
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify(useShellStore.getState().preferences),
+    );
+  },
+  setSessionListDisplayMode: (value) => {
+    set((state) => ({
+      preferences: { ...state.preferences, sessionListDisplayMode: value },
     }));
     localStorage.setItem(
       storageKey,
@@ -340,6 +354,12 @@ export function hydrateShellPreferences() {
     }
     if (typeof parsed.sessionFoldWorkRuns === "boolean")
       patch.sessionFoldWorkRuns = parsed.sessionFoldWorkRuns;
+    if (
+      parsed.sessionListDisplayMode === "title" ||
+      parsed.sessionListDisplayMode === "preview"
+    ) {
+      patch.sessionListDisplayMode = parsed.sessionListDisplayMode;
+    }
     if (Object.keys(patch).length > 0) {
       useShellStore.setState((state) => ({
         preferences: { ...state.preferences, ...patch },

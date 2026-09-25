@@ -88,6 +88,22 @@ describe("shell appearance", () => {
     });
   });
 
+  it("restores and persists the session list display mode", () => {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ sessionListDisplayMode: "title" }),
+    );
+    hydrateShellPreferences();
+    expect(useShellStore.getState().preferences.sessionListDisplayMode).toBe(
+      "title",
+    );
+
+    useShellStore.getState().setSessionListDisplayMode("preview");
+    expect(
+      JSON.parse(localStorage.getItem(key)!).sessionListDisplayMode,
+    ).toBe("preview");
+  });
+
   it("survives malformed and unavailable storage", () => {
     for (const payload of [
       "{",

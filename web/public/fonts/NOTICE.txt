@@ -1,0 +1,12 @@
+Bundled interface fonts
+
+Inter Variable
+Copyright 2016 The Inter Project Authors.
+Licensed under the SIL Open Font License, Version 1.1.
+
+Noto Sans SC Variable
+Copyright Google Inc.
+Licensed under the SIL Open Font License, Version 1.1.
+
+The complete license texts are distributed in the built front-end under
+fonts/Inter-OFL.txt and fonts/Noto-Sans-SC-OFL.txt.

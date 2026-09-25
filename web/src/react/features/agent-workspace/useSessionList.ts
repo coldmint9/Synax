@@ -204,13 +204,17 @@ export function useSessionList(
     (id: string) => {
       if (!routeProjectId) return;
       useAgentSessionStore.getState().markSessionRead(id);
+      if (selectedIdFromUrl === id) {
+        useAgentSessionStore.getState().openPanel(id, { forceFresh: true });
+        return;
+      }
       navigate(
         listView === "workflow"
           ? workflowSessionPath(routeProjectId, id)
           : sessionPath(routeProjectId, id),
       );
     },
-    [listView, navigate, routeProjectId],
+    [listView, navigate, routeProjectId, selectedIdFromUrl],
   );
 
   const openNewDraft = useCallback(() => {

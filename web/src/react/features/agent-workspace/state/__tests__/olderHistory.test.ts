@@ -95,3 +95,33 @@ it("rebuilds an invalidated cursor from the latest pages and keeps the earlier c
     "m0", "m1", "m2", "m3", "m4", "m5",
   ]);
 });
+
+it("builds every rail point before changing the lazy transcript page", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow)
+    .mockResolvedValueOnce(page(["m2", "m3"], "oldest", "older"))
+    .mockResolvedValueOnce(page(["m1", "m2"], undefined, "oldest"));
+
+  await store.getState().loadTimelineIndex();
+
+  const state = store.getState();
+  expect(state.sessionDetailCache.session.timelineMessages?.map((message) => message.id)).toEqual([
+    "m1", "m2", "m3", "m4",
+  ]);
+  expect(state.sessionDetailCache.session.timelineIndexLoaded).toBe(true);
+  expect(state.messages.map((message) => message.id)).toEqual(["m3", "m4"]);
+  expect(state.sessionDetailCache.session.historyWindow?.olderCursor).toBe("older");
+});
+
+it("loads just the pages needed when jumping to an indexed older point", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow)
+    .mockResolvedValueOnce(page(["m2", "m3"], "oldest", "older"))
+    .mockResolvedValueOnce(page(["m1", "m2"], undefined, "oldest"));
+
+  expect(await store.getState().loadHistoryUntil("m2")).toBe(true);
+  expect(store.getState().messages.map((message) => message.id)).toEqual(["m2", "m3", "m4"]);
+  expect(vi.mocked(agentRuntimeApi.historyWindow).mock.calls).toEqual([["session", "older"]]);
+  expect(await store.getState().loadHistoryUntil("m1")).toBe(true);
+  expect(store.getState().messages.map((message) => message.id)).toEqual(["m1", "m2", "m3", "m4"]);
+});

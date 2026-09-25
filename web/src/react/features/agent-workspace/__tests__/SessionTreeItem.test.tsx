@@ -14,6 +14,7 @@ import type {
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { SessionTreeItem } from "../SessionTreeItem";
 import type { SessionTreeNode } from "../useSessionList";
+import { useShellStore } from "../../../state/shellStore";
 
 function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
@@ -56,6 +57,9 @@ describe("SessionTreeItem", () => {
       messages: [],
       sessionDetailCache: {},
     });
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, sessionListDisplayMode: "preview" },
+    }));
   });
 
   it("shows the animated pixel loader before the title without an empty expand control", () => {
@@ -248,6 +252,7 @@ describe("SessionTreeItem", () => {
         message("m3", "user", "internal prompt", {
           source: "system_injection",
         }),
+        message("m4", "user", "latest user follow-up"),
       ],
     });
     const { container } = render(
@@ -261,9 +266,7 @@ describe("SessionTreeItem", () => {
     expect(container.querySelector(".session-list-preview")?.textContent).toBe(
       "已完成复核， 正在验证布局。",
     );
-    expect(container.querySelector("time")?.getAttribute("dateTime")).toBe(
-      "2026-01-02T00:00:00Z",
-    );
+    expect(container.querySelector("time")).toBeNull();
   });
 
   it("uses the summary or task content when no messages have been loaded", () => {
@@ -288,6 +291,37 @@ describe("SessionTreeItem", () => {
     );
     expect(container.querySelector(".session-list-preview")?.textContent).toBe(
       "hello",
+    );
+  });
+
+  it("hides ordinary previews in title-only mode while retaining search snippets", () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, sessionListDisplayMode: "title" },
+    }));
+    const { container, rerender } = render(
+      <SessionTreeItem
+        node={makeNode(makeSession({ resultSummary: "摘要内容" }))}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+    expect(container.querySelector(".session-list-preview")).toBeNull();
+
+    rerender(
+      <SessionTreeItem
+        node={{
+          ...makeNode(makeSession()),
+          searchSnippet: "匹配的摘要",
+          searchQuery: "摘要",
+        }}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+    expect(container.querySelector(".session-list-preview")?.textContent).toBe(
+      "匹配的摘要",
     );
   });
 });

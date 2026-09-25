@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentRuntimeApi } from './agentRuntime'
+import { useNotificationStore } from '../../react/state/notificationStore'
 
 const originalFetch = globalThis.fetch
 
@@ -48,6 +49,15 @@ describe('agentRuntimeApi', () => {
       '/api/agent-runtime/sessions/ars_1/permissions',
       expect.any(Object),
     )
+  })
+
+  it('keeps stale history pages local to the caller instead of showing a global notification', async () => {
+    useNotificationStore.setState({ notifications: [], unreadCount: 0 })
+    mockJson({ error: 'Conversation revision changed; refresh the view.', code: 'HISTORY_STALE' }, false, 409)
+
+    await expect(agentRuntimeApi.historyWindow('ars_1', 'old-page'))
+      .rejects.toMatchObject({ code: 'HISTORY_STALE' })
+    expect(useNotificationStore.getState().notifications).toEqual([])
   })
 
   it('archives sessions through the agent runtime base path', async () => {

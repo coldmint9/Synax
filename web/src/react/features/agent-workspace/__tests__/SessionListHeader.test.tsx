@@ -24,7 +24,11 @@ function renderHeader(
 describe("SessionListHeader", () => {
   beforeEach(() => {
     useShellStore.setState((state) => ({
-      preferences: { ...state.preferences, locale: "zh" },
+      preferences: {
+        ...state.preferences,
+        locale: "zh",
+        sessionListDisplayMode: "preview",
+      },
     }));
   });
 
@@ -47,8 +51,7 @@ describe("SessionListHeader", () => {
     fireEvent.click(newChat);
     expect(onNewSession).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: /refresh|刷新/i })).toBeNull();
-    // Only "新对话" and the clear-inactive action remain in the header actions.
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.getAllByRole("button")).toHaveLength(4);
   });
   it("disables new-chat while creating a session", () => {
     const onNewSession = vi.fn();
@@ -83,5 +86,25 @@ describe("SessionListHeader", () => {
       onOpenWorkflows: noop,
     });
     expect(screen.getByRole("button", { name: /Workflow/ })).toBeTruthy();
+  });
+
+  it("switches and persists the two session row display modes", () => {
+    renderHeader();
+
+    const titles = screen.getByRole("button", { name: "仅标题" });
+    const previews = screen.getByRole("button", { name: "标题与摘要" });
+    expect(previews).toHaveAttribute("aria-pressed", "true");
+    expect(titles).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(titles);
+
+    expect(titles).toHaveAttribute("aria-pressed", "true");
+    expect(previews).toHaveAttribute("aria-pressed", "false");
+    expect(useShellStore.getState().preferences.sessionListDisplayMode).toBe(
+      "title",
+    );
+    expect(
+      JSON.parse(localStorage.getItem("rumbling-shell-preferences")!).sessionListDisplayMode,
+    ).toBe("title");
   });
 });

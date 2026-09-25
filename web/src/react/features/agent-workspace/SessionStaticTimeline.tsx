@@ -319,12 +319,9 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   );
   const showLive = Boolean(liveId && excludeStepId === liveId);
   const timeline = useMemo(() => {
-    const persistedStepIds = new Set(
-      steps.filter((step) => step.status !== "running").map((step) => step.id),
-    );
-    const pendingSnapshots = (snapshots ?? []).filter(
-      (snapshot) => !persistedStepIds.has(snapshot.stepId),
-    );
+    // A completed step can arrive before its assistant message. The store
+    // retires each snapshot only after its persisted content is confirmed.
+    const pendingSnapshots = snapshots ?? [];
     const snapshotIds = new Set(
       pendingSnapshots.map((snapshot) => snapshot.stepId),
     );

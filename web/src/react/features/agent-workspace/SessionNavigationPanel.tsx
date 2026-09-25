@@ -178,6 +178,15 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
     messages,
     toolCalls,
     childSessions,
+    historyWindow,
+    timelineMessages,
+    timelineRuns,
+    timelineSteps,
+    timelineToolCalls,
+    timelineIndexLoaded,
+    timelineIndexError,
+    loadTimelineIndex,
+    loadHistoryUntil,
   } = useAgentSessionStore(
     useShallow((state) => ({
       selectedSessionId: state.selectedSessionId,
@@ -191,20 +200,66 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
       childSessions: state.selectedSessionId
         ? state.childSessions[state.selectedSessionId]
         : undefined,
+      historyWindow: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.historyWindow
+        : undefined,
+      timelineMessages: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineMessages
+        : undefined,
+      timelineRuns: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineRuns
+        : undefined,
+      timelineSteps: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineSteps
+        : undefined,
+      timelineToolCalls: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineToolCalls
+        : undefined,
+      timelineIndexLoaded: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineIndexLoaded
+        : undefined,
+      timelineIndexError: state.selectedSessionId
+        ? state.sessionDetailCache[state.selectedSessionId]?.timelineIndexError
+        : undefined,
+      loadTimelineIndex: state.loadTimelineIndex,
+      loadHistoryUntil: state.loadHistoryUntil,
     })),
   );
+
+  useEffect(() => {
+    if (selectedSessionId && historyWindow?.hasEarlier && !timelineIndexLoaded && !timelineIndexError)
+      void loadTimelineIndex();
+  }, [historyWindow?.hasEarlier, historyWindow?.revision, loadTimelineIndex, selectedSessionId, timelineIndexLoaded, timelineIndexError]);
+
+  const indexReady = Boolean(timelineIndexLoaded || !historyWindow?.hasEarlier);
+  const timelineRunsSource = indexReady ? (timelineRuns ?? runs) : runs;
+  const timelineStepsSource = indexReady ? (timelineSteps ?? steps) : steps;
+  const timelineMessagesSource = indexReady ? (timelineMessages ?? messages) : messages;
+  const timelineToolCallsSource = indexReady ? (timelineToolCalls ?? toolCalls) : toolCalls;
 
   const entries = useMemo(
     () =>
       buildConversationTimeline(
-        runs,
-        steps,
-        messages,
-        toolCalls,
+        timelineRunsSource,
+        timelineStepsSource,
+        timelineMessagesSource,
+        timelineToolCallsSource,
         childSessions,
-        { session },
+        {
+          session,
+          includeInitialPrompt: indexReady || !historyWindow?.hasEarlier,
+        },
       ),
-    [runs, steps, messages, toolCalls, childSessions, session],
+    [
+      timelineRunsSource,
+      timelineStepsSource,
+      timelineMessagesSource,
+      timelineToolCallsSource,
+      childSessions,
+      session,
+      historyWindow?.hasEarlier,
+      indexReady,
+    ],
   );
   const turns = useMemo(() => groupTimelineIntoTurns(entries), [entries]);
 
@@ -283,13 +338,16 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
   }, [turns, scrollRootRef, selectedSessionId]);
 
   const jump = useCallback(
-    (entryId: string) => {
-      scrollToEntry(scrollRootRef.current, entryId);
+    async (entryId: string) => {
+      if (indexReady) await loadHistoryUntil(entryId);
+      const scroll = () => scrollToEntry(scrollRootRef.current, entryId);
+      scroll();
+      window.requestAnimationFrame(scroll);
     },
-    [scrollRootRef],
+    [indexReady, loadHistoryUntil, scrollRootRef],
   );
 
-  if (turns.length === 0) return null;
+  if (turns.length === 0 || (historyWindow?.hasEarlier && !timelineIndexLoaded && !timelineIndexError)) return null;
 
   const hoveredTurn = hoverIndex === null ? null : turns[hoverIndex];
   const preview = hoveredTurn

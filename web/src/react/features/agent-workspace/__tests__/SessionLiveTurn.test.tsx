@@ -61,7 +61,7 @@ const props = {
 };
 
 describe("SessionLiveTurn", () => {
-  it("hands completed snapshots over to history after detail refresh", () => {
+  it("keeps a snapshot until the store confirms its persisted content", () => {
     const { rerender, container } = render(<SessionLiveTurn {...props} />);
     expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
       1,
@@ -71,10 +71,9 @@ describe("SessionLiveTurn", () => {
     ).toHaveLength(1);
 
     rerender(<SessionLiveTurn {...props} steps={[persisted]} />);
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(1);
+    rerender(<SessionLiveTurn {...props} steps={[persisted]} streamingCompletedSteps={[]} />);
     expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
-    expect(
-      screen.queryByText("bui-tool|bui-activity|StreamingTextBlock"),
-    ).toBeNull();
     expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
     expect(screen.getByRole("status")).toHaveAccessibleName();
   });
@@ -90,17 +89,15 @@ describe("SessionLiveTurn", () => {
         ]}
       />,
     );
-    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
-      1,
-    );
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(2);
     expect(
       screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("renders nothing when history owns every step and there is no active stream", () => {
     const { container } = render(
-      <SessionLiveTurn {...props} steps={[persisted]} streamingStepId={null} />,
+      <SessionLiveTurn {...props} steps={[persisted]} streamingStepId={null} streamingCompletedSteps={[]} />,
     );
     expect(container.innerHTML).toBe("");
   });

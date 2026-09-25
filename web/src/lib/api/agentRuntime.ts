@@ -930,7 +930,10 @@ export const agentRuntimeApi = {
   messageContentPage: (sessionId: string, messageId: string, cursor = 0, revision?: number) =>
     request<{ text: string; next?: number; revision: number }>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`),
   historyWindow: (sessionId: string, cursor?: string) =>
-    request<HistoryWindowResponse>(`/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
+    request<HistoryWindowResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { silent: true },
+    ),
   upgradeHistory: (sessionId: string) =>
     request<{ upgraded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/history/upgrade`, {
       method: "POST", body: JSON.stringify({ acknowledgeCheckpointReset: true }),

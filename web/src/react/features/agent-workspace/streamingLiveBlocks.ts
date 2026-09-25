@@ -18,7 +18,12 @@ export const EMPTY_STREAMING_BUFFERS: StreamingLiveBuffers = {
 };
 
 const LIVE_TEXT_CHARS = 64 * 1024;
-const boundedText = (text: string) => text.length <= LIVE_TEXT_CHARS ? text : "[Earlier live preview omitted; final message is retained]\n" + text.slice(-LIVE_TEXT_CHARS);
+export const LIVE_PREVIEW_OMISSION =
+  "[Earlier live preview omitted; final message is retained]\n";
+const boundedText = (text: string) =>
+  text.length <= LIVE_TEXT_CHARS
+    ? text
+    : LIVE_PREVIEW_OMISSION + text.slice(-LIVE_TEXT_CHARS);
 function toolCallsToBlocks(toolCalls: ToolCallRecord[]): TurnContentBlock[] {
   if (toolCalls.length === 0) return [];
   const views = toolCalls.map(toolCallRecordToView);

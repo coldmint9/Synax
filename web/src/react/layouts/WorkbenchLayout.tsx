@@ -1,6 +1,6 @@
 import type { SessionNotificationTarget } from "../../lib/notifications/sessionNotifications";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer";
-import { lazy, useEffect, useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { Outlet, useNavigate, useParams, useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../lib/api/agentRuntime";
 import { projectApi } from "../../lib/api/project";
@@ -25,7 +25,7 @@ import { WorkbenchIslandProvider } from "./WorkbenchIsland";
 import { GitToolbarProvider } from "../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../components/ToastContainer";
-import { CachedWorkbenchPage } from "./CachedWorkbenchPage";
+import { CachedWorkbenchPage, PageLoading } from "./CachedWorkbenchPage";
 import { setSessionDetailsVisible } from "../features/agent-workspace/state/agentSessionStore";
 const WikiPage = lazy(() => import("../pages/WikiPage"));
 const SessionsPage = lazy(() => import("../pages/SessionsPage"));
@@ -182,14 +182,6 @@ function WorkbenchLayoutContent() {
   })();
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
-  const selectedSessionStatus = useAgentSessionStore((s) => {
-    const id = s.selectedSessionId;
-    return id ? s.sessions.find((session) => session.id === id)?.status : undefined;
-  });
-  const cacheSessionsPage =
-    selectedSessionStatus !== "running" &&
-    selectedSessionStatus !== "waiting_permission" &&
-    selectedSessionStatus !== "waiting_input";
   const agentPanelOpen = useAgentSessionStore((s) => s.panelOpen);
   const workspaceState = useSessionWorkspace(selectedSessionId);
   const workspaceViewerOpen = Boolean(
@@ -290,14 +282,16 @@ function WorkbenchLayoutContent() {
           />
           <div className="workbench-island">
             <div className="island-body">
-              {/* Live sessions remount on return so they reload and resubscribe. */}
+              {/* Sessions are never retained across page switches. */}
               {effectiveProjectId && <>
                 {wikiEnabled && <CachedWorkbenchPage key={`${effectiveProjectId}:wiki`} active={activePanel === "wiki"}>
                   <WikiPage projectId={effectiveProjectId} />
                 </CachedWorkbenchPage>}
-                <CachedWorkbenchPage key={`${effectiveProjectId}:sessions`} active={activePanel === "sessions"} cache={cacheSessionsPage}>
-                  <SessionsPage />
-                </CachedWorkbenchPage>
+                {activePanel === "sessions" && (
+                  <Suspense fallback={<PageLoading />}>
+                    <SessionsPage />
+                  </Suspense>
+                )}
               </>}
               {/* Outlet for non-cached routes (welcome, settings) */}
               <div

@@ -85,8 +85,12 @@ it("keeps the last answer visible while completion waits for the persisted trans
       reset: true,
       refresh: false,
     });
-  expect(store.getState().streamingStepId).toBe("first");
-  expect(materializeLiveBlocks(store.getState().streamingLive)).toEqual([
+  expect(store.getState().streamingStepId).toBeNull();
+  expect(store.getState().streamingCompletedSteps[0]?.blocks).toEqual([
+    { type: "text", content: "Finished answer" },
+  ]);
+  delta("Late answer");
+  expect(store.getState().streamingCompletedSteps[0]?.blocks).toEqual([
     { type: "text", content: "Finished answer" },
   ]);
 });

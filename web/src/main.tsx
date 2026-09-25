@@ -4,6 +4,8 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, useNavigate } from "react-router-dom";
 import { RouterProvider } from "@heroui/react";
 import App from "./react/App";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/noto-sans-sc/wght.css";
 import "./index.css";
 import "katex/dist/katex.min.css";
 import {

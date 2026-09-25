@@ -54,6 +54,48 @@ afterEach(() => {
   store.setState(store.getInitialState());
 });
 describe("versioned transcript refresh", () => {
+  it("retries a stale latest read without surfacing a transient detail error", async () => {
+    const versionedSession = {
+      ...session,
+      sessionMetadata: { historyStorage: 3 },
+    } as AgentSession;
+    const window = {
+      messages: [], runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+      historyWindow: {
+        revision: 2, epoch: 1, hasEarlier: false,
+        latest: true, detailsTruncated: false,
+      },
+    } satisfies HistoryWindowResponse;
+    store.setState({ sessions: [versionedSession] });
+    const fetchWindow = vi.spyOn(api, "historyWindow")
+      .mockRejectedValueOnce({ code: "HISTORY_STALE" })
+      .mockResolvedValueOnce(window);
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(fetchWindow).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(store.getState().sessionDetailCache[session.id].cachedAt).toBeGreaterThan(0),
+    );
+    expect(fetchWindow.mock.calls).toEqual([[session.id], [session.id]]);
+    expect(store.getState().detailError).toBeNull();
+  });
+
+  it("does not retry non-stale latest read errors", async () => {
+    const versionedSession = {
+      ...session,
+      sessionMetadata: { historyStorage: 3 },
+    } as AgentSession;
+    store.setState({ sessions: [versionedSession] });
+    const fetchWindow = vi.spyOn(api, "historyWindow")
+      .mockRejectedValueOnce(new Error("offline"));
+
+    await store.getState().refreshDetail();
+    await vi.waitFor(() =>
+      expect(store.getState().detailError).toContain("offline"),
+    );
+    expect(fetchWindow).toHaveBeenCalledTimes(1);
+  });
+
   it("loads the latest page instead of retaining a previously cached history cursor", async () => {
     const versionedSession = {
       ...session,
@@ -219,7 +261,7 @@ it("does not mark a profile-only cache entry as a loaded transcript", async () =
     }),
   );
   await store.getState().refreshDetail();
-  expect(store.getState().sessionDetailCache[session.id].cachedAt).toBe(0);
+  expect(store.getState().sessionDetailCache[session.id]?.cachedAt ?? 0).toBe(0);
   expect(store.getState().detailLoading).toBe(true);
   resolve({ items: [] });
   await vi.waitFor(() => expect(store.getState().detailLoading).toBe(false));
@@ -235,11 +277,11 @@ it("retains existing content and exposes failure instead of permanently loading"
     expect(store.getState().detailError).toContain("offline"),
   );
   expect(store.getState().detailLoading).toBe(false);
-  expect(store.getState().sessionDetailCache[session.id].cachedAt).toBe(0);
+  expect(store.getState().sessionDetailCache[session.id]?.cachedAt ?? 0).toBe(0);
 });
 
 it("replaces live output only when both persisted steps and messages are ready", async () => {
-  const completedStep = { id: "step", status: "completed" } as never;
+  const completedStep = { id: "step", runId: "run", status: "completed" } as never;
   store.setState({
     sessions: [{ ...session, status: "completed" }],
     streamingStepId: "step",
@@ -254,26 +296,28 @@ it("replaces live output only when both persisted steps and messages are ready",
   );
   await store.getState().refreshDetail();
   expect(store.getState().steps).toEqual([]);
-  expect(store.getState().streamingLive.pendingText).toBe("Answer");
+  expect(store.getState().streamingCompletedSteps[0]?.blocks).toEqual([
+    { type: "text", content: "Answer" },
+  ]);
   const states: Array<{
-    live: string | null;
+    snapshot: number;
     messages: number;
     steps: number;
   }> = [];
   const unsubscribe = store.subscribe((s) =>
     states.push({
-      live: s.streamingStepId,
+      snapshot: s.streamingCompletedSteps.length,
       messages: s.messages.length,
       steps: s.steps.length,
     }),
   );
   resolve({
-    items: [{ id: "answer", content: "Answer", stepId: "step" } as never],
+    items: [{ id: "answer", role: "assistant", content: "Answer", stepId: "step", metadata: {} } as never],
   });
-  await vi.waitFor(() => expect(store.getState().streamingStepId).toBeNull());
+  await vi.waitFor(() => expect(store.getState().streamingCompletedSteps).toEqual([]));
   unsubscribe();
   expect(
-    states.every((s) => s.live !== null || (s.steps === 1 && s.messages === 1)),
+    states.every((s) => s.snapshot !== 0 || (s.steps === 1 && s.messages === 1)),
   ).toBe(true);
 });
 
@@ -292,8 +336,49 @@ it("keeps a completed answer when an older in-flight transcript response lands",
   store.getState().patchSession(session.id, { status: "completed" });
   resolve({ items: [] });
   await store.getState().refreshDetail({ joinPending: true });
-  expect(store.getState().streamingStepId).toBe("step");
-  expect(store.getState().streamingLive.pendingText).toBe("Final answer");
+  await vi.waitFor(() =>
+    expect(store.getState().streamingCompletedSteps[0]?.blocks).toEqual([
+      { type: "text", content: "Final answer" },
+    ]),
+  );
+  expect(store.getState().streamingStepId).toBeNull();
+});
+
+it("retains a completed step's final reply until the matching message is persisted", async () => {
+  const step = { id: "step", runId: "run", status: "completed" } as never;
+  vi.mocked(api.listSessionSteps).mockResolvedValue({ items: [step] });
+  store.setState({
+    sessions: [{ ...session, status: "running", activeRunId: "run" }],
+  });
+  store.getState().applyLiveEvent({
+    type: "step_started", stepId: "step", stepIndex: 1,
+  });
+  store.getState().applyLiveEvent({
+    type: "message_delta", stepId: "step", delta: "# Summary\nFinal answer",
+  });
+  store.getState().applyLiveEvent({
+    type: "runtime_state", sessionId: session.id,
+    patch: { status: "completed", activeRunId: null },
+    reset: true, refresh: false,
+  });
+
+  await store.getState().refreshDetail();
+  await vi.waitFor(() => expect(store.getState().steps).toEqual([step]));
+  expect(store.getState().messages).toEqual([]);
+  expect(store.getState().streamingCompletedSteps[0]?.blocks).toEqual([
+    { type: "text", content: "# Summary\nFinal answer" },
+  ]);
+
+  vi.mocked(api.listMessages).mockResolvedValue({
+    items: [{
+      id: "final", sessionId: session.id, runId: "run", stepId: "step",
+      role: "assistant", content: "# Summary\nFinal answer", metadata: {},
+      createdAt: "2026-01-01T00:00:00Z",
+    }],
+  });
+  await store.getState().refreshDetail();
+  await vi.waitFor(() => expect(store.getState().streamingCompletedSteps).toEqual([]));
+  expect(store.getState().messages).toHaveLength(1);
 });
 
 it("does not refresh transcript freshness when an optional profile fetch completes later", async () => {

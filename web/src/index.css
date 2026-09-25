@@ -806,9 +806,13 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family:
-      "Inter",
-      system-ui,
       -apple-system,
+      BlinkMacSystemFont,
+      "SF Pro Text",
+      "SF Pro Display",
+      "Inter Variable",
+      "Noto Sans SC Variable",
+      system-ui,
       sans-serif;
   }
 }
@@ -5085,8 +5089,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   overflow-wrap: anywhere;
 }
 
-/* Two-line session cards: status, title and time share the first row;
-   the preview starts on the same text edge as the title. */
+/* Session rows keep the title and optional preview on a stable text edge. */
 .session-list-item {
   position: relative;
   min-width: 0;
@@ -5111,12 +5114,13 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
 }
 .session-list-select {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) max-content;
+  grid-template-columns: 12px minmax(0, 1fr);
+  grid-template-rows: auto auto;
   align-items: center;
   gap: 5px 9px;
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px 38px 10px 12px;
   border-radius: inherit;
   text-align: left;
   cursor: pointer;
@@ -5159,17 +5163,8 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   font-weight: 600;
   line-height: 20px;
 }
-.session-list-time {
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 20px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
 .session-list-preview {
-  grid-column: 2 / -1;
-  padding-right: 20px;
+  grid-column: 2;
   color: hsl(var(--foreground-hsl) / 0.72);
   font-size: 12px;
   line-height: 18px;
@@ -5190,20 +5185,62 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   cursor: pointer;
 }
 .session-list-expand {
-  top: 12px;
+  top: 50%;
   left: -2px;
   width: 16px;
   height: 18px;
+  transform: translateY(-50%);
 }
 .session-list-delete {
   right: 8px;
-  bottom: 8px;
+  top: 50%;
   width: 22px;
   height: 22px;
+  transform: translateY(-50%);
   opacity: 0;
   transition:
     opacity 140ms ease,
     background-color 140ms ease;
+}
+.session-list-item--title-only .session-list-select {
+  grid-template-rows: auto;
+  min-height: 38px;
+  padding-block: 8px;
+}
+.session-list-display-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid hsl(var(--border-hsl) / 0.45);
+  border-radius: 7px;
+  background: hsl(var(--secondary) / 0.28);
+}
+.session-list-display-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  color: hsl(var(--muted-foreground));
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+.session-list-display-mode-button[aria-pressed="true"] {
+  color: var(--foreground);
+  background: hsl(var(--background) / 0.85);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.08);
+}
+.session-list-display-mode-button:hover {
+  color: var(--foreground);
+}
+.session-list-display-mode-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -1px;
 }
 .session-list-item:hover .session-list-delete,
 .session-list-item:focus-within .session-list-delete {

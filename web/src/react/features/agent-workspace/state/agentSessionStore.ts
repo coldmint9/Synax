@@ -1,9 +1,18 @@
-import type { HistoryWindowState } from "../../../../lib/api/agentRuntime";
+import type {
+  HistoryWindowResponse,
+  HistoryWindowState,
+} from "../../../../lib/api/agentRuntime";
 import type { RuntimeContentPart } from "../../../../lib/api/runtimeMedia";
 import type { TurnReference } from "../../../../lib/api/agentRuntime";
 import type { BackendId } from "../../../../lib/api/agentRuntime";
 import { create } from "zustand";
 import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
+import {
+  extendTimelineIndex,
+  previewTimelineMessage,
+  seedTimelineIndex,
+  timelineContainsEntry,
+} from "./timelineHistoryIndex";
 import { usePendingSubmissionStore } from "./pendingSubmissionStore";
 import {
   agentRuntimeApi,
@@ -63,6 +72,7 @@ import {
   applyThoughtDelta,
   applyToolCall,
   applyToolResult,
+  LIVE_PREVIEW_OMISSION,
   hasStreamingContent,
   snapshotStreamingBuffers,
   type StreamingLiveBuffers,
@@ -81,6 +91,19 @@ function isMissingSession(error: unknown, sessionId: string): boolean {
     error.code === "NOT_FOUND" &&
     error.message === `Agent runtime resource not found: ${sessionId}`
   );
+}
+
+async function readLatestHistoryWindow(
+  sessionId: string,
+): Promise<HistoryWindowResponse> {
+  try {
+    return await agentRuntimeApi.historyWindow(sessionId);
+  } catch (error) {
+    if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
+    // The first read may race a runtime append. Start over from the latest
+    // immutable root instead of retrying the expired cursor.
+    return agentRuntimeApi.historyWindow(sessionId);
+  }
 }
 
 const READ_MARKERS_KEY = "synax-session-read-markers";
@@ -185,6 +208,12 @@ export interface SessionDetailCacheEntry {
   lastVisitedAt?: number;
   historyWindow?: HistoryWindowState;
   historyPagesLoaded?: boolean;
+  timelineMessages?: AgentRuntimeMessage[];
+  timelineRuns?: AgentRun[];
+  timelineSteps?: AgentRunStep[];
+  timelineToolCalls?: ToolCallRecord[];
+  timelineIndexLoaded?: boolean;
+  timelineIndexError?: string;
 }
 
 let activeSessionsRefresh: {
@@ -202,6 +231,7 @@ let activeDetailRefresh: {
   again: boolean;
 } | null = null;
 let activeOlderHistory: { sessionId: string; promise: Promise<void> } | null = null;
+let activeTimelineIndex: { sessionId: string; promise: Promise<void> } | null = null;
 
 let activeTranscriptRefresh: {
   sessionId: string;
@@ -209,6 +239,99 @@ let activeTranscriptRefresh: {
 } | null = null;
 let detailRefreshEpoch = 0;
 let interactionRefreshVersion = 0;
+let finalReplyRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let finalReplyRetryCount = 0;
+const FINAL_REPLY_RETRY_DELAYS = [700, 1400, 2800];
+
+function clearFinalReplyRetry(): void {
+  if (finalReplyRetryTimer !== null) clearTimeout(finalReplyRetryTimer);
+  finalReplyRetryTimer = null;
+  finalReplyRetryCount = 0;
+}
+
+function scheduleFinalReplyRetry(sessionId: string): void {
+  if (
+    finalReplyRetryTimer !== null ||
+    finalReplyRetryCount >= FINAL_REPLY_RETRY_DELAYS.length
+  ) return;
+  const delay = FINAL_REPLY_RETRY_DELAYS[finalReplyRetryCount++];
+  finalReplyRetryTimer = setTimeout(() => {
+    finalReplyRetryTimer = null;
+    const state = useAgentSessionStore.getState();
+    if (
+      state.selectedSessionId === sessionId &&
+      state.streamingCompletedSteps.length > 0 &&
+      isTerminalSessionStatus(
+        state.sessions.find((session) => session.id === sessionId)?.status,
+      )
+    )
+      void state.refreshDetail();
+  }, delay);
+}
+
+function isTerminalSessionStatus(
+  status: AgentSession["status"] | undefined,
+): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
+}
+
+type CompletedLiveStep = AgentSessionStoreState["streamingCompletedSteps"][number];
+
+function confirmedLiveStep(
+  snapshot: CompletedLiveStep,
+  steps: AgentRunStep[],
+  messages: AgentRuntimeMessage[],
+  toolCalls: ToolCallRecord[],
+): boolean {
+  const step = steps.find((item) => item.id === snapshot.stepId);
+  if (!step) return false;
+  const runId = snapshot.runId ?? step.runId;
+  const answers = messages.filter(
+    (message) =>
+      message.role === "assistant" &&
+      message.metadata?.type !== "thinking" &&
+      message.metadata?.kind !== "thought" &&
+      (message.stepId === snapshot.stepId ||
+        (!message.stepId && Boolean(runId) && message.runId === runId)),
+  );
+  const text = snapshot.blocks
+    .filter((block) => block.type === "text")
+    .map((block) => block.content.trim())
+    .filter(Boolean)
+    .map((part) =>
+      part.startsWith(LIVE_PREVIEW_OMISSION)
+        ? part.slice(LIVE_PREVIEW_OMISSION.length).trim()
+        : part,
+    )
+    .filter(Boolean);
+  if (text.length > 0) {
+    const persistedText = answers.map((message) => message.content).join("\n");
+    return text.every((part) => persistedText.includes(part));
+  }
+  if (
+    snapshot.blocks.some((block) => block.type === "thinking") &&
+    !messages.some(
+      (message) =>
+        message.stepId === snapshot.stepId &&
+        (message.metadata?.type === "thinking" ||
+          message.metadata?.kind === "thought"),
+    )
+  )
+    return false;
+  const toolIds = snapshot.blocks.flatMap((block) =>
+    block.type === "tool_call"
+      ? [block.call.id]
+      : block.type === "tool_call_group"
+        ? block.calls.map((call) => call.id)
+        : [],
+  );
+  return toolIds.every((id) => toolCalls.some((call) => call.id === id));
+}
 
 function trimSessionDetailCache(
   cache: Record<string, SessionDetailCacheEntry>,
@@ -564,6 +687,7 @@ export interface AgentSessionStoreState {
   streamingCompletedSteps: Array<{
     stepId: string;
     stepIndex: number;
+    runId?: string;
     blocks: TurnContentBlock[];
   }>;
 
@@ -594,10 +718,12 @@ export interface AgentSessionStoreState {
     sessionIds: string[],
     projectId: string | null,
   ) => void;
-  openPanel: (sessionId: string) => void;
+  openPanel: (sessionId: string, options?: { forceFresh?: boolean }) => void;
   closePanel: () => void;
   loadOlderHistory: () => Promise<void>;
-  refreshDetail: (options?: { joinPending?: boolean }) => Promise<void>;
+  loadTimelineIndex: () => Promise<void>;
+  loadHistoryUntil: (entryId: string) => Promise<boolean>;
+  refreshDetail: (options?: { joinPending?: boolean; forceFresh?: boolean }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
   fetchSessionStats: () => Promise<void>;
@@ -685,6 +811,27 @@ function clearStreamingBuffers(): void {
   deltaBuffer = [];
   if (deltaFlushTimer !== null) clearTimeout(deltaFlushTimer);
   deltaFlushTimer = null;
+}
+
+function snapshotCurrentStep(state: AgentSessionStoreState): CompletedLiveStep[] {
+  if (!state.streamingStepId || !hasStreamingContent(state.streamingLive))
+    return state.streamingCompletedSteps;
+  const step = state.steps.find((item) => item.id === state.streamingStepId);
+  return [
+    ...state.streamingCompletedSteps.filter(
+      (item) => item.stepId !== state.streamingStepId,
+    ),
+    {
+      stepId: state.streamingStepId,
+      stepIndex: step?.index ?? state.streamingCompletedSteps.length + 1,
+      runId:
+        step?.runId ??
+        state.sessions.find((item) => item.id === state.selectedSessionId)
+          ?.activeRunId ??
+        undefined,
+      blocks: snapshotStreamingBuffers(state.streamingLive),
+    },
+  ].slice(-8);
 }
 
 export const useAgentSessionStore = create<AgentSessionStoreState>(
@@ -831,6 +978,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     setProjectId: (projectId) => {
       if (projectId === get().projectId) return;
+      clearFinalReplyRetry();
       clearScheduledSessionRefresh();
       activeSessionsRefresh = null;
       activeSessionsPage = null;
@@ -996,6 +1144,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     resetSessionDetailForDraft: () => {
       ++detailRefreshEpoch;
       clearInvocationUsageRefresh();
+      clearFinalReplyRetry();
       activeDetailRefresh = null;
       activeTranscriptRefresh = null;
       releaseSessionLiveSubscription();
@@ -1133,6 +1282,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     resetConversationHistory: (sessionId) => {
+      if (get().selectedSessionId === sessionId) clearFinalReplyRetry();
       ++detailRefreshEpoch;
       activeDetailRefresh = null;
       activeTranscriptRefresh = null;
@@ -1166,15 +1316,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       void get().refreshDetail();
     },
 
-    openPanel: (sessionId) => {
+    openPanel: (sessionId, options) => {
       if (isRuntimeResourceGone(sessionId)) return;
       const { panelOpen, selectedSessionId: prev } = get();
       const session = get().sessions.find((s) => s.id === sessionId);
       const liveSession = isActiveSessionStatus(session?.status);
-      if (panelOpen && prev === sessionId && !liveSession) return;
+      const forceFresh = options?.forceFresh === true;
+      if (panelOpen && prev === sessionId) {
+        if (!forceFresh && !liveSession) return;
+        if (
+          forceFresh &&
+          (activeDetailRefresh?.sessionId === sessionId ||
+            activeTranscriptRefresh?.sessionId === sessionId)
+        ) {
+          return;
+        }
+      }
 
       const isSwitch = prev !== sessionId;
-      if (isSwitch) {
+      if (isSwitch || forceFresh) {
+        clearFinalReplyRetry();
         ++detailRefreshEpoch;
         clearInvocationUsageRefresh();
         activeDetailRefresh = null;
@@ -1184,7 +1345,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Active sessions must always render from a fresh request. The live
       // stream remains the fast path, but an old detail snapshot must not be
       // restored when the conversation page is mounted again.
-      const cached = liveSession
+      const cached = liveSession || forceFresh
         ? undefined
         : get().sessionDetailCache[sessionId];
       set((state) => ({
@@ -1199,10 +1360,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             }
           : state.sessionDetailCache,
         ...(isSwitch ? { interactionState: null } : {}),
-        streamingRetry: null,
-        streamingStepId: null,
-        streamingLive: EMPTY_STREAMING_BUFFERS,
-        streamingCompletedSteps: [],
+        ...(isSwitch ? {
+          streamingRetry: null,
+          streamingStepId: null,
+          streamingLive: EMPTY_STREAMING_BUFFERS,
+          streamingCompletedSteps: [],
+        } : {}),
         ...(cached
           ? {
               runs: cached.runs,
@@ -1215,11 +1378,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               sessionTodos: cached.sessionTodos,
               sessionInvocationUsage: cached.sessionInvocationUsage,
             }
-          : isSwitch
+          : isSwitch || forceFresh
             ? emptyDetailPayload()
             : {}),
       }));
-      if (isSwitch) clearStreamingBuffers();
+      if (isSwitch || forceFresh) clearStreamingBuffers();
       if (isActiveSessionStatus(session?.status)) {
         ensureLiveStream(sessionId);
       } else if (isSwitch) {
@@ -1236,13 +1399,20 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Completed/failed/cancelled pages are immutable from the transcript
       // perspective. Reuse their cached payload until an explicit refresh or
       // a runtime mutation invalidates it; only active pages keep polling.
-      const needsRefresh = !cached?.cachedAt || isActiveSessionStatus(session?.status);
-      if (needsRefresh) void get().refreshDetail();
+      const needsRefresh =
+        forceFresh || !cached?.cachedAt || isActiveSessionStatus(session?.status);
+      if (needsRefresh) {
+        void get().refreshDetail({
+          joinPending: true,
+          forceFresh,
+        });
+      }
     },
 
     closePanel: () => {
       releaseSessionLiveSubscription();
       clearInvocationUsageRefresh();
+      clearFinalReplyRetry();
       set({ panelOpen: false });
     },
 
@@ -1251,7 +1421,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (!sessionId) return;
       const initial = get().sessionDetailCache[sessionId];
       const cursor = initial?.historyWindow?.olderCursor;
-      if (!cursor || activeOlderHistory?.sessionId === sessionId) return;
+      if (activeOlderHistory?.sessionId === sessionId) return activeOlderHistory.promise;
+      if (!cursor) return;
       const promise = (async () => {
         let pages;
         let rebuilt = false;
@@ -1324,6 +1495,144 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         if (activeOlderHistory?.promise === promise) activeOlderHistory = null;
       }
     },
+    loadTimelineIndex: async () => {
+      const sessionId = get().selectedSessionId;
+      if (!sessionId) return;
+      if (activeTimelineIndex?.sessionId === sessionId) return activeTimelineIndex.promise;
+      const initial = get().sessionDetailCache[sessionId];
+      if (!initial?.historyWindow || initial.timelineIndexLoaded) return;
+      if (!initial.historyWindow.olderCursor) {
+        set((state) => {
+          const current = state.sessionDetailCache[sessionId];
+          if (!current || state.selectedSessionId !== sessionId || current.historyWindow?.hasEarlier) return state;
+          return { sessionDetailCache: {
+            ...state.sessionDetailCache,
+            [sessionId]: { ...current, timelineIndexLoaded: true, timelineIndexError: undefined },
+          } };
+        });
+        return;
+      }
+      const promise = (async () => {
+        let cursor = initial.historyWindow!.olderCursor;
+        let revision = initial.historyWindow!.revision;
+        let epoch = initial.historyWindow!.epoch;
+        let restarts = 0;
+        let timelineMessages = initial.timelineMessages ?? initial.messages.map(previewTimelineMessage);
+        let timelineRuns = initial.timelineRuns ?? initial.runs;
+        let timelineSteps = initial.timelineSteps ?? initial.steps;
+        let timelineToolCalls = initial.timelineToolCalls ?? initial.toolCalls;
+        try {
+          while (cursor && get().selectedSessionId === sessionId) {
+            let older: HistoryWindowResponse;
+            try {
+              older = await agentRuntimeApi.historyWindow(sessionId, cursor);
+            } catch (error) {
+              if ((error as { code?: string }).code !== "HISTORY_STALE" || ++restarts > 2) throw error;
+              // Rebase the rail only. Never replace the reader's visible page.
+              const latest = await readLatestHistoryWindow(sessionId);
+              if (get().selectedSessionId !== sessionId) return;
+              revision = latest.historyWindow.revision;
+              epoch = latest.historyWindow.epoch;
+              cursor = latest.historyWindow.olderCursor;
+              const seed = seedTimelineIndex(latest);
+              timelineMessages = seed.timelineMessages ?? [];
+              timelineRuns = seed.timelineRuns ?? [];
+              timelineSteps = seed.timelineSteps ?? [];
+              timelineToolCalls = seed.timelineToolCalls ?? [];
+              continue;
+            }
+            if (get().selectedSessionId !== sessionId) return;
+            if (older.historyWindow.revision !== revision || older.historyWindow.epoch !== epoch) {
+              if (++restarts > 2) return;
+              const latest = await readLatestHistoryWindow(sessionId);
+              revision = latest.historyWindow.revision;
+              epoch = latest.historyWindow.epoch;
+              cursor = latest.historyWindow.olderCursor;
+              const seed = seedTimelineIndex(latest);
+              timelineMessages = seed.timelineMessages ?? [];
+              timelineRuns = seed.timelineRuns ?? [];
+              timelineSteps = seed.timelineSteps ?? [];
+              timelineToolCalls = seed.timelineToolCalls ?? [];
+              continue;
+            }
+            const nextCursor = older.historyWindow.olderCursor;
+            if (nextCursor === cursor) throw new Error("History cursor did not advance");
+            const indexed = extendTimelineIndex(
+              {
+                ...initial,
+                timelineMessages,
+                timelineRuns,
+                timelineSteps,
+                timelineToolCalls,
+              },
+              older,
+            );
+            timelineMessages = indexed.timelineMessages ?? timelineMessages;
+            timelineRuns = indexed.timelineRuns ?? timelineRuns;
+            timelineSteps = indexed.timelineSteps ?? timelineSteps;
+            timelineToolCalls = indexed.timelineToolCalls ?? timelineToolCalls;
+            cursor = nextCursor;
+          }
+          if (get().selectedSessionId !== sessionId) return;
+          set((state) => {
+            const current = state.sessionDetailCache[sessionId];
+            if (!current || state.selectedSessionId !== sessionId ||
+                current.historyWindow?.epoch !== epoch ||
+                current.historyWindow?.revision !== revision) return state;
+            return {
+              sessionDetailCache: {
+                ...state.sessionDetailCache,
+                [sessionId]: {
+                  ...current,
+                  timelineMessages,
+                  timelineRuns,
+                  timelineSteps,
+                  timelineToolCalls,
+                  timelineIndexLoaded: true,
+                  timelineIndexError: undefined,
+                },
+              },
+            };
+          });
+        } catch (error) {
+          set((state) => {
+            const current = state.sessionDetailCache[sessionId];
+            if (!current || state.selectedSessionId !== sessionId) return state;
+            return { sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: {
+              ...current, timelineIndexError: String(error),
+            } } };
+          });
+        }
+      })();
+      activeTimelineIndex = { sessionId, promise };
+      try { await promise; } finally {
+        if (activeTimelineIndex?.promise === promise) activeTimelineIndex = null;
+        const current = get().sessionDetailCache[sessionId];
+        if (get().selectedSessionId === sessionId &&
+            current?.historyWindow && !current.timelineIndexLoaded &&
+            !current.timelineIndexError &&
+            (current.historyWindow.revision !== initial.historyWindow.revision ||
+              current.historyWindow.epoch !== initial.historyWindow.epoch)) {
+          void get().loadTimelineIndex();
+        }
+      }
+    },
+    loadHistoryUntil: async (entryId) => {
+      const sessionId = get().selectedSessionId;
+      if (!sessionId) return false;
+      while (get().selectedSessionId === sessionId) {
+        const current = get().sessionDetailCache[sessionId];
+        if (!current) return false;
+        if (timelineContainsEntry(current, entryId) ||
+            (entryId === `user-input-${sessionId}` && !current.historyWindow?.hasEarlier)) return true;
+        const cursor = current.historyWindow?.olderCursor;
+        if (!cursor) return false;
+        await get().loadOlderHistory();
+        if (get().sessionDetailCache[sessionId]?.historyWindow?.olderCursor === cursor &&
+            !activeOlderHistory?.promise) return false;
+      }
+      return false;
+    },
     /**
      * Refresh the selected session's detail.
      *
@@ -1334,10 +1643,25 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     refreshDetail: async (options) => {
       const targetSessionId = get().selectedSessionId;
       const targetProjectId = get().projectId;
+      const forceFresh = options?.forceFresh === true;
       if (!targetSessionId) return;
       // A deleted session has nothing left to refresh; without this every poll
       // tick would re-issue the full nine-request burst against a dead id.
       if (isRuntimeResourceGone(targetSessionId)) return;
+
+      // A terminal patch can arrive while an older transcript request is in
+      // flight. Freeze the last delta before any result is allowed to settle.
+      const status = get().sessions.find((item) => item.id === targetSessionId)?.status;
+      if (isTerminalSessionStatus(status) && get().streamingStepId) {
+        flushStreamingDeltas();
+        set((state) => ({
+          streamingCompletedSteps: snapshotCurrentStep(state),
+          streamingStepId: null,
+          streamingLive: EMPTY_STREAMING_BUFFERS,
+          streamingRetry: null,
+        }));
+        clearStreamingBuffers();
+      }
 
       if (activeDetailRefresh?.sessionId === targetSessionId) {
         if (!options?.joinPending) activeDetailRefresh.again = true;
@@ -1355,6 +1679,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const targetSessionIsLive = isActiveSessionStatus(targetSession?.status);
       set({
         detailLoading:
+          forceFresh ||
           targetSessionIsLive ||
           !get().sessionDetailCache[targetSessionId]?.cachedAt,
         detailError: null,
@@ -1375,7 +1700,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               !isRuntimeResourceGone(targetSessionId) &&
               detailRefreshEpoch === epoch &&
               !refresh.again;
-            const cachedEntry = targetSessionIsLive
+            const cachedEntry = targetSessionIsLive || forceFresh
               ? undefined
               : get().sessionDetailCache[targetSessionId];
             const versioned = get().sessions.find(session => session.id === targetSessionId)?.sessionMetadata?.historyStorage === 3;
@@ -1482,11 +1807,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
             const transcriptSource = versioned
-              ? agentRuntimeApi.historyWindow(targetSessionId)
-                  .catch(error => {
-                    if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
-                    return agentRuntimeApi.historyWindow(targetSessionId);
-                  })
+              ? readLatestHistoryWindow(targetSessionId)
                   .then(window => [
                     { items: window.steps }, { items: window.runs }, { items: window.events },
                     { items: window.messages, historyWindow: window.historyWindow },
@@ -1517,20 +1838,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     knownEventId && cachedEntry
                       ? [...cachedEntry.events, ...eventsRes.items].slice(-256)
                       : eventsRes.items;
-                  // A response requested before completion may lack the final
-                  // message. Only a refresh started after completion can retire
-                  // the live answer; the completion event schedules that refresh.
-                  const preserveLive =
-                    sessionActive ||
-                    [
-                      "running",
-                      "queued",
-                      "waiting_permission",
-                      "waiting_input",
-                    ].includes(
-                      get().sessions.find((s) => s.id === targetSessionId)
-                        ?.status ?? "",
-                    );
                   const cacheEntry: SessionDetailCacheEntry = {
                     runs: runsRes.items,
                     steps: stepsRes.items,
@@ -1544,12 +1851,45 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     cachedAt: Date.now(),
                     lastVisitedAt: Date.now(),
                     historyWindow: "historyWindow" in messagesRes ? messagesRes.historyWindow : undefined,
+                    ...(versioned && "historyWindow" in messagesRes
+                      ? {
+                          ...seedTimelineIndex({
+                            messages: messagesRes.items,
+                            runs: runsRes.items,
+                            steps: stepsRes.items,
+                            toolCalls: toolCallsRes.items,
+                            events: [],
+                            permissions: [],
+                            historyWindow: messagesRes.historyWindow,
+                          }),
+                          timelineIndexLoaded: !messagesRes.historyWindow.olderCursor,
+                        }
+                      : {}),
                   };
 
+                  let pendingFinalReply = false;
                   set((s) => {
-                    const merged = versioned
+                    const merged = versioned && !forceFresh
                       ? mergeRefreshedHistory(s.sessionDetailCache[targetSessionId], cacheEntry)
                       : cacheEntry;
+                    const currentStatus = s.sessions.find(
+                      (item) => item.id === targetSessionId,
+                    )?.status;
+                    const terminal = isTerminalSessionStatus(currentStatus);
+                    const snapshots = terminal
+                      ? snapshotCurrentStep(s)
+                      : s.streamingCompletedSteps;
+                    const pendingSnapshots = snapshots.filter(
+                      (snapshot) =>
+                        !confirmedLiveStep(
+                          snapshot,
+                          merged.steps,
+                          merged.messages,
+                          merged.toolCalls,
+                        ),
+                    );
+                    pendingFinalReply = terminal && pendingSnapshots.length > 0;
+                    const preserveLive = isActiveSessionStatus(currentStatus);
                     return {
                       detailLoading: false,
                       detailError: null,
@@ -1559,22 +1899,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       messages: merged.messages,
                       toolCalls: merged.toolCalls,
                       permissions: merged.permissions,
-                      sessionDetailCache: preserveLive
-                        ? s.sessionDetailCache
-                        : trimSessionDetailCache({
-                            ...s.sessionDetailCache,
-                            [targetSessionId]: merged,
-                          }, s.selectedSessionId),
+                      sessionDetailCache: trimSessionDetailCache(
+                        {
+                          ...s.sessionDetailCache,
+                          [targetSessionId]: merged,
+                        },
+                        s.selectedSessionId,
+                      ),
+                      streamingCompletedSteps: pendingSnapshots,
                       ...(preserveLive
                         ? {}
                         : {
                             streamingRetry: null,
                             streamingStepId: null,
                             streamingLive: EMPTY_STREAMING_BUFFERS,
-                            streamingCompletedSteps: [],
                           }),
                     };
                   });
+
+                  if (pendingFinalReply) scheduleFinalReplyRetry(targetSessionId);
+                  else clearFinalReplyRetry();
 
                   const session = get().sessions.find(
                     (s) => s.id === targetSessionId,
@@ -1586,8 +1930,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               )
               .catch((error) => {
                 if (discardIfMissing(error)) return;
-                if (isCurrent())
+                if (isCurrent()) {
                   set({ detailLoading: false, detailError: String(error) });
+                  if (
+                    get().streamingCompletedSteps.length > 0 &&
+                    isTerminalSessionStatus(
+                      get().sessions.find((session) => session.id === targetSessionId)
+                        ?.status,
+                    )
+                  )
+                    scheduleFinalReplyRetry(targetSessionId);
+                }
               });
 
             activeTranscriptRefresh = {
@@ -1878,12 +2231,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             "interrupted",
           ].includes(event.patch.status ?? "");
           if (event.reset) {
-            if (terminal && get().streamingStepId) {
-              // The persisted transcript arrives later. Keep the visible answer
-              // until refreshDetail replaces it and clears live state together.
+            if (terminal) {
+              clearFinalReplyRetry();
               flushStreamingDeltas();
-              set({ streamingRetry: null });
+              set((state) => ({
+                streamingRetry: null,
+                streamingCompletedSteps: snapshotCurrentStep(state),
+                streamingStepId: null,
+                streamingLive: EMPTY_STREAMING_BUFFERS,
+              }));
+              clearStreamingBuffers();
             } else {
+              clearFinalReplyRetry();
               clearStreamingBuffers();
               set({
                 streamingRetry: null,
@@ -1901,18 +2260,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           if (!streamVisible) break;
           flushStreamingDeltas();
           const s = get();
-          const hasContent =
-            s.streamingStepId && hasStreamingContent(s.streamingLive);
-          const completedSteps = hasContent
-            ? [
-                ...s.streamingCompletedSteps,
-                {
-                  stepId: s.streamingStepId!,
-                  stepIndex: s.streamingCompletedSteps.length + 1,
-                  blocks: snapshotStreamingBuffers(s.streamingLive),
-                },
-              ]
-            : s.streamingCompletedSteps;
+          const completedSteps = snapshotCurrentStep(s);
           clearStreamingBuffers();
           set({
             streamingRetry: null,

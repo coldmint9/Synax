@@ -143,10 +143,10 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
     (!streamingStep || streamingStep.status === "running");
 
   // History owns persisted steps; snapshots bridge the gap until detail refresh.
-  const persistedStepIds = new Set(steps.map((step) => step.id));
-  const pendingCompletedSteps = streamingCompletedSteps.filter(
-    (step) => !persistedStepIds.has(step.stepId),
-  );
+  // A persisted step may arrive before its final assistant message. The store
+  // removes snapshots only after content confirmation, so status alone must
+  // not hide a still-visible final reply.
+  const pendingCompletedSteps = streamingCompletedSteps;
 
   useEffect(() => {
     const el = scrollContainerRef?.current;

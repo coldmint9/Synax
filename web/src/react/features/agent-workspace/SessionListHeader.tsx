@@ -1,6 +1,15 @@
-import { Archive, ArrowLeft, PanelLeftClose, Search, SquarePen } from "lucide-react";
+import {
+  AlignLeft,
+  Archive,
+  ArrowLeft,
+  List,
+  PanelLeftClose,
+  Search,
+  SquarePen,
+} from "lucide-react";
 import { Button } from "@heroui/react";
 import { useLocale } from "../../../hooks/useLocale";
+import { useShellStore } from "../../state/shellStore";
 import type { SessionListView } from "./sessionBuckets";
 
 interface Props {
@@ -33,6 +42,12 @@ export function SessionListHeader({
   onCollapsePanel,
 }: Props) {
   const { t, locale } = useLocale();
+  const displayMode = useShellStore(
+    (state) => state.preferences.sessionListDisplayMode,
+  );
+  const setDisplayMode = useShellStore(
+    (state) => state.setSessionListDisplayMode,
+  );
   const isWorkflowView = listView === "workflow";
 
   return (
@@ -99,23 +114,51 @@ export function SessionListHeader({
         </div>
       </div>
 
-      <div className="relative">
-        <Search
-          size={12}
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none"
-        />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder={
-            locale === "zh"
-              ? "搜索当前工作区会话全文…"
-              : "Search workspace conversations…"
-          }
-          maxLength={256}
-          className="w-full h-7 pl-7 pr-2.5 text-[11px] bg-secondary/40 border border-border/30 rounded-md text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent/40 focus:bg-secondary/60 transition-colors"
-        />
+      <div className="flex min-w-0 items-center gap-1">
+        <div className="relative min-w-0 flex-1">
+          <Search
+            size={12}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 pointer-events-none"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder={
+              locale === "zh"
+                ? "搜索当前工作区会话全文…"
+                : "Search workspace conversations…"
+            }
+            maxLength={256}
+            className="w-full h-7 pl-7 pr-2.5 text-[11px] bg-secondary/40 border border-border/30 rounded-md text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent/40 focus:bg-secondary/60 transition-colors"
+          />
+        </div>
+        <div
+          className="session-list-display-mode shrink-0"
+          role="group"
+          aria-label={t("sessionListDisplayMode")}
+        >
+          <button
+            type="button"
+            className="session-list-display-mode-button"
+            aria-pressed={displayMode === "title"}
+            aria-label={t("sessionListModeTitle")}
+            title={t("sessionListModeTitle")}
+            onClick={() => setDisplayMode("title")}
+          >
+            <List size={14} />
+          </button>
+          <button
+            type="button"
+            className="session-list-display-mode-button"
+            aria-pressed={displayMode === "preview"}
+            aria-label={t("sessionListModePreview")}
+            title={t("sessionListModePreview")}
+            onClick={() => setDisplayMode("preview")}
+          >
+            <AlignLeft size={14} />
+          </button>
+        </div>
       </div>
 
       {!isWorkflowView && hasGeneratedWiki ? (
