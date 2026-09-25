@@ -24,6 +24,7 @@ import {
 import { useShellStore } from "../../state/shellStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { useAgentSessionStore } from "./state/agentSessionStore";
 
 const contextTypes = [
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
@@ -116,6 +117,7 @@ export function ComposerContextPicker({
     setCompacting(true);
     setCompactMessage("");
     setError("");
+    useAgentSessionStore.setState({ contextCompactionNotice: { status: "running" } });
     try {
       const result = await agentRuntimeApi.compactContext(sessionId);
       if (request !== compactRequest.current) return;
@@ -125,8 +127,13 @@ export function ComposerContextPicker({
           : "Context compaction started. Completion will appear in the conversation.",
       );
     } catch (err) {
-      if (request === compactRequest.current)
-        setError(err instanceof Error ? err.message : String(err));
+      if (request === compactRequest.current) {
+        const message = err instanceof Error ? err.message : String(err);
+        useAgentSessionStore.setState({
+          contextCompactionNotice: { status: "failed", error: message },
+        });
+        setError(message);
+      }
     } finally {
       if (request === compactRequest.current) {
         compactPending.current = false;
