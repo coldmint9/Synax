@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Button, Switch } from '@heroui/react'
+import { Button, Switch } from "@/react/components/ui"
 import { Wrench, FileCode } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { FormRow } from './FormRow'

@@ -1,4 +1,4 @@
-import { Button, Modal } from "@heroui/react";
+import { Button, Modal } from "@/react/components/ui";
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";

@@ -1,4 +1,4 @@
-import { ProgressBar } from '@heroui/react'
+import { ProgressBar } from "@/react/components/ui"
 
 type WikiProgressBarProps = {
   'aria-label': string
@@ -10,7 +10,7 @@ type WikiProgressBarProps = {
   className?: string
 }
 
-/** HeroUI v3 ProgressBar requires Track + Fill children to render the bar. */
+/** Synax UI v3 ProgressBar requires Track + Fill children to render the bar. */
 export default function WikiProgressBar({
   'aria-label': ariaLabel,
   done,

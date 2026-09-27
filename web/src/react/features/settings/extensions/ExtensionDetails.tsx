@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Spinner } from '@heroui/react'
+import { Button, Drawer, Spinner } from "@/react/components/ui"
 import {
   extensionsApi,
   type ExtensionItem,

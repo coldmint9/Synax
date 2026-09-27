@@ -1,4 +1,4 @@
-import { Button, Modal } from "@heroui/react";
+import { Button, Modal } from "@/react/components/ui";
 import { Archive } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 

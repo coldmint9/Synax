@@ -1,7 +1,7 @@
 import { MediaParts } from "../media/MediaParts";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { useLocale } from "../../../hooks/useLocale";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";

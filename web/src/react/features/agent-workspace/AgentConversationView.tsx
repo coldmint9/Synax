@@ -2,7 +2,7 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionHistoryProvider } from "./SessionHistoryContext";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { memo } from "react";
-import { Chip, Card } from "@heroui/react";
+import { Chip, Card } from "@/react/components/ui";
 import { XCircle, Zap } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import type {

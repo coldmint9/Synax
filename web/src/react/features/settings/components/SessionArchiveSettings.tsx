@@ -1,4 +1,4 @@
-import { Button, Modal, Switch } from "@heroui/react";
+import { Button, Modal, Switch } from "@/react/components/ui";
 import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "../../../../hooks/useLocale";

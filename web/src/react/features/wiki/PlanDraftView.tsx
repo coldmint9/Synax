@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Zap, X, Loader2 } from 'lucide-react'
-import { Button, Modal } from '@heroui/react'
+import { Button, Modal } from "@/react/components/ui"
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanNode } from '../../../lib/api/goal'

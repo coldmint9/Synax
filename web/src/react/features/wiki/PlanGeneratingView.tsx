@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
 import { Loader2, FileCode, AlertCircle, RotateCcw, Search, Brain, Send, CheckCircle2 } from 'lucide-react'
-import { Button } from '@heroui/react'
+import { Button } from "@/react/components/ui"
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiGoal } from '../../../lib/api/goal'

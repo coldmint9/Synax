@@ -1,4 +1,4 @@
-import { Label, ListBox, Select } from '@heroui/react'
+import { Label, ListBox, Select } from "@/react/components/ui"
 import { FolderCode } from 'lucide-react'
 import type { ProjectWorkspaceRoot } from '../../../lib/api/project'
 import { useWorkspaceCopy } from './workspaceCopy'

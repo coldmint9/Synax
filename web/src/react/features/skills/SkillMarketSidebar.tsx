@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from 'react'
-import { Button } from '@heroui/react'
+import { Button } from "@/react/components/ui"
 import { ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import type { SkillSourceRecord } from '../../../lib/api/skills'
 

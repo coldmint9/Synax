@@ -2,7 +2,7 @@ import { DialogOverlay } from "../../components/DialogOverlay";
 import { AppSelect } from "../../components/AppSelect";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
+import { Button, Input, Label, TextField, Tooltip } from "@/react/components/ui";
 import { ArrowRight, FolderCode, Layers2, Pin, X } from "lucide-react";
 import { WorkspaceProjectSources } from "../workspace/WorkspaceProjectSources";
 import { WorkspaceProjectRow } from "../workspace/WorkspaceProjectRow";

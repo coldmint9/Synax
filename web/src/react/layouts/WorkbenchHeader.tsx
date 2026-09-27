@@ -2,10 +2,11 @@ import { ToolbarPill } from "./ToolbarPill";
 import { GitToolbarTarget } from "../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
+import { LiquidGlassSurface } from "../components/ui/LiquidGlassSurface";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
+import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@/react/components/ui";
 import {
   BookOpen,
   GitMerge,
@@ -640,7 +641,8 @@ export function WorkbenchHeader({
           className={`workbench-header${compact ? " workbench-header--docked" : ""}`}
         >
           <>
-            <div className="wh-pill">
+            <div className="wh-pill liquid-glass-island">
+              <LiquidGlassSurface intensity="subtle">
               <div className="project-switcher-anchor">
                 <ProjectSwitcher
                   hasProject={hasProject}
@@ -701,6 +703,7 @@ export function WorkbenchHeader({
                 </button>
                 <ThemeToggle />
               </div>
+              </LiquidGlassSurface>
             </div>
 
             <WikiToolbarPill visible={activePanel === "wiki"} />

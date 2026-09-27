@@ -163,7 +163,7 @@ describe('extension center', () => {
       'project-a',
       expect.objectContaining({ view: 'market' }),
     )
-    // HeroUI exposes selection controls as buttons with their field label.
+    // Synax UI exposes selection controls as buttons with their field label.
     expect(screen.getByLabelText('来源')).toBeInTheDocument()
     expect(screen.getByLabelText('类型')).toBeInTheDocument()
   })

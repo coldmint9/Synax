@@ -6,7 +6,7 @@ import {
   Label,
   TextArea,
   TextField,
-} from '@heroui/react'
+} from "@/react/components/ui"
 import { Plus, RefreshCw } from 'lucide-react'
 import {
   extensionsApi,

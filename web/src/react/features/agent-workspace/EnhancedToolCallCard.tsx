@@ -2,7 +2,7 @@ import { WebSearchResults, webSearchQuery } from "./WebSearchResults";
 import { MediaParts } from "../media/MediaParts";
 import { useState } from "react";
 import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
-import { Card, Chip } from "@heroui/react";
+import { Card, Chip } from "@/react/components/ui";
 import {
   Terminal,
   FileEdit,

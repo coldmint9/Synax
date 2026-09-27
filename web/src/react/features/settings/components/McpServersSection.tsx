@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Switch, Modal } from "@heroui/react";
+import { Button, Switch, Modal } from "@/react/components/ui";
 import { Loader2, Plug, Plus, Wifi } from "lucide-react";
 import { ExtensionControls } from '../../../components/extensions/ExtensionControls';
 import { UninstallDialog } from '../../../components/extensions/UninstallDialog';

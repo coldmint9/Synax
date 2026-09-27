@@ -1,7 +1,7 @@
 import { DiscoveryDialogs } from './DiscoveryDialogs'
 import type { DiscoveryItem as Item } from './discovery-types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Checkbox, Input, TextField } from '@heroui/react'
+import { Button, Checkbox, Input, TextField } from "@/react/components/ui"
 import {
   ArrowDownToLine,
   Check,

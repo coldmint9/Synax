@@ -1,4 +1,4 @@
-import { Chip } from "@heroui/react";
+import { Chip } from "@/react/components/ui";
 import { Layers } from "lucide-react";
 import type { ToolCallView } from "./buildInterleavedTurns";
 import { EnhancedToolCallCard } from "./EnhancedToolCallCard";

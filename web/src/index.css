@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@heroui/styles";
 @import "./react/components/modalViewport.css";
 @import "./react/desktopPerformance.css";
 @import "./react/components/beautiful-ui/activities.css";
@@ -25,7 +24,7 @@
   --color-card-foreground: hsl(var(--card-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
-  /* `danger` is the HeroUI-facing name for the same token; without this
+  /* `danger` is the Synax UI-facing name for the same token; without this
      mapping every bg-danger/text-danger utility silently compiled away. */
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
@@ -533,7 +532,7 @@
   --warning-hsl: var(--cx-warning-hsl);
   --muted-hsl: var(--cx-gray-100-hsl);
 
-  /* Full colors (HeroUI components use var(--x) directly) */
+  /* Full colors (Synax UI components use var(--x) directly) */
   --background: var(--cx-gray-50);
   --foreground: var(--cx-text);
   --border: var(--cx-gray-150);
@@ -545,7 +544,7 @@
   --warning: hsl(var(--cx-warning-hsl));
   --warning-foreground: #ffffff;
 
-  /* HeroUI-specific tokens */
+  /* Synax UI-specific tokens */
   --surface: var(--cx-gray-0);
   --surface-foreground: var(--cx-text);
   --surface-secondary: var(--cx-gray-75);
@@ -570,7 +569,7 @@
   --segment-foreground: var(--cx-text);
   --scrollbar: var(--cx-gray-250);
 
-  /* Project tokens (not used by HeroUI directly) */
+  /* Project tokens (not used by Synax UI directly) */
   --card: var(--cx-gray-0-hsl);
   --card-foreground: var(--cx-text-hsl);
   --popover: var(--cx-gray-0-hsl);
@@ -663,7 +662,7 @@
   --warning: hsl(var(--warning-hsl));
   --warning-foreground: #0d0d0d;
 
-  /* HeroUI-specific tokens */
+  /* Synax UI-specific tokens */
   --surface: #1b2027;
   --surface-foreground: var(--foreground);
   --surface-secondary: #171b22;
@@ -1404,12 +1403,12 @@
     gap: 2px;
   }
 
-  /* HeroUI Tabs 在 header 内的样式覆盖 */
+  /* Synax UI Tabs 在 header 内的样式覆盖 */
   .wh-tabs {
     display: flex;
     align-items: center;
   }
-  /* The three header tabs fit without HeroUI's scroll container. Its
+  /* The three header tabs fit without Synax UI's scroll container. Its
      overflow chevron could cover the Git label during Wiki/Git switches. */
   .wh-tabs .tabs__list {
     background: transparent !important;
@@ -4087,7 +4086,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   color: hsl(var(--muted-foreground));
 }
 
-/* HeroUI owns selection-control surfaces and checked/hover/focus states. */
+/* Synax UI owns selection-control surfaces and checked/hover/focus states. */
 input[type="radio"] {
   accent-color: var(--accent);
 }
@@ -6468,7 +6467,7 @@ input[type="radio"] {
   }
 }
 
-/* Compact settings layout; control materials are owned by HeroUI. */
+/* Compact settings layout; control materials are owned by Synax UI. */
 :root .settings-select .select__trigger {
   align-items: center;
   height: 30px;
@@ -6616,3 +6615,61 @@ input[type="radio"] {
     inset 2px 2px 5px hsl(var(--primary) / 0.12),
     inset -2px -2px 5px hsl(var(--background-hsl) / 0.84);
 }
+
+/* ── Synax UI / ceramic-neumorphic controls ─────────────────────────────── */
+:root {
+  --synax-neu-light: color-mix(in srgb, var(--card) 92%, white);
+  --synax-neu-dark: color-mix(in srgb, var(--card) 78%, black);
+  --synax-control-border: color-mix(in srgb, var(--border) 74%, white);
+  --synax-control-shadow: 5px 5px 12px color-mix(in srgb, var(--foreground) 12%, transparent), -4px -4px 10px color-mix(in srgb, white 82%, transparent);
+  --synax-glass-bg: color-mix(in srgb, var(--card) 58%, transparent);
+  --synax-glass-border: color-mix(in srgb, white 62%, transparent);
+}
+.dark {
+  --synax-neu-light: color-mix(in srgb, var(--card) 92%, white 8%);
+  --synax-neu-dark: color-mix(in srgb, var(--background) 84%, black);
+  --synax-control-border: color-mix(in srgb, white 13%, var(--border));
+  --synax-control-shadow: 5px 5px 14px rgb(0 0 0 / .32), -4px -4px 10px rgb(255 255 255 / .035);
+  --synax-glass-bg: rgb(24 29 42 / .58);
+  --synax-glass-border: rgb(255 255 255 / .16);
+}
+.synax-control, .synax-input, .synax-select-trigger, .synax-dropdown-trigger {
+  border: 1px solid var(--synax-control-border);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--synax-neu-light) 86%, transparent), color-mix(in srgb, var(--synax-neu-dark) 70%, transparent));
+  box-shadow: var(--synax-control-shadow), inset 0 1px rgb(255 255 255 / .16);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.synax-button { display:inline-flex; align-items:center; justify-content:center; gap:.45rem; border-radius: .75rem; padding:.45rem .75rem; color:var(--foreground); font:inherit; cursor:pointer; }
+.synax-button--sm { min-height:1.9rem; padding:.3rem .55rem; font-size:.75rem; }
+.synax-button--lg { min-height:2.7rem; padding:.7rem 1rem; }
+.synax-button--icon { width:2rem; padding:0; }
+.synax-button--primary { color:var(--primary-foreground); background:linear-gradient(145deg, color-mix(in srgb, var(--primary) 88%, white), var(--primary)); }
+.synax-button--ghost { background:transparent; box-shadow:none; border-color:transparent; }
+.synax-button:hover:not(:disabled), .synax-control:hover:not(:disabled), .synax-select-trigger:hover:not(:disabled) { transform:translateY(-1px); box-shadow: 7px 7px 16px color-mix(in srgb, var(--foreground) 14%, transparent), -4px -4px 12px color-mix(in srgb, white 78%, transparent), inset 0 1px rgb(255 255 255 / .2); }
+.synax-button:active:not(:disabled), .synax-control:active:not(:disabled) { transform:translateY(1px); box-shadow:inset 2px 2px 6px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.synax-button:disabled, .synax-input:disabled, .is-disabled { opacity:.48; cursor:not-allowed; }
+.synax-input { min-height:2.35rem; width:100%; border-radius:.7rem; padding:.55rem .7rem; color:var(--foreground); outline:none; }
+.synax-input:focus-visible, .synax-control:focus-visible, .synax-select-trigger:focus-visible { border-color:color-mix(in srgb, var(--primary) 65%, var(--border)); box-shadow:0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent), var(--synax-control-shadow); }
+.synax-textarea { min-height:5rem; resize:vertical; }
+.synax-field { display:grid; gap:.4rem; }
+.synax-label { color:var(--foreground); font-size:.78rem; font-weight:600; }
+.synax-description { color:var(--muted-foreground); font-size:.72rem; }
+.synax-field-error { color:var(--destructive); font-size:.72rem; }
+.synax-card, .synax-surface { border:1px solid var(--synax-control-border); border-radius:1rem; background:linear-gradient(145deg, color-mix(in srgb, var(--synax-neu-light) 72%, transparent), color-mix(in srgb, var(--synax-neu-dark) 50%, transparent)); box-shadow:var(--synax-control-shadow); }
+.synax-card__header, .synax-card__content, .synax-card__footer { padding: .8rem 1rem; }
+.synax-card__header { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+.synax-card__title, .synax-modal__heading { margin:0; font-weight:650; }
+.synax-chip { display:inline-flex; align-items:center; gap:.25rem; border-radius:999px; padding:.2rem .55rem; font-size:.7rem; border:1px solid var(--synax-control-border); }
+.synax-chip--soft { background:color-mix(in srgb, var(--primary) 10%, transparent); }
+.synax-spinner { display:inline-block; border:2px solid color-mix(in srgb, currentColor 18%, transparent); border-top-color:currentColor; border-radius:50%; width:1.1rem; height:1.1rem; animation:synax-spin .7s linear infinite; }
+.synax-spinner--sm { width:.8rem; height:.8rem; }
+.synax-skeleton { display:block; min-height:.85rem; border-radius:.45rem; background:linear-gradient(100deg, color-mix(in srgb,var(--muted) 45%,transparent), color-mix(in srgb,var(--foreground) 9%,transparent), color-mix(in srgb,var(--muted) 45%,transparent)); background-size:200% 100%; animation:synax-shimmer 1.4s infinite; }
+.synax-progress { height:.45rem; overflow:hidden; border-radius:999px; background:color-mix(in srgb,var(--muted) 45%,transparent); box-shadow:inset 2px 2px 4px rgb(0 0 0 / .14); }.synax-progress > span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--primary),color-mix(in srgb,var(--primary) 45%,white)); transition:width .25s ease; }
+.synax-separator { background:var(--border); }.synax-separator--horizontal { height:1px; width:100%; }.synax-separator--vertical { width:1px; height:100%; }
+.synax-switch { position:relative; display:inline-flex; align-items:center; width:2.5rem; height:1.45rem; border:1px solid var(--synax-control-border); border-radius:999px; background:var(--muted); cursor:pointer; box-shadow:inset 2px 2px 4px rgb(0 0 0 / .18); }.synax-switch.is-selected { background:var(--primary); }.synax-switch__thumb { width:1rem; height:1rem; margin-left:.18rem; border-radius:50%; background:white; box-shadow:1px 2px 4px rgb(0 0 0 / .25); transition:transform .2s ease; }.synax-switch.is-selected .synax-switch__thumb { transform:translateX(1.05rem); }.synax-switch__content, .synax-switch__control { display:contents; }
+.synax-checkbox { display:inline-flex; align-items:center; gap:.5rem; cursor:pointer; }.synax-checkbox input { accent-color:var(--primary); }.synax-checkbox__content,.synax-checkbox__control { display:contents; }
+.synax-dropdown, .synax-popover, .synax-select { position:relative; }.synax-dropdown-popover, .synax-popover, .synax-select-popover { z-index:80; min-width:12rem; margin-top:.4rem; border:1px solid var(--synax-glass-border); border-radius:.9rem; padding:.35rem; background:var(--synax-glass-bg); box-shadow:0 18px 42px rgb(0 0 0 / .22), inset 0 1px rgb(255 255 255 / .3); backdrop-filter:blur(22px) saturate(1.4); }.synax-dropdown-menu, .synax-listbox { display:grid; gap:.15rem; }.synax-dropdown-item, .synax-listbox-item { display:flex; align-items:center; gap:.5rem; width:100%; border:0; border-radius:.55rem; background:transparent; padding:.45rem .55rem; color:var(--foreground); text-align:left; cursor:pointer; }.synax-dropdown-item:hover, .synax-listbox-item:hover, .synax-listbox-item.is-selected { background:color-mix(in srgb,var(--primary) 14%,transparent); }.synax-dropdown-item--danger { color:var(--destructive); }.synax-dropdown-section { padding:.25rem; }.synax-dropdown-submenu { position:relative; }.synax-select-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:2.3rem; border-radius:.7rem; padding:.45rem .65rem; color:var(--foreground); cursor:pointer; }.synax-select-popover { position:absolute; left:0; right:0; top:100%; }.synax-listbox-indicator { margin-left:auto; color:var(--primary); }
+.synax-tabs-list { display:flex; align-items:center; gap:.25rem; }.synax-tab { position:relative; border:0; border-radius:.65rem; background:transparent; color:var(--muted-foreground); padding:.45rem .65rem; cursor:pointer; }.synax-tab.is-selected { color:var(--foreground); background:color-mix(in srgb,var(--primary) 12%,transparent); }.synax-tab-indicator { position:absolute; inset:auto .55rem .1rem; height:2px; border-radius:99px; background:var(--primary); }.synax-tooltip__content { z-index:100; border-radius:.45rem; background:var(--foreground); color:var(--background); padding:.3rem .45rem; font-size:.7rem; }
+.synax-overlay { position:fixed; inset:0; background:rgb(5 8 18 / .42); backdrop-filter:blur(8px); }.synax-overlay__viewport { position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:1rem; overflow:auto; }.synax-overlay__container { width:100%; display:flex; justify-content:center; }.synax-modal-container { width:100%; }.synax-modal { position:relative; max-height:calc(100vh - 2rem); overflow:auto; border:1px solid var(--synax-glass-border); border-radius:1.25rem; background:var(--synax-glass-bg); box-shadow:0 24px 80px rgb(0 0 0 / .3), inset 0 1px rgb(255 255 255 / .28); backdrop-filter:blur(26px) saturate(1.3); }.synax-modal__header,.synax-modal__body,.synax-modal__footer { padding:1rem 1.2rem; }.synax-modal__footer { display:flex; justify-content:flex-end; gap:.5rem; }.synax-modal-close { position:absolute; top:.75rem; right:.75rem; display:grid; place-items:center; border:0; background:transparent; color:var(--muted-foreground); cursor:pointer; }
+.liquid-glass-surface { position:relative; isolation:isolate; overflow:hidden; border:1px solid var(--synax-glass-border); border-radius:inherit; background:linear-gradient(145deg, rgb(255 255 255 / .18), rgb(255 255 255 / .035)); box-shadow:inset 0 1px rgb(255 255 255 / .34), inset 0 -1px rgb(0 0 0 / .08), 0 10px 28px rgb(0 0 0 / .1); backdrop-filter:blur(18px) saturate(1.55); }.liquid-glass-surface--strong { backdrop-filter:blur(28px) saturate(1.8); }.liquid-glass-svg,.liquid-glass-canvas,.liquid-glass-rim { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }.liquid-glass-svg { opacity:.32; filter:var(--liquid-filter); }.liquid-glass-canvas { z-index:0; mix-blend-mode:screen; }.liquid-glass-rim { z-index:1; border-radius:inherit; box-shadow:inset 0 0 0 1px rgb(255 255 255 / .2), inset 0 -12px 22px rgb(80 130 255 / .05); }.liquid-glass-content { position:relative; z-index:2; }
+@keyframes synax-spin { to { transform:rotate(360deg); } } @keyframes synax-shimmer { to { background-position:-200% 0; } }

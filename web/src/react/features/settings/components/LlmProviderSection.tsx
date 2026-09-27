@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertDialog, Button } from '@heroui/react'
+import { AlertDialog, Button } from "@/react/components/ui"
 import { KeyRound, Plus } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'

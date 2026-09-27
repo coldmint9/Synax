@@ -1,4 +1,4 @@
-import { Button, Checkbox, Modal, TextArea, Tooltip } from "@heroui/react";
+import { Button, Checkbox, Modal, TextArea, Tooltip } from "@/react/components/ui";
 import { AppSelect } from "../../components/AppSelect";
 import {
   AlertCircle,

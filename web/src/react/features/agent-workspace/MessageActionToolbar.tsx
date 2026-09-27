@@ -1,4 +1,4 @@
-import { Button, Tooltip } from "@heroui/react";
+import { Button, Tooltip } from "@/react/components/ui";
 import { Check, Copy, GitFork, Pencil, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { copyTextToClipboard } from "../../../lib/clipboard";

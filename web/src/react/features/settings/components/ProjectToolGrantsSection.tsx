@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { ShieldCheck } from "lucide-react";
 import {
   agentRuntimeApi,

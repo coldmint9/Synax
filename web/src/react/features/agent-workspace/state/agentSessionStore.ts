@@ -1834,7 +1834,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               toolCallsSource,
               agentRuntimeApi.listPermissions(targetSessionId),
             ]);
-            const transcriptTask = transcriptSource
+            const transcriptTask = (transcriptSource as Promise<any>)
               .then(
                 ([
                   stepsRes,
@@ -1843,7 +1843,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   messagesRes,
                   toolCallsRes,
                   permissionsRes,
-                ]) => {
+                ]): void => {
                   if (!isCurrent()) return;
                   const events =
                     knownEventId && cachedEntry

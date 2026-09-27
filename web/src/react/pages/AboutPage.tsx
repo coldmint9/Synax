@@ -4,7 +4,7 @@ import {
   Typography,
   Chip,
   Separator,
-} from "@heroui/react";
+} from "@/react/components/ui";
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../components/IconSurface";
 

@@ -1450,7 +1450,7 @@ textarea.agent-request-input {
 }
 
 /* Switching drafts is an immediate replacement, never a layout/slide animation.
-   The stable host's HeroUI entrance runs only on actual mount. */
+   The stable host's Synax UI entrance runs only on actual mount. */
 .session-composer-island[data-switching="true"] .session-composer-island-frame,
 .session-composer-island[data-switching="true"]
   .session-composer-island-content,

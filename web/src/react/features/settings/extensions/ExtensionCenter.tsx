@@ -5,7 +5,7 @@ import {
   InputGroup,
   Spinner,
   TextField,
-} from '@heroui/react'
+} from "@/react/components/ui"
 import {
   Compass,
   Plus,

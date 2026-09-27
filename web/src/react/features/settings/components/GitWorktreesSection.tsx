@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Input, Label, ListBox, Select, TextField } from '@heroui/react'
+import { Button, Input, Label, ListBox, Select, TextField } from "@/react/components/ui"
 import { GitBranch, Plus, RefreshCw, Scissors, Trash2 } from 'lucide-react'
 import { projectApi, type GitWorkspaceSummary, type ProjectWorkspaceRoot } from '../../../../lib/api/project'
 import { useLocale } from '../../../../hooks/useLocale'

@@ -7,7 +7,7 @@ import {
   Search,
   SquarePen,
 } from "lucide-react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { useLocale } from "../../../hooks/useLocale";
 import { useShellStore } from "../../state/shellStore";
 import type { SessionListView } from "./sessionBuckets";

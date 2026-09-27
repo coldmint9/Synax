@@ -5,7 +5,7 @@ import { useTranscriptSession } from "../SessionTranscriptContext";
 import { AgentConversationView } from "../AgentConversationView";
 import { useAgentSessionStore as store } from "../state/agentSessionStore";
 
-vi.mock("@heroui/react", () => ({
+vi.mock("@/react/components/ui", () => ({
   Card: ({ children }: { children: unknown }) => <div>{children}</div>,
   Chip: ({ children }: { children: unknown }) => <span>{children}</span>,
 }));

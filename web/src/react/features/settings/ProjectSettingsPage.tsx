@@ -1,4 +1,4 @@
-import { Button, ScrollShadow, Spinner, Typography } from "@heroui/react";
+import { Button, ScrollShadow, Spinner, Typography } from "@/react/components/ui";
 import { useParams, useSearchParams } from "react-router-dom";
 import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
 import { ExtensionCenter } from "./extensions/ExtensionCenter";

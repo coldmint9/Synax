@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { createPortal } from "react-dom";
-import { Button, Spinner } from "@heroui/react";
+import { Button, Spinner } from "@/react/components/ui";
 import { ChevronDown, ChevronUp, Download, RotateCw } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import { useDesktopUpdate } from "./DesktopUpdateProvider";

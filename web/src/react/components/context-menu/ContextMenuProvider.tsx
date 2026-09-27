@@ -1,4 +1,4 @@
-import { Dropdown, Label, Separator } from "@heroui/react";
+import { Dropdown, Label, Separator } from "@/react/components/ui";
 import {
   createContext,
   useCallback,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
+import { ListBox, Popover } from "@/react/components/ui";
 import { Check, GitBranch, LoaderCircle, Search } from "lucide-react";
 import {
   agentRuntimeApi,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Popover } from "@heroui/react";
+import { Popover } from "@/react/components/ui";
 import { ChevronDown } from "lucide-react";
 import {
   agentRuntimeApi,

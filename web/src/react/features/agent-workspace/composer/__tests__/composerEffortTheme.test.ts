@@ -14,7 +14,7 @@ function declarations(selector: string) {
 }
 
 describe("effort picker theme", () => {
-  it("uses HeroUI surfaces in both themes without a separate material palette", () => {
+  it("uses Synax UI surfaces in both themes without a separate material palette", () => {
     expect(declarations(".composer-effort-rail").background).toBe(
       "var(--default)",
     );

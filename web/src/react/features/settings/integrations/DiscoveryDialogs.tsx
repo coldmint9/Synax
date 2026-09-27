@@ -1,4 +1,4 @@
-import { Button, Modal } from '@heroui/react'
+import { Button, Modal } from "@/react/components/ui"
 import { ArrowUpRight, Monitor } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
 import type { LocalDiscoveryResult } from '../../../../lib/api/local-discovery'

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { ChevronRight, RotateCcw } from "lucide-react";
-import { Popover, useOverlayState } from "@heroui/react";
+import { Popover, useOverlayState } from "@/react/components/ui";
 import type { ReasoningEffort } from "../../../../lib/api/agentRuntime";
 import { REASONING_EFFORT_LABELS } from "../../settings/lib/providerPresets";
 import { useLocale } from "../../../../hooks/useLocale";

@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { shallow } from "zustand/shallow";
-import { Skeleton } from "@heroui/react";
+import { Skeleton } from "@/react/components/ui";
 import { useLocale } from "../../../hooks/useLocale";
 import type {
   AgentRun,

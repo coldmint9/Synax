@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ListChecks, Check, RotateCcw } from 'lucide-react'
-import { Button, TextArea } from '@heroui/react'
+import { Button, TextArea } from "@/react/components/ui"
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'

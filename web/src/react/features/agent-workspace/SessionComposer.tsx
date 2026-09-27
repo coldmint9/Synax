@@ -794,16 +794,18 @@ export function SessionComposer({
       }
       modeControl={
         <div className="flex items-center gap-1">
-          <SessionModePicker
-            mode={acp ? "chat" : mode}
-            disabled={!modeEnabled}
-            description={
-              zh
-                ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
-                : "Mode and approval are independent; switching is disabled while busy or pending."
-            }
-            onChange={handleModeChange}
-          />
+          {!acp && backendId !== "native" ? (
+            <SessionModePicker
+              mode={mode}
+              disabled={!modeEnabled}
+              description={
+                zh
+                  ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
+                  : "Mode and approval are independent; switching is disabled while busy or pending."
+              }
+              onChange={handleModeChange}
+            />
+          ) : null}
           {isDraft && (
             <GitWorkspacePicker
               projectId={projectId}

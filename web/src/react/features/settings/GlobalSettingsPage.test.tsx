@@ -13,12 +13,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, ProviderDef } from "../../../lib/contracts/config";
 import { useState, type ReactNode } from "react";
 
-// Appearance has its own integration tests using real HeroUI color controls.
+// Appearance has its own integration tests using real Synax UI color controls.
 vi.mock("./components/AppearanceSection", () => ({
   AppearanceSection: () => <div />,
 }));
 
-vi.mock("@heroui/react", () => {
+vi.mock("@/react/components/ui", () => {
   const Passthrough = ({ children, className }: any) => (
     <div className={className}>{children}</div>
   );

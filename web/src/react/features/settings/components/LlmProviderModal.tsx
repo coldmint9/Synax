@@ -7,7 +7,7 @@ import {
   Label,
   Modal,
   TextField,
-} from "@heroui/react";
+} from "@/react/components/ui";
 import {
   Check,
   ChevronDown,

@@ -1,4 +1,4 @@
-import { Label, ListBox, Select } from "@heroui/react";
+import { ListBox, Select } from "@/react/components/ui";
 import type { Key, ReactNode } from "react";
 
 export interface AppSelectOption {
@@ -24,10 +24,10 @@ export interface AppSelectProps {
 }
 
 /**
- * Shared HeroUI v3 single-value selector.
+ * Shared Synax UI v3 single-value selector.
  *
  * Selection fields use Select/ListBox, while command menus should use
- * Dropdown. Geometry and interaction states intentionally come from HeroUI;
+ * Dropdown. Geometry and interaction states intentionally come from Synax UI;
  * callers only control layout width and option content.
  */
 export function AppSelect({
@@ -54,8 +54,9 @@ export function AppSelect({
       className={["app-select", className].filter(Boolean).join(" ")}
       placeholder={placeholder}
       aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}
+      displayValue={value == null ? undefined : options.find((option) => option.key === value)?.label}
     >
-      {label ? <Label>{label}</Label> : null}
+      {label ? <span className="synax-label">{label}</span> : null}
       <Select.Trigger>
         {startContent}
         <Select.Value />

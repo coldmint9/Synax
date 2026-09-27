@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Popover, useOverlayState } from "@heroui/react";
+import { Popover, useOverlayState } from "@/react/components/ui";
 import type {
   GlobalConfig,
   ProviderDef,

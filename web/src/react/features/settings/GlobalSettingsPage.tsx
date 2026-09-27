@@ -5,7 +5,7 @@ import { useShellStore } from "../../state/shellStore";
 import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
 import { ExtensionCenter } from "./extensions/ExtensionCenter";
 import { useExtensionCopy } from "./extensions/extension-copy";
-import { ScrollShadow, Spinner, Typography } from "@heroui/react";
+import { ScrollShadow, Spinner, Typography } from "@/react/components/ui";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../../hooks/useLocale";
 import { AppearanceSection } from "./components/AppearanceSection";

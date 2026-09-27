@@ -1,4 +1,4 @@
-import { Button, Tooltip } from "@heroui/react";
+import { Button, Tooltip } from "@/react/components/ui";
 import {
   ShieldAlert,
   ShieldCheck,

@@ -1,5 +1,5 @@
 import { Bell } from 'lucide-react'
-import { Popover } from '@heroui/react'
+import { Popover } from "@/react/components/ui"
 import { useNotificationStore } from '../../state/notificationStore'
 import { NotificationPanel } from './NotificationPanel'
 

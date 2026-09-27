@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
+import { ListBox, Popover } from "@/react/components/ui";
 import { ChevronDown } from "lucide-react";
 import type { BackendId } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";

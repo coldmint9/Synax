@@ -1,4 +1,4 @@
-import { Button, Spinner } from '@heroui/react'
+import { Button, Spinner } from "@/react/components/ui"
 import { Check, Save } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
 

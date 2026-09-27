@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppSelect } from "../AppSelect";
 
-it("uses the HeroUI Select anatomy and changes a single value", async () => {
+it("uses the Synax UI Select anatomy and changes a single value", async () => {
   const onChange = vi.fn();
   const user = userEvent.setup();
   const { container } = render(

@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Skeleton } from "@heroui/react";
+import { Button, Skeleton } from "@/react/components/ui";
 import WikiProgressBar from "./WikiProgressBar";
 import { useScrollRestore } from "../../../hooks/useScrollRestore";
 import { useLocale } from "../../../hooks/useLocale";

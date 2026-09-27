@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ListBox, Popover, Tooltip } from "@heroui/react";
+import { ListBox, Popover, Tooltip } from "@/react/components/ui";
 import { ChevronDown, GitBranch, LoaderCircle } from "lucide-react";
 import type { GitWorkspaceSelection } from "../../../lib/api/agentRuntime";
 import { projectApi, type GitWorkspaceSummary } from "../../../lib/api/project";

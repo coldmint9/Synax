@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Popover } from "@heroui/react";
+import { Popover } from "@/react/components/ui";
 import {
   Check,
   Paperclip,

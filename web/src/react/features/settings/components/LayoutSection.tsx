@@ -1,5 +1,5 @@
 import { FileOpenerSelect } from "./FileOpenerSelect";
-import { Switch } from "@heroui/react";
+import { Switch } from "@/react/components/ui";
 import { SlidersHorizontal } from "lucide-react";
 import { useShellStore } from "../../../state/shellStore";
 import { useLocale } from "../../../../hooks/useLocale";

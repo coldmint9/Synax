@@ -1,5 +1,5 @@
 import { useState, type ReactNode, type Ref } from "react";
-import { Button, Input, Label, Tabs, TextField } from "@heroui/react";
+import { Button, Input, Label, Tabs, TextField } from "@/react/components/ui";
 import {
   Check,
   FolderOpen,

@@ -1,4 +1,4 @@
-import { Button, Dropdown, Switch } from '@heroui/react'
+import { Button, Dropdown, Switch } from "@/react/components/ui"
 import { MoreHorizontal } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 

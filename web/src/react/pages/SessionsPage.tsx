@@ -3,7 +3,7 @@ import "../features/agent-workspace/workPage.css";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { WorkbenchIslandSlot } from "../layouts/WorkbenchIsland";
-import { Button, Modal } from "@heroui/react";
+import { Button, Modal } from "@/react/components/ui";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
 import { useSessionDetailPolling } from "../features/agent-workspace/useSessionDetailPolling";

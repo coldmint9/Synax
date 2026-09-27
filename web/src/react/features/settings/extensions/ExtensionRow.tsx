@@ -1,4 +1,4 @@
-import { Button, Dropdown, Switch } from '@heroui/react'
+import { Button, Dropdown, Switch } from "@/react/components/ui"
 import { MoreHorizontal, Plug, Sparkles, Wrench } from 'lucide-react'
 import type { ExtensionItem } from '../../../../lib/api/extensions'
 import { useExtensionCopy } from './extension-copy'

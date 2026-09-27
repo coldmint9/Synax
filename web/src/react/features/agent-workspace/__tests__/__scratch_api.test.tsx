@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { Accordion, Card, Chip } from "@heroui/react";
+import { Accordion, Card, Chip } from "@/react/components/ui";
 
-describe("scratch heroui api", () => {
+describe("scratch Synax UI api", () => {
   it("exposes compound parts", () => {
     // eslint-disable-next-line no-console
     console.log("Accordion keys:", Object.keys(Accordion));

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, InputGroup, Switch, TextField } from "@heroui/react";
+import { Button, InputGroup, Switch, TextField } from "@/react/components/ui";
 import { ExternalLink, Search } from "lucide-react";
 import type {
   GlobalConfig,

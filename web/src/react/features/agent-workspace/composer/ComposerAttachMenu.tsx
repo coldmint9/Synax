@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { BookOpen, Check, Plus, Sparkles } from "lucide-react";
-import { Dropdown, Header, Label, Switch } from "@heroui/react";
+import { Dropdown, Header, Label, Switch } from "@/react/components/ui";
 import type { WikiDocument } from "../../../../lib/contracts/wiki";
 import { skillsApi, type SkillSummary } from "../../../../lib/api/skills";
 import { useShellStore } from "../../../state/shellStore";

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Button, Pagination, useOverlayState } from '@heroui/react'
+import { Button, Pagination, useOverlayState } from "@/react/components/ui"
 import { RefreshCw, Search, Sparkles, X } from 'lucide-react'
 import { skillsApi, skillSourcesApi, MARKET_PAGE_SIZE, type SkillSummary } from '../../../lib/api/skills'
 import { useLocale } from '../../../hooks/useLocale'

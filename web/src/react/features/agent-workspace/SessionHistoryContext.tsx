@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Button, Modal, Spinner } from "@heroui/react";
+import { Button, Modal, Spinner } from "@/react/components/ui";
 import { GitFork, RotateCcw, AlertTriangle } from "lucide-react";
 import {
   conversationHistoryApi,

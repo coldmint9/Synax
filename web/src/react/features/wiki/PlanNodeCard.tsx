@@ -1,5 +1,5 @@
 import { CheckCircle2, Circle, Loader2, ChevronUp, ChevronDown, Trash2, Pencil, Eye } from 'lucide-react'
-import { Button, Card } from '@heroui/react'
+import { Button, Card } from "@/react/components/ui"
 import { type WikiPlanNode } from '../../../lib/api/goal'
 
 export type NodeCardMode = 'compact' | 'expanded'

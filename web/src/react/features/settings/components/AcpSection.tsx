@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Button, Checkbox } from '@heroui/react'
+import { Button, Checkbox } from "@/react/components/ui"
 import { Server, RefreshCw } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'

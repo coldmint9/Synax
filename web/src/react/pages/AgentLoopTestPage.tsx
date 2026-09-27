@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, RefreshCw, Send, X } from "lucide-react";
-import { Button, Card, Chip, ScrollShadow, Spinner } from "@heroui/react";
+import { Button, Card, Chip, ScrollShadow, Spinner } from "@/react/components/ui";
 import {
   agentRuntimeApi,
   type AgentSession,

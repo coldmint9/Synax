@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
+import { Button, Input, Label, TextField, Tooltip } from "@/react/components/ui";
 import { Loader2, Plus, RefreshCw, Unlink, X, Layers2 } from "lucide-react";
 import { projectApi, type ProjectWorkspace } from "../../../../lib/api/project";
 import { WorkspaceProjectSources } from "../../workspace/WorkspaceProjectSources";

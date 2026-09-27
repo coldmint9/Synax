@@ -17,7 +17,7 @@ export default defineConfig({
     deps: {
       optimizer: {
         web: {
-          include: ['react-aria', 'react-aria-components', '@heroui/react', '@heroui/styles'],
+          include: ['react-aria', 'react-aria-components', '@headlessui/react'],
         },
       },
     },

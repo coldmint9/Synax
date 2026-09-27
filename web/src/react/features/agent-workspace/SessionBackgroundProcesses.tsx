@@ -1,7 +1,7 @@
 import { useTerminalStore } from "../terminal/terminalStore";
 import { useSessionWorkspaceStore } from "./state/sessionWorkspaceStore";
 import { useEffect, useRef, useState } from "react";
-import { Popover } from "@heroui/react";
+import { Popover } from "@/react/components/ui";
 import { LoaderCircle, Square, Terminal, Trash2 } from "lucide-react";
 import {
   agentRuntimeApi,

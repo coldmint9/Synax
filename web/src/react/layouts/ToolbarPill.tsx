@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { LiquidGlassSurface } from "../components/ui/LiquidGlassSurface";
 
 /** Keep the slot mounted so both its width and its sibling's position can retract. */
 export function ToolbarPill({
@@ -50,7 +51,7 @@ export function ToolbarPill({
       inert={!visible}
     >
       {mounted && (
-        <div ref={pillRef} className="wh-pill">{children}</div>
+        <div ref={pillRef} className="wh-pill liquid-glass-island"><LiquidGlassSurface intensity="subtle">{children}</LiquidGlassSurface></div>
       )}
     </div>
   );

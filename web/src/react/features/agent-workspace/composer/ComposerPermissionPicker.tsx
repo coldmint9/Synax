@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
+import { ListBox, Popover } from "@/react/components/ui";
 import "../agentControls.css";
 import { ChevronDown, LoaderCircle, Shield } from "lucide-react";
 import { useLocale } from "../../../../hooks/useLocale";

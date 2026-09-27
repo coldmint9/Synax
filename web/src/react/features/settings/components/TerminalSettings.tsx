@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { Terminal } from "lucide-react";
 import { configApi } from "../../../../lib/api/config";
 import type { UpdateGlobalConfigRequest } from "../../../../lib/contracts/config";

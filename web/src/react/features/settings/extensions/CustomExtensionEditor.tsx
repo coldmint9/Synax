@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Button, Input, Label, Modal, TextArea, TextField } from '@heroui/react'
+import { Button, Input, Label, Modal, TextArea, TextField } from "@/react/components/ui"
 import { AppSelect } from '../../../components/AppSelect'
 import {
   extensionsApi,

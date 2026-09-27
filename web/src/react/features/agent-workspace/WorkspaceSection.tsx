@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { ChevronDown } from "lucide-react";
 

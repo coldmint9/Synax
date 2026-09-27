@@ -1,4 +1,4 @@
-import { AlertDialog, Button } from '@heroui/react'
+import { AlertDialog, Button } from "@/react/components/ui"
 import { useLocale } from '../../../hooks/useLocale'
 
 export function UninstallDialog({

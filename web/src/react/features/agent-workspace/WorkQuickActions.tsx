@@ -1,4 +1,4 @@
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui";
 import { PanelRight } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 

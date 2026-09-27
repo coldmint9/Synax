@@ -1,4 +1,4 @@
-import { Chip } from "@heroui/react";
+import { Chip } from "@/react/components/ui";
 import type { StatusFilter } from "./useSessionList";
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
