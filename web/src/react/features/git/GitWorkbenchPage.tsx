@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  GitBranch,
   GitMerge,
   Plus,
   RefreshCw,
@@ -22,6 +21,7 @@ import {
 import { MergeRequestForm } from "./MergeRequestForm";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
+import GitHistoryTree from "./GitHistoryTree";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
 type View = "requests" | "branches" | "presets" | "history";
@@ -174,7 +174,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           {(
             [
               ["requests", "合并请求"],
-              ["branches", "分支"],
+              ["branches", "历史树"],
               ["presets", "预设"],
               ["history", "运行记录"],
             ] as [View, string][]
@@ -197,7 +197,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           onChange={(event) => setView(event.target.value as View)}
         >
           <option value="requests">合并请求</option>
-          <option value="branches">分支</option>
+          <option value="branches">历史树</option>
           <option value="presets">预设</option>
           <option value="history">运行记录</option>
         </select>
@@ -229,34 +229,22 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <span className="git-island-action-label">新建 MR</span>
         </button>
       </GitToolbarContent>
-      <header className="mr-page-header">
-        <div>
-          <h1>
-            <GitMerge size={23} />
-            Git 工作台
-          </h1>
-          <p className="mr-muted">在独立工作树中准备、审阅和验证本地合并。</p>
-        </div>
-      </header>
-      <div className="mr-toolbar">
-        <label className="mr-root-select">
-          仓库
-          <select
-            value={rootId ?? ""}
-            onChange={(e) => setRootId(e.target.value)}
+      <div className="mr-toolbar mr-root-tabs" role="tablist" aria-label="仓库">
+        <span className="mr-root-tabs-label">仓库</span>
+        {!roots.length && <span className="mr-root-tab is-active">项目默认仓库</span>}
+        {roots.map((root) => (
+          <button
+            key={root.id}
+            type="button"
+            role="tab"
+            aria-selected={root.id === rootId}
+            className={`mr-root-tab ${root.id === rootId ? "is-active" : ""}`}
+            disabled={root.status !== "available"}
+            onClick={() => setRootId(root.id)}
           >
-            {!roots.length && <option value="">项目默认仓库</option>}
-            {roots.map((root) => (
-              <option
-                key={root.id}
-                value={root.id}
-                disabled={root.status !== "available"}
-              >
-                {root.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            {root.name}
+          </button>
+        ))}
       </div>
       {error && (
         <p className="mr-error" role="alert">
@@ -354,71 +342,21 @@ function GitWorkbench({ projectId }: { projectId: string }) {
             </>
           )}
           {view === "branches" && (
-            <section className="mr-card">
-              <h2>本地分支</h2>
+            <section className="mr-card mr-history-card">
+              <div className="mr-history-header">
+                <div>
+                  <div className="mr-history-kicker">COMMIT ACTIVITY · {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short" }).format(new Date())}</div>
+                  <h2>历史树</h2>
+                  <p className="mr-muted">沿着提交活动回看项目如何前进、分叉与合流。</p>
+                </div>
+                {workspace && <span className="mr-history-repo">{workspace.repositoryRoot}</span>}
+              </div>
               {branchLoading ? (
-                <p role="status">正在加载分支…</p>
+                <p role="status">正在加载提交历史…</p>
               ) : !workspace ? (
-                <p className="mr-empty">无法读取仓库分支。</p>
+                <p className="mr-empty">无法读取仓库历史。</p>
               ) : (
-                <>
-                  <p className="mr-muted mr-repo-path">
-                    {workspace.repositoryRoot}
-                  </p>
-                  <div className="mr-table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>分支</th>
-                          <th>提交</th>
-                          <th>上游</th>
-                          <th>工作树 / 会话</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {workspace.branches.map((branch) => {
-                          const worktree = workspace.worktrees.find(
-                            (item) => item.path === branch.checkedOutPath,
-                          );
-                          return (
-                            <tr key={branch.name}>
-                              <td>
-                                <span className="mr-actions">
-                                  <GitBranch size={15} />
-                                  {branch.name}
-                                </span>
-                              </td>
-                              <td>
-                                <code title={branch.head}>
-                                  {branch.head.slice(0, 12)}
-                                </code>
-                              </td>
-                              <td>{branch.upstream ?? "—"}</td>
-                              <td>
-                                {branch.checkedOutPath ? (
-                                  <>
-                                    <code>{branch.checkedOutPath}</code>
-                                    {worktree && (
-                                      <small>
-                                        {worktree.dirty
-                                          ? "有未提交更改"
-                                          : "干净"}{" "}
-                                        · {worktree.sessionCount} 个会话
-                                        {worktree.managed ? " · 托管" : ""}
-                                      </small>
-                                    )}
-                                  </>
-                                ) : (
-                                  "未检出"
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
+                <GitHistoryTree workspace={workspace} />
               )}
             </section>
           )}

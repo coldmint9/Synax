@@ -21,6 +21,11 @@ import {
 } from "../../lib/env.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { logger } from "../../lib/logger.js";
+import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+import {
+  saveContextCompaction,
+  type ContextCompactionState,
+} from "./context-compaction-state.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { agentRuntimeStore } from "./session-store.js";
@@ -240,56 +245,77 @@ class SessionProcessManager {
       );
     }
     this.assertCanSpawnChild(sessionId);
+    const compaction: ContextCompactionState = {
+      id: makeRuntimeId("cmp"),
+      status: "running",
+      startedAt: nowIso(),
+      requestId: agentRuntimeStore.getSessionStats(sessionId).context.requestId,
+    };
+    saveContextCompaction(sessionId, compaction);
     this.pendingCompactions.add(sessionId);
     logger.info({ sessionId }, "[context-compaction] started");
-    sessionLiveBus.emit(sessionId, { type: "context_compaction_started" });
-    void this.runContextCompaction(sessionId);
+    void this.runContextCompaction(sessionId, compaction);
     return { accepted: true, status: "compacting" };
   }
 
-  private async runContextCompaction(sessionId: string): Promise<void> {
+  private async runContextCompaction(
+    sessionId: string,
+    compaction: ContextCompactionState,
+  ): Promise<void> {
     let request: ContextCompactionRequest | undefined;
     try {
       const state = await this.ensureChild(sessionId);
       const requestId = randomUUID();
-      const result = await new Promise<ContextCompactionResult>((resolve, reject) => {
-        const timer = setTimeout(
-          () =>
-            reject(
-              new AgentRuntimeError(
-                "Context compaction timed out.",
-                "COMPACTION_TIMEOUT",
-                504,
+      const result = await new Promise<ContextCompactionResult>(
+        (resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              reject(
+                new AgentRuntimeError(
+                  "Context compaction timed out.",
+                  "COMPACTION_TIMEOUT",
+                  504,
+                ),
               ),
-            ),
-          CONTEXT_COMPACTION_TIMEOUT_MS,
-        );
-        request = { requestId, resolve, reject, timer };
-        state.compactions.set(requestId, request);
-        state.child.send?.(
-          { type: "context:compact", requestId },
-          (error) => {
-            if (error) reject(error);
-          },
-        );
-      });
+            CONTEXT_COMPACTION_TIMEOUT_MS,
+          );
+          request = { requestId, resolve, reject, timer };
+          state.compactions.set(requestId, request);
+          state.child.send?.(
+            { type: "context:compact", requestId },
+            (error) => {
+              if (error) reject(error);
+            },
+          );
+        },
+      );
       logger.info(
-        { sessionId, originalTokens: result.originalTokens, compressedTokens: result.tokens },
+        {
+          sessionId,
+          originalTokens: result.originalTokens,
+          compressedTokens: result.tokens,
+        },
         "[context-compaction] completed",
       );
-      sessionLiveBus.emit(sessionId, {
-        type: "context_compacted",
-        stepId: "",
+      saveContextCompaction(sessionId, {
+        ...compaction,
+        status: "completed",
+        completedAt: nowIso(),
+        compacted: result.compacted,
         originalTokens: result.originalTokens,
         compressedTokens: result.tokens,
         messageCount: result.messageCount,
       });
     } catch (error) {
       logger.error({ err: error, sessionId }, "[context-compaction] failed");
-      sessionLiveBus.emit(sessionId, {
-        type: "context_compaction_failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (agentRuntimeStore.tryGetSession(sessionId)) {
+        saveContextCompaction(sessionId, {
+          ...compaction,
+          status: "failed",
+          completedAt: nowIso(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
       if (request) {
         clearTimeout(request.timer);
@@ -685,13 +711,20 @@ class SessionProcessManager {
     const state = this.children.get(sessionId);
     if (!state) return;
 
-    if (message.type === "context:compact:done" || message.type === "context:compact:error") {
+    if (
+      message.type === "context:compact:done" ||
+      message.type === "context:compact:error"
+    ) {
       const request = state.compactions.get(message.requestId);
       if (!request) return;
       clearTimeout(request.timer);
       state.compactions.delete(message.requestId);
-      if (message.type === "context:compact:done") request.resolve(message.result);
-      else request.reject(new AgentRuntimeError(message.error, "COMPACTION_FAILED", 500));
+      if (message.type === "context:compact:done")
+        request.resolve(message.result);
+      else
+        request.reject(
+          new AgentRuntimeError(message.error, "COMPACTION_FAILED", 500),
+        );
       return;
     }
 

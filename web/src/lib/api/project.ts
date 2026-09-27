@@ -92,10 +92,21 @@ export interface GitWorktreeSummary {
   sessionCount: number;
 }
 
+export interface GitCommitSummary {
+  id: string;
+  parents: string[];
+  subject: string;
+  author: string;
+  authoredAt: string;
+  refs: string[];
+  rebase: boolean;
+}
+
 export interface GitWorkspaceSummary {
   repositoryRoot: string;
   defaultPath: string;
   branches: GitBranchSummary[];
+  commits: GitCommitSummary[];
   worktrees: GitWorktreeSummary[];
 }
 

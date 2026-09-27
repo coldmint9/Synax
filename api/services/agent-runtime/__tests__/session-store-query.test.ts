@@ -126,6 +126,28 @@ function insertRawSession(input: {
     );
 }
 
+describe("pinned session pagination", () => {
+  beforeEach(resetAgentRuntimeFixtures);
+
+  it("persists pins, pages older pinned sessions first, and restores chronological order on unpin", () => {
+    for (const [id, updatedAt] of [["old", "2026-01-01"], ["new", "2026-01-03"], ["middle", "2026-01-02"]]) {
+      agentRuntimeStore.createSession(sessionFixture({ id, updatedAt }));
+    }
+    const original = agentRuntimeStore.getSession("old");
+    agentRuntimeStore.updateSessionMetadata("old", { pinned: true });
+    expect(agentRuntimeStore.getSession("old").sessionMetadata?.pinned).toBe(true);
+    expect(agentRuntimeStore.getSession("old").updatedAt).toBe(original.updatedAt);
+    const page = (offset: number) => agentRuntimeStore.listSessionsPage(
+      { projectId: "project-alpha" }, { limit: 1, offset },
+    );
+    expect([0, 1, 2].map((offset) => page(offset).items[0].id)).toEqual(["old", "new", "middle"]);
+    expect(page(0).totalCount).toBe(3);
+    agentRuntimeStore.updateSessionMetadata("old", { pinned: false });
+    expect([0, 1, 2].map((offset) => page(offset).items[0].id)).toEqual(["new", "middle", "old"]);
+    expect(agentRuntimeStore.listSessionsPage({ projectId: "other-project" }).items).toEqual([]);
+  });
+});
+
 describe("listSessions SQL scoping", () => {
   beforeEach(resetAgentRuntimeFixtures);
 
@@ -605,7 +627,7 @@ describe("listSessionsPage projected-status pagination", () => {
     // The page query is bounded by LIMIT/OFFSET and never enumerates the tail.
     expect(pageQuery!.sql).toContain("WHERE projected_status = ?");
     expect(pageQuery!.sql).toContain(
-      "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+      "END DESC, updated_at DESC, id DESC LIMIT ? OFFSET ?",
     );
     expect(pageQuery!.args).toEqual(["project-alpha", "running", 1, 0]);
   });

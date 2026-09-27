@@ -1,3 +1,4 @@
+import { interruptContextCompaction } from "./context-compaction-state.js";
 import { hasInput } from "./content-parts.js";
 import { getRawSqlite } from "../../db/index.js";
 import { agentRuntimeStore } from "./session-store.js";
@@ -76,6 +77,10 @@ export async function recoverRuntime(
     for (const session of agentRuntimeStore.listSessions({
       limit: Number.MAX_SAFE_INTEGER,
     })) {
+      interruptContextCompaction(
+        session.id,
+        "API restarted before context compaction completed. Please retry.",
+      );
       const runs = agentRuntimeStore.listRuns(session.id);
       const checkpoint = findDurableCheckpoint(session.id, runs);
       const checkpointRun = checkpoint
@@ -139,7 +144,12 @@ export async function recoverRuntime(
           completedAt: null,
           updatedAt: nowIso(),
           ...(session.sessionMetadata?.runtimeControl
-            ? { sessionMetadata: { ...session.sessionMetadata, runtimeControl: null } }
+            ? {
+                sessionMetadata: {
+                  ...session.sessionMetadata,
+                  runtimeControl: null,
+                },
+              }
             : {}),
         });
         if (!unknownProcesses.length) {

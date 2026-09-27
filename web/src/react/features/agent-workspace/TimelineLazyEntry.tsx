@@ -47,7 +47,9 @@ export function getMeasuredFoldHeight(
   let height = 0;
   let rows = 0;
   for (const [key, value] of measuredEntryHeights) {
-    if (!prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`)))
+    if (
+      !prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`))
+    )
       continue;
     height += value;
     rows += 1;
@@ -69,6 +71,7 @@ export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
     return Math.min(600, 72 + Math.ceil(entry.content.length / 80) * 20);
   }
 
+  if (entry.kind === "compaction") return 36;
   if (entry.kind === "work_log") {
     // Folded runs render as a single collapsed activity row.
     return 28;

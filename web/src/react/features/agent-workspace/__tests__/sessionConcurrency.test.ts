@@ -216,3 +216,16 @@ it("does not count a deep-linked session as a paginated row", async () => {
     useAgentSessionStore.getState().sessions.map((item) => item.id),
   ).toEqual(["linked", "s1"]);
 });
+
+
+it("keeps loaded ordinary sessions when the refreshed page ends with an older pinned session", async () => {
+  const pins = Array.from({ length: 20 }, (_, i) => ({
+    ...row(`pin-${i}`), updatedAt: "2026-01-01", sessionMetadata: { pinned: true },
+  }));
+  const ordinary = row("ordinary");
+  useAgentSessionStore.setState({ sessions: [...pins, ordinary], sessionListOffset: 21 });
+  vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({ ...page(pins), totalCount: 21 });
+  await useAgentSessionStore.getState().refreshSessions();
+  expect(useAgentSessionStore.getState().sessions.map((session) => session.id)).toContain("ordinary");
+  expect(useAgentSessionStore.getState().sessionListOffset).toBe(21);
+});

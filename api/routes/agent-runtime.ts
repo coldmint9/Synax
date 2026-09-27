@@ -2,7 +2,11 @@ import { observationLifetime } from "../lib/observation-lifetime.js";
 import { getRawSqlite } from "../db/index.js";
 import { upgradeHistory } from "../services/agent-runtime/checkpoints/version-runtime/migrate.js";
 import { readHistoryWindow } from "../services/agent-runtime/checkpoints/version-runtime/window.js";
-import { boundaryOnlySession, versionRepository, versionedSession } from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
+import {
+  boundaryOnlySession,
+  versionRepository,
+  versionedSession,
+} from "../services/agent-runtime/checkpoints/version-runtime/bridge.js";
 import {
   optimizeInput,
   MAX_OPTIMIZATION_INPUT_CHARS,
@@ -15,10 +19,11 @@ import {
   recoverHistoryOperation,
   editRunRequestId,
 } from "../services/agent-runtime/checkpoints/operations.js";
-import { forkSimpleConversation, previewSimpleFork } from "../services/agent-runtime/checkpoints/simple-fork.js";
 import {
-  historyRevision,
-} from "../services/agent-runtime/checkpoints/guards.js";
+  forkSimpleConversation,
+  previewSimpleFork,
+} from "../services/agent-runtime/checkpoints/simple-fork.js";
+import { historyRevision } from "../services/agent-runtime/checkpoints/guards.js";
 import { workRuntime } from "../services/agent-runtime/work-runtime.js";
 import { workflowMode } from "../services/agent-runtime/workflow-mode.js";
 import { searchSessions } from "../services/agent-runtime/session-search.js";
@@ -91,7 +96,10 @@ import { sessionUsesAcpEngine } from "../services/agent-runtime/acp-engine/index
 import { ensureSessionTitleGenerated } from "../services/agent-runtime/session-title-service.js";
 import { runtimeBus } from "../services/agent-runtime/runtime-bus.js";
 import { withSessionEventsQuiesced } from "../services/agent-runtime/runtime-event-quiesce.js";
-import { sessionLiveBus, type SessionLiveEvent } from "../services/agent-runtime/session-live-bus.js";
+import {
+  sessionLiveBus,
+  type SessionLiveEvent,
+} from "../services/agent-runtime/session-live-bus.js";
 import { sessionProcessManager } from "../services/agent-runtime/session-process-manager.js";
 import { logger } from "../lib/logger.js";
 import { getGlobalConfig } from "../lib/config/config-store.js";
@@ -139,7 +147,10 @@ import {
   resolveGitWorkspaceSelection,
 } from "../services/git-workspaces.js";
 
-import { listProjectToolGrants, revokeProjectToolGrant } from "../services/agent-runtime/project-tool-grants.js";
+import {
+  listProjectToolGrants,
+  revokeProjectToolGrant,
+} from "../services/agent-runtime/project-tool-grants.js";
 
 export const agentRuntimeRoutes = new Hono();
 agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
@@ -151,8 +162,13 @@ agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
 });
 agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
   try {
-    const removed = revokeProjectToolGrant(c.req.param("projectId"), c.req.param("toolId"));
-    return removed ? c.json({ revoked: true }) : c.json({ error: "Tool grant not found." }, 404);
+    const removed = revokeProjectToolGrant(
+      c.req.param("projectId"),
+      c.req.param("toolId"),
+    );
+    return removed
+      ? c.json({ revoked: true })
+      : c.json({ error: "Tool grant not found." }, 404);
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -237,13 +253,18 @@ async function archiveSessionAfterShutdown(
   });
 }
 
-const inputOptimizationSchema = z.object({
-  projectId: z.string().trim().min(1).max(256),
-  text: z.string().min(1).max(MAX_OPTIMIZATION_INPUT_CHARS)
-    .refine((text) => Boolean(text.trim())),
-  model: z.string().trim().min(1).max(512).optional(),
-  backendId: backendIdSchema.optional(),
-}).strict();
+const inputOptimizationSchema = z
+  .object({
+    projectId: z.string().trim().min(1).max(256),
+    text: z
+      .string()
+      .min(1)
+      .max(MAX_OPTIMIZATION_INPUT_CHARS)
+      .refine((text) => Boolean(text.trim())),
+    model: z.string().trim().min(1).max(512).optional(),
+    backendId: backendIdSchema.optional(),
+  })
+  .strict();
 
 agentRuntimeRoutes.post("/input/optimize", async (c) => {
   const body = await readJson(c);
@@ -455,7 +476,10 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
 
 agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
   try {
-    return c.json(sessionProcessManager.beginContextCompaction(c.req.param("id")), 202);
+    return c.json(
+      sessionProcessManager.beginContextCompaction(c.req.param("id")),
+      202,
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -633,10 +657,7 @@ async function archiveSessionRoute(c: Context) {
     const id = c.req.param("sessionId");
     if (!id) throw new AgentValidationError("Session id is required.");
     const control = await readControl(c);
-    const result = await archiveSessionAfterShutdown(
-      id,
-      control.runId,
-    );
+    const result = await archiveSessionAfterShutdown(id, control.runId);
     for (const archivedId of result.archivedSessionIds)
       invalidateSessionEnvironment(archivedId);
     if (result.parentId) invalidateSessionEnvironment(result.parentId);
@@ -719,31 +740,62 @@ async function archiveInactiveSessionsRoute(c: Context) {
   }
 }
 
-agentRuntimeRoutes.post("/sessions/archive-inactive", archiveInactiveSessionsRoute);
-agentRuntimeRoutes.post("/sessions/clear-inactive", archiveInactiveSessionsRoute);
+agentRuntimeRoutes.post(
+  "/sessions/archive-inactive",
+  archiveInactiveSessionsRoute,
+);
+agentRuntimeRoutes.post(
+  "/sessions/clear-inactive",
+  archiveInactiveSessionsRoute,
+);
 
 agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
     const body = await c.req.json();
     if (body?.acknowledgeCheckpointReset !== true)
-      throw new AgentRuntimeError("Explicit acknowledgement of legacy checkpoint retirement is required.", "VALIDATION_ERROR", 400);
+      throw new AgentRuntimeError(
+        "Explicit acknowledgement of legacy checkpoint retirement is required.",
+        "VALIDATION_ERROR",
+        400,
+      );
     return c.json(await upgradeHistory(c.req.param("sessionId")));
-  } catch (error) { return runtimeError(c, error); }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
   try {
     const id = c.req.param("sessionId");
     agentRuntimeStore.getSession(id);
-    if (!versionedSession(id)) throw new AgentRuntimeError("Upgrade history before using version windows.", "HISTORY_MIGRATION_REQUIRED", 409);
+    if (!versionedSession(id))
+      throw new AgentRuntimeError(
+        "Upgrade history before using version windows.",
+        "HISTORY_MIGRATION_REQUIRED",
+        409,
+      );
     return c.json(readHistoryWindow(id, c.req.query("cursor")));
-  } catch (error) { return runtimeError(c, error); }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
   try {
-    const sessionId=c.req.param("sessionId");
-    if(versionedSession(sessionId))return c.json(versionRepository().page(sessionId,"messages",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
+    const sessionId = c.req.param("sessionId");
+    if (versionedSession(sessionId))
+      return c.json(
+        versionRepository().page(sessionId, "messages", {
+          limit:
+            c.req.query("limit") === undefined
+              ? 64
+              : Number(c.req.query("limit")),
+          cursor: c.req.query("cursor"),
+          reverse: c.req.query("reverse") === "true",
+          preview: c.req.query("preview") === "true",
+          fields: c.req.query("fields")?.split(","),
+        }),
+      );
     return c.json({
       items: agentLoopRuntime.listMessages(c.req.param("sessionId")),
     });
@@ -752,16 +804,53 @@ agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/content",(c)=>{
-  try{
-    const sessionId=c.req.param("sessionId");
-    if(!versionedSession(sessionId))return c.json({error:"Content paging requires a versioned session."},409);
-    const repo=versionRepository();
-    if(Number(c.req.query("cursor")??0)>0&&c.req.query("revision")===undefined)return c.json({error:"Content continuation requires the original revision.",code:"HISTORY_STALE"},409);
-    if(c.req.query("revision")!==undefined&&Number(c.req.query("revision"))!==repo.head(sessionId).revision)return c.json({error:"Conversation changed.",code:"HISTORY_STALE"},409);
-    return c.json(repo.content(sessionId,"messages",c.req.param("messageId"),"content",Number(c.req.query("cursor")??0),c.req.query("revision")===undefined?undefined:Number(c.req.query("revision"))));
-  }catch(error){return runtimeError(c,error);}
-});
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/messages/:messageId/content",
+  (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      if (!versionedSession(sessionId))
+        return c.json(
+          { error: "Content paging requires a versioned session." },
+          409,
+        );
+      const repo = versionRepository();
+      if (
+        Number(c.req.query("cursor") ?? 0) > 0 &&
+        c.req.query("revision") === undefined
+      )
+        return c.json(
+          {
+            error: "Content continuation requires the original revision.",
+            code: "HISTORY_STALE",
+          },
+          409,
+        );
+      if (
+        c.req.query("revision") !== undefined &&
+        Number(c.req.query("revision")) !== repo.head(sessionId).revision
+      )
+        return c.json(
+          { error: "Conversation changed.", code: "HISTORY_STALE" },
+          409,
+        );
+      return c.json(
+        repo.content(
+          sessionId,
+          "messages",
+          c.req.param("messageId"),
+          "content",
+          Number(c.req.query("cursor") ?? 0),
+          c.req.query("revision") === undefined
+            ? undefined
+            : Number(c.req.query("revision")),
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
 agentRuntimeRoutes.get("/sessions/:sessionId/runs", (c) => {
   try {
@@ -938,6 +1027,25 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", (c) => {
           .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
           .catch(detach);
     }, AGENT_RUNTIME_HEARTBEAT_MS);
+    // Manual compaction has no run/journal chunk, but uses the same UI stream.
+    const unsubscribeCompaction = sessionLiveBus.subscribe(
+      sessionId,
+      (event) => {
+        if (
+          observer.signal.aborted ||
+          ![
+            "context_compaction_started",
+            "context_compacted",
+            "context_compaction_failed",
+            "context_compaction_state",
+          ].includes(event.type)
+        )
+          return;
+        void stream
+          .writeSSE({ event: event.type, data: JSON.stringify(event) })
+          .catch(detach);
+      },
+    );
     try {
       const snapshot = runtimeJournal.snapshot(sessionId);
       await stream.writeSSE({
@@ -960,6 +1068,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", (c) => {
       if (!observer.signal.aborted) throw error;
     } finally {
       detach();
+      unsubscribeCompaction();
       clearInterval(heartbeat);
       c.req.raw.signal.removeEventListener("abort", detach);
     }
@@ -987,11 +1096,35 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
 });
 
 agentRuntimeRoutes.get("/sessions/:sessionId/events", (c) => {
-  if(versionedSession(c.req.param("sessionId")) && !boundaryOnlySession(c.req.param("sessionId"))){
-    try{
-      if(c.req.query("after"))return c.json({error:"Use the versioned event cursor instead of a legacy event id.",code:"HISTORY_PAGE_REQUIRED"},409);
-      return c.json(versionRepository().page(c.req.param("sessionId"),"events",{limit:c.req.query("limit")===undefined?64:Number(c.req.query("limit")),cursor:c.req.query("cursor"),reverse:c.req.query("reverse")==="true",preview:c.req.query("preview")==="true",fields:c.req.query("fields")?.split(",")}));
-    }catch(error){return runtimeError(c,error);}
+  if (
+    versionedSession(c.req.param("sessionId")) &&
+    !boundaryOnlySession(c.req.param("sessionId"))
+  ) {
+    try {
+      if (c.req.query("after"))
+        return c.json(
+          {
+            error:
+              "Use the versioned event cursor instead of a legacy event id.",
+            code: "HISTORY_PAGE_REQUIRED",
+          },
+          409,
+        );
+      return c.json(
+        versionRepository().page(c.req.param("sessionId"), "events", {
+          limit:
+            c.req.query("limit") === undefined
+              ? 64
+              : Number(c.req.query("limit")),
+          cursor: c.req.query("cursor"),
+          reverse: c.req.query("reverse") === "true",
+          preview: c.req.query("preview") === "true",
+          fields: c.req.query("fields")?.split(","),
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
   }
   const parsed = listEventsQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
@@ -1145,45 +1278,82 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
   }
 });
 
-agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/system-terminal", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
-  if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
-  try {
-    await openSessionFileInSystemTerminal(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId);
-    return c.json({ ok: true });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/environment/file/system-terminal",
+  async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z
+      .object({
+        path: z.string().min(1).max(1024),
+        rootId: z.string().min(1).optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
+    try {
+      await openSessionFileInSystemTerminal(
+        c.req.param("sessionId"),
+        parsed.data.path,
+        parsed.data.rootId,
+      );
+      return c.json({ ok: true });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
-agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/trash", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = z.object({ path: z.string().min(1).max(1024), rootId: z.string().min(1).optional() }).safeParse(body);
-  if (!parsed.success) return c.json({ error: "Invalid trash payload" }, 400);
-  try {
-    return c.json(await trashSessionEnvironmentFile(c.req.param("sessionId"), parsed.data.path, parsed.data.rootId));
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/environment/file/trash",
+  async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z
+      .object({
+        path: z.string().min(1).max(1024),
+        rootId: z.string().min(1).optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) return c.json({ error: "Invalid trash payload" }, 400);
+    try {
+      return c.json(
+        await trashSessionEnvironmentFile(
+          c.req.param("sessionId"),
+          parsed.data.path,
+          parsed.data.rootId,
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
-agentRuntimeRoutes.post("/sessions/:sessionId/environment/file/rename", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = z.object({
-    path: z.string().min(1).max(1024),
-    newName: z.string().min(1).max(255),
-    rootId: z.string().min(1).optional(),
-  }).safeParse(body);
-  if (!parsed.success) return c.json({ error: "Invalid rename payload" }, 400);
-  try {
-    return c.json(await renameSessionEnvironmentFile(
-      c.req.param("sessionId"), parsed.data.path, parsed.data.newName, parsed.data.rootId,
-    ));
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/environment/file/rename",
+  async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z
+      .object({
+        path: z.string().min(1).max(1024),
+        newName: z.string().min(1).max(255),
+        rootId: z.string().min(1).optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success)
+      return c.json({ error: "Invalid rename payload" }, 400);
+    try {
+      return c.json(
+        await renameSessionEnvironmentFile(
+          c.req.param("sessionId"),
+          parsed.data.path,
+          parsed.data.newName,
+          parsed.data.rootId,
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/file/media",
@@ -1342,22 +1512,19 @@ const restoreSessionFileSchema = z.object({
   path: z.string().trim().min(1).max(1024),
 });
 
-agentRuntimeRoutes.post(
-  "/sessions/:sessionId/git/files/restore",
-  async (c) => {
-    const body = await readJson(c);
-    if (!body.ok) return c.json({ error: body.error }, 400);
-    const parsed = restoreSessionFileSchema.safeParse(body.data ?? {});
-    if (!parsed.success) return validationError(c, parsed.error);
-    try {
-      return c.json(
-        await restoreSessionFile(c.req.param("sessionId"), parsed.data),
-      );
-    } catch (error) {
-      return runtimeError(c, error);
-    }
-  },
-);
+agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = restoreSessionFileSchema.safeParse(body.data ?? {});
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    return c.json(
+      await restoreSessionFile(c.req.param("sessionId"), parsed.data),
+    );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 
 agentRuntimeRoutes.get("/sessions/:sessionId/stats", async (c) => {
   try {
@@ -1701,13 +1868,19 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
 
     const heartbeat = setInterval(() => {
       if (!lifetime.signal.aborted)
-        void stream.writeSSE({ event: SseEventType.Ping, data: String(Date.now()) }).catch(lifetime.stop);
+        void stream
+          .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
+          .catch(lifetime.stop);
     }, 25_000);
     try {
       if (lifetime.signal.aborted) return;
       await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
       await lifetime.ended;
-    } finally { clearInterval(heartbeat); unsubscribe(); lifetime.dispose(); }
+    } finally {
+      clearInterval(heartbeat);
+      unsubscribe();
+      lifetime.dispose();
+    }
   });
 });
 
@@ -1809,6 +1982,27 @@ agentRuntimeRoutes.post(
     }
   },
 );
+agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z
+    .object({ pinned: z.boolean() })
+    .strict()
+    .safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const session = agentRuntimeStore.updateSessionMetadata(
+      c.req.param("sessionId"),
+      parsed.data,
+    );
+    return c.json({
+      session: projectSessionSummary(projectSessionState(session)),
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1902,7 +2096,10 @@ const historyActionSchema = z.object({
   includeFiles: z.boolean().default(true),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
-const forkActionSchema = historyActionSchema.extend({ includeFiles: z.literal(false).default(false), workspaceMode: z.enum(["new_worktree", "reuse_worktree"]) });
+const forkActionSchema = historyActionSchema.extend({
+  includeFiles: z.literal(false).default(false),
+  workspaceMode: z.enum(["new_worktree", "reuse_worktree"]),
+});
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
   try {
     return c.json(checkpointSummary(c.req.param("sessionId")));
@@ -1925,9 +2122,24 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
     if (parsed.data.action !== "fork")
-      return c.json(await previewHistory(sessionId, parsed.data.checkpointId, parsed.data.includeFiles));
-    if (!parsed.data.workspaceMode) throw new AgentValidationError("Choose a new worktree or the existing worktree before forking.");
-    return c.json(await previewSimpleFork(sessionId, parsed.data.checkpointId, parsed.data.workspaceMode));
+      return c.json(
+        await previewHistory(
+          sessionId,
+          parsed.data.checkpointId,
+          parsed.data.includeFiles,
+        ),
+      );
+    if (!parsed.data.workspaceMode)
+      throw new AgentValidationError(
+        "Choose a new worktree or the existing worktree before forking.",
+      );
+    return c.json(
+      await previewSimpleFork(
+        sessionId,
+        parsed.data.checkpointId,
+        parsed.data.workspaceMode,
+      ),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1938,7 +2150,9 @@ for (const action of ["rollback", "edit", "fork"] as const) {
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
-      const parsed = (action === "fork" ? forkActionSchema : historyActionSchema).safeParse(body.data);
+      const parsed = (
+        action === "fork" ? forkActionSchema : historyActionSchema
+      ).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
@@ -1987,7 +2201,11 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   }
 });
 
-agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", c => {
-  try { visitConversation(c.req.param("sessionId")); return c.json({visited:true}); }
-  catch(error) { return runtimeError(c,error); }
+agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", (c) => {
+  try {
+    visitConversation(c.req.param("sessionId"));
+    return c.json({ visited: true });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });

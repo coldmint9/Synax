@@ -61,3 +61,9 @@
     --composer-mode-border: Highlight;
   }
 }
+
+/* Mode affordances use Synax semantic accents instead of hardcoded blue/purple. */
+.agent-session-controls[data-composer-mode="plan"] { --composer-mode-border: var(--cx-accent-strong); }
+.agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: hsl(var(--electric-purple)); }
+.dark .agent-session-controls[data-composer-mode="plan"],
+.dark .agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: var(--cx-accent-top); }

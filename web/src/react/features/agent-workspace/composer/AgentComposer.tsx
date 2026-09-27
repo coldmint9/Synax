@@ -146,10 +146,10 @@ export function AgentComposer({
   const { t, locale } = useLocale();
   const keyboardHintId = useId();
   const separateKeyboardHints = keyboardHintPlacement === "tooltip";
-  const keyboardHint = `${locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line"}${commands ? (locale === "zh" ? " · / 打开命令" : " · / for commands") : ""}`;
-  const inputPlaceholder = separateKeyboardHints
-    ? (placeholder ?? t("agentPlaceholder"))
-    : `${placeholder ?? t("agentPlaceholder")} ${keyboardHint}`;
+
+  const inputPlaceholder =
+      (placeholder ?? t("agentPlaceholder"))
+
   const inputCapability = useInputCapability(
     projectId,
     sessionId,
@@ -505,7 +505,7 @@ export function AgentComposer({
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={inputPlaceholder}
-            title={separateKeyboardHints ? keyboardHint : undefined}
+
             aria-label={t("agentPlaceholder")}
             aria-describedby={
               separateKeyboardHints ? keyboardHintId : undefined
@@ -576,7 +576,7 @@ export function AgentComposer({
             onKeyDown={handleKeyDown}
             {...compositionProps}
             placeholder={inputPlaceholder}
-            title={separateKeyboardHints ? keyboardHint : undefined}
+
             aria-label={t("agentPlaceholder")}
             aria-describedby={
               separateKeyboardHints ? keyboardHintId : undefined
@@ -624,11 +624,7 @@ export function AgentComposer({
           {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
         </span>
       )}
-      {separateKeyboardHints && (
-        <span id={keyboardHintId} className="sr-only">
-          {keyboardHint}
-        </span>
-      )}
+      {separateKeyboardHints}
     </div>
   );
 }

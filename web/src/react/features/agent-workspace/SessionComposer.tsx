@@ -148,7 +148,10 @@ export function SessionComposer({
   const editLock = useRef<object | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [error, setError] = sessionComposerError.useDraft(viewKey, () => null);
-  const [draftMode, setDraftMode] = sessionComposerMode.useDraft(viewKey, () => "chat");
+  const [draftMode, setDraftMode] = sessionComposerMode.useDraft(
+    viewKey,
+    () => "chat",
+  );
   const updateSessionMode = useAgentSessionStore((s) => s.updateSessionMode);
   const interactionState = useAgentSessionStore((s) => s.interactionState);
   const sendSessionMessage = useAgentSessionStore((s) => s.sendSessionMessage);
@@ -994,7 +997,9 @@ export function SessionComposer({
         >
           <div
             className="agent-dock-shell-content agent-composer-ask-switch"
-            data-ask-active={hasPendingClarificationInteractions ? "true" : "false"}
+            data-ask-active={
+              hasPendingClarificationInteractions ? "true" : "false"
+            }
           >
             <div
               className="agent-composer-input-slot"
@@ -1026,9 +1031,7 @@ export function SessionComposer({
     >
       {isCentered ? (
         <div className="session-welcome-layout flex w-full max-w-3xl flex-col items-center gap-6">
-          {draftPreview?.scope !== viewKey && (
-            <NewSessionWelcome />
-          )}
+          {draftPreview?.scope !== viewKey && <NewSessionWelcome />}
           <div className="w-full min-w-0">{composerShell}</div>
         </div>
       ) : (

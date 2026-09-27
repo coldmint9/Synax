@@ -136,12 +136,24 @@
   background: hsl(var(--secondary));
   overflow: hidden;
 }
-.runtime-profile-meter > span {
+.runtime-profile-meter-fill {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  transition: width 180ms ease;
+}
+.runtime-profile-meter-fill > span {
   display: block;
   height: 100%;
-  border-radius: inherit;
-  background: var(--profile-accent);
-  transition: width 180ms ease;
+  min-width: 1px;
+}
+.runtime-profile-meter--segmented .runtime-profile-meter-fill > span:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.runtime-profile-meter--segmented .runtime-profile-meter-fill > span:last-child {
+  border-radius: 0 4px 4px 0;
 }
 .runtime-profile-meter[data-high="true"] > span {
   background: var(--warning);

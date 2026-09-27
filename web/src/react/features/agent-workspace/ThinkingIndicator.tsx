@@ -1,9 +1,15 @@
 import { useLocale } from "../../../hooks/useLocale";
 import { PixelLoader } from "./LoadingState";
 
-export function ThinkingIndicator({ showLabel = true }: { showLabel?: boolean }) {
+export function ThinkingIndicator({
+  showLabel = true,
+  label: customLabel,
+}: {
+  showLabel?: boolean;
+  label?: string;
+}) {
   const { t } = useLocale();
-  const label = t("sessionPendingThinking");
+  const label = customLabel ?? t("sessionPendingThinking");
   return (
     <div
       role="status"

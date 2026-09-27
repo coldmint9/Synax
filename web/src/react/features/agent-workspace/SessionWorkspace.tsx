@@ -69,7 +69,14 @@ export function SessionRuntimeStatus({
   status?: AgentSession["status"];
 }) {
   const { locale } = useLocale();
-  const currentStatus = status ?? session?.status ?? stats?.status ?? "idle";
+  const compacting = useAgentSessionStore(
+    (state) =>
+      state.selectedSessionId === session?.id &&
+      state.contextCompactionNotice?.status === "running",
+  );
+  const currentStatus = compacting
+    ? "compacting"
+    : (status ?? session?.status ?? stats?.status ?? "idle");
 
   const badgeClass =
     STATUS_BADGE[currentStatus] ?? "bg-secondary/70 text-foreground/80";
@@ -104,11 +111,15 @@ export function SessionRuntimeStatus({
       <span
         className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${badgeClass}`}
       >
-        {currentStatus === "waiting_input"
+        {currentStatus === "compacting"
           ? locale === "zh"
-            ? "等待输入"
-            : "Waiting for input"
-          : currentStatus}
+            ? "压缩中"
+            : "Compacting"
+          : currentStatus === "waiting_input"
+            ? locale === "zh"
+              ? "等待输入"
+              : "Waiting for input"
+            : currentStatus}
       </span>
     </span>
   );

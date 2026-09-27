@@ -1,3 +1,5 @@
+import type { ContextCompactionState } from "../../../../api/services/agent-runtime/context-compaction-state";
+export type { ContextCompactionState };
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import type { RuntimeContentPart, InputModality } from "./runtimeMedia";
 export type { RuntimeContentPart } from "./runtimeMedia";
@@ -470,6 +472,7 @@ export interface SessionCacheUsage {
 }
 
 export interface SessionStats {
+  contextCompaction?: ContextCompactionState;
   cache?: SessionCacheUsage;
   roundCount?: number;
   /** Legacy estimates, ignored by usage displays. New servers return null. */
@@ -487,6 +490,7 @@ export interface SessionStats {
     reason: string | null;
   } | null;
   context?: {
+    compactedTokens?: number;
     inputTokens: number | null;
     /** "estimate" is accepted only for legacy responses and is never displayed. */
     source?: "provider" | "estimate" | null;
@@ -783,9 +787,12 @@ export interface HistoryWindowResponse {
 
 export const agentRuntimeApi = {
   compactContext: (sessionId: string) =>
-    request<{ accepted: true; status: "compacting" }>(`/sessions/${encodeURIComponent(sessionId)}/context/compact`, {
-      method: "POST",
-    }),
+    request<{ accepted: true; status: "compacting" }>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/compact`,
+      {
+        method: "POST",
+      },
+    ),
   searchSessions: (
     projectId: string,
     q: string,
@@ -894,6 +901,11 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reply`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  setSessionPinned: (sessionId: string, pinned: boolean) =>
+    request<{ session: AgentSession }>(
+      `/sessions/${encodeURIComponent(sessionId)}/pin`,
+      { method: "PATCH", body: JSON.stringify({ pinned }) },
+    ),
   updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
     request<{ session: AgentSession }>(
       `/sessions/${encodeURIComponent(sessionId)}/mode`,
@@ -908,16 +920,31 @@ export const agentRuntimeApi = {
       body: JSON.stringify({ runId: runId ?? undefined }),
     }),
   deleteSession: (sessionId: string) =>
-    request<ArchiveSessionResult>(`/sessions/${encodeURIComponent(sessionId)}/archive`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-  clearInactiveSessions: (projectId: string) =>
-    request<{ ok: true; archivedBatchCount: number; archivedCount: number; archivedSessionIds: string[] }>(
-      `/sessions/archive-inactive`,
-      { method: "POST", body: JSON.stringify({ projectId }) },
+    request<ArchiveSessionResult>(
+      `/sessions/${encodeURIComponent(sessionId)}/archive`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
     ),
-  listSessionArchives: (query: { projectId?: string; q?: string; limit?: number; offset?: number } = {}) => {
+  clearInactiveSessions: (projectId: string) =>
+    request<{
+      ok: true;
+      archivedBatchCount: number;
+      archivedCount: number;
+      archivedSessionIds: string[];
+    }>(`/sessions/archive-inactive`, {
+      method: "POST",
+      body: JSON.stringify({ projectId }),
+    }),
+  listSessionArchives: (
+    query: {
+      projectId?: string;
+      q?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
     const qs = new URLSearchParams();
     Object.entries(query).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "")
@@ -937,17 +964,28 @@ export const agentRuntimeApi = {
       `/session-archives/${encodeURIComponent(batchId)}`,
       { method: "DELETE" },
     ),
-  messageContentPage: (sessionId: string, messageId: string, cursor = 0, revision?: number) =>
-    request<{ text: string; next?: number; revision: number }>(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`),
+  messageContentPage: (
+    sessionId: string,
+    messageId: string,
+    cursor = 0,
+    revision?: number,
+  ) =>
+    request<{ text: string; next?: number; revision: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`,
+    ),
   historyWindow: (sessionId: string, cursor?: string) =>
     request<HistoryWindowResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
       { silent: true },
     ),
   upgradeHistory: (sessionId: string) =>
-    request<{ upgraded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/history/upgrade`, {
-      method: "POST", body: JSON.stringify({ acknowledgeCheckpointReset: true }),
-    }),
+    request<{ upgraded: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/history/upgrade`,
+      {
+        method: "POST",
+        body: JSON.stringify({ acknowledgeCheckpointReset: true }),
+      },
+    ),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -1159,10 +1197,16 @@ export const agentRuntimeApi = {
     ),
   // Submitting is a short idempotent HTTP request. Observing the accepted run
   // shares the WS transport instead of holding another HTTP/1.1 connection.
-  resumeStream: (sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void) =>
-    submitAndObserveRun(sessionId, body, onChunk, "continue"),
-  streamTurn: (sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void) =>
-    submitAndObserveRun(sessionId, body, onChunk, "turn"),
+  resumeStream: (
+    sessionId: string,
+    body: StreamTurnRequest,
+    onChunk: (chunk: unknown) => void,
+  ) => submitAndObserveRun(sessionId, body, onChunk, "continue"),
+  streamTurn: (
+    sessionId: string,
+    body: StreamTurnRequest,
+    onChunk: (chunk: unknown) => void,
+  ) => submitAndObserveRun(sessionId, body, onChunk, "turn"),
 
   listInputQueue: (sessionId: string) =>
     apiRequest<{ items: QueuedInput[] }>(
@@ -1225,26 +1269,48 @@ export interface SessionGitBranches {
 }
 
 async function submitAndObserveRun(
-  sessionId: string, body: StreamTurnRequest, onChunk: (chunk: unknown) => void, mode: "turn" | "continue",
+  sessionId: string,
+  body: StreamTurnRequest,
+  onChunk: (chunk: unknown) => void,
+  mode: "turn" | "continue",
 ): Promise<void> {
-  const { run } = await agentRuntimeApi.submitRun(sessionId, body, crypto.randomUUID(), mode);
+  const { run } = await agentRuntimeApi.submitRun(
+    sessionId,
+    body,
+    crypto.randomUUID(),
+    mode,
+  );
   await new Promise<void>((resolve, reject) => {
-    const source = new AuthenticatedEventSource(`${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream`);
+    const source = new AuthenticatedEventSource(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream`,
+    );
     let cursor = 0;
-    source.onmessage = event => {
-      if (event.data === "[DONE]") { source.close(); resolve(); return; }
+    source.onmessage = (event) => {
+      if (event.data === "[DONE]") {
+        source.close();
+        resolve();
+        return;
+      }
       const next = Number(event.lastEventId);
       if (Number.isSafeInteger(next) && next > 0) {
         if (next <= cursor) return;
         cursor = next;
       }
-      try { onChunk(JSON.parse(event.data)); }
-      catch (error) { source.close(); reject(error); }
+      try {
+        onChunk(JSON.parse(event.data));
+      } catch (error) {
+        source.close();
+        reject(error);
+      }
     };
     source.onerror = () => {
       if (source.readyState !== AuthenticatedEventSource.CLOSED) return;
-      const error = createAppError("Run observation is unavailable. Reload the session to recover its persisted result.", 503);
-      handleError(error); reject(error);
+      const error = createAppError(
+        "Run observation is unavailable. Reload the session to recover its persisted result.",
+        503,
+      );
+      handleError(error);
+      reject(error);
     };
   });
 }

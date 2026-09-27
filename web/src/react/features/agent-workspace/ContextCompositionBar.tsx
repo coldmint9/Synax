@@ -33,6 +33,10 @@ export function ContextCompositionBar({
   const zh = locale === "zh";
   const heading = zh ? "上下文用量" : "Context usage";
   const { total, available } = contextUsage(context);
+  const estimate = context?.compactedTokens;
+  const estimated =
+    typeof estimate === "number" && Number.isFinite(estimate) && estimate >= 0;
+  const displayTotal = estimated ? estimate : total;
   const knownWindow =
     contextLimitKnown !== false &&
     typeof contextLimit === "number" &&
@@ -41,15 +45,15 @@ export function ContextCompositionBar({
       ? contextLimit
       : null;
   const windowUsage =
-    available && knownWindow !== null
-      ? Number(((total / knownWindow) * 100).toFixed(2))
+    (available || estimated) && knownWindow !== null
+      ? Number(((displayTotal / knownWindow) * 100).toFixed(2))
       : null;
   const stale = available && context?.stale === true;
   return (
     <section className="space-y-2" aria-label={heading}>
       <div className="flex items-center justify-between text-[9px] text-muted-foreground">
         <span>{heading}</span>
-        {available && (
+        {(available || estimated) && (
           <span
             className="text-muted-foreground/60"
             title={
@@ -58,7 +62,7 @@ export function ContextCompositionBar({
                 : "Last provider-reported full input tokens including cache; not cumulative or exact next-turn usage."
             }
           >
-            {`${zh ? "服务商实测" : "Provider reported"} · ${formatTokenCount(total)}${knownWindow !== null ? ` / ${formatContextLimit(knownWindow)}` : ""}`}
+            {`${estimated && !available ? (zh ? "压缩后估算" : "Compacted estimate") : zh ? "服务商实测" : "Provider reported"} · ${formatTokenCount(displayTotal)}${knownWindow !== null ? ` / ${formatContextLimit(knownWindow)}` : ""}`}
           </span>
         )}
       </div>
@@ -67,6 +71,17 @@ export function ContextCompositionBar({
           {zh
             ? "上次请求的供应商数据；当前请求暂无数据"
             : "Last request's provider data; current request has no data"}
+        </p>
+      )}
+      {(available || estimated) && (
+        <p className="text-xs text-muted-foreground">
+          {estimated && !available
+            ? zh
+              ? "压缩后本地估算；下次请求返回后会更新为服务商实测。"
+              : "Local estimate after compaction; provider usage updates after the next request."
+            : zh
+              ? "仅代表上次请求实测；压缩后不会立即更新。"
+              : "Measured on the last request; does not update immediately after compaction."}
         </p>
       )}
       {windowUsage !== null ? (
@@ -80,7 +95,7 @@ export function ContextCompositionBar({
             style={{ width: `${Math.min(windowUsage, 100)}%` }}
           />
         </div>
-      ) : !available ? (
+      ) : !available && !estimated ? (
         <p className="text-[9px] text-muted-foreground/60">
           {zh ? "暂无供应商数据" : "No provider usage available"}
         </p>

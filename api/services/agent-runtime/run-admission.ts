@@ -97,6 +97,18 @@ export function acceptRuntimeRun(
         );
       return { run, reused: true };
     }
+    if (
+      (
+        session.sessionMetadata?.contextCompaction as
+          | { status?: string }
+          | undefined
+      )?.status === "running"
+    )
+      throw new AgentRuntimeError(
+        "Wait for context compaction to finish.",
+        "COMPACTION_BUSY",
+        409,
+      );
     if (profileService.getForSession(session).executionHost === "embedded") {
       throw new AgentRuntimeError(
         "This session belongs to an embedded job host. Use that job’s controls.",
@@ -228,7 +240,9 @@ export function acceptedInputRequestId(
   if (!runId) return undefined;
   const run = agentRuntimeStore.getRun(runId);
   if (run.sessionId !== sessionId)
-    throw new AgentValidationError("The accepted Run belongs to another session.");
+    throw new AgentValidationError(
+      "The accepted Run belongs to another session.",
+    );
   return (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId;
 }
 

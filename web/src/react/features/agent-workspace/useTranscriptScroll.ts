@@ -59,6 +59,8 @@ export function useTranscriptScroll(
     readingRef.current = saved?.reading ?? false;
     let manualUntil = 0;
     let pointerDown = false;
+    let lastHeight = element.scrollHeight;
+    let lastClientHeight = element.clientHeight;
     lastTopRef.current = element.scrollTop;
     const publish = (reading: boolean) => {
       if (readingRef.current === reading) return;
@@ -103,15 +105,20 @@ export function useTranscriptScroll(
     const handleScroll = () => {
       const top = element.scrollTop;
       const distance = element.scrollHeight - top - element.clientHeight;
-      pinnedRef.current = distance <= 48;
+      const manual = pointerDown || performance.now() <= manualUntil;
+      const movedUp = top < lastTopRef.current - 1;
+      const resized =
+        element.scrollHeight !== lastHeight ||
+        element.clientHeight !== lastClientHeight;
+      // Layout scroll events must not release the bottom pin before resize
+      // delivery. Preserve intentional upward jumps from message navigation.
+      if (distance <= 48 || manual || (movedUp && !resized))
+        pinnedRef.current = distance <= 48;
       if (distance <= 32) publish(false);
-      else if (
-        distance >= 96 &&
-        top < lastTopRef.current - 1 &&
-        (pointerDown || performance.now() <= manualUntil)
-      )
-        publish(true);
+      else if (distance >= 96 && movedUp && manual) publish(true);
       lastTopRef.current = top;
+      lastHeight = element.scrollHeight;
+      lastClientHeight = element.clientHeight;
     };
     element.addEventListener("click", inspectDisclosure, true);
     element.addEventListener("keydown", handleDisclosureKey, true);
@@ -133,8 +140,13 @@ export function useTranscriptScroll(
               element.scrollTop = element.scrollHeight;
               lastTopRef.current = element.scrollTop;
             }
+            lastHeight = element.scrollHeight;
+            lastClientHeight = element.clientHeight;
           });
-    if (observer && content) observer.observe(content);
+    if (observer) {
+      if (content) observer.observe(content);
+      observer.observe(element);
+    }
     return () => {
       positions.delete(sessionId);
       positions.set(sessionId, {

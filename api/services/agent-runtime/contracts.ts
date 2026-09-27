@@ -159,6 +159,9 @@ export const runtimeEventTypeSchema = z.enum([
   "subsession_started",
   "todo_updated",
   "task_state_updated",
+  "context_compaction_started",
+  "context_compacted",
+  "context_compaction_failed",
 ]);
 export type RuntimeEventType = z.infer<typeof runtimeEventTypeSchema>;
 

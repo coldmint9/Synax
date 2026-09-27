@@ -13,6 +13,7 @@ import { Skeleton } from "@/react/components/ui";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { AgentConversationView } from "./AgentConversationView";
+import { sessionCompaction } from "./sessionCompaction";
 import { SessionNavigationPanel } from "./SessionNavigationPanel";
 import type { AgentRunStatus } from "../../../lib/api/agentRuntime";
 
@@ -40,7 +41,6 @@ function useSessionTranscriptStatic() {
         streamingStepId: s.streamingStepId,
         streamingLive: s.streamingLive,
         streamingCompletedSteps: s.streamingCompletedSteps,
-        contextCompactionNotice: s.contextCompactionNotice,
       };
     }),
   );
@@ -69,8 +69,20 @@ export function SessionTranscript({
     streamingStepId,
     streamingLive,
     streamingCompletedSteps,
-    contextCompactionNotice,
   } = useSessionTranscriptStatic();
+  const compactionNotice = useAgentSessionStore(
+    (s) => s.contextCompactionNotice,
+  );
+  const compacting =
+    sessionCompaction(session)?.status === "running" ||
+    compactionNotice?.status === "running";
+  const hasCompactionRow = messages.some(
+    (message) =>
+      message.metadata?.source === "context_compaction" &&
+      (message.metadata.contextCompaction as { status?: string } | undefined)
+        ?.status === "running",
+  );
+  const compactionId = sessionCompaction(session)?.id;
   const pending = usePendingSubmissionStore((state) =>
     sessionId ? state.items[sessionId] : undefined,
   );
@@ -78,37 +90,53 @@ export function SessionTranscript({
     () => projectPendingSubmission(pending, runs, messages),
     [pending, runs, messages],
   );
-  const responseRunId = projected.run?.id ?? (pending ? null : session?.activeRunId);
-  const responseRun = projected.run ?? runs.find((run) => run.id === responseRunId);
+  const responseRunId =
+    projected.run?.id ?? (pending ? null : session?.activeRunId);
+  const responseRun =
+    projected.run ?? runs.find((run) => run.id === responseRunId);
   const hasAssistantText = useMemo(() => {
     const responseStepIds = new Set(
-      steps.filter((step) => step.runId === responseRunId).map((step) => step.id),
+      steps
+        .filter((step) => step.runId === responseRunId)
+        .map((step) => step.id),
     );
     const persistedResponse = Boolean(
       responseRunId &&
-        messages.some(
-          (message) =>
-            message.role === "assistant" &&
-            Boolean(message.content.trim()) &&
-            (message.runId === responseRunId ||
-              (message.stepId !== null && responseStepIds.has(message.stepId)) ||
-              (pending && message.metadata.requestId === pending.requestId)),
-        ),
+      messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          Boolean(message.content.trim()) &&
+          (message.runId === responseRunId ||
+            (message.stepId !== null && responseStepIds.has(message.stepId)) ||
+            (pending && message.metadata.requestId === pending.requestId)),
+      ),
     );
     const completedResponse = streamingCompletedSteps.some((step) =>
       step.blocks.some(
         (block) => block.type === "text" && Boolean(block.content.trim()),
       ),
     );
-    return persistedResponse || hasStreamingText(streamingLive) || completedResponse;
-  }, [messages, pending?.requestId, responseRunId, steps, streamingCompletedSteps, streamingLive]);
+    return (
+      persistedResponse || hasStreamingText(streamingLive) || completedResponse
+    );
+  }, [
+    messages,
+    pending?.requestId,
+    responseRunId,
+    steps,
+    streamingCompletedSteps,
+    streamingLive,
+  ]);
   const hasAssistantThinking = useMemo(() => {
     const responseStepIds = new Set(
-      steps.filter((step) => step.runId === responseRunId).map((step) => step.id),
+      steps
+        .filter((step) => step.runId === responseRunId)
+        .map((step) => step.id),
     );
     const persistedThinking = messages.some((message) => {
       const isThinking =
-        message.metadata?.type === "thinking" || message.metadata?.kind === "thought";
+        message.metadata?.type === "thinking" ||
+        message.metadata?.kind === "thought";
       return (
         isThinking &&
         hasDisplayableReasoning(message.content) &&
@@ -148,7 +176,9 @@ export function SessionTranscript({
     !hasAssistantText &&
     !hasAssistantThinking &&
     !runFinished &&
-    (Boolean(pending) || session?.status === "queued" || session?.status === "running");
+    (Boolean(pending) ||
+      session?.status === "queued" ||
+      session?.status === "running");
   const latestRunStatus = useMemo(() => {
     if (!sessionId) return undefined;
     for (let i = runs.length - 1; i >= 0; i -= 1) {
@@ -174,6 +204,9 @@ export function SessionTranscript({
     onReadingHistoryChange,
     active && (!loading || showLiveBlock || Boolean(pending)),
   );
+  useLayoutEffect(() => {
+    if (compacting) scrollToBottom(true);
+  }, [compacting, compactionId]);
 
   const olderHistory = useOlderTranscriptHistory(scrollRef, sessionId, active);
 
@@ -218,19 +251,36 @@ export function SessionTranscript({
         >
           <div className="session-transcript-body">
             {olderHistory.loading && (
-              <div role="status" className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm">
-                {locale === "zh" ? "正在加载更早消息…" : "Loading earlier messages…"}
+              <div
+                role="status"
+                className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm"
+              >
+                {locale === "zh"
+                  ? "正在加载更早消息…"
+                  : "Loading earlier messages…"}
               </div>
             )}
             {olderHistory.error && (
-              <div role="alert" className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-xs text-danger shadow-sm">
-                {locale === "zh" ? "加载更早消息失败。" : "Could not load earlier messages."}{" "}
-                <button type="button" className="underline" onClick={() => void olderHistory.retry()}>
+              <div
+                role="alert"
+                className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-xs text-danger shadow-sm"
+              >
+                {locale === "zh"
+                  ? "加载更早消息失败。"
+                  : "Could not load earlier messages."}{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => void olderHistory.retry()}
+                >
                   {locale === "zh" ? "重试" : "Retry"}
                 </button>
               </div>
             )}
-            {loading && projected.messages.length === 0 && !showLiveBlock && !showThinking ? (
+            {loading &&
+            projected.messages.length === 0 &&
+            !showLiveBlock &&
+            !showThinking ? (
               <div
                 role="status"
                 className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4"
@@ -265,20 +315,37 @@ export function SessionTranscript({
                 </button>
               </div>
             ) : (
-              <AgentConversationView
-                session={session}
-                runs={runs}
-                steps={steps}
-                toolCalls={toolCalls}
-                messages={projected.messages}
-                childSessions={childSessions}
-                excludeStepId={showLiveBlock ? streamingStepId : null}
-                unifiedLive={active}
-                submitting={Boolean(pending)}
-                scrollRootRef={scrollRef}
-                compactionNotice={contextCompactionNotice ?? undefined}
-                liveTurn={showThinking ? <ThinkingIndicator /> : undefined}
-              />
+              <>
+                <AgentConversationView
+                  session={session}
+                  runs={runs}
+                  steps={steps}
+                  toolCalls={toolCalls}
+                  messages={projected.messages}
+                  childSessions={childSessions}
+                  excludeStepId={showLiveBlock ? streamingStepId : null}
+                  unifiedLive={active}
+                  submitting={Boolean(pending)}
+                  scrollRootRef={scrollRef}
+                  liveTurn={
+                    compacting && !hasCompactionRow ? (
+                      <ThinkingIndicator
+                        label={
+                          locale === "zh"
+                            ? "正在压缩上下文"
+                            : "Compacting context"
+                        }
+                      />
+                    ) : compactionNotice?.status === "failed" ? (
+                      <p role="alert" className="text-xs text-danger">
+                        {compactionNotice.error}
+                      </p>
+                    ) : showThinking ? (
+                      <ThinkingIndicator />
+                    ) : undefined
+                  }
+                />
+              </>
             )}
           </div>
         </div>

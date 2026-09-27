@@ -3,6 +3,7 @@ import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import type {
   AgentInteraction,
+  ContextCompactionState,
   AgentRun,
   AgentRunStep,
   AgentRuntimeMessage,
@@ -16,6 +17,13 @@ import {
 } from "./buildInterleavedTurns";
 
 export type ConversationTimelineEntry =
+  | {
+      id: string;
+      kind: "compaction";
+      createdAt: string;
+      label: string;
+      state: ContextCompactionState;
+    }
   | {
       id: string;
       kind: "error";
@@ -175,10 +183,15 @@ export function buildUserMessageEntries(
   );
   if (alreadyShown) return fromMessages;
 
-  const forkCreatedAt = (session.sessionMetadata?.fork as { sourceCreatedAt?: string } | undefined)?.sourceCreatedAt;
+  const forkCreatedAt = (
+    session.sessionMetadata?.fork as { sourceCreatedAt?: string } | undefined
+  )?.sourceCreatedAt;
   const initial: UserMessageTimelineEntry = {
     id: sessionUserInputEntryId(session.id),
-    createdAt: messages.find(isSessionPromptUserMessage)?.createdAt ?? forkCreatedAt ?? session.createdAt,
+    createdAt:
+      messages.find(isSessionPromptUserMessage)?.createdAt ??
+      forkCreatedAt ??
+      session.createdAt,
     label: truncate(userInput),
     content: userInput,
   };
@@ -526,7 +539,8 @@ function foldCompletedRounds(
       end < items.length &&
       items[end].entry.kind === "agent" &&
       !standaloneReplyIds.has(items[end].entry.id)
-    ) end += 1;
+    )
+      end += 1;
 
     const round = items.slice(index, end) as AgentTimelineItem[];
     const complete = round.every((item) =>
@@ -579,9 +593,31 @@ export function buildConversationTimeline(
     messages,
     childSessions,
   ).filter((turn) => !failedStepIds.has(turn.stepId) || turn.blocks.length > 0);
-  const userEntries = buildUserMessageEntries(messages, options?.session, options?.includeInitialPrompt);
+  const userEntries = buildUserMessageEntries(
+    messages,
+    options?.session,
+    options?.includeInitialPrompt,
+  );
 
   const items = buildTimelineItems(filteredSteps, agentTurns, userEntries);
+  for (const message of messages) {
+    if (message.metadata?.source !== "context_compaction") continue;
+    const state = message.metadata.contextCompaction as
+      | ContextCompactionState
+      | undefined;
+    if (!state) continue;
+    items.push({
+      timestamp: toTimestamp(message.createdAt),
+      entry: {
+        id: message.id,
+        kind: "compaction",
+        createdAt: message.createdAt,
+        label: message.content,
+        state,
+      },
+    });
+  }
+
   // Completed replies with no surviving step still belong to their message, not a synthetic artifact event.
   const stepIds = new Set(steps.map((step) => step.id));
   const runIdsWithSteps = new Set(steps.map((step) => step.runId));
@@ -593,7 +629,9 @@ export function buildConversationTimeline(
       message.metadata?.partial ||
       message.metadata?.type === "thinking" ||
       message.metadata?.kind === "thought" ||
-      ["artifact_publisher", "artifact_request", "artifact_job"].includes(String(message.metadata?.source)) ||
+      ["artifact_publisher", "artifact_request", "artifact_job"].includes(
+        String(message.metadata?.source),
+      ) ||
       (message.stepId && stepIds.has(message.stepId)) ||
       (!message.stepId &&
         message.runId &&
@@ -601,11 +639,20 @@ export function buildConversationTimeline(
       seenOrphans.has(message.id)
     )
       continue;
-    const isForkReply = typeof message.metadata?.forkedFromMessageId === "string";
+    const isForkReply =
+      typeof message.metadata?.forkedFromMessageId === "string";
     const blocks: TurnContentBlock[] = visualizationReplyParts(message);
-    if (!isForkReply && !blocks.some((block) => block.type === "visualization")) continue;
-    if (isForkReply && message.contentParts?.some((part) => part.type !== "text")) {
-      blocks.unshift({ type: "media", parts: message.contentParts, messageId: message.id });
+    if (!isForkReply && !blocks.some((block) => block.type === "visualization"))
+      continue;
+    if (
+      isForkReply &&
+      message.contentParts?.some((part) => part.type !== "text")
+    ) {
+      blocks.unshift({
+        type: "media",
+        parts: message.contentParts,
+        messageId: message.id,
+      });
     }
     if (!blocks.length) continue;
     seenOrphans.add(message.id);
@@ -618,7 +665,8 @@ export function buildConversationTimeline(
         id: `reply-${message.id}`,
         kind: "agent",
         createdAt: message.createdAt,
-        label: truncate(message.content) || (isForkReply ? "助手回复" : "交互预览"),
+        label:
+          truncate(message.content) || (isForkReply ? "助手回复" : "交互预览"),
         turn: {
           stepId: `reply-${message.id}`,
           index: 0,
@@ -689,9 +737,12 @@ export function buildConversationTimeline(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return foldCompletedRounds(items, stepById, runStatusByStepId, standaloneReplyIds).map(
-    (item) => item.entry,
-  );
+  return foldCompletedRounds(
+    items,
+    stepById,
+    runStatusByStepId,
+    standaloneReplyIds,
+  ).map((item) => item.entry);
 }
 
 export function sessionEntryDomId(entryId: string): string {

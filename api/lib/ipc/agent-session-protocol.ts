@@ -259,6 +259,7 @@ export function forwardChunkToLiveBus(
         originalTokens: chunk.originalTokens,
         compressedTokens: chunk.compressedTokens,
         messageCount: chunk.messageCount,
+        event: chunk.event,
       };
       break;
     default:

@@ -1,18 +1,40 @@
-import type { LlmRetryState } from '../llm-runtime/retry-state.js';
-import { EventEmitter } from 'node:events';
-import type { ToolCallRecord } from './contracts.js';
-import { isSessionEventsQuiesced } from './runtime-event-quiesce.js';
+import type { ContextCompactionState } from "./context-compaction-state.js";
+import type { LlmRetryState } from "../llm-runtime/retry-state.js";
+import { EventEmitter } from "node:events";
+import type {
+  AgentRuntimeMessage,
+  RuntimeEvent,
+  ToolCallRecord,
+} from "./contracts.js";
+import { isSessionEventsQuiesced } from "./runtime-event-quiesce.js";
 
 export type SessionLiveEvent =
-  | { type: 'retry_status'; stepId: string; retry: LlmRetryState }
-  | { type: 'step_started'; stepId: string; stepIndex: number; modelCapabilities?: { reasoning: boolean } }
-  | { type: 'message_delta'; stepId: string; delta: string }
-  | { type: 'thought_delta'; stepId: string; delta: string }
-  | { type: 'tool_call'; stepId: string; toolCall: ToolCallRecord }
-  | { type: 'tool_result'; stepId: string; toolCall: ToolCallRecord }
-  | { type: 'context_compaction_started' }
-  | { type: 'context_compacted'; stepId: string; originalTokens: number; compressedTokens: number; messageCount: number }
-  | { type: 'context_compaction_failed'; error: string };
+  | {
+      type: "context_compaction_state";
+      state: ContextCompactionState;
+      message: AgentRuntimeMessage;
+    }
+  | { type: "retry_status"; stepId: string; retry: LlmRetryState }
+  | {
+      type: "step_started";
+      stepId: string;
+      stepIndex: number;
+      modelCapabilities?: { reasoning: boolean };
+    }
+  | { type: "message_delta"; stepId: string; delta: string }
+  | { type: "thought_delta"; stepId: string; delta: string }
+  | { type: "tool_call"; stepId: string; toolCall: ToolCallRecord }
+  | { type: "tool_result"; stepId: string; toolCall: ToolCallRecord }
+  | { type: "context_compaction_started"; event?: RuntimeEvent }
+  | {
+      type: "context_compacted";
+      stepId: string;
+      originalTokens: number;
+      compressedTokens: number;
+      messageCount: number;
+      event?: RuntimeEvent;
+    }
+  | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
 
 const MAX_BUFFERED_EVENTS = 2000;
 
@@ -43,15 +65,18 @@ class SessionLiveBus {
     // A quiesced (tearing-down) session has no transcript left to stream to.
     if (isSessionEventsQuiesced(sessionId)) return;
     const emitter = this.emitters.get(sessionId);
-    const listenerCount = emitter?.listenerCount('event') ?? 0;
+    const listenerCount = emitter?.listenerCount("event") ?? 0;
     if (listenerCount > 0) {
-      emitter!.emit('event', event);
+      emitter!.emit("event", event);
       return;
     }
     this.bufferEvent(sessionId, event);
   }
 
-  subscribe(sessionId: string, handler: (event: SessionLiveEvent) => void): () => void {
+  subscribe(
+    sessionId: string,
+    handler: (event: SessionLiveEvent) => void,
+  ): () => void {
     const emitter = this.getOrCreate(sessionId);
     const buffered = this.buffers.get(sessionId);
     if (buffered?.length) {
@@ -60,16 +85,18 @@ class SessionLiveBus {
         handler(event);
       }
     }
-    emitter.on('event', handler);
+    emitter.on("event", handler);
     return () => {
-      emitter.off('event', handler);
+      emitter.off("event", handler);
     };
   }
 
-  clearBuffer(sessionId: string): void { this.buffers.delete(sessionId); }
+  clearBuffer(sessionId: string): void {
+    this.buffers.delete(sessionId);
+  }
 
   cleanup(sessionId: string): void {
-    this.buffers.delete(sessionId);
+    this.clearBuffer(sessionId);
     const emitter = this.emitters.get(sessionId);
     if (emitter) {
       emitter.removeAllListeners();

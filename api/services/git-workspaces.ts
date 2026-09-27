@@ -40,10 +40,21 @@ export interface GitWorktreeSummary {
   sessionCount: number;
 }
 
+export interface GitCommitSummary {
+  id: string;
+  parents: string[];
+  subject: string;
+  author: string;
+  authoredAt: string;
+  refs: string[];
+  rebase: boolean;
+}
+
 export interface GitWorkspaceSummary {
   repositoryRoot: string;
   defaultPath: string;
   branches: GitBranchSummary[];
+  commits: GitCommitSummary[];
   worktrees: GitWorktreeSummary[];
 }
 
@@ -407,6 +418,53 @@ export async function listGitWorkspaces(
         checkedOutPath: branchPaths.get(name) ?? null,
       };
     });
+  const commitLog = await git(context.location, context.root, [
+    "log",
+    "--branches",
+    "--full-history",
+    "--topo-order",
+    "-n",
+    "180",
+    "--date=iso-strict",
+    "--format=%H%x00%P%x00%s%x00%an%x00%aI%x1e",
+  ]);
+  let rebaseIds = new Set<string>();
+  try {
+    const reflog = await git(context.location, context.root, [
+      "reflog",
+      "--all",
+      "--date=iso-strict",
+      "--format=%H%x00%gs%x1e",
+      "-n",
+      "300",
+    ]);
+    rebaseIds = new Set(
+      reflog.stdout
+        .split("\x1e")
+        .map((record) => record.trim())
+        .filter(Boolean)
+        .filter((record) => /\brebase\b/i.test(record))
+        .map((record) => record.split("\0", 1)[0]),
+    );
+  } catch {
+    // Reflogs may be disabled; the commit graph remains authoritative.
+  }
+  const commits = commitLog.stdout
+    .split("\x1e")
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [id, parents = "", subject, author, authoredAt] = record.split("\0");
+      return {
+        id,
+        parents: parents ? parents.split(" ") : [],
+        subject,
+        author,
+        authoredAt,
+        refs: branches.filter((branch) => branch.head === id).map((branch) => branch.name),
+        rebase: rebaseIds.has(id),
+      };
+    });
   const dirtyResults = await Promise.all(
     worktrees.map(async (item) => {
       if (item.prunable) return false;
@@ -429,6 +487,7 @@ export async function listGitWorkspaces(
     repositoryRoot: worktrees[0].path,
     defaultPath: context.root,
     branches,
+    commits,
     worktrees: worktrees.map((item, index) => ({
       ...item,
       primary: index === 0,
