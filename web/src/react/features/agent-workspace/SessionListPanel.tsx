@@ -102,7 +102,8 @@ export function SessionListPanel({
             selectedId={list.selectedId}
             isLoadingMore={list.isLoadingMore}
             hasMore={list.hasMore}
-            hideGroupHeaders
+            hideGroupHeaders={!list.hasPinned}
+            onTogglePin={list.togglePin}
             emptyLabel={
               list.searchQuery.trim()
                 ? locale === "zh"

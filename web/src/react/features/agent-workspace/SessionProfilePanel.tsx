@@ -1,7 +1,11 @@
 import { memo, useId } from "react";
 import { ChevronDown, CircleAlert, Wrench } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import type { AgentRun, AgentRunStep } from "../../../lib/api/agentRuntime";
+import type {
+  AgentRun,
+  AgentRunStep,
+  ContextComposition,
+} from "../../../lib/api/agentRuntime";
 import {
   formatContextLimit,
   formatTokenCount,
@@ -9,9 +13,9 @@ import {
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
-import { ContextCompositionBar } from "./ContextCompositionBar";
 import { SessionCacheCard } from "./SessionCacheCard";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
+import { sessionCompaction } from "./sessionCompaction";
 import { readSessionBackendId } from "./synaxSessionTypes";
 import { formatModelDisplayName, useProviderNames } from "./useProviderNames";
 import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
@@ -30,6 +34,78 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
     <RuntimeProfile key={sessionId} sessionId={sessionId} />
   ) : null;
 });
+
+function readContextComposition(
+  stats: { contextComposition?: ContextComposition | null } | null,
+  steps: AgentRunStep[],
+): ContextComposition | null {
+  if (stats?.contextComposition) return stats.contextComposition;
+  for (const step of [...steps].sort((a, b) => b.index - a.index)) {
+    const composition = step.metadata?.contextComposition;
+    if (composition && typeof composition === "object")
+      return composition as ContextComposition;
+  }
+  return null;
+}
+
+const COMPOSITION_COLORS = {
+  tools: "var(--profile-accent)",
+  mcp: "light-dark(#a498b8, #b4a4cc)",
+  skills: "light-dark(#b29e83, #c1ad8d)",
+  messages: "var(--profile-green)",
+  system: "var(--profile-muted)",
+} as const;
+
+function ContextCompositionMeter({
+  composition,
+  percent,
+  label,
+  valueText,
+}: {
+  composition: ContextComposition | null;
+  percent: number | null;
+  label: string;
+  valueText: string;
+}) {
+  const values = composition
+    ? (["system", "messages", "tools", "mcp", "skills"] as const)
+        .map((kind) => ({
+          kind,
+          value: Number(composition[kind] ?? 0),
+        }))
+        .filter((item) => item.value > 0)
+    : [];
+  const total = values.reduce((sum, item) => sum + item.value, 0);
+  const width = percent === null ? 0 : Math.min(100, percent);
+  return (
+    <div
+      className={`runtime-profile-meter${values.length ? " runtime-profile-meter--segmented" : ""}`}
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={width}
+      aria-valuetext={valueText}
+    >
+      <div
+        className="runtime-profile-meter-fill"
+        style={{ width: `${width}%` }}
+      >
+        {values.map(({ kind, value }) => (
+          <span
+            key={kind}
+            data-context-category={kind}
+            title={`${kind}: ${value.toLocaleString()} tokens`}
+            style={{
+              width: `${(value / total) * 100}%`,
+              background: COMPOSITION_COLORS[kind],
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function RuntimeProfile({ sessionId }: { sessionId: string }) {
   const zh = useLocale().locale === "zh";
@@ -50,7 +126,22 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
     }),
   );
   const runtime = sessionRuntimeSelection(session, runs, steps);
-  const summary = runtimeProfileSummary(stats, session?.status, zh);
+  const liveCompaction = useAgentSessionStore(
+    (state) =>
+      state.selectedSessionId === sessionId &&
+      state.contextCompactionNotice?.status === "running",
+  );
+  const compacting =
+    sessionCompaction(session)?.status === "running" || liveCompaction;
+  const summary = compacting
+    ? {
+        ...runtimeProfileSummary(stats, session?.status, zh),
+        label: zh ? "压缩中" : "Compacting",
+        tone: "running",
+      }
+    : runtimeProfileSummary(stats, session?.status, zh);
+  const composition = readContextComposition(stats, steps);
+  const compositionLabel = zh ? "上下文类型占比" : "Context composition";
   const title = zh ? "运行详情" : "Runtime details";
   const model =
     formatModelDisplayName(runtime.model, providers) ??
@@ -182,19 +273,12 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
             )}
           </button>
           {summary.percent !== null && (
-            <div
-              className="runtime-profile-meter"
-              data-high={summary.high}
-              data-stale={summary.stale}
-              role="meter"
-              aria-label={zh ? "上下文使用率" : "Context usage"}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.min(100, Number(summary.percent.toFixed(1)))}
-              aria-valuetext={`${summary.stale ? (zh ? "上次记录 · " : "Last sample · ") : ""}${tokenLabel} / ${formatContextLimit(summary.limit!)} · ${percentLabel}`}
-            >
-              <span style={{ width: `${Math.min(100, summary.percent)}%` }} />
-            </div>
+            <ContextCompositionMeter
+              composition={composition}
+              percent={summary.percent}
+              label={compositionLabel}
+              valueText={`${summary.stale ? (zh ? "上次记录 · " : "Last sample · ") : ""}${tokenLabel}${summary.limit !== null ? ` / ${formatContextLimit(summary.limit)}` : ""} · ${percentLabel ?? "—"}`}
+            />
           )}
         </div>
         {open && (
@@ -211,13 +295,6 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
               <>
                 {stats && (
                   <>
-                    <div className="runtime-profile-context">
-                      <ContextCompositionBar
-                        context={stats.context}
-                        contextLimit={stats.contextLimit}
-                        contextLimitKnown={stats.contextLimitKnown !== false}
-                      />
-                    </div>
                     <div className="runtime-profile-performance">
                       <dl className="runtime-profile-properties">
                         <dt>{zh ? "运行轮次" : "Execution rounds"}</dt>

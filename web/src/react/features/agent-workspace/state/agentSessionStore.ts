@@ -110,8 +110,35 @@ const READ_MARKERS_KEY = "synax-session-read-markers";
 
 type ContextCompactionNotice =
   | { status: "running" }
-  | { status: "completed"; originalTokens: number; compressedTokens: number; messageCount: number }
+  | {
+      status: "completed";
+      originalTokens: number;
+      compressedTokens: number;
+      messageCount: number;
+    }
   | { status: "failed"; error: string };
+
+type StoredContextCompaction = {
+  status: "running" | "completed" | "failed";
+  originalTokens?: number;
+  compressedTokens?: number;
+  messageCount?: number;
+  error?: string;
+};
+function contextCompactionNotice(
+  state?: StoredContextCompaction,
+): ContextCompactionNotice | null {
+  if (!state) return null;
+  if (state.status === "running") return { status: "running" };
+  if (state.status === "failed")
+    return { status: "failed", error: state.error ?? "上下文压缩失败" };
+  return {
+    status: "completed",
+    originalTokens: state.originalTokens ?? 0,
+    compressedTokens: state.compressedTokens ?? 0,
+    messageCount: state.messageCount ?? 0,
+  };
+}
 
 export type SessionInputBody = {
   contentParts?: RuntimeContentPart[];
@@ -235,8 +262,10 @@ let activeDetailRefresh: {
   promise: Promise<void>;
   again: boolean;
 } | null = null;
-let activeOlderHistory: { sessionId: string; promise: Promise<void> } | null = null;
-let activeTimelineIndex: { sessionId: string; promise: Promise<void> } | null = null;
+let activeOlderHistory: { sessionId: string; promise: Promise<void> } | null =
+  null;
+let activeTimelineIndex: { sessionId: string; promise: Promise<void> } | null =
+  null;
 
 let activeTranscriptRefresh: {
   sessionId: string;
@@ -258,7 +287,8 @@ function scheduleFinalReplyRetry(sessionId: string): void {
   if (
     finalReplyRetryTimer !== null ||
     finalReplyRetryCount >= FINAL_REPLY_RETRY_DELAYS.length
-  ) return;
+  )
+    return;
   const delay = FINAL_REPLY_RETRY_DELAYS[finalReplyRetryCount++];
   finalReplyRetryTimer = setTimeout(() => {
     finalReplyRetryTimer = null;
@@ -285,7 +315,8 @@ function isTerminalSessionStatus(
   );
 }
 
-type CompletedLiveStep = AgentSessionStoreState["streamingCompletedSteps"][number];
+type CompletedLiveStep =
+  AgentSessionStoreState["streamingCompletedSteps"][number];
 
 function confirmedLiveStep(
   snapshot: CompletedLiveStep,
@@ -344,14 +375,20 @@ function trimSessionDetailCache(
 ): Record<string, SessionDetailCacheEntry> {
   // Account UTF-16 retained payload without allocating JSON copies. Shared
   // objects may be over-counted across entries: conservative is preferable.
-  const measure = (value: unknown, budget: number, seen = new WeakSet<object>()): number => {
+  const measure = (
+    value: unknown,
+    budget: number,
+    seen = new WeakSet<object>(),
+  ): number => {
     if (typeof value === "string") return value.length * 2 + 16;
     if (!value || typeof value !== "object") return 16;
     if (seen.has(value)) return 0;
     seen.add(value);
     let bytes = 32;
     for (const key in value) {
-      bytes += key.length * 2 + measure((value as Record<string, unknown>)[key], budget - bytes, seen);
+      bytes +=
+        key.length * 2 +
+        measure((value as Record<string, unknown>)[key], budget - bytes, seen);
       if (bytes > budget) break;
     }
     return bytes;
@@ -512,11 +549,14 @@ function patchSessionDetailCache(
     lastVisitedAt: Date.now(),
   };
   useAgentSessionStore.setState((s) => ({
-    sessionDetailCache: trimSessionDetailCache({
-      ...s.sessionDetailCache,
-      // Profile responses do not make an unfinished transcript fresh.
-      [sessionId]: { ...existing, ...patch },
-    }, s.selectedSessionId),
+    sessionDetailCache: trimSessionDetailCache(
+      {
+        ...s.sessionDetailCache,
+        // Profile responses do not make an unfinished transcript fresh.
+        [sessionId]: { ...existing, ...patch },
+      },
+      s.selectedSessionId,
+    ),
   }));
 }
 
@@ -530,13 +570,21 @@ function ensureLiveStream(sessionId: string): void {
 // One trailing refresh across the global bus, session stream, Dock and usage
 // events. Mutations still use immediate refreshDetail when their caller needs it.
 let liveDetailRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingRefresh: { projectId: string | null; list: boolean; detail: string | null; usage: string | null; interactions: string | null } | null = null;
+let pendingRefresh: {
+  projectId: string | null;
+  list: boolean;
+  detail: string | null;
+  usage: string | null;
+  interactions: string | null;
+} | null = null;
 let sessionDetailsVisible = true;
 const refreshRevisions = new Map<string, number>();
 
 export function clearScheduledSessionRefresh(): void {
   if (liveDetailRefreshTimer) clearTimeout(liveDetailRefreshTimer);
-  liveDetailRefreshTimer = null; pendingRefresh = null; refreshRevisions.clear();
+  liveDetailRefreshTimer = null;
+  pendingRefresh = null;
+  refreshRevisions.clear();
 }
 export function setSessionDetailsVisible(visible: boolean): void {
   sessionDetailsVisible = visible;
@@ -545,15 +593,24 @@ export function setSessionDetailsVisible(visible: boolean): void {
 }
 function flushScheduledSessionRefresh(): void {
   liveDetailRefreshTimer = null;
-  const pending = pendingRefresh, state = useAgentSessionStore.getState();
+  const pending = pendingRefresh,
+    state = useAgentSessionStore.getState();
   if (!pending) return;
-  if (pending.projectId !== state.projectId) { pendingRefresh = null; return; }
+  if (pending.projectId !== state.projectId) {
+    pendingRefresh = null;
+    return;
+  }
   if (typeof document !== "undefined" && document.hidden) return;
-  if (pending.list) { pending.list = false; void state.refreshSessions({ joinPending: true }); }
+  if (pending.list) {
+    pending.list = false;
+    void state.refreshSessions({ joinPending: true });
+  }
   if (!sessionDetailsVisible) return;
   pendingRefresh = null;
-  if (pending.detail && pending.detail === state.selectedSessionId) void state.refreshDetail();
-  else if (pending.usage && pending.usage === state.selectedSessionId) void state.fetchSessionInvocationUsage();
+  if (pending.detail && pending.detail === state.selectedSessionId)
+    void state.refreshDetail();
+  else if (pending.usage && pending.usage === state.selectedSessionId)
+    void state.fetchSessionInvocationUsage();
   if (pending.interactions && pending.interactions === state.selectedSessionId)
     void state.refreshInteractions(pending.interactions);
 }
@@ -567,13 +624,21 @@ export function scheduleSessionRefresh(
     const key = `${state.projectId}:${sessionId}:${target}`;
     if ((refreshRevisions.get(key) ?? -1) >= revision!) return;
     refreshRevisions.set(key, revision!);
-    if (refreshRevisions.size > 64) refreshRevisions.delete(refreshRevisions.keys().next().value!);
+    if (refreshRevisions.size > 64)
+      refreshRevisions.delete(refreshRevisions.keys().next().value!);
   }
   if (!pendingRefresh || pendingRefresh.projectId !== state.projectId)
-    pendingRefresh = { projectId: state.projectId, list: false, detail: null, usage: null, interactions: null };
+    pendingRefresh = {
+      projectId: state.projectId,
+      list: false,
+      detail: null,
+      usage: null,
+      interactions: null,
+    };
   if (target === "all" || target === "list") pendingRefresh.list = true;
   if (sessionId && sessionId === state.selectedSessionId) {
-    if (target === "all" || target === "detail") pendingRefresh.detail = sessionId;
+    if (target === "all" || target === "detail")
+      pendingRefresh.detail = sessionId;
     if (target === "usage") pendingRefresh.usage = sessionId;
     if (target === "interactions") pendingRefresh.interactions = sessionId;
   } else if (
@@ -583,7 +648,12 @@ export function scheduleSessionRefresh(
     state.sessionDetailCache[sessionId]
   ) {
     const cached = state.sessionDetailCache[sessionId];
-    useAgentSessionStore.setState({ sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: { ...cached, cachedAt: 0 } } });
+    useAgentSessionStore.setState({
+      sessionDetailCache: {
+        ...state.sessionDetailCache,
+        [sessionId]: { ...cached, cachedAt: 0 },
+      },
+    });
   }
   if (!liveDetailRefreshTimer)
     // Usage and interactions reconcile visible state, so they ride the fast
@@ -594,15 +664,23 @@ export function scheduleSessionRefresh(
     );
 }
 function scheduleLiveRefreshDetail(): void {
-  scheduleSessionRefresh(useAgentSessionStore.getState().selectedSessionId, "detail");
+  scheduleSessionRefresh(
+    useAgentSessionStore.getState().selectedSessionId,
+    "detail",
+  );
 }
 function scheduleInvocationUsageRefresh(): void {
-  scheduleSessionRefresh(useAgentSessionStore.getState().selectedSessionId, "usage");
+  scheduleSessionRefresh(
+    useAgentSessionStore.getState().selectedSessionId,
+    "usage",
+  );
 }
 function clearInvocationUsageRefresh(): void {
-  if (pendingRefresh) { pendingRefresh.usage = null; pendingRefresh.detail = null; }
+  if (pendingRefresh) {
+    pendingRefresh.usage = null;
+    pendingRefresh.detail = null;
+  }
 }
-
 
 function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   const index = items.findIndex((item) => item.id === next.id);
@@ -647,7 +725,8 @@ function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
   const last = deltaBuffer[deltaBuffer.length - 1];
   if (last?.type === type) last.delta += delta;
   else deltaBuffer.push({ type, delta });
-  if (bufferedDeltaChars >= 64 * 1024 || deltaBuffer.length >= 64) flushStreamingDeltas();
+  if (bufferedDeltaChars >= 64 * 1024 || deltaBuffer.length >= 64)
+    flushStreamingDeltas();
   // Timers also work when an Electron window is hidden; no parallel rAF and
   // interval loops, artificial typewriter backlog, or permanently idle timers.
   if (deltaFlushTimer === null)
@@ -729,7 +808,10 @@ export interface AgentSessionStoreState {
   loadOlderHistory: () => Promise<void>;
   loadTimelineIndex: () => Promise<void>;
   loadHistoryUntil: (entryId: string) => Promise<boolean>;
-  refreshDetail: (options?: { joinPending?: boolean; forceFresh?: boolean }) => Promise<void>;
+  refreshDetail: (options?: {
+    joinPending?: boolean;
+    forceFresh?: boolean;
+  }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
   fetchSessionStats: () => Promise<void>;
@@ -821,7 +903,9 @@ function clearStreamingBuffers(): void {
   deltaFlushTimer = null;
 }
 
-function snapshotCurrentStep(state: AgentSessionStoreState): CompletedLiveStep[] {
+function snapshotCurrentStep(
+  state: AgentSessionStoreState,
+): CompletedLiveStep[] {
   if (!state.streamingStepId || !hasStreamingContent(state.streamingLive))
     return state.streamingCompletedSteps;
   const step = state.steps.find((item) => item.id === state.streamingStepId);
@@ -1050,8 +1134,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   (!before.has(session.id) ||
                     session.id === state.selectedSessionId ||
                     (items.length === SESSION_PAGE_SIZE &&
-                      session.updatedAt <=
-                        items[items.length - 1].updatedAt)) &&
+                      (Number(session.sessionMetadata?.pinned === true) <
+                        Number(
+                          items[items.length - 1].sessionMetadata?.pinned ===
+                            true,
+                        ) ||
+                        ((session.sessionMetadata?.pinned === true) ===
+                          (items[items.length - 1].sessionMetadata?.pinned ===
+                            true) &&
+                          session.updatedAt <=
+                            items[items.length - 1].updatedAt)))) &&
                   !ids.has(session.id) &&
                   !isRuntimeResourceGone(session.id),
               );
@@ -1355,9 +1447,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Active sessions must always render from a fresh request. The live
       // stream remains the fast path, but an old detail snapshot must not be
       // restored when the conversation page is mounted again.
-      const cached = liveSession || forceFresh
-        ? undefined
-        : get().sessionDetailCache[sessionId];
+      const cached =
+        liveSession || forceFresh
+          ? undefined
+          : get().sessionDetailCache[sessionId];
       set((state) => ({
         panelOpen: true,
         detailLoading: !cached?.cachedAt,
@@ -1370,13 +1463,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             }
           : state.sessionDetailCache,
         ...(isSwitch ? { interactionState: null } : {}),
-        ...(isSwitch ? {
-          streamingRetry: null,
-          streamingStepId: null,
-          streamingLive: EMPTY_STREAMING_BUFFERS,
-          streamingCompletedSteps: [],
-          contextCompactionNotice: null,
-        } : {}),
+        ...(isSwitch
+          ? {
+              streamingRetry: null,
+              streamingStepId: null,
+              streamingLive: EMPTY_STREAMING_BUFFERS,
+              streamingCompletedSteps: [],
+              contextCompactionNotice: null,
+            }
+          : {}),
         ...(cached
           ? {
               runs: cached.runs,
@@ -1411,7 +1506,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // perspective. Reuse their cached payload until an explicit refresh or
       // a runtime mutation invalidates it; only active pages keep polling.
       const needsRefresh =
-        forceFresh || !cached?.cachedAt || isActiveSessionStatus(session?.status);
+        forceFresh ||
+        !cached?.cachedAt ||
+        isActiveSessionStatus(session?.status);
       if (needsRefresh) {
         void get().refreshDetail({
           joinPending: true,
@@ -1432,7 +1529,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (!sessionId) return;
       const initial = get().sessionDetailCache[sessionId];
       const cursor = initial?.historyWindow?.olderCursor;
-      if (activeOlderHistory?.sessionId === sessionId) return activeOlderHistory.promise;
+      if (activeOlderHistory?.sessionId === sessionId)
+        return activeOlderHistory.promise;
       if (!cursor) return;
       const promise = (async () => {
         let pages;
@@ -1440,7 +1538,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         try {
           pages = [await agentRuntimeApi.historyWindow(sessionId, cursor)];
         } catch (error) {
-          if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
+          if ((error as { code?: string }).code !== "HISTORY_STALE")
+            throw error;
           // Cursors are tied to an immutable tree root. If new messages have
           // arrived, walk the new root until we rejoin the oldest loaded row.
           const oldestId = initial.messages[0]?.id;
@@ -1453,7 +1552,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           rebuilt = true;
           while (
             latest.historyWindow.olderCursor &&
-            (!oldestId || !latest.messages.some((message) => message.id === oldestId))
+            (!oldestId ||
+              !latest.messages.some((message) => message.id === oldestId))
           ) {
             latest = await agentRuntimeApi.historyWindow(
               sessionId,
@@ -1463,7 +1563,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           }
           if (latest.historyWindow.olderCursor) {
             pages.push(
-              await agentRuntimeApi.historyWindow(sessionId, latest.historyWindow.olderCursor),
+              await agentRuntimeApi.historyWindow(
+                sessionId,
+                latest.historyWindow.olderCursor,
+              ),
             );
           }
         }
@@ -1474,7 +1577,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             !current?.historyWindow ||
             current.historyWindow.epoch !== pages[0].historyWindow.epoch ||
             (!rebuilt && current.historyWindow.olderCursor !== cursor)
-          ) return state;
+          )
+            return state;
           const base: SessionDetailCacheEntry = rebuilt
             ? {
                 ...pages[0],
@@ -1484,7 +1588,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 cachedAt: Date.now(),
               }
             : current;
-          const entry = (rebuilt ? pages.slice(1) : pages).reduce(prependHistory, base);
+          const entry = (rebuilt ? pages.slice(1) : pages).reduce(
+            prependHistory,
+            base,
+          );
           return {
             messages: entry.messages,
             runs: entry.runs,
@@ -1492,10 +1599,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             toolCalls: entry.toolCalls,
             events: entry.events,
             permissions: entry.permissions,
-            sessionDetailCache: trimSessionDetailCache({
-              ...state.sessionDetailCache,
-              [sessionId]: entry,
-            }, state.selectedSessionId),
+            sessionDetailCache: trimSessionDetailCache(
+              {
+                ...state.sessionDetailCache,
+                [sessionId]: entry,
+              },
+              state.selectedSessionId,
+            ),
           };
         });
       })();
@@ -1509,17 +1619,29 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     loadTimelineIndex: async () => {
       const sessionId = get().selectedSessionId;
       if (!sessionId) return;
-      if (activeTimelineIndex?.sessionId === sessionId) return activeTimelineIndex.promise;
+      if (activeTimelineIndex?.sessionId === sessionId)
+        return activeTimelineIndex.promise;
       const initial = get().sessionDetailCache[sessionId];
       if (!initial?.historyWindow || initial.timelineIndexLoaded) return;
       if (!initial.historyWindow.olderCursor) {
         set((state) => {
           const current = state.sessionDetailCache[sessionId];
-          if (!current || state.selectedSessionId !== sessionId || current.historyWindow?.hasEarlier) return state;
-          return { sessionDetailCache: {
-            ...state.sessionDetailCache,
-            [sessionId]: { ...current, timelineIndexLoaded: true, timelineIndexError: undefined },
-          } };
+          if (
+            !current ||
+            state.selectedSessionId !== sessionId ||
+            current.historyWindow?.hasEarlier
+          )
+            return state;
+          return {
+            sessionDetailCache: {
+              ...state.sessionDetailCache,
+              [sessionId]: {
+                ...current,
+                timelineIndexLoaded: true,
+                timelineIndexError: undefined,
+              },
+            },
+          };
         });
         return;
       }
@@ -1528,7 +1650,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         let revision = initial.historyWindow!.revision;
         let epoch = initial.historyWindow!.epoch;
         let restarts = 0;
-        let timelineMessages = initial.timelineMessages ?? initial.messages.map(previewTimelineMessage);
+        let timelineMessages =
+          initial.timelineMessages ??
+          initial.messages.map(previewTimelineMessage);
         let timelineRuns = initial.timelineRuns ?? initial.runs;
         let timelineSteps = initial.timelineSteps ?? initial.steps;
         let timelineToolCalls = initial.timelineToolCalls ?? initial.toolCalls;
@@ -1538,7 +1662,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             try {
               older = await agentRuntimeApi.historyWindow(sessionId, cursor);
             } catch (error) {
-              if ((error as { code?: string }).code !== "HISTORY_STALE" || ++restarts > 2) throw error;
+              if (
+                (error as { code?: string }).code !== "HISTORY_STALE" ||
+                ++restarts > 2
+              )
+                throw error;
               // Rebase the rail only. Never replace the reader's visible page.
               const latest = await readLatestHistoryWindow(sessionId);
               if (get().selectedSessionId !== sessionId) return;
@@ -1553,7 +1681,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               continue;
             }
             if (get().selectedSessionId !== sessionId) return;
-            if (older.historyWindow.revision !== revision || older.historyWindow.epoch !== epoch) {
+            if (
+              older.historyWindow.revision !== revision ||
+              older.historyWindow.epoch !== epoch
+            ) {
               if (++restarts > 2) return;
               const latest = await readLatestHistoryWindow(sessionId);
               revision = latest.historyWindow.revision;
@@ -1567,7 +1698,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               continue;
             }
             const nextCursor = older.historyWindow.olderCursor;
-            if (nextCursor === cursor) throw new Error("History cursor did not advance");
+            if (nextCursor === cursor)
+              throw new Error("History cursor did not advance");
             const indexed = extendTimelineIndex(
               {
                 ...initial,
@@ -1587,9 +1719,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           if (get().selectedSessionId !== sessionId) return;
           set((state) => {
             const current = state.sessionDetailCache[sessionId];
-            if (!current || state.selectedSessionId !== sessionId ||
-                current.historyWindow?.epoch !== epoch ||
-                current.historyWindow?.revision !== revision) return state;
+            if (
+              !current ||
+              state.selectedSessionId !== sessionId ||
+              current.historyWindow?.epoch !== epoch ||
+              current.historyWindow?.revision !== revision
+            )
+              return state;
             return {
               sessionDetailCache: {
                 ...state.sessionDetailCache,
@@ -1609,21 +1745,33 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           set((state) => {
             const current = state.sessionDetailCache[sessionId];
             if (!current || state.selectedSessionId !== sessionId) return state;
-            return { sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: {
-              ...current, timelineIndexError: String(error),
-            } } };
+            return {
+              sessionDetailCache: {
+                ...state.sessionDetailCache,
+                [sessionId]: {
+                  ...current,
+                  timelineIndexError: String(error),
+                },
+              },
+            };
           });
         }
       })();
       activeTimelineIndex = { sessionId, promise };
-      try { await promise; } finally {
-        if (activeTimelineIndex?.promise === promise) activeTimelineIndex = null;
+      try {
+        await promise;
+      } finally {
+        if (activeTimelineIndex?.promise === promise)
+          activeTimelineIndex = null;
         const current = get().sessionDetailCache[sessionId];
-        if (get().selectedSessionId === sessionId &&
-            current?.historyWindow && !current.timelineIndexLoaded &&
-            !current.timelineIndexError &&
-            (current.historyWindow.revision !== initial.historyWindow.revision ||
-              current.historyWindow.epoch !== initial.historyWindow.epoch)) {
+        if (
+          get().selectedSessionId === sessionId &&
+          current?.historyWindow &&
+          !current.timelineIndexLoaded &&
+          !current.timelineIndexError &&
+          (current.historyWindow.revision !== initial.historyWindow.revision ||
+            current.historyWindow.epoch !== initial.historyWindow.epoch)
+        ) {
           void get().loadTimelineIndex();
         }
       }
@@ -1634,13 +1782,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       while (get().selectedSessionId === sessionId) {
         const current = get().sessionDetailCache[sessionId];
         if (!current) return false;
-        if (timelineContainsEntry(current, entryId) ||
-            (entryId === `user-input-${sessionId}` && !current.historyWindow?.hasEarlier)) return true;
+        if (
+          timelineContainsEntry(current, entryId) ||
+          (entryId === `user-input-${sessionId}` &&
+            !current.historyWindow?.hasEarlier)
+        )
+          return true;
         const cursor = current.historyWindow?.olderCursor;
         if (!cursor) return false;
         await get().loadOlderHistory();
-        if (get().sessionDetailCache[sessionId]?.historyWindow?.olderCursor === cursor &&
-            !activeOlderHistory?.promise) return false;
+        if (
+          get().sessionDetailCache[sessionId]?.historyWindow?.olderCursor ===
+            cursor &&
+          !activeOlderHistory?.promise
+        )
+          return false;
       }
       return false;
     },
@@ -1662,7 +1818,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
       // A terminal patch can arrive while an older transcript request is in
       // flight. Freeze the last delta before any result is allowed to settle.
-      const status = get().sessions.find((item) => item.id === targetSessionId)?.status;
+      const status = get().sessions.find(
+        (item) => item.id === targetSessionId,
+      )?.status;
       if (isTerminalSessionStatus(status) && get().streamingStepId) {
         flushStreamingDeltas();
         set((state) => ({
@@ -1711,13 +1869,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               !isRuntimeResourceGone(targetSessionId) &&
               detailRefreshEpoch === epoch &&
               !refresh.again;
-            const cachedEntry = targetSessionIsLive || forceFresh
-              ? undefined
-              : get().sessionDetailCache[targetSessionId];
-            const versioned = get().sessions.find(session => session.id === targetSessionId)?.sessionMetadata?.historyStorage === 3;
-            const knownEventId = !versioned && cachedEntry?.events?.length
-              ? cachedEntry.events[cachedEntry.events.length - 1].id
-              : undefined;
+            const cachedEntry =
+              targetSessionIsLive || forceFresh
+                ? undefined
+                : get().sessionDetailCache[targetSessionId];
+            const versioned =
+              get().sessions.find((session) => session.id === targetSessionId)
+                ?.sessionMetadata?.historyStorage === 3;
+            const knownEventId =
+              !versioned && cachedEntry?.events?.length
+                ? cachedEntry.events[cachedEntry.events.length - 1].id
+                : undefined;
 
             const discardIfMissing = (error: unknown) => {
               if (!isCurrent() || !isMissingSession(error, targetSessionId))
@@ -1757,9 +1919,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((stats) => {
                   if (!isCurrent()) return;
                   set({ sessionStats: stats });
-                  if (!isActiveSessionStatus(get().sessions.find(
-                    (session) => session.id === targetSessionId,
-                  )?.status)) {
+                  if (
+                    !isActiveSessionStatus(
+                      get().sessions.find(
+                        (session) => session.id === targetSessionId,
+                      )?.status,
+                    )
+                  ) {
                     patchSessionDetailCache(targetSessionId, {
                       sessionStats: stats,
                     });
@@ -1773,9 +1939,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((todosRes) => {
                   if (!isCurrent()) return;
                   set({ sessionTodos: todosRes.items });
-                  if (!isActiveSessionStatus(get().sessions.find(
-                    (session) => session.id === targetSessionId,
-                  )?.status)) {
+                  if (
+                    !isActiveSessionStatus(
+                      get().sessions.find(
+                        (session) => session.id === targetSessionId,
+                      )?.status,
+                    )
+                  ) {
                     patchSessionDetailCache(targetSessionId, {
                       sessionTodos: todosRes.items,
                     });
@@ -1789,9 +1959,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .then((usage) => {
                   if (!isCurrent()) return;
                   set({ sessionInvocationUsage: usage });
-                  if (!isActiveSessionStatus(get().sessions.find(
-                    (session) => session.id === targetSessionId,
-                  )?.status)) {
+                  if (
+                    !isActiveSessionStatus(
+                      get().sessions.find(
+                        (session) => session.id === targetSessionId,
+                      )?.status,
+                    )
+                  ) {
                     patchSessionDetailCache(targetSessionId, {
                       sessionInvocationUsage: usage,
                     });
@@ -1813,27 +1987,36 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               "waiting_permission",
               "waiting_input",
             ].includes(polledStatus ?? "");
-            const toolCallsSource =
-              versioned ? Promise.resolve({ items: [] }) : sessionActive && cachedEntry?.cachedAt
+            const toolCallsSource = versioned
+              ? Promise.resolve({ items: [] })
+              : sessionActive && cachedEntry?.cachedAt
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
             const transcriptSource = versioned
-              ? readLatestHistoryWindow(targetSessionId)
-                  .then(window => [
-                    { items: window.steps }, { items: window.runs }, { items: window.events },
-                    { items: window.messages, historyWindow: window.historyWindow },
-                    { items: window.toolCalls }, { items: window.permissions },
-                  ] as const)
+              ? readLatestHistoryWindow(targetSessionId).then(
+                  (window) =>
+                    [
+                      { items: window.steps },
+                      { items: window.runs },
+                      { items: window.events },
+                      {
+                        items: window.messages,
+                        historyWindow: window.historyWindow,
+                      },
+                      { items: window.toolCalls },
+                      { items: window.permissions },
+                    ] as const,
+                )
               : Promise.all([
-              // Steps and their messages must become visible together. A
-              // completed step alone would hide its still-visible live answer.
-              agentRuntimeApi.listSessionSteps(targetSessionId),
-              agentRuntimeApi.listRuns(targetSessionId),
-              agentRuntimeApi.listEvents(targetSessionId, knownEventId),
-              agentRuntimeApi.listMessages(targetSessionId),
-              toolCallsSource,
-              agentRuntimeApi.listPermissions(targetSessionId),
-            ]);
+                  // Steps and their messages must become visible together. A
+                  // completed step alone would hide its still-visible live answer.
+                  agentRuntimeApi.listSessionSteps(targetSessionId),
+                  agentRuntimeApi.listRuns(targetSessionId),
+                  agentRuntimeApi.listEvents(targetSessionId, knownEventId),
+                  agentRuntimeApi.listMessages(targetSessionId),
+                  toolCallsSource,
+                  agentRuntimeApi.listPermissions(targetSessionId),
+                ]);
             const transcriptTask = transcriptSource
               .then(
                 ([
@@ -1861,7 +2044,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     sessionInvocationUsage: get().sessionInvocationUsage,
                     cachedAt: Date.now(),
                     lastVisitedAt: Date.now(),
-                    historyWindow: "historyWindow" in messagesRes ? messagesRes.historyWindow : undefined,
+                    historyWindow:
+                      "historyWindow" in messagesRes
+                        ? messagesRes.historyWindow
+                        : undefined,
                     ...(versioned && "historyWindow" in messagesRes
                       ? {
                           ...seedTimelineIndex({
@@ -1873,16 +2059,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                             permissions: [],
                             historyWindow: messagesRes.historyWindow,
                           }),
-                          timelineIndexLoaded: !messagesRes.historyWindow.olderCursor,
+                          timelineIndexLoaded:
+                            !messagesRes.historyWindow.olderCursor,
                         }
                       : {}),
                   };
 
                   let pendingFinalReply = false;
                   set((s) => {
-                    const merged = versioned && !forceFresh
-                      ? mergeRefreshedHistory(s.sessionDetailCache[targetSessionId], cacheEntry)
-                      : cacheEntry;
+                    const merged =
+                      versioned && !forceFresh
+                        ? mergeRefreshedHistory(
+                            s.sessionDetailCache[targetSessionId],
+                            cacheEntry,
+                          )
+                        : cacheEntry;
                     const currentStatus = s.sessions.find(
                       (item) => item.id === targetSessionId,
                     )?.status;
@@ -1907,6 +2098,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       runs: merged.runs,
                       steps: merged.steps,
                       events: merged.events,
+                      contextCompactionNotice: contextCompactionNotice(
+                        s.sessions.find((item) => item.id === targetSessionId)
+                          ?.sessionMetadata?.contextCompaction as
+                          | StoredContextCompaction
+                          | undefined,
+                      ),
                       messages: merged.messages,
                       toolCalls: merged.toolCalls,
                       permissions: merged.permissions,
@@ -1928,7 +2125,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     };
                   });
 
-                  if (pendingFinalReply) scheduleFinalReplyRetry(targetSessionId);
+                  if (pendingFinalReply)
+                    scheduleFinalReplyRetry(targetSessionId);
                   else clearFinalReplyRetry();
 
                   const session = get().sessions.find(
@@ -1946,8 +2144,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   if (
                     get().streamingCompletedSteps.length > 0 &&
                     isTerminalSessionStatus(
-                      get().sessions.find((session) => session.id === targetSessionId)
-                        ?.status,
+                      get().sessions.find(
+                        (session) => session.id === targetSessionId,
+                      )?.status,
                     )
                   )
                     scheduleFinalReplyRetry(targetSessionId);
@@ -2329,6 +2528,29 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             toolCalls: upsertById(s.toolCalls, event.toolCall),
           }));
           break;
+        case "context_compaction_state": {
+          if (
+            !streamVisible ||
+            event.message.sessionId !== get().selectedSessionId
+          )
+            break;
+          const session = get().sessions.find(
+            (item) => item.id === event.message.sessionId,
+          );
+          get().patchSession(event.message.sessionId, {
+            sessionMetadata: {
+              ...session?.sessionMetadata,
+              contextCompaction: event.state,
+            },
+          });
+          set((state) => ({
+            contextCompactionNotice: contextCompactionNotice(event.state),
+            messages: upsertById(state.messages, event.message),
+          }));
+          void get().fetchSessionStats();
+          scheduleLiveRefreshDetail();
+          break;
+        }
         case "context_compaction_started":
           if (!streamVisible) break;
           set({ contextCompactionNotice: { status: "running" } });
@@ -2348,7 +2570,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         case "context_compaction_failed":
           if (!streamVisible) break;
-          set({ contextCompactionNotice: { status: "failed", error: event.error } });
+          set({
+            contextCompactionNotice: { status: "failed", error: event.error },
+          });
           break;
       }
     },

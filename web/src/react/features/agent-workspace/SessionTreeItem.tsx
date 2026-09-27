@@ -1,7 +1,7 @@
 import { SearchHighlight } from "./SearchHighlight";
 import { PixelLoader } from "./LoadingState";
 import { memo } from "react";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal, Pin } from "lucide-react";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useNotificationStore } from "../../state/notificationStore";
 import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
@@ -36,6 +36,7 @@ interface Props {
   onToggleExpand: (id: string) => void;
   onDelete?: (id: string) => void;
   onCancel?: (id: string) => void;
+  onTogglePin?: (id: string) => Promise<void>;
 }
 
 function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
@@ -48,8 +49,7 @@ function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
     for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
       const message = messages![i];
       if (message.sessionId !== session.id || !message.content.trim()) continue;
-      if (message.role === "assistant")
-        return message.content;
+      if (message.role === "assistant") return message.content;
     }
     return "";
   });
@@ -76,13 +76,15 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   onSelect,
   onToggleExpand,
   onDelete,
+  onTogglePin,
 }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const displayMode = useShellStore(
     (state) => state.preferences.sessionListDisplayMode,
   );
   const { session, depth, children } = node;
   const title = useSessionDisplayTitle(session);
+  const pinned = session.sessionMetadata?.pinned === true;
   const hasKids = children.length > 0;
   const isRunning =
     session.status === "running" || session.status === "stopping";
@@ -94,15 +96,56 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const menu = useContextMenu(() => ({
     label: title,
     entries: [
-      { type: "action", id: "open", label: t("contextOpen"), run: () => onSelect(session.id) },
-      { type: "action", id: "copy-id", label: t("contextCopySessionId"), run: async () => {
-        if (!await copyTextToClipboard(session.id)) throw new Error(t("contextCopyFailed"));
-        useNotificationStore.getState().push({ type: "success", message: t("contextCopied"), duration: 1800 });
-      } },
-      ...(onDelete ? [
-        { type: "separator" } as const,
-        { type: "action", id: "archive", label: t("sessionDelete"), restoreFocus: false, run: () => onDelete(session.id) } as const,
-      ] : []),
+      {
+        type: "action",
+        id: "open",
+        label: t("contextOpen"),
+        run: () => onSelect(session.id),
+      },
+      {
+        type: "action",
+        id: "copy-id",
+        label: t("contextCopySessionId"),
+        run: async () => {
+          if (!(await copyTextToClipboard(session.id)))
+            throw new Error(t("contextCopyFailed"));
+          useNotificationStore
+            .getState()
+            .push({
+              type: "success",
+              message: t("contextCopied"),
+              duration: 1800,
+            });
+        },
+      },
+      ...(onTogglePin
+        ? [
+            {
+              type: "action",
+              id: "pin",
+              label: pinned
+                ? locale === "zh"
+                  ? "取消置顶"
+                  : "Unpin"
+                : locale === "zh"
+                  ? "置顶"
+                  : "Pin",
+              run: () => onTogglePin(session.id),
+            } as const,
+          ]
+        : []),
+      ...(onDelete
+        ? [
+            { type: "separator" } as const,
+            {
+              type: "action",
+              id: "archive",
+              label: t("sessionDelete"),
+              restoreFocus: false,
+              run: () => onDelete(session.id),
+            } as const,
+          ]
+        : []),
     ],
   }));
 
@@ -145,6 +188,13 @@ export const SessionTreeItem = memo(function SessionTreeItem({
           ) : null}
         </span>
         <span className="session-list-title" title={title}>
+          {pinned && (
+            <Pin
+              size={12}
+              className="session-list-pin"
+              aria-label={locale === "zh" ? "已置顶" : "Pinned"}
+            />
+          )}
           <SearchHighlight text={title} query={node.searchQuery} />
           {needsUserInput && (
             <span className="session-list-needs-input">

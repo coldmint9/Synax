@@ -4801,6 +4801,56 @@ input[type="radio"] {
   overflow-wrap: anywhere;
 }
 
+/* Keep rows mounted so both sections animate without losing row state. */
+.session-list-section--separated {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.session-list-section-toggle {
+  min-height: 32px;
+  border-radius: 6px;
+}
+.session-list-section-toggle:hover {
+  background: hsl(var(--secondary) / 0.72);
+}
+.session-list-section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.session-list-section-chevron {
+  transition: transform 200ms ease;
+}
+.session-list-section-toggle[aria-expanded="false"] .session-list-section-chevron {
+  transform: rotate(-90deg);
+}
+.session-list-section-content {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 200ms ease, opacity 200ms ease;
+}
+.session-list-section-content[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.session-list-section-rows {
+  min-height: 0;
+  overflow: hidden;
+}
+.session-list-pin {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: -1px;
+  color: hsl(var(--muted-foreground));
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-list-section-content,
+  .session-list-section-chevron {
+    transition: none;
+  }
+}
+
 /* Session rows keep the title and optional preview on a stable text edge. */
 .session-list-item {
   position: relative;

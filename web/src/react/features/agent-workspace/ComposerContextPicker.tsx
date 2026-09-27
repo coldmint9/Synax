@@ -25,6 +25,7 @@ import { useShellStore } from "../../state/shellStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { sessionCompaction } from "./sessionCompaction";
 
 const contextTypes = [
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
@@ -80,15 +81,26 @@ export function ComposerContextPicker({
   const [options, setOptions] = useState<TurnReferenceOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [compacting, setCompacting] = useState(false);
-  const [compactMessage, setCompactMessage] = useState("");
+  const [compactSubmitting, setCompactSubmitting] = useState(false);
+  const compactionNotice = useAgentSessionStore((s) =>
+    s.selectedSessionId === sessionId ? s.contextCompactionNotice : null,
+  );
+  const compactRunning = useAgentSessionStore(
+    (s) =>
+      sessionCompaction(s.sessions.find((item) => item.id === sessionId))
+        ?.status === "running" || compactionNotice?.status === "running",
+  );
+  const compacting =
+    compactRunning ||
+    (compactSubmitting &&
+      compactionNotice?.status !== "completed" &&
+      compactionNotice?.status !== "failed");
   const compactRequest = useRef(0);
   const compactPending = useRef(false);
   useEffect(() => {
     compactRequest.current += 1;
     compactPending.current = false;
-    setCompacting(false);
-    setCompactMessage("");
+    setCompactSubmitting(false);
     return () => {
       compactRequest.current += 1;
     };
@@ -111,33 +123,39 @@ export function ComposerContextPicker({
           ? "立即压缩历史，保留最近上下文"
           : "Compact history now, keeping recent context";
   const handleCompact = async () => {
-    if (!sessionId || compactUnavailable || compactPending.current) return;
+    if (
+      !sessionId ||
+      compactUnavailable ||
+      compacting ||
+      compactPending.current
+    )
+      return;
     compactPending.current = true;
     const request = ++compactRequest.current;
-    setCompacting(true);
-    setCompactMessage("");
+    setCompactSubmitting(true);
     setError("");
-    useAgentSessionStore.setState({ contextCompactionNotice: { status: "running" } });
+    setOpen(false);
+    useAgentSessionStore.setState({
+      contextCompactionNotice: { status: "running" },
+    });
     try {
-      const result = await agentRuntimeApi.compactContext(sessionId);
-      if (request !== compactRequest.current) return;
-      setCompactMessage(
-        zh
-          ? "上下文压缩已开始，完成后会在对话区提示"
-          : "Context compaction started. Completion will appear in the conversation.",
-      );
+      await agentRuntimeApi.compactContext(sessionId);
     } catch (err) {
-      if (request === compactRequest.current) {
+      if (
+        request === compactRequest.current &&
+        useAgentSessionStore.getState().selectedSessionId === sessionId &&
+        useAgentSessionStore.getState().contextCompactionNotice?.status ===
+          "running"
+      ) {
         const message = err instanceof Error ? err.message : String(err);
         useAgentSessionStore.setState({
           contextCompactionNotice: { status: "failed", error: message },
         });
-        setError(message);
       }
     } finally {
       if (request === compactRequest.current) {
         compactPending.current = false;
-        setCompacting(false);
+        setCompactSubmitting(false);
       }
     }
   };
@@ -427,7 +445,11 @@ export function ComposerContextPicker({
                 onClick={() => void handleCompact()}
               >
                 {compacting ? (
-                  <Loader2 size={15} className="animate-spin" />
+                  <Loader2
+                    size={15}
+                    aria-hidden="true"
+                    className="animate-spin motion-reduce:animate-none"
+                  />
                 ) : (
                   <Minimize2 size={15} />
                 )}
@@ -442,14 +464,6 @@ export function ComposerContextPicker({
                   <small>{compactHint}</small>
                 </span>
               </button>
-              {compactMessage && (
-                <p
-                  role="status"
-                  className="px-3 py-2 text-xs text-muted-foreground"
-                >
-                  {compactMessage}
-                </p>
-              )}
               {error && (
                 <p role="alert" className="px-3 py-2 text-xs text-destructive">
                   {error}

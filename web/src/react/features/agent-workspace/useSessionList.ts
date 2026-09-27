@@ -2,6 +2,7 @@ import { useSessionSearch } from "./useSessionSearch";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import type {
   AgentSession,
   AgentSessionStatus,
@@ -31,7 +32,7 @@ export interface SessionTreeNode {
 }
 
 export interface SessionGroup {
-  key: SessionListView;
+  key: string;
   label: string;
   sessions: SessionTreeNode[];
   collapsed: boolean;
@@ -124,20 +125,39 @@ export function useSessionList(
         }
         return node;
       });
+    const pinned = tree.filter(
+      (node) => node.session.sessionMetadata?.pinned === true,
+    );
+    const hasPinned = pinned.length > 0;
+    const regular = hasPinned
+      ? tree.filter((node) => node.session.sessionMetadata?.pinned !== true)
+      : tree;
     return [
+      ...(hasPinned
+        ? [
+            {
+              key: `pinned:${listView}`,
+              label: locale === "zh" ? "置顶" : "Pinned",
+              sessions: pinned,
+              collapsed: collapsedGroups.has(`pinned:${listView}`),
+              count: pinned.length,
+            },
+          ]
+        : []),
       {
         key: listView,
-        label:
-          listView === "sessions"
+        label: hasPinned
+          ? locale === "zh"
+            ? "普通会话"
+            : "Other sessions"
+          : listView === "sessions"
             ? locale === "zh"
               ? "会话"
               : "Sessions"
-            : locale === "zh"
-              ? "Workflow"
-              : "Workflows",
-        sessions: tree,
-        collapsed: collapsedGroups.has(listView),
-        count: tree.length,
+            : "Workflows",
+        sessions: regular,
+        collapsed: hasPinned && collapsedGroups.has(listView),
+        count: regular.length,
       },
     ];
   }, [
@@ -150,14 +170,6 @@ export function useSessionList(
     listView,
     nodeCache,
   ]);
-
-  const visibleGroups = useMemo(
-    () =>
-      grouped.map((group) =>
-        group.collapsed ? { ...group, sessions: [] } : group,
-      ),
-    [grouped],
-  );
 
   const refresh = useCallback(
     async (options?: { joinPending?: boolean }) => {
@@ -172,6 +184,37 @@ export function useSessionList(
       search.enabled,
       search.refresh,
     ],
+  );
+
+  const togglePin = useCallback(
+    async (id: string) => {
+      const current = grouped
+        .flatMap((group) => group.sessions)
+        .find((node) => node.session.id === id)?.session;
+      if (!current || current.projectId !== routeProjectId) return;
+      const { session: updated } = await agentRuntimeApi.setSessionPinned(
+        id,
+        current.sessionMetadata?.pinned !== true,
+      );
+      if (useAgentSessionStore.getState().projectId !== routeProjectId) return;
+      useAgentSessionStore.setState((state) => ({
+        // Pin changes reorder server pages; restart the cursor without dropping loaded rows.
+        sessionListOffset: 0,
+        sessions: state.sessions.map((session) =>
+          session.id === id
+            ? {
+                ...session,
+                sessionMetadata: {
+                  ...session.sessionMetadata,
+                  pinned: updated.sessionMetadata?.pinned === true,
+                },
+              }
+            : session,
+        ),
+      }));
+      await refresh();
+    },
+    [routeProjectId, refresh, grouped],
   );
 
   const loadMore = useCallback(async () => {
@@ -223,7 +266,9 @@ export function useSessionList(
   }, [listView, navigate, routeProjectId]);
 
   return {
-    groups: visibleGroups,
+    groups: grouped,
+    hasPinned: grouped.some((group) => group.key.startsWith("pinned:")),
+    togglePin,
     listView,
     viewCounts,
     totalCount,

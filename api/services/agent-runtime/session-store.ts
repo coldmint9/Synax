@@ -1,5 +1,10 @@
+import type { ContextCompactionState } from "./context-compaction-state.js";
 import { queueHistoryDeletion } from "./checkpoints/version-runtime/deletion.js";
-import { diagnosticPage, trackDiagnostic, trimDiagnosticEvents } from "./checkpoints/version-runtime/diagnostics.js";
+import {
+  diagnosticPage,
+  trackDiagnostic,
+  trimDiagnosticEvents,
+} from "./checkpoints/version-runtime/diagnostics.js";
 import { retainVersionRecordAssets } from "./checkpoints/version-runtime/assets.js";
 import {
   writeVersionEntity,
@@ -572,15 +577,24 @@ function mapRunPart(row: RunPartRow): AgentRunPart {
 }
 
 /** Reuse the live row codecs for the bounded, explicit v2 upgrade. */
-export function mapLegacyHistoryRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+export function mapLegacyHistoryRow(
+  table: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   const codecs: Record<string, (row: never) => unknown> = {
-    agent_runtime_messages: mapMessage, agent_runtime_events: mapEvent,
-    agent_runtime_runs: mapRun, agent_runtime_run_steps: mapRunStep,
-    agent_runtime_run_parts: mapRunPart, agent_runtime_tool_calls: mapToolCall,
-    agent_runtime_permissions: mapPermission, agent_runtime_artifacts: mapArtifact,
-    agent_runtime_context_bundles: mapContextBundle, agent_runtime_thinking_summaries: mapThinkingSummary,
+    agent_runtime_messages: mapMessage,
+    agent_runtime_events: mapEvent,
+    agent_runtime_runs: mapRun,
+    agent_runtime_run_steps: mapRunStep,
+    agent_runtime_run_parts: mapRunPart,
+    agent_runtime_tool_calls: mapToolCall,
+    agent_runtime_permissions: mapPermission,
+    agent_runtime_artifacts: mapArtifact,
+    agent_runtime_context_bundles: mapContextBundle,
+    agent_runtime_thinking_summaries: mapThinkingSummary,
   };
-  if (codecs[table]) return codecs[table](row as never) as Record<string, unknown>;
+  if (codecs[table])
+    return codecs[table](row as never) as Record<string, unknown>;
   if (table === "agent_runtime_work") {
     const work = JSON.parse(String(row.payload_json));
     return { ledger: [], noProgressSteps: 0, decisionFailures: 0, ...work };
@@ -588,8 +602,13 @@ export function mapLegacyHistoryRow(table: string, row: Record<string, unknown>)
   const value: Record<string, unknown> = {};
   for (const [key, field] of Object.entries(row)) {
     if (["_rowid", "version_epoch", "_metadata"].includes(key)) continue;
-    const name = key.replace(/_json$/, "").replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-    value[name] = key.endsWith("_json") && typeof field === "string" ? JSON.parse(field) : field;
+    const name = key
+      .replace(/_json$/, "")
+      .replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    value[name] =
+      key.endsWith("_json") && typeof field === "string"
+        ? JSON.parse(field)
+        : field;
   }
   return value;
 }
@@ -610,18 +629,32 @@ export class AgentRuntimeStore {
   }
 
   getSession(id: string): AgentSession {
-    if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) throw new AgentNotFoundError(id);
+    if (
+      getRawSqlite()
+        .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
+        .get(id)
+    )
+      throw new AgentNotFoundError(id);
     const row = getRawSqlite()
-      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL")
+      .prepare(
+        "SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL",
+      )
       .get(id) as SessionRow | undefined;
     if (!row) throw new AgentNotFoundError(id);
     return mapSession(row);
   }
 
   tryGetSession(id: string): AgentSession | undefined {
-    if (getRawSqlite().prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?").get(id)) return undefined;
+    if (
+      getRawSqlite()
+        .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
+        .get(id)
+    )
+      return undefined;
     const row = getRawSqlite()
-      .prepare("SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL")
+      .prepare(
+        "SELECT * FROM agent_runtime_sessions WHERE id = ? AND archived_at IS NULL",
+      )
       .get(id) as SessionRow | undefined;
     return row ? mapSession(row) : undefined;
   }
@@ -715,7 +748,10 @@ export class AgentRuntimeStore {
     } = {},
   ): AgentSession[] {
     const db = getRawSqlite();
-    const conditions: string[] = ["archived_at IS NULL", "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
+    const conditions: string[] = [
+      "archived_at IS NULL",
+      "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)",
+    ];
     const params: string[] = [];
     // Truthiness matches the previous `!filter.x || ...` JS guards, which also
     // skipped empty-string filters.
@@ -768,7 +804,10 @@ export class AgentRuntimeStore {
     countByStatus: Record<string, number>;
   } {
     const db = getRawSqlite();
-    const conditions: string[] = ["archived_at IS NULL", "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)"];
+    const conditions: string[] = [
+      "archived_at IS NULL",
+      "NOT EXISTS(SELECT 1 FROM conversation_v3_deletions d WHERE d.session_id=agent_runtime_sessions.id)",
+    ];
     const baseParams: string[] = [];
     if (filter.projectId) {
       conditions.push("project_id = ?");
@@ -814,7 +853,7 @@ export class AgentRuntimeStore {
         ? (
             db
               .prepare(
-                `SELECT * FROM (${projected})${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+                `SELECT * FROM (${projected})${statusFilter} ORDER BY CASE WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.pinned') = 1 THEN 1 ELSE 0 END DESC, updated_at DESC, id DESC LIMIT ? OFFSET ?`,
               )
               .all(
                 ...baseParams,
@@ -929,7 +968,9 @@ export class AgentRuntimeStore {
     const db = getRawSqlite();
     const totalCount = (
       db
-        .prepare(`SELECT COUNT(*) AS count FROM agent_runtime_sessions root WHERE ${where}`)
+        .prepare(
+          `SELECT COUNT(*) AS count FROM agent_runtime_sessions root WHERE ${where}`,
+        )
         .get(...params) as { count: number }
     ).count;
     const limit = Math.max(1, Math.min(100, Math.trunc(page.limit)));
@@ -1281,7 +1322,10 @@ export class AgentRuntimeStore {
           {
             table: "messages",
             id: message.id,
-            fields: { ...current, metadata } as unknown as Record<string, unknown>,
+            fields: { ...current, metadata } as unknown as Record<
+              string,
+              unknown
+            >,
             preserveOrder: true,
           },
         ]);
@@ -1357,7 +1401,8 @@ export class AgentRuntimeStore {
             event.summary,
             stringify(event.payload),
           );
-          if (boundaryOnlySession(sessionId)) trackDiagnostic(sessionId, "events", event.id);
+          if (boundaryOnlySession(sessionId))
+            trackDiagnostic(sessionId, "events", event.id);
         }
         if (boundaryOnlySession(sessionId)) trimDiagnosticEvents(sessionId);
       }
@@ -1366,7 +1411,8 @@ export class AgentRuntimeStore {
   }
 
   appendEvent(event: RuntimeEvent): RuntimeEvent {
-    if (boundaryOnlySession(event.sessionId)) return this.appendEvents([event])[0];
+    if (boundaryOnlySession(event.sessionId))
+      return this.appendEvents([event])[0];
     if (versionedSession(event.sessionId)) {
       versionRepository().put(
         event.sessionId,
@@ -1397,8 +1443,15 @@ export class AgentRuntimeStore {
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
     this.getSession(sessionId);
     if (boundaryOnlySession(sessionId)) {
-      const items = diagnosticPage(sessionId, "events", { limit: 64, preview: true }).items as unknown as RuntimeEvent[];
-      return after ? items.slice(Math.max(0, items.findIndex(item => item.id === after) + 1)) : items;
+      const items = diagnosticPage(sessionId, "events", {
+        limit: 64,
+        preview: true,
+      }).items as unknown as RuntimeEvent[];
+      return after
+        ? items.slice(
+            Math.max(0, items.findIndex((item) => item.id === after) + 1),
+          )
+        : items;
     }
     if (versionedSession(sessionId)) {
       const items = versionedList<RuntimeEvent>(sessionId, "events");
@@ -1444,7 +1497,11 @@ export class AgentRuntimeStore {
     types: RuntimeEvent["type"][],
   ): RuntimeEvent | null {
     if (types.length === 0) return null;
-    if (boundaryOnlySession(sessionId)) return diagnosticPage(sessionId, "events", { limit: 1, types }).items[0] as unknown as RuntimeEvent ?? null;
+    if (boundaryOnlySession(sessionId))
+      return (
+        (diagnosticPage(sessionId, "events", { limit: 1, types })
+          .items[0] as unknown as RuntimeEvent) ?? null
+      );
     if (versionedSession(sessionId))
       return versionRepository().latestEvent(
         sessionId,
@@ -1469,8 +1526,13 @@ export class AgentRuntimeStore {
     type: RuntimeEvent["type"],
   ): number {
     if (boundaryOnlySession(sessionId)) {
-      const items = diagnosticPage(sessionId, "events", { limit: 256, preview: true }).items;
-      return items.slice(Math.max(0, items.findIndex(item => item.id === eventId) + 1)).filter(item => item.type === type).length;
+      const items = diagnosticPage(sessionId, "events", {
+        limit: 256,
+        preview: true,
+      }).items;
+      return items
+        .slice(Math.max(0, items.findIndex((item) => item.id === eventId) + 1))
+        .filter((item) => item.type === type).length;
     }
     if (versionedSession(sessionId))
       return versionRepository().countEventsAfter(sessionId, eventId, type);
@@ -1773,21 +1835,41 @@ export class AgentRuntimeStore {
 
   /** A usage badge does not need tool input/output evidence. Keep versioned
    * visibility authoritative; legacy SQL can project only the aggregate fields. */
-  listToolInvocationRows(sessionId: string): Array<Pick<ToolCallRecord, "toolId" | "category" | "startedAt" | "inputRef">> {
+  listToolInvocationRows(
+    sessionId: string,
+  ): Array<
+    Pick<ToolCallRecord, "toolId" | "category" | "startedAt" | "inputRef">
+  > {
     if (versionedSession(sessionId)) {
-      return listVersionEntities<ToolCallRecord>(sessionId, "tools").map(call => ({
-        toolId: call.toolId, category: call.category, startedAt: call.startedAt,
-        inputRef: call.toolId === "skill.load" ? call.inputRef : null,
-      }));
+      return listVersionEntities<ToolCallRecord>(sessionId, "tools").map(
+        (call) => ({
+          toolId: call.toolId,
+          category: call.category,
+          startedAt: call.startedAt,
+          inputRef: call.toolId === "skill.load" ? call.inputRef : null,
+        }),
+      );
     }
-    const rows = getRawSqlite().prepare(`SELECT tool_id AS toolId, category, started_at AS startedAt,
+    const rows = getRawSqlite()
+      .prepare(
+        `SELECT tool_id AS toolId, category, started_at AS startedAt,
       CASE WHEN tool_id='skill.load' AND json_valid(input_ref_json)
         THEN json_extract(input_ref_json,'$.skillId') ELSE NULL END AS skillId
-      FROM agent_runtime_tool_calls WHERE session_id=?`).all(sessionId) as Array<{
-        toolId: string; category: ToolCallRecord["category"]; startedAt: string; skillId: unknown;
-      }>;
-    return rows.map(row => ({ toolId: row.toolId, category: row.category, startedAt: row.startedAt,
-      inputRef: typeof row.skillId === "string" ? { skillId: row.skillId } : null }));
+      FROM agent_runtime_tool_calls WHERE session_id=?`,
+      )
+      .all(sessionId) as Array<{
+      toolId: string;
+      category: ToolCallRecord["category"];
+      startedAt: string;
+      skillId: unknown;
+    }>;
+    return rows.map((row) => ({
+      toolId: row.toolId,
+      category: row.category,
+      startedAt: row.startedAt,
+      inputRef:
+        typeof row.skillId === "string" ? { skillId: row.skillId } : null,
+    }));
   }
 
   listToolCalls(sessionId: string): ToolCallRecord[] {
@@ -2059,10 +2141,20 @@ export class AgentRuntimeStore {
   }
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {
-    if (appendOnlySession(sessionId)) return diagnosticPage(sessionId, "compactions", { limit: 1 }).items[0] as unknown as CompactionRecord ?? null;
+    if (appendOnlySession(sessionId))
+      return (
+        (diagnosticPage(sessionId, "compactions", { limit: 1 })
+          .items[0] as unknown as CompactionRecord) ?? null
+      );
     if (versionedSession(sessionId)) {
       const latest = versionRepository().last(sessionId, "compactions", ["id"]);
-      return latest ? readVersionEntity<CompactionRecord>(sessionId, "compactions", String(latest.id)) : null;
+      return latest
+        ? readVersionEntity<CompactionRecord>(
+            sessionId,
+            "compactions",
+            String(latest.id),
+          )
+        : null;
     }
     const row = getRawSqlite()
       .prepare(
@@ -2100,7 +2192,8 @@ export class AgentRuntimeStore {
     work: Pick<WorkRecord, "id" | "status" | "remaining" | "reason"> | null;
     roundCount: number;
     contextComposition: ContextComposition | null;
-    context: SessionUsageProjection["context"];
+    context: SessionUsageProjection["context"] & { compactedTokens?: number };
+    contextCompaction?: ContextCompactionState;
     cache: SessionUsageProjection["cache"];
     usage: SessionUsageProjection["usage"];
     coverage: SessionUsageProjection["coverage"];
@@ -2133,7 +2226,15 @@ export class AgentRuntimeStore {
       sessionId,
       this.listSessionTree(sessionId).map((s) => s.id),
     );
-    const input = projected.context.inputTokens ?? 0;
+    const contextCompaction = session.sessionMetadata?.contextCompaction as
+      | ContextCompactionState
+      | undefined;
+    const compactedTokens =
+      contextCompaction?.status === "completed" &&
+      contextCompaction.requestId === projected.context.requestId
+        ? contextCompaction.compressedTokens
+        : undefined;
+    const input = compactedTokens ?? projected.context.inputTokens ?? 0;
     const output = projected.usage.self.output;
     const total = input;
     const latestContextWindowSize = projected.reportedWindow;
@@ -2206,7 +2307,11 @@ export class AgentRuntimeStore {
         : null,
       roundCount,
       contextComposition,
-      context: projected.context,
+      context: {
+        ...projected.context,
+        ...(compactedTokens !== undefined ? { compactedTokens } : {}),
+      },
+      contextCompaction,
       cache: projected.cache,
       usage: projected.usage,
       coverage: projected.coverage,

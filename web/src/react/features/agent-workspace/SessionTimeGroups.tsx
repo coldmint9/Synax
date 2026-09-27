@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { ChevronDown, Pin } from "lucide-react";
+import { useCallback, useId, useState } from "react";
 import { useLocale } from "../../../hooks/useLocale";
 import { SynaxWordmark } from "./SynaxWordmark";
 import { SessionTreeItem } from "./SessionTreeItem";
@@ -19,6 +20,7 @@ interface Props {
   onToggleExpand: (id: string) => void;
   onLoadMore: () => void;
   onDelete: (id: string) => void;
+  onTogglePin?: (id: string) => Promise<void>;
 }
 
 export function SessionTimeGroups({
@@ -36,14 +38,19 @@ export function SessionTimeGroups({
   onToggleExpand,
   onLoadMore,
   onDelete,
+  onTogglePin,
 }: Props) {
   const { locale } = useLocale();
+  const groupId = useId();
   // ponytail: retain mounted rows in batches of 30; window only if profiling shows long-scroll DOM growth matters.
   const [visibleCount, setVisibleCount] = useState(30);
-  const totalRows = groups.reduce(
-    (sum, group) => sum + group.sessions.length,
+  const totalRows = Math.max(
     0,
+    ...groups
+      .filter((group) => !group.collapsed)
+      .map((group) => group.sessions.length),
   );
+  const anyExpanded = groups.some((group) => !group.collapsed);
   const revealMore = useCallback(() => {
     if (visibleCount < totalRows) setVisibleCount((count) => count + 30);
     else if (hasMore && !isLoadingMore) onLoadMore();
@@ -53,12 +60,13 @@ export function SessionTimeGroups({
       const el = e.currentTarget;
       if (
         el.scrollHeight - el.scrollTop - el.clientHeight < 120 &&
-        !isLoadingMore
+        !isLoadingMore &&
+        anyExpanded
       ) {
         revealMore();
       }
     },
-    [isLoadingMore, revealMore],
+    [isLoadingMore, revealMore, anyExpanded],
   );
 
   // Filter out empty groups
@@ -83,45 +91,71 @@ export function SessionTimeGroups({
     return (
       <div className="session-list-empty">
         <SynaxWordmark compact />
-        <span className="session-list-empty-label">{emptyLabel ?? "No sessions yet"}</span>
+        <span className="session-list-empty-label">
+          {emptyLabel ?? "No sessions yet"}
+        </span>
       </div>
     );
   }
 
-  let remaining = visibleCount;
   return (
     <div
       className="session-list-groups flex-1 overflow-y-auto pl-2 pr-0.5 py-1"
       onScroll={onScroll}
     >
-      {nonEmptyGroups.map((g) => {
-        const rows = g.sessions.slice(0, Math.max(0, remaining));
-        remaining -= rows.length;
+      {groups.map((g, index) => {
+        const rows = g.sessions.slice(0, visibleCount);
+        const contentId = `${groupId}-${g.key}`;
         return (
-          <div key={g.key}>
+          <div
+            key={g.key}
+            className={
+              !hideGroupHeaders && index > 0
+                ? "session-list-section session-list-section--separated"
+                : "session-list-section"
+            }
+          >
             {!hideGroupHeaders ? (
               <button
-                className="list-section-label sticky top-0 z-10 w-full cursor-pointer bg-background/95 backdrop-blur-sm"
+                type="button"
+                className="list-section-label session-list-section-toggle w-full cursor-pointer"
                 onClick={() => onToggleGroup(g.key)}
+                aria-expanded={!g.collapsed}
+                aria-controls={contentId}
               >
-                <span className="text-[10px] w-3 text-center text-muted-foreground/60">
-                  {g.collapsed ? "▸" : "▾"}
-                </span>
+                <ChevronDown
+                  size={13}
+                  className="session-list-section-chevron"
+                  aria-hidden="true"
+                />
+                {g.key.startsWith("pinned:") && (
+                  <Pin size={12} aria-hidden="true" />
+                )}
                 {g.label}
-                <span className="text-muted-foreground/40">· {g.count}</span>
+                <span className="text-muted-foreground/60">· {g.count}</span>
               </button>
             ) : null}
-            {!g.collapsed &&
-              rows.map((n) => (
-                <SessionTreeItem
-                  key={n.session.id}
-                  node={n}
-                  isSelected={n.session.id === selectedId}
-                  onSelect={onSelect}
-                  onToggleExpand={onToggleExpand}
-                  onDelete={onDelete}
-                />
-              ))}
+            <div
+              id={contentId}
+              className="session-list-section-content"
+              data-collapsed={g.collapsed}
+              aria-hidden={g.collapsed || undefined}
+              inert={g.collapsed}
+            >
+              <div className="session-list-section-rows">
+                {rows.map((n) => (
+                  <SessionTreeItem
+                    key={n.session.id}
+                    node={n}
+                    isSelected={n.session.id === selectedId}
+                    onSelect={onSelect}
+                    onToggleExpand={onToggleExpand}
+                    onDelete={onDelete}
+                    onTogglePin={onTogglePin}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         );
       })}
@@ -145,7 +179,7 @@ export function SessionTimeGroups({
           </button>
         </div>
       ) : null}
-      {(hasMore || visibleCount < totalRows) && (
+      {anyExpanded && (hasMore || visibleCount < totalRows) && (
         <button
           type="button"
           disabled={isLoadingMore}

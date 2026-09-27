@@ -11,6 +11,7 @@ import { resetAgentRuntimeFixtures } from '../../services/agent-runtime/__tests_
 import { runCoordinator } from '../../services/agent-runtime/run-coordinator.js';
 import { normalizeAgentSessionStatus } from '../../services/agent-runtime/session-projection.js';
 import { agentRuntimeRoutes } from '../agent-runtime.js';
+import { sessionLiveBus } from '../../services/agent-runtime/session-live-bus.js';
 const mock = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../services/agent-runtime/backend-execution.js', () => ({ executeBackendSession: mock.execute }));
 vi.mock('../../services/llm-runtime/provider-check.js', () => ({ assertLlmProviderConfigured: vi.fn() }));
@@ -62,6 +63,30 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
+  it('delivers manual compaction progress, completion and failure on the unified session stream', async () => {
+    const id = await createSession();
+    let text = '';
+    const req = http.get({ hostname: '127.0.0.1', port, path: `/sessions/${id}/stream` }, res => {
+      res.setEncoding('utf8');
+      res.on('data', data => { text += data; });
+    });
+    try {
+      await vi.waitFor(() => expect(text).toContain('event: snapshot'));
+      sessionLiveBus.emit(id, { type: 'context_compaction_started' });
+      sessionLiveBus.emit(id, { type: 'context_compacted', stepId: '', originalTokens: 1000, compressedTokens: 200, messageCount: 4 });
+      sessionLiveBus.emit(id, { type: 'context_compaction_failed', error: 'Summary timed out' });
+      sessionLiveBus.emit(id, { type: 'message_delta', stepId: 'ignored', delta: 'do not duplicate journal events' });
+      await vi.waitFor(() => expect(text).toContain('event: context_compaction_failed'));
+      expect(text).toContain('event: context_compaction_started');
+      expect(text).toContain('"compressedTokens":200');
+      expect(text).toContain('Summary timed out');
+      expect(text).not.toContain('do not duplicate journal events');
+    } finally {
+      req.destroy();
+      sessionLiveBus.cleanup(id);
+    }
+  });
+
   it('keeps the public session running while shutdown is pending and refuses policy changes', async () => {
     const id = await createSession('synax');
     await request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'stopping-policy' });

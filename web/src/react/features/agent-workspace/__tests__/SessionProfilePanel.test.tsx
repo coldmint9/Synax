@@ -41,6 +41,16 @@ const stats = (overrides: Partial<SessionStats> = {}): SessionStats => ({
   },
   contextLimit: 200000,
   contextUsedPercent: 10.7,
+  contextComposition: {
+    version: 2,
+    tools: 120,
+    mcp: 80,
+    skills: 40,
+    messages: 300,
+    system: 60,
+    total: 600,
+    measuredAt: "2026-09-21T00:00:00Z",
+  },
   toolCallCount: 9,
   activeSubAgentCount: 0,
   ...overrides,
@@ -96,7 +106,10 @@ describe("SessionProfilePanel mini/detail", () => {
     const first = setup();
     fireEvent.click(screen.getByText("21.4K"));
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("上下文用量")).toBeInTheDocument();
+    expect(screen.queryByText("上下文用量")).toBeNull();
+    expect(
+      screen.getByRole("meter", { name: "上下文类型占比" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("运行中")).toHaveLength(1);
     expect(
       localStorage.getItem("synax:workspace:disclosure:profile:runtime"),
@@ -181,7 +194,7 @@ describe("SessionProfilePanel mini/detail", () => {
     expect(screen.queryByText("上次上下文")).toBeNull();
     expect(screen.getByTitle("暂无供应商数据")).toBeInTheDocument();
     fireEvent.click(toggle());
-    expect(screen.getByText("暂无供应商数据")).toBeInTheDocument();
+    expect(screen.queryByText("上下文用量")).toBeNull();
   });
 
   it("labels previous provider measurements without treating them as current usage", () => {
@@ -258,7 +271,10 @@ describe("SessionProfilePanel mini/detail", () => {
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Context")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Runtime details" }));
-    expect(screen.getByText("Context usage")).toBeInTheDocument();
+    expect(screen.queryByText("Context usage")).toBeNull();
+    expect(
+      screen.getByRole("meter", { name: "Context composition" }),
+    ).toBeInTheDocument();
   });
 
   it("does not show an inspector without a session", () => {

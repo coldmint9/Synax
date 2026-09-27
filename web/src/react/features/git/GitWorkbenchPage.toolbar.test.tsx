@@ -62,13 +62,13 @@ describe("Git secondary island", () => {
     const page = container.querySelector(".git-workbench")!;
     expect(island.querySelector('nav[aria-label="Git 视图"]')).not.toBeNull();
     expect(page.querySelector('nav[aria-label="Git 视图"]')).toBeNull();
-    expect(page.querySelector(".mr-root-select")).not.toBeNull();
+    expect(page.querySelector(".mr-root-tabs")).not.toBeNull();
 
     const create = screen.getByRole("button", { name: "新建 MR" });
     expect(create).toBeDisabled();
     await waitFor(() => expect(create).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "分支" }));
-    expect(page).toHaveTextContent("本地分支");
+    fireEvent.click(screen.getByRole("button", { name: "历史树" }));
+    expect(page).toHaveTextContent("历史树");
     fireEvent.change(island.querySelector(".git-island-view-select")!, {
       target: { value: "history" },
     });

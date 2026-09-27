@@ -1,3 +1,4 @@
+import { ContextCompactionFeedback } from "./ContextCompactionFeedback";
 import { InteractionCard } from "./AgentInteractionPanel";
 import { MediaParts } from "../media/MediaParts";
 import { memo } from "react";
@@ -47,6 +48,8 @@ export const TimelineEntryView = memo(function TimelineEntryView({
   isWorking?: boolean;
 }) {
   const { locale } = useLocale();
+  if (entry.kind === "compaction")
+    return <ContextCompactionFeedback state={entry.state} />;
   if (entry.kind === "error") {
     return (
       <div
