@@ -1,23 +1,18 @@
-import { agentPlanSchema, type AgentPlan } from './control-contracts.js';
+import { agentPlanSchema } from './control-contracts.js';
 import { getGoalState, initializeGoal } from './goal-control.js';
 import { AgentRuntimeError, AgentValidationError } from './runtime-errors.js';
 import { makeRuntimeId } from './runtime-ids.js';
 import { agentRuntimeStore as store } from './session-store.js';
 import { TaskStore } from './tools/task-tools.js';
+import {
+  getPlanArtifact,
+  type PlanArtifact,
+  updatePlanArtifact,
+} from './plan-artifact-store.js';
 
-const PLAN_STATUSES = ['draft', 'saved', 'approved'] as const;
-export type StoredPlanStatus = (typeof PLAN_STATUSES)[number];
+export type StoredPlan = PlanArtifact;
 
-export interface StoredPlan extends AgentPlan {
-  revision: number;
-  status: StoredPlanStatus;
-  executionId?: string;
-  approvedRunId?: string;
-  approvedStepIndex?: number;
-  approvedByMessageId?: string;
-}
-
-export function getStoredPlan(sessionId: string): StoredPlan | null {
+function legacyStoredPlan(sessionId: string): StoredPlan | null {
   const raw = store.getSession(sessionId).sessionMetadata?.plan;
   const parsed = agentPlanSchema.safeParse(raw);
   if (!parsed.success || !raw || typeof raw !== 'object') return null;
@@ -28,19 +23,26 @@ export function getStoredPlan(sessionId: string): StoredPlan | null {
     typeof revision !== 'number' ||
     !Number.isInteger(revision) ||
     revision < 1 ||
-    typeof status !== 'string' ||
-    !PLAN_STATUSES.includes(status as StoredPlanStatus)
-  )
-    return null;
+    !['draft', 'saved', 'approved'].includes(String(status))
+  ) return null;
   return {
     ...parsed.data,
+    id: `legacy-plan-${sessionId}-${revision}`,
+    sessionId,
+    projectId: store.getSession(sessionId).projectId,
     revision,
-    status: status as StoredPlanStatus,
+    status: status as PlanArtifact['status'],
     ...(typeof record.executionId === 'string' ? { executionId: record.executionId } : {}),
     ...(typeof record.approvedRunId === 'string' ? { approvedRunId: record.approvedRunId } : {}),
     ...(typeof record.approvedStepIndex === 'number' ? { approvedStepIndex: record.approvedStepIndex } : {}),
     ...(typeof record.approvedByMessageId === 'string' ? { approvedByMessageId: record.approvedByMessageId } : {}),
+    createdAt: '',
+    updatedAt: '',
   };
+}
+
+export function getStoredPlan(sessionId: string): StoredPlan | null {
+  return getPlanArtifact(sessionId) ?? legacyStoredPlan(sessionId);
 }
 
 export function executeStoredPlan(input: {
@@ -85,6 +87,15 @@ export function executeStoredPlan(input: {
   store.updateRun(input.runId, {
     metadata: { ...run.metadata, goalExecutionId: approved.executionId },
   });
+  if (!approved.id.startsWith('legacy-plan-')) {
+    updatePlanArtifact(input.sessionId, approved.revision, {
+      status: 'approved',
+      executionId: approved.executionId,
+      approvedRunId: approved.approvedRunId,
+      approvedStepIndex: approved.approvedStepIndex,
+      approvedByMessageId: approved.approvedByMessageId,
+    });
+  }
   store.updateSessionMetadata(input.sessionId, {
     mode: goalMode ? 'goal' : 'chat',
     plan: approved,

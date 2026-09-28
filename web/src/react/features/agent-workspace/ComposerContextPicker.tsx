@@ -17,7 +17,6 @@ import {
   Check,
   Paperclip,
   MessageCircle,
-  ListTodo,
   Target,
   ArrowLeft,
   Minimize2,
@@ -98,9 +97,9 @@ function ContextPickerContent({
   const attachmentInput = useRef<HTMLInputElement>(null);
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
   const unified = Boolean(onAttachFiles || hasModes);
+  const selectedMode = mode === "plan" ? "chat" : mode;
   const modeOptions = [
     { id: "chat", label: zh ? "对话" : "Chat", Icon: MessageCircle },
-    { id: "plan", label: zh ? "计划" : "Plan", Icon: ListTodo },
     { id: "goal", label: zh ? "目标" : "Goal", Icon: Target },
   ] as const;
   const [kind, setKind] = useState<TurnReference["kind"] | null>(null);
@@ -274,7 +273,7 @@ function ContextPickerContent({
         }
         aria-description={
           hasModes
-            ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === mode)?.label ?? (zh ? "计划节点" : "Plan node")}`
+            ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
             : undefined
         }
         className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
@@ -450,11 +449,11 @@ function ContextPickerContent({
               })}
             {hasModes && (
               <RadioGroup
-                value={mode === "plan_node" ? "plan" : mode}
+                value={mode === "plan_node" ? "chat" : selectedMode}
                 disabled={disabled || modeDisabled || mode === "plan_node"}
                 onChange={(id: AgentSessionMode) => {
                   close();
-                  if (id !== mode) onModeChange?.(id);
+                  if (id !== selectedMode) onModeChange?.(id);
                 }}
                 className="session-composer-mode-group"
                 aria-label={zh ? "工作模式" : "Work mode"}
@@ -475,7 +474,7 @@ function ContextPickerContent({
                     <Icon size={15} aria-hidden="true" />
                     <span>{label}</span>
                     {(mode === id ||
-                      (id === "plan" && mode === "plan_node")) && (
+                      (id === "chat" && mode === "plan_node")) && (
                       <Check size={14} className="ms-auto" aria-hidden="true" />
                     )}
                   </Radio>

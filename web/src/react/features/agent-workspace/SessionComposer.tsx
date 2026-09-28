@@ -775,11 +775,9 @@ export function SessionComposer({
       }
       commands={commands}
       placeholder={
-        mode === "plan"
-          ? t("sessionPlanPlaceholder")
-          : mode === "goal"
-            ? t("sessionGoalPlaceholder")
-            : t("sessionComposePlaceholder")
+        mode === "goal"
+          ? t("sessionGoalPlaceholder")
+          : t("sessionComposePlaceholder")
       }
       welcomePlaceholderDelay={isCentered ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
       onOverlayOpenChange={setOverlayOpen}
@@ -902,7 +900,7 @@ export function SessionComposer({
     <div
       className="agent-session-controls w-full"
       data-composer-mode={
-        backendId !== "native" ? "chat" : mode === "plan_node" ? "plan" : mode
+        backendId !== "native" || mode === "plan_node" ? "chat" : mode
       }
     >
       {error && (

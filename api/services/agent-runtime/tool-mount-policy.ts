@@ -3,6 +3,7 @@ import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
 import { WIKI_AGENT_READ_TOOL_IDS } from '../wiki/wiki-agent-tool-provider.js';
 import { controlRoot, workflowMode } from './workflow-mode.js';
+import { getStoredPlan } from './plan-execution.js';
 
 const WIKI_AGENT_READ_TOOLS = new Set<string>(WIKI_AGENT_READ_TOOL_IDS);
 
@@ -61,9 +62,11 @@ export function isToolMountedForSession(session: AgentSession, tool: { id: strin
   if (['work.checkpoint', 'goal.finish', 'verification.run'].includes(tool.id)) {
     return mode === 'goal';
   }
-  if (tool.id === 'plan.propose') return mode === 'plan' || mode === 'goal';
+  // Planning is a base Chat capability; proposing a plan is safe because it
+  // creates a read-only approval checkpoint rather than mutating the workspace.
+  if (tool.id === 'plan.propose') return mode === 'chat' || mode === 'plan' || mode === 'goal';
   if (tool.id === 'plan.execute') {
-    const plan = root.sessionMetadata?.plan as { status?: string } | undefined;
+    const plan = getStoredPlan(root.id);
     return mode === 'plan' || mode === 'goal' || (mode === 'chat' && plan?.status === 'saved');
   }
   if (mode === 'plan') return isPlanningReadTool(tool.id);

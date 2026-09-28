@@ -22,6 +22,7 @@ describe("tool mount policy", () => {
     expect(isPlanningReadTool("webSearch")).toBe(true);
     expect(isPlanningReadTool("design.write")).toBe(true);
     expect(isPlanningReadTool("design.preview")).toBe(true);
+    expect(isToolMountedForSession(sessionWithMode("chat"), { id: "plan.propose" })).toBe(true);
 
     const webSearch = { id: "webSearch" };
     expect(isToolMountedForSession(sessionWithMode("chat"), webSearch)).toBe(

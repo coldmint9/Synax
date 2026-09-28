@@ -27,6 +27,7 @@ import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
 import type { AgentRun } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
+import { PlanHistoryPanel } from "./PlanHistoryPanel";
 
 const STATUS_BADGE: Record<string, string> = {
   queued: "bg-primary/12 text-primary",
@@ -269,9 +270,39 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
           </p>
         )}
         {plan && (
-          <p>
-            {zh ? "计划" : "Plan"} v{plan.revision}: {plan.title}
-          </p>
+          <>
+            <p>
+              {zh ? "计划" : "Plan"} v{plan.revision}: {plan.title}
+            </p>
+            {Array.isArray(plan.steps) && plan.steps.length > 0 && (
+              <ol className="list-decimal space-y-1 ps-5 text-foreground/80">
+                {plan.steps.slice(0, 12).map((step, index) => (
+                  <li key={step.id ?? index}>
+                    {step.title}
+                    {step.description ? ` — ${step.description}` : ""}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {Array.isArray(plan.acceptanceCriteria) && plan.acceptanceCriteria.length > 0 && (
+              <div>
+                <strong className="font-medium">
+                  {zh ? "验收标准" : "Acceptance criteria"}
+                </strong>
+                <ul className="list-disc space-y-1 ps-5 text-foreground/80">
+                  {plan.acceptanceCriteria.slice(0, 12).map((criterion) => (
+                    <li key={criterion}>{criterion}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {typeof plan.revision === "number" && (
+              <PlanHistoryPanel
+                session={session}
+                currentRevision={plan.revision}
+              />
+            )}
+          </>
         )}
         {goal && (
           <>

@@ -23,6 +23,11 @@ import {
   type InteractionReply,
 } from "./control-contracts.js";
 import { executeStoredPlan } from "./plan-execution.js";
+import {
+  createPlanArtifact,
+  getPlanArtifact,
+  updatePlanArtifact,
+} from "./plan-artifact-store.js";
 
 type Row = {
   id: string;
@@ -154,8 +159,9 @@ export const interactionService = {
       const oldPlan = session.sessionMetadata?.plan as
         | { revision?: number }
         | undefined;
-      const revision =
-        input.kind === "plan_approval" ? (oldPlan?.revision ?? 0) + 1 : 1;
+      const revision = input.kind === "plan_approval"
+        ? (getPlanArtifact(input.sessionId)?.revision ?? oldPlan?.revision ?? 0) + 1
+        : 1;
       const i: AgentInteraction = {
         sessionId: input.sessionId,
         runId: input.runId,
@@ -189,8 +195,13 @@ export const interactionService = {
           );
       });
       if ("plan" in request) {
+        const artifact = createPlanArtifact({
+          sessionId: i.sessionId,
+          plan: request.plan!,
+          status: "draft",
+        });
         store.updateSessionMetadata(i.sessionId, {
-          plan: { ...request.plan, revision, status: "draft" },
+          plan: { ...artifact, status: "draft" },
         });
         const goal = session.sessionMetadata?.goal;
         if (
@@ -324,11 +335,13 @@ export const interactionService = {
             expectedRevision: i.revision,
             allowWaitingInput: true,
           });
-        } else if (reply.action === "cancel")
+        } else if (reply.action === "cancel") {
+          updatePlanArtifact(sessionId, i.revision, { status: "saved" });
           store.updateSessionMetadata(sessionId, {
-            mode: session.sessionMetadata?.mode === "goal" ? "goal" : "plan",
+            mode: session.sessionMetadata?.mode === "goal" ? "goal" : "chat",
             plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
           });
+        }
       }
       const status: AgentInteraction["status"] =
         reply.action === "cancel"
@@ -376,8 +389,9 @@ export const interactionService = {
         | { revision?: number }
         | undefined;
       if (plan?.revision !== i.revision) conflict("The plan revision changed.");
+      updatePlanArtifact(sessionId, i.revision, { status: "saved" });
       store.updateSessionMetadata(sessionId, {
-        mode: session.sessionMetadata?.mode === "goal" ? "goal" : "plan",
+        mode: session.sessionMetadata?.mode === "goal" ? "goal" : "chat",
         plan: { ...i.request.plan!, revision: i.revision, status: "saved" },
       });
       const reply: InteractionReply = { revision: i.revision, action: "save" };

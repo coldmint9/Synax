@@ -9,7 +9,6 @@ import {
   Check,
   ChevronDown,
   MessageCircle,
-  ListTodo,
   Target,
 } from "lucide-react";
 import type { AgentSessionMode } from "../../../lib/api/agentRuntime";
@@ -43,14 +42,6 @@ export function SessionModePicker({
         : "Ask anything or get work done",
     },
     {
-      id: "plan",
-      label: zh ? "计划" : "Plan",
-      Icon: ListTodo,
-      detail: zh
-        ? "先讨论方案，确认后再执行"
-        : "Explore first, execute when ready",
-    },
-    {
       id: "goal",
       label: zh ? "目标" : "Goal",
       Icon: Target,
@@ -59,14 +50,15 @@ export function SessionModePicker({
         : "Keep working toward an accepted goal",
     },
   ] as const;
-  const Icon = options.find((option) => option.id === mode)?.Icon ?? ListTodo;
+  const visibleMode = mode === "plan" ? "chat" : mode;
+  const Icon = options.find((option) => option.id === visibleMode)?.Icon ?? MessageCircle;
   const label =
-    options.find((option) => option.id === mode)?.label ??
+    options.find((option) => option.id === visibleMode)?.label ??
     (zh ? "计划节点" : "Plan node");
   return (
     <Listbox
       key={String(disabled)}
-      value={mode}
+      value={visibleMode}
       disabled={disabled}
       onChange={(value) => {
         const option = options.find((item) => item.id === value);
@@ -81,7 +73,7 @@ export function SessionModePicker({
             aria-description={description}
             title={description}
             disabled={disabled}
-            data-mode={mode}
+            data-mode={visibleMode}
             className="agent-dock-composer-chip agent-mode-trigger"
           >
             <Icon size={13} aria-hidden />

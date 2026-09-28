@@ -99,7 +99,7 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
         const state = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
         expect(state.session.status).toBe('running');
       });
-      expect((await request('PATCH', `/sessions/${id}/mode`, { mode: 'plan' })).status).toBe(409);
+      expect((await request('PATCH', `/sessions/${id}/mode`, { mode: 'plan' })).status).toBe(400);
       expect((await request('PATCH', `/sessions/${id}/permissions`, { permissionTier: 'unrestricted' })).status).toBe(409);
       expect((await request('POST', `/sessions/${id}/interactions/pending/reply`, { revision: 1, action: 'submit', answers: {} })).status).toBe(409);
     } finally { confirm(); await stopping; interrupt.mockRestore(); }

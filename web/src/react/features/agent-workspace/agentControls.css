@@ -1215,7 +1215,6 @@ textarea.agent-request-input {
   border-radius: 0.5rem;
   padding-inline: 0.5rem;
 }
-.agent-session-controls .agent-mode-trigger[data-mode="plan"],
 .agent-session-controls .agent-mode-trigger[data-mode="goal"] {
   background: hsl(var(--primary) / 0.1);
   color: hsl(var(--foreground-hsl) / 0.9);
