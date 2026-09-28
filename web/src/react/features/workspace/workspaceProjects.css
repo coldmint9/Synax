@@ -300,10 +300,10 @@
 .workspace-source-tabs {
   width: 100%;
 }
-.workspace-source-tabs .tabs__list {
+.workspace-source-tabs [role="tablist"] {
   width: 100%;
 }
-.workspace-source-tabs .tabs__tab {
+.workspace-source-tabs [role="tab"] {
   flex: 1;
   gap: 7px;
   min-width: 0;

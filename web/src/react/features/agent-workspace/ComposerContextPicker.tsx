@@ -1,5 +1,18 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Popover } from "@heroui/react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxOption,
+  ComboboxOptions,
+  Radio,
+  RadioGroup,
+} from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
 import {
   Check,
   Paperclip,
@@ -33,21 +46,7 @@ const contextTypes = [
   { id: "wiki", zh: "Wiki 文档", en: "Wiki document", Icon: BookOpen },
 ] as const;
 
-export function ComposerContextPicker({
-  projectId,
-  sessionId,
-  backendId,
-  references,
-  onChange,
-  disabled,
-  compactDisabled,
-  onOpen,
-  onOpenChange,
-  onAttachFiles,
-  mode,
-  modeDisabled = false,
-  onModeChange,
-}: {
+interface Props {
   projectId: string;
   sessionId?: string;
   backendId: string;
@@ -61,12 +60,41 @@ export function ComposerContextPicker({
   mode?: AgentSessionMode | "plan_node";
   modeDisabled?: boolean;
   onModeChange?: (mode: AgentSessionMode) => void;
-}) {
+}
+
+export function ComposerContextPicker(props: Props) {
+  return (
+    <Popover
+      key={`${props.projectId}:${props.sessionId ?? ""}:${props.backendId}`}
+    >
+      {({ open, close }) => (
+        <ContextPickerContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function ContextPickerContent({
+  projectId,
+  sessionId,
+  backendId,
+  references,
+  onChange,
+  disabled,
+  compactDisabled,
+  onOpen,
+  onOpenChange,
+  onAttachFiles,
+  mode,
+  modeDisabled = false,
+  onModeChange,
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const { locale } = useLocale(),
     zh = locale === "zh";
   const attachmentInput = useRef<HTMLInputElement>(null);
-  const modeGroupName = useId();
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
   const unified = Boolean(onAttachFiles || hasModes);
   const selectedMode = mode === "plan" ? "chat" : mode;
@@ -74,8 +102,19 @@ export function ComposerContextPicker({
     { id: "chat", label: zh ? "对话" : "Chat", Icon: MessageCircle },
     { id: "goal", label: zh ? "目标" : "Goal", Icon: Target },
   ] as const;
-  const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<TurnReference["kind"] | null>(null);
+  const typeButtons = useRef<
+    Partial<Record<TurnReference["kind"], HTMLButtonElement | null>>
+  >({});
+  const returnFocusTo = useRef<TurnReference["kind"] | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      returnFocusTo.current = null;
+    } else if (!kind && returnFocusTo.current) {
+      typeButtons.current[returnFocusTo.current]?.focus({ preventScroll: true });
+      returnFocusTo.current = null;
+    }
+  }, [kind, open]);
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<TurnReferenceOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -133,7 +172,7 @@ export function ComposerContextPicker({
     const request = ++compactRequest.current;
     setCompactSubmitting(true);
     setError("");
-    setOpen(false);
+    close();
     useAgentSessionStore.setState({
       contextCompactionNotice: { status: "running" },
     });
@@ -158,11 +197,12 @@ export function ComposerContextPicker({
       }
     }
   };
+  const previousWikiEnabled = useRef(wikiEnabled);
   useEffect(() => {
-    setOpen(false);
-    setKind(null);
-    setSearch("");
-  }, [projectId, sessionId, backendId, disabled, wikiEnabled]);
+    if (open && (disabled || previousWikiEnabled.current !== wikiEnabled))
+      close();
+    previousWikiEnabled.current = wikiEnabled;
+  }, [open, disabled, wikiEnabled, close]);
   useEffect(() => {
     if (!open || !kind) return;
     let current = true;
@@ -191,10 +231,6 @@ export function ComposerContextPicker({
       clearTimeout(timer);
     };
   }, [open, kind, search, projectId, sessionId]);
-  useEffect(() => {
-    onOpenChange?.(open && !disabled);
-    return () => onOpenChange?.(false);
-  }, [open, disabled, onOpenChange]);
   const selectedType = contextTypes.find((type) => type.id === kind);
   return (
     <>
@@ -212,10 +248,10 @@ export function ComposerContextPicker({
           }}
         />
       )}
-      <Popover
-        isOpen={open && !disabled}
+      <OverlayStateObserver
+        open={open}
         onOpenChange={(next) => {
-          setOpen(next && !disabled);
+          onOpenChange?.(next);
           if (next) {
             onOpen();
             setKind(null);
@@ -223,255 +259,262 @@ export function ComposerContextPicker({
             setError("");
           }
         }}
+      />
+      <PopoverButton
+        disabled={disabled}
+        aria-label={
+          unified
+            ? zh
+              ? "添加附件、上下文或切换模式"
+              : "Add attachments, context or change mode"
+            : zh
+              ? "添加上下文"
+              : "Add context"
+        }
+        aria-description={
+          hasModes
+            ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
+            : undefined
+        }
+        className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
       >
-        <Popover.Trigger<"button">
-          render={(props) => <button {...props} type="button" />}
-          disabled={disabled}
-          aria-label={
-            unified
-              ? zh
-                ? "添加附件、上下文或切换模式"
-                : "Add attachments, context or change mode"
-              : zh
-                ? "添加上下文"
-                : "Add context"
+        <Plus size={16} aria-hidden="true" />
+      </PopoverButton>
+      <PopoverPanel
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
           }
-          aria-description={
-            hasModes
-              ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
-              : undefined
-          }
-          className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
-        >
-          <Plus size={16} aria-hidden="true" />
-        </Popover.Trigger>
-        <Popover.Content
-          placement="top start"
-          offset={8}
-          className="session-context-picker"
-        >
-          {kind ? (
-            <>
-              <div className="session-context-picker-heading">
-                <button
-                  type="button"
-                  aria-label={zh ? "返回上下文类型" : "Back to context types"}
-                  onClick={() => {
-                    setKind(null);
-                    setSearch("");
-                  }}
-                >
-                  <ArrowLeft size={14} />
-                </button>
-                <span>{zh ? selectedType?.zh : selectedType?.en}</span>
-              </div>
-              <input
-                key={kind}
-                autoFocus
-                aria-label={zh ? "搜索上下文" : "Search context"}
-                placeholder={
-                  kind === "file"
-                    ? zh
-                      ? "搜索文件名或路径…"
-                      : "Search file name or path…"
-                    : zh
-                      ? "搜索名称…"
-                      : "Search by name…"
-                }
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="session-context-picker-search"
-              />
-              <div className="session-context-picker-results">
-                {options.map((ref) => {
-                  const added = references.some(
-                    (item) => item.kind === ref.kind && item.id === ref.id,
-                  );
-                  return (
-                    <button
-                      type="button"
-                      key={ref.id}
-                      className="session-context-picker-option"
-                      disabled={added || references.length >= 20}
-                      onClick={() => {
-                        onChange([
-                          ...references,
-                          { kind: ref.kind, id: ref.id, label: ref.label },
-                        ]);
-                        setOpen(false);
-                      }}
-                    >
-                      {ref.kind === "file" && (
-                        <FileTypeIcon path={ref.id} size={16} />
-                      )}
-                      <span className="session-context-picker-option-label">
-                        {ref.label ?? ref.id}
-                      </span>
-                      {ref.kind === "file" && ref.recent && (
-                        <small className="session-context-picker-recent">
-                          {zh ? "近期访问" : "Recent"}
-                        </small>
-                      )}
-                      {(added || (ref.label && ref.label !== ref.id)) && (
-                        <small>
-                          {added ? (zh ? "已添加" : "Added") : ref.id}
-                        </small>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-              {loading && <p role="status">{zh ? "正在加载…" : "Loading…"}</p>}
-              {!loading && error && <p role="alert">{error}</p>}
-              {!loading && !error && !options.length && (
-                <p role="status">{zh ? "没有匹配项" : "No matches"}</p>
-              )}
-              {references.length >= 20 && (
-                <p role="status">
-                  {zh ? "最多添加 20 个上下文" : "Up to 20 references"}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              {onAttachFiles && (
-                <button
-                  type="button"
-                  className="session-context-picker-option"
-                  onClick={() => {
-                    attachmentInput.current?.click();
-                    setOpen(false);
-                  }}
-                >
-                  <Paperclip size={15} aria-hidden="true" />
-                  <span>
-                    {zh ? "添加附件" : "Attach files"}
-                    <small>
-                      {zh
-                        ? "图片、音频、视频、PDF 或文件"
-                        : "Images, audio, video, PDFs or files"}
-                    </small>
-                  </span>
-                </button>
-              )}
-              <div className="session-context-picker-heading">
-                {zh ? "添加上下文" : "Add context"}
-              </div>
-              {contextTypes
-                .filter((type) => type.id !== "wiki" || wikiEnabled)
-                .map(({ id, Icon, ...labels }) => {
-                  const unavailable =
-                    backendId !== "native" && (id === "skill" || id === "mcp");
-                  return (
-                    <button
-                      type="button"
-                      key={id}
-                      disabled={unavailable}
-                      className="session-context-picker-option"
-                      onClick={() => setKind(id)}
-                    >
-                      <Icon size={15} />
-                      <span>
-                        {zh ? labels.zh : labels.en}
-                        {unavailable && (
-                          <small>
-                            {zh
-                              ? "由此后端的原生配置管理"
-                              : "Managed by this backend"}
-                          </small>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              {hasModes && (
-                <div
-                  className="session-composer-mode-group"
-                  role="radiogroup"
-                  aria-label={zh ? "工作模式" : "Work mode"}
-                >
-                  <div className="session-context-picker-heading">
-                    {zh ? "工作模式" : "Work mode"}
-                  </div>
-                  {modeOptions.map(({ id, label, Icon }) => (
-                    <label
-                      key={id}
-                      className="session-context-picker-option session-composer-mode-option"
-                      data-mode={id}
-                      data-disabled={
-                        disabled || modeDisabled || mode === "plan_node"
-                          ? "true"
-                          : undefined
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name={modeGroupName}
-                        value={id}
-                        className="sr-only"
-                        aria-label={label}
-                        checked={
-                          selectedMode === id || (id === "chat" && mode === "plan_node")
-                        }
-                        disabled={
-                          disabled || modeDisabled || mode === "plan_node"
-                        }
-                        onChange={() => {
-                          if (disabled || modeDisabled || mode === "plan_node")
-                            return;
-                          setOpen(false);
-                          if (id !== selectedMode) onModeChange?.(id);
-                        }}
-                      />
-                      <Icon size={15} aria-hidden="true" />
-                      <span>{label}</span>
-                      {(mode === id ||
-                        (id === "chat" && mode === "plan_node")) && (
-                        <Check
-                          size={14}
-                          className="ms-auto"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </label>
-                  ))}
-                </div>
-              )}
+        }}
+        focus
+        anchor={{ to: "top start", gap: 8, padding: 8 }}
+        className="session-context-picker"
+      >
+        {kind ? (
+          <Combobox
+            key={kind}
+            value={null as TurnReferenceOption | null}
+            immediate
+              onChange={(ref) => {
+              if (
+                !ref ||
+                disabled ||
+                references.length >= 20 ||
+                references.some(
+                  (item) => item.kind === ref.kind && item.id === ref.id,
+                )
+              )
+                return;
+              onChange([
+                ...references,
+                { kind: ref.kind, id: ref.id, label: ref.label },
+              ]);
+              close();
+            }}
+          >
+            <div className="session-context-picker-heading">
+              <button
+                type="button"
+                aria-label={zh ? "返回上下文类型" : "Back to context types"}
+                onClick={() => {
+                  returnFocusTo.current = kind;
+                  setKind(null);
+                  setSearch("");
+                }}
+              >
+                <ArrowLeft size={14} />
+              </button>
+              <span>{zh ? selectedType?.zh : selectedType?.en}</span>
+            </div>
+            <ComboboxInput
+              autoFocus
+              aria-label={zh ? "搜索上下文" : "Search context"}
+              placeholder={
+                kind === "file"
+                  ? zh
+                    ? "搜索文件名或路径…"
+                    : "Search file name or path…"
+                  : zh
+                    ? "搜索名称…"
+                    : "Search by name…"
+              }
+              displayValue={() => search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="session-context-picker-search"
+            />
+            <ComboboxOptions
+            modal={false}
+              static
+              aria-label={zh ? "上下文" : "Context"}
+              className="session-context-picker-results"
+            >
+              {options.map((ref) => {
+                const added = references.some(
+                  (item) => item.kind === ref.kind && item.id === ref.id,
+                );
+                return (
+                  <ComboboxOption
+                    value={ref}
+                    key={ref.id}
+                    className="session-context-picker-option data-focus:bg-muted data-disabled:opacity-50"
+                    disabled={added || references.length >= 20}
+                  >
+                    {ref.kind === "file" && (
+                      <FileTypeIcon path={ref.id} size={16} />
+                    )}
+                    <span className="session-context-picker-option-label">
+                      {ref.label ?? ref.id}
+                    </span>
+                    {ref.kind === "file" && ref.recent && (
+                      <small className="session-context-picker-recent">
+                        {zh ? "近期访问" : "Recent"}
+                      </small>
+                    )}
+                    {(added || (ref.label && ref.label !== ref.id)) && (
+                      <small>
+                        {added ? (zh ? "已添加" : "Added") : ref.id}
+                      </small>
+                    )}
+                  </ComboboxOption>
+                );
+              })}
+            </ComboboxOptions>
+            {loading && <p role="status">{zh ? "正在加载…" : "Loading…"}</p>}
+            {!loading && error && <p role="alert">{error}</p>}
+            {!loading && !error && !options.length && (
+              <p role="status">{zh ? "没有匹配项" : "No matches"}</p>
+            )}
+            {references.length >= 20 && (
+              <p role="status">
+                {zh ? "最多添加 20 个上下文" : "Up to 20 references"}
+              </p>
+            )}
+          </Combobox>
+        ) : (
+          <>
+            {onAttachFiles && (
               <button
                 type="button"
                 className="session-context-picker-option"
-                disabled={compactUnavailable || compacting}
-                onClick={() => void handleCompact()}
+                onClick={() => {
+                  attachmentInput.current?.click();
+                  close();
+                }}
               >
-                {compacting ? (
-                  <Loader2
-                    size={15}
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                ) : (
-                  <Minimize2 size={15} />
-                )}
+                <Paperclip size={15} aria-hidden="true" />
                 <span>
-                  {compacting
-                    ? zh
-                      ? "正在压缩上下文…"
-                      : "Compacting context…"
-                    : zh
-                      ? "强制压缩上下文"
-                      : "Force compact context"}
-                  <small>{compactHint}</small>
+                  {zh ? "添加附件" : "Attach files"}
+                  <small>
+                    {zh
+                      ? "图片、音频、视频、PDF 或文件"
+                      : "Images, audio, video, PDFs or files"}
+                  </small>
                 </span>
               </button>
-              {error && (
-                <p role="alert" className="px-3 py-2 text-xs text-destructive">
-                  {error}
-                </p>
+            )}
+            <div className="session-context-picker-heading">
+              {zh ? "添加上下文" : "Add context"}
+            </div>
+            {contextTypes
+              .filter((type) => type.id !== "wiki" || wikiEnabled)
+              .map(({ id, Icon, ...labels }) => {
+                const unavailable =
+                  backendId !== "native" && (id === "skill" || id === "mcp");
+                return (
+                  <button
+                    type="button"
+                    key={id}
+                    ref={(button) => {
+                      typeButtons.current[id] = button;
+                    }}
+                    disabled={unavailable}
+                    className="session-context-picker-option"
+                    onClick={() => setKind(id)}
+                  >
+                    <Icon size={15} />
+                    <span>
+                      {zh ? labels.zh : labels.en}
+                      {unavailable && (
+                        <small>
+                          {zh
+                            ? "由此后端的原生配置管理"
+                            : "Managed by this backend"}
+                        </small>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            {hasModes && (
+              <RadioGroup
+                value={mode === "plan_node" ? "chat" : selectedMode}
+                disabled={disabled || modeDisabled || mode === "plan_node"}
+                onChange={(id: AgentSessionMode) => {
+                  close();
+                  if (id !== selectedMode) onModeChange?.(id);
+                }}
+                className="session-composer-mode-group"
+                aria-label={zh ? "工作模式" : "Work mode"}
+              >
+                <div className="session-context-picker-heading">
+                  {zh ? "工作模式" : "Work mode"}
+                </div>
+                {modeOptions.map(({ id, label, Icon }) => (
+                  <Radio
+                    as="button"
+                    type="button"
+                    key={id}
+                    value={id}
+                    aria-label={label}
+                    className="session-context-picker-option session-composer-mode-option"
+                    data-mode={id}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>{label}</span>
+                    {(mode === id ||
+                      (id === "chat" && mode === "plan_node")) && (
+                      <Check size={14} className="ms-auto" aria-hidden="true" />
+                    )}
+                  </Radio>
+                ))}
+              </RadioGroup>
+            )}
+            <button
+              type="button"
+              className="session-context-picker-option"
+              disabled={compactUnavailable || compacting}
+              onClick={() => void handleCompact()}
+            >
+              {compacting ? (
+                <Loader2
+                  size={15}
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : (
+                <Minimize2 size={15} />
               )}
-            </>
-          )}
-        </Popover.Content>
-      </Popover>
+              <span>
+                {compacting
+                  ? zh
+                    ? "正在压缩上下文…"
+                    : "Compacting context…"
+                  : zh
+                    ? "强制压缩上下文"
+                    : "Force compact context"}
+                <small>{compactHint}</small>
+              </span>
+            </button>
+            {error && (
+              <p role="alert" className="px-3 py-2 text-xs text-destructive">
+                {error}
+              </p>
+            )}
+          </>
+        )}
+      </PopoverPanel>
     </>
   );
 }

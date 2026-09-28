@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { Terminal } from "lucide-react";
 import { configApi } from "../../../../lib/api/config";
 import type { UpdateGlobalConfigRequest } from "../../../../lib/contracts/config";
@@ -128,7 +128,7 @@ export function TerminalSettings({
             aria-label={zh ? "保存终端路径" : "Save terminal path"}
             size="sm"
             variant="secondary"
-            isDisabled={saving || draft.trim() === configuredPath}
+            disabled={saving || draft.trim() === configuredPath}
           >
             {saving ? (zh ? "保存中…" : "Saving…") : zh ? "保存" : "Save"}
           </Button>
@@ -136,8 +136,8 @@ export function TerminalSettings({
             type="button"
             size="sm"
             variant="tertiary"
-            isDisabled={saving || !configuredPath}
-            onPress={() => void save("")}
+            disabled={saving || !configuredPath}
+            onClick={() => void save("")}
           >
             {zh ? "恢复系统默认" : "Use system default"}
           </Button>

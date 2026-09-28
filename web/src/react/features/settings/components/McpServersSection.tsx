@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Switch, Modal } from "@heroui/react";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
+import { Switch } from "@/react/components/ui/Toggle";
 import { Loader2, Plug, Plus, Wifi } from "lucide-react";
 import { ExtensionControls } from '../../../components/extensions/ExtensionControls';
 import { UninstallDialog } from '../../../components/extensions/UninstallDialog';
@@ -223,8 +225,8 @@ export function McpServersSection({
           <Button
             size="sm"
             variant="secondary"
-            isDisabled={saving}
-            onPress={() => {
+            disabled={saving}
+            onClick={() => {
               setSaveError(null);
               setEditing(emptyDraft(randomId()));
             }}
@@ -266,25 +268,23 @@ export function McpServersSection({
       <UninstallDialog name={pendingUninstall?.name ?? null} description={t('mcpUninstallHint')}
         busy={saving} error={saveError} onCancel={() => setPendingUninstall(null)}
         onConfirm={() => { if (pendingUninstall) void handleDelete(pendingUninstall.id); }} />
-      <Modal
-        isOpen={Boolean(editing)}
-        onOpenChange={(open) => {
-          if (!open && !saving) setEditing(null);
-        }}
+      <Dialog
+        open={Boolean(editing)}
+        onClose={() => { if (!saving) setEditing(null); }}
       >
-        <Modal.Backdrop>
-          <Modal.Container size="lg">
-            <Modal.Dialog>
+        <>
+          <DialogContainer size="lg">
+            <DialogPanel>
               {editing && (
                 <>
-                  <Modal.Header>
-                    <Modal.Heading>
+                  <DialogHeader>
+                    <DialogTitle>
                       {servers.some((s) => s.id === editing.id)
                         ? t("settingsMcpEditTitle")
                         : t("settingsMcpAddTitle")}
-                    </Modal.Heading>
-                  </Modal.Header>
-                  <Modal.Body>
+                    </DialogTitle>
+                  </DialogHeader>
+                  <DialogBody>
                     <fieldset disabled={saving} className="space-y-3">
                       <label className="block">
                         <span className="mb-1 block text-xs font-medium text-foreground">
@@ -359,18 +359,14 @@ export function McpServersSection({
                         <Switch
                           size="md"
                           aria-label={t("settingsMcpEnable")}
-                          isSelected={editing.enabled}
+                          checked={editing.enabled}
                           onChange={(checked) =>
                             setEditing({
                               ...editing,
                               enabled: Boolean(checked),
                             })
                           }
-                        >
-                          <Switch.Content><Switch.Control>
-                            <Switch.Thumb />
-                          </Switch.Control></Switch.Content>
-                        </Switch>
+                        />
                         <span className="text-xs text-foreground">
                           {t("settingsMcpEnable")}
                         </span>
@@ -389,8 +385,8 @@ export function McpServersSection({
                         </p>
                       )}
                     </fieldset>
-                  </Modal.Body>
-                  <Modal.Footer>
+                  </DialogBody>
+                  <DialogFooter>
                     <fieldset
                       disabled={saving}
                       className="flex flex-wrap items-center justify-end gap-2"
@@ -398,18 +394,18 @@ export function McpServersSection({
                       <Button
                         size="sm"
                         variant="ghost"
-                        isDisabled={saving}
-                        onPress={() => setEditing(null)}
+                        disabled={saving}
+                        onClick={() => setEditing(null)}
                       >
                         {t("settingsMcpClose")}
                       </Button>
                       <Button
                         size="sm"
                         variant="secondary"
-                        isDisabled={
+                        disabled={
                           !editing.command.trim() || testingId !== null
                         }
-                        onPress={() => void handleTest(draftToConfig(editing))}
+                        onClick={() => void handleTest(draftToConfig(editing))}
                       >
                         {testingId === editing.id ? (
                           <Loader2 size={12} className="animate-spin" />
@@ -420,19 +416,19 @@ export function McpServersSection({
                       </Button>
                       <Button
                         size="sm"
-                        isPending={saving}
-                        onPress={() => void handleSaveDraft()}
+                        pending={saving}
+                        onClick={() => void handleSaveDraft()}
                       >
                         {t(servers.some((s) => s.id === editing.id) ? "settingsMcpSave" : "settingsMcpAddServer")}
                       </Button>
                     </fieldset>
-                  </Modal.Footer>
+                  </DialogFooter>
                 </>
               )}
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+            </DialogPanel>
+          </DialogContainer>
+        </>
+      </Dialog>
     </SettingsCard>
   );
 }

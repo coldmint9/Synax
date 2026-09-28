@@ -56,7 +56,7 @@ describe("message action toolbar", () => {
       "true",
     );
   });
-  it("allows fork independently when rollback needs the running session to stop", () => {
+  it("allows fork independently when rollback needs the running session to stop", async () => {
     const onFork = vi.fn();
     const onRollback = vi.fn();
     render(
@@ -69,10 +69,27 @@ describe("message action toolbar", () => {
         onRollback={onRollback}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Fork from here" }));
     fireEvent.click(screen.getByRole("button", { name: "Roll back to here" }));
-    expect(onFork).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Fork from here" }));
+    expect(onFork).not.toHaveBeenCalled();
+    expect(await screen.findAllByRole("menuitem")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("menuitem", { name: "In a new worktree" }));
+    expect(onFork).toHaveBeenCalledExactlyOnceWith("new_worktree");
     expect(onRollback).not.toHaveBeenCalled();
+  });
+  it("dismisses the two-option pop with Escape without executing a fork", async () => {
+    const onFork = vi.fn();
+    render(<MessageActionToolbar role="assistant" text="reply" onFork={onFork} />);
+    const trigger = screen.getByRole("button", { name: "Fork from here" });
+    fireEvent.click(trigger);
+    const menu = await screen.findByRole("menu");
+    expect(menu.textContent).toBe("In a new worktreeIn the original workspace");
+    expect(menu.querySelector('[data-glass-finish="flat"]')).not.toBeNull();
+    expect(menu.querySelector('svg.liquid-glass-svg, canvas')).toBeNull();
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(onFork).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
   it("shows exactly the actions appropriate for each role", () => {
     const onEdit = vi.fn();

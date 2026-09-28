@@ -1,5 +1,5 @@
 import { FileOpenerSelect } from "./FileOpenerSelect";
-import { Switch } from "@heroui/react";
+import { Switch } from "@/react/components/ui/Toggle";
 import { SlidersHorizontal } from "lucide-react";
 import { useShellStore } from "../../../state/shellStore";
 import { useLocale } from "../../../../hooks/useLocale";
@@ -69,14 +69,10 @@ export function LayoutSection() {
         >
           <Switch
             size="sm"
-            isSelected={notifications}
+            checked={notifications}
             onChange={setNotifications}
             aria-label={t("settingsNotifications")}
-          >
-            <Switch.Content><Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control></Switch.Content>
-          </Switch>
+          />
         </FormRow>
 
         <FormRow
@@ -85,14 +81,10 @@ export function LayoutSection() {
         >
           <Switch
             size="sm"
-            isSelected={foldWorkRuns}
+            checked={foldWorkRuns}
             onChange={setFoldWorkRuns}
             aria-label={t("sessionWorkLogToggle")}
-          >
-            <Switch.Content><Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control></Switch.Content>
-          </Switch>
+          />
         </FormRow>
 
         <FormRow
@@ -124,14 +116,10 @@ export function LayoutSection() {
         >
           <Switch
             size="sm"
-            isSelected={wikiEnabled}
+            checked={wikiEnabled}
             onChange={setWikiEnabled}
             aria-label="Wiki"
-          >
-            <Switch.Content><Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control></Switch.Content>
-          </Switch>
+          />
         </FormRow>
 
         <FormRow

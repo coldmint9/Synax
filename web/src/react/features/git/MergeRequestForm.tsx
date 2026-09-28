@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
   type MergeStrategy,
 } from "../../../lib/api/gitMr";
 import { BranchSourcePicker, ancestorLabel } from "./BranchSourcePicker";
+import { useIslandPresence } from "../../layouts/useIslandPresence";
 import { DialogOverlay } from "../../components/DialogOverlay";
 import { moveSource, validateInput } from "./mergeUi";
 interface Props {
@@ -35,7 +36,7 @@ export function MergeRequestForm({
   rootId,
   workspace,
   onRootChange,
-  onClose,
+  onClose: onDismiss,
   onSubmit,
 }: Props) {
   const [branchOptions, setBranchOptions] = useState<{
@@ -61,6 +62,14 @@ export function MergeRequestForm({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const panel = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(true);
+  const { ref: motionRef, present } = useIslandPresence<HTMLElement>(open);
+  const onClose = () => setOpen(false);
+  const attachPanel = useCallback((node: HTMLElement | null) => {
+    panel.current = node;
+    motionRef(node);
+  }, [motionRef]);
+  useEffect(() => { if (!present) onDismiss(); }, [present, onDismiss]);
   const latest = useRef({ busy, onClose });
   latest.current = { busy, onClose };
   useEffect(() => {
@@ -229,9 +238,9 @@ export function MergeRequestForm({
     }
   }
   return (
-    <DialogOverlay className="mr-modal-backdrop">
+    <DialogOverlay className="mr-modal-backdrop" inert={!open} aria-hidden={!open}>
       <section
-        ref={panel}
+        ref={attachPanel}
         role="dialog"
         aria-modal="true"
         aria-labelledby="mr-create-title"

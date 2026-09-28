@@ -195,3 +195,12 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Repository actions are a real measurable header, including legacy snapshots. */
+.workspace-dashboard .ws-repository-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
+  gap: 5px;
+}

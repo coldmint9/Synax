@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
-import { Button, Input, Label, Modal, TextArea, TextField } from '@heroui/react'
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Input, Label, TextArea, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { AppSelect } from '../../../components/AppSelect'
 import {
   extensionsApi,
@@ -185,19 +187,17 @@ export function CustomExtensionEditor({
     }
   }
   return (
-    <Modal
-      isOpen
-      onOpenChange={(open) => {
-        if (!open && !busy && !testing) onClose()
-      }}
+    <Dialog
+      open
+      onClose={() => { if (!busy && !testing) onClose(); }} dismissible={!busy && !testing}
     >
-      <Modal.Backdrop isDismissable={!busy && !testing}>
-        <Modal.Container size="lg">
-          <Modal.Dialog>
-            <Modal.Header>
-              <Modal.Heading>{detail ? copy.edit : copy.create}</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
+      <>
+        <DialogContainer size="lg">
+          <DialogPanel>
+            <DialogHeader>
+              <DialogTitle>{detail ? copy.edit : copy.create}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               <fieldset disabled={busy || testing} className="extension-form">
                 {!detail && (
                   <AppSelect
@@ -210,29 +210,25 @@ export function CustomExtensionEditor({
                     }))}
                   />
                 )}
-                <TextField isRequired value={name} onChange={setName}>
+                <Field>
                   <Label>{copy.name}</Label>
-                  <Input autoFocus maxLength={128} />
-                </TextField>
-                <TextField
-                  isRequired
-                  value={description}
-                  onChange={setDescription}
-                >
+                  <Input autoFocus maxLength={128} required value={name} onChange={(event) => (setName)(event.currentTarget.value)} />
+                </Field>
+                <Field>
                   <Label>{copy.description}</Label>
-                  <Input maxLength={4000} />
-                </TextField>
+                  <Input maxLength={4000} required value={description} onChange={(event) => (setDescription)(event.currentTarget.value)} />
+                </Field>
                 {kind === 'skill' ? (
                   <>
-                    <TextField isRequired value={content} onChange={setContent}>
+                    <Field>
                       <Label>{copy.content}</Label>
-                      <TextArea className="extension-markdown" />
-                    </TextField>
+                      <TextArea className="extension-markdown" required value={content} onChange={(event) => (setContent)(event.currentTarget.value)} />
+                    </Field>
                     <div>
                       <Button
                         size="sm"
                         variant="secondary"
-                        onPress={() => fileInput.current?.click()}
+                        onClick={() => fileInput.current?.click()}
                       >
                         {copy.importFile}
                       </Button>
@@ -270,24 +266,20 @@ export function CustomExtensionEditor({
                     />
                     {mode === 'command' ? (
                       <>
-                        <TextField
-                          isRequired
-                          value={command}
-                          onChange={setCommand}
-                        >
+                        <Field>
                           <Label>{copy.command}</Label>
-                          <Input placeholder={copy.commandHint} />
-                        </TextField>
-                        <TextField value={args} onChange={setArgs}>
+                          <Input placeholder={copy.commandHint} required value={command} onChange={(event) => (setCommand)(event.currentTarget.value)} />
+                        </Field>
+                        <Field>
                           <Label>{copy.args}</Label>
-                          <TextArea className="font-mono text-xs" rows={3} />
-                        </TextField>
+                          <TextArea className="font-mono text-xs" rows={3} value={args} onChange={(event) => (setArgs)(event.currentTarget.value)} />
+                        </Field>
                       </>
                     ) : (
-                      <TextField isRequired value={url} onChange={setUrl}>
+                      <Field>
                         <Label>{copy.endpoint}</Label>
-                        <Input type="url" placeholder="https://" />
-                      </TextField>
+                        <Input type="url" placeholder="https://" required value={url} onChange={(event) => (setUrl)(event.currentTarget.value)} />
+                      </Field>
                     )}
                     {kind === 'tool' && (
                       <p className="extension-form-note">
@@ -298,39 +290,36 @@ export function CustomExtensionEditor({
                       <summary>{copy.advanced}</summary>
                       <div className="extension-form">
                         {mode === 'command' && (
-                          <TextField value={cwd} onChange={setCwd}>
+                          <Field>
                             <Label>{copy.cwd}</Label>
-                            <Input />
-                          </TextField>
+                            <Input value={cwd} onChange={(event) => (setCwd)(event.currentTarget.value)} />
+                          </Field>
                         )}
                         {kind === 'mcp' && mode === 'command' && (
-                          <TextField value={env} onChange={setEnv}>
+                          <Field>
                             <Label>{copy.env}</Label>
-                            <TextArea className="font-mono text-xs" />
-                          </TextField>
+                            <TextArea className="font-mono text-xs" value={env} onChange={(event) => (setEnv)(event.currentTarget.value)} />
+                          </Field>
                         )}
                         {mode === 'http' && (
-                          <TextField value={headers} onChange={setHeaders}>
+                          <Field>
                             <Label>{copy.headers}</Label>
-                            <TextArea className="font-mono text-xs" />
-                          </TextField>
+                            <TextArea className="font-mono text-xs" value={headers} onChange={(event) => (setHeaders)(event.currentTarget.value)} />
+                          </Field>
                         )}
                         {kind === 'tool' && (
                           <>
-                            <TextField value={schema} onChange={setSchema}>
+                            <Field>
                               <Label>{copy.schema}</Label>
                               <TextArea
                                 rows={6}
-                                className="font-mono text-xs"
+                                className="font-mono text-xs" value={schema} onChange={(event) => (setSchema)(event.currentTarget.value)}
                               />
-                            </TextField>
-                            <TextField
-                              value={timeout}
-                              onChange={setTimeoutValue}
-                            >
+                            </Field>
+                            <Field>
                               <Label>{copy.timeout}</Label>
-                              <Input type="number" min={1} max={120} />
-                            </TextField>
+                              <Input type="number" min={1} max={120} value={timeout} onChange={(event) => (setTimeoutValue)(event.currentTarget.value)} />
+                            </Field>
                           </>
                         )}
                       </div>
@@ -342,18 +331,14 @@ export function CustomExtensionEditor({
                           <p className="extension-form-note">
                             {copy.configImportHint}
                           </p>
-                          <TextField
-                            value={importJson}
-                            onChange={setImportJson}
-                            aria-label={copy.importConfig}
-                          >
-                            <TextArea rows={5} className="font-mono text-xs" />
-                          </TextField>
+                          <Field>
+                            <TextArea rows={5} className="font-mono text-xs" value={importJson} onChange={(event) => (setImportJson)(event.currentTarget.value)} aria-label={copy.importConfig} />
+                          </Field>
                           <Button
                             size="sm"
                             variant="secondary"
-                            onPress={applyImport}
-                            isDisabled={!importJson.trim()}
+                            onClick={applyImport}
+                            disabled={!importJson.trim()}
                           >
                             {copy.applyConfig}
                           </Button>
@@ -373,13 +358,13 @@ export function CustomExtensionEditor({
                   </p>
                 )}
               </fieldset>
-            </Modal.Body>
-            <Modal.Footer>
+            </DialogBody>
+            <DialogFooter>
               <Button
                 size="sm"
                 variant="tertiary"
-                isDisabled={busy || testing}
-                onPress={onClose}
+                disabled={busy || testing}
+                onClick={onClose}
               >
                 {copy.cancel}
               </Button>
@@ -387,9 +372,9 @@ export function CustomExtensionEditor({
                 <Button
                   size="sm"
                   variant="secondary"
-                  isPending={testing}
-                  isDisabled={busy}
-                  onPress={async () => {
+                  pending={testing}
+                  disabled={busy}
+                  onClick={async () => {
                     setError('')
                     setTestMessage('')
                     setTesting(true)
@@ -413,16 +398,16 @@ export function CustomExtensionEditor({
               )}
               <Button
                 size="sm"
-                isPending={busy}
-                isDisabled={testing}
-                onPress={() => void save()}
+                pending={busy}
+                disabled={testing}
+                onClick={() => void save()}
               >
                 {copy.save}
               </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </>
+    </Dialog>
   )
 }

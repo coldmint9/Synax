@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
-import {
-  Button,
-  Drawer,
-  Input,
-  Label,
-  TextArea,
-  TextField,
-} from '@heroui/react'
+import { Drawer, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Input, Label, TextArea, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { Plus, RefreshCw } from 'lucide-react'
 import {
   extensionsApi,
@@ -72,38 +67,34 @@ export function ExtensionSources({
   }
   return (
     <Drawer
-      isOpen
-      onOpenChange={(open) => {
-        if (!open && !busy) onClose()
-      }}
+      open
+      onClose={() => { if (!busy) onClose(); }} dismissible={!busy}
     >
-      <Drawer.Backdrop isDismissable={!busy}>
-        <Drawer.Content placement="right">
-          <Drawer.Dialog className="extension-drawer">
-            <Drawer.Header>
-              <Drawer.Heading>{copy.sources}</Drawer.Heading>
-            </Drawer.Header>
-            <Drawer.Body>
+      <>
+        <DialogContainer >
+          <DialogPanel className="extension-drawer">
+            <DialogHeader>
+              <DialogTitle>{copy.sources}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               <section className="extension-form">
                 <h3 className="text-sm font-medium">{copy.local}</h3>
                 <p className="extension-form-note">{copy.localHint}</p>
-                <TextField
-                  value={directories}
-                  onChange={setDirectories}
-                  isDisabled={loading || busy}
+                <Field
+                  disabled={loading || busy}
                 >
                   <Label>{copy.directories}</Label>
                   <TextArea
                     rows={4}
                     placeholder="/path/to/extensions"
-                    className="font-mono text-xs"
+                    className="font-mono text-xs" value={directories} onChange={(event) => (setDirectories)(event.currentTarget.value)}
                   />
-                </TextField>
+                </Field>
                 <Button
                   size="sm"
                   variant="secondary"
-                  isDisabled={loading || busy}
-                  onPress={() =>
+                  disabled={loading || busy}
+                  onClick={() =>
                     void action(() =>
                       extensionsApi.saveDirectories(
                         projectId,
@@ -154,10 +145,10 @@ export function ExtensionSources({
                       <Button
                         size="sm"
                         variant="ghost"
-                        isIconOnly
+                        iconOnly
                         aria-label={`${copy.sync}: ${source.name}`}
-                        isDisabled={busy}
-                        onPress={() =>
+                        disabled={busy}
+                        onClick={() =>
                           void action(() =>
                             source.id.startsWith('catalog/')
                               ? extensionsApi.syncSource(projectId, source.id)
@@ -172,14 +163,14 @@ export function ExtensionSources({
               </div>
               {adding ? (
                 <fieldset disabled={busy} className="extension-form mt-6">
-                  <TextField value={label} onChange={setLabel} isRequired>
+                  <Field>
                     <Label>{copy.sourceName}</Label>
-                    <Input />
-                  </TextField>
-                  <TextField value={sourceId} onChange={setSourceId} isRequired>
+                    <Input value={label} onChange={(event) => (setLabel)(event.currentTarget.value)} required />
+                  </Field>
+                  <Field>
                     <Label>{copy.sourceId}</Label>
-                    <Input placeholder="my-team" pattern="[a-z0-9-]+" />
-                  </TextField>
+                    <Input placeholder="my-team" pattern="[a-z0-9-]+" value={sourceId} onChange={(event) => (setSourceId)(event.currentTarget.value)} required />
+                  </Field>
                   <AppSelect
                     label={copy.type}
                     value={type}
@@ -190,16 +181,16 @@ export function ExtensionSources({
                       { key: 'git-index', label: copy.git },
                     ]}
                   />
-                  <TextField value={url} onChange={setUrl} isRequired>
+                  <Field>
                     <Label>{copy.sourceUrl}</Label>
                     <Input
                       placeholder={
                         type === 'git-index'
                           ? 'owner/repository'
                           : 'https://example.com/skills.json'
-                      }
+                      } value={url} onChange={(event) => (setUrl)(event.currentTarget.value)} required
                     />
-                  </TextField>
+                  </Field>
                   {type === 'catalog' && (
                     <details>
                       <summary>{copy.remoteManifest}</summary>
@@ -241,13 +232,13 @@ export function ExtensionSources({
                   )}
                   <Button
                     size="sm"
-                    isDisabled={
+                    disabled={
                       busy ||
                       !label.trim() ||
                       !/^[a-z0-9-]+$/.test(sourceId) ||
                       !url.trim()
                     }
-                    onPress={() =>
+                    onClick={() =>
                       void action(async () => {
                         if (type === 'catalog')
                           await extensionsApi.addSource(projectId, {
@@ -289,7 +280,7 @@ export function ExtensionSources({
                   size="sm"
                   variant="ghost"
                   className="mt-4"
-                  onPress={() => setAdding(true)}
+                  onClick={() => setAdding(true)}
                 >
                   <Plus size={14} />
                   {copy.addSource}
@@ -300,20 +291,20 @@ export function ExtensionSources({
                   {error}
                 </p>
               )}
-            </Drawer.Body>
-            <Drawer.Footer>
+            </DialogBody>
+            <DialogFooter>
               <Button
                 size="sm"
                 variant="tertiary"
-                isDisabled={busy}
-                onPress={onClose}
+                disabled={busy}
+                onClick={onClose}
               >
                 {copy.close}
               </Button>
-            </Drawer.Footer>
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </>
     </Drawer>
   )
 }

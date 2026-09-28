@@ -1,4 +1,5 @@
-import { Button, Tooltip } from "@heroui/react";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { Button } from "@/react/components/ui/Button";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -100,30 +101,29 @@ function PermissionItem({
         <Button
           size="sm"
           variant="primary"
-          isDisabled={isLoading}
-          onPress={() => onReply(permission.id, "once")}
+          disabled={isLoading}
+          onClick={() => onReply(permission.id, "once")}
         >
           {t("permAllowOnce")}
         </Button>
         {(!Array.isArray(permission.metadata?.allowedReplies) ||
           permission.metadata.allowedReplies.includes("always")) && (
-          <Tooltip delay={0}>
+          <Tooltip delay={0} content={<>{t("permAlwaysAllowHint")}</>}>
             <Button
               size="sm"
               variant="ghost"
-              isDisabled={isLoading}
-              onPress={() => onReply(permission.id, "always")}
+              disabled={isLoading}
+              onClick={() => onReply(permission.id, "always")}
             >
               {t("permAlwaysAllow")}
             </Button>
-            <Tooltip.Content>{t("permAlwaysAllowHint")}</Tooltip.Content>
           </Tooltip>
         )}
         <Button
           size="sm"
           variant="danger-soft"
-          isDisabled={isLoading}
-          onPress={() => onReply(permission.id, "reject")}
+          disabled={isLoading}
+          onClick={() => onReply(permission.id, "reject")}
         >
           {t("permReject")}
         </Button>

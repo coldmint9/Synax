@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { agentRuntimeApi } from '../../../../lib/api/agentRuntime';
 import { WorkspaceFileMutationHost } from '../WorkspaceFileMutationHost';
@@ -36,7 +37,8 @@ describe('workspace file mutation confirmation', () => {
     act(() => requestFileMutation({ sessionId: 'session-1', rootId: 'api', path: 'src/a.ts', kind: 'trash' }));
     expect(await screen.findByText(/移到系统废纸篓/)).toBeTruthy();
     expect(trash).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(useSessionWorkspaceStore.getState().sessions['session-1'].tabs).toHaveLength(1);
     act(() => requestFileMutation({ sessionId: 'session-1', rootId: 'api', path: 'src/a.ts', kind: 'trash' }));
     fireEvent.click(await screen.findByRole('button', { name: '移到废纸篓' }));

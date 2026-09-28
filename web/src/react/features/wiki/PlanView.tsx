@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ListChecks, Check, RotateCcw } from 'lucide-react'
-import { Button, TextArea } from '@heroui/react'
+import { TextArea } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { useShellStore } from '../../state/shellStore'
@@ -177,8 +178,8 @@ function PlanNodeReviewPanel({ planId, nodeId, projectId }: { planId: string; no
         <Button
           size="sm"
           variant="primary"
-          isDisabled={acting || !workDir}
-          onPress={() => void handleAccept()}
+          disabled={acting || !workDir}
+          onClick={() => void handleAccept()}
         >
           <Check size={12} />
           {t('planNodeAccept')}
@@ -186,8 +187,8 @@ function PlanNodeReviewPanel({ planId, nodeId, projectId }: { planId: string; no
         <Button
           size="sm"
           variant="ghost"
-          isDisabled={acting || !feedback.trim()}
-          onPress={() => void handleRedo()}
+          disabled={acting || !feedback.trim()}
+          onClick={() => void handleRedo()}
         >
           <RotateCcw size={12} />
           {t('planNodeRedo')}

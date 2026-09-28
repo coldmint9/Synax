@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { FileCode } from "lucide-react";
 import { configApi } from "../../../../lib/api/config";
 import { useLocale } from "../../../../hooks/useLocale";
@@ -23,7 +23,7 @@ export function OpenConfigFile() {
 
   return (
     <div className="mt-8 border-t border-border pt-6">
-      <Button size="sm" variant="secondary" isDisabled={opening} onPress={open}>
+      <Button size="sm" variant="secondary" disabled={opening} onClick={open}>
         <FileCode size={13} />
         {t("settingsOpenConfigFile")}
       </Button>

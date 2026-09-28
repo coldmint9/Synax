@@ -191,7 +191,7 @@ it("keeps the direct mode selector and plus-menu mode controls synchronized", as
   const { container } = renderComposer();
   const controls = container.querySelector(".agent-session-controls")!;
   expect(controls).toHaveAttribute("data-composer-mode", "chat");
-  expect(screen.getByRole("button", { name: "Session mode" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Session mode" })).not.toBeInTheDocument();
   for (const [label, mode] of [["Goal", "goal"], ["Chat", "chat"]]) {
     await userEvent.click(screen.getByRole("button", { name: "Add attachments, context or change mode" }));
     await userEvent.click(screen.getByRole("radio", { name: label, exact: true }));
@@ -233,11 +233,6 @@ async function selectMode(mode: "goal", prefix = "") {
 }
 
 async function expectModeUnavailable() {
-  const modeButton = screen.queryByRole("button", { name: "Session mode" });
-  if (modeButton) {
-    expect(modeButton).toBeDisabled();
-    return;
-  }
   const trigger = document.querySelector<HTMLButtonElement>(
     'button[aria-label="Add attachments, context or change mode"]',
   );
@@ -249,12 +244,9 @@ async function expectModeUnavailable() {
     expect(trigger).toBeDisabled();
     return;
   }
-  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
-    target: { value: "/plan" },
-  });
-  expect(
-    await screen.findByRole("option", { name: /^\/plan / }),
-  ).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(trigger);
+  const goal = screen.queryByRole("radio", { name: "Goal", exact: true });
+  if (goal) expect(goal).toHaveAttribute("aria-disabled", "true");
 }
 
 describe("SessionComposer input queue", () => {
@@ -459,7 +451,6 @@ describe("SessionComposer mode controls", () => {
     });
     renderComposer();
     await expectModeUnavailable();
-    expect(screen.getByRole("button", { name: "Session mode" })).toBeDisabled();
     expect(useAgentSessionStore.getState().draftMode).toBe("plan");
   });
 

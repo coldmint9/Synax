@@ -99,37 +99,39 @@ function MediaAsset({
           className="max-h-48 max-w-full rounded-lg"
         />
       )}
-      <div className="mt-1 flex items-center gap-2">
-        <Paperclip size={12} />
-        <span className="max-w-48 truncate" title={asset.filename}>
-          {asset.filename}
-        </span>
-        <span className="text-muted-foreground">
-          {asset.size < 1024
-            ? `${asset.size} B`
-            : `${(asset.size / 1024).toFixed(0)} KB`}
-        </span>
-        {url && (
-          <a
-            href={url}
-            download={asset.filename}
-            aria-label={`下载 ${asset.filename}`}
-            className="text-primary"
-          >
-            <Download size={14} />
-          </a>
-        )}
-        {url && asset.mediaType === "application/pdf" && (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary"
-          >
-            查看 / View
-          </a>
-        )}
-      </div>
+      {!image && (
+        <div className="mt-1 flex items-center gap-2">
+          <Paperclip size={12} />
+          <span className="max-w-48 truncate" title={asset.filename}>
+            {asset.filename}
+          </span>
+          <span className="text-muted-foreground">
+            {asset.size < 1024
+              ? `${asset.size} B`
+              : `${(asset.size / 1024).toFixed(0)} KB`}
+          </span>
+          {url && (
+            <a
+              href={url}
+              download={asset.filename}
+              aria-label={`下载 ${asset.filename}`}
+              className="text-primary"
+            >
+              <Download size={14} />
+            </a>
+          )}
+          {url && asset.mediaType === "application/pdf" && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary"
+            >
+              查看 / View
+            </a>
+          )}
+        </div>
+      )}
       {opened && url && (
         <dialog
           ref={dialogRef}

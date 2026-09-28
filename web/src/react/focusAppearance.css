@@ -1,5 +1,5 @@
 /* Focus changes behavior, not decoration. Cover native controls, custom
-   focus-within wrappers and React Aria/HeroUI controls (including body portals).
+   focus-within wrappers and React Aria/Synax UI controls (including body portals).
    Reset only focus outlines/rings: preserve ordinary borders, card shadows,
    selected/checked states, text selection and keyboard navigation. */
 :where(

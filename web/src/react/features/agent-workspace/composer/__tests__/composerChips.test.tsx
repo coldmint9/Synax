@@ -33,11 +33,10 @@ describe("ComposerPermissionPicker", () => {
     const select = screen.getByRole("button", { name: "审批模式" });
     expect(select).toHaveAttribute("data-tier", "boundary");
     await userEvent.click(select);
-    expect(
-      screen
-        .getAllByRole("option")
-        .map((option) => option.getAttribute("data-key")),
-    ).toEqual(["boundary", "auto", "unrestricted"]);
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    expect(screen.getByRole("option", { name: /^边界审批/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: /^自动审批/ })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("option", { name: /^无限制/ })).toHaveAttribute("aria-selected", "false");
     expect(select.title).toContain("下一步生效");
     await userEvent.click(screen.getByRole("option", { name: /^自动审批/ }));
     expect(onChange).toHaveBeenCalledWith("auto");
@@ -109,10 +108,7 @@ describe("ComposerEffortPicker", () => {
 
   it("does not open when disabled", () => {
     render(<ComposerEffortPicker effort="high" disabled onChange={vi.fn()} />);
-    expect(screen.getByLabelText("思考强度")).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(screen.getByLabelText("思考强度")).toBeDisabled();
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
   });
 

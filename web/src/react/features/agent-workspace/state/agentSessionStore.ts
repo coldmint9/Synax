@@ -1,3 +1,4 @@
+import { SESSION_PAGE_SIZE } from "../../../../lib/sessionListPaging";
 import type {
   HistoryWindowResponse,
   HistoryWindowState,
@@ -223,7 +224,6 @@ export function isSessionUnread(
   );
 }
 
-const SESSION_PAGE_SIZE = 20;
 const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 4;
 
 export interface SessionDetailCacheEntry {

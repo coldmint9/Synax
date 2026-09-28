@@ -470,6 +470,7 @@ export const createSessionRequestSchema = z
     gitWorkspace: z
       .discriminatedUnion("kind", [
         z.object({ kind: z.literal("default") }),
+        z.object({ kind: z.literal("new-worktree") }),
         z.object({
           kind: z.literal("worktree"),
           path: z.string().min(1).max(4096),

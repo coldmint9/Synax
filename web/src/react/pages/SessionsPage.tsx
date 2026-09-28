@@ -3,7 +3,8 @@ import "../features/agent-workspace/workPage.css";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { WorkbenchIslandSlot } from "../layouts/WorkbenchIsland";
-import { Button, Modal } from "@heroui/react";
+import { Dialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAgentSessionStore } from "../features/agent-workspace/state/agentSessionStore";
 import { useSessionDetailPolling } from "../features/agent-workspace/useSessionDetailPolling";
@@ -338,7 +339,7 @@ export default memo(function SessionsPage() {
                 variant="secondary"
                 size="sm"
                 className="gap-1.5"
-                onPress={() => navigate(newSessionPath(projectId))}
+                onClick={() => navigate(newSessionPath(projectId))}
               >
                 <Plus size={14} />
                 {t("sessionNew")}
@@ -347,24 +348,24 @@ export default memo(function SessionsPage() {
           </div>
         )}
       </>
-      <Modal.Backdrop isOpen={detailsOpen} onOpenChange={setDetailsOpen}>
-        <Modal.Container size="sm">
-          <Modal.Dialog className="work-details-dialog">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>
+      <Dialog open={detailsOpen} onClose={() => (setDetailsOpen)(false)}>
+        <DialogContainer size="sm">
+          <DialogPanel className="work-details-dialog">
+            <DialogCloseButton />
+            <DialogHeader>
+              <DialogTitle>
                 {locale === "zh" ? "任务详情" : "Task details"}
-              </Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
+              </DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               <SessionWorkspacePanel
                 sessionId={agentSessionId}
                 mode="dashboard"
               />
-            </Modal.Body>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </DialogBody>
+          </DialogPanel>
+        </DialogContainer>
+      </Dialog>
       {showTranscript && agentSessionId ? (
         <AgentCommandRail
           hidden={hasWorkspaceContent}

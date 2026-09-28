@@ -1,4 +1,18 @@
-import { Button, Checkbox, Modal, TextArea, Tooltip } from "@heroui/react";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import {
+  Dialog,
+  DialogContainer,
+  DialogPanel,
+  DialogCloseButton,
+  DialogHeader,
+  DialogIcon,
+  DialogTitle,
+  DialogBody,
+  DialogFooter,
+} from "@/react/components/ui/Dialog";
+import { Input, TextArea } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
+import { Checkbox } from "@/react/components/ui/Toggle";
 import { AppSelect } from "../../components/AppSelect";
 import {
   AlertCircle,
@@ -89,7 +103,9 @@ export function SessionCommitDialog({
   const selectedModelRef = selectedModel
     ? formatModelReference(selectedModel.providerId, selectedModel.modelId)
     : null;
+  const detached = !branch || branch === "HEAD";
   const [message, setMessage] = useState("");
+  const [branchName, setBranchName] = useState("");
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [submitting, setSubmitting] = useState<"commit" | "push" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +122,7 @@ export function SessionCommitDialog({
     generation.current += 1;
     locked.current = false;
     setMessage("");
+    setBranchName("");
     setIncludeUntracked(true);
     setGenerating(false);
     setError(null);
@@ -194,6 +211,10 @@ export function SessionCommitDialog({
       setError(t("workspaceCommitMessageRequired"));
       return;
     }
+    if (detached && (!branchName.trim() || branchName !== branchName.trim())) {
+      setError(t("workspaceCommitBranchRequired"));
+      return;
+    }
     locked.current = true;
     const request = generation.current;
     setSubmitting(push ? "push" : "commit");
@@ -205,6 +226,7 @@ export function SessionCommitDialog({
         {
           ...(rootId ? { rootId } : {}),
           message: trimmed,
+          ...(detached ? { branchName } : {}),
           ...(push ? {} : { push: false }),
           ...(includeUntracked ? {} : { includeUntracked: false }),
         },
@@ -237,21 +259,23 @@ export function SessionCommitDialog({
   };
 
   const busy = submitting !== null;
-  const upstream = result?.upstream ?? branch;
+  const upstream = result?.upstream ?? result?.branch ?? branch;
   const pushed = result?.pushed === true;
 
   return (
-    <Modal.Backdrop isOpen={isOpen} onOpenChange={handleOpenChange}>
-      <Modal.Container size="sm">
-        <Modal.Dialog className="sm:max-w-lg">
-          <Modal.CloseTrigger />
-          <Modal.Header>
-            <Modal.Icon className="bg-primary/10 text-primary">
+    <Dialog open={isOpen} onClose={() => handleOpenChange(false)}>
+      <DialogContainer size="sm">
+        <DialogPanel className="sm:max-w-lg">
+          <DialogCloseButton />
+          <DialogHeader>
+            <DialogIcon className="bg-primary/10 text-primary">
               <GitCommit size={18} />
-            </Modal.Icon>
-            <Modal.Heading>{t("workspaceCommitTitle")}</Modal.Heading>
-          </Modal.Header>
-          <Modal.Body className="space-y-4">
+            </DialogIcon>
+            <DialogTitle>
+              {detached ? t("workspaceCommitDetachedTitle") : t("workspaceCommitTitle")}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
             {rootName && (
               <p className="text-xs font-medium" title={rootName}>
                 {rootName}
@@ -301,9 +325,9 @@ export function SessionCommitDialog({
                     <GitBranch size={11} className="shrink-0 text-primary" />
                     <span
                       className="truncate font-mono text-foreground/85"
-                      title={branch}
+                      title={detached ? t("workspaceCommitNoBranch") : branch}
                     >
-                      {branch}
+                      {detached ? t("workspaceCommitNoBranch") : branch}
                     </span>
                   </span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -315,20 +339,40 @@ export function SessionCommitDialog({
                   </span>
                 </div>
 
+                {detached && (
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="session-commit-branch"
+                      className="text-xs font-medium text-foreground/85"
+                    >
+                      {t("workspaceCommitBranchLabel")}
+                    </label>
+                    <Input
+                      id="session-commit-branch"
+                      aria-label={t("workspaceCommitBranchLabel")}
+                      value={branchName}
+                      onChange={(event) => {
+                        setBranchName(event.target.value);
+                        setError(null);
+                      }}
+                      placeholder={t("workspaceCommitBranchPlaceholder")}
+                      maxLength={1024}
+                      disabled={busy}
+                    />
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      {t("workspaceCommitBranchHint")}
+                    </p>
+                  </div>
+                )}
+
                 {/* Untracked files only join the commit when explicitly chosen. */}
                 <label className="flex cursor-pointer items-center gap-2 px-1 text-[11px] text-muted-foreground">
                   <Checkbox
-                    isSelected={includeUntracked}
+                    checked={includeUntracked}
                     onChange={setIncludeUntracked}
-                    isDisabled={busy}
+                    disabled={busy}
                     aria-label={t("workspaceCommitIncludeUntracked")}
-                  >
-                    <Checkbox.Content>
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                    </Checkbox.Content>
-                  </Checkbox>
+                  />
                   <span>{t("workspaceCommitIncludeUntracked")}</span>
                 </label>
 
@@ -372,43 +416,42 @@ export function SessionCommitDialog({
                       onChange={(event) => setMessage(event.target.value)}
                       placeholder={t("workspaceCommitMessagePlaceholder")}
                       rows={4}
-                      fullWidth
                       disabled={generating || busy}
                       className="pr-12 text-xs"
                     />
                     <div className="absolute right-2 top-2">
                       {generating ? (
-                        <Tooltip delay={300}>
+                        <Tooltip
+                          delay={300}
+                          content={<>{t("workspaceCommitStopGenerating")}</>}
+                        >
                           <Button
-                            isIconOnly
+                            iconOnly
                             variant="ghost"
                             size="sm"
-                            onPress={cancelGeneration}
+                            onClick={cancelGeneration}
                             aria-label={t("workspaceCommitStopGenerating")}
                           >
                             <X size={14} />
                           </Button>
-                          <Tooltip.Content>
-                            {t("workspaceCommitStopGenerating")}
-                          </Tooltip.Content>
                         </Tooltip>
                       ) : (
-                        <Tooltip delay={300}>
+                        <Tooltip
+                          delay={300}
+                          content={<>{t("workspaceCommitGenerate")}</>}
+                        >
                           <Button
-                            isIconOnly
+                            iconOnly
                             variant="ghost"
                             size="sm"
-                            onPress={() => void generate()}
-                            isDisabled={
+                            onClick={() => void generate()}
+                            disabled={
                               !selectedModelRef || changedFiles === 0 || busy
                             }
                             aria-label={t("workspaceCommitGenerate")}
                           >
                             <Sparkles size={14} />
                           </Button>
-                          <Tooltip.Content>
-                            {t("workspaceCommitGenerate")}
-                          </Tooltip.Content>
                         </Tooltip>
                       )}
                     </div>
@@ -419,7 +462,7 @@ export function SessionCommitDialog({
                 </div>
 
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  {t("workspaceCommitActionHint")}
+                  {t(detached ? "workspaceCommitDetachedActionHint" : "workspaceCommitActionHint")}
                 </p>
 
                 {error ? (
@@ -433,13 +476,13 @@ export function SessionCommitDialog({
                 ) : null}
               </>
             )}
-          </Modal.Body>
-          <Modal.Footer className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+          </DialogBody>
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
             {result ? (
               <Button
                 variant="primary"
                 size="sm"
-                onPress={onClose}
+                onClick={onClose}
                 className="sm:ml-auto"
               >
                 {t("workspaceCommitDone")}
@@ -449,8 +492,8 @@ export function SessionCommitDialog({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onPress={onClose}
-                  isDisabled={busy}
+                  onClick={onClose}
+                  disabled={busy}
                   className="sm:mr-auto"
                 >
                   {t("workspaceCommitCancel")}
@@ -459,9 +502,9 @@ export function SessionCommitDialog({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onPress={() => void run(false)}
-                    isPending={submitting === "commit"}
-                    isDisabled={
+                    onClick={() => void run(false)}
+                    pending={submitting === "commit"}
+                    disabled={
                       !sessionId ||
                       changedFiles === 0 ||
                       submitting === "push" ||
@@ -473,9 +516,9 @@ export function SessionCommitDialog({
                   <Button
                     variant="primary"
                     size="sm"
-                    onPress={() => void run(true)}
-                    isPending={submitting === "push"}
-                    isDisabled={
+                    onClick={() => void run(true)}
+                    pending={submitting === "push"}
+                    disabled={
                       !sessionId ||
                       changedFiles === 0 ||
                       submitting === "commit" ||
@@ -487,9 +530,9 @@ export function SessionCommitDialog({
                 </div>
               </>
             )}
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   );
 }

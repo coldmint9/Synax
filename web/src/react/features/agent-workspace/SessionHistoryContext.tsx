@@ -10,8 +10,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Button, Modal, Spinner } from "@heroui/react";
-import { GitFork, RotateCcw, AlertTriangle } from "lucide-react";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
+import { RotateCcw, AlertTriangle } from "lucide-react";
 import {
   conversationHistoryApi,
   type HistoryAction,
@@ -26,6 +28,7 @@ import type {
 } from "../../../lib/api/agentRuntime";
 import { isRuntimeResourceGone } from "../../../lib/runtimeResourceRegistry";
 import { useLocale } from "../../../hooks/useLocale";
+import { useNotificationStore } from "../../state/notificationStore";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 
 interface ContextValue {
@@ -42,6 +45,7 @@ interface ContextValue {
     action: HistoryAction,
     checkpoint: MessageCheckpoint,
     message?: string,
+    workspaceMode?: ForkWorkspaceMode,
   ) => Promise<boolean>;
 }
 const HistoryContext = createContext<ContextValue | null>(null);
@@ -81,7 +85,7 @@ export function SessionHistoryProvider({
   const sessionId = session?.id;
   useConversationHistoryVisit(sessionId);
   const [includeFiles, setIncludeFiles] = useState(true);
-  const [forkMode, setForkMode] = useState<ForkWorkspaceMode>();
+  const forkInFlight = useRef(false);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       // A removed or archived session owns no checkpoints; skip the doomed
@@ -145,8 +149,10 @@ export function SessionHistoryProvider({
       action: HistoryAction,
       checkpoint: MessageCheckpoint,
       message?: string,
+      workspaceMode?: ForkWorkspaceMode,
     ): Promise<boolean> => {
-      if (!sessionId || executing || resolver.current) return false;
+      if (!sessionId || executing || resolver.current || forkInFlight.current) return false;
+      if (action === "fork" && !workspaceMode) return false;
       if (
         action !== "fork" &&
         session?.sessionMetadata?.historyRollbackEnabled === false
@@ -161,7 +167,44 @@ export function SessionHistoryProvider({
       const epoch = ++requestEpoch.current;
       const requestId = crypto.randomUUID();
       setIncludeFiles(action !== "fork");
-      setForkMode(undefined);
+      if (action === "fork") {
+        forkInFlight.current = true;
+        setExecuting(true);
+        setError(null);
+        try {
+          // Mode selection is the confirmation. Keep server validation, but no
+          // intermediate dialog and never cancel the source conversation.
+          const checked = await conversationHistoryApi.preview(
+            sessionId, checkpoint.id, "fork", false, workspaceMode,
+          );
+          if (epoch !== requestEpoch.current) return false;
+          if (!checked.canApply) {
+            throw new Error(checked.conflicts[0]?.reason || (zh ? "当前无法分叉，请重试" : "Unable to fork. Please retry."));
+          }
+          const result = await conversationHistoryApi.apply(sessionId, "fork", {
+            checkpointId: checkpoint.id, revision: checked.revision, requestId,
+            includeFiles: false, workspaceMode,
+          });
+          if (epoch !== requestEpoch.current) return false;
+          const store = useAgentSessionStore.getState();
+          await store.refreshSessions();
+          if (epoch !== requestEpoch.current) return false;
+          store.openPanel(result.sessionId);
+          void refresh();
+          return true;
+        } catch (e) {
+          if (epoch === requestEpoch.current) {
+            const message = (e as Error).message;
+            setError(message);
+            // Only actual failures are reported outside the two-option pop.
+            useNotificationStore.getState().push({ type: "error", message });
+          }
+          return false;
+        } finally {
+          forkInFlight.current = false;
+          if (epoch === requestEpoch.current) setExecuting(false);
+        }
+      }
       setPending({
         action,
         checkpoint,
@@ -242,7 +285,6 @@ export function SessionHistoryProvider({
       const result = new Promise<boolean>((resolve) => {
         resolver.current = resolve;
       });
-      if (action === "fork") return result;
       void (async () => {
         try {
           setExecuting(true);
@@ -279,35 +321,18 @@ export function SessionHistoryProvider({
         if (epoch === requestEpoch.current) setError((error as Error).message);
       });
   };
-  const chooseForkMode = (mode: ForkWorkspaceMode) => {
-    if (!pending || pending.action !== "fork" || executing) return;
-    setForkMode(mode);
-    setPreview(null);
-    setError(null);
-    setPending({ ...pending, requestId: crypto.randomUUID() });
-    const epoch = ++requestEpoch.current;
-    void conversationHistoryApi
-      .preview(pending.sessionId, pending.checkpoint.id, "fork", false, mode)
-      .then((value) => {
-        if (epoch === requestEpoch.current) setPreview(value);
-      })
-      .catch((error) => {
-        if (epoch === requestEpoch.current) setError((error as Error).message);
-      });
-  };
   const confirm = async () => {
     if (
       !pending ||
       !preview ||
       executing ||
-      !preview.canApply ||
-      (pending.action === "fork" && !forkMode)
+      !preview.canApply
     )
       return;
     setExecuting(true);
     setError(null);
     try {
-      const result = await conversationHistoryApi.apply(
+      await conversationHistoryApi.apply(
         pending.sessionId,
         pending.action,
         {
@@ -315,18 +340,12 @@ export function SessionHistoryProvider({
           revision: preview.revision,
           requestId: pending.requestId,
           message: pending.message,
-          includeFiles: pending.action === "fork" ? false : includeFiles,
-          ...(pending.action === "fork" ? { workspaceMode: forkMode } : {}),
+          includeFiles,
         },
       );
       const store = useAgentSessionStore.getState();
-      if (pending.action === "fork") {
-        await store.refreshSessions();
-        store.openPanel(result.sessionId);
-      } else {
-        store.resetConversationHistory(pending.sessionId);
-        await Promise.all([store.refreshSessions(), store.refreshDetail()]);
-      }
+      store.resetConversationHistory(pending.sessionId);
+      await Promise.all([store.refreshSessions(), store.refreshDetail()]);
       close(true);
       void refresh();
     } catch (e) {
@@ -352,7 +371,7 @@ export function SessionHistoryProvider({
           : loadError ||
             (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
       running: Boolean(session && ACTIVE_STATUSES.has(session.status)),
-      busy: Boolean(pending),
+      busy: Boolean(pending) || executing,
       error,
       request,
       checkpoint: (messageId, stepId) => {
@@ -403,23 +422,12 @@ export function SessionHistoryProvider({
       pending,
       error,
       request,
+      executing,
       zh,
       messages,
     ],
   );
-  const fork = pending?.action === "fork",
-    edit = pending?.action === "edit";
-  const title = fork
-    ? zh
-      ? "从此处创建分支会话"
-      : "Fork conversation here"
-    : edit
-      ? zh
-        ? "编辑并重新发送"
-        : "Edit and resend"
-      : zh
-        ? "回滚到此处"
-        : "Roll back to here";
+  const title = zh ? "回滚到此处" : "Roll back to here";
   return (
     <HistoryContext.Provider value={value}>
       {summary?.recoveryRequired && (
@@ -435,8 +443,8 @@ export function SessionHistoryProvider({
           <Button
             size="sm"
             variant="secondary"
-            isPending={executing}
-            onPress={() => {
+            pending={executing}
+            onClick={() => {
               if (!sessionId) return;
               setExecuting(true);
               void conversationHistoryApi
@@ -465,105 +473,34 @@ export function SessionHistoryProvider({
         </p>
       )}
       {children}
-      <Modal.Backdrop
-        isOpen={Boolean(pending && pending.action !== "edit")}
-        onOpenChange={(open) => {
-          if (!open && !executing) close();
-        }}
-        isDismissable={!executing}
+      <Dialog
+        open={pending?.action === "rollback"}
+        onClose={() => { if (!executing) close(); }}
+        dismissible={!executing}
       >
-        <Modal.Container size="md">
-          <Modal.Dialog>
-            <Modal.Header>
-              <Modal.Icon>
-                {fork ? <GitFork size={19} /> : <RotateCcw size={19} />}
-              </Modal.Icon>
-              <Modal.Heading>{title}</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body className="flex flex-col gap-3 text-sm">
+        <DialogContainer size="md">
+          <DialogPanel>
+            <DialogHeader>
+              <DialogIcon>
+                <RotateCcw size={19} />
+              </DialogIcon>
+              <DialogTitle>{title}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="flex flex-col gap-3 text-sm">
               <p>
-                {fork
-                  ? zh
-                    ? "复制到选中回复为止的会话历史，不会停止源会话。请选择工作树方式；新会话不支持回滚或编辑旧消息。"
-                    : "Copy the conversation through this reply without stopping the source. Choose a worktree mode; the new conversation is append-only."
-                  : zh
-                    ? "后续消息将被裁剪。文件撤销仅针对本会话明确记录、尚未提交且未过期的变更；其他文件不会改动。"
-                    : "Later conversation records will be trimmed. File undo only affects this session’s recorded, uncommitted, unexpired changes; unrelated files are preserved."}
+                {zh
+                  ? "后续消息将被裁剪。文件撤销仅针对本会话明确记录、尚未提交且未过期的变更；其他文件不会改动。"
+                  : "Later conversation records will be trimmed. File undo only affects this session’s recorded, uncommitted, unexpired changes; unrelated files are preserved."}
               </p>
-              {fork ? (
-                <fieldset className="flex flex-col gap-3" disabled={executing}>
-                  <legend className="mb-2 font-medium">
-                    {zh ? "工作树方式（必选）" : "Worktree mode (required)"}
-                  </legend>
-                  <label className="flex items-start gap-2">
-                    <input
-                      type="radio"
-                      name="fork-workspace-mode"
-                      value="new_worktree"
-                      checked={forkMode === "new_worktree"}
-                      onChange={() => chooseForkMode("new_worktree")}
-                    />
-                    <span>
-                      <strong>
-                        {zh ? "新建工作树" : "Create a new worktree"}
-                      </strong>
-                      <br />
-                      <span className="text-xs text-muted-foreground">
-                        {zh
-                          ? "从当前 Git 提交建立独立工作目录；不复制未提交修改、忽略文件或依赖环境。"
-                          : "Independent directory at the current Git commit; uncommitted changes, ignored files and dependencies are not copied."}
-                      </span>
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2">
-                    <input
-                      type="radio"
-                      name="fork-workspace-mode"
-                      value="reuse_worktree"
-                      checked={forkMode === "reuse_worktree"}
-                      onChange={() => chooseForkMode("reuse_worktree")}
-                    />
-                    <span>
-                      <strong>
-                        {zh ? "维持原工作树" : "Keep the existing worktree"}
-                      </strong>
-                      <br />
-                      <span className="text-xs text-warning">
-                        {zh
-                          ? "仅复制会话，不复制目录。两份会话会修改同一份文件。"
-                          : "Copy the conversation only. Both conversations can change the same files."}
-                      </span>
-                    </span>
-                  </label>
-                </fieldset>
-              ) : (
-                <>
-                  <label className="flex items-start gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={includeFiles}
-                      disabled={executing}
-                      onChange={(event) =>
-                        changeFilePolicy(event.target.checked)
-                      }
-                      className="mt-1 accent-[var(--accent)]"
-                    />
-                    <span>
-                      {zh
-                        ? "同时撤销本会话记录的未提交文件变更"
-                        : "Also undo this session’s recorded uncommitted file changes"}
-                    </span>
-                  </label>
-                  {!includeFiles && (
-                    <p className="text-xs text-muted-foreground">
-                      {zh
-                        ? "仅裁剪会话历史，已有工作目录中的文件保持不变。"
-                        : "Trim conversation only; files in the existing workspace remain unchanged."}
-                    </p>
-                  )}
-                </>
-              )}
-              {!preview && !error && (!fork || forkMode) && (
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={includeFiles} disabled={executing}
+                  onChange={(event) => changeFilePolicy(event.target.checked)} className="mt-1 accent-[var(--accent)]" />
+                <span>{zh ? "同时撤销本会话记录的未提交文件变更" : "Also undo this session’s recorded uncommitted file changes"}</span>
+              </label>
+              {!includeFiles && <p className="text-xs text-muted-foreground">
+                {zh ? "仅裁剪会话历史，已有工作目录中的文件保持不变。" : "Trim conversation only; files in the existing workspace remain unchanged."}
+              </p>}
+              {!preview && !error && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Spinner size="sm" />
                   {zh ? "正在检查消息和文件…" : "Checking messages and files…"}
@@ -572,13 +509,9 @@ export function SessionHistoryProvider({
               {preview && (
                 <>
                   <p className="text-muted-foreground">
-                    {fork
-                      ? zh
-                        ? `${forkMode === "new_worktree" ? "新建工作树" : "维持原工作树"} · 新会话不支持回滚`
-                        : `${forkMode === "new_worktree" ? "New worktree" : "Existing worktree"} · append-only conversation`
-                      : zh
-                        ? `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
-                        : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
+                    {zh
+                      ? `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
+                      : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
                   </p>
                   {preview.files.length > 0 && (
                     <ul className="message-history-files">
@@ -658,15 +591,9 @@ export function SessionHistoryProvider({
                     </div>
                   )}
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {!fork &&
-                      (zh
-                        ? "24 小时未主动访问会话后，文件撤销记录自动清理，聊天历史保留。Git 已提交的变更、外部数据库与网络操作不会被撤销。"
-                        : "File undo expires after 24 hours without an active visit; conversation history remains. Git commits, external databases and network effects are preserved.")}
-                    {fork &&
-                      forkMode === "new_worktree" &&
-                      (zh
-                        ? " 新工作目录可能需要重新准备环境。"
-                        : " The new workspace may need environment setup.")}
+                    {zh
+                      ? "24 小时未主动访问会话后，文件撤销记录自动清理，聊天历史保留。Git 已提交的变更、外部数据库与网络操作不会被撤销。"
+                      : "File undo expires after 24 hours without an active visit; conversation history remains. Git commits, external databases and network effects are preserved."}
                   </p>
                 </>
               )}
@@ -675,31 +602,31 @@ export function SessionHistoryProvider({
                   {error}
                 </p>
               )}
-            </Modal.Body>
-            <Modal.Footer>
+            </DialogBody>
+            <DialogFooter>
               <Button
                 size="sm"
                 variant="ghost"
-                onPress={() => close()}
-                isDisabled={executing}
+                onClick={() => close()}
+                disabled={executing}
               >
                 {zh ? "取消" : "Cancel"}
               </Button>
               <Button
                 size="sm"
-                variant={fork ? "primary" : "danger"}
-                isPending={executing}
-                isDisabled={
-                  !preview?.canApply || executing || (fork && !forkMode)
+                variant="danger"
+                pending={executing}
+                disabled={
+                  !preview?.canApply || executing
                 }
-                onPress={() => void confirm()}
+                onClick={() => void confirm()}
               >
                 {title}
               </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </Dialog>
     </HistoryContext.Provider>
   );
 }

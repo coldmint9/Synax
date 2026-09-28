@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { Input, Label, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { Loader2, Plus, RefreshCw, Unlink, X, Layers2 } from "lucide-react";
 import { projectApi, type ProjectWorkspace } from "../../../../lib/api/project";
 import { WorkspaceProjectSources } from "../../workspace/WorkspaceProjectSources";
@@ -215,10 +217,10 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
           <Button
             size="sm"
             variant="ghost"
-            isIconOnly
+            iconOnly
             aria-label={c.refresh}
-            isDisabled={disabled}
-            onPress={() => void reload()}
+            disabled={disabled}
+            onClick={() => void reload()}
           >
             <RefreshCw
               size={13}
@@ -229,8 +231,8 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
             ref={addTrigger}
             size="sm"
             variant="secondary"
-            isDisabled={disabled || !workspace}
-            onPress={() => {
+            disabled={disabled || !workspace}
+            onClick={() => {
               setAdding(true);
               setError(null);
               setNotice(null);
@@ -296,21 +298,25 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                     {t(root.status)}
                   </span>
                   {root.role === "reference" && (
-                    <Tooltip delay={300}>
+                    <Tooltip
+                      delay={300}
+                      content={
+                        <>
+                          {c.remove} · {c.unlinkHint}
+                        </>
+                      }
+                    >
                       <Button
                         size="sm"
                         variant="ghost"
-                        isIconOnly
-                        isDisabled={disabled}
-                        isPending={busy === `remove:${root.id}`}
+                        iconOnly
+                        disabled={disabled}
+                        pending={busy === `remove:${root.id}`}
                         aria-label={`${c.remove}: ${root.name} (${root.path})`}
-                        onPress={() => remove(root.id)}
+                        onClick={() => remove(root.id)}
                       >
                         <Unlink size={14} />
                       </Button>
-                      <Tooltip.Content>
-                        {c.remove} · {c.unlinkHint}
-                      </Tooltip.Content>
                     </Tooltip>
                   )}
                 </WorkspaceProjectRow>
@@ -337,10 +343,10 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    isIconOnly
+                    iconOnly
                     aria-label={c.close}
-                    isDisabled={disabled}
-                    onPress={() => setAdding(false)}
+                    disabled={disabled}
+                    onClick={() => setAdding(false)}
                   >
                     <X size={15} />
                   </Button>
@@ -361,29 +367,29 @@ function ProjectReferencesContent({ projectId }: { projectId: string }) {
                   selectedId={selectedProject}
                 />
                 {mode === "local" && (
-                  <TextField
-                    value={name}
-                    onChange={setName}
-                    isDisabled={disabled}
-                  >
+                  <Field disabled={disabled}>
                     <Label>{c.projectName}</Label>
-                    <Input maxLength={120} />
-                  </TextField>
+                    <Input
+                      maxLength={120}
+                      value={name}
+                      onChange={(event) => setName(event.currentTarget.value)}
+                    />
+                  </Field>
                 )}
                 <div className="workspace-add-footer">
                   <Button
                     size="sm"
                     variant="ghost"
-                    isDisabled={disabled}
-                    onPress={() => setAdding(false)}
+                    disabled={disabled}
+                    onClick={() => setAdding(false)}
                   >
                     {c.cancel}
                   </Button>
                   <Button
                     size="sm"
-                    isDisabled={disabled || !canAdd}
-                    isPending={busy === "add"}
-                    onPress={add}
+                    disabled={disabled || !canAdd}
+                    pending={busy === "add"}
+                    onClick={add}
                   >
                     <Plus size={13} />
                     {c.confirmAdd}

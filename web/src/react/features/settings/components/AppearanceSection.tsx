@@ -1,20 +1,4 @@
-import { useState } from "react";
-import {
-  Button,
-  ColorArea,
-  ColorField,
-  InputGroup,
-  ColorPicker,
-  ColorSlider,
-  ColorSwatch,
-  ColorSwatchPicker,
-  Label,
-  Radio,
-  RadioGroup,
-  Tooltip,
-  parseColor,
-  type ColorValue,
-} from "@heroui/react";
+import { Description, Label, Radio, RadioGroup } from "@headlessui/react";
 import {
   ArrowUp,
   Check,
@@ -22,17 +6,13 @@ import {
   Moon,
   Palette,
   RotateCcw,
-  SlidersHorizontal,
   Sparkles,
   Sun,
 } from "lucide-react";
-import {
-  ACCENT_PRESETS,
-  DEFAULT_ACCENT,
-  type ThemeMode,
-} from "../../../../lib/appearance";
+import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../../lib/appearance";
 import { useLocale } from "../../../../hooks/useLocale";
 import { useShellStore } from "../../../state/shellStore";
+import { AccentColorPicker } from "./AccentColorPicker";
 import { SettingsCard } from "./SettingsCard";
 import "./appearance.css";
 
@@ -44,19 +24,6 @@ export function AppearanceSection() {
   const accent = useShellStore((s) => s.preferences.accentColor);
   const setTheme = useShellStore((s) => s.setTheme);
   const setAccent = useShellStore((s) => s.setAccentColor);
-  // Keep the Color object while dragging: HEX alone loses hue at white/black.
-  const [pickerColor, setPickerColor] = useState<ColorValue>(() =>
-    parseColor(accent).toFormat("hsb"),
-  );
-  const value =
-    pickerColor.toString("hex").toLowerCase() === accent
-      ? pickerColor
-      : parseColor(accent).toFormat("hsb");
-  const changeColor = (color: ColorValue | null) => {
-    if (!color) return;
-    setPickerColor(color.toFormat("hsb"));
-    setAccent(color.toString("hex"));
-  };
   const preset = ACCENT_PRESETS.find((item) => item.color === accent);
   const colorName = preset ? preset[locale] : zh ? "自定义" : "Custom";
   const modes = [
@@ -73,12 +40,12 @@ export function AppearanceSection() {
         zh ? "即时生效，自动保存" : "Applied instantly · saved automatically"
       }
     >
-      <div className="appearance-modes">
+      <RadioGroup value={mode} onChange={setTheme} className="appearance-modes">
         <div className="appearance-heading">
-          <span className="appearance-label">
+          <Label className="appearance-label">
             {zh ? "明暗模式" : "Color mode"}
-          </span>
-          <span className="appearance-hint" aria-live="polite">
+          </Label>
+          <Description as="span" className="appearance-hint" aria-live="polite">
             {mode === "system"
               ? zh
                 ? `当前随系统使用${resolved === "dark" ? "深色" : "浅色"}`
@@ -86,25 +53,19 @@ export function AppearanceSection() {
               : zh
                 ? "选择适合你的工作氛围"
                 : "Set the tone for your workspace"}
-          </span>
+          </Description>
         </div>
-        <RadioGroup
-          aria-label={zh ? "明暗模式" : "Color mode"}
-          orientation="horizontal"
-          className="appearance-mode-group"
-          value={mode}
-          onChange={(next) => setTheme(next as ThemeMode)}
-        >
+        <div className="appearance-mode-group">
           {modes.map(({ id, label, Icon }) => (
             <Radio
+              as="button"
+              type="button"
               key={id}
               value={id}
-              aria-label={label}
               className="appearance-mode"
             >
-              <Radio.Content>
-                <span
-                  className={`appearance-mini appearance-mini--${id}`}
+              <span
+                className={`appearance-mini appearance-mini--${id}`}
                 aria-hidden="true"
               >
                 <span className="appearance-mini__sidebar">
@@ -122,18 +83,16 @@ export function AppearanceSection() {
                 </span>
               </span>
               <span className="appearance-mode__caption">
-                <Icon size={14} />
+                <Icon size={14} aria-hidden="true" />
                 <span>{label}</span>
-                <span className="appearance-mode__check">
+                <span className="appearance-mode__check" aria-hidden="true">
                   <Check size={11} />
                 </span>
               </span>
-              </Radio.Content>
             </Radio>
           ))}
-        </RadioGroup>
-      </div>
-
+        </div>
+      </RadioGroup>
       <div className="appearance-colors">
         <div className="appearance-palette">
           <div className="appearance-heading">
@@ -149,96 +108,44 @@ export function AppearanceSection() {
               ? "一点色彩，让专注更有自己的样子。"
               : "A little color. A workspace that feels like you."}
           </p>
-          <ColorSwatchPicker
+          <RadioGroup
+            value={accent}
+            onChange={setAccent}
             aria-label={zh ? "预设主题色" : "Accent presets"}
             className="appearance-swatches"
-            value={accent}
-            onChange={changeColor}
           >
             {ACCENT_PRESETS.map((item) => (
-              <ColorSwatchPicker.Item
+              <Radio
+                as="button"
+                type="button"
                 key={item.color}
-                color={item.color}
+                value={item.color}
                 aria-label={item[locale]}
+                className="appearance-swatch"
+                style={{ backgroundColor: item.color }}
               >
-                <ColorSwatchPicker.Swatch />
-                <ColorSwatchPicker.Indicator>
-                  <Check />
-                </ColorSwatchPicker.Indicator>
-              </ColorSwatchPicker.Item>
+                {({ checked }) => (
+                  <>{checked && <Check size={15} aria-hidden="true" />}</>
+                )}
+              </Radio>
             ))}
-          </ColorSwatchPicker>
+          </RadioGroup>
           <div className="appearance-custom-row">
-            <ColorPicker value={value} onChange={changeColor}>
-              <ColorPicker.Trigger
-                className="appearance-custom"
-                aria-label={zh ? "自定义主题色" : "Custom accent color"}
-              >
-                <SlidersHorizontal size={14} />
-                <span>{zh ? "调色盘" : "Custom color"}</span>
-                <span className="appearance-hex">{accent.toUpperCase()}</span>
-              </ColorPicker.Trigger>
-              <ColorPicker.Popover
-                className="appearance-color-popover"
-                placement="bottom start"
-                aria-label={zh ? "自定义主题色" : "Custom accent color"}
-              >
-                <div className="appearance-heading">
-                  <span className="appearance-label">
-                    {zh ? "自定义主题色" : "Custom accent color"}
-                  </span>
-                  <ColorSwatch color={value} size="sm" />
-                </div>
-                <ColorArea
-                  aria-label={zh ? "饱和度与亮度" : "Saturation and brightness"}
-                  colorSpace="hsb"
-                  xChannel="saturation"
-                  yChannel="brightness"
-                  className="appearance-color-area"
-                >
-                  <ColorArea.Thumb />
-                </ColorArea>
-                <ColorSlider
-                  channel="hue"
-                  colorSpace="hsb"
-                  aria-label={zh ? "色相" : "Hue"}
-                >
-                  <ColorSlider.Track>
-                    <ColorSlider.Thumb />
-                  </ColorSlider.Track>
-                </ColorSlider>
-                <ColorField>
-                  <Label>{zh ? "HEX 色值" : "HEX color"}</Label>
-                  <InputGroup>
-                    <InputGroup.Input
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                      }}
-                    />
-                  </InputGroup>
-                </ColorField>
-                <p className="appearance-hint">
-                  {zh
-                    ? "拖动选色，或输入 HEX 色值。"
-                    : "Drag to explore, or enter a HEX color."}
-                </p>
-              </ColorPicker.Popover>
-            </ColorPicker>
-            <Tooltip delay={300}>
-              <Button
-                variant="ghost"
-                size="sm"
-                isIconOnly
-                isDisabled={accent === DEFAULT_ACCENT}
-                aria-label={zh ? "恢复默认主题色" : "Reset accent color"}
-                onPress={() => setAccent(DEFAULT_ACCENT)}
-              >
-                <RotateCcw size={14} />
-              </Button>
-              <Tooltip.Content>
-                {zh ? "恢复默认主题色" : "Reset accent color"}
-              </Tooltip.Content>
-            </Tooltip>
+            <AccentColorPicker
+              value={accent}
+              onChange={setAccent}
+              locale={locale}
+            />
+            <button
+              type="button"
+              className="appearance-icon-button"
+              disabled={accent === DEFAULT_ACCENT}
+              aria-label={zh ? "恢复默认主题色" : "Reset accent color"}
+              title={zh ? "恢复默认主题色" : "Reset accent color"}
+              onClick={() => setAccent(DEFAULT_ACCENT)}
+            >
+              <RotateCcw size={14} aria-hidden="true" />
+            </button>
           </div>
         </div>
         <div className="appearance-preview" aria-hidden="true">

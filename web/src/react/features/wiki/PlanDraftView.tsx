@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Zap, X, Loader2 } from 'lucide-react'
-import { Button, Modal } from '@heroui/react'
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import { type WikiPlanNode } from '../../../lib/api/goal'
@@ -51,11 +52,11 @@ export default function PlanDraftView({ projectId }: Props) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onPress={handleDiscard}>
+          <Button variant="ghost" size="sm" onClick={handleDiscard}>
             <X size={12} />
             {t('planDraftDiscard')}
           </Button>
-          <Button variant="primary" size="sm" onPress={handleConfirm} isDisabled={confirming || nodes.length === 0}>
+          <Button variant="primary" size="sm" onClick={handleConfirm} disabled={confirming || nodes.length === 0}>
             {confirming ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
             {t('planDraftConfirm')}
           </Button>
@@ -109,13 +110,13 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
   }
 
   return (
-    <Modal.Backdrop isOpen onOpenChange={(open) => { if (!open) onClose() }}>
-      <Modal.Container size="md">
-        <Modal.Dialog>
-          <Modal.Header>
-            <Modal.Heading>{t('planEditNodeTitle')}</Modal.Heading>
-          </Modal.Header>
-          <Modal.Body>
+    <Dialog open onClose={onClose}>
+      <DialogContainer size="md">
+        <DialogPanel>
+          <DialogHeader>
+            <DialogTitle>{t('planEditNodeTitle')}</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
             <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground/70 mb-1 block">{t('planEditTitle')}</label>
@@ -143,16 +144,16 @@ function NodeEditModal({ node, projectId, onClose, onSave }: {
                 />
               </div>
             </div>
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="ghost" size="sm" onPress={onClose}>{t('commonCancel')}</Button>
-            <Button variant="primary" size="sm" onPress={handleSave} isDisabled={saving || !title.trim()}>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={onClose}>{t('commonCancel')}</Button>
+            <Button variant="primary" size="sm" onClick={handleSave} disabled={saving || !title.trim()}>
               {saving ? <Loader2 size={12} className="animate-spin" /> : null}
               {t('commonSave')}
             </Button>
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   )
 }

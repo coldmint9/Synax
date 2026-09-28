@@ -1,6 +1,7 @@
-import { render,fireEvent,screen,waitFor } from '@testing-library/react';
+import { act,render,fireEvent,screen,waitFor } from '@testing-library/react';
 import { beforeEach,afterEach,describe,expect,it,vi } from 'vitest';
 import { SessionHistoryProvider,useSessionHistory } from '../SessionHistoryContext';
+import { MessageActionToolbar } from '../MessageActionToolbar';
 import { UserMessageBlock } from '../UserMessageBlock';
 import { conversationHistoryApi } from '../../../../lib/api/conversationHistory';
 import { useShellStore } from '../../../state/shellStore';
@@ -11,7 +12,7 @@ vi.mock('../../../../lib/api/runtimeEventBus',()=>({subscribe:()=>()=>{}}));
 vi.mock('../../../../lib/api/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn()}}));
 const cp={id:'cp',kind:'reply' as const,messageId:'msg',stepId:null,available:true,reason:null,hasLaterHistory:true,initialInput:false};
 const session={id:'s',status:'completed',sessionMetadata:{backend:{id:'native'}}} as unknown as AgentSession;
-function Trigger({action='rollback'}: {action?: 'rollback' | 'edit' | 'fork'}){const history=useSessionHistory();return <button onClick={()=>void history?.request(action,cp,'Edited')}>Open</button>;}
+function Trigger({action='rollback'}: {action?: 'rollback' | 'edit' | 'fork'}){const history=useSessionHistory();return action==='fork' ? <MessageActionToolbar role="assistant" text="Reply" busy={history?.busy} onFork={mode=>void history?.request('fork',cp,undefined,mode)}/> : <button onClick={()=>void history?.request(action,cp,'Edited')}>Open</button>;}
 beforeEach(()=>{
  vi.clearAllMocks();useShellStore.setState(s=>({preferences:{...s.preferences,locale:'zh'}}));
  vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[cp]});
@@ -45,18 +46,51 @@ describe('history impact confirmation',()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);fireEvent.click(screen.getByRole('button',{name:'Open'}));
    expect(await screen.findByText(/expired.ts.*超过 24 小时未访问/)).toBeInTheDocument();expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
  });
- it.each([['reuse_worktree', '维持原工作树'], ['new_worktree', '新建工作树']] as const)('requires an explicit %s choice and submits a conversation-only fork', async (mode, label) => {
+ it.each([['reuse_worktree', '在原工作空间中'], ['new_worktree', '在新的工作树上']] as const)('executes %s directly from the two-option pop', async (mode, label) => {
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
-   fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   const confirm=await screen.findByRole('button',{name:'从此处创建分支会话'});
-   expect(confirm).toBeDisabled();
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   expect(await screen.findAllByRole('menuitem')).toHaveLength(2);
+   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+   expect(screen.queryByText('工作树方式（必选）')).not.toBeInTheDocument();
    expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
-   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-   fireEvent.click(screen.getByRole('radio',{name:new RegExp(label)}));
+   fireEvent.click(screen.getByRole('menuitem',{name:label}));
    await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','fork',false,mode));
-   await waitFor(()=>expect(confirm).not.toBeDisabled());
-   fireEvent.click(confirm);
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','fork',expect.objectContaining({workspaceMode:mode,includeFiles:false})));
+   expect(conversationHistoryApi.apply).toHaveBeenCalledOnce();
+   await waitFor(()=>expect(useAgentSessionStore.getState().openPanel).toHaveBeenCalledWith('s'));
+ });
+ it('rejects an invalid preview without applying and allows a retry', async () => {
+   vi.mocked(conversationHistoryApi.preview).mockResolvedValueOnce({checkpointId:'cp',revision:0,removedMessages:0,files:[],conflicts:[{root:'/project',path:'',reason:'Unavailable'}],exclusions:'',canApply:false});
+   render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在新的工作树上'}));
+   await waitFor(()=>expect(screen.getByRole('button',{name:'从此处分叉'})).not.toBeDisabled());
+   expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在原工作空间中'}));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledOnce());
+ });
+ it('ignores a stale preview after changing sessions', async () => {
+   let resolve!: (value: Awaited<ReturnType<typeof conversationHistoryApi.preview>>) => void;
+   vi.mocked(conversationHistoryApi.preview).mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+   const view=render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在新的工作树上'}));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledOnce());
+   view.rerender(<SessionHistoryProvider session={{...session,id:'other'}} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   await act(async()=>{resolve({checkpointId:'cp',revision:0,removedMessages:0,files:[],conflicts:[],exclusions:'',canApply:true});});
+   expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
+   expect(useAgentSessionStore.getState().openPanel).not.toHaveBeenCalled();
+ });
+ it('guards rapid duplicate mode submissions while the first preview is pending', async () => {
+   let resolve!: (value: Awaited<ReturnType<typeof conversationHistoryApi.preview>>) => void;
+   vi.mocked(conversationHistoryApi.preview).mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+   function DoubleTrigger(){const h=useSessionHistory();return <button onClick={()=>{void h?.request('fork',cp,undefined,'new_worktree');void h?.request('fork',cp,undefined,'reuse_worktree');}}>Double</button>;}
+   render(<SessionHistoryProvider session={session} messages={[]}><DoubleTrigger/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'Double'}));
+   expect(conversationHistoryApi.preview).toHaveBeenCalledOnce();
+   await act(async()=>{resolve({checkpointId:'cp',revision:0,removedMessages:0,files:[],conflicts:[],exclusions:'',canApply:true});});
+   expect(conversationHistoryApi.apply).toHaveBeenCalledOnce();
  });
  it('keeps a running session alive while editing and stops only on Send', async () => {
    const running={...session,status:'running' as const};
@@ -71,7 +105,8 @@ describe('history impact confirmation',()=>{
    });
    const stop=vi.spyOn(useAgentSessionStore.getState(),'cancelSessionRun').mockResolvedValue();
    render(<SessionHistoryProvider session={running} messages={[]}><UserMessageBlock messageId="msg" content="Original"/></SessionHistoryProvider>);
-   fireEvent.click(await screen.findByRole('button',{name:'编辑消息'}));
+   await waitFor(()=>expect(screen.getByRole('button',{name:'编辑消息'})).not.toHaveAttribute('aria-disabled','true'));
+   fireEvent.click(screen.getByRole('button',{name:'编辑消息'}));
    expect(stop).not.toHaveBeenCalled();
    fireEvent.change(screen.getByRole('textbox',{name:'编辑已发送消息'}),{target:{value:'Updated'}});
    fireEvent.click(screen.getByRole('button',{name:'发送'}));
@@ -123,12 +158,12 @@ describe('history impact confirmation',()=>{
      sessionId:'s',revision:0,reason:'Stop the session and its agents before changing history.',
      stopRequired:true,forkReason:null,checkpoints:[cp],
    });
-   function Availability(){const value=useSessionHistory();return <output>{JSON.stringify({reason:value?.reason,forkReason:value?.forkReason})}</output>;}
+   function Availability(){const value=useSessionHistory();return <output aria-label="availability">{JSON.stringify({reason:value?.reason,forkReason:value?.forkReason})}</output>;}
    render(<SessionHistoryProvider session={running} messages={[]}><Availability/><Trigger action="fork"/></SessionHistoryProvider>);
-   await waitFor(()=>expect(screen.getByRole('status')).toHaveTextContent('"forkReason":null'));
-   expect(screen.getByRole('status')).toHaveTextContent('"reason":null');
-   fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   fireEvent.click(await screen.findByRole('radio',{name:/维持原工作树/}));
+   await waitFor(()=>expect(screen.getByRole('status',{name:'availability'})).toHaveTextContent('"forkReason":null'));
+   expect(screen.getByRole('status',{name:'availability'})).toHaveTextContent('"reason":null');
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在原工作空间中'}));
    await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','fork',false,'reuse_worktree'));
    expect(useAgentSessionStore.getState().cancelSessionRun).not.toHaveBeenCalled();
  });

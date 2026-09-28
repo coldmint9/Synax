@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +17,7 @@ type RepositoryInput = string | WorkspaceLocation;
 
 export type GitWorkspaceSelection =
   | { kind: "default" }
+  | { kind: "new-worktree" }
   | { kind: "worktree"; path: string }
   | { kind: "branch"; branch: string };
 
@@ -553,6 +554,35 @@ export async function createGitWorktree(
   });
 }
 
+/** A new session gets its own clean worktree at the source checkout's HEAD. */
+export async function createDetachedGitWorktree(
+  repositoryPath: RepositoryInput,
+  projectId: string,
+): Promise<GitWorktreeSummary> {
+  const context = await assertRepository(repositoryPath);
+  return withRepositoryLock(context, async () => {
+    const destination = await managedWorktreePath(
+      context.location,
+      projectId,
+      `session-${randomUUID()}`,
+    );
+    await ensureParent(context.location, destination);
+    await git(context.location, context.root, [
+      "worktree", "add", "--detach", destination, "HEAD",
+    ]);
+    const canonicalDestination = await canonical(context.location, destination);
+    const summary = await listGitWorkspaces(context.location, projectId);
+    const created = summary.worktrees.find((item) =>
+      samePath(context.location, item.path, canonicalDestination),
+    );
+    if (!created)
+      throw new GitWorkspaceError(
+        "Git created the worktree but it could not be listed.", 500,
+      );
+    return created;
+  });
+}
+
 export async function removeGitWorktree(
   repositoryPath: RepositoryInput,
   projectId: string,
@@ -635,6 +665,15 @@ export async function resolveGitWorkspaceSelection(
       location: context.location,
     };
   }
+  if (selection.kind === "new-worktree") {
+    const created = await createDetachedGitWorktree(context.location, projectId);
+    return {
+      workDir: created.path,
+      branch: null,
+      kind: "new-worktree",
+      location: { ...context.location, path: created.path },
+    };
+  }
   if (selection.kind === "worktree") {
     const requested = await canonical(context.location, selection.path).catch(
       () => {
@@ -693,6 +732,98 @@ export async function resolveGitWorkspaceSelection(
   };
 }
 
+/** Count porcelain records, not lines: filenames may contain newlines or tabs. */
+export async function countGitCheckoutChanges(
+  repositoryPath: RepositoryInput,
+): Promise<number> {
+  const context = await assertRepository(repositoryPath);
+  const { stdout } = await git(context.location, context.root, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+  ]);
+  const records = stdout.split("\0").filter(Boolean);
+  let count = 0;
+  for (let index = 0; index < records.length; index++) {
+    const status = records[index].slice(0, 2);
+    if (status.includes("R") || status.includes("C")) index++; // original path
+    count++;
+  }
+  return count;
+}
+
+async function assertCheckoutSafe(context: RepositoryContext): Promise<void> {
+  if (await countGitCheckoutChanges(context.location))
+    throw new GitWorkspaceError(
+      "Commit or stash uncommitted changes before switching branches.",
+      409,
+    );
+  await assertNoGitOperation(context);
+}
+
+async function assertNoGitOperation(context: RepositoryContext): Promise<void> {
+  for (const marker of [
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "rebase-merge",
+    "rebase-apply",
+    "BISECT_LOG",
+    "sequencer",
+  ]) {
+    const location = (
+      await git(context.location, context.root, ["rev-parse", "--git-path", marker])
+    ).stdout.trim();
+    if (await pathExists(context.location, context.root, location))
+      throw new GitWorkspaceError(
+        "A Git operation is in progress. Finish it before switching branches.",
+        409,
+      );
+  }
+}
+
+/** Create a branch at this checkout's current HEAD without guessing a base branch. */
+export async function createAndSwitchGitBranch(
+  repositoryPath: RepositoryInput,
+  branch: string,
+  assertIdle: (root: string) => void = () => {},
+): Promise<string> {
+  const context = await assertRepository(repositoryPath);
+  return withRepositoryLock(context, async () => {
+    await assertBranchName(context, branch);
+    if (await branchExists(context, branch))
+      throw new GitWorkspaceError(`Branch "${branch}" already exists.`, 409);
+    await assertCheckoutSafe(context);
+    assertIdle(context.root);
+    await git(context.location, context.root, ["switch", "-c", branch]);
+    return (
+      await git(context.location, context.root, ["branch", "--show-current"])
+    ).stdout.trim();
+  });
+}
+
+/** Give a detached session worktree a name at its own HEAD; preserve all edits. */
+export async function attachDetachedGitBranch(
+  repositoryPath: RepositoryInput,
+  branch: string,
+): Promise<string> {
+  const context = await assertRepository(repositoryPath);
+  return withRepositoryLock(context, async () => {
+    await assertBranchName(context, branch);
+    const current = (
+      await git(context.location, context.root, ["branch", "--show-current"])
+    ).stdout.trim();
+    if (current)
+      throw new GitWorkspaceError("This worktree already has a branch.", 409);
+    if (await branchExists(context, branch))
+      throw new GitWorkspaceError(`Branch "${branch}" already exists.`, 409);
+    await assertNoGitOperation(context);
+    await git(context.location, context.root, ["switch", "-c", branch]);
+    return branch;
+  });
+}
+
 /** Change this worktree, never discard edits, auto-stash, or guess remote refs. */
 export async function switchGitBranch(
   repositoryPath: RepositoryInput,
@@ -708,38 +839,7 @@ export async function switchGitBranch(
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();
     if (current === branch) return current;
-    const status = await git(context.location, context.root, [
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-    ]);
-    if (status.stdout.trim())
-      throw new GitWorkspaceError(
-        "Commit or stash uncommitted changes before switching branches.",
-        409,
-      );
-    for (const marker of [
-      "MERGE_HEAD",
-      "CHERRY_PICK_HEAD",
-      "REVERT_HEAD",
-      "rebase-merge",
-      "rebase-apply",
-      "BISECT_LOG",
-      "sequencer",
-    ]) {
-      const location = (
-        await git(context.location, context.root, [
-          "rev-parse",
-          "--git-path",
-          marker,
-        ])
-      ).stdout.trim();
-      if (await pathExists(context.location, context.root, location))
-        throw new GitWorkspaceError(
-          "A Git operation is in progress. Finish it before switching branches.",
-          409,
-        );
-    }
+    await assertCheckoutSafe(context);
     const occupied = (await rawWorktrees(context)).find(
       (item) =>
         item.branch === branch &&

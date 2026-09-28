@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Button, Checkbox } from '@heroui/react'
+import { Button } from "@/react/components/ui/Button";
+import { Checkbox } from "@/react/components/ui/Toggle";
 import { Server, RefreshCw } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
@@ -145,10 +146,10 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
             size="sm"
             variant="secondary"
             className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm"
-            isPending={discovering}
-            onPress={() => void loadDiscovery(true)}
+            pending={discovering}
+            onClick={() => void loadDiscovery(true)}
           >
-            {({ isPending }) => (
+            {({ pending: isPending }) => (
               <>
                 {isPending ? null : <RefreshCw size={12} />}
                 {t('settingsAcpRefresh')}
@@ -173,12 +174,10 @@ export function AcpSection({ config, onUpdate }: AcpSectionProps) {
               className={`settings-item flex items-start gap-3 p-3 ${checked ? 'settings-item--active' : ''}`}
             >
               <Checkbox
-                isSelected={checked}
+                checked={checked}
                 onChange={(isChecked) => handleToggle(item.id, isChecked)}
                 aria-label={item.label}
-              >
-                <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control></Checkbox.Content>
-              </Checkbox>
+              />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-foreground">{item.label}</span>

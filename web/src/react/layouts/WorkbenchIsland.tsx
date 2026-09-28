@@ -1,3 +1,5 @@
+import { loadMotion, reducedMotion } from "../design/motion";
+import type { gsap } from "gsap";
 import {
   Component,
   createContext,
@@ -57,6 +59,11 @@ interface TransitionProps {
   children: ReactNode;
 }
 
+interface TransitionSnapshot {
+  bounds: DOMRect | null;
+  focused: HTMLElement | null;
+}
+
 /** Own one portal container so moving the controls never remounts their menus.
  * A pre-commit snapshot captures the expanded pill before its labels change.
  * Only the short move reads layout; no resize observer or animation loop runs
@@ -65,7 +72,8 @@ class IslandTransition extends Component<TransitionProps> {
   private mount = Object.assign(document.createElement("div"), {
     className: "workbench-island-mount",
   });
-  private animation: Animation | undefined;
+  private animation: gsap.core.Tween | undefined;
+  private animationEpoch = 0;
   private lastBounds: DOMRect | null = null;
 
   private pill() {
@@ -75,32 +83,63 @@ class IslandTransition extends Component<TransitionProps> {
   componentDidMount() {
     this.props.target?.appendChild(this.mount);
     this.lastBounds = this.pill()?.getBoundingClientRect() ?? null;
+    if (!reducedMotion()) void loadMotion().catch(() => {});
   }
 
-  getSnapshotBeforeUpdate(previous: TransitionProps): DOMRect | null {
+  getSnapshotBeforeUpdate(previous: TransitionProps): TransitionSnapshot | null {
     if (
       previous.target === this.props.target &&
       previous.compact === this.props.compact
     )
       return null;
     const bounds = this.pill()?.getBoundingClientRect();
-    return bounds?.width ? bounds : this.lastBounds;
+    const active = this.mount.ownerDocument.activeElement;
+    return {
+      bounds: bounds?.width ? bounds : this.lastBounds,
+      focused:
+        active instanceof HTMLElement && this.mount.contains(active)
+          ? active
+          : null,
+    };
   }
 
   componentDidUpdate(
     previous: TransitionProps,
     _state: unknown,
-    previousBounds: DOMRect | null,
+    snapshot: TransitionSnapshot | null,
   ) {
     if (
       previous.target === this.props.target &&
       previous.compact === this.props.compact
     )
       return;
-    this.animation?.cancel();
+    this.animationEpoch++;
+    this.animation?.kill();
+    this.pill()?.style.removeProperty("transform");
+    this.pill()?.style.removeProperty("transform-origin");
     this.animation = undefined;
-    if (this.mount.parentNode !== this.props.target)
-      this.props.target?.appendChild(this.mount);
+    if (this.props.target && this.mount.parentNode !== this.props.target) {
+      const ownerDocument = this.mount.ownerDocument;
+      const active = ownerDocument.activeElement;
+      // Prefer the actual focused descendant; the old slot may already have
+      // been removed in this commit, in which case the snapshot preserves it.
+      const focused =
+        active instanceof HTMLElement && this.mount.contains(active)
+          ? active
+          : active === ownerDocument.body
+            ? snapshot?.focused
+            : null;
+      this.props.target.appendChild(this.mount);
+      if (
+        focused?.isConnected &&
+        this.mount.contains(focused) &&
+        (ownerDocument.activeElement === focused ||
+          ownerDocument.activeElement === ownerDocument.body)
+      ) {
+        focused.focus({ preventScroll: true });
+      }
+    }
+    const previousBounds = snapshot?.bounds ?? null;
     const pill = this.pill();
     if (!pill) return;
     const next = pill.getBoundingClientRect();
@@ -108,23 +147,27 @@ class IslandTransition extends Component<TransitionProps> {
     if (
       !previousBounds?.width ||
       !next.width ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      reducedMotion()
     )
       return;
     const zoom = pill.offsetHeight ? next.height / pill.offsetHeight : 1;
-    this.animation = pill.animate?.(
-      [
-        {
-          transform: `translate(${(previousBounds.x - next.x) / zoom}px, ${(previousBounds.y - next.y) / zoom}px) scale(${previousBounds.width / next.width}, ${previousBounds.height / next.height})`,
-        },
-        { transform: "none" },
-      ],
-      { duration: 280, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-    );
+    const epoch = ++this.animationEpoch;
+    const x = (previousBounds.x - next.x) / zoom;
+    const y = (previousBounds.y - next.y) / zoom;
+    const scaleX = previousBounds.width / next.width;
+    const scaleY = previousBounds.height / next.height;
+    void loadMotion().then((motion) => {
+      if (epoch !== this.animationEpoch || !pill.isConnected || reducedMotion()) return;
+      this.animation = motion.fromTo(pill,
+        { x, y, scaleX, scaleY, transformOrigin: "top left" },
+        { x: 0, y: 0, scaleX: 1, scaleY: 1, duration: .24, ease: "power3.out", clearProps: "transform,transformOrigin", overwrite: true },
+      );
+    }).catch(() => { /* Layout and focus already use the final static position. */ });
   }
 
   componentWillUnmount() {
-    this.animation?.cancel();
+    this.animationEpoch++;
+    this.animation?.kill();
     this.mount.remove();
   }
 

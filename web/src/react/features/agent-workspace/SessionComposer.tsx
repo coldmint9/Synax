@@ -1,4 +1,6 @@
 import "./composerModes.css";
+import { NewSessionScene } from "./NewSessionScene";
+import { welcomePlaceholderDelay } from "./welcomeTyping";
 import { NewSessionWelcome } from "./NewSessionWelcome";
 import {
   composerDraftScope,
@@ -777,7 +779,7 @@ export function SessionComposer({
           ? t("sessionGoalPlaceholder")
           : t("sessionComposePlaceholder")
       }
-      keyboardHintPlacement={isCentered ? "tooltip" : "placeholder"}
+      welcomePlaceholderDelay={isCentered ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
       onOverlayOpenChange={setOverlayOpen}
       modelControl={
         backendId === "codex" || backendId === "claude-code" ? (
@@ -795,16 +797,18 @@ export function SessionComposer({
       }
       modeControl={
         <div className="flex items-center gap-1">
-          <SessionModePicker
-            mode={acp ? "chat" : mode}
-            disabled={!modeEnabled}
-            description={
-              zh
-                ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
-                : "Mode and approval are independent; switching is disabled while busy or pending."
-            }
-            onChange={handleModeChange}
-          />
+          {!acp && backendId !== "native" ? (
+            <SessionModePicker
+              mode={mode}
+              disabled={!modeEnabled}
+              description={
+                zh
+                  ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
+                  : "Mode and approval are independent; switching is disabled while busy or pending."
+              }
+              onChange={handleModeChange}
+            />
+          ) : null}
           {isDraft && (
             <GitWorkspacePicker
               projectId={projectId}
@@ -1026,10 +1030,12 @@ export function SessionComposer({
       }
     >
       {isCentered ? (
-        <div className="session-welcome-layout flex w-full max-w-3xl flex-col items-center gap-6">
-          {draftPreview?.scope !== viewKey && <NewSessionWelcome />}
-          <div className="w-full min-w-0">{composerShell}</div>
-        </div>
+        <NewSessionScene key={viewKey} paused={Boolean(content) || overlayOpen || commands.overlayOpen || submitting || changingMode}>
+          {draftPreview?.scope !== viewKey && <NewSessionWelcome finish={Boolean(content)} />}
+          <div className="w-full min-w-0" data-welcome-layer="composer">
+            <div data-welcome-enter="">{composerShell}</div>
+          </div>
+        </NewSessionScene>
       ) : (
         <div className="mx-auto w-full min-w-0 max-w-3xl">
           {statusSlot}

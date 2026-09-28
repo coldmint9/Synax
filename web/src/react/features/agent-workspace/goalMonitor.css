@@ -27,11 +27,11 @@
 .goal-monitor__track { height: .7rem; padding: .18rem; border-radius: 999px; background: var(--default); }
 .goal-monitor__track span { display: block; height: 100%; border-radius: inherit; background: var(--goal-monitor-color); transition: width 260ms ease; }
 .goal-monitor__section { display: grid; gap: .35rem; padding-top: .65rem; border-top: 1px solid hsl(var(--border-hsl) / .4); }
-.goal-monitor__section--criteria { height: 18rem; overflow-y: auto; align-content: start; padding: .75rem 0; }
+.goal-monitor__section--criteria { max-height: 18rem; overflow-y: auto; align-content: start; padding: .75rem 0; }
 .goal-monitor__section-title { color: hsl(var(--muted-foreground)); font-size: .64rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .goal-monitor__item { display: flex; align-items: flex-start; gap: .4rem; color: hsl(var(--foreground-hsl) / .78); font-size: .68rem; line-height: 1.35; }
 .goal-monitor__item svg { flex: 0 0 auto; margin-top: .08rem; color: var(--goal-monitor-color); }
 .goal-monitor__muted { color: hsl(var(--muted-foreground)); font-size: .68rem; }
 .goal-monitor__notice { display: flex; align-items: center; gap: .4rem; color: #b45309; font-size: .68rem; }
-@media (max-width: 767px) { .goal-monitor { width: min(19rem, calc(100vw - 2rem)); } .goal-monitor__section--criteria { height: min(18rem, 42vh); } }
+@media (max-width: 767px) { .goal-monitor { width: min(19rem, calc(100vw - 2rem)); } .goal-monitor__section--criteria { max-height: min(18rem, 42vh); } }
 @media (prefers-reduced-motion: reduce) { .goal-monitor__track span { transition: none; } }

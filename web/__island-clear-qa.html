@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>透明 Island 材质验证</title><style>
+body{max-width:760px;margin:0;background:#e9eee9;padding:28px;font:14px system-ui;color:#23302a}h1{font-size:20px}h2{font-size:13px;font-weight:500;margin:0 0 32px}.samples{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}section{min-width:0;padding:28px;border-radius:16px;background:linear-gradient(110deg,#dad6b3,transparent 65%),repeating-linear-gradient(0deg,transparent 0 21px,#536e8933 21px 22px),#c2dfd3}.dark{background:linear-gradient(110deg,#384253,transparent 65%),repeating-linear-gradient(0deg,transparent 0 21px,#9cafb630 21px 22px),#192c25;color:#e3e8df}.samples .synax-island{width:max-content;max-width:100%}.caption{font-size:12px;margin:28px 0 0;opacity:.8}#checks{white-space:pre-wrap;font:12px system-ui}@media(max-width:520px){body{padding:14px}section{padding:18px 8px}.synax-island .wh-tab{width:28px}}
+</style></head><body><h1>纯平面透明 Island · 纯色选中 Pill</h1><p>以下为真实 Island 组件，放在测试背景上。</p><div id="app"></div><pre id="checks"></pre>
+<script type="module">
+import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;
+</script><script type="module">
+import React from 'react';import {createRoot} from 'react-dom/client';
+import {Bot,BookOpen,GitBranch,Terminal,SlidersHorizontal,Moon} from 'lucide-react';
+import '/src/react/design/tokens.css';import '/src/react/design/command-deck.css';
+import {IslandSurface} from '/src/react/layouts/IslandSurface.tsx';import {IslandSelection} from '/src/react/layouts/IslandSelection.tsx';
+const h=React.createElement;
+function Sample({theme}){const [selected,setSelected]=React.useState('Work');return h('section',{className:theme},h('h2',null,theme==='dark'?'深色 · 透明背景，浅色文字＋深色局部光晕':'浅色 · 透明背景，深色文字＋浅色局部光晕'),h(IslandSurface,{kind:'primary'},h('button',{className:'wh-project-trigger'},'Synax'),h('span',{className:'wh-divider'}),h(IslandSelection,{activeKey:selected},...[['Work',Bot],['Wiki',BookOpen],['Git',GitBranch]].map(([name,Icon])=>h('button',{key:name,className:'wh-tab','data-island-option':name,'aria-pressed':name===selected,onClick:()=>setSelected(name)},h(Icon,{size:15}),h('span',null,name)))),h('span',{className:'wh-divider'}),...[[Terminal,'终端'],[SlidersHorizontal,'设置'],[Moon,'主题']].map(([Icon,name])=>h('button',{key:name,className:'wh-btn','aria-label':name,onClick:()=>setSelected(name)},h(Icon,{size:15})))),h('p',{className:'caption'},'无弧面／高光／外层投影 · 纯色 Pill＋柔影 · 当前选择：'+selected));}
+createRoot(document.querySelector('#app')).render(h('div',{className:'samples'},h(Sample,{theme:'light'}),h(Sample,{theme:'dark'})));
+</script></body></html>

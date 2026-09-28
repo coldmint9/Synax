@@ -1,7 +1,7 @@
 import { MediaParts } from "../media/MediaParts";
 import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from "../../../hooks/useLocale";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
@@ -93,19 +93,19 @@ export const UserMessageBlock = memo(function UserMessageBlock({
             <Button
               size="sm"
               variant="ghost"
-              isDisabled={saving}
-              onPress={() => setEditing(false)}
+              disabled={saving}
+              onClick={() => setEditing(false)}
             >
               {zh ? "取消" : "Cancel"}
             </Button>
             <Button
               size="sm"
               variant="primary"
-              isPending={saving}
-              isDisabled={
+              pending={saving}
+              disabled={
                 saving || !draft.trim()
               }
-              onPress={() => void save()}
+              onClick={() => void save()}
             >
               {zh ? "发送" : "Send"}
             </Button>

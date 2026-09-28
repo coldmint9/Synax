@@ -32,6 +32,7 @@
   border: 1px solid var(--border);
   border-radius: 11px;
   cursor: pointer;
+  background: var(--surface);
   transition:
     border-color 140ms,
     background 140ms;
@@ -39,12 +40,12 @@
 .appearance-mode:hover {
   background: var(--surface-secondary);
 }
-.appearance-mode[data-selected="true"] {
+.appearance-mode[data-checked] {
   border-color: var(--cx-accent-strong);
   background: color-mix(in srgb, var(--cx-accent-bottom) 8%, var(--surface));
   box-shadow: 0 0 0 1px var(--cx-accent-strong);
 }
-.appearance-mode[data-focus-visible="true"] {
+.appearance-mode:focus-visible {
   outline: 2px solid var(--cx-accent-strong);
   outline-offset: 4px;
 }
@@ -69,12 +70,12 @@
 .appearance-mode__check svg {
   opacity: 0;
 }
-.appearance-mode[data-selected="true"] .appearance-mode__check {
+.appearance-mode[data-checked] .appearance-mode__check {
   border-color: transparent;
   background: var(--cx-accent-bottom);
   color: var(--cx-accent-ink);
 }
-.appearance-mode[data-selected="true"] .appearance-mode__check svg {
+.appearance-mode[data-checked] .appearance-mode__check svg {
   opacity: 1;
 }
 .appearance-mini {
@@ -160,16 +161,27 @@
   margin-top: 4px;
 }
 .appearance-swatches {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 18px 0;
 }
-.appearance-swatches .color-swatch-picker__item {
+/* These states belong to Headless UI radios, not legacy swatch anatomy. */
+.appearance-swatch {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
   width: 34px;
   height: 34px;
+  padding: 0;
+  border: 2px solid transparent;
   border-radius: 50%;
-}
-.appearance-swatches .color-swatch-picker__indicator > svg {
   color: #181818;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px #00000018;
+}
+.appearance-swatch[data-checked] {
+  border-color: var(--foreground);
 }
 .appearance-custom-row {
   display: flex;
@@ -178,7 +190,10 @@
 }
 .appearance-custom {
   display: flex;
+  align-items: center;
   gap: 8px;
+  min-height: 34px;
+  cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 7px 10px;
@@ -195,19 +210,181 @@
   font-size: 0.6875rem;
   color: hsl(var(--muted-foreground));
 }
+.appearance-picker {
+  min-width: 0;
+}
 .appearance-color-popover {
-  width: 272px;
+  box-sizing: border-box;
+  z-index: 100;
+  display: grid;
+  gap: 8px;
+  width: 304px;
   max-width: calc(100vw - 24px);
-  padding: 16px;
-  gap: 16px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: 0 12px 36px #00000026;
+}
+.appearance-color-popover p {
+  margin: 0;
+}
+.appearance-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.appearance-editor-actions .appearance-icon-button {
+  flex-basis: 28px;
+  width: 28px;
+  height: 28px;
+}
+.appearance-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.appearance-color-preview {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.appearance-icon-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--foreground);
+  background: transparent;
+  cursor: pointer;
+}
+.appearance-icon-button:hover:not(:disabled) {
+  background: var(--field-hover);
+}
+.appearance-icon-button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .appearance-color-area {
-  max-width: none;
+  position: relative;
   width: 100%;
-  aspect-ratio: 1.5;
+  aspect-ratio: 1.95;
   border-radius: 8px;
+  background-image:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, transparent);
+  box-shadow: inset 0 0 0 1px #00000020;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.appearance-color-area__thumb {
+  position: absolute;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px #0009,
+    0 1px 3px #0005;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.appearance-channels {
+  display: grid;
+  gap: 6px;
+}
+.appearance-channel,
+.appearance-hex-field {
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.appearance-channel output {
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted-foreground));
+}
+.appearance-channel__range {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--cx-accent-strong);
+  cursor: pointer;
+}
+.appearance-channel__range--hue {
+  appearance: none;
+  border-radius: 6px;
+  background: linear-gradient(
+      to right,
+      #f00,
+      #ff0,
+      #0f0,
+      #0ff,
+      #00f,
+      #f0f,
+      #f00
+    )
+    center / 100% 10px no-repeat;
+}
+.appearance-channel__range--hue::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px #0009;
+}
+.appearance-channel__range--hue::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px #0009;
+}
+.appearance-hex-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  background: var(--field-background);
+  font: inherit;
+  font-family: var(--font-mono);
+}
+.appearance-hex-field input[aria-invalid="true"] {
+  border-color: var(--danger, #d22f42);
+}
+.appearance-color-error {
+  color: var(--danger, #d22f42);
+  font-size: 0.75rem;
+}
+.appearance-swatch:focus-visible,
+.appearance-custom:focus-visible,
+.appearance-icon-button:focus-visible,
+.appearance-channel__range:focus-visible,
+.appearance-hex-field input:focus-visible {
+  outline: 2px solid var(--cx-accent-strong);
+  outline-offset: 3px;
 }
 .appearance-preview {
   overflow: hidden;

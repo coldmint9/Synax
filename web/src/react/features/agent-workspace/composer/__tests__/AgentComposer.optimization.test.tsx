@@ -113,7 +113,7 @@ it("shows local errors while keeping the original textarea value", async () => {
   expect(screen.getByRole("textbox")).toHaveValue("Draft A");
 });
 it.each([false, true])(
-  "renders composer text with a bold weight (expanded=%s)",
+  "renders composer text with a readable normal weight (expanded=%s)",
   (expanded) => {
     render(
       <AgentComposer
@@ -123,6 +123,6 @@ it.each([false, true])(
         defaultExpanded={expanded}
       />,
     );
-    expect(screen.getByRole("textbox")).toHaveClass("font-semibold");
+    expect(screen.getByRole("textbox")).toHaveClass("font-normal");
   },
 );

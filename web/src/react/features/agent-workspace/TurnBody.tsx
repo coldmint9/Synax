@@ -227,8 +227,8 @@ export function TurnBody({
           busy={history?.busy}
           onFork={
             checkpoint?.available
-              ? () => {
-                  void history?.request("fork", checkpoint);
+              ? (mode) => {
+                  void history?.request("fork", checkpoint, undefined, mode);
                 }
               : undefined
           }

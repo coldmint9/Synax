@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { ChevronRight, RotateCcw } from "lucide-react";
-import { Popover, useOverlayState } from "@heroui/react";
+import { Radio, RadioGroup } from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
 import type { ReasoningEffort } from "../../../../lib/api/agentRuntime";
 import { REASONING_EFFORT_LABELS } from "../../settings/lib/providerPresets";
 import { useLocale } from "../../../../hooks/useLocale";
@@ -27,18 +33,30 @@ interface Props {
   onOverlayOpenChange?: (open: boolean) => void;
 }
 
-export function ComposerEffortPicker({
+export function ComposerEffortPicker(props: Props) {
+  return (
+    <Popover>
+      {({ open, close }) => (
+        <EffortPickerContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function EffortPickerContent({
   effort,
   allowed,
   modelLabel,
   onChange,
   disabled,
   onOverlayOpenChange,
-}: Props) {
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const { t } = useLocale();
-  const state = useOverlayState({ onOpenChange: onOverlayOpenChange });
-  const lastEffortRef = useRef(effort);
-
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open, close]);
   const levels = useMemo<ReasoningEffort[]>(
     () => (allowed && allowed.length > 0 ? allowed : ALL_LEVELS),
     [allowed],
@@ -46,18 +64,14 @@ export function ComposerEffortPicker({
 
   // Keep an existing selection valid when the selected provider's allowed set changes.
   useEffect(() => {
-    if (!state.isOpen) return;
-    const current = lastEffortRef.current;
+    if (!open || disabled) return;
+    const current = effort;
     if (levels.includes(current)) return;
     const fallback = levels.includes(FALLBACK)
       ? FALLBACK
       : (levels[0] ?? FALLBACK);
     if (fallback !== current) onChange(fallback);
-  }, [state.isOpen, levels, onChange]);
-
-  useEffect(() => {
-    lastEffortRef.current = effort;
-  }, [effort]);
+  }, [open, disabled, levels, effort, onChange]);
 
   const activeEffort = levels.includes(effort)
     ? effort
@@ -83,16 +97,11 @@ export function ComposerEffortPicker({
   }
 
   return (
-    <Popover
-      isOpen={disabled ? false : state.isOpen}
-      onOpenChange={(open) => {
-        if (disabled) return;
-        state.setOpen(open);
-      }}
-    >
-      <Popover.Trigger
+    <>
+      <OverlayStateObserver open={open} onOpenChange={onOverlayOpenChange} />
+      <PopoverButton
         aria-label={t("effortLabel")}
-        aria-disabled={Boolean(disabled)}
+        disabled={disabled}
         className={`agent-dock-composer-chip inline-flex h-7 max-w-[4.75rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${
           disabled ? " pointer-events-none opacity-50" : ""
         }`}
@@ -102,10 +111,10 @@ export function ComposerEffortPicker({
         <span className="truncate font-medium tracking-tight text-foreground/85">
           {activeEffort}
         </span>
-      </Popover.Trigger>
-      <Popover.Content
-        placement="top end"
-        offset={8}
+      </PopoverButton>
+      <PopoverPanel
+        focus
+        anchor={{ to: "top end", gap: 8, padding: 8 }}
         className="composer-effort-picker z-50 w-[16rem] overflow-hidden rounded-xl p-0"
       >
         <div className="px-3 pb-3 pt-2.5">
@@ -135,8 +144,10 @@ export function ComposerEffortPicker({
           </div>
 
           {/* Compact slider: semantic accent fill, surface thumb, and station dots. */}
-          <div
-            role="radiogroup"
+          <RadioGroup
+            value={activeEffort}
+            onChange={onChange}
+            disabled={disabled}
             aria-label={t("effortLabel")}
             className="composer-effort-rail relative mt-2.5 flex h-8 items-center rounded-full p-1"
           >
@@ -156,30 +167,23 @@ export function ComposerEffortPicker({
                 transitionTimingFunction: "cubic-bezier(0.34, 0.9, 0.4, 1)",
               }}
             />
-            {levels.map((level, index) => {
-              const selected = level === activeEffort;
-              return (
-                <button
-                  key={level}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={REASONING_EFFORT_LABELS[level]}
-                  onClick={() => {
-                    // Keep the card open after changing intensity, like Codex.
-                    if (!selected) onChange(level);
-                  }}
-                  style={{ left: stationLeft(index) }}
-                  className="composer-effort-station group/effort-station absolute top-1/2 z-30 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-full outline-none transition-colors duration-200"
-                >
-                  <span
-                    aria-hidden
-                    className="composer-effort-dot size-1.5 rounded-full transition-[background-color,transform] duration-200 group-hover/effort-station:scale-150"
-                  />
-                </button>
-              );
-            })}
-          </div>
+            {levels.map((level, index) => (
+              <Radio
+                as="button"
+                key={level}
+                type="button"
+                value={level}
+                aria-label={REASONING_EFFORT_LABELS[level]}
+                style={{ left: stationLeft(index) }}
+                className="composer-effort-station group/effort-station absolute top-1/2 z-30 grid size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-full outline-none transition-colors duration-200"
+              >
+                <span
+                  aria-hidden
+                  className="composer-effort-dot size-1.5 rounded-full transition-[background-color,transform] duration-200 group-hover/effort-station:scale-150"
+                />
+              </Radio>
+            ))}
+          </RadioGroup>
 
           <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
             {allowed && allowed.length > 0
@@ -187,7 +191,7 @@ export function ComposerEffortPicker({
               : t("effortUnrestrictedHint")}
           </p>
         </div>
-      </Popover.Content>
-    </Popover>
+      </PopoverPanel>
+    </>
   );
 }

@@ -1,4 +1,4 @@
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { formatContextLimit } from "../../../../lib/formatTokens";
 import {
   ChevronDown,
@@ -137,17 +137,17 @@ export function LlmProviderCard({
             </span>
           </div>
           <div className="flex items-center gap-2 pt-1">
-            <Button size="sm" variant="secondary" onPress={onEdit}>
+            <Button size="sm" variant="secondary" onClick={onEdit}>
               <Pencil size={12} />
               编辑
             </Button>
             {isSaved && !isDefault && (
-              <Button size="sm" variant="secondary" onPress={onSetDefault}>
+              <Button size="sm" variant="secondary" onClick={onSetDefault}>
                 <ShieldCheck size={12} />
                 {t("llmCardSetDefault")}
               </Button>
             )}
-            <Button size="sm" variant="danger-soft" onPress={onRemove}>
+            <Button size="sm" variant="danger-soft" onClick={onRemove}>
               <Trash2 size={12} />
               {t("llmCardDelete")}
             </Button>

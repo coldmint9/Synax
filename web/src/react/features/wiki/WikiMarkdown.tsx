@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Components } from 'react-markdown'
 import { remarkGithubAlerts } from '../../../lib/remark-github-alerts'
 import { MarkdownRenderer, sharedMarkdownComponents } from '../../components/markdown/MarkdownRenderer'
@@ -71,7 +72,8 @@ const markdownComponents: Components = {
   },
 }
 
-export function WikiMarkdown({ content }: { content: string }) {
+// The Wiki keeps both views mounted; switching tabs must not reparse the document.
+export const WikiMarkdown = memo(function WikiMarkdown({ content }: { content: string }) {
   return (
     <MarkdownRenderer
       content={content}
@@ -81,4 +83,4 @@ export function WikiMarkdown({ content }: { content: string }) {
       remarkPlugins={[remarkGithubAlerts]}
     />
   )
-}
+})

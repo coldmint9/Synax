@@ -1,11 +1,17 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { useAgentSessionStore as store } from "../state/agentSessionStore";
+import {
+  clearScheduledSessionRefresh,
+  setSessionDetailsVisible,
+  useAgentSessionStore as store,
+} from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 import {
   agentRuntimeApi as api,
+  type AgentRuntimeMessage,
   type AgentSession,
   type HistoryWindowResponse,
   type SessionStats,
+  type ToolCallRecord,
 } from "../../../../lib/api/agentRuntime";
 vi.mock("../../../../lib/api/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
@@ -17,6 +23,16 @@ const session = {
   status: "running",
   childSessionIds: [],
 } as unknown as AgentSession;
+const message = (id: string): AgentRuntimeMessage => ({
+  id,
+  sessionId: session.id,
+  runId: null,
+  stepId: null,
+  role: "assistant",
+  content: id,
+  metadata: {},
+  createdAt: "2026-01-01T00:00:00Z",
+});
 const stats = (status: "running" | "completed") =>
   ({
     status,
@@ -28,6 +44,11 @@ const stats = (status: "running" | "completed") =>
     activeSubAgentCount: 0,
   }) as SessionStats;
 beforeEach(() => {
+  clearScheduledSessionRefresh();
+  setSessionDetailsVisible(true);
+  store.getState().resetSessionDetailForDraft();
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  vi.spyOn(globalThis, "fetch");
   store.setState({
     ...store.getInitialState(),
     sessions: [session],
@@ -46,12 +67,21 @@ beforeEach(() => {
     "listMessages",
     "listToolCalls",
     "listPermissions",
+    "listInputQueue",
   ] as const)
     vi.spyOn(api, key).mockResolvedValue({ items: [] });
 });
 afterEach(() => {
-  vi.restoreAllMocks();
+  const networkCalls = [...vi.mocked(globalThis.fetch).mock.calls];
+  // Store resets alone do not clear the coordinator's module-level timer.
+  clearScheduledSessionRefresh();
+  setSessionDetailsVisible(true);
+  store.getState().resetSessionDetailForDraft();
   store.setState(store.getInitialState());
+  if (vi.isFakeTimers()) vi.clearAllTimers();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  expect(networkCalls).toEqual([]);
 });
 describe("versioned transcript refresh", () => {
   it("retries a stale latest read without surfacing a transient detail error", async () => {
@@ -168,7 +198,7 @@ describe("loaded history across refreshes", () => {
       sessions: [versioned],
       sessionDetailCache: {
         [session.id]: {
-          messages: [{ id: "old" } as never], runs: [], steps: [], toolCalls: [],
+          messages: [message("old")], runs: [], steps: [], toolCalls: [],
           events: [], permissions: [], sessionStats: null, sessionTodos: [],
           sessionInvocationUsage: null, cachedAt: Date.now(), historyPagesLoaded: true,
           historyWindow: { revision: 1, epoch: 1, hasEarlier: false,
@@ -177,7 +207,7 @@ describe("loaded history across refreshes", () => {
       },
     });
     vi.spyOn(api, "historyWindow").mockResolvedValue({
-      messages: [{ id: "latest" } as never], runs: [], steps: [], toolCalls: [],
+      messages: [message("latest")], runs: [], steps: [], toolCalls: [],
       events: [], permissions: [],
       historyWindow: { revision: 2, epoch: 1, olderCursor: "bridge", hasEarlier: true,
         latest: true, detailsTruncated: false },
@@ -194,7 +224,7 @@ describe("loaded history across refreshes", () => {
       sessions: [versioned],
       sessionDetailCache: {
         [session.id]: {
-          messages: [{ id: "discarded" } as never], runs: [], steps: [], toolCalls: [],
+          messages: [message("discarded")], runs: [], steps: [], toolCalls: [],
           events: [], permissions: [], sessionStats: null, sessionTodos: [],
           sessionInvocationUsage: null, cachedAt: Date.now(), historyPagesLoaded: true,
           historyWindow: { revision: 1, epoch: 1, olderCursor: "old", hasEarlier: true,
@@ -203,7 +233,7 @@ describe("loaded history across refreshes", () => {
       },
     });
     vi.spyOn(api, "historyWindow").mockResolvedValue({
-      messages: [{ id: "replacement" } as never], runs: [], steps: [], toolCalls: [],
+      messages: [message("replacement")], runs: [], steps: [], toolCalls: [],
       events: [], permissions: [],
       historyWindow: { revision: 2, epoch: 2, hasEarlier: false, latest: true,
         detailsTruncated: false },
@@ -418,7 +448,6 @@ it("lets polling join a slow transcript without repeatedly invalidating its resu
 });
 
 it("rejects an old response after switching A → B → A", async () => {
-  vi.spyOn(api, "listInputQueue").mockResolvedValue({ items: [] });
   const other = { ...session, id: "other" };
   store.setState({
     projectId: "p",
@@ -456,30 +485,36 @@ it("rejects an old response after switching A → B → A", async () => {
 describe("invocation usage live refresh", () => {
   it("debounces new tool calls and does not refetch for updates to the same call", async () => {
     vi.useFakeTimers();
-    try {
-      store.setState({ streamingStepId: "step-1" });
-      const call = {
-        id: "call-1",
-        stepId: "step-1",
-        toolId: "file.read",
-      } as never;
-      store.getState().applyLiveEvent({
-        type: "tool_call",
-        stepId: "step-1",
-        toolCall: call,
-      });
-      store.getState().applyLiveEvent({
-        type: "tool_call",
-        stepId: "step-1",
-        toolCall: call,
-      });
+    store.setState({ streamingStepId: "step-1" });
+    const call: ToolCallRecord = {
+      id: "call-1",
+      sessionId: session.id,
+      runId: null,
+      stepId: "step-1",
+      toolId: "file.read",
+      category: "file",
+      mutability: "read",
+      inputSummary: "Read a file",
+      outputSummary: null,
+      status: "running",
+      startedAt: "2026-01-01T00:00:00Z",
+      endedAt: null,
+      error: null,
+    };
+    store.getState().applyLiveEvent({
+      type: "tool_call",
+      stepId: "step-1",
+      toolCall: call,
+    });
+    store.getState().applyLiveEvent({
+      type: "tool_call",
+      stepId: "step-1",
+      toolCall: call,
+    });
 
-      expect(api.getSessionInvocationUsage).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(500);
-      expect(api.getSessionInvocationUsage).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(api.getSessionInvocationUsage).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(api.getSessionInvocationUsage).toHaveBeenCalledTimes(1);
   });
 
   it("reconciles invocation usage immediately when a run becomes terminal", async () => {
@@ -513,7 +548,6 @@ describe("inactive session page cache", () => {
 
   it("reuses a completed page without fetching its transcript again", async () => {
     const completed = { ...session, status: "completed" } as AgentSession;
-    vi.spyOn(api, "listInputQueue").mockResolvedValue({ items: [] });
     store.setState({
       panelOpen: false,
       selectedSessionId: null,

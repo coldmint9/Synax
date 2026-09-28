@@ -9,7 +9,7 @@ const ICONS: Record<NotificationType, typeof Info> = {
   warning: AlertTriangle,
 }
 
-/* HeroUI default toast: the surface stays opaque and only the indicator/title
+/* Synax UI default toast: the surface stays opaque and only the indicator/title
    carries the variant tone, so no per-type translucent background is needed. */
 const ICON_STYLES: Record<NotificationType, string> = {
   info: 'text-accent-soft-foreground',

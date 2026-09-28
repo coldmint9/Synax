@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { ShieldCheck } from "lucide-react";
 import {
   agentRuntimeApi,
@@ -56,8 +56,8 @@ export function ProjectToolGrantsSection({ projectId }: { projectId: string }) {
           {items.map((grant) => (
             <li key={grant.toolId} className="flex items-center justify-between gap-3">
               <span className="text-sm font-mono">{grant.toolId}</span>
-              <Button size="sm" variant="danger-soft" isDisabled={busy !== null}
-                onPress={() => void revoke(grant.toolId)}
+              <Button size="sm" variant="danger-soft" disabled={busy !== null}
+                onClick={() => void revoke(grant.toolId)}
                 aria-label={`${zh ? "撤销" : "Revoke"} ${grant.toolId}`}>
                 {zh ? "撤销" : "Revoke"}
               </Button>

@@ -1,4 +1,5 @@
-import { AlertDialog, Button } from '@heroui/react'
+import { AlertDialog, DialogContainer, DialogPanel, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from '../../../hooks/useLocale'
 
 export function UninstallDialog({
@@ -18,40 +19,38 @@ export function UninstallDialog({
 }) {
   const { t } = useLocale()
   return (
-    <AlertDialog.Backdrop
-      isOpen={name !== null}
-      onOpenChange={(open) => {
-        if (!open && !busy) onCancel()
-      }}
-      isDismissable={!busy}
-      isKeyboardDismissDisabled={busy}
+    <AlertDialog
+      open={name !== null}
+      onClose={() => { if (!busy) onCancel(); }}
+      dismissible={!busy}
+
     >
-      <AlertDialog.Container>
-        <AlertDialog.Dialog className="sm:max-w-[420px]">
-          <AlertDialog.Header>
-            <AlertDialog.Icon status="danger" />
-            <AlertDialog.Heading>
+      <DialogContainer>
+        <DialogPanel className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogIcon tone="danger" />
+            <DialogTitle>
               {t('extensionUninstallTitle', { name: name ?? '' })}
-            </AlertDialog.Heading>
-          </AlertDialog.Header>
-          <AlertDialog.Body>
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody>
             <p className="text-sm text-muted-foreground">{description}</p>
             {error && (
               <p role="alert" className="mt-3 text-sm text-danger">
                 {error}
               </p>
             )}
-          </AlertDialog.Body>
-          <AlertDialog.Footer>
-            <Button variant="tertiary" isDisabled={busy} onPress={onCancel}>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="tertiary" disabled={busy} onClick={onCancel}>
               {t('commonCancel')}
             </Button>
-            <Button variant="danger" isPending={busy} onPress={onConfirm}>
+            <Button variant="danger" pending={busy} onClick={onConfirm}>
               {t('skillMarketUninstall')}
             </Button>
-          </AlertDialog.Footer>
-        </AlertDialog.Dialog>
-      </AlertDialog.Container>
-    </AlertDialog.Backdrop>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogContainer>
+    </AlertDialog>
   )
 }

@@ -7,6 +7,7 @@ import { DATA_ROOT } from "../../lib/env.js";
 import {
   switchGitBranch,
   createGitWorktree,
+  attachDetachedGitBranch,
   listGitWorkspaces,
   removeGitWorktree,
   resolveGitWorkspaceSelection,
@@ -206,5 +207,37 @@ describe("safe branch switching", () => {
       /progress/i,
     );
     expect(git(["branch", "--show-current"])).toBe("main");
+  }, gitTestTimeoutMs);
+});
+
+describe('fresh session worktree', () => {
+  it('creates a unique detached worktree from current HEAD without moving a branch', async () => {
+    git(['switch', '-c', 'topic/source']);
+    fs.appendFileSync(path.join(repository, 'README.md'), 'source\n');
+    git(['add', '.']); git(['commit', '-m', 'source']);
+    const head = git(['rev-parse', 'HEAD']);
+    const first = await resolveGitWorkspaceSelection(repository, projectId, { kind: 'new-worktree' });
+    const second = await resolveGitWorkspaceSelection(repository, projectId, { kind: 'new-worktree' });
+    expect(first.workDir).not.toBe(second.workDir);
+    expect(first.kind).toBe('new-worktree');
+    expect(first.branch).toBeNull();
+    expect(git(['rev-parse', 'HEAD'], first.workDir)).toBe(head);
+    expect(git(['branch', '--show-current'], first.workDir)).toBe('');
+    expect(git(['branch', '--show-current'])).toBe('topic/source');
+    expect(git(['rev-parse', 'HEAD'], second.workDir)).toBe(head);
+  }, gitTestTimeoutMs);
+});
+
+describe('attach a branch to detached work', () => {
+  it('keeps tracked and untracked edits while attaching a new branch at HEAD', async () => {
+    git(['switch', '--detach']);
+    fs.appendFileSync(path.join(repository, 'README.md'), 'working\n');
+    fs.writeFileSync(path.join(repository, 'draft.txt'), 'new');
+    const base = git(['rev-parse', 'HEAD']);
+    await attachDetachedGitBranch(repository, 'topic/from-detached');
+    expect(git(['branch', '--show-current'])).toBe('topic/from-detached');
+    expect(git(['rev-parse', 'HEAD'])).toBe(base);
+    expect(git(['status', '--porcelain', '--untracked-files=all'])).toContain('draft.txt');
+    expect(fs.readFileSync(path.join(repository, 'README.md'), 'utf8')).toContain('working');
   }, gitTestTimeoutMs);
 });

@@ -44,18 +44,20 @@ describe("permission dropdown", () => {
     const onChange = vi.fn();
     render(<ComposerPermissionPicker value="boundary" onChange={onChange} />);
     const trigger = screen.getByRole("button", { name: "审批模式" });
-    trigger.focus();
-    await user.keyboard("{Enter}");
+    await user.tab();
+    await user.keyboard(" ");
     await user.keyboard("{Escape}");
     expect(onChange).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
     );
     expect(trigger).toHaveFocus();
+    await user.keyboard(" ");
+    const listbox = await screen.findByRole("listbox");
+    expect(listbox).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^自动审批/ }).id));
     await user.keyboard("{Enter}");
-    // happy-dom has no layout, so the dialog focus scope cannot find visible options.
-    screen.getByRole("option", { name: /^边界审批/ }).focus();
-    await user.keyboard("{ArrowDown}{Enter}");
     expect(onChange).toHaveBeenCalledExactlyOnceWith("auto");
   });
 
@@ -118,8 +120,13 @@ describe("permission dropdown", () => {
     await waitFor(() =>
       expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: "审批模式" })).toBe(trigger);
-    expect(trigger).toHaveTextContent("自动审批");
+    const nextTrigger = screen.getByRole("button", { name: "审批模式" });
+    expect(nextTrigger).toHaveTextContent("自动审批");
+    expect(nextTrigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(nextTrigger);
+    expect(screen.getByRole("option", { name: /^自动审批/ })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Escape}");
+    expect(nextTrigger).toHaveFocus();
     expect(onChange).not.toHaveBeenCalled();
   });
 

@@ -1,10 +1,4 @@
-import {
-  ScrollShadow,
-  Surface,
-  Typography,
-  Chip,
-  Separator,
-} from "@heroui/react";
+import { ScrollArea, Surface, Text, Badge, Separator } from "@/react/components/ui/Display";
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../components/IconSurface";
 
@@ -25,57 +19,57 @@ const techStack = [
 
 export default function AboutPage() {
   return (
-    <ScrollShadow className="h-full overflow-y-auto">
-      <Surface variant="default" className="min-h-full">
+    <ScrollArea className="h-full overflow-y-auto">
+      <Surface tone="default" className="min-h-full">
         <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
           <div className="mb-8 flex items-start gap-4">
             <IconSurface tone="primary" size="xl" className="rounded-2xl">
               <span className="text-2xl font-bold">S</span>
             </IconSurface>
             <div>
-              <Typography type="h4">Synax</Typography>
-              <Typography type="body-sm" color="muted" className="mt-1">
+              <Text variant="h4">Synax</Text>
+              <Text variant="body-sm" color="muted" className="mt-1">
                 Local-first AI coding workspace
-              </Typography>
+              </Text>
             </div>
           </div>
 
           <div className="space-y-6">
             <section>
-              <Typography type="body-sm" color="muted">
+              <Text variant="body-sm" color="muted">
                 Work with coding agents, source files, diffs, and terminals in
                 one local workspace. Connect your models, tools, and skills to
                 build, run, and review projects.
-              </Typography>
+              </Text>
             </section>
 
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">
+              <Text variant="h6" className="mb-3">
                 Version
-              </Typography>
+              </Text>
               <div className="flex items-center gap-2">
-                <Chip size="sm" variant="soft" color="warning">
+                <Badge size="sm" variant="soft" tone="warning">
                   {VERSION}
-                </Chip>
-                <Typography type="body-xs" color="muted">
+                </Badge>
+                <Text variant="body-xs" color="muted">
                   Alpha
-                </Typography>
+                </Text>
               </div>
             </section>
 
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">
+              <Text variant="h6" className="mb-3">
                 Tech Stack
-              </Typography>
+              </Text>
               <div className="flex flex-wrap gap-2">
                 {techStack.map((t) => (
-                  <Chip key={t.label} size="sm" variant="soft" color={t.color}>
+                  <Badge key={t.label} size="sm" variant="soft" tone={t.color}>
                     {t.label}
-                  </Chip>
+                  </Badge>
                 ))}
               </div>
             </section>
@@ -83,9 +77,9 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">
+              <Text variant="h6" className="mb-3">
                 Links
-              </Typography>
+              </Text>
               <a
                 href={REPO_URL}
                 target="_blank"
@@ -100,12 +94,12 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">
+              <Text variant="h6" className="mb-3">
                 Author
-              </Typography>
-              <Typography type="body-sm" color="muted" className="mb-2">
+              </Text>
+              <Text variant="body-sm" color="muted" className="mb-2">
                 coldmint9
-              </Typography>
+              </Text>
               <a
                 href={AUTHOR_URL}
                 target="_blank"
@@ -120,19 +114,19 @@ export default function AboutPage() {
             <Separator />
 
             <section>
-              <Typography type="h6" className="mb-3">
+              <Text variant="h6" className="mb-3">
                 License
-              </Typography>
-              <Typography type="body-sm" color="muted" className="mb-2">
+              </Text>
+              <Text variant="body-sm" color="muted" className="mb-2">
                 Copyright (c) 2026 Synax contributors
-              </Typography>
-              <Typography type="body-sm" color="muted">
+              </Text>
+              <Text variant="body-sm" color="muted">
                 MIT License
-              </Typography>
+              </Text>
             </section>
           </div>
         </div>
       </Surface>
-    </ScrollShadow>
+    </ScrollArea>
   );
 }

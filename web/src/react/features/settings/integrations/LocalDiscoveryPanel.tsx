@@ -1,7 +1,9 @@
 import { DiscoveryDialogs } from './DiscoveryDialogs'
 import type { DiscoveryItem as Item } from './discovery-types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Checkbox, Input, TextField } from '@heroui/react'
+import { Input, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
+import { Checkbox } from "@/react/components/ui/Toggle";
 import {
   ArrowDownToLine,
   Check,
@@ -237,11 +239,11 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
         <Button
           size="sm"
           variant="secondary"
-          isPending={loading}
-          isDisabled={busy}
-          onPress={() => void scan()}
+          pending={loading}
+          disabled={busy}
+          onClick={() => void scan()}
         >
-          {({ isPending }) => (
+          {({ pending: isPending }) => (
             <>
               {!isPending && <RefreshCw size={13} />}
               {text('重新扫描', 'Rescan')}
@@ -304,8 +306,8 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              isDisabled={busy || loading || directories.length >= 8}
-              onPress={() => setPicker(true)}
+              disabled={busy || loading || directories.length >= 8}
+              onClick={() => setPicker(true)}
             >
               <FolderPlus size={14} />
               {text('添加扫描目录', 'Add directory')}
@@ -315,14 +317,14 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                 <span title={directory}>{directory}</span>
                 <Button
                   size="sm"
-                  isIconOnly
+                  iconOnly
                   variant="ghost"
-                  isDisabled={busy || loading}
+                  disabled={busy || loading}
                   aria-label={text(
                     `移除扫描目录 ${directory}`,
                     `Remove directory ${directory}`,
                   )}
-                  onPress={() =>
+                  onClick={() =>
                     setDirectories((current) =>
                       current.filter((d) => d !== directory),
                     )
@@ -371,7 +373,7 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                   size="sm"
                   variant={kind === value ? 'secondary' : 'ghost'}
                   aria-pressed={kind === value}
-                  onPress={() => setKind(value)}
+                  onClick={() => setKind(value)}
                 >
                   {value === 'all'
                     ? text('全部', 'All')
@@ -388,18 +390,17 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                 </Button>
               ))}
             </div>
-            <TextField
-              aria-label={text(
-                '搜索名称、描述或路径',
-                'Search names, descriptions or paths',
-              )}
+            <Field
               className="discovery-search"
-              value={query}
-              onChange={setQuery}
+
+
             >
               <Search size={13} />
-              <Input placeholder={text('搜索能力…', 'Search capabilities…')} />
-            </TextField>
+              <Input placeholder={text('搜索能力…', 'Search capabilities…')} aria-label={text(
+                '搜索名称、描述或路径',
+                'Search names, descriptions or paths',
+              )} value={query} onChange={(event) => (setQuery)(event.currentTarget.value)} />
+            </Field>
           </div>
           {error && (
             <div className="discovery-message is-error" role="alert">
@@ -408,8 +409,8 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
               <Button
                 size="sm"
                 variant="ghost"
-                isDisabled={loading || busy}
-                onPress={() => void scan()}
+                disabled={loading || busy}
+                onClick={() => void scan()}
               >
                 {text('重试扫描', 'Retry scan')}
               </Button>
@@ -440,12 +441,12 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                 '选择所有可添加的结果',
                 'Select all available results',
               )}
-              isDisabled={!selectable.length || busy || loading}
-              isSelected={
+              disabled={!selectable.length || busy || loading}
+              checked={
                 selectable.length > 0 &&
                 selectable.every((item) => selected.has(item.id))
               }
-              isIndeterminate={
+              indeterminate={
                 selectable.some((item) => selected.has(item.id)) &&
                 !selectable.every((item) => selected.has(item.id))
               }
@@ -458,11 +459,7 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                   return next
                 })
               }
-            >
-              <Checkbox.Content><Checkbox.Control>
-                <Checkbox.Indicator />
-              </Checkbox.Control></Checkbox.Content>
-            </Checkbox>
+            />
             <span>
               {text(
                 `${filtered.length} 项能力`,
@@ -509,8 +506,8 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                 <Button
                   size="sm"
                   variant="secondary"
-                  isDisabled={busy || loading}
-                  onPress={() => {
+                  disabled={busy || loading}
+                  onClick={() => {
                     setQuery('')
                     setSource('all')
                     setKind('all')
@@ -532,14 +529,10 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                       `选择 ${item.name}`,
                       `Select ${item.name}`,
                     )}
-                    isSelected={selected.has(item.id)}
-                    isDisabled={!available(item) || busy || loading}
+                    checked={selected.has(item.id)}
+                    disabled={!available(item) || busy || loading}
                     onChange={(checked) => toggle(item.id, checked)}
-                  >
-                    <Checkbox.Content><Checkbox.Control>
-                      <Checkbox.Indicator />
-                    </Checkbox.Control></Checkbox.Content>
-                  </Checkbox>
+                  />
                   <button
                     className="discovery-row-detail"
                     onClick={() => setDetail(item)}
@@ -592,9 +585,9 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
                       size="sm"
                       variant="ghost"
                       className="discovery-add"
-                      isDisabled={busy || loading}
+                      disabled={busy || loading}
                       aria-label={text(`添加 ${item.name}`, `Add ${item.name}`)}
-                      onPress={() => void addItems([item])}
+                      onClick={() => void addItems([item])}
                     >
                       <ArrowDownToLine size={14} />
                       <span>{text('添加', 'Add')}</span>
@@ -618,11 +611,11 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
             </span>
             <Button
               size="sm"
-              isPending={busy}
-              isDisabled={!selectedItems.length || loading}
-              onPress={() => void addItems(selectedItems)}
+              pending={busy}
+              disabled={!selectedItems.length || loading}
+              onClick={() => void addItems(selectedItems)}
             >
-              {({ isPending }) => (
+              {({ pending: isPending }) => (
                 <>
                   {!isPending && <ArrowDownToLine size={13} />}
                   {text('添加到项目', 'Add to project')}

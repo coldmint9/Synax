@@ -5,7 +5,7 @@ import { useShellStore } from "../../state/shellStore";
 import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
 import { ExtensionCenter } from "./extensions/ExtensionCenter";
 import { useExtensionCopy } from "./extensions/extension-copy";
-import { ScrollShadow, Spinner, Typography } from "@heroui/react";
+import { ScrollArea, Spinner, Text } from "@/react/components/ui/Display";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../../hooks/useLocale";
 import { AppearanceSection } from "./components/AppearanceSection";
@@ -46,17 +46,17 @@ export default function GlobalSettingsPage() {
   }
 
   return (
-    <ScrollShadow className="settings-scroll-viewport">
+    <ScrollArea className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
           {section === "archive" ? (
             <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
           ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
           <div className="mb-8">
-            <Typography type="h5">{t("settingsSystemConfig")}</Typography>
-            <Typography type="body-sm" color="muted" className="mt-1">
+            <Text variant="h5">{t("settingsSystemConfig")}</Text>
+            <Text variant="body-sm" color="muted" className="mt-1">
               {t("settingsTitle")}
-            </Typography>
+            </Text>
           </div>
 
           <div className="space-y-8">
@@ -91,6 +91,6 @@ export default function GlobalSettingsPage() {
           </>}
         </SettingsFrame>
       </div>
-    </ScrollShadow>
+    </ScrollArea>
   );
 }

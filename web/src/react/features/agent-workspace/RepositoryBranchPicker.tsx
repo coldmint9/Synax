@@ -1,6 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
-import { Check, GitBranch, LoaderCircle, Search } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxOption,
+  ComboboxOptions,
+} from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { Check, GitBranch, LoaderCircle, Plus, Search, X } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionGitBranches,
@@ -8,77 +18,101 @@ import {
 import { useLocale } from "../../../hooks/useLocale";
 import { refreshWorkspace } from "./workspaceRefresh";
 
-export function RepositoryBranchPicker({
-  sessionId,
-  rootId,
-  branch,
-  disabled,
-  onSwitched,
-  openRequest,
-}: {
+interface Props {
   sessionId: string;
   rootId?: string;
   branch: string;
   disabled?: boolean;
   onSwitched: () => void;
   openRequest?: number;
-}) {
+}
+
+export function RepositoryBranchPicker(props: Props) {
+  return (
+    <Popover key={`${props.sessionId}:${props.rootId ?? ""}`}>
+      {({ open, close }) => (
+        <BranchPickerContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function BranchPickerContent({
+  sessionId,
+  rootId,
+  branch,
+  disabled,
+  onSwitched,
+  openRequest,
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [creating, setCreating] = useState(false);
+  const [newBranch, setNewBranch] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const lastOpenRequest = useRef<number | undefined>(undefined);
   const [data, setData] = useState<SessionGitBranches | null>(null);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const mutating = useRef(false);
-  useEffect(() => {
-    if (!open) return;
-    // The dialog restores focus after mounting; focus search after that step.
-    const frame = requestAnimationFrame(() => searchRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+
   useEffect(
     () => () => {
       generation.current++;
     },
-    [sessionId, rootId],
+    [],
   );
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open, close]);
+  useEffect(() => {
+    if (!openRequest || lastOpenRequest.current === openRequest) return;
+    lastOpenRequest.current = openRequest;
+    // Open through the real trigger, not a second controlled overlay state.
+    if (!open && !disabled && !switching) trigger.current?.click();
+  }, [openRequest, open, disabled, switching]);
 
-  async function load() {
-    const request = ++generation.current;
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setQuery("");
+    setCreating(false);
+    setNewBranch("");
+    setCreateError(null);
     setLoading(true);
     setError(null);
     setData(null);
-    try {
-      const result = await agentRuntimeApi.listSessionBranches(
-        sessionId,
-        rootId,
-      );
-      if (request === generation.current) setData(result);
-    } catch (err) {
-      if (request === generation.current)
-        setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (request === generation.current) setLoading(false);
-    }
-  }
-  useEffect(() => {
-    if (!openRequest || disabled || switching) return;
-    setOpen(true);
-    setQuery("");
-    void load();
-  }, [openRequest]);
+    void agentRuntimeApi
+      .listSessionBranches(sessionId, rootId)
+      .then((result) => {
+        if (active) setData(result);
+      })
+      .catch((err: unknown) => {
+        if (active) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, sessionId, rootId]);
 
-  async function select(name: string) {
-    if (mutating.current || name === data?.current) return;
+  async function select(name: string | null) {
+    if (!name || disabled || mutating.current) return;
+    const option = data?.branches.find((item) => item.name === name);
+    if (!option || option.occupied) return;
+    close();
+    if (name === data?.current) return;
     const request = ++generation.current;
     mutating.current = true;
     setSwitching(true);
-    setOpen(false);
     setError(null);
     try {
       const result = await agentRuntimeApi.switchSessionBranch(
@@ -99,102 +133,122 @@ export function RepositoryBranchPicker({
       if (request === generation.current) setSwitching(false);
     }
   }
+
+  async function createBranch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newBranch.trim();
+    if (!name || disabled || mutating.current) return;
+    if (name !== newBranch) {
+      setCreateError(zh ? "分支名称不能包含首尾空格" : "Remove leading or trailing spaces");
+      return;
+    }
+    if (data?.branches.some((item) => item.name === name)) {
+      setCreateError(zh ? "该分支已存在" : "Branch already exists");
+      return;
+    }
+    const request = ++generation.current;
+    mutating.current = true;
+    setSwitching(true);
+    setCreateError(null);
+    try {
+      const result = await agentRuntimeApi.createSessionBranch(
+        sessionId,
+        name,
+        rootId,
+      );
+      if (request === generation.current) {
+        setData(result);
+        refreshWorkspace(sessionId, rootId);
+        close();
+        onSwitched();
+      }
+    } catch (err) {
+      if (request === generation.current)
+        setCreateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      mutating.current = false;
+      if (request === generation.current) setSwitching(false);
+    }
+  }
+
   const search = query.trim().toLocaleLowerCase();
   const visibleBranches =
-    data?.branches.filter((item) =>
-      item.name.toLocaleLowerCase().includes(search),
-    ) ?? [];
+    data?.branches
+      .filter((item) => item.name.toLocaleLowerCase().includes(search))
+      .sort((a, b) => {
+        const rank = (item: typeof a) =>
+          item.name === "main" || item.name === "master"
+            ? 0
+            : item.current
+              ? 1
+              : 2;
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      }) ?? [];
+  const baseBranch = data?.current || null;
   const searchLabel = zh ? "搜索分支" : "Search branches";
-
   return (
     <>
-      <Popover
-        isOpen={open}
-        onOpenChange={(value) => {
-          setOpen(value);
-          if (value) {
-            setQuery("");
-            void load();
+      <PopoverButton
+        ref={trigger}
+        className="ws-branch-trigger"
+        disabled={disabled || switching}
+        title={branch || "HEAD"}
+        aria-label={`${zh ? "切换 Git 分支" : "Switch Git branch"}: ${branch || "HEAD"}`}
+      >
+        <span className="ws-branch-icon" aria-hidden="true">
+          {switching ? (
+            <LoaderCircle size={12} className="animate-spin" />
+          ) : (
+            <GitBranch size={12} />
+          )}
+        </span>
+        <span className="ws-branch-label">{branch || "HEAD"}</span>
+      </PopoverButton>
+      <PopoverPanel
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
           }
         }}
+        className="ws-branch-popover"
+        anchor={{ to: "bottom start", gap: 6, padding: 8 }}
+        focus
+        role="dialog"
+        aria-label={zh ? "切换 Git 分支" : "Switch Git branch"}
       >
-        <Popover.Trigger<"button">
-          render={(props) => <button {...props} type="button" />}
-          className="ws-branch-trigger"
+        <Combobox
+          value={data?.current ?? null}
+          onChange={(name) => void select(name)}
+          immediate
           disabled={disabled || switching}
-          title={branch || "HEAD"}
-          aria-label={`${zh ? "切换 Git 分支" : "Switch Git branch"}: ${branch || "HEAD"}`}
         >
-          <span className="ws-branch-icon" aria-hidden="true">
-            {switching ? (
-              <LoaderCircle size={12} className="animate-spin" />
-            ) : (
-              <GitBranch size={12} />
-            )}
-          </span>
-          <span className="ws-branch-label">{branch || "HEAD"}</span>
-        </Popover.Trigger>
-        <Popover.Content
-          className="ws-branch-popover"
-          placement="bottom start"
-          offset={6}
-        >
-          <Popover.Dialog
-            aria-label={zh ? "切换 Git 分支" : "Switch Git branch"}
-            className="ws-branch-dialog"
-          >
+          <div className="ws-branch-dialog">
             <label className="ws-branch-search">
               <Search size={15} aria-hidden />
-              <input
-                ref={searchRef}
+              <ComboboxInput
+                autoFocus
                 type="search"
                 aria-label={searchLabel}
                 placeholder={searchLabel}
-                value={query}
+                displayValue={() => query}
                 onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
-                    return;
-                  const options =
-                    listRef.current?.querySelectorAll<HTMLElement>(
-                      '[role="option"]:not([aria-disabled="true"])',
-                    );
-                  if (!options?.length) return;
-                  event.preventDefault();
-                  options[
-                    event.key === "ArrowDown" ? 0 : options.length - 1
-                  ].focus();
-                }}
               />
             </label>
             <p className="ws-branch-heading">{zh ? "分支" : "Branches"}</p>
-            {loading ? (
-              <p role="status" className="ws-branch-empty">
-                {zh ? "加载分支…" : "Loading branches…"}
-              </p>
-            ) : error ? (
-              <p role="alert" className="ws-branch-error">
-                {error}
-              </p>
-            ) : visibleBranches.length ? (
-              <ListBox
-                ref={listRef}
-                className="ws-branch-list"
-                aria-label={zh ? "Git 分支" : "Git branches"}
-                selectionMode="single"
-                selectionBehavior="replace"
-                selectedKeys={new Set(data?.current ? [data.current] : [])}
-                onSelectionChange={(keys) => {
-                  if (keys === "all") return;
-                  const key = [...keys][0];
-                  if (key != null) void select(String(key));
-                }}
-              >
-                {visibleBranches.map((item) => (
-                  <ListBox.Item
+            <ComboboxOptions
+              modal={false}
+              static
+              className="ws-branch-list"
+              aria-label={zh ? "Git 分支" : "Git branches"}
+            >
+              {!loading &&
+                !error &&
+                visibleBranches.map((item) => (
+                  <ComboboxOption
                     key={item.name}
-                    id={item.name}
-                    textValue={item.name}
+                    value={item.name}
                     aria-label={item.name}
                     aria-description={
                       item.occupied
@@ -203,7 +257,7 @@ export function RepositoryBranchPicker({
                           : "In another worktree"
                         : undefined
                     }
-                    isDisabled={item.occupied || switching}
+                    disabled={item.occupied || switching}
                     className="ws-branch-option"
                   >
                     <GitBranch
@@ -215,6 +269,13 @@ export function RepositoryBranchPicker({
                       <span className="ws-branch-name" title={item.name}>
                         {item.name}
                       </span>
+                      {item.current && Boolean(data?.dirtyFileCount) && (
+                        <small>
+                          {zh
+                            ? `未提交：${data!.dirtyFileCount} 个文件`
+                            : `Uncommitted: ${data!.dirtyFileCount} ${data!.dirtyFileCount === 1 ? "file" : "files"}`}
+                        </small>
+                      )}
                       {item.occupied && (
                         <small>
                           {zh ? "已被工作树占用" : "In another worktree"}
@@ -228,23 +289,104 @@ export function RepositoryBranchPicker({
                         aria-label={zh ? "当前分支" : "Current branch"}
                       />
                     )}
-                  </ListBox.Item>
+                  </ComboboxOption>
                 ))}
-              </ListBox>
-            ) : (
+            </ComboboxOptions>
+            {loading ? (
               <p role="status" className="ws-branch-empty">
-                {data?.branches.length
-                  ? zh
-                    ? "没有匹配的分支"
-                    : "No matching branches"
-                  : zh
-                    ? "没有可切换的本地分支"
-                    : "No local branches"}
+                {zh ? "加载分支…" : "Loading branches…"}
               </p>
+            ) : error ? (
+              <p role="alert" className="ws-branch-error">
+                {error}
+              </p>
+            ) : (
+              !visibleBranches.length && (
+                <p role="status" className="ws-branch-empty">
+                  {data?.branches.length
+                    ? zh
+                      ? "没有匹配的分支"
+                      : "No matching branches"
+                    : zh
+                      ? "没有可切换的本地分支"
+                      : "No local branches"}
+                </p>
+              )
             )}
-          </Popover.Dialog>
-        </Popover.Content>
-      </Popover>
+          </div>
+        </Combobox>
+        <div className="ws-branch-footer">
+          {creating ? (
+            <form
+              className="ws-branch-create"
+              onSubmit={(event) => void createBranch(event)}
+            >
+              <div className="ws-branch-create-row">
+                <input
+                  autoFocus
+                  aria-label={zh ? "新分支名称" : "New branch name"}
+                  placeholder={zh ? "新分支名称" : "New branch name"}
+                  value={newBranch}
+                  onChange={(event) => {
+                    setNewBranch(event.target.value);
+                    setCreateError(null);
+                  }}
+                  disabled={switching}
+                  maxLength={1024}
+                />
+                <button type="submit" disabled={!newBranch.trim() || switching}>
+                  {switching ? (
+                    <LoaderCircle size={15} className="animate-spin" />
+                  ) : (
+                    <Check size={15} />
+                  )}
+                  <span className="sr-only">
+                    {zh ? "创建并检出" : "Create and check out"}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating(false);
+                    setCreateError(null);
+                  }}
+                  disabled={switching}
+                >
+                  <X size={15} />
+                  <span className="sr-only">{zh ? "取消" : "Cancel"}</span>
+                </button>
+              </div>
+              {baseBranch && (
+                <small>
+                  {zh ? `从 ${baseBranch} 创建` : `Create from ${baseBranch}`}
+                </small>
+              )}
+              {createError && (
+                <p role="alert" className="ws-branch-create-error">
+                  {createError}
+                </p>
+              )}
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="ws-branch-create-trigger"
+              disabled={loading || Boolean(error) || !baseBranch || switching}
+              title={
+                !baseBranch && !loading
+                  ? zh
+                    ? "需要已检出的分支"
+                    : "A checked-out branch is required"
+                  : undefined
+              }
+              onClick={() => setCreating(true)}
+            >
+              <Plus size={17} aria-hidden />
+              <span>{zh ? "创建并检出新分支…" : "Create and check out new branch…"}</span>
+            </button>
+          )}
+        </div>
+      </PopoverPanel>
       {error && !open && (
         <p role="alert" className="ws-branch-error">
           {error}

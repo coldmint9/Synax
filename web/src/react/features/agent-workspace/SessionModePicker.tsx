@@ -1,6 +1,16 @@
-import { useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
-import { ChevronDown, MessageCircle, Target } from "lucide-react";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOptions,
+  ListboxOption,
+} from "@headlessui/react";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
+import {
+  Check,
+  ChevronDown,
+  MessageCircle,
+  Target,
+} from "lucide-react";
 import type { AgentSessionMode } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 import "./agentControls.css";
@@ -22,7 +32,6 @@ export function SessionModePicker({
 }: Props) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [open, setOpen] = useState(false);
   const options = [
     {
       id: "chat",
@@ -41,72 +50,68 @@ export function SessionModePicker({
         : "Keep working toward an accepted goal",
     },
   ] as const;
-  // Historical plan sessions are displayed as chat; new sessions cannot enter plan mode.
   const visibleMode = mode === "plan" ? "chat" : mode;
   const Icon = options.find((option) => option.id === visibleMode)?.Icon ?? MessageCircle;
-  const changeOpen = (value: boolean) => {
-    setOpen(value);
-    onOpenChange?.(value);
-  };
   const label =
     options.find((option) => option.id === visibleMode)?.label ??
     (zh ? "计划节点" : "Plan node");
   return (
-    <Popover
-      isOpen={!disabled && open}
-      onOpenChange={(value) => changeOpen(!disabled && value)}
+    <Listbox
+      key={String(disabled)}
+      value={visibleMode}
+      disabled={disabled}
+      onChange={(value) => {
+        const option = options.find((item) => item.id === value);
+        if (option && option.id !== mode) onChange(option.id);
+      }}
     >
-      <Popover.Trigger<"button">
-        render={(props) => <button {...props} type="button" />}
-        aria-label={zh ? "会话模式" : "Session mode"}
-        aria-description={description}
-        title={description}
-        disabled={disabled}
-        data-mode={visibleMode}
-        className="agent-dock-composer-chip agent-mode-trigger"
-      >
-        <Icon size={13} aria-hidden />
-        <span>{label}</span>
-        <ChevronDown size={10} aria-hidden />
-      </Popover.Trigger>
-      <Popover.Content
-        placement="top start"
-        offset={8}
-        className="agent-mode-popover agent-workflow-popover"
-      >
-        <ListBox
-          autoFocus
-          aria-label={zh ? "会话模式" : "Session mode"}
-          selectionMode="single"
-          disallowEmptySelection
-          selectedKeys={new Set([visibleMode])}
-          onSelectionChange={(keys) => {
-            if (disabled || keys === "all") return;
-            const selected = [...keys][0];
-            const option = options.find((item) => item.id === selected);
-            if (option) {
-              changeOpen(false);
-              if (option.id !== mode) onChange(option.id);
-            }
-          }}
-        >
-          {options.map((option) => (
-            <ListBox.Item
-              key={option.id}
-              id={option.id}
-              textValue={option.label}
-              className="agent-mode-option agent-mode-option--workflow"
-            >
-              <option.Icon size={17} aria-hidden />
-              <span className="agent-mode-option-copy">
-                <strong>{option.label}</strong>
-                <small>{option.detail}</small>
-              </span>
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Popover.Content>
-    </Popover>
+      {({ open }) => (
+        <>
+          <OverlayStateObserver open={open} onOpenChange={onOpenChange} />
+          <ListboxButton
+            aria-label={zh ? "会话模式" : "Session mode"}
+            aria-description={description}
+            title={description}
+            disabled={disabled}
+            data-mode={visibleMode}
+            className="agent-dock-composer-chip agent-mode-trigger"
+          >
+            <Icon size={13} aria-hidden />
+            <span>{label}</span>
+            <ChevronDown size={10} aria-hidden />
+          </ListboxButton>
+          <ListboxOptions
+            anchor={{ to: "top start", gap: 8, padding: 8 }}
+            portal
+            modal={false}
+            aria-label={zh ? "会话模式" : "Session mode"}
+            className="agent-mode-popover agent-workflow-popover ui-select-options z-[1200] max-h-80 overflow-y-auto rounded-xl border border-border bg-card p-1 text-card-foreground shadow-lg outline-none"
+          >
+            {options.map((option) => (
+              <ListboxOption
+                key={option.id}
+                value={option.id}
+                className="agent-mode-option agent-mode-option--workflow flex cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-xs outline-none data-focus:bg-muted data-selected:bg-primary/10"
+              >
+                {({ selected }) => (
+                  <>
+                    <option.Icon size={17} aria-hidden />
+                    <span className="agent-mode-option-copy">
+                      <strong>{option.label}</strong>
+                      <small>{option.detail}</small>
+                    </span>
+                    <Check
+                      size={14}
+                      aria-hidden
+                      className={selected ? "shrink-0" : "invisible shrink-0"}
+                    />
+                  </>
+                )}
+              </ListboxOption>
+            ))}
+          </ListboxOptions>
+        </>
+      )}
+    </Listbox>
   );
 }

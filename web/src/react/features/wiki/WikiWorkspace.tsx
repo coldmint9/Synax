@@ -10,8 +10,9 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Skeleton } from "@heroui/react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Skeleton } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import WikiProgressBar from "./WikiProgressBar";
 import { useScrollRestore } from "../../../hooks/useScrollRestore";
 import { useLocale } from "../../../hooks/useLocale";
@@ -42,6 +43,11 @@ import {
   isProviderNotConfiguredError,
   LlmProviderRequiredBanner,
 } from "../../components/LlmProviderRequiredBanner";
+
+// View-mode changes only hide/show these retained surfaces. Their own store
+// subscriptions still update, without rebuilding the composer on every tab click.
+const RetainedAgentDock = memo(AgentDock);
+const RetainedPlanView = memo(PlanView);
 
 function WikiGeneratingShell({
   gen,
@@ -132,7 +138,7 @@ function EmptyState({
             </div>
           ))}
 
-        <Button className="mt-4 w-full" onPress={handleGenerate}>
+        <Button className="mt-4 w-full" onClick={handleGenerate}>
           <Sparkles size={14} />
           {t("wikiGenerate")}
         </Button>
@@ -189,7 +195,7 @@ function FailedState({
             </div>
           ))}
 
-        <Button className="mt-4 w-full" onPress={handleRetry}>
+        <Button className="mt-4 w-full" onClick={handleRetry}>
           <RefreshCw size={14} />
           {t("wikiRetry")}
         </Button>
@@ -510,7 +516,9 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
-  if (loading.snapshot && !gen.active) {
+  // A reconnect refresh must not tear down the cached document and composer.
+  // Retain only this project's content; first loads/project switches still use the skeleton.
+  if (loading.snapshot && snapshot?.projectId !== projectId && !gen.active) {
     return (
       <div className="flex h-full min-h-0 overflow-hidden">
         <aside
@@ -728,11 +736,11 @@ export default function WikiWorkspace({ projectId }: { projectId: string }) {
 
       {/* ── Center: Block content or Plan view ── */}
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <AgentDock projectId={projectId} />
+        <RetainedAgentDock projectId={projectId} />
         <div
           className={`min-h-0 flex-1 flex flex-col overflow-hidden pt-14 ${viewMode !== "plan" ? "hidden" : ""}`}
         >
-          <PlanView projectId={projectId} />
+          <RetainedPlanView projectId={projectId} />
         </div>
         <div
           className={`min-h-0 flex-1 flex flex-col overflow-hidden ${viewMode !== "document" ? "hidden" : ""}`}

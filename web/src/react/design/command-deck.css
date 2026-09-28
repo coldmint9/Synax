@@ -1,0 +1,231 @@
+/* One command deck, one material envelope. Controls never carry a second glass layer. */
+.workbench-header {
+  --island-center-offset: 130px;
+  position: fixed;
+  top: var(--workbench-island-top, 12px);
+  left: calc(50% + var(--island-center-offset));
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  width: max-content;
+  max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
+  white-space: nowrap;
+}
+.workbench-shell[data-active-panel="wiki"] .workbench-header { --island-center-offset: 90px; }
+.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"]) .workbench-header { --island-center-offset: 0px; }
+.workbench-shell .workspace-island-slot .workbench-header {
+  position: relative;
+  inset: auto;
+  width: max-content;
+  max-width: 100%;
+  transform: none;
+}
+.synax-island, .wh-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  box-shadow: none;
+  isolation: isolate;
+}
+.workbench-header > .synax-island { min-width: 0; max-width: 100%; }
+.synax-island-material.liquid-glass-surface[data-glass-state] {
+  /* Untinted glass: blur the real backdrop, never paint a light/dark panel.
+     The shared glass-solid token remains available for accessibility fallback. */
+  --glass-base: transparent;
+  --glass-transparent: transparent;
+  --glass-blur: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 42px;
+  padding: 5px;
+  border-radius: inherit;
+}
+/* Flat means no raised edge, optical shoulder, gradient rim or outer shadow. */
+.synax-island-material.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+  box-shadow: none;
+}
+.synax-island-material.liquid-glass-surface[data-glass-state] > :is(.liquid-glass-svg, .liquid-glass-gpu-host) {
+  display: none;
+}
+.workbench-island-mount > .workbench-header > .synax-island { transform-origin: top left; }
+.wh-pill-slot {
+  flex: 0 0 auto;
+  width: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  --toolbar-gap: 8px;
+  max-width: max-content;
+}
+.wh-pill-slot.open {
+  width: calc(var(--toolbar-width, 0px) + var(--toolbar-gap));
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+.wh-pill-slot > .synax-island { width: max-content; margin-left: var(--toolbar-gap); }
+.wh-actions, .wh-tabs-list { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+.wh-tabs { min-width: 0; }
+.wh-divider { flex: 0 0 1px; width: 1px; height: 14px; margin-inline: 5px; background: var(--ui-line); }
+.wh-btn, .wh-tab, .wh-goal-menu, .wh-project-trigger {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ui-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  -webkit-app-region: no-drag;
+}
+.wh-btn { width: 32px; padding: 0; }
+.wh-btn svg, .wh-tab svg, .wh-goal-menu svg { flex-shrink: 0; }
+.wh-btn:hover, .wh-tab:hover:not(:disabled), .wh-goal-menu:hover, .wh-project-trigger:hover { color: var(--ui-text); background: color-mix(in srgb, var(--ui-panel) 65%, transparent); }
+.wh-tab[aria-pressed="true"], .wh-btn.active, .wh-project-trigger[data-open], .wh-goal-menu[data-open] {
+  color: var(--ui-text);
+  background: color-mix(in srgb, var(--ui-panel) 85%, transparent);
+  box-shadow: var(--ui-shadow-control);
+}
+.wh-btn:active, .wh-tab:active:not(:disabled), .wh-goal-menu:active, .wh-project-trigger:active { box-shadow: var(--ui-shadow-inset); }
+.wh-btn:focus-visible, .wh-tab:focus-visible, .wh-goal-menu:focus-visible, .wh-project-trigger:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.wh-btn:disabled, .wh-tab:disabled { opacity: .4; cursor: not-allowed; }
+.wh-project-trigger { max-width: 200px; padding-inline: 9px; color: var(--ui-text); }
+.wh-project-label { min-width: 0; max-width: 158px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; letter-spacing: -.015em; }
+.wh-project-trigger--icon, .wh-goal-menu--icon, .wh-tabs--icon-only .wh-tab { width: 30px; min-width: 30px; padding-inline: 0; }
+.project-switcher-anchor { display: flex; min-width: 0; }
+.wh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--ui-line); border-radius: 9px; background: var(--ui-panel); color: var(--ui-text); font-size: 12px; font-weight: 500; box-shadow: var(--ui-shadow-control); }
+.wh-pill-btn--sm { min-height: 27px; padding: 4px 8px; font-size: 11px; }
+.wh-pill-btn--primary { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: transparent; }
+.wh-pill-btn--soft { color: hsl(var(--primary)); background: var(--ui-accent-soft); border-color: transparent; }
+.wh-pill-btn--danger-soft { color: hsl(var(--destructive)); background: hsl(var(--destructive) / .08); border-color: transparent; }
+.wh-pill-btn:disabled { opacity: .4; cursor: not-allowed; }
+.wh-pill-btn:active:not(:disabled) { box-shadow: var(--ui-shadow-inset); }
+.workbench-header--docked .synax-island { border-radius: 9999px; }
+.workbench-header--docked .synax-island-material { min-height: 34px; padding: 3px; gap: 1px; }
+.workbench-header--docked :is(.wh-btn, .wh-tab, .wh-project-trigger, .wh-goal-menu) { width: 28px; min-width: 28px; height: 28px; padding: 0; border-radius: 8px; }
+.workbench-header--docked .wh-divider { margin-inline: 3px; height: 12px; }
+.work-quick-actions.wh-pill { position: absolute; top: 14px; right: 10px; z-index: 25; height: 32px; padding: 2px; border: 1px solid var(--ui-line); background: var(--ui-panel); box-shadow: var(--ui-shadow-control); }
+@media (max-width: 760px) {
+  .workbench-header { left: 8px; right: 8px; max-width: none; width: auto; transform: none; }
+  .workbench-shell .workspace-island-slot .workbench-header { left: auto; right: auto; width: max-content; max-width: 100%; }
+  .workbench-header > .synax-island { flex: 1 1 auto; }
+  .synax-island-material.liquid-glass-surface[data-glass-state] { gap: 1px; padding: 4px; min-height: 40px; }
+  .wh-project-label { max-width: 70px; }
+  .wh-tab { width: 30px; min-width: 30px; padding: 0; }
+  .wh-tab > span { display: none; }
+  .wh-btn { width: 29px; }
+  .wh-divider { margin-inline: 3px; }
+  .wh-pill-slot { --toolbar-gap: 6px; }
+}
+@media (max-width: 520px) {
+  .wh-project-label { max-width: 50px; }
+  .wh-goal-menu > span { display: none; }
+  .wh-goal-menu { gap: 3px; padding-inline: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wh-pill-slot, .wh-btn, .wh-tab, .wh-goal-menu, .wh-project-trigger { transition: none; }
+}
+
+/* Clear ink controls share one flat, softly raised selection pill. */
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) {
+  color: var(--island-ink);
+  font-weight: 600;
+  text-shadow: 0 1px 1px var(--island-ink-halo), 0 0 3px var(--island-ink-halo);
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab):hover:not(:disabled) {
+  background: transparent;
+  color: var(--island-ink);
+  box-shadow: none;
+}
+/* Only the glyphs receive a halo; do not filter their control or popovers. */
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) > svg {
+  filter: drop-shadow(0 1px 1px var(--island-ink-halo));
+}
+.synax-island :is(.wh-tab[aria-pressed="true"], .wh-pill-btn[aria-current="page"], .wiki-view-tab[aria-checked="true"]) {
+  background: transparent;
+  color: var(--island-ink);
+  font-weight: 700;
+  box-shadow: none;
+}
+.synax-island :is(.wh-btn.active, .wh-project-trigger[data-open], .wh-goal-menu[data-open]) {
+  background: var(--island-pill-background);
+  box-shadow: var(--island-pill-shadow);
+  color: var(--island-ink);
+}
+.synax-island .wh-pill-btn--primary {
+  background: var(--island-pill-background);
+  color: var(--island-ink);
+  box-shadow: none;
+}
+.synax-island .wh-pill-btn--primary:hover:not(:disabled) { background: var(--island-pill-background); box-shadow: var(--island-pill-shadow); }
+.synax-island .wh-pill-btn--danger-soft { color: hsl(var(--destructive)); }
+.synax-island :is(button, [role="radio"], select):focus-visible { outline: 2px solid var(--island-ink); outline-offset: 2px; }
+.synax-island {
+  --island-ink: #18221c;
+  --island-ink-halo: rgb(255 255 255 / .85);
+  --island-pill-background: var(--ui-panel);
+  --island-pill-shadow: 0 3px 9px rgb(30 47 38 / .13);
+}
+.dark .synax-island {
+  --island-ink: #f4f8f3;
+  --island-ink-halo: rgb(0 0 0 / .9);
+  --island-pill-shadow: 0 3px 9px rgb(0 0 0 / .28);
+}
+@media (prefers-contrast: more), (forced-colors: active) {
+  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) {
+    color: CanvasText;
+    text-shadow: none;
+  }
+  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) > svg { filter: none; }
+  .synax-island .island-selection-pill,
+  .synax-island :is(.wh-btn.active, .wh-project-trigger[data-open], .wh-goal-menu[data-open], .wh-pill-btn--primary) {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
+.island-selection { position: relative; display: flex; align-items: center; gap: 2px; isolation: isolate; }
+.island-selection > :not(.island-selection-pill) { position: relative; z-index: 1; }
+.synax-island .island-selection > button:hover:not(:disabled) { background: transparent; }
+.island-selection-pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--island-pill-background);
+  box-shadow: var(--island-pill-shadow);
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .synax-island :is(button, [role="radio"], select) { transition: none; }
+}
+
+.wh-pill-slot.closing:has(> .synax-island) { visibility: visible; }

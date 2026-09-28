@@ -1,7 +1,18 @@
 import { useTerminalStore } from "../terminal/terminalStore";
 import { useSessionWorkspaceStore } from "./state/sessionWorkspaceStore";
-import { useEffect, useRef, useState } from "react";
-import { Popover } from "@heroui/react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { PopoverGroup } from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
 import { LoaderCircle, Square, Terminal, Trash2 } from "lucide-react";
 import {
   agentRuntimeApi,
@@ -27,7 +38,6 @@ export function SessionBackgroundProcesses({
   const [items, setItems] = useState<SessionBackgroundProcess[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [busy, setBusy] = useState<{
     id: string;
     action: "stop" | "delete" | "stop-delete";
@@ -47,30 +57,6 @@ export function SessionBackgroundProcesses({
   const generation = useRef(0);
   const revision = useRef(0);
   const busyRef = useRef(false);
-  // The row delete confirmation follows the pointer: it appears on hover and
-  // lingers briefly so the cursor can travel into the popover.
-  const hoverClose = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const openDeleteHover = (id: string) => {
-    if (hoverClose.current) {
-      clearTimeout(hoverClose.current);
-      hoverClose.current = null;
-    }
-    setConfirmDeleteId(id);
-  };
-  const scheduleDeleteHoverClose = () => {
-    if (hoverClose.current) clearTimeout(hoverClose.current);
-    hoverClose.current = setTimeout(() => {
-      hoverClose.current = null;
-      setConfirmDeleteId(null);
-    }, 250);
-  };
-  useEffect(
-    () => () => {
-      if (hoverClose.current) clearTimeout(hoverClose.current);
-    },
-    [],
-  );
-
   useEffect(() => {
     const current = ++generation.current;
     let disposed = false;
@@ -80,7 +66,6 @@ export function SessionBackgroundProcesses({
     setError(null);
     setLoadError(null);
     setBusy(null);
-    setConfirmDeleteId(null);
 
     busyRef.current = false;
     const reload = async () => {
@@ -134,7 +119,6 @@ export function SessionBackgroundProcesses({
     const current = generation.current;
     busyRef.current = true;
     setBusy({ id, action });
-    setConfirmDeleteId(null);
     setError(null);
     revision.current++;
     try {
@@ -270,182 +254,247 @@ export function SessionBackgroundProcesses({
           {error || loadError}
         </p>
       )}
-      {services.map((item) => {
-        const live = item.state !== "closed";
-        // Plain terminals have no service lifecycle: no status, no stop — the
-        // delete button directly clears the terminal and its session.
-        const plainTerminal = item.kind === "terminal";
-        const livePorts = live && !plainTerminal ? (item.ports ?? []) : [];
-        const deleteProps = {
-          disabled: busy !== null,
-          className: "ws-icon-button bui-process-delete",
-          "aria-label": `${plainTerminal ? (zh ? "删除终端" : "Delete terminal") : zh ? "删除记录" : "Delete record"} ${item.command}`,
-          title: plainTerminal
-            ? zh
-              ? "删除终端并清除该终端会话"
-              : "Delete the terminal and clear its session"
-            : live
+      <PopoverGroup className="contents">
+        {services.map((item) => {
+          const live = item.state !== "closed";
+          // Plain terminals have no service lifecycle: no status, no stop — the
+          // delete button directly clears the terminal and its session.
+          const plainTerminal = item.kind === "terminal";
+          const livePorts = live && !plainTerminal ? (item.ports ?? []) : [];
+          const deleteProps = {
+            disabled: busy !== null,
+            className: "ws-icon-button bui-process-delete",
+            "aria-label": `${plainTerminal ? (zh ? "删除终端" : "Delete terminal") : zh ? "删除记录" : "Delete record"} ${item.command}`,
+            title: plainTerminal
               ? zh
-                ? "停止并删除记录"
-                : "Stop and delete record"
-              : zh
-                ? "删除记录（不删除文件）"
-                : "Delete record (keeps files)",
-        };
-        const deleteIcon =
-          busy?.id === item.id && busy.action !== "stop" ? (
-            <LoaderCircle size={12} className="animate-spin" />
-          ) : (
-            <Trash2 size={12} />
-          );
-        const open =
-          drawerOpen &&
-          (activeTerminal === item.terminalId ||
-            activeTerminal === `legacy:${item.id}`);
-        return (
-          <div
-            className={`bui-process-row${livePorts.length ? " bui-process-row--ports" : ""}`}
-            key={item.id}
-          >
-            <div className="bui-process-info">
-              <button
-                type="button"
-                className="bui-process-command"
-                data-terminal-open={item.terminalId}
-                aria-expanded={open}
-                onClick={() => {
-                  const projectId = item.projectId ?? environment?.projectId;
-                  if (!projectId) return;
-                  if (item.terminalId)
-                    void useTerminalStore
-                      .getState()
-                      .openTerminal(projectId, item.terminalId);
-                  else
-                    useTerminalStore.getState().openLegacy({
-                      sessionId,
-                      projectId,
-                      process: item,
-                      cwd:
-                        root?.workspacePath ?? environment?.workspacePath ?? "",
-                    });
-                }}
-                title={item.command}
-              >
-                <Terminal size={11} aria-hidden />
-                <code>{item.command}</code>
-              </button>
-              {!plainTerminal && (
-                <span className="bui-process-meta">
-                  {/* Running is conveyed by the row colour alone; only
-                      finished records get a status chip. */}
-                  {!live && (
-                    <ActivityStatus
-                      status={
-                        item.exitCode === null
-                          ? "cancelled"
-                          : item.exitCode === 0
-                            ? "completed"
-                            : "failed"
-                      }
-                    />
-                  )}
-                  {item.pid && <span>PID {item.pid}</span>}
-                  {livePorts.map((port) => (
-                    <span
-                      key={port}
-                      className="bui-process-port"
-                      title={zh ? `服务端口 :${port}` : `Service port :${port}`}
-                    >
-                      :{port}
-                    </span>
-                  ))}
-                </span>
-              )}
-            </div>
-            <div className="bui-process-actions">
-              {live && !plainTerminal && (
+                ? "删除终端并清除该终端会话"
+                : "Delete the terminal and clear its session"
+              : live
+                ? zh
+                  ? "停止并删除记录"
+                  : "Stop and delete record"
+                : zh
+                  ? "删除记录（不删除文件）"
+                  : "Delete record (keeps files)",
+          };
+          const deleteIcon =
+            busy?.id === item.id && busy.action !== "stop" ? (
+              <LoaderCircle size={12} className="animate-spin" />
+            ) : (
+              <Trash2 size={12} />
+            );
+          const open =
+            drawerOpen &&
+            (activeTerminal === item.terminalId ||
+              activeTerminal === `legacy:${item.id}`);
+          return (
+            <div
+              className={`bui-process-row${livePorts.length ? " bui-process-row--ports" : ""}`}
+              key={item.id}
+            >
+              <div className="bui-process-info">
                 <button
                   type="button"
-                  disabled={busy !== null}
-                  className="ws-icon-button"
-                  aria-label={`${zh ? "终止" : "Stop"} ${item.command}`}
-                  title={
-                    zh ? "停止服务及其子进程" : "Stop service and its children"
-                  }
-                  onClick={() => void act(item.id, "stop")}
+                  className="bui-process-command"
+                  data-terminal-open={item.terminalId}
+                  aria-expanded={open}
+                  onClick={() => {
+                    const projectId = item.projectId ?? environment?.projectId;
+                    if (!projectId) return;
+                    if (item.terminalId)
+                      void useTerminalStore
+                        .getState()
+                        .openTerminal(projectId, item.terminalId);
+                    else
+                      useTerminalStore.getState().openLegacy({
+                        sessionId,
+                        projectId,
+                        process: item,
+                        cwd:
+                          root?.workspacePath ??
+                          environment?.workspacePath ??
+                          "",
+                      });
+                  }}
+                  title={item.command}
                 >
-                  {busy?.id === item.id && busy.action === "stop" ? (
-                    <LoaderCircle size={12} className="animate-spin" />
-                  ) : (
-                    <Square size={12} />
-                  )}
+                  <Terminal size={11} aria-hidden />
+                  <code>{item.command}</code>
                 </button>
-              )}
-              {live && !plainTerminal ? (
-                <Popover
-                  isOpen={confirmDeleteId === item.id && busy === null}
-                  onOpenChange={(open) =>
-                    setConfirmDeleteId(open ? item.id : null)
-                  }
-                >
-                  <Popover.Trigger<"button">
+                {!plainTerminal && (
+                  <span className="bui-process-meta">
+                    {/* Running is conveyed by the row colour alone; only
+                      finished records get a status chip. */}
+                    {!live && (
+                      <ActivityStatus
+                        status={
+                          item.exitCode === null
+                            ? "cancelled"
+                            : item.exitCode === 0
+                              ? "completed"
+                              : "failed"
+                        }
+                      />
+                    )}
+                    {item.pid && <span>PID {item.pid}</span>}
+                    {livePorts.map((port) => (
+                      <span
+                        key={port}
+                        className="bui-process-port"
+                        title={
+                          zh ? `服务端口 :${port}` : `Service port :${port}`
+                        }
+                      >
+                        :{port}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+              <div className="bui-process-actions">
+                {live && !plainTerminal && (
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    className="ws-icon-button"
+                    aria-label={`${zh ? "终止" : "Stop"} ${item.command}`}
+                    title={
+                      zh
+                        ? "停止服务及其子进程"
+                        : "Stop service and its children"
+                    }
+                    onClick={() => void act(item.id, "stop")}
+                  >
+                    {busy?.id === item.id && busy.action === "stop" ? (
+                      <LoaderCircle size={12} className="animate-spin" />
+                    ) : (
+                      <Square size={12} />
+                    )}
+                  </button>
+                )}
+                {live && !plainTerminal ? (
+                  <DeleteConfirmation
+                    key={`${sessionId}:${item.id}`}
+                    triggerProps={deleteProps}
+                    icon={deleteIcon}
+                    zh={zh}
+                    onConfirm={() => void act(item.id, "stop-delete")}
+                  />
+                ) : (
+                  <button
                     {...deleteProps}
-                    onMouseEnter={() => openDeleteHover(item.id)}
-                    onMouseLeave={scheduleDeleteHoverClose}
-                    onFocus={() => openDeleteHover(item.id)}
-                    render={(props) => <button {...props} type="button" />}
+                    type="button"
+                    onClick={() => void act(item.id, "delete")}
                   >
                     {deleteIcon}
-                  </Popover.Trigger>
-                  <Popover.Content
-                    placement="top end"
-                    offset={6}
-                    className="bui-process-confirm"
-                    onMouseEnter={() => openDeleteHover(item.id)}
-                    onMouseLeave={scheduleDeleteHoverClose}
-                  >
-                    <Popover.Dialog
-                      aria-label={zh ? "停止并删除？" : "Stop and delete?"}
-                    >
-                      <Popover.Heading>
-                        {zh ? "停止并删除？" : "Stop and delete?"}
-                      </Popover.Heading>
-                      <p>
-                        {zh
-                          ? "将停止服务及其子进程，并删除记录。文件会保留。"
-                          : "Stop this service and its children, then delete the record. Files will be kept."}
-                      </p>
-                      <div className="bui-process-confirm-actions">
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(null)}
-                        >
-                          {zh ? "取消" : "Cancel"}
-                        </button>
-                        <button
-                          type="button"
-                          className="bui-process-confirm-delete"
-                          onClick={() => void act(item.id, "stop-delete")}
-                        >
-                          {zh ? "停止并删除" : "Stop and delete"}
-                        </button>
-                      </div>
-                    </Popover.Dialog>
-                  </Popover.Content>
-                </Popover>
-              ) : (
-                <button
-                  {...deleteProps}
-                  type="button"
-                  onClick={() => void act(item.id, "delete")}
-                >
-                  {deleteIcon}
-                </button>
-              )}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </PopoverGroup>
     </WorkspaceSection>
+  );
+}
+
+interface DeleteConfirmationProps {
+  triggerProps: ButtonHTMLAttributes<HTMLButtonElement>;
+  icon: ReactNode;
+  zh: boolean;
+  onConfirm: () => void;
+}
+
+function DeleteConfirmation(props: DeleteConfirmationProps) {
+  return (
+    <Popover>
+      {({ open, close }) => (
+        <DeleteConfirmationContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function DeleteConfirmationContent({
+  triggerProps,
+  icon,
+  zh,
+  onConfirm,
+  open,
+  close,
+}: DeleteConfirmationProps & { open: boolean; close: () => void }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const hoverClose = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHoverClose = () => {
+    if (hoverClose.current) clearTimeout(hoverClose.current);
+    hoverClose.current = null;
+  };
+  const scheduleHoverClose = () => {
+    cancelHoverClose();
+    hoverClose.current = setTimeout(() => {
+      hoverClose.current = null;
+      // Keyboard users can continue a confirmation independently of the pointer.
+      if (!panel.current?.contains(document.activeElement)) close();
+    }, 250);
+  };
+  useEffect(
+    () => () => {
+      if (hoverClose.current) clearTimeout(hoverClose.current);
+    },
+    [],
+  );
+  useEffect(() => {
+    if (open && triggerProps.disabled) close();
+    if (!open) cancelHoverClose();
+  }, [open, triggerProps.disabled, close]);
+  return (
+    <>
+      <PopoverButton
+        {...triggerProps}
+        ref={trigger}
+        onMouseEnter={() => {
+          cancelHoverClose();
+          // Headless UI's native trigger remains the only open-state authority.
+          if (!open && !triggerProps.disabled) trigger.current?.click();
+        }}
+        onMouseLeave={scheduleHoverClose}
+      >
+        {icon}
+      </PopoverButton>
+      <PopoverPanel
+        anchor={{ to: "top end", gap: 6, padding: 8 }}
+        className="bui-process-confirm"
+        onMouseEnter={cancelHoverClose}
+        onMouseLeave={scheduleHoverClose}
+        role="dialog"
+        aria-label={zh ? "停止并删除？" : "Stop and delete?"}
+      >
+        <div ref={panel}>
+          <h3 className="text-xs font-semibold">{zh ? "停止并删除？" : "Stop and delete?"}</h3>
+          <p>
+            {zh
+              ? "将停止服务及其子进程，并删除记录。文件会保留。"
+              : "Stop this service and its children, then delete the record. Files will be kept."}
+          </p>
+          <div className="bui-process-confirm-actions">
+            <button type="button" onClick={() => close()}>
+              {zh ? "取消" : "Cancel"}
+            </button>
+            <button
+              type="button"
+              className="bui-process-confirm-delete"
+              disabled={triggerProps.disabled}
+              onClick={() => {
+                close();
+                onConfirm();
+              }}
+            >
+              {zh ? "停止并删除" : "Stop and delete"}
+            </button>
+          </div>
+        </div>
+      </PopoverPanel>
+    </>
   );
 }

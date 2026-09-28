@@ -364,3 +364,35 @@ describe("SessionCommitDialog", () => {
     },
   );
 });
+
+describe('detached worktree branch creation', () => {
+  it('requires a branch name and submits it with commit-and-push', async () => {
+    commitSessionWorkspace.mockReset();
+    commitSessionWorkspace.mockResolvedValue(committed);
+    const { onCommitted } = renderDialog({ branch: 'HEAD' });
+    expect(screen.getByLabelText('新分支名称')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('提交信息'), { target: { value: 'feat: new worktree' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交并推送' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('请先为工作树创建分支');
+    expect(commitSessionWorkspace).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('新分支名称'), { target: { value: 'topic/new-worktree' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交并推送' }));
+    await waitFor(() => expect(commitSessionWorkspace).toHaveBeenCalledExactlyOnceWith('session-1', {
+      message: 'feat: new worktree', branchName: 'topic/new-worktree',
+    }));
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledWith(committed));
+  });
+});
+
+describe('detached local commit summary', () => {
+  it('shows the newly attached branch rather than HEAD after a commit-only run', async () => {
+    commitSessionWorkspace.mockReset();
+    commitSessionWorkspace.mockResolvedValue({ ...committed, upstream: null, pushed: null });
+    renderDialog({ branch: 'HEAD' });
+    fireEvent.change(screen.getByLabelText('新分支名称'), { target: { value: 'feature/commit-ui' } });
+    fireEvent.change(screen.getByLabelText('提交信息'), { target: { value: 'feat: changes' } });
+    fireEvent.click(screen.getByRole('button', { name: '仅提交' }));
+    await screen.findByRole('status');
+    expect(screen.getByRole('status')).toHaveTextContent('feature/commit-ui');
+  });
+});

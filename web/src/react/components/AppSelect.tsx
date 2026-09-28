@@ -1,5 +1,5 @@
-import { Label, ListBox, Select } from "@heroui/react";
-import type { Key, ReactNode } from "react";
+import { Select } from "@/react/components/ui/Select";
+import type { ReactNode } from "react";
 
 export interface AppSelectOption {
   key: string;
@@ -23,13 +23,7 @@ export interface AppSelectProps {
   popoverClassName?: string;
 }
 
-/**
- * Shared HeroUI v3 single-value selector.
- *
- * Selection fields use Select/ListBox, while command menus should use
- * Dropdown. Geometry and interaction states intentionally come from HeroUI;
- * callers only control layout width and option content.
- */
+/** App-level option naming adapter; selection and keyboard interaction use Headless UI. */
 export function AppSelect({
   value,
   onChange,
@@ -47,42 +41,25 @@ export function AppSelect({
   return (
     <Select
       value={value}
-      onChange={(key: Key | null) => onChange(key == null ? null : String(key))}
-      isDisabled={isDisabled}
-      fullWidth={fullWidth}
-      variant={variant}
-      className={["app-select", className].filter(Boolean).join(" ")}
+      onChange={onChange}
+      options={options.map((option) => ({
+        value: option.key,
+        label: option.label,
+        textValue: option.textValue,
+        disabled: option.isDisabled,
+      }))}
+      label={label}
+      aria-label={ariaLabel}
       placeholder={placeholder}
-      aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}
-    >
-      {label ? <Label>{label}</Label> : null}
-      <Select.Trigger>
-        {startContent}
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      <Select.Popover className={popoverClassName}>
-        <ListBox
-          aria-label={
-            ariaLabel ?? (typeof label === "string" ? label : "Options")
-          }
-        >
-          {options.map((option) => (
-            <ListBox.Item
-              key={option.key}
-              id={option.key}
-              textValue={
-                option.textValue ??
-                (typeof option.label === "string" ? option.label : option.key)
-              }
-              isDisabled={option.isDisabled}
-            >
-              {option.label}
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
-    </Select>
+      disabled={isDisabled}
+      className={["app-select", fullWidth ? "w-full" : "w-auto", className]
+        .filter(Boolean)
+        .join(" ")}
+      leading={startContent}
+      optionsClassName={popoverClassName}
+      triggerClassName={
+        variant === "primary" ? "bg-primary text-primary-foreground" : undefined
+      }
+    />
   );
 }

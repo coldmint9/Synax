@@ -1,4 +1,5 @@
-import { Button, Modal } from "@heroui/react";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { Archive } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 
@@ -19,38 +20,36 @@ export function SessionDeleteDialog({
 }: Props) {
   const { t } = useLocale();
   return (
-    <Modal.Backdrop
-      isOpen={isOpen}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
     >
-      <Modal.Container size="sm">
-        <Modal.Dialog>
-          <Modal.Header>
-            <Modal.Icon>
+      <DialogContainer size="sm">
+        <DialogPanel>
+          <DialogHeader>
+            <DialogIcon>
               <Archive size={18} />
-            </Modal.Icon>
-            <Modal.Heading>{t("sessionDelete")}</Modal.Heading>
-          </Modal.Header>
-          <Modal.Body>
+            </DialogIcon>
+            <DialogTitle>{t("sessionDelete")}</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
             {t("sessionDeleteConfirm", { title: sessionTitle })}
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="ghost" onPress={onClose} size="sm">
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} size="sm">
               {t("commonCancel")}
             </Button>
             <Button
               variant="primary"
-              onPress={onConfirm}
-              isPending={isDeleting}
+              onClick={onConfirm}
+              pending={isDeleting}
               size="sm"
             >
               {t("sessionDelete")}
             </Button>
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   );
 }

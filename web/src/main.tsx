@@ -1,12 +1,12 @@
 import { RuntimeAccessGate } from "./react/features/runtime/RuntimeAccessGate";
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, useNavigate } from "react-router-dom";
-import { RouterProvider } from "@heroui/react";
+import { BrowserRouter } from "react-router-dom";
 import App from "./react/App";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/noto-sans-sc/wght.css";
 import "./index.css";
+import "./react/design/fonts.css";
 import "katex/dist/katex.min.css";
 import {
   hydrateShellPreferences,
@@ -19,20 +19,13 @@ installScrollRevealScrollbar();
 const stopAppearance = startShellAppearance();
 if (import.meta.hot) import.meta.hot.dispose(stopAppearance);
 
-function HeroUIRouter({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
-  return <RouterProvider navigate={navigate}>{children}</RouterProvider>;
-}
-
 function bootstrap() {
   ReactDOM.createRoot(document.getElementById("app")!).render(
     <React.StrictMode>
       <BrowserRouter>
-        <HeroUIRouter>
-          <RuntimeAccessGate>
-            <App />
-          </RuntimeAccessGate>
-        </HeroUIRouter>
+        <RuntimeAccessGate>
+          <App />
+        </RuntimeAccessGate>
       </BrowserRouter>
     </React.StrictMode>,
   );

@@ -1,11 +1,28 @@
+import { Radio, RadioGroup } from "@headlessui/react";
 import { ToolbarPill } from "./ToolbarPill";
 import { GitToolbarTarget } from "../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
+import { IslandSurface } from "./IslandSurface";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Tabs, Dropdown, Modal, Button, useOverlayState } from "@heroui/react";
+import { Menu, MenuButton, MenuAction, MenuOpenObserver } from "@/react/components/ui/Menu";
+import { Popover, PopoverButton } from "@/react/components/ui/Popover";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { IslandMenuItems, IslandPopoverPanel } from "./IslandOverlays";
+import { IslandSelection } from "./IslandSelection";
+import {
+  Dialog,
+  DialogContainer,
+  DialogPanel,
+  DialogHeader,
+  DialogIcon,
+  DialogTitle,
+  DialogBody,
+  DialogFooter,
+} from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import {
   BookOpen,
   GitMerge,
@@ -19,6 +36,7 @@ import {
   Ellipsis,
   Download,
   RotateCcw,
+  Check,
   ChevronDown,
   Target,
 } from "lucide-react";
@@ -131,7 +149,6 @@ function ProjectSwitcher({
   iconOnly?: boolean;
 }) {
   const { t } = useLocale();
-  const labelRef = useRef<HTMLSpanElement>(null);
   const displayName = hasProject
     ? projectName
     : useShellStore.getState().preferences.locale === "zh"
@@ -143,100 +160,32 @@ function ProjectSwitcher({
   const currentBadge = badges[currentProjectId];
 
   return (
-    <Dropdown
-      onOpenChange={(isOpen) => {
-        if (isOpen) {
-          onOpen?.();
-          void refreshBadges();
-        }
-      }}
-    >
-      <Dropdown.Trigger>
-        <div
-          role="button"
-          tabIndex={0}
-          className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`}
-          title={displayName}
-          aria-label={t("appSwitchProject")}
-        >
-          {iconOnly ? (
-            <>
-              <Folder size={14} />
-              <ProjectSessionBadgeMark
-                badge={currentBadge}
-                className="project-session-badge--icon-trigger"
-              />
-            </>
-          ) : (
-            <>
-              <ProjectSessionBadgeMark badge={currentBadge} />
-              <span
-                ref={labelRef}
-                className="wh-project-label text-xs font-medium"
-                onMouseEnter={() =>
-                  labelRef.current?.scrollTo({
-                    left: labelRef.current.scrollWidth,
-                    behavior: "smooth",
-                  })
-                }
-                onMouseLeave={() =>
-                  labelRef.current?.scrollTo({ left: 0, behavior: "smooth" })
-                }
-              >
-                {displayName}
-              </span>
-            </>
-          )}
-        </div>
-      </Dropdown.Trigger>
-      <Dropdown.Popover placement={iconOnly ? "bottom start" : "top start"}>
-        <Dropdown.Menu
-          aria-label={t("appSwitchProject")}
-          onAction={(key) => {
-            if (key === "__create__") onCreateProject();
-            else onProjectSwitch(key as string);
-          }}
-        >
-          {projects.map((project) => (
-            <Dropdown.Item
-              key={project.id}
-              id={project.id}
-              textValue={project.name}
-            >
-              <div className="flex items-center justify-between w-full gap-2">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="text-xs truncate min-w-0">
-                    {project.name}
-                  </span>
-                  <ProjectSessionBadgeMark
-                    badge={badges[project.id]}
-                    showCount
-                  />
-                </span>
-                <span
-                  role="button"
-                  tabIndex={-1}
-                  className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
-                  onClick={(event) => onRemoveRequest(event, project)}
-                >
-                  <Trash2 size={11} />
-                </span>
-              </div>
-            </Dropdown.Item>
-          ))}
-          <Dropdown.Item
-            key="__create__"
-            id="__create__"
-            textValue={t("appImportProject")}
-          >
-            <span className="flex items-center gap-1.5 text-xs text-primary">
-              <Plus size={12} />
-              {t("appImportProject")}
-            </span>
-          </Dropdown.Item>
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
+    <Menu>
+      {({ open, close }) => <>
+        <MenuOpenObserver open={open} onOpen={() => { onOpen?.(); void refreshBadges(); }} />
+        <Tooltip content={displayName}>
+          <MenuButton className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`} aria-label={t("appSwitchProject")}>
+            {iconOnly && <Folder size={15} aria-hidden="true" />}
+            {!iconOnly && <span className="wh-project-label">{displayName}</span>}
+            <ProjectSessionBadgeMark badge={currentBadge} className={iconOnly ? "project-session-badge--icon-trigger" : undefined} />
+          </MenuButton>
+        </Tooltip>
+        <IslandMenuItems open={open} anchor={{ to: iconOnly ? "bottom start" : "top start", gap: 10, padding: 8 }} aria-label={t("appSwitchProject")} className="min-w-60">
+          {projects.map(project => <div key={project.id} className="flex items-center gap-1" role="none">
+            <MenuAction onClick={() => onProjectSwitch(project.id)} className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 truncate">{project.name}</span>
+              <ProjectSessionBadgeMark badge={badges[project.id]} showCount />
+              {project.id === currentProjectId && <Check size={13} aria-hidden="true" />}
+            </MenuAction>
+            <MenuAction danger className="!w-8 shrink-0 !p-2" aria-label={`${t("appRemoveProject")}: ${project.name}`} onClick={event => { close(); onRemoveRequest(event, project); }}>
+              <Trash2 size={13} aria-hidden="true" />
+            </MenuAction>
+          </div>)}
+          <div role="separator" className="my-1 h-px bg-border" />
+          <MenuAction onClick={onCreateProject}><Plus size={14} aria-hidden="true" />{t("appImportProject")}</MenuAction>
+        </IslandMenuItems>
+      </>}
+    </Menu>
   );
 }
 
@@ -255,44 +204,34 @@ function MainNavTabs({
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
 
   return (
-    <Tabs
-      selectedKey={activePanel ?? ""}
-      onSelectionChange={(key) => onPanelToggle(key as ActivityPanel)}
+    <nav
+      aria-label={t("workspaceMainNav")}
       className={`wh-tabs ${iconOnly ? "wh-tabs--icon-only" : ""}`}
     >
-      <Tabs.List aria-label={t("workspaceMainNav")} className="wh-tabs-list">
+      <IslandSelection activeKey={activePanel} className="wh-tabs-list">
         {navTabs
           .filter((tab) => tab.id !== "wiki" || wikiEnabled)
-          .map((tab, i) => {
+          .map((tab) => {
             const Icon = tab.icon;
             return (
-              <Tabs.Tab
+              <Button
                 key={tab.id}
-                id={tab.id}
-                isDisabled={!hasProject}
-                onPress={() => {
-                  if (activePanel === tab.id) onPanelToggle(tab.id);
-                }}
+                data-island-option={tab.id}
+                variant="ghost"
+                size="sm"
+                disabled={!hasProject}
+                aria-pressed={activePanel === tab.id}
+                onClick={() => onPanelToggle(tab.id)}
                 aria-label={tab.label}
-                className={`wh-tab wh-tab--${tab.id}`}
+                className={`wh-tab wh-tab--${tab.id} ${activePanel === tab.id ? "bg-primary/10 text-primary" : ""}`}
               >
-                {i > 0 && <Tabs.Separator />}
-                {iconOnly ? (
-                  <span className="inline-flex" title={tab.label}>
-                    <Icon size={13} />
-                  </span>
-                ) : (
-                  <>
-                    <Icon size={13} />
-                    <span>{tab.label}</span>
-                  </>
-                )}
-                <Tabs.Indicator />
-              </Tabs.Tab>
+                <Icon size={13} />
+                {!iconOnly && <span>{tab.label}</span>}
+              </Button>
             );
           })}
-      </Tabs.List>
-    </Tabs>
+      </IslandSelection>
+    </nav>
   );
 }
 
@@ -417,30 +356,39 @@ function WikiToolbar({ visible }: { visible: boolean }) {
 
   return (
     <div className="flex items-center gap-0.5">
-      <Tabs
-        selectedKey={viewMode}
-        onSelectionChange={(key) => setViewMode(key as WikiViewMode)}
+      <RadioGroup
+        value={viewMode}
+        onChange={setViewMode}
+        aria-label="Wiki"
         className="wiki-view-tabs"
       >
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Wiki" className="wiki-view-tabs-list">
-            <Tabs.Tab id="document" className="wiki-view-tab">
-              <span>{t("wikiDocument")}</span>
-              <Tabs.Indicator />
-            </Tabs.Tab>
-            <Tabs.Tab id="plan" className="wiki-view-tab">
-              <span>{t("wikiPlan")}</span>
-              {planGenStatus === "generating" && (
-                <span className="relative flex h-2 w-2 ml-0.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                </span>
-              )}
-              <Tabs.Indicator />
-            </Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
-      </Tabs>
+        <IslandSelection activeKey={viewMode} className="wiki-view-tabs-list flex items-center gap-1">
+          <Radio
+            as="button"
+            type="button"
+            value="document"
+            data-island-option="document"
+            className="wiki-view-tab rounded-lg px-2 py-1 text-xs data-checked:bg-primary/10 data-checked:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <span>{t("wikiDocument")}</span>
+          </Radio>
+          <Radio
+            as="button"
+            type="button"
+            value="plan"
+            data-island-option="plan"
+            className="wiki-view-tab inline-flex items-center rounded-lg px-2 py-1 text-xs data-checked:bg-primary/10 data-checked:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <span>{t("wikiPlan")}</span>
+            {planGenStatus === "generating" && (
+              <span className="relative ml-0.5 flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 motion-reduce:animate-none" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+              </span>
+            )}
+          </Radio>
+        </IslandSelection>
+      </RadioGroup>
       <div className="wh-divider" />
       <button
         type="button"
@@ -466,46 +414,15 @@ function WikiToolbar({ visible }: { visible: boolean }) {
       >
         <Search size={13} />
       </button>
-      <Dropdown>
-        <Dropdown.Trigger>
-          <div role="button" tabIndex={0} className="wh-btn" title="Tools">
-            <Ellipsis size={13} />
-          </div>
-        </Dropdown.Trigger>
-        <Dropdown.Popover placement="bottom end">
-          <Dropdown.Menu
-            aria-label={t("wikiTools")}
-            onAction={(key) => {
-              if (key === "export" && snapshot) {
-                window.open(wikiApi.exportSnapshotUrl(snapshot.id), "_blank");
-              } else if (key === "reinit") {
-                useWikiStore.getState().setShowReinitConfirm(true);
-              }
-            }}
-          >
-            <Dropdown.Item
-              key="export"
-              id="export"
-              textValue={t("wikiExportAll")}
-            >
-              <span className="flex items-center gap-2 text-xs">
-                <Download size={12} />
-                {t("wikiExportAll")}
-              </span>
-            </Dropdown.Item>
-            <Dropdown.Item
-              key="reinit"
-              id="reinit"
-              textValue={t("wikiReinitialize")}
-            >
-              <span className="flex items-center gap-2 text-xs text-destructive">
-                <RotateCcw size={12} />
-                {t("wikiReinitialize")}
-              </span>
-            </Dropdown.Item>
-          </Dropdown.Menu>
-        </Dropdown.Popover>
-      </Dropdown>
+      <Menu>
+        {({ open }) => <>
+        <Tooltip content={t("wikiTools")}><MenuButton className="wh-btn" aria-label={t("wikiTools")}><Ellipsis size={15} /></MenuButton></Tooltip>
+        <IslandMenuItems open={open} aria-label={t("wikiTools")}>
+          <MenuAction disabled={!snapshot} onClick={() => { if (snapshot) window.open(wikiApi.exportSnapshotUrl(snapshot.id), "_blank"); }}><Download size={14} />{t("wikiExportAll")}</MenuAction>
+          <MenuAction danger onClick={() => useWikiStore.getState().setShowReinitConfirm(true)}><RotateCcw size={14} />{t("wikiReinitialize")}</MenuAction>
+        </IslandMenuItems>
+        </>}
+      </Menu>
     </div>
   );
 }
@@ -532,25 +449,16 @@ function GoalToolbarPill({
   return (
     <ToolbarPill visible={visible && Boolean(sessionId)}>
       {sessionId && (
-        <Dropdown>
-          <Dropdown.Trigger>
-            <button
-              type="button"
-              className={`wh-goal-menu ${iconOnly ? "wh-goal-menu--icon" : ""}`}
-              title={label}
-              aria-label={label}
-            >
-              <Target size={13} />
-              {!iconOnly && <span>{label}</span>}
-              <ChevronDown size={11} aria-hidden />
-            </button>
-          </Dropdown.Trigger>
-          <Dropdown.Popover placement="bottom start">
-            <div className="goal-monitor-menu">
-              <GoalMonitorPanel sessionId={sessionId} />
-            </div>
-          </Dropdown.Popover>
-        </Dropdown>
+        <Popover>
+          {({ open }) => <>
+          <Tooltip content={label}><PopoverButton className={`wh-goal-menu ${iconOnly ? "wh-goal-menu--icon" : ""}`} aria-label={label}>
+            <Target size={14} />{!iconOnly && <span>{label}</span>}<ChevronDown size={11} aria-hidden="true" />
+          </PopoverButton></Tooltip>
+          <IslandPopoverPanel open={open} focus className="goal-monitor-menu" aria-label={label}>
+            <GoalMonitorPanel sessionId={sessionId} />
+          </IslandPopoverPanel>
+          </>}
+        </Popover>
       )}
     </ToolbarPill>
   );
@@ -570,33 +478,40 @@ export function WorkbenchHeader({
 }: WorkbenchHeaderProps) {
   const { t } = useLocale();
   const location = useLocation();
+  const terminalOpen = useTerminalStore((state) => state.open);
   const gitToolbarVisible =
     activePanel === "git" && !location.pathname.includes("/git/mr/");
-  const confirmState = useOverlayState();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [projectSwitcherUsed, setProjectSwitcherUsed] = useState(false);
 
   const handleRemoveClick = useCallback(
     (e: React.MouseEvent, project: ProjectSummary) => {
       e.stopPropagation();
+      if (deleting) return;
+      setDeleteError(null);
       setDeleteTarget(project);
-      confirmState.open();
+      setConfirmOpen(true);
     },
-    [confirmState],
+    [deleting],
   );
 
   const handleConfirmRemove = useCallback(async () => {
     if (!deleteTarget || deleting) return;
     setDeleting(true);
+    setDeleteError(null);
     try {
       await onRemoveProject(deleteTarget.id);
-      confirmState.close();
+      setConfirmOpen(false);
       setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error));
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, deleting, onRemoveProject, confirmState]);
+  }, [deleteTarget, deleting, onRemoveProject]);
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const goalSessionId = useAgentSessionStore((s) => {
@@ -640,68 +555,64 @@ export function WorkbenchHeader({
           className={`workbench-header${compact ? " workbench-header--docked" : ""}`}
         >
           <>
-            <div className="wh-pill">
-              <div className="project-switcher-anchor">
-                <ProjectSwitcher
+            <IslandSurface kind="primary">
+                <div className="project-switcher-anchor">
+                  <ProjectSwitcher
+                    hasProject={hasProject}
+                    projectName={projectName}
+                    currentProjectId={currentProjectId}
+                    projects={projects}
+                    onProjectSwitch={onProjectSwitch}
+                    onCreateProject={onCreateProject}
+                    onRemoveRequest={handleRemoveClick}
+                    onOpen={() => setProjectSwitcherUsed(true)}
+                    iconOnly={compact}
+                  />
+
+                  <ProjectImportHint
+                    hasProject={hasProject}
+                    targetActivated={projectSwitcherUsed}
+                    onImport={onCreateProject}
+                  />
+                </div>
+
+                <div className="wh-divider" />
+
+                <MainNavTabs
+                  activePanel={activePanel}
                   hasProject={hasProject}
-                  projectName={projectName}
-                  currentProjectId={currentProjectId}
-                  projects={projects}
-                  onProjectSwitch={onProjectSwitch}
-                  onCreateProject={onCreateProject}
-                  onRemoveRequest={handleRemoveClick}
-                  onOpen={() => setProjectSwitcherUsed(true)}
+                  onPanelToggle={onPanelToggle}
                   iconOnly={compact}
                 />
 
-                <ProjectImportHint
-                  hasProject={hasProject}
-                  targetActivated={projectSwitcherUsed}
-                  onImport={onCreateProject}
-                />
-              </div>
+                <div className="wh-divider" />
 
-              <div className="wh-divider" />
-
-              <MainNavTabs
-                activePanel={activePanel}
-                hasProject={hasProject}
-                onPanelToggle={onPanelToggle}
-                iconOnly={compact}
-              />
-
-              <div className="wh-divider" />
-
-              <div className="wh-actions">
-                <button
-                  type="button"
-                  className="wh-btn"
-                  aria-label={
-                    useShellStore.getState().preferences.locale === "zh"
-                      ? "终端"
-                      : "Terminal"
-                  }
-                  title={
-                    useShellStore.getState().preferences.locale === "zh"
-                      ? "终端"
-                      : "Terminal"
-                  }
-                  onClick={() => useTerminalStore.getState().toggle()}
-                >
-                  <TerminalIcon size={15} />
-                </button>
-                <button
-                  type="button"
-                  className="wh-btn"
-                  title={t("appSettings")}
-                  aria-label={t("appSettings")}
-                  onClick={() => onPanelToggle("settings")}
-                >
-                  <Settings2 size={15} />
-                </button>
-                <ThemeToggle />
-              </div>
-            </div>
+                <div className="wh-actions">
+                  <Tooltip content={useShellStore.getState().preferences.locale === "zh" ? "终端" : "Terminal"}><button
+                    type="button"
+                    className={`wh-btn ${terminalOpen ? "active" : ""}`}
+                    aria-pressed={terminalOpen}
+                    aria-label={
+                      useShellStore.getState().preferences.locale === "zh"
+                        ? "终端"
+                        : "Terminal"
+                    }
+                    onClick={() => useTerminalStore.getState().toggle()}
+                  >
+                    <TerminalIcon size={15} />
+                  </button></Tooltip>
+                  <Tooltip content={t("appSettings")}><button
+                    type="button"
+                    className={`wh-btn ${activePanel === "settings" ? "active" : ""}`}
+                    aria-pressed={activePanel === "settings"}
+                    aria-label={t("appSettings")}
+                    onClick={() => onPanelToggle("settings")}
+                  >
+                    <Settings2 size={15} />
+                  </button></Tooltip>
+                  <ThemeToggle />
+                </div>
+            </IslandSurface>
 
             <WikiToolbarPill visible={activePanel === "wiki"} />
             <GoalToolbarPill
@@ -715,17 +626,17 @@ export function WorkbenchHeader({
           </>
 
           {/* Remove project confirmation modal */}
-          <Modal state={confirmState}>
-            <Modal.Backdrop>
-              <Modal.Container size="sm">
-                <Modal.Dialog>
-                  <Modal.Header>
-                    <Modal.Icon className="bg-destructive/10 text-destructive">
+          <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} dismissible={!deleting}>
+            <>
+              <DialogContainer size="sm">
+                <DialogPanel>
+                  <DialogHeader>
+                    <DialogIcon className="bg-destructive/10 text-destructive">
                       <Trash2 size={18} />
-                    </Modal.Icon>
-                    <Modal.Heading>{t("appRemoveProject")}</Modal.Heading>
-                  </Modal.Header>
-                  <Modal.Body>
+                    </DialogIcon>
+                    <DialogTitle>{t("appRemoveProject")}</DialogTitle>
+                  </DialogHeader>
+                  <DialogBody>
                     <p className="text-sm text-muted-foreground">
                       {t("appRemoveProjectConfirm", {
                         name: deleteTarget?.name ?? "",
@@ -736,14 +647,15 @@ export function WorkbenchHeader({
                         {t("appRemoveProjectRunning")}
                       </p>
                     )}
-                  </Modal.Body>
-                  <Modal.Footer>
+                    {deleteError && <p role="alert" className="mt-2 text-sm text-destructive">{deleteError}</p>}
+                  </DialogBody>
+                  <DialogFooter>
                     <Button
                       variant="ghost"
                       size="sm"
-                      isDisabled={deleting}
-                      onPress={() => {
-                        confirmState.close();
+                      disabled={deleting}
+                      onClick={() => {
+                        setConfirmOpen(false);
                         setDeleteTarget(null);
                       }}
                     >
@@ -752,16 +664,16 @@ export function WorkbenchHeader({
                     <Button
                       variant="danger"
                       size="sm"
-                      isDisabled={deleting}
-                      onPress={() => void handleConfirmRemove()}
+                      disabled={deleting}
+                      onClick={() => void handleConfirmRemove()}
                     >
                       {deleting ? t("appRemoving") : t("appConfirmRemove")}
                     </Button>
-                  </Modal.Footer>
-                </Modal.Dialog>
-              </Modal.Container>
-            </Modal.Backdrop>
-          </Modal>
+                  </DialogFooter>
+                </DialogPanel>
+              </DialogContainer>
+            </>
+          </Dialog>
         </div>
       )}
     </WorkbenchIsland>

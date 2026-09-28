@@ -1,4 +1,4 @@
-import { Button } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import { PanelRight } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 
@@ -19,9 +19,9 @@ export function WorkQuickActions({
         <Button
           size="sm"
           variant="ghost"
-          isIconOnly
+          iconOnly
           className="work-details-trigger"
-          onPress={onShowDetails}
+          onClick={onShowDetails}
           aria-label={zh ? "任务详情" : "Task details"}
         >
           <PanelRight size={13} />

@@ -1,4 +1,5 @@
-import { Button, Modal } from "@heroui/react";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
@@ -61,24 +62,24 @@ export function WorkspaceFileMutationHost() {
     } finally { setBusy(false); }
   };
 
-  return <Modal.Backdrop isOpen={request !== null} onOpenChange={(open) => { if (!open) close(); }}>
-    <Modal.Container size="sm">
-      <Modal.Dialog aria-label={t(request?.kind === "trash" ? "contextTrashFile" : "contextRenameFile")}>
-        <Modal.Header><Modal.Heading>{t(request?.kind === "trash" ? "contextTrashFile" : "contextRenameFile")}</Modal.Heading></Modal.Header>
-        <Modal.Body>
+  return <Dialog open={request !== null} onClose={close}>
+    <DialogContainer size="sm">
+      <DialogPanel aria-label={t(request?.kind === "trash" ? "contextTrashFile" : "contextRenameFile")}>
+        <DialogHeader><DialogTitle>{t(request?.kind === "trash" ? "contextTrashFile" : "contextRenameFile")}</DialogTitle></DialogHeader>
+        <DialogBody>
           {request?.kind === "rename" ? <form id="workspace-file-rename" onSubmit={(event) => void submit(event)}>
             <label htmlFor="workspace-file-name">{t("contextNewName")}</label>
             <input id="workspace-file-name" value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-lg border border-border bg-background p-2 text-sm" autoFocus disabled={busy} />
           </form> : <p>{t("contextTrashConfirm", { file: request?.path ?? "" })}</p>}
           {error && <p role="alert" className="text-danger text-xs">{error}</p>}
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="ghost" onPress={close} isDisabled={busy}>{t("commonCancel")}</Button>
-          <Button variant={request?.kind === "trash" ? "danger" : "primary"} onPress={() => void submit()} isDisabled={busy || (request?.kind === "rename" && !name.trim())}>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={close} disabled={busy}>{t("commonCancel")}</Button>
+          <Button variant={request?.kind === "trash" ? "danger" : "primary"} onClick={() => void submit()} disabled={busy || (request?.kind === "rename" && !name.trim())}>
             {t(request?.kind === "trash" ? "contextTrashFile" : "contextRenameFile")}
           </Button>
-        </Modal.Footer>
-      </Modal.Dialog>
-    </Modal.Container>
-  </Modal.Backdrop>;
+        </DialogFooter>
+      </DialogPanel>
+    </DialogContainer>
+  </Dialog>;
 }

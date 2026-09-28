@@ -1,4 +1,5 @@
-import { Button, Modal } from '@heroui/react'
+import { Dialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
 import { ArrowUpRight, Monitor } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
 import type { LocalDiscoveryResult } from '../../../../lib/api/local-discovery'
@@ -34,23 +35,21 @@ export function DiscoveryDialogs({
   const unsupported = result?.mcp.unsupported ?? []
   return (
     <>
-      <Modal
-        isOpen={Boolean(detail)}
-        onOpenChange={(open) => {
-          if (!open) setDetail(null)
-        }}
+      <Dialog
+        open={Boolean(detail)}
+        onClose={() => setDetail(null)}
       >
-        <Modal.Backdrop>
-          <Modal.Container size="lg">
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
+        <>
+          <DialogContainer size="lg">
+            <DialogPanel>
+              <DialogCloseButton />
+              <DialogHeader>
                 <div className="discovery-overline">
                   {detail?.kind === 'mcp' ? 'MCP SERVER' : 'SKILL'}
                 </div>
-                <Modal.Heading>{detail?.name}</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body className="discovery-detail">
+                <DialogTitle>{detail?.name}</DialogTitle>
+              </DialogHeader>
+              <DialogBody className="discovery-detail">
                 {error && (
                   <p role="alert" className="text-destructive">
                     {error}
@@ -125,16 +124,16 @@ export function DiscoveryDialogs({
                     )}
                   </>
                 )}
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="secondary" onPress={() => setDetail(null)}>
+              </DialogBody>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setDetail(null)}>
                   {text('关闭', 'Close')}
                 </Button>
                 {detail && (
                   <Button
-                    isPending={busy}
-                    isDisabled={!available(detail) || loading}
-                    onPress={() => void addItems([detail])}
+                    pending={busy}
+                    disabled={!available(detail) || loading}
+                    onClick={() => void addItems([detail])}
                   >
                     {installed(detail)
                       ? text('已添加', 'Added')
@@ -142,28 +141,28 @@ export function DiscoveryDialogs({
                     <ArrowUpRight size={14} />
                   </Button>
                 )}
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
-      <Modal isOpen={showLocations} onOpenChange={setShowLocations}>
-        <Modal.Backdrop>
-          <Modal.Container size="lg">
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Heading>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogContainer>
+        </>
+      </Dialog>
+      <Dialog open={showLocations} onClose={() => (setShowLocations)(false)}>
+        <>
+          <DialogContainer size="lg">
+            <DialogPanel>
+              <DialogCloseButton />
+              <DialogHeader>
+                <DialogTitle>
                   {text('扫描位置', 'Scan locations')}
-                </Modal.Heading>
+                </DialogTitle>
                 <p className="text-xs text-muted-foreground">
                   {text(
                     '检查常用配置位置；不会递归扫描整个磁盘。',
                     'Checks known configuration locations without traversing the entire disk.',
                   )}
                 </p>
-              </Modal.Header>
-              <Modal.Body className="discovery-location-list">
+              </DialogHeader>
+              <DialogBody className="discovery-location-list">
                 {unsupported.length > 0 && (
                   <div className="discovery-message is-error">
                     {text(
@@ -208,19 +207,19 @@ export function DiscoveryDialogs({
                     </small>
                   </div>
                 ))}
-              </Modal.Body>
-              <Modal.Footer>
+              </DialogBody>
+              <DialogFooter>
                 <Button
                   variant="secondary"
-                  onPress={() => setShowLocations(false)}
+                  onClick={() => setShowLocations(false)}
                 >
                   {text('完成', 'Done')}
                 </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogContainer>
+        </>
+      </Dialog>
     </>
   )
 }

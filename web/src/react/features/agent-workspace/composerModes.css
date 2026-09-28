@@ -28,25 +28,16 @@
 .session-composer-mode-option[data-mode="goal"] > svg:first-of-type {
   color: #8b5cf6;
 }
-.agent-session-controls[data-composer-mode="goal"] {
-  --composer-mode-border: #8b5cf6;
+/* Mode is a quiet state cue, not a permanent fluorescent outline. */
+.agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: hsl(var(--electric-purple)); }
+:root .agent-session-controls[data-composer-mode="goal"] .agent-session-composer-shell.agent-dock-shell {
+  border: 1px solid var(--ui-line);
+  border-inline-start: 2px solid color-mix(in srgb, var(--composer-mode-border) 40%, var(--ui-line));
+  background: var(--ui-panel);
 }
-.dark .agent-session-controls[data-composer-mode="goal"] {
-  --composer-mode-border: #c084fc;
-}
-/* The attribute raises specificity above existing focused/dark composer rules.
-   No chat override: switching back restores the standard neutral surface. */
-:root
-  .agent-session-controls[data-composer-mode="goal"]
-  .agent-session-composer-shell.agent-dock-shell {
-  border: 2px solid var(--composer-mode-border);
+:root .agent-session-controls[data-composer-mode="goal"] .agent-session-composer-shell.agent-dock-shell:focus-within {
+  border-color: color-mix(in srgb, var(--composer-mode-border) 35%, var(--ui-line));
 }
 @media (forced-colors: active) {
-  :root .agent-session-controls[data-composer-mode="goal"] {
-    --composer-mode-border: Highlight;
-  }
+  :root .agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: Highlight; }
 }
-
-/* Mode affordances use Synax semantic accents instead of hardcoded blue/purple. */
-.agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: hsl(var(--electric-purple)); }
-.dark .agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: var(--cx-accent-top); }

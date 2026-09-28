@@ -19,6 +19,7 @@ import {
   type MergeRequestInput,
 } from "../../../lib/api/gitMr";
 import { MergeRequestForm } from "./MergeRequestForm";
+import { IslandSelection } from "../../layouts/IslandSelection";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
@@ -171,24 +172,27 @@ function GitWorkbench({ projectId }: { projectId: string }) {
     <main className="git-workbench">
       <GitToolbarContent>
         <nav aria-label="Git 视图" className="git-island-views">
-          {(
-            [
-              ["requests", "合并请求"],
-              ["branches", "历史树"],
-              ["presets", "预设"],
-              ["history", "运行记录"],
-            ] as [View, string][]
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`wh-pill-btn ${view === id ? "wh-pill-btn--soft" : ""}`}
-              aria-current={view === id ? "page" : undefined}
-              onClick={() => setView(id)}
-            >
-              {label}
-            </button>
-          ))}
+          <IslandSelection activeKey={view}>
+            {(
+              [
+                ["requests", "合并请求"],
+                ["branches", "历史树"],
+                ["presets", "预设"],
+                ["history", "运行记录"],
+              ] as [View, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                data-island-option={id}
+                type="button"
+                className={`wh-pill-btn ${view === id ? "wh-pill-btn--soft" : ""}`}
+                aria-current={view === id ? "page" : undefined}
+                onClick={() => setView(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </IslandSelection>
         </nav>
         <select
           className="git-island-view-select"

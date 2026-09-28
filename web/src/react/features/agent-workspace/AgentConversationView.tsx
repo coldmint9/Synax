@@ -2,7 +2,7 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionHistoryProvider } from "./SessionHistoryContext";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { memo } from "react";
-import { Chip, Card } from "@heroui/react";
+import { Badge, Card } from "@/react/components/ui/Display";
 import { XCircle, Zap } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import type {
@@ -79,14 +79,14 @@ export const AgentConversationView = memo(function AgentConversationView({
               </span>
             ) : null}
             {cat?.isBuiltin ? (
-              <Chip
+              <Badge
                 size="sm"
                 variant="secondary"
-                color="accent"
+                tone="accent"
                 className="text-[10px]"
               >
                 {t("sessionBuiltin")}
-              </Chip>
+              </Badge>
             ) : null}
             <div className="ml-auto flex items-center gap-2">
               <div className="flex items-center gap-1.5">
@@ -144,16 +144,16 @@ export const AgentConversationView = memo(function AgentConversationView({
             }
           >
             <div className="px-3.5 py-2.5">
-              <Chip
+              <Badge
                 size="sm"
-                color={session?.status === "failed" ? "danger" : "default"}
+                tone={session?.status === "failed" ? "danger" : "default"}
                 variant="soft"
                 className="mb-1 text-[10px]"
               >
                 {session?.status === "failed"
                   ? t("activityStatusFailed")
                   : t("activityStatusInterrupted")}
-              </Chip>
+              </Badge>
               <div className="text-[13px] leading-relaxed text-muted-foreground">
                 {session?.blockedReason ?? t("sessionResumeHint")}
               </div>

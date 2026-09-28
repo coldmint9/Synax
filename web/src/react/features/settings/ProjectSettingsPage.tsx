@@ -1,4 +1,5 @@
-import { Button, ScrollShadow, Spinner, Typography } from "@heroui/react";
+import { ScrollArea, Spinner, Text } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import { useParams, useSearchParams } from "react-router-dom";
 import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
 import { ExtensionCenter } from "./extensions/ExtensionCenter";
@@ -72,7 +73,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
-        <Button size="sm" variant="outline" onPress={reload}>
+        <Button size="sm" variant="outline" onClick={reload}>
           {t("settingsRefresh")}
         </Button>
       </div>
@@ -90,26 +91,26 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
     section === "general" || section === "archive" ? null : section;
 
   return (
-    <ScrollShadow className="settings-scroll-viewport">
+    <ScrollArea className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId} projectMode>
           {extensionSection ? <ExtensionCenter key={`${projectId}:${extensionSection}`} projectId={projectId} section={extensionSection} onNavigate={select} /> : <>
           <div className="flex items-start justify-between gap-3 mb-8">
             <div>
-              <Typography type="h5">{t("settingsProjectTitle")}</Typography>
-              <Typography
-                type="body-xs"
+              <Text variant="h5">{t("settingsProjectTitle")}</Text>
+              <Text
+                variant="body-xs"
                 color="muted"
                 className="mt-1 font-mono"
               >
                 {projectId}
-              </Typography>
+              </Text>
             </div>
             <Button
               size="sm"
               variant="outline"
-              isIconOnly
-              onPress={reload}
+              iconOnly
+              onClick={reload}
               aria-label={t("settingsRefresh")}
             >
               <RefreshCw size={12} />
@@ -146,6 +147,6 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
           </>}
         </SettingsFrame>
       </div>
-    </ScrollShadow>
+    </ScrollArea>
   );
 }

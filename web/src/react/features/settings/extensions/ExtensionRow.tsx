@@ -1,4 +1,6 @@
-import { Button, Dropdown, Switch } from '@heroui/react'
+import { Menu, MenuButton, MenuItems, MenuAction } from "@/react/components/ui/Menu";
+import { Button } from "@/react/components/ui/Button";
+import { Switch } from "@/react/components/ui/Toggle";
 import { MoreHorizontal, Plug, Sparkles, Wrench } from 'lucide-react'
 import type { ExtensionItem } from '../../../../lib/api/extensions'
 import { useExtensionCopy } from './extension-copy'
@@ -65,63 +67,26 @@ export function ExtensionRow({
             </span>
             <Switch
               size="md"
-              isSelected={item.enabled}
-              isDisabled={busy}
+              checked={item.enabled}
+              disabled={busy}
               onChange={onToggle}
               aria-label={`${copy.toggle}: ${item.name}`}
-            >
-              <Switch.Content>
-                <Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control>
-              </Switch.Content>
-            </Switch>
-            <Dropdown>
-              <Button
-                size="sm"
-                variant="ghost"
-                isIconOnly
-                isDisabled={busy}
-                aria-label={`${copy.more}: ${item.name}`}
-              >
-                <MoreHorizontal size={16} />
-              </Button>
-              <Dropdown.Popover placement="bottom end">
-                <Dropdown.Menu
-                  aria-label={copy.more}
-                  onAction={(key) =>
-                    key === 'edit'
-                      ? onEdit()
-                      : key === 'remove'
-                        ? onUninstall()
-                        : onOpen()
-                  }
-                >
-                  <Dropdown.Item id="details" textValue={copy.details}>
-                    {copy.details}
-                  </Dropdown.Item>
-                  {item.editable && (
-                    <Dropdown.Item id="edit" textValue={copy.edit}>
-                      {copy.edit}
-                    </Dropdown.Item>
-                  )}
-                  <Dropdown.Item
-                    id="remove"
-                    textValue={copy.uninstall}
-                    className="text-danger"
-                  >
-                    {copy.uninstall}
-                  </Dropdown.Item>
-                </Dropdown.Menu>
-              </Dropdown.Popover>
-            </Dropdown>
+            />
+            <Menu>
+              <MenuButton className="size-7 text-muted-foreground hover:bg-muted" disabled={busy} aria-label={`${copy.more}: ${item.name}`}><MoreHorizontal size={16} /></MenuButton>
+              <MenuItems aria-label={copy.more}>
+                <MenuAction onClick={onOpen}>{copy.details}</MenuAction>
+                {item.editable && <MenuAction onClick={onEdit}>{copy.edit}</MenuAction>}
+                <MenuAction danger onClick={onUninstall}>{copy.uninstall}</MenuAction>
+              </MenuItems>
+            </Menu>
           </>
         ) : (
           <Button
             size="sm"
             variant="secondary"
-            isDisabled={busy || Boolean(item.conflict)}
-            onPress={onInstall}
+            disabled={busy || Boolean(item.conflict)}
+            onClick={onInstall}
             aria-label={`${copy.install}: ${item.name}`}
           >
             {copy.install}

@@ -102,6 +102,32 @@ describe("SessionProfilePanel mini/detail", () => {
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "10.7");
   });
 
+  it("renders message, tool, MCP and Skill composition segments", () => {
+    setup();
+    const meter = screen.getByRole("meter");
+    const segments = [
+      ...meter.querySelectorAll<HTMLElement>("[data-context-category]"),
+    ];
+
+    expect(segments.map((segment) => segment.dataset.contextCategory)).toEqual([
+      "messages",
+      "tools",
+      "mcp",
+      "skills",
+    ]);
+    expect(meter.querySelector("[data-context-category=system]")).toBeNull();
+    expect(segments.map((segment) => segment.style.width)).toEqual([
+      "50%",
+      "20%",
+      `${(80 / 600) * 100}%`,
+      `${(40 / 600) * 100}%`,
+    ]);
+    expect(segments[0]).toHaveAttribute(
+      "title",
+      "消息: 300 Token（分类估算）",
+    );
+  });
+
   it("toggles the whole summary, keeps metrics in place and remembers the session choice", () => {
     const first = setup();
     fireEvent.click(screen.getByText("21.4K"));

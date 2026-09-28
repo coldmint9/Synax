@@ -1,4 +1,4 @@
-/* Portalled controls use the same semantic surfaces as HeroUI, not island materials. */
+/* Portalled controls use the same semantic surfaces as Synax UI, not island materials. */
 .composer-effort-value {
   color: var(--foreground);
 }

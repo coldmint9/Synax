@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { ListBox, Popover, Tooltip } from "@heroui/react";
-import { ChevronDown, GitBranch, LoaderCircle } from "lucide-react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxOption,
+  ComboboxOptions,
+} from "@headlessui/react";
+import { Popover, PopoverButton, PopoverPanel } from "@/react/components/ui/Popover";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { Check, GitBranch, GitFork, LoaderCircle, Search } from "lucide-react";
 import type { GitWorkspaceSelection } from "../../../lib/api/agentRuntime";
 import { projectApi, type GitWorkspaceSummary } from "../../../lib/api/project";
 import { useLocale } from "../../../hooks/useLocale";
@@ -13,8 +20,17 @@ interface Props {
   onChange: (selection: GitWorkspaceSelection) => void;
 }
 
+type WorkspaceOption = {
+  id: string;
+  label: string;
+  detail: string;
+  meta: string;
+  group: "new" | "default" | "worktree" | "branch";
+};
+
 function selectionId(selection: GitWorkspaceSelection): string {
   if (selection.kind === "default") return "default";
+  if (selection.kind === "new-worktree") return "new-worktree";
   return selection.kind === "branch"
     ? `branch:${selection.branch}`
     : `worktree:${selection.path}`;
@@ -22,6 +38,7 @@ function selectionId(selection: GitWorkspaceSelection): string {
 
 function selectionFromId(id: string): GitWorkspaceSelection | null {
   if (id === "default") return { kind: "default" };
+  if (id === "new-worktree") return { kind: "new-worktree" };
   if (id.startsWith("branch:"))
     return { kind: "branch", branch: id.slice("branch:".length) };
   if (id.startsWith("worktree:"))
@@ -29,23 +46,42 @@ function selectionFromId(id: string): GitWorkspaceSelection | null {
   return null;
 }
 
-export function GitWorkspacePicker({
+export function GitWorkspacePicker(props: Props) {
+  return (
+    <Popover key={props.projectId}>
+      {({ open, close }) => (
+        <GitWorkspacePickerContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function GitWorkspacePickerContent({
   projectId,
   value,
   disabled,
   onChange,
-}: Props) {
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<GitWorkspaceSummary | null>(null);
+
+  useEffect(() => {
+    if (open) setQuery("");
+  }, [open]);
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open, close]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setSummary(null);
-    projectApi
+    void projectApi
       .listGitWorkspaces(projectId)
       .then((result) => {
         if (active) setSummary(result);
@@ -61,47 +97,47 @@ export function GitWorkspacePicker({
     };
   }, [projectId]);
 
-  const options = useMemo(() => {
+  const options = useMemo<WorkspaceOption[]>(() => {
     if (!summary) return [];
-    const worktrees = summary.worktrees.map((item) => ({
+    const worktrees: WorkspaceOption[] = summary.worktrees
+      .filter((item) => !item.prunable)
+      .map((item) => ({
       id: `worktree:${item.path}`,
       label: item.branch ?? item.head.slice(0, 8),
       detail: item.path,
       meta: [
         item.primary
-          ? zh
-            ? "主工作树"
-            : "Primary worktree"
-          : zh
-            ? "工作树"
-            : "Worktree",
-        item.detached ? (zh ? "分离 HEAD" : "Detached HEAD") : null,
-        `HEAD ${item.head.slice(0, 12)}`,
+          ? zh ? "主工作树" : "Primary worktree"
+          : zh ? "工作树" : "Worktree",
+        item.detached ? (zh ? "尚未创建分支" : "No branch yet") : null,
+        `HEAD ${item.head.slice(0, 8)}`,
         item.dirty ? (zh ? "有未提交修改" : "Dirty") : null,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      ].filter(Boolean).join(" · "),
+      group: "worktree",
     }));
-    const branches = summary.branches
+    const branches: WorkspaceOption[] = summary.branches
       .filter((item) => !item.checkedOutPath)
       .map((item) => ({
         id: `branch:${item.name}`,
         label: item.name,
-        detail: zh ? "创建托管工作树" : "Create managed worktree",
-        meta: [
-          zh ? "分支" : "Branch",
-          `HEAD ${item.head.slice(0, 12)}`,
-          item.upstream ? `${zh ? "上游" : "Upstream"} ${item.upstream}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        detail: zh ? "新会话将使用托管工作树" : "A managed worktree will be used",
+        meta: item.upstream ?? `HEAD ${item.head.slice(0, 8)}`,
+        group: "branch",
       }));
     return [
+      {
+        id: "new-worktree",
+        label: zh ? "新工作树上开始" : "Start in a new worktree",
+        detail: zh ? "从当前 HEAD 创建，暂不创建分支" : "From current HEAD · no branch yet",
+        meta: "",
+        group: "new",
+      },
       {
         id: "default",
         label: zh ? "项目默认工作区" : "Project default",
         detail: summary.defaultPath,
         meta: zh ? "项目配置的默认目录" : "Project configured default",
+        group: "default",
       },
       ...worktrees,
       ...branches,
@@ -112,15 +148,25 @@ export function GitWorkspacePicker({
   const selectedId = selectionId(value);
   const selected = options.find((option) => option.id === selectedId);
   const label = selected?.label ?? (zh ? "项目默认工作区" : "Project default");
+  const search = query.trim().toLocaleLowerCase();
+  const filtered = options.filter((option) =>
+    `${option.label} ${option.meta} ${option.detail}`.toLocaleLowerCase().includes(search),
+  );
+  const groups = ["new", "default", "worktree", "branch"] as const;
+  const headings = {
+    new: "",
+    default: zh ? "工作区" : "Workspace",
+    worktree: zh ? "工作树" : "Worktrees",
+    branch: zh ? "可用分支" : "Available branches",
+  };
 
   return (
-    <Popover
-      isOpen={!disabled && open}
-      onOpenChange={(next) => setOpen(!disabled && next)}
-    >
-      <Tooltip delay={400}>
-        <Popover.Trigger<"button">
-          render={(props) => <button {...props} type="button" />}
+    <>
+      <Tooltip
+        delay={400}
+        content={<>{zh ? "选择新会话的工作区" : "Choose a workspace for this session"}</>}
+      >
+        <PopoverButton
           disabled={disabled || loading}
           aria-label={zh ? "Git 工作区" : "Git workspace"}
           className="agent-dock-composer-chip agent-mode-trigger"
@@ -131,55 +177,93 @@ export function GitWorkspacePicker({
             <GitBranch size={11} aria-hidden />
           )}
           <span>{label}</span>
-          <ChevronDown size={10} aria-hidden />
-        </Popover.Trigger>
-        <Tooltip.Content>
-          {zh
-            ? "选择新会话使用的分支或工作树"
-            : "Choose the branch or worktree for this session"}
-        </Tooltip.Content>
+        </PopoverButton>
       </Tooltip>
-      <Popover.Content
-        placement="top end"
-        offset={8}
-        className="agent-mode-popover git-workspace-popover"
+      <PopoverPanel
+        anchor={{ to: "top end", gap: 8, padding: 8 }}
+        focus
+        role="dialog"
+        aria-label={zh ? "Git 工作区" : "Git workspace"}
+        className="git-workspace-popover"
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
       >
-        <ListBox
-          aria-label={zh ? "Git 工作区" : "Git workspace"}
-          selectionMode="single"
-          disallowEmptySelection
-          selectedKeys={new Set([selectedId])}
-          onSelectionChange={(keys) => {
-            if (disabled || keys === "all") return;
-            const next = selectionFromId(String([...keys][0]));
-            if (next) {
-              setOpen(false);
-              onChange(next);
-            }
+        <Combobox
+          value={selectedId}
+          onChange={(id) => {
+            const next = selectionFromId(id ?? "");
+            if (!next || disabled) return;
+            close();
+            onChange(next);
           }}
+          immediate
+          disabled={disabled || loading}
         >
-          {options.map((option) => (
-            <ListBox.Item
-              key={option.id}
-              id={option.id}
-              textValue={option.label}
-              className="agent-mode-option git-workspace-option"
-            >
-              <div className="git-workspace-option-copy">
-                <div className="git-workspace-option-label">{option.label}</div>
-                <div className="git-workspace-option-meta">{option.meta}</div>
-                <div
-                  className="git-workspace-option-detail"
-                  title={option.detail}
-                >
-                  {option.detail}
+          <div className="git-workspace-search">
+            <Search size={15} aria-hidden />
+            <ComboboxInput
+              autoFocus
+              type="search"
+              aria-label={zh ? "搜索工作区" : "Search workspaces"}
+              placeholder={zh ? "搜索工作区或分支" : "Search workspaces or branches"}
+              displayValue={() => query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <ComboboxOptions
+            static
+            modal={false}
+            aria-label={zh ? "工作区选项" : "Workspace options"}
+            className="git-workspace-list"
+          >
+            {groups.map((group) => {
+              const items = filtered.filter((item) => item.group === group);
+              if (!items.length) return null;
+              return (
+                <div key={group} className="git-workspace-group" role="presentation">
+                  {headings[group] && <p className="git-workspace-heading">{headings[group]}</p>}
+                  {items.map((option) => (
+                    <ComboboxOption
+                      key={option.id}
+                      value={option.id}
+                      aria-label={option.label}
+                      className="git-workspace-option"
+                    >
+                      {({ selected: isSelected }) => (
+                        <>
+                          {option.group === "new" ? (
+                            <GitFork size={16} aria-hidden className="git-workspace-option-icon" />
+                          ) : (
+                            <GitBranch size={16} aria-hidden className="git-workspace-option-icon" />
+                          )}
+                          <span className="git-workspace-option-copy">
+                            <span className="git-workspace-option-label" title={option.label}>
+                              {option.label}
+                            </span>
+                            <small title={option.detail}>{option.detail}</small>
+                            {option.meta && <small>{option.meta}</small>}
+                          </span>
+                          {isSelected && <Check size={16} aria-label={zh ? "当前选择" : "Selected"} className="git-workspace-check" />}
+                        </>
+                      )}
+                    </ComboboxOption>
+                  ))}
                 </div>
-              </div>
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Popover.Content>
-    </Popover>
+              );
+            })}
+          </ComboboxOptions>
+          {!filtered.length && !loading && (
+            <p role="status" className="git-workspace-empty">
+              {zh ? "没有匹配的工作区" : "No matching workspaces"}
+            </p>
+          )}
+        </Combobox>
+      </PopoverPanel>
+    </>
   );
 }

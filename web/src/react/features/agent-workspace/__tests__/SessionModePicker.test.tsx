@@ -45,8 +45,8 @@ const props = {
 
 describe("compact session mode control", () => {
   it.each([false, true])(
-    "shows newline and slash command hints (expanded=%s)",
-    (expanded) => {
+    "keeps the placeholder clean and shows keyboard hints on hover (expanded=%s)",
+    async (expanded) => {
       render(
         <AgentComposer
           {...props}
@@ -65,8 +65,11 @@ describe("compact session mode control", () => {
       );
       expect(screen.getByRole("textbox")).toHaveAttribute(
         "placeholder",
-        "Ask Synax… Shift+Enter for a new line · / for commands",
+        "Ask Synax…",
       );
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      await userEvent.hover(screen.getByRole("textbox"));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("Shift+Enter for a new line · / for commands");
     },
   );
 
@@ -75,7 +78,6 @@ describe("compact session mode control", () => {
       <AgentComposer
         {...props}
         defaultExpanded
-        keyboardHintPlacement="tooltip"
         placeholder="An idea, a question, a place to begin…"
         commands={{
           inputRef: { current: null },
@@ -99,10 +101,8 @@ describe("compact session mode control", () => {
     expect(hints).toHaveTextContent("Shift+Enter");
     expect(hints).toHaveTextContent("commands");
     expect(hints).toHaveClass("sr-only");
-    expect(input).toHaveAttribute(
-      "title",
-      "Shift+Enter for a new line · / for commands",
-    );
+    expect(input).not.toHaveAttribute("title");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(
       document.querySelector(".session-composer-keyboard-hints"),
     ).toBeNull();
@@ -258,19 +258,12 @@ describe("compact session mode control", () => {
     const trigger = screen.getByRole("button", { name: "Session mode" });
     await user.tab();
     expect(trigger).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(
-      await screen.findByRole("listbox", { name: "Session mode" }),
-    ).toBeVisible();
-    // In a layout-less DOM the popover focuses its dialog first; Tab enters the list.
-    await user.tab();
-    await waitFor(() =>
-      expect(screen.getByRole("option", { name: /^Chat\b/ })).toHaveFocus(),
-    );
+    await user.keyboard(" ");
+    const listbox = await screen.findByRole("listbox", { name: "Session mode" });
+    expect(listbox).toHaveFocus();
+    await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^Chat\b/ }).id));
     await user.keyboard("{ArrowDown}");
-    await waitFor(() =>
-      expect(screen.getByRole("option", { name: /^Plan\b/ })).toHaveFocus(),
-    );
+    await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^Plan\b/ }).id));
     await user.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("plan");
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -291,5 +284,49 @@ describe("compact session mode control", () => {
     await userEvent.click(trigger);
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("composer primary action surface", () => {
+  it("uses one native button for send, without the glass wrapper", async () => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <div className="agent-session-controls">
+        <AgentComposer {...props} content="Ready to send" onSubmit={onSubmit} modeControl={<span>Chat</span>} />
+      </div>,
+    );
+    const send = screen.getByRole("button", { name: "agentSend" });
+    expect(send).toHaveClass("agent-dock-composer-action");
+    expect(send).toHaveClass("agent-dock-composer-send");
+    expect(send.closest(".glass-button-surface, .liquid-glass-surface")).toBeNull();
+    expect(container.querySelectorAll(".agent-dock-composer-actions > .agent-dock-composer-action")).toHaveLength(1);
+    await userEvent.click(send);
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stop and resume behavior without adding another surrounding surface", async () => {
+    const onStop = vi.fn();
+    const onResume = vi.fn();
+    const view = render(
+      <AgentComposer {...props} isGenerating onStop={onStop} />,
+    );
+    const stop = screen.getByRole("button", { name: "agentStop" });
+    expect(stop.closest(".glass-button-surface, .liquid-glass-surface")).toBeNull();
+    expect(stop).toHaveClass("agent-dock-composer-action");
+    await userEvent.click(stop);
+    expect(onStop).toHaveBeenCalledOnce();
+    view.rerender(<AgentComposer {...props} isResumable onResume={onResume} />);
+    const resume = screen.getByRole("button", { name: "sessionResume" });
+    expect(resume.closest(".glass-button-surface, .liquid-glass-surface")).toBeNull();
+    await userEvent.click(resume);
+    expect(onResume).toHaveBeenCalledOnce();
+  });
+
+  it("keeps disabled send disabled with a single button", () => {
+    render(<AgentComposer {...props} content=" " />);
+    const send = screen.getByRole("button", { name: "agentSend" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveClass("agent-dock-composer-action");
+    expect(send.closest(".glass-button-surface")).toBeNull();
   });
 });

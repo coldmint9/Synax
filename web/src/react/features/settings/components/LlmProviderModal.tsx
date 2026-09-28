@@ -1,13 +1,7 @@
 import { useState } from "react";
-import {
-  Button,
-  Description,
-  FieldError,
-  InputGroup,
-  Label,
-  Modal,
-  TextField,
-} from "@heroui/react";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Description, FieldError, InputGroup, Label, Field, Input, InputSuffix } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import {
   Check,
   ChevronDown,
@@ -256,69 +250,64 @@ export function LlmProviderModal({
   }
 
   return (
-    <Modal.Backdrop
-      isOpen
-      isDismissable={false}
-      onOpenChange={(open) => {
-        if (!open) void handleClose();
-      }}
+    <Dialog
+      open
+      dismissible={false}
+      onClose={() => void handleClose()}
     >
-      <Modal.Container size="lg">
-        <Modal.Dialog>
-          <Modal.Header>
-            <Modal.Heading>
+      <DialogContainer size="lg">
+        <DialogPanel>
+          <DialogHeader>
+            <DialogTitle>
               {isNew
                 ? zh
                   ? "新增供应商"
                   : "Add provider"
                 : `${draft.label} 配置`}
-            </Modal.Heading>
-          </Modal.Header>
-          <Modal.Body className="px-6">
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody className="px-6">
             <div className="space-y-4">
               {
-                <TextField
-                  value={draft.label}
-                  onChange={(val) => setDraft((d) => ({ ...d, label: val }))}
-                >
+                <Field>
                   <Label className="text-xs">供应商名称</Label>
                   <InputGroup>
-                    <InputGroup.Input placeholder="My Provider" />
+                    <Input placeholder="My Provider" value={draft.label} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, label: val })); }} />
                   </InputGroup>
-                </TextField>
+                </Field>
               }
 
-              <TextField
-                isInvalid={!!fieldError("apiKey")}
-                type={showApiKey ? "text" : "password"}
-                value={draft.apiKey}
-                onChange={(val) => setDraft((d) => ({ ...d, apiKey: val }))}
+              <Field
+                invalid={!!fieldError("apiKey")}
+
+
+
               >
                 <Label className="text-xs">
                   API Key <span className="text-destructive">*</span>
                 </Label>
                 <InputGroup>
-                  <InputGroup.Input
+                  <Input
                     placeholder={
                       draft.apiKeyMasked || t("llmCardApiKeyPlaceholder")
-                    }
+                    } type={showApiKey ? "text" : "password"} value={draft.apiKey} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, apiKey: val })); }}
                   />
-                  <InputGroup.Suffix className="pr-0">
+                  <InputSuffix className="pr-0">
                     <Button
-                      isIconOnly
+                      iconOnly
                       size="sm"
                       variant="ghost"
                       aria-label={showApiKey ? "隐藏" : "显示"}
-                      onPress={() => setShowApiKey(!showApiKey)}
+                      onClick={() => setShowApiKey(!showApiKey)}
                     >
                       {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
                     </Button>
-                  </InputGroup.Suffix>
+                  </InputSuffix>
                 </InputGroup>
                 {fieldError("apiKey") && (
                   <FieldError>{fieldError("apiKey")}</FieldError>
                 )}
-              </TextField>
+              </Field>
 
               <SettingsSelect
                 label="协议"
@@ -334,17 +323,17 @@ export function LlmProviderModal({
                 }))}
               />
 
-              <TextField
-                isInvalid={!!fieldError("baseUrl")}
-                value={draft.baseUrl}
-                onChange={(val) => setDraft((d) => ({ ...d, baseUrl: val }))}
+              <Field
+                invalid={!!fieldError("baseUrl")}
+
+
               >
                 <Label className="text-xs">Base URL</Label>
                 <InputGroup>
-                  <InputGroup.Input
+                  <Input
                     placeholder={
                       draft.custom ? "https://api.example.com" : undefined
-                    }
+                    } value={draft.baseUrl} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, baseUrl: val })); }}
                   />
                 </InputGroup>
                 {fieldError("baseUrl") ? (
@@ -356,7 +345,7 @@ export function LlmProviderModal({
                     </Description>
                   )
                 )}
-              </TextField>
+              </Field>
 
               <div className="space-y-1">
                 <span className="block text-xs text-foreground pb-1">
@@ -494,8 +483,8 @@ export function LlmProviderModal({
                   <Button
                     size="sm"
                     variant="secondary"
-                    isPending={draft.discoveringModels}
-                    onPress={handleDiscover}
+                    pending={draft.discoveringModels}
+                    onClick={handleDiscover}
                   >
                     <RefreshCw size={12} />
                     {t("llmCardDiscover")}
@@ -730,15 +719,15 @@ export function LlmProviderModal({
                 </div>
               )}
             </div>
-          </Modal.Body>
-          <Modal.Footer>
+          </DialogBody>
+          <DialogFooter>
             <Button
               size="sm"
               variant="secondary"
-              isPending={draft.validating}
-              onPress={handleValidate}
+              pending={draft.validating}
+              onClick={handleValidate}
             >
-              {({ isPending }) => (
+              {({ pending: isPending }) => (
                 <>
                   {isPending ? null : <Wifi size={12} />}
                   {t("llmCardValidate")}
@@ -770,8 +759,8 @@ export function LlmProviderModal({
             <Button
               size="sm"
               variant="secondary"
-              isDisabled={saving || !valid}
-              onPress={() => {
+              disabled={saving || !valid}
+              onClick={() => {
                 void flush();
               }}
             >
@@ -781,14 +770,14 @@ export function LlmProviderModal({
             <Button
               variant="ghost"
               size="sm"
-              isDisabled={saving}
-              onPress={handleClose}
+              disabled={saving}
+              onClick={handleClose}
             >
               {zh ? "关闭" : "Close"}
             </Button>
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   );
 }

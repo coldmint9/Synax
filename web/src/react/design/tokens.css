@@ -1,0 +1,100 @@
+/* Paired cool-neutral surfaces; the dark canvas and panel follow the reference. */
+:root {
+  /* Shared interface entry. The first family is reserved for the licensed,
+     bundled face; until its files are supplied, platform/bundled fallbacks apply. */
+  --font-interface: "Synax Avenir Next", "Avenir Next", "Inter Variable",
+    "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --ui-canvas: #f7f8fa;
+  --ui-panel: #ffffff;
+  --ui-panel-soft: #edf0f4;
+  --ui-text: #242932;
+  --ui-subtle: #626a76;
+  --ui-line: #dce2ea;
+  --ui-line-strong: #c7d0db;
+  --ui-signal: #aec478;
+  --ui-canvas-hsl: 220.00 23.08% 97.45%;
+  --ui-panel-hsl: 0.00 0.00% 100.00%;
+  --ui-panel-soft-hsl: 214.29 24.14% 94.31%;
+  --ui-text-hsl: 218.57 16.28% 16.86%;
+  --ui-subtle-hsl: 216.00 9.26% 42.35%;
+  --ui-line-hsl: 214.29 25.00% 89.02%;
+  --ui-line-strong-hsl: 213.00 21.74% 81.96%;
+  --ui-signal-hsl: 77.37 39.18% 61.96%;
+}
+.dark {
+  --ui-canvas: #10141c;
+  --ui-panel: #171b23;
+  --ui-panel-soft: #272c34;
+  --ui-text: #bfbdb6;
+  --ui-subtle: #a6a59f;
+  --ui-line: #2d323b;
+  --ui-line-strong: #4c535e;
+  --ui-signal: #c6db91;
+  --ui-canvas-hsl: 220.00 27.27% 8.63%;
+  --ui-panel-hsl: 220.00 20.69% 11.37%;
+  --ui-panel-soft-hsl: 216.92 14.29% 17.84%;
+  --ui-text-hsl: 46.67 6.57% 73.14%;
+  --ui-subtle-hsl: 51.43 3.78% 63.73%;
+  --ui-line-hsl: 218.57 13.46% 20.39%;
+  --ui-line-strong-hsl: 216.67 10.59% 33.33%;
+  --ui-signal-hsl: 77.03 50.68% 71.37%;
+}
+
+:root {
+  color-scheme: light;
+  --ui-accent: hsl(var(--primary));
+  --ui-accent-soft: color-mix(in srgb, var(--ui-accent) 9%, var(--ui-panel));
+  --ui-shadow-control: 0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7);
+  --ui-shadow-inset: inset 0 1px 2px rgb(26 34 48 / .04);
+  --ui-shadow-floating: 0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045);
+  --ui-tooltip-background: #272c34;
+  --ui-tooltip-foreground: #f7f8fa;
+  --radius: .625rem;
+  --background-hsl: var(--ui-canvas-hsl);
+  --foreground-hsl: var(--ui-text-hsl);
+  --border-hsl: var(--ui-line-hsl);
+  --muted-hsl: var(--ui-panel-soft-hsl);
+  --background: var(--ui-canvas);
+  --foreground: var(--ui-text);
+  --border: var(--ui-line);
+  --surface: var(--ui-panel);
+  --surface-foreground: var(--ui-text);
+  --surface-secondary: var(--ui-panel-soft);
+  --surface-shadow: 0 1px 2px rgb(26 34 48 / .03);
+  --overlay: var(--ui-panel);
+  --overlay-foreground: var(--ui-text);
+  --default: var(--ui-panel-soft);
+  --default-hover: var(--ui-line);
+  --default-foreground: var(--ui-text);
+  --muted: var(--ui-subtle);
+  --muted-foreground: var(--ui-subtle-hsl);
+  --card: var(--ui-panel-hsl);
+  --card-foreground: var(--ui-text-hsl);
+  --popover: var(--ui-panel-hsl);
+  --popover-foreground: var(--ui-text-hsl);
+  --secondary: var(--ui-panel-soft-hsl);
+  --secondary-foreground: var(--ui-text-hsl);
+  --input: var(--ui-line-hsl);
+  --field-background: var(--ui-panel);
+  --field-foreground: var(--ui-text);
+  --field-placeholder: var(--ui-subtle);
+  --field-border: var(--ui-line);
+  --field-border-hover: var(--ui-line-strong);
+  --field-hover: var(--ui-panel-soft);
+  --field-focus: var(--ui-panel);
+  --separator: var(--ui-line);
+  --segment: var(--ui-panel);
+  --segment-foreground: var(--ui-text);
+  --scrollbar: var(--ui-line-strong);
+  /* The editor is a solid writing surface; glass belongs to command islands. */
+  --agent-glass-bg: var(--ui-panel);
+  --agent-glass-border: var(--ui-line);
+  --agent-glass-shadow: var(--ui-shadow-control);
+}
+.dark {
+  color-scheme: dark;
+  --ui-shadow-control: 0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035);
+  --ui-shadow-inset: inset 0 1px 2px rgb(0 0 0 / .14);
+  --ui-shadow-floating: 0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14);
+  --surface-shadow: 0 1px 2px rgb(0 0 0 / .10);
+}

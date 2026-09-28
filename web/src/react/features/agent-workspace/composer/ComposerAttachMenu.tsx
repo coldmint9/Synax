@@ -1,6 +1,21 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Plus, Sparkles } from "lucide-react";
-import { Dropdown, Header, Label, Switch } from "@heroui/react";
+import {
+  Disclosure,
+  DisclosureButton,
+  DisclosurePanel,
+  Radio,
+  RadioGroup,
+} from "@headlessui/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Check, ChevronDown, Plus, Sparkles } from "lucide-react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
+import { Field, Label } from "@/react/components/ui/Field";
+import { Checkbox, Switch } from "@/react/components/ui/Toggle";
+import { Tooltip } from "@/react/components/ui/Tooltip";
 import type { WikiDocument } from "../../../../lib/contracts/wiki";
 import { skillsApi, type SkillSummary } from "../../../../lib/api/skills";
 import { useShellStore } from "../../../state/shellStore";
@@ -17,30 +32,9 @@ interface Props {
   skillIds: string[];
   onSkillIdsChange: (ids: string[]) => void;
   disabled?: boolean;
-  /** Disable wiki attach controls only (skills/permissions stay editable). */
   skillsDisabled?: boolean;
   wikiAttachDisabled?: boolean;
   onOverlayOpenChange?: (open: boolean) => void;
-}
-
-function AttachBadge({ count, label }: { count?: number; label?: string }) {
-  if (label) {
-    return (
-      <span className="agent-attach-badge ms-auto rounded-full px-1.5 py-px text-[9px] font-medium uppercase tracking-wide">
-        {label}
-      </span>
-    );
-  }
-  if (!count || count <= 0) return null;
-  return (
-    <span className="agent-attach-badge ms-auto rounded-full px-1.5 py-px text-[9px] font-medium">
-      {count}
-    </span>
-  );
-}
-
-function isGeneratedWikiDocument(doc: WikiDocument): boolean {
-  return !doc.isSection && doc.contentMd.trim().length > 0;
 }
 
 function WikiAttachPanel({
@@ -50,248 +44,226 @@ function WikiAttachPanel({
   onWikiAttachModeChange,
   documents,
   disabled,
-}: {
-  documentId: string | null;
-  onDocumentChange: (id: string | null) => void;
-  wikiAttachMode: SynaxWikiAttachMode;
-  onWikiAttachModeChange: (mode: SynaxWikiAttachMode) => void;
-  documents: WikiDocument[];
-  disabled?: boolean;
-}) {
+}: Pick<
+  Props,
+  | "documentId"
+  | "onDocumentChange"
+  | "wikiAttachMode"
+  | "onWikiAttachModeChange"
+  | "documents"
+> & { disabled?: boolean }) {
   const { t } = useLocale();
   const isAuto = wikiAttachMode === "auto";
-  const generatedDocuments = useMemo(
-    () => documents.filter(isGeneratedWikiDocument),
+  const generated = useMemo(
+    () =>
+      documents.filter(
+        (doc) => !doc.isSection && doc.contentMd.trim().length > 0,
+      ),
     [documents],
   );
-
   return (
-    <div
-      className={`w-56 py-1${disabled ? " pointer-events-none opacity-60" : ""}`}
-    >
-      <div className="flex items-center justify-between gap-3 px-2.5 py-2">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium text-foreground">
-            {t("agentWikiAuto")}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-            {isAuto ? t("agentWikiAutoOnDesc") : t("agentWikiAutoOffDesc")}
+    <div className="space-y-2 py-2">
+      <div className="flex items-center justify-between gap-3 px-2">
+        <div>
+          <p className="text-xs font-medium">{t("agentWikiAuto")}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t(isAuto ? "agentWikiAutoOnDesc" : "agentWikiAutoOffDesc")}
           </p>
         </div>
         <Switch
           size="sm"
-          isSelected={isAuto}
-          isDisabled={disabled}
-          onChange={(selected) =>
-            onWikiAttachModeChange(selected ? "auto" : "manual")
+          checked={isAuto}
+          onChange={(checked) =>
+            onWikiAttachModeChange(checked ? "auto" : "manual")
           }
+          disabled={disabled}
           aria-label={t("agentWikiAuto")}
-        >
-          <Switch.Content>
-            <Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control>
-          </Switch.Content>
-        </Switch>
+        />
       </div>
-
       {!isAuto && (
-        <Dropdown.Menu
+        <RadioGroup
+          value={documentId ?? "__none__"}
+          onChange={(value) =>
+            onDocumentChange(value === "__none__" ? null : value)
+          }
+          disabled={disabled}
           aria-label={t("agentWikiContext")}
-          selectedKeys={new Set([documentId ?? "__none__"])}
-          selectionMode="single"
-          onSelectionChange={(keys) => {
-            if (disabled) return;
-            const key = [...keys][0];
-            if (key)
-              onDocumentChange(String(key) === "__none__" ? null : String(key));
-          }}
+          className="space-y-1"
         >
-          <Dropdown.Section>
-            <Header>{t("agentWikiContext")}</Header>
-            <Dropdown.Item id="__none__" textValue={t("agentWikiNone")}>
-              {documentId === null ? (
-                <Check size={14} className="shrink-0 text-primary" />
-              ) : (
-                <span className="size-3.5 shrink-0" aria-hidden />
-              )}
-              <Label
-                className={
-                  documentId === null ? "font-medium text-primary" : ""
-                }
+          {[{ id: "__none__", title: t("agentWikiNone") }, ...generated].map(
+            (doc) => (
+              <Radio
+                key={doc.id}
+                as="button"
+                type="button"
+                value={doc.id}
+                className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs data-checked:bg-primary/10 data-checked:text-primary data-disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-ring"
               >
-                {t("agentWikiNone")}
-              </Label>
-            </Dropdown.Item>
-            {generatedDocuments.length === 0 ? (
-              <div className="px-3 py-2 text-[10px] text-muted-foreground">
-                {t("agentWikiGeneratedEmpty")}
-              </div>
-            ) : (
-              generatedDocuments.map((doc) => (
-                <Dropdown.Item key={doc.id} id={doc.id} textValue={doc.title}>
-                  {documentId === doc.id ? (
-                    <Check size={14} className="shrink-0 text-primary" />
-                  ) : (
-                    <span className="size-3.5 shrink-0" aria-hidden />
-                  )}
-                  <Label
-                    className={`truncate ${documentId === doc.id ? "font-medium text-primary" : ""}`}
-                  >
-                    {doc.title}
-                  </Label>
-                </Dropdown.Item>
-              ))
-            )}
-          </Dropdown.Section>
-        </Dropdown.Menu>
+                {({ checked }) => (
+                  <>
+                    <Check
+                      size={13}
+                      className={checked ? "shrink-0" : "invisible shrink-0"}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{doc.title}</span>
+                  </>
+                )}
+              </Radio>
+            ),
+          )}
+          {generated.length === 0 && (
+            <p className="px-2 py-1 text-[11px] text-muted-foreground">
+              {t("agentWikiGeneratedEmpty")}
+            </p>
+          )}
+        </RadioGroup>
       )}
     </div>
   );
 }
 
-export function ComposerAttachMenu({
-  projectId,
-  documentId,
-  onDocumentChange,
-  wikiAttachMode,
-  onWikiAttachModeChange,
-  documents,
-  skillIds,
-  onSkillIdsChange,
-  disabled,
-  wikiAttachDisabled,
-  skillsDisabled,
-  onOverlayOpenChange,
-}: Props) {
+function AttachPanel(props: Props & { open: boolean; close: () => void }) {
   const { t, locale } = useLocale();
-  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
+  const wikiEnabled = useShellStore((state) => state.preferences.wikiEnabled);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
-  const skillsLoadedRef = useRef(false);
-  const skillsLoadingRef = useRef(false);
-
-  const loadSkills = useCallback(() => {
-    if (skillsLoadedRef.current || skillsLoadingRef.current) return;
-    skillsLoadingRef.current = true;
-    setSkillsLoading(true);
+  const [loading, setLoading] = useState(false);
+  const loaded = useRef(false);
+  useEffect(() => {
+    if (props.open && props.disabled) props.close();
+  }, [props.open, props.disabled, props.close]);
+  useEffect(() => {
+    if (!props.open || props.disabled || props.skillsDisabled || loaded.current)
+      return;
+    let active = true;
+    setLoading(true);
     void skillsApi
-      .list({ projectId, profileId: SYNAX_PROFILE_ID })
-      .then((res) => {
-        skillsLoadedRef.current = true;
+      .list({ projectId: props.projectId, profileId: SYNAX_PROFILE_ID })
+      .then((result) => {
+        if (!active) return;
+        loaded.current = true;
         setSkills(
-          res.items.filter(
+          result.items.filter(
             (skill) =>
               skill.status === "available" && Boolean(skill.installPath),
           ),
         );
       })
       .catch(() => {
-        skillsLoadedRef.current = true;
-        setSkills([]);
+        if (active) setSkills([]);
       })
       .finally(() => {
-        skillsLoadingRef.current = false;
-        setSkillsLoading(false);
+        if (active) setLoading(false);
       });
-  }, [projectId]);
-
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      onOverlayOpenChange?.(open);
-      if (open) loadSkills();
-    },
-    [loadSkills, onOverlayOpenChange],
-  );
-
+    return () => {
+      active = false;
+    };
+  }, [props.open, props.projectId, props.disabled, props.skillsDisabled]);
   return (
-    <Dropdown onOpenChange={handleOpenChange}>
-      <Dropdown.Trigger
-        isDisabled={disabled}
-        aria-label={t("agentAttach")}
-        className="button button--icon-only button--sm button--tertiary relative inline-flex size-7 shrink-0 items-center justify-center rounded-full p-0 text-foreground/80"
-      >
-        <Plus size={14} className="shrink-0" strokeWidth={2} />
-      </Dropdown.Trigger>
-      <Dropdown.Popover placement="top start" className="z-50">
-        <Dropdown.Menu aria-label={t("agentAttach")}>
-          {wikiEnabled && (
-            <Dropdown.SubmenuTrigger>
-              <Dropdown.Item id="wiki" textValue={t("agentAttachWiki")}>
-                <BookOpen
-                  size={14}
-                  className="shrink-0 text-muted-foreground/70"
-                />
-                <Label>{t("agentAttachWiki")}</Label>
-                {wikiAttachMode === "auto" ? (
-                  <AttachBadge label="auto" />
-                ) : documentId ? (
-                  <AttachBadge count={1} />
-                ) : null}
-                <Dropdown.SubmenuIndicator />
-              </Dropdown.Item>
-              <Dropdown.Popover>
-                <WikiAttachPanel
-                  documentId={documentId}
-                  onDocumentChange={onDocumentChange}
-                  wikiAttachMode={wikiAttachMode}
-                  onWikiAttachModeChange={onWikiAttachModeChange}
-                  documents={documents}
-                  disabled={wikiAttachDisabled}
-                />
-              </Dropdown.Popover>
-            </Dropdown.SubmenuTrigger>
-          )}
+    <PopoverPanel
+      focus
+      anchor={{ to: "top start", gap: 8, padding: 8 }}
+      aria-label={t("agentAttach")}
+      className="w-72 max-h-[min(36rem,calc(100dvh-24px))] overflow-y-auto"
+    >
+      {wikiEnabled && (
+        <Disclosure>
+          <DisclosureButton
+            disabled={props.disabled}
+            className="group flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <BookOpen size={14} aria-hidden="true" />
+            <span>{t("agentAttachWiki")}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              {props.wikiAttachMode === "auto"
+                ? "AUTO"
+                : props.documentId
+                  ? "1"
+                  : ""}
+            </span>
+            <ChevronDown
+              size={12}
+              className="group-data-open:rotate-180"
+              aria-hidden="true"
+            />
+          </DisclosureButton>
+          <DisclosurePanel>
+            <WikiAttachPanel
+              {...props}
+              disabled={props.disabled || props.wikiAttachDisabled}
+            />
+          </DisclosurePanel>
+        </Disclosure>
+      )}
+      <div className="mt-2 border-t border-border pt-2">
+        <h3 className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
+          {t("agentAttachSkills")}
+        </h3>
+        {props.skillsDisabled ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {locale === "zh"
+              ? "此后端使用原生 Skills 配置。"
+              : "This backend uses its native Skills configuration."}
+          </p>
+        ) : loading ? (
+          <p role="status" className="px-2 py-2 text-xs text-muted-foreground">
+            {t("agentAttachSkillsLoading")}
+          </p>
+        ) : skills.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {t("agentAttachSkillsEmpty")}
+          </p>
+        ) : (
+          skills.map((skill) => (
+            <Field
+              key={skill.id}
+              className="!flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-muted"
+            >
+              <Checkbox
+                disabled={props.disabled || props.skillsDisabled}
+                checked={props.skillIds.includes(skill.id)}
+                onChange={(checked) =>
+                  props.onSkillIdsChange(
+                    checked
+                      ? [...props.skillIds, skill.id]
+                      : props.skillIds.filter((id) => id !== skill.id),
+                  )
+                }
+              />
+              <Label className="flex min-w-0 flex-1 items-center gap-2 !font-normal">
+                <Sparkles size={12} aria-hidden="true" />
+                <span className="truncate">{skill.label}</span>
+              </Label>
+            </Field>
+          ))
+        )}
+      </div>
+    </PopoverPanel>
+  );
+}
 
-          <Dropdown.Section>
-            <Header>{t("agentAttachSkills")}</Header>
-            {skillsDisabled ? (
-              <div className="px-3 py-2 text-[10px] text-muted-foreground">
-                {locale === "zh"
-                  ? "此后端使用原生 Skills 配置。"
-                  : "This backend uses its native Skills configuration."}
-              </div>
-            ) : skillsLoading ? (
-              <div className="px-3 py-2 text-[10px] text-muted-foreground">
-                {t("agentAttachSkillsLoading")}
-              </div>
-            ) : skills.length === 0 ? (
-              <div className="px-3 py-2 text-[10px] text-muted-foreground">
-                {t("agentAttachSkillsEmpty")}
-              </div>
-            ) : (
-              skills.map((skill) => (
-                <Dropdown.Item
-                  key={skill.id}
-                  id={skill.id}
-                  textValue={skill.label}
-                  onAction={() => {
-                    const next = skillIds.includes(skill.id)
-                      ? skillIds.filter((id) => id !== skill.id)
-                      : [...skillIds, skill.id];
-                    onSkillIdsChange(next);
-                  }}
-                >
-                  {skillIds.includes(skill.id) ? (
-                    <Check size={14} className="shrink-0 text-primary" />
-                  ) : (
-                    <span className="size-3.5 shrink-0" aria-hidden />
-                  )}
-                  <Sparkles
-                    size={12}
-                    className="shrink-0 text-muted-foreground/60"
-                  />
-                  <Label
-                    className={`truncate ${skillIds.includes(skill.id) ? "font-medium text-primary" : ""}`}
-                  >
-                    {skill.label}
-                  </Label>
-                </Dropdown.Item>
-              ))
-            )}
-          </Dropdown.Section>
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
+export function ComposerAttachMenu(props: Props) {
+  const { t } = useLocale();
+  return (
+    <Popover>
+      {({ open, close }) => (
+        <>
+          <OverlayStateObserver
+            open={open}
+            onOpenChange={props.onOverlayOpenChange}
+          />
+          <Tooltip content={t("agentAttach")}>
+            <PopoverButton
+              disabled={props.disabled}
+              aria-label={t("agentAttach")}
+              className="agent-attach-trigger size-7 shrink-0 text-muted-foreground hover:bg-muted"
+            >
+              <Plus size={15} />
+            </PopoverButton>
+          </Tooltip>
+          <AttachPanel key={props.projectId} {...props} open={open} close={close} />
+        </>
+      )}
+    </Popover>
   );
 }

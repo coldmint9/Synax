@@ -116,9 +116,7 @@ export function SessionListPanel({
             onSelect={list.select}
             onToggleGroup={list.toggleGroup}
             onToggleExpand={list.toggleExpand}
-            onLoadMore={() => {
-              void list.loadMore();
-            }}
+            onLoadMore={list.loadMore}
             onDelete={setDeleteId}
           />
         </div>

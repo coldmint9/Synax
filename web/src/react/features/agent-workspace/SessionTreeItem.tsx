@@ -1,7 +1,8 @@
 import { SearchHighlight } from "./SearchHighlight";
+import { SessionListTitle } from "./SessionListTitle";
 import { PixelLoader } from "./LoadingState";
 import { memo } from "react";
-import { ChevronDown, ChevronRight, MoreHorizontal, Pin } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useNotificationStore } from "../../state/notificationStore";
 import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
@@ -187,21 +188,15 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             />
           ) : null}
         </span>
-        <span className="session-list-title" title={title}>
-          {pinned && (
-            <Pin
-              size={12}
-              className="session-list-pin"
-              aria-label={locale === "zh" ? "已置顶" : "Pinned"}
-            />
-          )}
-          <SearchHighlight text={title} query={node.searchQuery} />
-          {needsUserInput && (
+        <SessionListTitle
+          title={title}
+          query={node.searchQuery}
+          suffix={needsUserInput ? (
             <span className="session-list-needs-input">
               {t("sessionNeedsUserInput")}
             </span>
-          )}
-        </span>
+          ) : undefined}
+        />
         {node.searchSnippet !== undefined ? (
           <span
             className="session-list-preview session-list-preview--search"

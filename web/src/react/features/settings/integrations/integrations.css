@@ -33,21 +33,6 @@
 .capabilities-tabs {
   gap: 0;
 }
-.capabilities-tabs > .tabs__list-container {
-  padding: 12px 20px;
-  border-bottom: 1px solid hsl(var(--border-hsl) / 0.5);
-}
-.capabilities-tabs .tabs__tab {
-  font-size: 12px;
-  gap: 7px;
-}
-.capabilities-tabs > .tabs__panel {
-  padding: 0;
-  outline: none;
-}
-.capabilities-tabs > .tabs__panel[data-inert] {
-  display: none;
-}
 .capabilities-count {
   font-size: 10px;
   opacity: 0.6;
@@ -679,13 +664,6 @@
   }
   .discovery-selection-bar {
     padding: 12px;
-  }
-  .capabilities-tabs > .tabs__list-container {
-    padding: 10px;
-  }
-  .capabilities-tabs .tabs__tab {
-    font-size: 11px;
-    padding-inline: 9px;
   }
   .capabilities-heading > span {
     display: none;

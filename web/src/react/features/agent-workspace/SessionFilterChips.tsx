@@ -1,4 +1,4 @@
-import { Chip } from "@heroui/react";
+import { Button } from "@/react/components/ui/Button";
 import type { StatusFilter } from "./useSessionList";
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
@@ -30,11 +30,11 @@ export function SessionFilterChips({
           f.key === "all" ? totalCount : (countByStatus[f.key] ?? 0);
         const active = value === f.key;
         return (
-          <Chip
+          <Button
             key={f.key}
-            size="sm"
-            variant={active ? "secondary" : "soft"}
-            color={active ? "accent" : "default"}
+            size="xs"
+            variant={active ? "secondary" : "ghost"}
+            aria-pressed={active}
             className="cursor-pointer shrink-0 text-[10px] transition-colors"
             onClick={() => onChange(f.key)}
           >
@@ -42,7 +42,7 @@ export function SessionFilterChips({
             <span className={active ? "" : "text-muted-foreground/60"}>
               {count}
             </span>
-          </Chip>
+          </Button>
         );
       })}
     </div>

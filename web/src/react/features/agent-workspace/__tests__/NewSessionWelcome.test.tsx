@@ -9,12 +9,14 @@ vi.mock("../../../../hooks/useLocale", () => ({
 }));
 
 describe("new session identity", () => {
-  it("gives the ASCII wordmark one accessible name without reading its punctuation", () => {
+  it("gives the ASCII wordmark one accessible name without exposing decorative characters", () => {
     render(<NewSessionWelcome />);
     const mark = screen.getByRole("img", { name: "Synax" });
-    expect(mark.querySelector("pre")).toHaveAttribute("aria-hidden", "true");
-    expect(mark.textContent).toMatch(/^[\x20-\x7e\n]+$/);
-    expect(mark.textContent?.split("\n")).toHaveLength(5);
+    expect(mark.querySelector("svg")).toBeNull();
+    expect(mark.querySelectorAll("pre")).toHaveLength(1);
+    expect(mark.querySelector("pre")?.textContent).toMatch(/^[█ \n]+$/);
+    expect(mark.querySelector("[data-ascii-stage]")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
       "sessionDraftTitle",
     );

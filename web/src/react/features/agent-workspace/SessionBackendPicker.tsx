@@ -1,6 +1,10 @@
-import { useState } from "react";
-import { ListBox, Popover } from "@heroui/react";
-import { ChevronDown } from "lucide-react";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOptions,
+  ListboxOption,
+} from "@headlessui/react";
+import { Check, ChevronDown } from "lucide-react";
 import type { BackendId } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 import "./agentControls.css";
@@ -18,14 +22,14 @@ export function SessionBackendPicker({
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [open, setOpen] = useState(false);
   return (
-    <Popover
-      isOpen={!disabled && open}
-      onOpenChange={(next) => setOpen(!disabled && next)}
+    <Listbox
+      key={String(disabled)}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
     >
-      <Popover.Trigger<"button">
-        render={(props) => <button {...props} type="button" />}
+      <ListboxButton
         disabled={disabled}
         aria-label={zh ? "执行后端" : "Execution backend"}
         title={
@@ -41,39 +45,33 @@ export function SessionBackendPicker({
           {options.find((option) => option.id === value)?.label ?? value}
         </span>
         <ChevronDown size={10} aria-hidden />
-      </Popover.Trigger>
-      <Popover.Content
-        placement="top end"
-        offset={8}
-        className="agent-mode-popover"
+      </ListboxButton>
+      <ListboxOptions
+        anchor={{ to: "top end", gap: 8, padding: 8 }}
+        portal
+        modal={false}
+        aria-label={zh ? "执行后端" : "Execution backend"}
+        className="agent-mode-popover ui-select-options z-[1200] max-h-80 overflow-y-auto rounded-xl border border-border bg-card p-1 text-card-foreground shadow-lg outline-none"
       >
-        <ListBox
-          aria-label={zh ? "执行后端" : "Execution backend"}
-          selectionMode="single"
-          disallowEmptySelection
-          selectedKeys={new Set([value])}
-          onSelectionChange={(keys) => {
-            if (disabled || keys === "all") return;
-            const option = options.find((item) => item.id === [...keys][0]);
-            if (option) {
-              setOpen(false);
-              onChange(option.id);
-            }
-          }}
-        >
-          {options.map((option) => (
-            <ListBox.Item
-              key={option.id}
-              id={option.id}
-              textValue={option.label}
-              className="agent-mode-option"
-            >
-              {option.label}
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Popover.Content>
-    </Popover>
+        {options.map((option) => (
+          <ListboxOption
+            key={option.id}
+            value={option.id}
+            className="agent-mode-option flex cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-xs outline-none data-focus:bg-muted data-selected:bg-primary/10"
+          >
+            {({ selected }) => (
+              <>
+                {option.label}
+                <Check
+                  size={14}
+                  aria-hidden
+                  className={selected ? "shrink-0" : "invisible shrink-0"}
+                />
+              </>
+            )}
+          </ListboxOption>
+        ))}
+      </ListboxOptions>
+    </Listbox>
   );
 }

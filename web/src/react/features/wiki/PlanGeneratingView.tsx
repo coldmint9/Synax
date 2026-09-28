@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
 import { Loader2, FileCode, AlertCircle, RotateCcw, Search, Brain, Send, CheckCircle2 } from 'lucide-react'
-import { Button } from '@heroui/react'
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from '../../../hooks/useLocale'
 import { useWikiStore } from '../../state/wikiStore'
 import type { WikiGoal } from '../../../lib/api/goal'
@@ -174,7 +174,7 @@ function FailedView({ error, onRetry }: { error: string | null; onRetry: () => v
         <AlertCircle size={28} className="mx-auto mb-3 text-destructive/60" />
         <h3 className="text-[13px] font-semibold text-foreground/80">{t('planFailedTitle')}</h3>
         <p className="mt-2 text-[11px] text-muted-foreground/60">{error ?? t('planUnknownError')}</p>
-        <Button size="sm" variant="ghost" className="mt-4" onPress={onRetry}>
+        <Button size="sm" variant="ghost" className="mt-4" onClick={onRetry}>
           <RotateCcw size={12} />
           {t('planRetry')}
         </Button>

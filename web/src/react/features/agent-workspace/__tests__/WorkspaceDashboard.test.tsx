@@ -137,7 +137,7 @@ describe("WorkspaceDashboard", () => {
     expect(screen.getByText("feature/dynamic-workflow-refactor")).toBeTruthy();
 
     expect(screen.getByRole("button", { name: /^Subagents/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Git 变更/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Git 变更" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /^输入源/ })).toBeTruthy();
     expect(screen.getByText("运行中 1")).toBeTruthy();
     expect(screen.getByText("已暂存 1")).toBeTruthy();
@@ -320,7 +320,7 @@ describe("WorkspaceDashboard", () => {
     const { container } = renderDashboard();
 
     const gitCard = screen
-      .getByRole("button", { name: /^Git 变更/ })
+      .getByRole("heading", { name: "Git 变更" })
       .closest(".ws-card");
     const inputCard = screen
       .getByRole("tab", { name: /^输入源/ })
@@ -340,29 +340,40 @@ describe("WorkspaceDashboard", () => {
     expect(gitCard?.querySelector(".ws-tree-folder")).toBeNull();
     expect(
       screen
-        .getByRole("button", { name: /^Git 变更/ })
-        .getAttribute("aria-expanded"),
-    ).toBe("true");
+        .getByRole("heading", { name: "Git 变更" })
+        .hasAttribute("aria-expanded"),
+    ).toBe(false);
 
     expect(container.querySelector(".ws-row-dir")).toBeNull();
     expect(screen.queryByText("src/views/chat-cli")).toBeNull();
   });
 
-  it("collapses a card body from its header", () => {
+  it("keeps Git changes permanently expanded with a plain heading and no total or chevron", () => {
     renderDashboard();
+    const heading = screen.getByRole("heading", { name: "Git 变更" });
+    const card = heading.closest(".ws-card")!;
+    expect(screen.queryByRole("button", { name: /^Git 变更/ })).toBeNull();
+    expect(heading).not.toHaveAttribute("aria-expanded");
+    expect(card.querySelector(".ws-card-count, .ws-card-chevron")).toBeNull();
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    fireEvent.click(heading);
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(card).toHaveAttribute("data-open", "true");
+  });
 
-    const header = screen.getByRole("button", { name: /^Git 变更/ });
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("notes.md")).toBeTruthy();
-
-    fireEvent.click(header);
-
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("notes.md")).toBeNull();
-    expect(screen.getByRole("button", { name: "输入 / 输出" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+  it("ignores an old collapsed Git section preference inside a repository", () => {
+    const key = "synax:workspace:disclosure:session-1:primary:changes";
+    localStorage.setItem(key, "false");
+    try {
+      renderDashboard({ repositories: [{ ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" }] });
+      const heading = screen.getByRole("heading", { name: "Git 变更" });
+      const section = heading.closest(".ws-project-section")!;
+      expect(section).toHaveAttribute("data-open", "true");
+      expect(section.querySelector(".ws-card-count, .ws-project-section-chevron")).toBeNull();
+      fireEvent.click(heading);
+      expect(within(section as HTMLElement).getByText("notes.md")).toBeInTheDocument();
+      expect(within(section as HTMLElement).getByRole("button", { name: "平铺视图" })).toBeInTheDocument();
+    } finally { localStorage.removeItem(key); }
   });
 
   it.each([true, false])(

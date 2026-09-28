@@ -2,7 +2,9 @@ import { DialogOverlay } from "../../components/DialogOverlay";
 import { AppSelect } from "../../components/AppSelect";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Input, Label, TextField, Tooltip } from "@heroui/react";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { Input, Label, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { ArrowRight, FolderCode, Layers2, Pin, X } from "lucide-react";
 import { WorkspaceProjectSources } from "../workspace/WorkspaceProjectSources";
 import { WorkspaceProjectRow } from "../workspace/WorkspaceProjectRow";
@@ -244,23 +246,25 @@ function ProjectCreateForm({
             <Button
               size="sm"
               variant="ghost"
-              isIconOnly
+              iconOnly
               aria-label={c.close}
-              isDisabled={submitting}
-              onPress={handleClose}
+              disabled={submitting}
+              onClick={handleClose}
             >
               <X size={17} />
             </Button>
           </header>
           <div className="workspace-create-name">
-            <TextField value={name} onChange={setName} isDisabled={submitting}>
+            <Field disabled={submitting}>
               <Label>{c.workspaceName}</Label>
               <Input
                 maxLength={120}
                 placeholder={c.namePlaceholder}
                 data-dialog-autofocus
+                value={name}
+                onChange={(event) => setName(event.currentTarget.value)}
               />
-            </TextField>
+            </Field>
           </div>
           <div className="workspace-create-body">
             <section
@@ -351,14 +355,14 @@ function ProjectCreateForm({
                     primary={index === 0}
                   >
                     {index > 0 && (
-                      <Tooltip delay={300}>
+                      <Tooltip delay={300} content={<>{c.makePrimary}</>}>
                         <Button
                           size="sm"
                           variant="ghost"
-                          isIconOnly
+                          iconOnly
                           aria-label={`${c.makePrimary}: ${item.name}`}
-                          isDisabled={submitting}
-                          onPress={() =>
+                          disabled={submitting}
+                          onClick={() =>
                             setMembers((items) => [
                               item,
                               ...items.filter((member) => member !== item),
@@ -367,16 +371,15 @@ function ProjectCreateForm({
                         >
                           <Pin size={13} />
                         </Button>
-                        <Tooltip.Content>{c.makePrimary}</Tooltip.Content>
                       </Tooltip>
                     )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      isIconOnly
+                      iconOnly
                       aria-label={`${c.remove} ${item.name}`}
-                      isDisabled={submitting}
-                      onPress={() =>
+                      disabled={submitting}
+                      onClick={() =>
                         setMembers((items) =>
                           items.filter((member) => member !== item),
                         )
@@ -409,16 +412,16 @@ function ProjectCreateForm({
               <Button
                 variant="ghost"
                 size="sm"
-                isDisabled={submitting}
-                onPress={handleClose}
+                disabled={submitting}
+                onClick={handleClose}
               >
                 {c.cancel}
               </Button>
               <Button
                 size="sm"
-                isDisabled={submitting || !members.length || !name.trim()}
-                isPending={submitting}
-                onPress={() => void createWorkspace()}
+                disabled={submitting || !members.length || !name.trim()}
+                pending={submitting}
+                onClick={() => void createWorkspace()}
               >
                 {submitting ? c.creating : c.title}
                 {!submitting && <ArrowRight size={14} />}

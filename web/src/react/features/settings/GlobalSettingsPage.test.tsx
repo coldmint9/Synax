@@ -13,208 +13,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, ProviderDef } from "../../../lib/contracts/config";
 import { useState, type ReactNode } from "react";
 
-// Appearance has its own integration tests using real HeroUI color controls.
+// Appearance has its own integration tests using real Synax UI color controls.
 vi.mock("./components/AppearanceSection", () => ({
   AppearanceSection: () => <div />,
 }));
 
-vi.mock("@heroui/react", () => {
-  const Passthrough = ({ children, className }: any) => (
-    <div className={className}>{children}</div>
-  );
-  const TabsComp = ({ children }: any) => <div>{children}</div>;
-  TabsComp.ListContainer = Passthrough;
-  TabsComp.List = ({ children }: any) => <div role="tablist">{children}</div>;
-  TabsComp.Tab = ({ children, id }: any) => (
-    <button role="tab" data-id={id}>
-      {children}
-    </button>
-  );
-  TabsComp.Indicator = () => null;
-  TabsComp.Panel = ({ children }: any) => <div role="tabpanel">{children}</div>;
-  const CardComp = ({ children, className }: any) => (
-    <div className={className}>{children}</div>
-  );
-  CardComp.Header = Passthrough;
-  CardComp.Content = Passthrough;
-  CardComp.Footer = Passthrough;
-  CardComp.Title = Passthrough;
-  CardComp.Description = Passthrough;
-  const SelectComp = ({ children, "aria-label": ariaLabel }: any) => (
-    <div aria-label={ariaLabel}>{children}</div>
-  );
-  SelectComp.Trigger = Passthrough;
-  SelectComp.Value = () => null;
-  SelectComp.Indicator = () => null;
-  SelectComp.Popover = Passthrough;
-  const ListBoxComp = ({ children }: any) => (
-    <div role="listbox">{children}</div>
-  );
-  ListBoxComp.Item = ({ children, id, textValue }: any) => (
-    <div role="option" aria-label={textValue}>
-      {children}
-    </div>
-  );
-  ListBoxComp.ItemIndicator = () => null;
-  const { createContext, useContext } = require("react");
-  const fieldContext = createContext({
-    value: "",
-    onChange: (_value: string) => {},
-  });
-  const InputGroupComp = Object.assign(Passthrough, {
-    Input: (props: any) => {
-      const field = useContext(fieldContext);
-      return (
-        <input
-          {...props}
-          value={field.value ?? ""}
-          onChange={(event) => field.onChange?.(event.target.value)}
-        />
-      );
-    },
-    Prefix: Passthrough,
-    Suffix: Passthrough,
-  });
-  const dialog = (role: string) => ({
-    Backdrop: ({ children, isOpen = true, isDismissable = true }: any) =>
-      isOpen ? (
-        <div data-dismissable={String(isDismissable)}>{children}</div>
-      ) : null,
-    Container: Passthrough,
-    Dialog: ({ children }: any) => <div role={role}>{children}</div>,
-    Header: Passthrough,
-    Body: Passthrough,
-    Footer: Passthrough,
-    Heading: ({ children }: any) => <h2>{children}</h2>,
-    Icon: () => null,
-    CloseTrigger: () => null,
-  });
-  return {
-    Modal: dialog("dialog"),
-    AlertDialog: dialog("alertdialog"),
-    TextField: ({ children, value, onChange }: any) => (
-      <fieldContext.Provider value={{ value, onChange }}>
-        <div>{children}</div>
-      </fieldContext.Provider>
-    ),
-    InputGroup: InputGroupComp,
-    FieldError: Passthrough,
-    Description: Passthrough,
-    Button: ({
-      children,
-      onPress,
-      startContent,
-      isLoading,
-      isPending,
-      isDisabled,
-      isIconOnly,
-      ...props
-    }: any) => (
-      <button
-        onClick={onPress}
-        disabled={isDisabled || isLoading || isPending}
-        {...props}
-      >
-        {startContent}
-        {typeof children === "function"
-          ? children({ isPending: Boolean(isPending) })
-          : children}
-      </button>
-    ),
-    Card: CardComp,
-    Chip: ({ children }: any) => <span>{children}</span>,
-    Checkbox: Object.assign(
-      ({ children, isSelected, onChange, isDisabled }: any) => (
-        <label>
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={(e: any) => onChange?.(e.target.checked)}
-            disabled={isDisabled}
-          />
-          {children}
-        </label>
-      ),
-      {
-        Control: Passthrough,
-        Indicator: () => null,
-        Content: Passthrough,
-      },
-    ),
-    Input: ({
-      value,
-      onValueChange,
-      placeholder,
-      label,
-      endContent,
-      type,
-      isDisabled,
-      description,
-      ...props
-    }: any) => (
-      <div>
-        {label && <label>{label}</label>}
-        <input
-          value={value ?? ""}
-          onChange={(e: any) => onValueChange?.(e.target.value)}
-          placeholder={placeholder}
-          type={type}
-          disabled={isDisabled}
-        />
-        {endContent}
-        {description && <span>{description}</span>}
-      </div>
-    ),
-    Label: ({ children }: any) => <span>{children}</span>,
-    ListBox: ListBoxComp,
-    NumberField: Object.assign(
-      ({ children, value, onChange, label }: any) => (
-        <div>
-          {label && <label>{label}</label>}
-          {children}
-          <input
-            value={value ?? ""}
-            onChange={(e: any) => onChange?.(Number(e.target.value) || 0)}
-          />
-        </div>
-      ),
-      {
-        Group: Passthrough,
-        Input: () => <span />,
-      },
-    ),
-    ScrollShadow: Passthrough,
-    Select: SelectComp,
-    Spinner: ({ size }: any) => <span data-testid="spinner" data-size={size} />,
-    Surface: Passthrough,
-    Switch: Object.assign(
-      ({ isSelected, onChange, children }: any) => (
-        <label>
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={(e: any) => onChange?.(e.target.checked)}
-          />
-          {children}
-        </label>
-      ),
-      {
-        Control: Passthrough,
-        Thumb: () => null,
-        Content: Passthrough,
-        Icon: () => null,
-      },
-    ),
-    Tabs: TabsComp,
-    TextArea: ({ value, onChange, label }: any) => (
-      <div>
-        {label && <label>{label}</label>}
-        <textarea value={value} onChange={onChange} />
-      </div>
-    ),
-    Typography: ({ children }: any) => <span>{children}</span>,
-  };
-});
+
 
 const mocks = vi.hoisted(() => ({
   discoverAcp: vi.fn(),
@@ -442,15 +246,17 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(dialog.getByRole("textbox", { name: "模型" })).toHaveValue("");
     expect(dialog.getByPlaceholderText("输入 API Key")).toHaveValue("");
     expect(screen.queryByRole("button", { name: /^OpenAI$/ })).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "协议" }));
     for (const protocol of [
       "OpenAI Chat Completions",
       "OpenAI Responses",
       "Anthropic Messages",
     ]) {
       expect(
-        dialog.getByRole("option", { name: protocol }),
+        screen.getByRole("option", { name: protocol }),
       ).toBeInTheDocument();
     }
+    await user.keyboard("{Escape}");
     expect(mocks.validateAiApi).not.toHaveBeenCalled();
     expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
     await user.click(dialog.getByRole("button", { name: "关闭", exact: true }));
@@ -495,9 +301,11 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
 
     await user.click(screen.getByRole("button", { name: /添加/ }));
 
-    expect(
-      screen.getByRole("dialog").closest("[data-dismissable]"),
-    ).toHaveAttribute("data-dismissable", "false");
+    const dialog = screen.getByRole("dialog");
+    const outsidePanel = dialog.querySelector(".ui-dialog-viewport");
+    expect(outsidePanel).not.toBeNull();
+    await user.click(outsidePanel as HTMLElement);
+    expect(screen.getByRole("dialog")).toBe(dialog);
 
     const baseUrlInput = screen.getByPlaceholderText("https://api.example.com");
     const modelInput = within(screen.getByRole("dialog")).getByRole("textbox", {

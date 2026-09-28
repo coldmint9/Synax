@@ -1,4 +1,8 @@
-import { Button, Tooltip } from "@heroui/react";
+import { Menu, MenuButton, MenuItems, MenuAction } from "@/react/components/ui/Menu";
+import { LiquidGlassSurface } from "@/react/components/ui/LiquidGlassSurface";
+import type { ForkWorkspaceMode } from "../../../lib/api/conversationHistory";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { Button } from "@/react/components/ui/Button";
 import { Check, Copy, GitFork, Pencil, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { copyTextToClipboard } from "../../../lib/clipboard";
@@ -14,7 +18,7 @@ interface Props {
   rollbackDisabledReason?: string;
   busy?: boolean;
   onEdit?: () => void;
-  onFork?: () => void;
+  onFork?: (mode: ForkWorkspaceMode) => void;
   onRollback?: () => void;
 }
 export function MessageActionToolbar({
@@ -54,27 +58,27 @@ export function MessageActionToolbar({
       ? "此消息没有可用的会话检查点"
       : "No conversation checkpoint for this message");
   const button = (
+    id: string,
     label: string,
     icon: React.ReactNode,
     action?: () => void,
     disabled = false,
     reason = unavailable,
   ) => (
-    <Tooltip delay={350} key={label}>
+    <Tooltip delay={350} key={id} content={<>{disabled ? reason : label}</>}>
       <Button
         aria-label={label}
         aria-disabled={disabled || undefined}
-        isIconOnly
+        iconOnly
         size="sm"
         variant="ghost"
         className="message-action-button"
-        onPress={() => {
+        onClick={() => {
           if (!disabled) action?.();
         }}
       >
         {icon}
       </Button>
-      <Tooltip.Content>{disabled ? reason : label}</Tooltip.Content>
     </Tooltip>
   );
   return (
@@ -85,12 +89,14 @@ export function MessageActionToolbar({
     >
       {role === "user" &&
         button(
+          "edit",
           zh ? "编辑消息" : "Edit message",
           <Pencil size={15} />,
           onEdit,
           Boolean(disabledReason || busy || !onEdit),
         )}
       {button(
+        "copy",
         copyLabel,
         copyState === "copied" ? (
           <Check size={15} className="text-success" />
@@ -103,14 +109,30 @@ export function MessageActionToolbar({
       )}
       {role === "assistant" && (
         <>
+          <Menu>
+            <Tooltip delay={350} content={forkDisabledReason || (zh ? "从此处分叉" : "Fork from here")}>
+              <MenuButton
+                aria-label={zh ? "从此处分叉" : "Fork from here"}
+                aria-disabled={Boolean(forkDisabledReason || busy || !onFork) || undefined}
+                disabled={Boolean(forkDisabledReason || busy || !onFork)}
+                className="message-action-button"
+              >
+                <GitFork size={15} />
+              </MenuButton>
+            </Tooltip>
+            <MenuItems modal={false} className="message-fork-pop" anchor={{ to: "bottom start", gap: 6, padding: 8 }}>
+              <LiquidGlassSurface finish="flat" interactive={false} className="message-fork-material">
+                <MenuAction disabled={Boolean(busy)} onClick={() => onFork?.("new_worktree")}>
+                  {zh ? "在新的工作树上" : "In a new worktree"}
+                </MenuAction>
+                <MenuAction disabled={Boolean(busy)} onClick={() => onFork?.("reuse_worktree")}>
+                  {zh ? "在原工作空间中" : "In the original workspace"}
+                </MenuAction>
+              </LiquidGlassSurface>
+            </MenuItems>
+          </Menu>
           {button(
-            zh ? "从此处分叉" : "Fork from here",
-            <GitFork size={15} />,
-            onFork,
-            Boolean(forkDisabledReason || busy || !onFork),
-            forkDisabledReason || unavailable,
-          )}
-          {button(
+            "rollback",
             zh ? "回滚到此处" : "Roll back to here",
             <RotateCcw size={15} />,
             onRollback,
@@ -125,7 +147,7 @@ export function MessageActionToolbar({
         </>
       )}
       <span
-        className="message-action-feedback"
+        className="message-action-feedback sr-only"
         role="status"
         aria-live="polite"
       >

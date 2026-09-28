@@ -10,14 +10,11 @@ const welcome = readFileSync(
   "utf8",
 );
 describe("composer mode borders", () => {
-  it("uses the purple solid goal border; chat is the planning surface", () => {
-    expect(css).toMatch(
-      /\[data-composer-mode="goal"\]\s*\{\s*--composer-mode-border: #8b5cf6;/,
-    );
-    expect(css).toMatch(
-      /:root\s+\.agent-session-controls\[data-composer-mode="goal"\]\s*\.agent-session-composer-shell.agent-dock-shell\s*\{\s*border: 2px solid var\(--composer-mode-border\);/,
-    );
-    expect(css).not.toContain('data-composer-mode="plan"');
+  it("keeps the quiet goal cue and removes plan-mode styling", () => {
+    expect(css).not.toContain('[data-composer-mode="plan"]');
+    expect(css).toContain('[data-composer-mode="goal"]');
+    expect(css).toContain("border: 1px solid var(--ui-line)");
+    expect(css).toContain("border-inline-start: 2px solid color-mix");
   });
   it("has no chat-mode tint and removes the old centered green focus override", () => {
     expect(css).not.toContain('[data-composer-mode="chat"]');

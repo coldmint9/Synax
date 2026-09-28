@@ -2,7 +2,7 @@ import { WebSearchResults, webSearchQuery } from "./WebSearchResults";
 import { MediaParts } from "../media/MediaParts";
 import { useState } from "react";
 import { MarkdownRenderer } from "../../components/markdown/MarkdownRenderer";
-import { Card, Chip } from "@heroui/react";
+import { Card, Badge } from "@/react/components/ui/Display";
 import {
   Terminal,
   FileEdit,
@@ -97,14 +97,14 @@ export function EnhancedToolCallCard({ call }: Props) {
               {call.duration}
             </span>
           )}
-          <Chip
+          <Badge
             size="sm"
-            color={chipColor}
+            tone={chipColor}
             variant="soft"
             className="h-4 text-[9px]"
           >
             {call.status}
-          </Chip>
+          </Badge>
           {hasOutput &&
             (expanded ? (
               <ChevronDown size={12} className="text-muted-foreground" />

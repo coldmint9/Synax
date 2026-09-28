@@ -1,4 +1,5 @@
-import type { ContextCompactionState } from "../../../../api/services/agent-runtime/context-compaction-state";
+import { SESSION_PAGE_SIZE } from "../sessionListPaging";
+import type { ContextCompactionState } from "../../../../api/services/agent-runtime/context-compaction-types";
 export type { ContextCompactionState };
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import type { RuntimeContentPart, InputModality } from "./runtimeMedia";
@@ -370,6 +371,7 @@ export interface EvidenceArtifact {
 
 export type GitWorkspaceSelection =
   | { kind: "default" }
+  | { kind: "new-worktree" }
   | { kind: "worktree"; path: string }
   | { kind: "branch"; branch: string };
 
@@ -816,7 +818,7 @@ export const agentRuntimeApi = {
     signal?: AbortSignal,
   ) =>
     request<SessionSearchResponse>(
-      `/sessions/search?${new URLSearchParams({ projectId, q, offset: String(offset) })}`,
+      `/sessions/search?${new URLSearchParams({ projectId, q, offset: String(offset), limit: String(SESSION_PAGE_SIZE) })}`,
       // Search owns its inline error/retry UI. Avoid duplicate global toasts.
       { signal, silent: true },
     ),
@@ -1115,6 +1117,11 @@ export const agentRuntimeApi = {
     request<SessionGitBranches>(
       `/sessions/${encodeURIComponent(sessionId)}/git/branches${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
+  createSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
+    request<SessionGitBranches>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/branches/create`,
+      { method: "POST", body: JSON.stringify({ branch, rootId }) },
+    ),
   switchSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
     request<SessionGitBranches>(
       `/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`,
@@ -1167,6 +1174,7 @@ export const agentRuntimeApi = {
     sessionId: string,
     body: {
       message: string;
+      branchName?: string;
       push?: boolean;
       rootId?: string;
       includeUntracked?: boolean;
@@ -1297,6 +1305,7 @@ export const agentRuntimeApi = {
 
 export interface SessionGitBranches {
   rootId: string;
+  dirtyFileCount: number;
   current: string;
   branches: { name: string; current: boolean; occupied: boolean }[];
 }
