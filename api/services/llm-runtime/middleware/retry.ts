@@ -3,6 +3,7 @@ import { logger } from "../../../lib/logger.js";
 
 import type { LlmRetryState } from "../retry-state.js";
 export type { LlmRetryState } from "../retry-state.js";
+import { isTimeoutAbort } from "../abort-reason.js";
 
 export interface RetryConfig {
   maxRetries: number;
@@ -205,6 +206,9 @@ function isAbortError(error: unknown): boolean {
 
 /** Transport failures only. HTTP 5xx/429 are upstream errors, not an offline network. */
 export function isNetworkError(error: unknown): boolean {
+  // A deadline abort is a transport failure, not a cancellation: it must stay
+  // retryable even though every abort shares the AbortError name.
+  if (isTimeoutAbort(error)) return true
   if (
     isAbortError(error) ||
     isExplicitlyNonRetryable(error) ||
@@ -223,6 +227,8 @@ export function isNetworkError(error: unknown): boolean {
 }
 
 export function isRetryableLlmError(err: unknown): boolean {
+  // Deadline aborts are retryable transport failures; other aborts are terminal.
+  if (isTimeoutAbort(err)) return true
   if (isAbortError(err) || isExplicitlyNonRetryable(err)) return false
   if (errorMessage(err).toLowerCase().includes('overload')) return true
   if (isRateLimitError(err)) return true

@@ -18,6 +18,7 @@ import {
 import {
   MAX_AGENT_SESSION_PROCESSES,
   AGENT_SESSION_CHILD_READY_TIMEOUT_MS,
+  agentSessionsRunInProcess,
 } from "../../lib/env.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { logger } from "../../lib/logger.js";
@@ -31,6 +32,7 @@ import { AgentRuntimeError } from "./runtime-errors.js";
 import { agentRuntimeStore } from "./session-store.js";
 import {
   assertSessionCanCompact,
+  compactSessionContextWithLlm,
   type ContextCompactionResult,
 } from "./manual-context-compaction.js";
 import { sessionLiveBus } from "./session-live-bus.js";
@@ -254,8 +256,50 @@ class SessionProcessManager {
     saveContextCompaction(sessionId, compaction);
     this.pendingCompactions.add(sessionId);
     logger.info({ sessionId }, "[context-compaction] started");
-    void this.runContextCompaction(sessionId, compaction);
+    // An in-process session has no worker to receive `context:compact`.
+    void (agentSessionsRunInProcess()
+      ? this.runInProcessContextCompaction(sessionId, compaction)
+      : this.runContextCompaction(sessionId, compaction));
     return { accepted: true, status: "compacting" };
+  }
+
+  /** Compact in the host process; only forked sessions have a worker to ask. */
+  private async runInProcessContextCompaction(
+    sessionId: string,
+    compaction: ContextCompactionState,
+  ): Promise<void> {
+    try {
+      const result = await compactSessionContextWithLlm(sessionId);
+      logger.info(
+        {
+          sessionId,
+          originalTokens: result.originalTokens,
+          compressedTokens: result.tokens,
+        },
+        "[context-compaction] completed",
+      );
+      saveContextCompaction(sessionId, {
+        ...compaction,
+        status: "completed",
+        completedAt: nowIso(),
+        compacted: result.compacted,
+        originalTokens: result.originalTokens,
+        compressedTokens: result.tokens,
+        messageCount: result.messageCount,
+      });
+    } catch (error) {
+      logger.error({ err: error, sessionId }, "[context-compaction] failed");
+      if (agentRuntimeStore.tryGetSession(sessionId)) {
+        saveContextCompaction(sessionId, {
+          ...compaction,
+          status: "failed",
+          completedAt: nowIso(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      this.pendingCompactions.delete(sessionId);
+    }
   }
 
   private async runContextCompaction(

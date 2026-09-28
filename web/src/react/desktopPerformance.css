@@ -28,10 +28,8 @@ html.electron {
 
 .electron
   :is(
-    .agent-dock-shell,
-    .agent-session-composer-shell,
+    .agent-dock-shell:not(.agent-session-composer-shell),
     .agent-dock-preview-pill,
-    .session-file-island-pill,
     .session-nav-preview,
     .settings-section__body,
     .ui-dialog-panel,
@@ -39,4 +37,47 @@ html.electron {
   ) {
   background: hsl(var(--card)) !important;
   background-image: none !important;
+}
+
+/* Web parity for the surfaces the Web build frosts. The global opt-out above
+   still covers every other surface (portals, pseudo-elements, the dock mini
+   shell, dialogs), but these keep the Web build's exact material on desktop:
+   the composer input shell, its workspace / branch chips, the session file
+   island pill and the Work page branch + workspace pickers. Values mirror
+   agentControls.css, index.css and workPage.css so desktop matches Web. */
+
+/* Composer input shell (Web: blur(5px) over hsl(0 0% 100% / 60%)). */
+html.electron
+  .agent-session-controls
+  .agent-session-composer-shell.agent-dock-shell {
+  -webkit-backdrop-filter: blur(5px) !important;
+  backdrop-filter: blur(5px) !important;
+}
+
+/* Composer chips, including the workspace / branch picker trigger. */
+html.electron .agent-dock-composer .agent-dock-composer-chip,
+html.electron .agent-dock-composer .button--tertiary {
+  -webkit-backdrop-filter: blur(8px) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Session file island pill. Mirrors index.css verbatim: the -webkit fallback is
+   5px, the standard property (the one Chromium computes and paints) is 14px in
+   both themes, so desktop keeps the Web value here too. */
+html.electron .session-file-island-pill {
+  -webkit-backdrop-filter: blur(5px) !important;
+  backdrop-filter: blur(14px) !important;
+}
+
+/* Work page branch / workspace pickers and their search filters. These panels
+   own an opaque token fill on Web, so desktop spells out the same blur(5px)
+   glass the Web composer uses instead of the desktop's forced solid card. */
+html.electron :is(.ws-branch-popover, .git-workspace-popover) {
+  -webkit-backdrop-filter: blur(5px) !important;
+  backdrop-filter: blur(5px) !important;
+  background: hsl(0deg 0% 100% / 60%) !important;
+  background-image: none !important;
+}
+html.electron.dark :is(.ws-branch-popover, .git-workspace-popover) {
+  background: hsl(0 0% 17% / 0.17) !important;
 }

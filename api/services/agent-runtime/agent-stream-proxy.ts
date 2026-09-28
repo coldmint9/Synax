@@ -1,7 +1,8 @@
 import { runCoordinator } from './run-coordinator.js';
 import { getBackendAdapter } from './backends/backend-registry.js';
 import { resolveBackendModel, resolveSessionBackend } from './backends/backend-binding.js';
-import { AgentValidationError } from './runtime-errors.js';
+import { AgentRuntimeError, AgentValidationError } from './runtime-errors.js';
+import { agentSessionsRunInProcess, MAX_AGENT_SESSION_PROCESSES } from '../../lib/env.js';
 import { interactionService } from './interaction-service.js';
 import { getRawSqlite } from '../../db/index.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
@@ -14,7 +15,7 @@ import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
 import { agentRuntimeStore } from './session-store.js';
 
 function useInProcessAgentSessions(): boolean {
-  return process.env.SYNAX_AGENT_SESSION_IN_PROCESS === '1';
+  return agentSessionsRunInProcess();
 }
 
 export function usesForkedAgentSessions(): boolean {
@@ -28,7 +29,11 @@ export function canStartAgentSessionProcess(sessionId?: string): boolean {
       return true;
     }
   }
-  if (!usesForkedAgentSessions()) return true;
+  if (!usesForkedAgentSessions()) {
+    // In-process runs must honour the same admission cap: without it every
+    // session would share the host's heap and event loop unbounded.
+    return agentLoopRuntime.activeSessionCount() < MAX_AGENT_SESSION_PROCESSES;
+  }
   return sessionProcessManager.canSpawnChild(sessionId);
 }
 
@@ -39,7 +44,15 @@ export function assertCanStartAgentSessionProcess(sessionId?: string): void {
       return;
     }
   }
-  if (!usesForkedAgentSessions()) return;
+  if (!usesForkedAgentSessions()) {
+    if (agentLoopRuntime.activeSessionCount() < MAX_AGENT_SESSION_PROCESSES)
+      return;
+    throw new AgentRuntimeError(
+      `Too many active agent session processes (max ${MAX_AGENT_SESSION_PROCESSES}).`,
+      "SESSION_LIMIT",
+      429,
+    );
+  }
   sessionProcessManager.assertCanSpawnChild(sessionId);
 }
 

@@ -7,6 +7,7 @@ import {
   Folder,
   Loader2,
   RefreshCw,
+  Search,
   X,
 } from "lucide-react";
 import {
@@ -57,6 +58,9 @@ const defaultLabels = {
   showHidden: "显示隐藏目录",
   showIgnored: "显示构建目录",
   path: "目录路径",
+  search: "搜索当前目录",
+  searchPlaceholder: "输入名称或路径快速筛选…",
+  noMatches: "没有匹配的目录。",
   loading: "正在读取目录…",
   close: "关闭",
   failed: "读取目录失败",
@@ -82,6 +86,9 @@ const englishLabels: typeof defaultLabels = {
   showHidden: "Show hidden directories",
   showIgnored: "Show build directories",
   path: "Directory path",
+  search: "Search this directory",
+  searchPlaceholder: "Filter by name or path…",
+  noMatches: "No matching directories.",
   loading: "Reading directories…",
   close: "Close",
   failed: "Failed to read directory",
@@ -138,6 +145,8 @@ function DirectoryPickerContent({
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const request = useRef<AbortController | null>(null);
   const [selected, setSelected] = useState<{ path: string; name: string }[]>(
     [],
@@ -190,6 +199,14 @@ function DirectoryPickerContent({
 
   const current = listing?.path ?? "";
   const crumbs = current ? breadcrumbs(current) : [];
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const filteredEntries = (listing?.entries ?? []).filter((entry) => {
+    if (!normalizedSearch) return true;
+    return `${entry.name} ${entry.path}`
+      .toLocaleLowerCase()
+      .includes(normalizedSearch);
+  });
+  const activeEntry = filteredEntries[activeSearchIndex];
 
   return (
     <DialogOverlay onClick={onClose}>
@@ -259,6 +276,61 @@ function DirectoryPickerContent({
             </div>
           </label>
 
+          <label className="workspace-directory-search">
+            <Search size={14} aria-hidden="true" />
+            <span className="sr-only">{label.search}</span>
+            <input
+              type="search"
+              aria-label={label.search}
+              aria-controls="workspace-directory-results"
+              aria-activedescendant={
+                normalizedSearch && activeEntry
+                  ? `workspace-directory-entry-${activeSearchIndex}`
+                  : undefined
+              }
+              value={searchQuery}
+              placeholder={label.searchPlaceholder}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setActiveSearchIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveSearchIndex((index) =>
+                    Math.min(
+                      index + 1,
+                      Math.max(filteredEntries.length - 1, 0),
+                    ),
+                  );
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveSearchIndex((index) => Math.max(index - 1, 0));
+                } else if (event.key === "Enter" && activeEntry) {
+                  event.preventDefault();
+                  void load(activeEntry.path);
+                  setSearchQuery("");
+                  setActiveSearchIndex(0);
+                } else if (event.key === "Escape") {
+                  setSearchQuery("");
+                  setActiveSearchIndex(0);
+                }
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label={label.close}
+                onClick={() => {
+                  setSearchQuery("");
+                  setActiveSearchIndex(0);
+                }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </label>
+
           <div className="mb-2 flex shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground">
             <button
               type="button"
@@ -301,6 +373,7 @@ function DirectoryPickerContent({
           </div>
 
           <div
+            id="workspace-directory-results"
             className="min-h-24 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-border/50 bg-background/60"
             role="region"
             aria-label={label.title}
@@ -320,17 +393,23 @@ function DirectoryPickerContent({
                 {error}
               </p>
             )}
-            {!loading && !error && listing?.entries.length === 0 && (
+            {!loading && !error && filteredEntries.length === 0 && (
               <p className="px-3 py-2 text-xs text-muted-foreground">
-                {label.empty}
+                {normalizedSearch ? label.noMatches : label.empty}
               </p>
             )}
             {!loading &&
               !error &&
-              listing?.entries.map((entry) => (
+              filteredEntries.map((entry, index) => (
                 <div
                   key={entry.path}
+                  id={`workspace-directory-entry-${index}`}
                   className="workspace-directory-entry"
+                  data-active={
+                    index === activeSearchIndex && normalizedSearch
+                      ? true
+                      : undefined
+                  }
                   data-selected={
                     selected.some((item) => item.path === entry.path) ||
                     undefined

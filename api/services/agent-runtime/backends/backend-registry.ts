@@ -6,6 +6,8 @@ import { agentLoopRuntime } from "../loop-runtime.js";
 import { sessionProcessManager } from "../session-process-manager.js";
 import { acpSessionEngine } from "../acp-engine/index.js";
 import { forwardChunkToLiveBus } from "../../../lib/ipc/agent-session-protocol.js";
+import { agentSessionsRunInProcess } from "../../../lib/env.js";
+import { ensureInProcessSessionReady } from "../in-process-session-bootstrap.js";
 import {
   BACKENDS,
   type BackendAdapter,
@@ -14,7 +16,7 @@ import {
 
 const native: BackendAdapter = {
   async *stream(sessionId, mode, input, signal) {
-    if (process.env.SYNAX_AGENT_SESSION_IN_PROCESS !== "1") {
+    if (!agentSessionsRunInProcess()) {
       yield* sessionProcessManager.streamSession(
         sessionId,
         mode,
@@ -24,8 +26,10 @@ const native: BackendAdapter = {
       // A goal may start its next round immediately. The previous worker must exit first.
       await sessionProcessManager.waitForIdleSessions([sessionId]);
     } else if (mode === "continue") {
+      ensureInProcessSessionReady(sessionId);
       yield* agentLoopRuntime.streamContinue(sessionId, input, signal);
     } else {
+      ensureInProcessSessionReady(sessionId);
       yield* agentLoopRuntime.streamRun(
         sessionId,
         input,

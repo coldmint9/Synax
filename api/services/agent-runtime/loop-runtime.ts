@@ -2409,6 +2409,15 @@ export class AgentLoopRuntime {
     ];
   }
 
+  /** Sessions holding at least one in-process execution, for session admission. */
+  activeSessionCount(): number {
+    let count = 0;
+    for (const controllers of this.activeSessionControllers.values()) {
+      if (controllers.size > 0) count += 1;
+    }
+    return count;
+  }
+
   async waitForIdleSessions(
     sessionIds: Iterable<string>,
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,

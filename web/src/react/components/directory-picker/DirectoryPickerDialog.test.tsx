@@ -86,6 +86,43 @@ describe("DirectoryPickerDialog", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  it("filters directories with quick search and opens the active result with Enter", async () => {
+    vi.mocked(listRemoteDirectories).mockResolvedValue(
+      listing({
+        entries: [
+          { name: "api-server", path: "/home/dev/api-server", hidden: false },
+          { name: "web-client", path: "/home/dev/web-client", hidden: false },
+        ],
+      }),
+    );
+
+    render(
+      <DirectoryPickerDialog
+        open
+        initialPath="/home/dev"
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: /api-server/ });
+    const search = screen.getByRole("searchbox", { name: "搜索当前目录" });
+    fireEvent.change(search, { target: { value: "web" } });
+
+    expect(screen.getByRole("button", { name: /web-client/ })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /api-server/ }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() =>
+      expect(listRemoteDirectories).toHaveBeenLastCalledWith(
+        "/home/dev/web-client",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+  });
+
   it("descends into an entry and confirms the new path", async () => {
     vi.mocked(listRemoteDirectories)
       .mockResolvedValueOnce(listing())
