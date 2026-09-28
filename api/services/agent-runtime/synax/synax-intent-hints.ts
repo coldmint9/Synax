@@ -127,7 +127,7 @@ export function buildSynaxIntentPromptSection(input: SynaxIntentHintInput): stri
     explore: 'Investigate and explain; do not implement changes unless the user also requests them.',
     coding: input.mode === 'plan' ? 'Design the requested change without implementing it.' : 'Implement the requested change within current authorization; inspect and verify the affected behavior.',
     review: 'Report actionable findings with file references; do not change code merely to perform a review.',
-    plan: 'Produce a decision-complete proposal proportional to the task; planning alone is not execution authorization.',
+    plan: 'Produce a decision-complete proposal proportional to the task. In chat, persist it with plan.propose as a versioned plan report; planning alone is not execution authorization.',
   }[intent];
   return `## Request focus\n${focus}\nThis routing hint is advisory; the actual user request and runtime mode take precedence.`;
 }

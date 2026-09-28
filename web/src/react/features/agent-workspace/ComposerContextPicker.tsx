@@ -4,7 +4,6 @@ import {
   Check,
   Paperclip,
   MessageCircle,
-  ListTodo,
   Target,
   ArrowLeft,
   Minimize2,
@@ -70,9 +69,9 @@ export function ComposerContextPicker({
   const modeGroupName = useId();
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
   const unified = Boolean(onAttachFiles || hasModes);
+  const selectedMode = mode === "plan" ? "chat" : mode;
   const modeOptions = [
     { id: "chat", label: zh ? "对话" : "Chat", Icon: MessageCircle },
-    { id: "plan", label: zh ? "计划" : "Plan", Icon: ListTodo },
     { id: "goal", label: zh ? "目标" : "Goal", Icon: Target },
   ] as const;
   const [open, setOpen] = useState(false);
@@ -239,7 +238,7 @@ export function ComposerContextPicker({
           }
           aria-description={
             hasModes
-              ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === mode)?.label ?? (zh ? "计划节点" : "Plan node")}`
+              ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
               : undefined
           }
           className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
@@ -412,7 +411,7 @@ export function ComposerContextPicker({
                         className="sr-only"
                         aria-label={label}
                         checked={
-                          mode === id || (id === "plan" && mode === "plan_node")
+                          selectedMode === id || (id === "chat" && mode === "plan_node")
                         }
                         disabled={
                           disabled || modeDisabled || mode === "plan_node"
@@ -421,13 +420,13 @@ export function ComposerContextPicker({
                           if (disabled || modeDisabled || mode === "plan_node")
                             return;
                           setOpen(false);
-                          if (id !== mode) onModeChange?.(id);
+                          if (id !== selectedMode) onModeChange?.(id);
                         }}
                       />
                       <Icon size={15} aria-hidden="true" />
                       <span>{label}</span>
                       {(mode === id ||
-                        (id === "plan" && mode === "plan_node")) && (
+                        (id === "chat" && mode === "plan_node")) && (
                         <Check
                           size={14}
                           className="ms-auto"

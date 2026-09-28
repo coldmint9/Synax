@@ -7,6 +7,7 @@ import {
   isSynaxProfile,
 } from "./synax/synax-session-mode.js";
 import { isToolMountedForSession, isPlanningReadTool } from "./tool-mount-policy.js";
+import { getStoredPlan } from './plan-execution.js';
 
 export const CONTROL_TOOLS = new Set([
   "human.ask",
@@ -27,7 +28,7 @@ export function controlToolError(
       return `Tool ${tool.id} is only available in goal mode.`;
     if (inferSynaxSessionMode(controlRoot(session)) === "plan")
       return "Planning is read-only. Approve a plan before executing changes.";
-    return `Tool ${tool.id} requires plan/goal mode or, for plan.execute, a saved plan and explicit execution intent.`;
+    return `Tool ${tool.id} is unavailable in the current workflow or requires an approved plan.`;
   }
   const workError = workRuntime.toolError(session.id, tool.id, args);
   if (workError) return workError;
@@ -47,11 +48,16 @@ export function controlToolError(
     root.status !== "running"
   )
     return "The controlling session is not running; execution is suspended.";
-  const plan = root.sessionMetadata?.plan as { status?: string } | undefined;
+  const plan = getStoredPlan(root.id);
+  // Chat may automatically create and persist a plan. Until it is approved,
+  // the plan checkpoint remains read-only; goal keeps the same boundary.
   const planning =
-    mode === "plan" || (mode === "goal" && plan?.status !== "approved");
+    mode === "plan" ||
+    ((mode === "goal" || mode === "chat") &&
+      !!plan &&
+      ["draft", "saved"].includes(plan.status ?? ""));
   if (planning && !isPlanningReadTool(tool.id))
-    return "Planning is read-only. Submit a plan with plan.propose and wait for the user's execute choice or a later explicit execution instruction.";
+    return "Planning is read-only. Submit a plan with plan.propose and wait for approval or an explicit execution instruction.";
   if (
     mode === "goal" && plan?.status === "approved" &&
     tool.id === "task.create"

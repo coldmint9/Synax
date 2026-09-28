@@ -51,7 +51,7 @@ export const planProposeTool: RegisteredTool = {
   id: "plan.propose",
   label: "Propose a plan",
   description:
-    "Submit a versioned implementation plan for a one-time execute-or-cancel confirmation. The user may also defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
+    "Submit a versioned implementation plan artifact from chat or goal. The report remains previewable across turns; the user may defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -76,14 +76,14 @@ export const planProposeTool: RegisteredTool = {
   },
 };
 const modeSwitchSchema = z.object({
-  mode: z.enum(["chat", "plan", "goal"]),
+  mode: z.enum(["chat", "goal"]),
   reason: z.string().trim().min(1).max(1000).optional(),
 }).strict();
 export const modeSwitchTool: RegisteredTool = {
   id: "mode.switch",
   label: "Switch session mode",
   description:
-    "Switch this Synax session between chat, plan, and goal when the user explicitly asks for a different workflow. Switching to goal does not approve or execute a saved plan. Must be the only call in a step.",
+    "Switch this Synax session between chat and goal when the user explicitly asks for a different workflow. Planning is automatic in chat. Switching to goal does not approve or execute a saved plan. Must be the only call in a step.",
   category: "task",
   internalGate: "none",
   mutability: "task",

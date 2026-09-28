@@ -187,12 +187,12 @@ it("keeps the interaction panel mounted when its state refreshes beside the inpu
   expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
 });
 
-it("uses one plus menu and keeps mode border state synchronized without a toolbar label", async () => {
+it("keeps the direct mode selector and plus-menu mode controls synchronized", async () => {
   const { container } = renderComposer();
   const controls = container.querySelector(".agent-session-controls")!;
   expect(controls).toHaveAttribute("data-composer-mode", "chat");
-  expect(screen.queryByRole("button", { name: "Session mode" })).not.toBeInTheDocument();
-  for (const [label, mode] of [["Plan", "plan"], ["Goal", "goal"], ["Chat", "chat"]]) {
+  expect(screen.getByRole("button", { name: "Session mode" })).toBeInTheDocument();
+  for (const [label, mode] of [["Goal", "goal"], ["Chat", "chat"]]) {
     await userEvent.click(screen.getByRole("button", { name: "Add attachments, context or change mode" }));
     await userEvent.click(screen.getByRole("radio", { name: label, exact: true }));
     await waitFor(() => expect(controls).toHaveAttribute("data-composer-mode", mode));
@@ -223,7 +223,7 @@ it("shows an optimistic draft immediately and restores its text if creation fail
   expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 });
 
-async function selectMode(mode: "plan" | "goal", prefix = "") {
+async function selectMode(mode: "goal", prefix = "") {
   fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
     target: { value: `${prefix}/${mode}` },
   });
@@ -233,6 +233,11 @@ async function selectMode(mode: "plan" | "goal", prefix = "") {
 }
 
 async function expectModeUnavailable() {
+  const modeButton = screen.queryByRole("button", { name: "Session mode" });
+  if (modeButton) {
+    expect(modeButton).toBeDisabled();
+    return;
+  }
   const trigger = document.querySelector<HTMLButtonElement>(
     'button[aria-label="Add attachments, context or change mode"]',
   );
@@ -376,7 +381,7 @@ describe("SessionComposer mode controls", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each(["plan", "goal"] as const)(
+  it.each(["goal"] as const)(
     "sends the selected draft %s mode through createSession metadata",
     async (mode) => {
       vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
@@ -454,9 +459,7 @@ describe("SessionComposer mode controls", () => {
     });
     renderComposer();
     await expectModeUnavailable();
-    expect(
-      screen.queryByRole("button", { name: "Session mode" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Session mode" })).toBeDisabled();
     expect(useAgentSessionStore.getState().draftMode).toBe("plan");
   });
 
@@ -512,13 +515,13 @@ describe("SessionComposer mode controls", () => {
         false,
       ),
     );
-    await selectMode("plan", "Keep my draft ");
+    await selectMode("goal", "Keep my draft ");
     expect(await screen.findByRole("alert")).toHaveTextContent("Run started");
     expect(
       screen.getByRole("button", { name: "Add attachments, context or change mode" }),
     ).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
-      "Keep my draft /plan",
+      "Keep my draft /goal",
     );
   });
 
@@ -565,7 +568,7 @@ describe("SessionComposer mode controls", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
   });
 
-  it.each(["chat", "plan"] as const)("does not mount stale goal summaries in %s", mode => {
+  it.each(["chat"] as const)("does not mount stale goal summaries in %s", mode => {
     const { container } = render(<SessionModeSummary session={{
       ...session,
       sessionMetadata: { mode, goal: { objective: "Historical goal", status: "blocked", reason: "Old blocker" } },

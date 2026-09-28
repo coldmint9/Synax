@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ListBox, Popover } from "@heroui/react";
-import { ChevronDown, MessageCircle, ListTodo, Target } from "lucide-react";
+import { ChevronDown, MessageCircle, Target } from "lucide-react";
 import type { AgentSessionMode } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 import "./agentControls.css";
@@ -33,14 +33,6 @@ export function SessionModePicker({
         : "Ask anything or get work done",
     },
     {
-      id: "plan",
-      label: zh ? "计划" : "Plan",
-      Icon: ListTodo,
-      detail: zh
-        ? "先讨论方案，确认后再执行"
-        : "Explore first, execute when ready",
-    },
-    {
       id: "goal",
       label: zh ? "目标" : "Goal",
       Icon: Target,
@@ -49,13 +41,15 @@ export function SessionModePicker({
         : "Keep working toward an accepted goal",
     },
   ] as const;
-  const Icon = options.find((option) => option.id === mode)?.Icon ?? ListTodo;
+  // Historical plan sessions are displayed as chat; new sessions cannot enter plan mode.
+  const visibleMode = mode === "plan" ? "chat" : mode;
+  const Icon = options.find((option) => option.id === visibleMode)?.Icon ?? MessageCircle;
   const changeOpen = (value: boolean) => {
     setOpen(value);
     onOpenChange?.(value);
   };
   const label =
-    options.find((option) => option.id === mode)?.label ??
+    options.find((option) => option.id === visibleMode)?.label ??
     (zh ? "计划节点" : "Plan node");
   return (
     <Popover
@@ -68,7 +62,7 @@ export function SessionModePicker({
         aria-description={description}
         title={description}
         disabled={disabled}
-        data-mode={mode}
+        data-mode={visibleMode}
         className="agent-dock-composer-chip agent-mode-trigger"
       >
         <Icon size={13} aria-hidden />
@@ -85,7 +79,7 @@ export function SessionModePicker({
           aria-label={zh ? "会话模式" : "Session mode"}
           selectionMode="single"
           disallowEmptySelection
-          selectedKeys={new Set([mode])}
+          selectedKeys={new Set([visibleMode])}
           onSelectionChange={(keys) => {
             if (disabled || keys === "all") return;
             const selected = [...keys][0];

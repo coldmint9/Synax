@@ -12,6 +12,7 @@ import {
   integer,
   real,
   uniqueIndex,
+  index,
   primaryKey,
 } from 'drizzle-orm/sqlite-core';
 
@@ -339,6 +340,31 @@ export const metaTable = sqliteTable('_meta', {
 });
 
 // ── Shared Agent Runtime tables ────────────────────────────────────────────
+
+export const agentPlanArtifacts = sqliteTable('agent_plan_artifacts', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  projectId: text('project_id').notNull(),
+  revision: integer('revision').notNull(),
+  status: text('status').notNull(),
+  title: text('title').notNull(),
+  objective: text('objective').notNull(),
+  stepsJson: text('steps_json').notNull().default('[]'),
+  acceptanceCriteriaJson: text('acceptance_criteria_json').notNull().default('[]'),
+  humanAcceptanceCriteriaJson: text('human_acceptance_criteria_json').notNull().default('[]'),
+  assumptionsJson: text('assumptions_json').notNull().default('[]'),
+  risksJson: text('risks_json').notNull().default('[]'),
+  executionId: text('execution_id'),
+  approvedRunId: text('approved_run_id'),
+  approvedStepIndex: integer('approved_step_index'),
+  approvedByMessageId: text('approved_by_message_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  uniqueIndex('agent_plan_artifacts_session_revision').on(table.sessionId, table.revision),
+  index('idx_agent_plan_artifacts_session_revision').on(table.sessionId, table.revision),
+  index('idx_agent_plan_artifacts_project_updated').on(table.projectId, table.updatedAt),
+]);
 
 export const agentRuntimeSessions = sqliteTable('agent_runtime_sessions', {
   id: text('id').primaryKey(),

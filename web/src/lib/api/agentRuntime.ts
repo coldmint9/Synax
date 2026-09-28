@@ -66,6 +66,7 @@ export interface AgentProfile {
   allowsSubsessions?: boolean;
 }
 
+/** Includes legacy plan for persisted/test compatibility; the UI no longer offers it. */
 export type AgentSessionMode = "chat" | "plan" | "goal";
 
 export interface HumanQuestion {
@@ -102,6 +103,20 @@ export interface AgentPlan {
   risks: string[];
 }
 
+export interface AgentPlanArtifact extends AgentPlan {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  revision: number;
+  status: "draft" | "saved" | "approved" | "superseded";
+  executionId?: string;
+  approvedRunId?: string;
+  approvedStepIndex?: number;
+  approvedByMessageId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentGoalState {
   objective: string;
   status:
@@ -131,7 +146,8 @@ export interface SessionDesignMetadata {
 
 export interface AgentSessionMetadata extends Record<string, unknown> {
   design?: SessionDesignMetadata | null;
-  mode?: AgentSessionMode | "plan_node";
+  /** Legacy "plan" sessions are accepted for read-only compatibility. */
+  mode?: AgentSessionMode | "plan" | "plan_node";
   plan?:
     | (AgentPlan & { revision: number; status: "draft" | "approved" | "saved" })
     | null;
@@ -888,6 +904,23 @@ export const agentRuntimeApi = {
   },
   getSession: (sessionId: string) =>
     request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
+  getSessionPlan: (sessionId: string) =>
+    request<{ plan: AgentPlanArtifact | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/plan`,
+    ),
+  listSessionPlans: (sessionId: string) =>
+    request<{ plans: AgentPlanArtifact[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/plans`,
+    ),
+  getSessionPlanRevision: (sessionId: string, revision: number) =>
+    request<{ plan: AgentPlanArtifact }>(
+      `/sessions/${encodeURIComponent(sessionId)}/plans/${revision}`,
+    ),
+  restoreSessionPlanRevision: (sessionId: string, revision: number) =>
+    request<{ plan: AgentPlanArtifact; session: AgentSession }>(
+      `/sessions/${encodeURIComponent(sessionId)}/plans/${revision}/restore`,
+      { method: "POST" },
+    ),
   listInteractions: (sessionId: string) =>
     request<{ interactions: AgentInteraction[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/interactions`,

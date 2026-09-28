@@ -250,7 +250,7 @@ describe("persistent human input", () => {
     expect(Boolean(controlToolError(store.getSession(session.id), { id: "task.create" }))).toBe(mode === "goal");
   });
 
-  it.each(["plan", "goal"] as const)("preserves explicit %s intent when deferring and later executing", mode => {
+  it.each(["chat", "goal"] as const)("preserves %s intent when deferring and later executing", mode => {
     const { session, run, step, call } = setup();
     store.updateSessionMetadata(session.id, { mode });
     const interaction = interactionService.request({ sessionId: session.id, runId: run.id, stepId: step.id, toolCallId: call.id,

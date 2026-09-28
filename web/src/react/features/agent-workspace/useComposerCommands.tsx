@@ -13,7 +13,6 @@ import {
 import {
   BookOpen,
   FileText,
-  ListTodo,
   Plug,
   Sparkles,
   Target,
@@ -32,7 +31,6 @@ const commands = [
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
   { id: "wiki", zh: "Wiki 文档", en: "Wiki document", Icon: BookOpen },
-  { id: "plan", zh: "计划模式", en: "Plan mode", Icon: ListTodo },
   { id: "goal", zh: "目标模式", en: "Goal mode", Icon: Target },
 ] as const;
 
@@ -272,7 +270,7 @@ export function useComposerCommands({
       replaceQuery("");
       return;
     }
-    if (row.command === "plan" || row.command === "goal") {
+    if (row.command === "goal") {
       try {
         await onModeChange(row.command);
         replaceQuery("");

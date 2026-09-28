@@ -58,6 +58,12 @@ import {
 import { workStore } from "../services/agent-runtime/work-store.js";
 import { interactionService } from "../services/agent-runtime/interaction-service.js";
 import { interactionReplySchema } from "../services/agent-runtime/control-contracts.js";
+import { getStoredPlan } from "../services/agent-runtime/plan-execution.js";
+import {
+  getPlanArtifact,
+  listPlanArtifacts,
+  restorePlanArtifact,
+} from "../services/agent-runtime/plan-artifact-store.js";
 import { initializeGoal } from "../services/agent-runtime/goal-control.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -1163,6 +1169,58 @@ agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
   }
 });
 
+agentRuntimeRoutes.get("/sessions/:sessionId/plan", (c) => {
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    return c.json({ plan: getStoredPlan(c.req.param("sessionId")) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/plans", (c) => {
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    return c.json({ plans: listPlanArtifacts(c.req.param("sessionId")) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/plans/:revision", (c) => {
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    const revision = Number(c.req.param("revision"));
+    if (!Number.isInteger(revision) || revision < 1)
+      return c.json({ error: "Plan revision must be a positive integer." }, 400);
+    const plan = getPlanArtifact(c.req.param("sessionId"), revision);
+    return plan ? c.json({ plan }) : c.json({ error: "Plan revision not found." }, 404);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", (c) => {
+  try {
+    const session = agentSessionRuntime.get(c.req.param("sessionId"));
+    const revision = Number(c.req.param("revision"));
+    if (!Number.isInteger(revision) || revision < 1)
+      return c.json({ error: "Plan revision must be a positive integer." }, 400);
+    if (session.parentSessionId || session.activeRunId || ["running", "waiting_input", "waiting_permission"].includes(session.status))
+      return c.json({ error: "Stop the session before restoring a plan revision." }, 409);
+    const plan = restorePlanArtifact(session.id, revision);
+    const goalMode = session.sessionMetadata?.mode === "goal";
+    const updated = agentRuntimeStore.updateSessionMetadata(session.id, {
+      mode: goalMode ? "goal" : "chat",
+      plan: { ...plan, status: "draft" },
+      goal: goalMode ? { ...initializeGoal(plan.objective), status: "planning" } : null,
+    });
+    return c.json({ plan, session: updated });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
@@ -2007,7 +2065,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
   const parsed = z
-    .object({ mode: z.enum(["chat", "plan", "goal"]) })
+    .object({ mode: z.enum(["chat", "goal"]) })
     .strict()
     .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
