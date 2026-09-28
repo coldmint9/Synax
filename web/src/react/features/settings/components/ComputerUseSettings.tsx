@@ -45,7 +45,7 @@ export function ComputerUseSettings({ value, onSave, locale }: {
           <option value="jev" disabled={!current.jev?.enabled}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option>
         </select>
       </label>
-      <label className="flex items-center gap-2"><input type="checkbox" checked={current.jev?.enabled ?? false} disabled={saving} onChange={e => void save({ ...current, jev: { ...current.jev, enabled: e.target.checked, fallback: current.jev?.fallback ?? 'fail_closed' }, strategy: !e.target.checked && current.strategy === 'jev' ? 'auto' : current.strategy })} />{zh ? '启用 Jev（需在 API 环境配置 TYPESAFE_API_KEY）' : 'Enable Jev (requires TYPESAFE_API_KEY in API environment)'}</label>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={current.jev?.enabled ?? false} disabled={saving} onChange={e => void save({ ...current, jev: { ...current.jev, enabled: e.target.checked, fallback: current.jev?.fallback ?? 'fail_closed' }, strategy: !e.target.checked && current.strategy === 'jev' ? 'auto' : current.strategy })} />{zh ? '启用 Jev（密钥在 全局设置 → 电脑操作 配置，或设置 TYPESAFE_API_KEY）' : 'Enable Jev (configure the key in Settings → Computer Use, or set TYPESAFE_API_KEY)'}</label>
       {current.jev?.enabled ? <label className="flex items-center gap-2">{zh ? 'Jev 失败时' : 'If Jev fails'}
         <select aria-label={zh ? 'Jev 失败策略' : 'Jev failure policy'} value={current.jev.fallback} disabled={saving} onChange={e => void save({ ...current, jev: { ...current.jev!, fallback: e.target.value as 'direct' | 'fail_closed' } })}>
           <option value="fail_closed">{zh ? '停止操作（安全默认）' : 'Stop (safe default)'}</option>
