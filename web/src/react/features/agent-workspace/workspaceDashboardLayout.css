@@ -10,6 +10,7 @@
   overflow: hidden;
   overscroll-behavior: contain;
   padding: 6px;
+  background: transparent;
 }
 .dashboard-panel {
   position: relative;
@@ -22,6 +23,19 @@
   flex: 0 1 var(--dashboard-panel-preferred-height, auto);
   max-height: 420px;
   border-radius: 12px;
+}
+.workspace-dashboard--custom .dashboard-panel {
+  border: 1px solid
+    var(--work-panel-edge, hsl(var(--border-hsl) / 0.28));
+  border-radius: var(--work-panel-radius, 12px);
+  background: var(--work-surface, var(--surface));
+  box-shadow: var(--surface-shadow);
+}
+.workspace-dashboard--custom .runtime-profile .runtime-profile-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .dashboard-panel-content {
   display: flex;

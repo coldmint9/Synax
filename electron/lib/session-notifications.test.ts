@@ -46,7 +46,7 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => window as any,
       async () => window as any,
-      "/icon.png",
+      "/synax-icon.png",
     );
     expect(service.show(payload)).toBe(false);
     service.setEnabled(true);
@@ -63,14 +63,14 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => window as any,
       async () => window as any,
-      "/icon.png",
+      "/synax-icon.png",
     );
     service.setEnabled(true);
     expect(service.show(payload)).toBe(true);
     expect(mocks.notices[0].options).toMatchObject(
       process.platform === "darwin"
         ? { actions: [{ type: "button", text: "回复" }] }
-        : { icon: "/icon.png" },
+        : { icon: "/synax-icon.png" },
     );
     expect(mocks.notices[0].options).not.toHaveProperty(
       process.platform === "darwin" ? "icon" : "actions",
@@ -95,7 +95,7 @@ describe("native session notifications", () => {
       const service = new SessionNotifications(
         () => window as any,
         async () => window as any,
-        "/icon.png",
+        "/synax-icon.png",
       );
       service.setEnabled(true);
       service.setRendererReady(true);
@@ -120,7 +120,7 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => window as any,
       async () => window as any,
-      "/icon.png",
+      "/synax-icon.png",
     );
     service.setEnabled(true);
     service.show(payload);
@@ -138,7 +138,7 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => window as any,
       async () => window as any,
-      "/icon.png",
+      "/synax-icon.png",
     );
     service.setEnabled(true);
     service.show(payload);
@@ -159,7 +159,7 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => current as any,
       ensure,
-      "/icon.png",
+      "/synax-icon.png",
     );
     service.setEnabled(true);
     service.show(payload);
@@ -181,7 +181,7 @@ describe("native session notifications", () => {
     const service = new SessionNotifications(
       () => window as any,
       async () => window as any,
-      "/icon.png",
+      "/synax-icon.png",
     );
     service.setEnabled(true);
     service.setRendererReady(true);

@@ -534,7 +534,7 @@ textarea.agent-request-input {
   font-size: 12px;
   line-height: 1.4;
 }
-.agent-request-action:hover {
+.agent-request-action:not(:disabled):hover {
   background: hsl(var(--foreground-hsl) / 0.045);
   color: var(--foreground);
 }
@@ -547,7 +547,13 @@ textarea.agent-request-input {
   color: hsl(var(--background-hsl));
   border-color: hsl(var(--foreground-hsl) / 0.35);
 }
-.agent-request-primary:hover {
+.agent-request-primary:disabled {
+  opacity: 1;
+  background: hsl(var(--foreground-hsl) / 0.08);
+  color: hsl(var(--foreground-hsl) / 0.4);
+  border-color: hsl(var(--border-hsl) / 0.6);
+}
+.agent-request-primary:not(:disabled):hover {
   background: var(--foreground);
   color: hsl(var(--background-hsl));
 }
@@ -597,16 +603,19 @@ textarea.agent-request-input {
   border: 1px solid hsl(var(--border-hsl) / 0.65);
   border-radius: 1rem;
   min-height: 0;
-  background: var(--surface);
+  background: hsl(0deg 0% 100% / 60%);
   -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: none;
+  box-shadow: 0 2px 5px hsl(2 0% 0% / 0.08);
+  backdrop-filter: blur(5px);
 }
 .agent-session-controls .agent-session-composer-shell:focus-within {
   border-color: hsl(var(--muted-foreground) / 0.45);
 }
 .dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
-  border-color: hsl(0 0% 100% / 0.1);
+  border-color: hsl(0deg 0% 100% / 0%);
+  background: hsl(0 0% 17% / 0.17);
+  box-shadow: 0 2px 5px hsl(2 0% 0% / 0.08);
+  backdrop-filter: blur(5px);
 }
 .dark .agent-session-controls .agent-session-composer-shell:focus-within {
   border-color: hsl(0 0% 100% / 0.2);
@@ -1045,154 +1054,6 @@ textarea.agent-request-input {
   color: hsl(var(--muted-foreground));
 }
 
-/* The transcript retains its geometry; only this independently positioned composer morphs. */
-.session-composer-island {
-  width: 100%;
-  pointer-events: none;
-}
-.session-composer-island-frame {
-  position: relative;
-  margin-inline: auto;
-  width: 100%;
-  border-radius: 1rem;
-  transition:
-    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 320ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-radius 320ms ease;
-}
-.session-composer-island-frame[data-measured="true"] {
-  height: var(--composer-island-height);
-}
-/* Keep this shadow within the command rail's 12px paint gutter. A shadow
-   on the clipped/transformed inner shell is cut into four square corners. */
-.session-composer-island:not([data-collapsed="true"])
-  > .session-composer-island-frame {
-  box-shadow: 0 2px 8px hsl(var(--foreground-hsl) / 0.08);
-}
-.dark
-  .session-composer-island:not([data-collapsed="true"])
-  > .session-composer-island-frame {
-  box-shadow: 0 2px 8px hsl(0 0% 0% / 0.32);
-}
-.session-composer-island-content {
-  /* Keep the centering transform identical before and after measurement. */
-  position: relative;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
-  pointer-events: auto;
-  opacity: 1;
-  transition:
-    opacity 160ms ease 100ms,
-    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.session-composer-island-frame[data-measured="true"]
-  > .session-composer-island-content {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: var(--composer-island-width);
-  transform: translateX(-50%);
-}
-.session-composer-island-pill {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  border: 1px solid hsl(var(--border-hsl) / 0.65);
-  background: hsl(var(--card) / 0.98);
-  border-radius: inherit;
-  box-shadow: 0 2px 8px hsl(var(--foreground-hsl) / 0.04);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    visibility 0s 120ms;
-}
-.session-composer-island[data-collapsed="true"]
-  > .session-composer-island-frame {
-  width: min(14rem, 100%);
-  height: 2.5rem;
-  border-radius: 999px;
-}
-.session-composer-island[data-collapsed="true"]
-  .session-composer-island-content {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translateX(-50%) translateY(8px) scale(0.98);
-  transition:
-    opacity 120ms ease,
-    transform 280ms ease,
-    visibility 0s 120ms;
-}
-.session-composer-island[data-collapsed="true"] .session-composer-island-pill {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transition:
-    opacity 200ms ease 100ms,
-    visibility 0s;
-}
-.session-composer-island-expand {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.625rem;
-  height: 100%;
-  flex: 1;
-  min-width: 0;
-  padding-inline: 1rem 0;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-  border-radius: inherit;
-}
-.session-composer-island-stop {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  flex-shrink: 0;
-  margin-inline-end: 0.375rem;
-  border-radius: 50%;
-  background: hsl(var(--foreground-hsl));
-  color: var(--background);
-}
-.session-composer-island-expand:hover {
-  color: var(--foreground);
-}
-.session-composer-island-stop:hover {
-  opacity: 0.8;
-}
-.session-composer-island-pill button:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: -2px;
-}
-.session-composer-island[data-collapsed="true"]
-  .session-composer-island-spinner {
-  animation: session-composer-island-spin 1.2s linear infinite;
-}
-@keyframes session-composer-island-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .session-composer-island-frame,
-  .session-composer-island-content,
-  .session-composer-island-pill {
-    transition: none !important;
-  }
-  .session-composer-island[data-collapsed="true"]
-    .session-composer-island-spinner {
-    animation: none;
-  }
-}
-
 /* Workflows live in the toolbar; proposals and answers live in the transcript. */
 .agent-mode-option-copy {
   flex: 1;
@@ -1495,15 +1356,6 @@ textarea.agent-request-input {
   padding-top: 1rem;
   color: hsl(var(--muted-foreground));
   font-size: 11px;
-}
-
-/* Switching drafts is an immediate replacement, never a layout/slide animation.
-   The stable host's Synax UI entrance runs only on actual mount. */
-.session-composer-island[data-switching="true"] .session-composer-island-frame,
-.session-composer-island[data-switching="true"]
-  .session-composer-island-content,
-.session-composer-island[data-switching="true"] .session-composer-island-pill {
-  transition: none !important;
 }
 
 /* Command surfaces must remain legible in both Synax themes. */

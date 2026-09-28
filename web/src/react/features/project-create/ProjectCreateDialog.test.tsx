@@ -126,7 +126,7 @@ describe("ProjectCreateDialog", () => {
     });
     const { onClose } = await renderDialog();
     await waitFor(() => expect(listWslDistributions).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("tab", { name: "WSL2" }));
+    fireEvent.click(await screen.findByRole("button", { name: "WSL2" }));
     const pathInput = screen.getByRole("textbox", { name: "项目目录路径" });
     fireEvent.change(pathInput, { target: { value: "/home/dev/app" } });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
@@ -157,7 +157,7 @@ describe("ProjectCreateDialog", () => {
       await renderDialog();
       expect(screen.getByRole("tab", { name: "本地" })).toBeInTheDocument();
       expect(
-        screen.queryByRole("tab", { name: "WSL2" }),
+        screen.queryByRole("button", { name: "WSL2" }),
       ).not.toBeInTheDocument();
       expect(screen.queryByText("Windows")).not.toBeInTheDocument();
       expect(listWslDistributions).not.toHaveBeenCalled();
@@ -176,7 +176,9 @@ describe("ProjectCreateDialog", () => {
     vi.mocked(listWslDistributions).mockResolvedValueOnce(result);
     await renderDialog();
     expect(listWslDistributions).toHaveBeenCalledExactlyOnceWith();
-    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "WSL2" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("WSL2 is unavailable")).not.toBeInTheDocument();
   });
 
@@ -186,11 +188,30 @@ describe("ProjectCreateDialog", () => {
       deferred<Awaited<ReturnType<typeof listWslDistributions>>>();
     vi.mocked(listWslDistributions).mockReturnValueOnce(pending.promise);
     await renderDialog();
-    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "WSL2" }),
+    ).not.toBeInTheDocument();
     await act(async () => pending.reject(new Error("WSL unavailable")));
-    expect(screen.queryByRole("tab", { name: "WSL2" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "WSL2" }),
+    ).not.toBeInTheDocument();
     await addPath("C:/repos/app");
     expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/app");
+  });
+
+  it("shows the remote SSH placeholder and keeps local creation unavailable", async () => {
+    await renderDialog();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "远程" }));
+    expect(screen.getByText("连接远程主机")).toBeInTheDocument();
+    expect(screen.getByText("SSH 主机连接功能即将支持。")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "项目目录路径" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "本地" }));
+    expect(
+      screen.getByRole("textbox", { name: "项目目录路径" }),
+    ).toBeInTheDocument();
   });
 
   it("uses one tab slider and resets directories when switching local / WSL2", async () => {
@@ -203,14 +224,16 @@ describe("ProjectCreateDialog", () => {
       ],
     });
     await renderDialog();
-    const wslTab = await screen.findByRole("tab", { name: "WSL2" });
+    const wslTab = await screen.findByRole("button", { name: "WSL2" });
     expect(screen.getAllByRole("tablist")).toHaveLength(1);
     expect(
-      within(screen.getByRole("tablist")).getAllByRole("tab"),
-    ).toHaveLength(3);
+      within(screen.getByRole("tablist", { name: "来源类型" })).getAllByRole(
+        "tab",
+      ),
+    ).toHaveLength(2);
     await addPath("C:/repos/app");
     fireEvent.click(wslTab);
-    expect(wslTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "WSL2" })).toBeInTheDocument();
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /WSL2 发行版/ }),
@@ -219,8 +242,10 @@ describe("ProjectCreateDialog", () => {
       target: { value: "/home/dev/app" },
     });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
-    fireEvent.click(wslTab);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
+    fireEvent.click(screen.getByRole("button", { name: "WSL2" }));
     expect(screen.getByRole("listitem")).toHaveTextContent(
       "Ubuntu · /home/dev/app",
     );
@@ -311,7 +336,9 @@ describe("ProjectCreateDialog", () => {
       project: project({ id: "created" }),
     });
     const { onClose } = await renderDialog();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     expect(
       screen.queryByRole("button", { name: /Scratch/ }),
     ).not.toBeInTheDocument();
@@ -320,7 +347,9 @@ describe("ProjectCreateDialog", () => {
     );
     await addPath("  /repos/existing  ");
     expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     expect(
       screen.getByRole("button", { name: /Existing.*repos/ }),
     ).toBeDisabled();
@@ -355,7 +384,9 @@ describe("ProjectCreateDialog", () => {
     });
     const { onClose } = await renderDialog();
     expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     fireEvent.click(
       await screen.findByRole("button", { name: /Existing.*repos/ }),
     );
@@ -390,7 +421,9 @@ describe("ProjectCreateDialog", () => {
       .mockRejectedValueOnce(new Error("创建失败，请重试"))
       .mockResolvedValueOnce({ project: project({ id: "retried" }) });
     const { onClose } = await renderDialog();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     fireEvent.click(
       await screen.findByRole("button", { name: /Existing.*repos/ }),
     );
@@ -407,7 +440,9 @@ describe("ProjectCreateDialog", () => {
       "Kept name",
     );
     expect(screen.getByRole("button", { name: "移除 Existing" })).toBeEnabled();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     expect(
       screen.getByRole("button", { name: /Existing.*repos/ }),
     ).toBeDisabled();
@@ -426,7 +461,9 @@ describe("ProjectCreateDialog", () => {
       new Error("项目列表不可用"),
     );
     render(<ProjectCreateDialog open onClose={vi.fn()} />);
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "项目列表不可用",
     );
@@ -515,7 +552,9 @@ describe("ProjectCreateDialog", () => {
       );
       rerender(<ProjectCreateDialog open={false} onClose={onClose} />);
       rerender(<ProjectCreateDialog open onClose={onClose} />);
-      await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "已有项目" }));
       await screen.findByRole("button", { name: /Fresh.*repos/ });
       await act(async () => {
         if (outcome === "resolve")
@@ -576,7 +615,9 @@ describe("ProjectCreateDialog", () => {
   );
   it("searches existing projects by path and blocks duplicate paths with trailing separators", async () => {
     await renderDialog();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "已有项目" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "已有项目" }));
     const search = screen.getByRole("textbox", { name: "搜索名称或路径" });
     fireEvent.change(search, { target: { value: "no-such-project" } });
     expect(screen.getByText("没有匹配的项目")).toBeInTheDocument();

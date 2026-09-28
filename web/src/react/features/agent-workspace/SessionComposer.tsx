@@ -1,4 +1,5 @@
 import "./composerModes.css";
+import "./goalFlame.css";
 import { NewSessionScene } from "./NewSessionScene";
 import { welcomePlaceholderDelay } from "./welcomeTyping";
 import { NewSessionWelcome } from "./NewSessionWelcome";
@@ -34,7 +35,6 @@ import {
   saveDraftComposer,
   saveDraftComposerContext,
 } from "./state/draftComposerStore";
-import { ComposerIsland } from "./ComposerIsland";
 import { useComposerCommands } from "./useComposerCommands";
 import type {
   GitWorkspaceSelection,
@@ -89,6 +89,11 @@ import type {
 } from "../../../lib/api/agentRuntime";
 import { AgentInteractionPanel } from "./AgentInteractionPanel";
 import { SessionModePicker } from "./SessionModePicker";
+import {
+  FlameWrap,
+  FLAME_PURPLE,
+  type FlameWrapOptions,
+} from "@/react/components/canvasui/FlameWrap";
 import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxDocumentId,
@@ -98,6 +103,33 @@ import {
   isAcpSession,
   type SynaxPermissionTier,
 } from "./synaxSessionTypes";
+
+/* Goal mode is the only surface that burns. The values are the documented
+   Flame Wrap configuration with two deliberate changes: the fire is the project
+   electric purple, and the radius matches the pill's 1rem corners so the flames
+   hug the shape instead of floating around it. */
+const GOAL_FLAME_OPTIONS: FlameWrapOptions = {
+  color: FLAME_PURPLE,
+  intensity: 0.5,
+  height: 170,
+  spread: 8,
+  radius: 16,
+  speed: 0.25,
+  scale: 0.75,
+  turbulence: 0.5,
+  turbulenceScale: 0.5,
+  turbulenceReach: 25,
+  sparks: 1.5,
+  sparkSize: 0.35,
+  sparkDensity: 1,
+  sparkSpeed: 1,
+  rim: 2.5,
+  melt: 4.5,
+  distortion: 10,
+  smoke: 1.5,
+  ember: 2,
+  scorch: 0,
+};
 
 interface Props {
   projectId: string;
@@ -896,12 +928,14 @@ export function SessionComposer({
     />
   );
 
+  /* One source of truth for the goal state: the same flag drives the styling
+     hook, the flame wrap and the mode-specific placeholder. */
+  const goalMode = backendId === "native" && mode === "goal";
+
   const composerShell = (
     <div
       className="agent-session-controls w-full"
-      data-composer-mode={
-        backendId !== "native" || mode === "plan_node" ? "chat" : mode
-      }
+      data-composer-mode={goalMode ? "goal" : "chat"}
     >
       {error && (
         <p role="alert" className="mb-2 px-2 text-xs text-danger">
@@ -974,21 +1008,13 @@ export function SessionComposer({
           onForce={(itemId) => forceQueuedInput(sessionId, itemId)}
         />
       )}
-      <ComposerIsland
-        sessionId={viewKey}
-        running={session?.status === "running"}
-        readingHistory={readingHistory}
-        protectedInteraction={
-          overlayOpen ||
-          commands.overlayOpen ||
-          hasPendingPermissions ||
-          hasPendingInteractions ||
-          Boolean(error) ||
-          submitting ||
-          editingQueue ||
-          changingMode
-        }
-        onStop={handleStop}
+      {/* Mounted in every mode so switching modes never remounts the input
+          subtree; only the flame itself turns on and off. */}
+      <FlameWrap
+        className="agent-session-goal-flame"
+        active={goalMode}
+        contentStyle={{ overflow: "visible" }}
+        {...GOAL_FLAME_OPTIONS}
       >
         <div
           className={`agent-session-composer-shell agent-dock-shell w-full flex flex-col items-center${isCentered ? " agent-session-composer-shell--draft" : ""}`}
@@ -1015,7 +1041,7 @@ export function SessionComposer({
             )}
           </div>
         </div>
-      </ComposerIsland>
+      </FlameWrap>
     </div>
   );
 

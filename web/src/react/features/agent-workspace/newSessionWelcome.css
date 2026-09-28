@@ -47,8 +47,6 @@
 .session-list-empty-label { max-width: 12rem; font-size: 12px; line-height: 1.75; text-wrap: balance; }
 .agent-session-composer--centered { overflow-y: auto; justify-content: safe center; }
 .agent-session-composer--centered .session-welcome-layout { gap: 28px; margin-block: auto; }
-.agent-session-composer--centered .session-composer-island:not([data-collapsed="true"]) > .session-composer-island-frame { box-shadow: var(--ui-shadow-control); }
-.agent-session-composer--centered .session-composer-island:focus-within > .session-composer-island-frame { box-shadow: 0 0 0 2px hsl(var(--primary) / .07), var(--ui-shadow-control); }
 @media (max-height: 620px) { .session-welcome .synax-wordmark { margin-bottom: 14px; } .agent-session-composer--centered .session-welcome-layout { gap: 18px; } }
 
 /* Characters retain their final geometry, so neither centering nor line wrapping jumps. */

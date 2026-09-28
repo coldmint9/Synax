@@ -138,7 +138,6 @@ function InteractionForm({
   const previousQuestionIndex = useRef(questionIndex);
   const [otherEnabled, setOtherEnabled] = useState<Record<string, boolean>>({});
   const [otherValues, setOtherValues] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -153,6 +152,50 @@ function InteractionForm({
     ? questions.slice(questionIndex, questionIndex + 1)
     : questions;
   const hasNextQuestion = paginated && questionIndex < questions.length - 1;
+
+  function isQuestionReady(question: HumanQuestion): boolean {
+    let value = values[question.id];
+    if (typeof value === "string") value = value.trim();
+
+    if (question.allowOther && otherEnabled[question.id]) {
+      const other = otherValues[question.id]?.trim();
+      if (!other) return false;
+      value =
+        question.type === "multi_select"
+          ? [...new Set([...(Array.isArray(value) ? value : []), other])]
+          : other;
+    }
+
+    const empty =
+      value === undefined ||
+      value === "" ||
+      (Array.isArray(value) && value.length === 0);
+    if (empty) return !question.required;
+
+    const size =
+      question.type === "number"
+        ? Number(value)
+        : (question.type === "text" || question.type === "textarea") &&
+            typeof value === "string"
+          ? value.length
+          : question.type === "multi_select" && Array.isArray(value)
+            ? value.length
+            : undefined;
+
+    if (question.type === "number" && !Number.isFinite(size)) return false;
+    return !(
+      size !== undefined &&
+      ((question.min !== undefined && size < question.min) ||
+        (question.max !== undefined && size > question.max))
+    );
+  }
+
+  const currentQuestionsReady = visibleQuestions.every(isQuestionReady);
+  const allQuestionsReady = questions.every(isQuestionReady);
+  const primaryActionDisabled =
+    disabled ||
+    submitting ||
+    !(isPlan ? allQuestionsReady : currentQuestionsReady);
 
   useEffect(() => {
     if (previousQuestionIndex.current !== questionIndex) {
@@ -220,7 +263,6 @@ function InteractionForm({
         answers[question.id] = value;
       }
     }
-    setErrors(invalid);
     if (Object.keys(invalid).length) {
       if (paginated) {
         setQuestionIndex(
@@ -260,8 +302,6 @@ function InteractionForm({
       id,
       "aria-label": question.label,
       "aria-required": Boolean(question.required),
-      "aria-invalid": Boolean(errors[question.id]),
-      "aria-describedby": errors[question.id] ? `${id}-error` : undefined,
       className: inputClass,
     };
     if (question.type === "single_select" || question.type === "multi_select") {
@@ -285,7 +325,6 @@ function InteractionForm({
                   name={id}
                   checked={checked}
                   aria-label={`${option.label}${question.recommended?.includes(option.value) ? ` (${zh ? "推荐" : "Recommended"})` : ""}`}
-                  aria-describedby={common["aria-describedby"]}
                   onChange={(event) => {
                     if (multiple)
                       update(
@@ -446,7 +485,7 @@ function InteractionForm({
       aria-busy={submitting}
       onSubmit={(event) => {
         event.preventDefault();
-        if (isPlan || disabled || submittingRef.current) return;
+        if (primaryActionDisabled || submittingRef.current) return;
         if (hasNextQuestion) {
           if (collectAnswers(visibleQuestions) !== null) {
             setQuestionIndex((index) => index + 1);
@@ -549,11 +588,6 @@ function InteractionForm({
               key={question.id}
               ref={paginated ? questionRef : undefined}
               tabIndex={paginated ? -1 : undefined}
-              aria-describedby={
-                errors[question.id]
-                  ? `${formId}-${question.id}-error`
-                  : undefined
-              }
             >
               <legend className="agent-request-label">
                 <AskMarkdown content={question.label} />
@@ -562,14 +596,6 @@ function InteractionForm({
                 ) : null}
               </legend>
               {questionInput(question)}
-              {errors[question.id] && (
-                <p
-                  id={`${formId}-${question.id}-error`}
-                  className="mt-1 text-xs text-danger"
-                >
-                  {errors[question.id]}
-                </p>
-              )}
             </fieldset>
           ))}
         </div>
@@ -588,7 +614,6 @@ function InteractionForm({
                 className={buttonClass}
                 disabled={questionIndex === 0}
                 onClick={() => {
-                  setErrors({});
                   setQuestionIndex((index) => index - 1);
                 }}
               >
@@ -616,6 +641,7 @@ function InteractionForm({
             <button
               type={isPlan ? "button" : "submit"}
               className={`${buttonClass} agent-request-primary`}
+              disabled={primaryActionDisabled}
               onClick={isPlan ? () => void reply("execute") : undefined}
             >
               {isPlan
@@ -632,13 +658,6 @@ function InteractionForm({
               {isPlan && <ArrowUpRight size={14} aria-hidden />}
             </button>
           </div>
-          {Object.keys(errors).length > 0 && (
-            <p role="alert" className="text-xs text-danger">
-              {zh
-                ? "请检查上方标记的字段。"
-                : "Check the highlighted fields above."}
-            </p>
-          )}
           {serverError && (
             <div role="alert" className="space-y-1 text-xs text-danger">
               <p className="break-words">{serverError}</p>

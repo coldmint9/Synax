@@ -80,18 +80,11 @@ let exitCode = 0;
         <div class="agent-command-rail-inner">
           <div class="agent-session-composer agent-session-composer--focus-rail w-full shrink-0">
             <div class="mx-auto w-full min-w-0 max-w-3xl"><div class="agent-session-controls w-full">
-              <div class="session-composer-island" data-collapsed="false">
-                <div class="session-composer-island-frame">
-                  <div class="session-composer-island-content">
-                    <div class="agent-session-composer-shell agent-dock-shell w-full flex flex-col items-center" data-multiline="true" data-has-media="false">
-                      <div class="agent-dock-shell-content"><div class="agent-dock-composer" data-session-controls data-multiline="true" data-expanded="true">
-                        <textarea class="fixture-input" placeholder="告诉 Synax 你想做什么… Shift+Enter 换行 · / 打开命令"></textarea>
-                        <div class="fixture-toolbar"><button>＋</button><button>对话⌄</button><button>无限制⌄</button><span class="fixture-model">zhipu · glm-5.3-flash　 max</span><button>↑</button></div>
-                      </div></div>
-                    </div>
-                  </div>
-                  <div class="session-composer-island-pill"><button class="session-composer-island-expand">运行中⌃</button><button class="session-composer-island-stop">■</button></div>
-                </div>
+              <div class="agent-session-composer-shell agent-dock-shell w-full flex flex-col items-center" data-multiline="true" data-has-media="false">
+                <div class="agent-dock-shell-content"><div class="agent-dock-composer" data-session-controls data-multiline="true" data-expanded="true">
+                  <textarea class="fixture-input" placeholder="告诉 Synax 你想做什么… Shift+Enter 换行 · / 打开命令"></textarea>
+                  <div class="fixture-toolbar"><button>＋</button><button>对话⌄</button><button>无限制⌄</button><span class="fixture-model">zhipu · glm-5.3-flash　 max</span><button>↑</button></div>
+                </div></div>
               </div>
             </div></div>
           </div>
@@ -131,12 +124,7 @@ let exitCode = 0;
       for (const theme of ["light", "dark"]) {
         await win.webContents.executeJavaScript(`new Promise(resolve => {
         document.documentElement.classList.toggle('dark', ${theme === "dark"});
-        const island=document.querySelector('.session-composer-island');
-        island.dataset.collapsed='false';
-        const frame=island.querySelector('.session-composer-island-frame');
-        island.style.setProperty('--composer-island-width', island.clientWidth+'px');
-        frame.dataset.measured='true';
-        island.style.setProperty('--composer-island-height', island.querySelector('.session-composer-island-content').scrollHeight+'px');
+        const shell=document.querySelector('.agent-session-composer-shell');
         setTimeout(resolve, 400);
       })`);
         for (const focus of [
@@ -146,12 +134,10 @@ let exitCode = 0;
           "project",
           "portal",
           "selection",
-          "collapsed",
         ]) {
           const data = await win.webContents
             .executeJavaScript(`new Promise(resolve => {
-          const scroll=document.querySelector('.session-chat-scroll'), island=document.querySelector('.session-composer-island');
-          const frame=island.querySelector('.session-composer-island-frame'), shell=island.querySelector('.agent-session-composer-shell');
+          const scroll=document.querySelector('.session-chat-scroll'), shell=document.querySelector('.agent-session-composer-shell');
           if ('${focus}' === 'input') document.querySelector('textarea').focus();
           if ('${focus}' === 'transcript') scroll.focus();
           if ('${focus}' === 'message') document.querySelector('#message-action').focus();
@@ -161,17 +147,15 @@ let exitCode = 0;
             const range=document.createRange();range.selectNodeContents(document.querySelector('.fixture-message p'));
             getSelection().removeAllRanges();getSelection().addRange(range);
           }
-          if ('${focus}' === 'collapsed') { document.activeElement.blur(); island.dataset.collapsed='true'; }
           setTimeout(() => {
-            const clip=document.querySelector('.agent-command-rail-inner').getBoundingClientRect(), box=frame.getBoundingClientRect();
+            const clip=document.querySelector('.agent-command-rail-inner').getBoundingClientRect(), box=shell.getBoundingClientRect();
             const panel=getComputedStyle(document.querySelector('.${contentClass}'));
-            const sc=getComputedStyle(shell), fc=getComputedStyle(frame);
-            resolve({desktop:${desktop},theme:'${theme}',width:${width},focus:'${focus}',shellShadow:sc.boxShadow,frameShadow:fc.boxShadow,filter:sc.backdropFilter,
+            const sc=getComputedStyle(shell);
+            resolve({desktop:${desktop},theme:'${theme}',width:${width},focus:'${focus}',shellShadow:sc.boxShadow,filter:sc.backdropFilter,
               panelBackground:panel.backgroundColor,panelShadow:panel.boxShadow,panelRadius:panel.borderRadius,
               outline:getComputedStyle(scroll).outlineStyle,
               gutter:{left:box.left-clip.left,right:clip.right-box.right,top:box.top-clip.top,bottom:clip.bottom-box.bottom},
-              scrollable:scroll.scrollHeight>scroll.clientHeight,collapsed:box.width<240,
-              heightMismatch:Math.abs(box.height-shell.getBoundingClientRect().height),
+              scrollable:scroll.scrollHeight>scroll.clientHeight,
               focusHintPresent:!!document.querySelector('.session-transcript-focus-hint'),
               focusedOutline:getComputedStyle(document.activeElement).outlineStyle,
               portalOutlines:['portal-button','checkbox-control','portal-input'].map(id=>getComputedStyle(document.getElementById(id)).outlineStyle),
@@ -241,18 +225,13 @@ let exitCode = 0;
       if (m.focus === "portal") assert.equal(m.focusedId, "portal-button");
       if (m.focus === "selection")
         assert(m.hasSelection, "Text selection must remain available.");
-      if (m.focus === "collapsed") {
-        assert(m.collapsed, "Collapsed pill remains compact.");
-        assert.equal(m.frameShadow, "none");
-      } else {
-        for (const [edge, gutter] of Object.entries(m.gutter))
-          assert(gutter >= 11, `Shadow is clipped at ${edge}: ${gutter}px`);
-        assert.notEqual(m.frameShadow, "none");
-        assert(
-          m.heightMismatch < 1,
-          "Shadow frame must match the visible input height.",
-        );
-      }
+      for (const [edge, gutter] of Object.entries(m.gutter))
+        assert(gutter >= 11, `Composer is clipped at ${edge}: ${gutter}px`);
+      assert.equal(
+        m.shellShadow,
+        "none",
+        "The removed running island must not leave a composer shadow frame.",
+      );
       assert.equal(
         m.focusHintPresent,
         false,

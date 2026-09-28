@@ -180,14 +180,15 @@
   align-self: stretch;
   height: auto;
   margin: 0 6px 0 0;
-  border: 1px solid var(--work-panel-edge);
-  border-radius: var(--work-panel-radius);
-  background: var(--work-surface);
-  box-shadow: var(--surface-shadow);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 :is(.work-page, .work-details-dialog) .workspace-dashboard {
-  gap: 0;
+  gap: 8px;
   padding: 6px 10px;
+  background: transparent;
 }
 :is(.work-page, .work-details-dialog) .ws-card {
   flex: 0 0 auto;
@@ -197,8 +198,6 @@
   box-shadow: none;
 
   overflow: hidden;
-
-  border-bottom: 1px solid var(--ui-line);
 }
 :is(.work-page, .work-details-dialog) .ws-card-head {
   min-height: 36px;
@@ -286,7 +285,7 @@
   z-index: 2;
   flex-wrap: wrap;
   border-radius: 11px;
-  background: hsl(var(--card));
+  /*background: hsl(var(--card));*/
 }
 .ws-card-toolbar {
   flex: 0 0 100%;

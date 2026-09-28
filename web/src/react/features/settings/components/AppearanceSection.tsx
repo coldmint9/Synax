@@ -14,6 +14,7 @@ import {
 import { useRef, useState, type ChangeEvent } from "react";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../../lib/appearance";
 import { DEFAULT_THEME } from "../../../../lib/theme/defaults";
+import { BUILTIN_THEMES } from "../../../../lib/theme/presets";
 import { themeToExport } from "../../../../lib/theme/normalize";
 import {
   downloadThemeFile,
@@ -75,6 +76,7 @@ export function AppearanceSection() {
   const setMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccentColor);
   const resetTheme = useThemeStore((s) => s.resetTheme);
+  const setActiveTheme = useThemeStore((s) => s.setActiveTheme);
   const [feedback, setFeedback] = useState<AppearanceFeedback | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const preset = ACCENT_PRESETS.find((item) => item.color === accent);
@@ -215,6 +217,54 @@ export function AppearanceSection() {
             <RotateCcw size={14} aria-hidden="true" />
             <span>{zh ? "恢复默认" : "Reset theme"}</span>
           </button>
+        </div>
+      </section>
+      <section className="appearance-builtins" aria-labelledby="appearance-builtins-title">
+        <div className="appearance-heading">
+          <span id="appearance-builtins-title" className="appearance-label">
+            {zh ? "经典主题" : "Classic themes"}
+          </span>
+          <span className="appearance-hint">
+            {zh ? "选择一套熟悉的编辑器配色" : "Choose a familiar editor palette"}
+          </span>
+        </div>
+        <div className="appearance-builtins-grid">
+          {BUILTIN_THEMES.map((theme) => {
+            const checked = activeTheme.id === theme.id && source === "builtin";
+            const colors = theme.colors[resolved];
+            return (
+              <button
+                type="button"
+                key={theme.id}
+                className="appearance-builtin"
+                data-checked={checked ? "" : undefined}
+                aria-pressed={checked}
+                onClick={() => {
+                  setActiveTheme(theme, "builtin");
+                  ensureThemeRuntime();
+                  announce("success", zh ? `已切换到「${theme.name}」` : `Switched to ${theme.name}`);
+                }}
+              >
+                <span
+                  className="appearance-builtin__preview"
+                  style={{
+                    background: colors.canvas,
+                    borderColor: colors.border,
+                  }}
+                  aria-hidden="true"
+                >
+                  <i style={{ background: colors.accent }} />
+                  <i style={{ background: colors.textMuted }} />
+                  <i style={{ background: colors.borderStrong }} />
+                </span>
+                <span className="appearance-builtin__meta">
+                  <strong>{theme.name}</strong>
+                  <span>{theme.id === "synax-default" ? (zh ? "Synax" : "Default") : "Built-in"}</span>
+                </span>
+                <Check className="appearance-builtin__check" size={14} aria-hidden="true" />
+              </button>
+            );
+          })}
         </div>
       </section>
       <RadioGroup value={mode} onChange={handleModeChange} className="appearance-modes">

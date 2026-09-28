@@ -1,0 +1,34 @@
+/* Goal mode burns: the purple WebGL flame wrap sits behind a passive overlay.
+   It never owns layout or input — the pill keeps its box, radius and shadow. */
+.agent-session-goal-flame {
+  position: relative;
+  width: 100%;
+}
+
+/* The fire is decoration; clicks, selection and the composer caret pass through. */
+.agent-session-goal-flame [data-flame-output] {
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The flame front reaches above the pill, so nothing between the composer and
+   the conversation may clip it. */
+.agent-session-goal-flame [data-flame-output],
+.agent-session-composer-flame-content {
+  overflow: visible;
+}
+
+/* Reduced motion keeps a single static flame frame; the compositor stays still. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-session-goal-flame [data-flame-output] {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Forced colors replace the flame with the system highlight: no WebGL color. */
+@media (forced-colors: active) {
+  .agent-session-goal-flame [data-flame-output] {
+    display: none;
+  }
+}

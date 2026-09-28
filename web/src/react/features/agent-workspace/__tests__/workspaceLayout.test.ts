@@ -99,25 +99,38 @@ describe("workspace layout constraints", () => {
   });
 
   it("keeps branch controls flush left and centers their icon and label", () => {
+    expect(declaration(".ws-branch-trigger", "justify-content")).toBe("flex-start");
+    expect(declaration(".ws-branch-trigger", "text-align")).toBe("left");
+    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "display")).toBe(
+      "inline-flex",
+    );
     expect(
-      declaration(
-        ":is(.work-page, .work-details-dialog) .ws-project-repository .ws-branch-trigger",
-        "padding-left",
-      ),
-    ).toBe("0");
-    expect(declaration(".ws-branch-trigger", "align-items")).toBe("center");
+      declaration(".ws-branch-trigger > .ws-branch-icon", "align-items"),
+    ).toBe("center");
+    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "flex")).toBe(
+      "0 0 auto",
+    );
+    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "overflow")).toBe(
+      "visible",
+    );
   });
 
   it("scrolls the branch list without shrinking wrapped branch rows", () => {
-    expect(declaration(".ws-branch-popover", "display")).toBe("flex");
-    expect(declaration(".ws-branch-dialog", "min-height")).toBe("0");
-    expect(declaration(".ws-branch-list", "overflow-y")).toBe("auto");
-    expect(declaration(".ws-branch-option", "flex-shrink")).toBe("0");
-    expect(declaration(".ws-branch-name", "overflow-wrap")).toBe("anywhere");
+    const list = ".ws-branch-list";
+    expect(declaration(list, "overflow-y")).toBe("auto");
+    expect(declaration(list, "min-height")).toBe("0");
+    expect(declaration(list, "flex")).toBe("1 1 auto");
+    expect(declaration(list, "align-content")).toBe("flex-start");
   });
-});
 
-it("lets pointer events pass through navigation rail padding over interactive artifacts",()=>{
- const sheet=postcss.parse(globalCss);const values=new Map<string,string>();sheet.walkRules(rule=>{if([".session-nav-float-rail",".session-nav-float-mark"].includes(rule.selector))rule.walkDecls("pointer-events",decl=>{values.set(rule.selector,decl.value);});});
- expect(values.get(".session-nav-float-rail")).toBe("none");expect(values.get(".session-nav-float-mark")).toBe("auto");
+  it("lets pointer events pass through navigation rail padding over interactive artifacts", () => {
+    expect(
+      declaration(
+        ".workbench-shell .workspace-navigation-rail",
+        "pointer-events",
+      ),
+    ).toBe("none");
+  });
+
+  expect(globalCss).toContain(".workspace-navigation-rail");
 });

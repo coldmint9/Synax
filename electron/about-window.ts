@@ -10,8 +10,8 @@ let aboutWindow: BrowserWindow | null = null;
 function loadIconDataUrl(): string {
   try {
     const iconPath = app.isPackaged
-      ? getResourcePath("icon.png")
-      : getResourcePath("electron", "resources", "icon.png");
+      ? getResourcePath("synax-icon.png")
+      : getResourcePath("electron", "resources", "synax-icon.png");
     return `data:image/png;base64,${fs.readFileSync(iconPath).toString("base64")}`;
   } catch {
     return "";

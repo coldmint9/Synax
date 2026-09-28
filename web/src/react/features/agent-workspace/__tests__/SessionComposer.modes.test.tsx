@@ -190,12 +190,33 @@ it("keeps the interaction panel mounted when its state refreshes beside the inpu
 it("keeps the direct mode selector and plus-menu mode controls synchronized", async () => {
   const { container } = renderComposer();
   const controls = container.querySelector(".agent-session-controls")!;
+  // The flame wrap stays mounted in every mode: only its effect turns on.
+  const flame = container.querySelector("[data-flame-wrap]")!;
   expect(controls).toHaveAttribute("data-composer-mode", "chat");
-  expect(screen.queryByRole("button", { name: "Session mode" })).not.toBeInTheDocument();
-  for (const [label, mode] of [["Goal", "goal"], ["Chat", "chat"]]) {
-    await userEvent.click(screen.getByRole("button", { name: "Add attachments, context or change mode" }));
-    await userEvent.click(screen.getByRole("radio", { name: label, exact: true }));
-    await waitFor(() => expect(controls).toHaveAttribute("data-composer-mode", mode));
+  expect(flame).toHaveAttribute("data-flame-active", "false");
+  expect(
+    screen.queryByRole("button", { name: "Session mode" }),
+  ).not.toBeInTheDocument();
+  for (const [label, mode] of [
+    ["Goal", "goal"],
+    ["Chat", "chat"],
+  ]) {
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Add attachments, context or change mode",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("radio", { name: label, exact: true }),
+    );
+    await waitFor(() =>
+      expect(controls).toHaveAttribute("data-composer-mode", mode),
+    );
+    expect(flame).toHaveAttribute(
+      "data-flame-active",
+      mode === "goal" ? "true" : "false",
+    );
+    expect(container.querySelector("[data-flame-wrap]")).toBe(flame);
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
   }
 });
@@ -266,10 +287,10 @@ describe("SessionComposer input queue", () => {
   ];
 
   it.each(["footer", "centered", "focusRail"] as const)(
-    "renders the queue above and outside the composer island in %s layout",
+    "renders the queue above the composer in %s layout",
     async (layout) => {
       vi.mocked(agentRuntimeApi.listInputQueue).mockResolvedValue({ items });
-      render(
+      const { container } = render(
         <MemoryRouter>
           <SessionComposer session={session} projectId="p1" layout={layout} />
         </MemoryRouter>,
@@ -279,10 +300,14 @@ describe("SessionComposer input queue", () => {
         ".input-queue-strip",
       )!;
       const input = screen.getByRole("textbox", { name: "Message" });
-      const island = input.closest(".session-composer-island")!;
-      expect(island).toBeInTheDocument();
-      expect(queue.parentElement).toBe(island.parentElement);
-      expect(queue.nextElementSibling).toBe(island);
+      const composer = input.closest(".agent-session-composer-shell")!;
+      const flame = container.querySelector("[data-flame-wrap]")!;
+      expect(composer).toBeInTheDocument();
+      // The goal flame wrap owns the composer box; the queue still sits
+      // directly above that box and never inside the composer itself.
+      expect(queue.parentElement).toBe(flame.parentElement);
+      expect(queue.nextElementSibling).toBe(flame);
+      expect(composer.closest("[data-flame-wrap]")).toBe(flame);
       expect(queue.closest(".agent-session-composer-shell")).toBeNull();
       expect(input.closest("form")).not.toContainElement(queue);
     },
@@ -314,9 +339,7 @@ describe("SessionComposer input queue", () => {
       });
       expect(forceButton).toHaveAttribute("title", "inputQueueForce");
       expect(item.closest('[inert], [aria-hidden="true"]')).toBeNull();
-      expect(
-        container.querySelector(".session-composer-island"),
-      ).toHaveAttribute("data-collapsed", String(readingHistory));
+      expect(container.querySelector(".session-composer-island")).toBeNull();
 
       await userEvent.click(forceButton);
       expect(force).toHaveBeenCalledExactlyOnceWith(session.id, items[1].id);
@@ -509,7 +532,9 @@ describe("SessionComposer mode controls", () => {
     await selectMode("goal", "Keep my draft ");
     expect(await screen.findByRole("alert")).toHaveTextContent("Run started");
     expect(
-      screen.getByRole("button", { name: "Add attachments, context or change mode" }),
+      screen.getByRole("button", {
+        name: "Add attachments, context or change mode",
+      }),
     ).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
       "Keep my draft /goal",
@@ -559,13 +584,27 @@ describe("SessionComposer mode controls", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
   });
 
-  it.each(["chat"] as const)("does not mount stale goal summaries in %s", mode => {
-    const { container } = render(<SessionModeSummary session={{
-      ...session,
-      sessionMetadata: { mode, goal: { objective: "Historical goal", status: "blocked", reason: "Old blocker" } },
-    }} />);
-    expect(container).toBeEmptyDOMElement();
-  });
+  it.each(["chat"] as const)(
+    "does not mount stale goal summaries in %s",
+    (mode) => {
+      const { container } = render(
+        <SessionModeSummary
+          session={{
+            ...session,
+            sessionMetadata: {
+              mode,
+              goal: {
+                objective: "Historical goal",
+                status: "blocked",
+                reason: "Old blocker",
+              },
+            },
+          }}
+        />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    },
+  );
 
   it("renders the goal summary and specialist role without goal budgets", () => {
     const summarySession = {

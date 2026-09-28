@@ -135,7 +135,7 @@ export function SessionTimeGroups({
   if (nonEmptyGroups.length === 0 && !hasMore && !error) {
     return (
       <div className="session-list-empty">
-        <SynaxWordmark compact />
+        {/* <SynaxWordmark compact /> */}
         <span className="session-list-empty-label">
           {emptyLabel ?? "No sessions yet"}
         </span>

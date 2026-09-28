@@ -70,12 +70,12 @@
   /* Static fallbacks keep the legacy token contract inspectable before the
      compatibility bridge below resolves aliases through --theme-*. */
   --ui-canvas: #f7f8fa;
-  --ui-panel: #ffffff;
-  --ui-panel-soft: #edf0f4;
+  --ui-panel: rgb(255 255 255 / 1);
+  --ui-panel-soft: rgb(237 240 244 / 1);
   --ui-text: #242932;
   --ui-subtle: #626a76;
   --ui-line: #dce2ea;
-  --ui-line-strong: #c7d0db;
+  --ui-line-strong: #c7dbd0;
 }
 
 .dark {
@@ -133,7 +133,7 @@
 
   --ui-canvas: #10141c;
   --ui-panel: #171b23;
-  --ui-panel-soft: #272c34;
+  --ui-panel-soft: rgb(39 44 52 / 0.7);
   --ui-text: #bfbdb6;
   --ui-subtle: #a6a59f;
   --ui-line: #2d323b;

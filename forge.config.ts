@@ -45,8 +45,8 @@ const config: ForgeConfig = {
       "./server-dist",
       "./web/dist",
       "./api/db/migrations",
-      "./electron/resources/icon.png",
-      "./electron/resources/icon.ico",
+      "./electron/resources/synax-icon.png",
+      "./electron/resources/synax-icon.ico",
     ],
     ignore: (file: string) => {
       if (!file) return false;
@@ -103,7 +103,7 @@ const config: ForgeConfig = {
         ),
         setupIcon: windowsIcon,
         iconUrl:
-          "https://raw.githubusercontent.com/coldmint9/Synax/main/electron/resources/icon.ico",
+          "https://raw.githubusercontent.com/coldmint9/Synax/main/electron/resources/synax-icon.ico",
         authors: desktopProduct.author,
         description: desktopProduct.description,
       }),

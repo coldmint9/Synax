@@ -114,7 +114,7 @@ function ContextCompositionMeter({
       title={categoryHint}
     >
       <div
-        className="runtime-profile-meter-fill"
+        className={`runtime-profile-meter-fill${segmented ? "" : " runtime-profile-meter-fill--fallback"}`}
         style={{ width: `${width}%` }}
       >
         {segmented &&

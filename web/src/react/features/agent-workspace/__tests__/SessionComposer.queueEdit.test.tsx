@@ -268,15 +268,18 @@ function switchTo(view: ReturnType<typeof show>, target: AgentSession) {
   );
 }
 
-it("switches isolated drafts in the same textarea and island without remounting", () => {
+it("switches isolated drafts in the same textarea without remounting", () => {
   const view = show();
   const input = screen.getByRole("textbox", { name: "Message" });
-  const island = view.container.querySelector(".session-composer-island");
+  const composer = view.container.querySelector(
+    ".agent-session-composer-shell",
+  );
   fireEvent.change(input, { target: { value: "Draft A\nSecond line" } });
   switchTo(view, { ...session, id: "s2" });
   expect(screen.getByRole("textbox", { name: "Message" })).toBe(input);
-  expect(view.container.querySelector(".session-composer-island")).toBe(island);
-  expect(island).toHaveAttribute("data-switching", "true");
+  expect(view.container.querySelector(".agent-session-composer-shell")).toBe(
+    composer,
+  );
   expect(input).toHaveValue("");
   fireEvent.change(input, { target: { value: "Draft B" } });
   switchTo(view, session);

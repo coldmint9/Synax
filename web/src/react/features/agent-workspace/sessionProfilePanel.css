@@ -148,6 +148,9 @@
   overflow: hidden;
   transition: width 180ms ease;
 }
+.runtime-profile-meter-fill--fallback {
+  background: var(--profile-accent);
+}
 .runtime-profile-meter-fill > span {
   display: block;
   height: 100%;

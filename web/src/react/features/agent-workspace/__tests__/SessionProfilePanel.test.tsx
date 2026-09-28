@@ -128,6 +128,19 @@ describe("SessionProfilePanel mini/detail", () => {
     );
   });
 
+  it("keeps the total context progress visible without composition data", () => {
+    setup({
+      sessionStats: stats({ contextComposition: null }),
+      steps: [],
+    });
+
+    const meter = screen.getByRole("meter");
+    const fill = meter.querySelector(".runtime-profile-meter-fill");
+    expect(fill).toHaveClass("runtime-profile-meter-fill--fallback");
+    expect(fill).toHaveStyle({ width: "10.7%" });
+    expect(fill?.querySelectorAll("[data-context-category]")).toHaveLength(0);
+  });
+
   it("toggles the whole summary, keeps metrics in place and remembers the session choice", () => {
     const first = setup();
     fireEvent.click(screen.getByText("21.4K"));

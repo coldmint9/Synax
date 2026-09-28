@@ -3,9 +3,16 @@ import { AppSelect } from "../../components/AppSelect";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Tooltip } from "@/react/components/ui/Tooltip";
+import {
+  Tab,
+  TabGroup,
+  TabList,
+  TabPanel,
+  TabPanels,
+} from "@/react/components/ui/Tabs";
 import { Input, Label, Field } from "@/react/components/ui/Field";
 import { Button } from "@/react/components/ui/Button";
-import { ArrowRight, FolderCode, Layers2, Pin, X } from "lucide-react";
+import { ArrowRight, FolderOpen, Pin, Server, Terminal, X } from "lucide-react";
 import { WorkspaceProjectSources } from "../workspace/WorkspaceProjectSources";
 import { WorkspaceProjectRow } from "../workspace/WorkspaceProjectRow";
 import { useWorkspaceCopy, workspacePathKey } from "../workspace/workspaceCopy";
@@ -59,6 +66,7 @@ function ProjectCreateForm({
   const navigate = useNavigate();
   const c = useWorkspaceCopy();
   const [mode, setMode] = useState<"local" | "existing">("local");
+  const [sourceType, setSourceType] = useState<"local" | "remote">("local");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [name, setName] = useState("");
   const [pathInput, setPathInput] = useState("");
@@ -187,7 +195,13 @@ function ProjectCreateForm({
     setPathInput("");
   };
   const createWorkspace = async () => {
-    if (locked.current || !active.current || !members.length || !name.trim())
+    if (
+      locked.current ||
+      !active.current ||
+      sourceType !== "local" ||
+      !members.length ||
+      !name.trim()
+    )
       return;
     locked.current = true;
     setSubmitting(true);
@@ -236,12 +250,14 @@ function ProjectCreateForm({
           onClick={(event) => event.stopPropagation()}
         >
           <header className="workspace-create-header">
-            <span className="workspace-project-icon workspace-project-icon--large">
-              <Layers2 size={22} strokeWidth={1.5} />
-            </span>
             <div>
               <h2 id="workspace-create-title">{c.title}</h2>
-              <p id="workspace-create-intro">{c.intro}</p>
+              <p
+                id="workspace-create-intro"
+                className="workspace-create-description"
+              >
+                {c.intro}
+              </p>
             </div>
             <Button
               size="sm"
@@ -256,75 +272,164 @@ function ProjectCreateForm({
           </header>
           <div className="workspace-create-name">
             <Field disabled={submitting}>
-              <Label>{c.workspaceName}</Label>
-              <Input
-                maxLength={120}
-                placeholder={c.namePlaceholder}
-                data-dialog-autofocus
-                value={name}
-                onChange={(event) => setName(event.currentTarget.value)}
-              />
+              <Label className="sr-only">{c.workspaceName}</Label>
+              <div className="workspace-name-control">
+                <FolderOpen size={18} aria-hidden="true" />
+                <Input
+                  maxLength={120}
+                  placeholder={c.namePlaceholder}
+                  aria-label={c.workspaceName}
+                  data-dialog-autofocus
+                  value={name}
+                  onChange={(event) => setName(event.currentTarget.value)}
+                />
+              </div>
             </Field>
           </div>
-          <div className="workspace-create-body">
+          <div className="workspace-create-body" data-source-type={sourceType}>
             <section
               className="workspace-create-sources"
               aria-label={c.sources}
             >
-              <WorkspaceProjectSources
-                mode={mode}
-                onModeChange={setMode}
-                localLabel={c.localHost}
-                directoryKind={locationKind}
-                onDirectoryKindChange={(kind) => {
-                  if (kind === locationKind) return;
-                  setLocationKind(kind);
-                  setPathInput("");
-                  setMembers([]);
+              <div className="workspace-create-section-label">{c.sources}</div>
+              <TabGroup
+                className="workspace-create-source-type"
+                selectedIndex={sourceType === "local" ? 0 : 1}
+                onChange={(index) => {
+                  setSourceType(index === 0 ? "local" : "remote");
+                  if (index === 0) setMode("local");
+                  if (index === 0 && locationKind === "wsl") {
+                    setLocationKind("host");
+                    setPathInput("");
+                    setMembers([]);
+                  }
                   setError(null);
                 }}
-                wslSelector={
-                  distributions.length > 0 ? (
-                    <div className="workspace-runtime-picker">
-                      <AppSelect
-                        label={c.wslDistribution}
-                        aria-label={c.wslDistribution}
-                        value={distribution || null}
-                        isDisabled={submitting}
-                        onChange={(value) => {
-                          if (!value) return;
-                          setDistribution(value);
-                          setPathInput("");
-                          setMembers([]);
-                          setError(null);
-                        }}
-                        options={distributions.map((item) => ({
-                          key: item.name,
-                          label: item.name,
-                        }))}
-                      />
+              >
+                <TabList
+                  className="workspace-create-source-type-tabs"
+                  aria-label={c.sourceTypes}
+                >
+                  <Tab
+                    disabled={submitting}
+                    onClick={() => {
+                      setMode("local");
+                      if (locationKind === "wsl") {
+                        setLocationKind("host");
+                        setPathInput("");
+                        setMembers([]);
+                        setError(null);
+                      }
+                    }}
+                  >
+                    <FolderOpen size={15} aria-hidden="true" />
+                    {c.local}
+                  </Tab>
+                  <Tab disabled={submitting}>
+                    <Server size={15} aria-hidden="true" />
+                    {c.remote}
+                  </Tab>
+                </TabList>
+                <TabPanels>
+                  <TabPanel className="workspace-create-source-panel">
+                    <WorkspaceProjectSources
+                      mode={mode}
+                      onModeChange={setMode}
+                      directoryKind={locationKind}
+                      onDirectoryKindChange={(kind) => {
+                        if (kind === locationKind) return;
+                        setLocationKind(kind);
+                        setPathInput("");
+                        setMembers([]);
+                        setError(null);
+                      }}
+                      wslSelector={
+                        distributions.length > 0 ? (
+                          <AppSelect
+                            label={c.wslDistribution}
+                            aria-label={c.wslDistribution}
+                            value={distribution || null}
+                            isDisabled={submitting}
+                            onChange={(value) => {
+                              if (!value) return;
+                              setDistribution(value);
+                              setPathInput("");
+                              setMembers([]);
+                              setError(null);
+                            }}
+                            options={distributions.map((item) => ({
+                              key: item.name,
+                              label: item.name,
+                            }))}
+                          />
+                        ) : undefined
+                      }
+                      locationSelector={
+                        distributions.length > 0 ? (
+                          <div className="workspace-location-select">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={submitting}
+                              onClick={() => {
+                                setMode("local");
+                                if (locationKind !== "wsl") {
+                                  setLocationKind("wsl");
+                                  setPathInput("");
+                                  setMembers([]);
+                                }
+                                setError(null);
+                              }}
+                            >
+                              <Terminal size={14} />
+                              WSL2
+                            </Button>
+                          </div>
+                        ) : undefined
+                      }
+                      simplified
+                      projects={existing}
+                      loading={loadingExisting}
+                      error={existingError}
+                      onRetry={() => setLoadAttempt((value) => value + 1)}
+                      disabled={submitting}
+                      paths={members.map(memberPath)}
+                      path={pathInput}
+                      onPathChange={setPathInput}
+                      onAddPath={addPath}
+                      browseRef={browseRef}
+                      onBrowse={() => setPickerOpen(true)}
+                      onChoose={(item) => {
+                        const location = projectLocation(item);
+                        if (location)
+                          addMembers([
+                            { projectId: item.id, name: item.name, location },
+                          ]);
+                      }}
+                    />
+                  </TabPanel>
+                  <TabPanel className="workspace-create-source-panel">
+                    <div
+                      className="workspace-remote-placeholder"
+                      aria-label={c.remoteTitle}
+                    >
+                      <div
+                        className="workspace-remote-ascii"
+                        aria-hidden="true"
+                      >
+                        <pre>{`┌──────┐
+│  ▄▄  │
+│ █  █ │
+│  ▀▀  │
+└──────┘`}</pre>
+                      </div>
+                      <strong>{c.remoteTitle}</strong>
+                      <p>{c.remoteDescription}</p>
+                      <span>{c.remoteComingSoon}</span>
                     </div>
-                  ) : undefined
-                }
-                projects={existing}
-                loading={loadingExisting}
-                error={existingError}
-                onRetry={() => setLoadAttempt((value) => value + 1)}
-                disabled={submitting}
-                paths={members.map(memberPath)}
-                path={pathInput}
-                onPathChange={setPathInput}
-                onAddPath={addPath}
-                browseRef={browseRef}
-                onBrowse={() => setPickerOpen(true)}
-                onChoose={(item) => {
-                  const location = projectLocation(item);
-                  if (location)
-                    addMembers([
-                      { projectId: item.id, name: item.name, location },
-                    ]);
-                }}
-              />
+                  </TabPanel>
+                </TabPanels>
+              </TabGroup>
             </section>
             <section className="workspace-create-members">
               <div className="workspace-section-label">
@@ -340,9 +445,6 @@ function ProjectCreateForm({
               >
                 {members.length === 0 && (
                   <div className="workspace-members-empty">
-                    <span className="workspace-empty-glyph">
-                      <FolderCode size={28} strokeWidth={1.2} />
-                    </span>
                     <strong>{c.emptyTitle}</strong>
                     <p>{c.emptyHint}</p>
                   </div>
@@ -390,10 +492,6 @@ function ProjectCreateForm({
                   </WorkspaceProjectRow>
                 ))}
               </div>
-              <p className="workspace-primary-note">
-                <Pin size={12} />
-                {c.primaryHint}
-              </p>
             </section>
           </div>
           {error && (
@@ -419,8 +517,14 @@ function ProjectCreateForm({
               </Button>
               <Button
                 size="sm"
-                disabled={submitting || !members.length || !name.trim()}
+                disabled={
+                  submitting ||
+                  sourceType !== "local" ||
+                  !members.length ||
+                  !name.trim()
+                }
                 pending={submitting}
+                className="workspace-create-submit"
                 onClick={() => void createWorkspace()}
               >
                 {submitting ? c.creating : c.title}

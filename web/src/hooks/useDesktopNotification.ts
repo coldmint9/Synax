@@ -42,7 +42,7 @@ async function sendNotification(
   dismiss(payload.sessionId);
   const notice = new Notification(payload.title, {
     body: payload.body,
-    icon: "/icon-192.png",
+    icon: "/synax-icon.png",
     tag: payload.id,
   });
   browserNotices.set(payload.sessionId, notice);

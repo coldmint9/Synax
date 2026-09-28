@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="synax-icon-title synax-icon-description" shape-rendering="crispEdges">
+  <title id="synax-icon-title">Synax</title>
+  <desc id="synax-icon-description">A block-character folded S mark with a soft glow.</desc>
+  <style>
+    .synax-background { fill: #081510; }
+    .synax-mark { fill: url(#synax-blocks); }
+    .synax-highlight { fill: url(#synax-highlight-blocks); opacity: 0.28; }
+    .synax-edge { fill: url(#synax-edge-blocks); opacity: 0.48; }
+    .synax-glow { fill: url(#synax-blocks); filter: url(#synax-glow-filter); opacity: 0.34; }
+
+    .synax-block { fill: #68eea9; }
+    .synax-bright-block { fill: #ddffeb; }
+    .synax-dim-block { fill: #3cd889; }
+    .synax-fringe-block { fill: #358d60; }
+
+    @media (prefers-color-scheme: light) {
+      .synax-background { fill: #f3f0e7; }
+      .synax-glow { opacity: 0.13; }
+      .synax-block { fill: #205c3b; }
+      .synax-bright-block { fill: #173f2b; }
+      .synax-dim-block { fill: #4b8763; }
+      .synax-fringe-block { fill: #5e886c; }
+    }
+  </style>
+  <defs>
+    <path id="synax-folded-s" d="M778 214H435L205 425 570 650H230V815H570L825 580 440 365H778Z" />
+    <clipPath id="synax-folded-s-clip">
+      <use href="#synax-folded-s" />
+    </clipPath>
+
+    <pattern id="synax-blocks" width="38" height="38" patternUnits="userSpaceOnUse">
+      <rect width="29" height="29" x="2" y="2" rx="1.5" class="synax-block" />
+    </pattern>
+    <pattern id="synax-highlight-blocks" width="38" height="38" patternUnits="userSpaceOnUse" patternTransform="translate(6 -7)">
+      <rect width="29" height="29" x="2" y="2" rx="1.5" class="synax-bright-block" />
+    </pattern>
+    <pattern id="synax-edge-blocks" width="38" height="38" patternUnits="userSpaceOnUse">
+      <rect width="7" height="7" x="1" y="31" class="synax-fringe-block" />
+      <rect width="5" height="5" x="31" y="2" class="synax-dim-block" />
+    </pattern>
+    <filter id="synax-glow-filter" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="22" />
+    </filter>
+  </defs>
+
+  <rect class="synax-background" width="1024" height="1024" rx="196" />
+  <use class="synax-glow" href="#synax-folded-s" />
+  <use class="synax-mark" href="#synax-folded-s" />
+  <use class="synax-highlight" href="#synax-folded-s" clip-path="url(#synax-folded-s-clip)" />
+  <use class="synax-edge" href="#synax-folded-s" clip-path="url(#synax-folded-s-clip)" />
+</svg>

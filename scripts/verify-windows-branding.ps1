@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Drawing
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $product = Get-Content (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
 $appRoot = Join-Path $projectRoot 'out/Synax-win32-x64'
-$masterIcon = Join-Path $projectRoot 'electron/resources/icon.ico'
+$masterIcon = Join-Path $projectRoot 'electron/resources/synax-icon.ico'
 
 function Assert-BrandIcon([string] $Executable) {
     if (!(Test-Path $Executable)) { throw "Missing executable: $Executable" }

@@ -1,18 +1,23 @@
 import { beforeEach, expect, it, vi } from "vitest";
+
 const mocks = vi.hoisted(() => ({ config: vi.fn(), generate: vi.fn() }));
+
 vi.mock("../../../lib/config/config-store.js", () => ({
   getGlobalConfig: mocks.config,
 }));
 vi.mock("../../llm-runtime/gateway.js", () => ({
   generateGatewayTextResult: mocks.generate,
 }));
+
 import { optimizeInput } from "../input-optimization.js";
+
 const input = {
   projectId: "p1",
   text: "  整理我的需求  ",
   model: "openai/current",
   backendId: "native",
 };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.config.mockReturnValue({
@@ -24,7 +29,8 @@ beforeEach(() => {
     finishReason: "stop",
   });
 });
-it("follows the explicit current model and never supplies tools", async () => {
+
+it("uses the selected API model without tools and sends a conservative editing contract", async () => {
   expect(await optimizeInput(input)).toEqual({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
   });
@@ -33,60 +39,106 @@ it("follows the explicit current model and never supplies tools", async () => {
     projectId: "p1",
     model: "openai/current",
     purpose: "input-optimization",
+    maxTokens: 512,
   });
   expect(request.tools).toBeUndefined();
-  expect(request.messages[0]).toMatchObject({ role: "system" });
   expect(request.messages[0].content).toContain(
-    "Your only job is to clarify and rewrite the user's draft",
+    "Make the smallest useful wording changes",
+  );
+  expect(request.messages[0].content).toContain(
+    "If the draft is already clear, return it unchanged",
+  );
+  expect(request.messages[0].content).toContain(
+    "Do not force the draft into one paragraph",
   );
   expect(request.messages[0].content).toContain(
     "Never ask the user a question",
   );
-  expect(request.messages[0].content).toContain(
-    "Output only the rewritten paragraph",
-  );
   expect(request.messages[1]).toEqual({ role: "user", content: input.text });
   expect(signal).toBeInstanceOf(AbortSignal);
 });
-it("requires a substantive single-paragraph rewrite without a fixed template", async () => {
-  await optimizeInput(input);
-  const prompt = mocks.generate.mock.calls[0][0].messages[0].content;
-  expect(prompt).toContain("one natural, coherent paragraph");
-  expect(prompt).toContain("Do not use a fixed template, headings, labels");
-  expect(prompt).toContain("Do more than fix punctuation");
-  expect(prompt).toContain("make the intended purpose explicit");
-});
-it("frames optimization as rewriting rather than answering", async () => {
-  await optimizeInput(input);
-  const prompt = mocks.generate.mock.calls[0][0].messages[0].content;
-  expect(prompt).toContain(
-    "Do not answer, solve, explain, recommend, plan, execute",
+
+it("does not force a generic expansion for a concise request", async () => {
+  const draft = "做成可视化动态交互的页面";
+  mocks.generate.mockResolvedValue({
+    text: "做成可视化的动态交互页面。",
+    finishReason: "stop",
+  });
+
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: "做成可视化的动态交互页面。",
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(1);
+  expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(
+    "The draft is concise",
   );
-  expect(prompt).toContain(
-    "without inventing details or turning it into a question",
-  );
-  expect(prompt).not.toContain("items to confirm");
 });
-it("retries a punctuation-only result with a paragraph rewrite correction", async () => {
+
+it("keeps structured drafts and protected literals intact", async () => {
+  const draft = [
+    "修复登录流程：",
+    "- 保留接口 `POST /api/login`",
+    "- 运行 `npm test`",
+    "```ts",
+    'const endpoint = "https://example.com/login";',
+    "```",
+  ].join("\n");
+  mocks.generate.mockResolvedValue({
+    text: [
+      "请修复登录流程：",
+      "- 保留接口 `POST /api/login`",
+      "- 运行 `npm test`",
+      "```ts",
+      'const endpoint = "https://example.com/login";',
+      "```",
+    ].join("\n"),
+    finishReason: "stop",
+  });
+
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: [
+      "请修复登录流程：",
+      "- 保留接口 `POST /api/login`",
+      "- 运行 `npm test`",
+      "```ts",
+      'const endpoint = "https://example.com/login";',
+      "```",
+    ].join("\n"),
+  });
+});
+
+it("repairs a provider response that drops protected content, then accepts a valid rewrite", async () => {
+  const draft = "修复 `src/login.ts`，并运行 `npm test`。";
+  const repaired = "请修复 `src/login.ts`，完成后运行 `npm test`。";
   mocks.generate
-    .mockResolvedValueOnce({ text: "只是改了标点。", finishReason: "stop" })
     .mockResolvedValueOnce({
-      text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+      text: "请修复登录问题。",
       finishReason: "stop",
-    });
-  expect(
-    await optimizeInput({
-      ...input,
-      text: "我想把项目需求整理清楚，重点说明目标和约束。",
-    }),
-  ).toEqual({
-    text: "我希望把项目需求梳理清楚，明确目标、约束以及最终希望达到的效果。",
+    })
+    .mockResolvedValueOnce({ text: repaired, finishReason: "stop" });
+
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: repaired,
   });
   expect(mocks.generate).toHaveBeenCalledTimes(2);
   expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
-    "one natural, coherent paragraph",
+    "previous rewrite violated the editing contract",
   );
 });
+
+it("falls back to the original draft when the provider keeps violating the contract", async () => {
+  const draft = "修复 `src/login.ts`，并运行 `npm test`。";
+  mocks.generate.mockResolvedValue({
+    text: "以下是一个完整的登录修复方案：\n1. 修改代码",
+    finishReason: "stop",
+  });
+
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: draft,
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+});
+
 it("does not add confirmation templates to a short draft", async () => {
   const draft = "做成可视化动态交互的页面";
   mocks.generate.mockResolvedValue({
@@ -97,6 +149,7 @@ it("does not add confirmation templates to a short draft", async () => {
     text: draft,
   });
 });
+
 it("preserves confirmation content that was already in the draft", async () => {
   const draft = "做成可交互页面，数据源待确认。";
   mocks.generate.mockResolvedValue({
@@ -116,6 +169,7 @@ it("uses the saved override even for an external backend", async () => {
   await optimizeInput({ ...input, backendId: "codex", model: undefined });
   expect(mocks.generate.mock.calls[0][0].model).toBe("custom/fixed");
 });
+
 it("does not silently choose a different model for missing or external selections", async () => {
   for (const change of [
     { model: undefined },
@@ -128,6 +182,7 @@ it("does not silently choose a different model for missing or external selection
   }
   expect(mocks.generate).not.toHaveBeenCalled();
 });
+
 it.each(["", "  ", "x".repeat(32_001)])(
   "rejects invalid input before generation",
   async (text) => {
@@ -135,6 +190,7 @@ it.each(["", "  ", "x".repeat(32_001)])(
     expect(mocks.generate).not.toHaveBeenCalled();
   },
 );
+
 it.each([
   { text: " ", finishReason: "stop" },
   { text: "partial", finishReason: "length" },
@@ -143,6 +199,7 @@ it.each([
   mocks.generate.mockResolvedValue(result);
   await expect(optimizeInput(input)).rejects.toThrow();
 });
+
 it("propagates aborts and provider failures", async () => {
   const controller = new AbortController();
   controller.abort();

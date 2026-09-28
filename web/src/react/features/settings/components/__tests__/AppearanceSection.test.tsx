@@ -369,8 +369,8 @@ describe("AppearanceSection", () => {
       source: "builtin",
       activeTheme: DEFAULT_THEME,
     });
-    expect(screen.getByText("Synax Default")).toBeInTheDocument();
-    expect(screen.getByText("Built-in")).toBeInTheDocument();
+    expect(screen.getAllByText("Synax Default").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Built-in").length).toBeGreaterThan(0);
     expect(screen.getByRole("status")).toHaveTextContent(
       "Restored built-in default theme",
     );

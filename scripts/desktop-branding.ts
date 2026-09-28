@@ -16,7 +16,7 @@ export const desktopProduct = JSON.parse(
 export function desktopIcon(platform: string): string {
   const extension =
     platform === "darwin" ? "icns" : platform === "win32" ? "ico" : "png";
-  const icon = path.join(root, "electron/resources", `icon.${extension}`);
+  const icon = path.join(root, "electron/resources", `synax-icon.${extension}`);
   if (!existsSync(icon))
     throw new Error(`Missing Synax application icon: ${icon}`);
   return icon;

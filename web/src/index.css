@@ -64,6 +64,7 @@
   --font-mono: "JetBrains Mono", "SF Mono", "Synax Liberation Mono", "Monaco", "Consolas", monospace;
 
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-toast-enter: toast-enter 0.32s var(--ease-spring) both;
   --animate-pulse-slow: pulse-slow 3s ease-in-out infinite;
   --animate-slide-in: slide-in 0.2s ease-out;
   --animate-ripple-out: ripple-out 1.5s cubic-bezier(0, 0.2, 0.8, 1) forwards;
@@ -94,6 +95,16 @@
 }
 
 /* ── Keyframes ── */
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 @keyframes pulse-slow {
   0%,
   100% {
@@ -2468,7 +2479,7 @@
   @apply text-primary/70;
 }
 .feed-prose code {
-  @apply font-mono text-[0.9em] font-medium rounded border border-primary/15 bg-primary/[0.07] px-1 py-0.5 text-foreground;
+  @apply font-mono text-[0.9em] font-medium rounded-[8px] border-0 bg-primary/[0.12] px-1 py-0.5 text-foreground;
 }
 .feed-prose pre {
   @apply rounded-lg border border-primary/20 bg-primary/[0.05] p-2.5 my-2.5 overflow-x-auto;
@@ -3885,8 +3896,8 @@ input[type="radio"] {
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid hsl(var(--border-hsl) / 0.75);
-  background: hsl(var(--card) / 0.94);
-  -webkit-backdrop-filter: blur(14px);
+  background: hsl(var(--card) / 0.7);
+  -webkit-backdrop-filter: blur(5px);
   backdrop-filter: blur(14px);
   box-shadow:
     0 1px 0 hsl(0 0% 100% / 0.7) inset,
@@ -3907,6 +3918,8 @@ input[type="radio"] {
     0 1px 0 hsl(0 0% 100% / 0.08) inset,
     0 2px 6px hsl(0 0% 0% / 0.45),
     0 10px 26px -10px hsl(0 0% 0% / 0.6);
+  background: hsl(#2b2b2b / 0.7);
+  -webkit-backdrop-filter: blur(5px);
 }
 
 .session-file-island-pill:hover {
@@ -5615,13 +5628,13 @@ input[type="radio"] {
 
 .agent-command-rail-inner {
   max-height: var(--agent-command-rail-max-height, calc(100dvh - 96px));
-  overflow-y: auto;
+  /*overflow-y: auto;*/
   /* Scroll containment clips box shadows too. Reserve paint space on every
      edge while keeping the input's previous width and bottom inset. */
   padding: 12px;
   pointer-events: auto;
   display: flex;
-  width: min(100%, calc(48rem + 24px));
+  width: min(100%, calc(48rem + 100px));
   margin: 0 auto;
   flex-direction: column;
   align-items: stretch;

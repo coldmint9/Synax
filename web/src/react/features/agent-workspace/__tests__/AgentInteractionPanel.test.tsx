@@ -308,6 +308,10 @@ describe("AgentInteractionPanel", () => {
     expect(container.querySelectorAll(".agent-request-choice-recommended")).toHaveLength(2);
     expect(screen.getByRole("checkbox", { name: "Fast (Recommended)" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Safe (Recommended)" })).not.toBeChecked();
+    const submit = screen.getByRole("button", { name: "Submit answers" });
+    expect(submit).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Fast (Recommended)" }));
+    expect(submit).not.toBeDisabled();
   });
 
   it("does not treat single-select bounds as option-value length", async () => {
@@ -432,11 +436,11 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
-  it("validates required fields and numeric bounds without posting", async () => {
+  it("keeps the primary action disabled for incomplete or invalid answers", async () => {
     render(<AgentInteractionPanel session={session} />);
     await screen.findByRole("textbox", { name: "Name" });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findAllByText("Required")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
     expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
     const user = await fillForm();
     for (let i = 0; i < 3; i++) {
@@ -444,11 +448,10 @@ describe("AgentInteractionPanel", () => {
     }
     await user.clear(screen.getByRole("spinbutton", { name: "Count" }));
     await user.type(screen.getByRole("spinbutton", { name: "Count" }), "8");
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    expect(screen.getByRole("spinbutton", { name: "Count" })).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(
+      screen.queryByText("Out of bounds (min 1, max 5)"),
+    ).not.toBeInTheDocument();
     expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
   });
 
@@ -505,6 +508,49 @@ describe("AgentInteractionPanel", () => {
         "s1",
         "i1",
         { revision: 3, action },
+      ),
+    );
+  });
+
+  it("keeps plan execution disabled until required choices are selected", async () => {
+    const planWithChoice: AgentInteraction = {
+      ...plan,
+      request: {
+        ...plan.request,
+        questions: [
+          {
+            id: "implementation",
+            type: "single_select",
+            label: "Implementation",
+            required: true,
+            options: [
+              { value: "css", label: "Use CSS" },
+              { value: "component", label: "Use a component" },
+            ],
+          },
+        ],
+      },
+    };
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [planWithChoice],
+    });
+    render(<AgentInteractionPanel session={session} />);
+
+    const execute = await screen.findByRole("button", {
+      name: "Start execution",
+    });
+    expect(execute).toBeDisabled();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: "Use CSS" }));
+    expect(execute).not.toBeDisabled();
+    await userEvent.click(execute);
+
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "plan1",
+        { revision: 3, action: "execute" },
       ),
     );
   });
@@ -572,6 +618,8 @@ describe("AgentInteractionPanel", () => {
         { name: "Other" },
       ),
     );
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByText("Enter an other option")).not.toBeInTheDocument();
     await user.type(
       screen.getByRole("textbox", { name: "Target — Other" }),
       "Desktop",
@@ -588,11 +636,14 @@ describe("AgentInteractionPanel", () => {
       screen.getByRole("textbox", { name: "Checks — Other" }),
       "Accessibility",
     );
-    await user.click(screen.getByRole("button", { name: "Submit answers" }));
-    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
-    expect(screen.getByText("Out of bounds (min 1, max 2)")).toBeVisible();
+    const submit = screen.getByRole("button", { name: "Submit answers" });
+    expect(submit).toBeDisabled();
+    expect(
+      screen.queryByText("Out of bounds (min 1, max 2)"),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "UI" }));
-    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    expect(submit).not.toBeDisabled();
+    await user.click(submit);
     await waitFor(() =>
       expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
         "s1",

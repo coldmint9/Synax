@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react'
+import { useMemo, useState } from 'react'
 import { X, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 import { useNotificationStore, type Notification, type NotificationType } from '../state/notificationStore'
 
@@ -9,8 +9,6 @@ const ICONS: Record<NotificationType, typeof Info> = {
   warning: AlertTriangle,
 }
 
-/* Synax UI default toast: the surface stays opaque and only the indicator/title
-   carries the variant tone, so no per-type translucent background is needed. */
 const ICON_STYLES: Record<NotificationType, string> = {
   info: 'text-accent-soft-foreground',
   success: 'text-success-soft-foreground',
@@ -58,7 +56,6 @@ function ToastItem({ notification, index, total, expanded }: {
   expanded: boolean
 }) {
   const dismiss = useNotificationStore(s => s.dismiss)
-  const ref = useRef<HTMLDivElement>(null)
   const Icon = ICONS[notification.type]
 
   const VARIANT_STYLES: Record<string, string> = {
@@ -74,7 +71,6 @@ function ToastItem({ notification, index, total, expanded }: {
 
   return (
     <div
-      ref={ref}
       style={{
         transform: `scale(${scale}) translateY(${translateY}px)`,
         opacity,
@@ -84,46 +80,48 @@ function ToastItem({ notification, index, total, expanded }: {
         left: 0,
         right: 0,
         pointerEvents: hidden ? 'none' : 'auto',
-        transition: 'transform 0.3s ease, opacity 0.3s ease',
       }}
-      className={`flex items-start gap-2 rounded-xl bg-surface px-3 py-2 shadow-overlay ${index === 0 ? 'animate-in slide-in-from-top-2 fade-in duration-300' : ''}`}
+      className="motion-safe:transition-[transform,opacity] motion-safe:duration-300 motion-safe:ease-out"
     >
-      <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
-      <div className="flex-1 min-w-0">
-        <p className="text-xs leading-5 text-overlay-foreground">
-          {notification.message}
-        </p>
-        {notification.actions && notification.actions.length > 0 && (
-          <div className="mt-1.5 flex items-center gap-3">
-            {notification.actions.map((a, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => { a.onClick(); dismiss(notification.id) }}
-                className={`text-[11px] font-medium transition-colors ${VARIANT_STYLES[a.variant ?? 'default']}`}
-              >
-                {a.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {!notification.actions && notification.action && (
-          <button
-            type="button"
-            onClick={() => { notification.action!.onClick(); dismiss(notification.id) }}
-            className="mt-1.5 text-[11px] font-medium text-primary hover:text-primary/80 transition-colors"
-          >
-            {notification.action.label} →
-          </button>
-        )}
+      <div className="flex items-start gap-2 rounded-xl border border-black/10 bg-white/90 px-3 py-2 text-zinc-900 shadow-overlay backdrop-blur-xl dark:border-white/15 dark:bg-black/80 dark:text-zinc-50 motion-safe:animate-toast-enter">
+        <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs leading-5 text-inherit">
+            {notification.message}
+          </p>
+          {notification.actions && notification.actions.length > 0 && (
+            <div className="mt-1.5 flex items-center gap-3">
+              {notification.actions.map((a, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => { a.onClick(); dismiss(notification.id) }}
+                  className={`text-[11px] font-medium transition-colors ${VARIANT_STYLES[a.variant ?? 'default']}`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {!notification.actions && notification.action && (
+            <button
+              type="button"
+              onClick={() => { notification.action!.onClick(); dismiss(notification.id) }}
+              className="mt-1.5 text-[11px] font-medium text-primary hover:text-primary/80 transition-colors"
+            >
+              {notification.action.label} →
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => dismiss(notification.id)}
+          aria-label="关闭通知"
+          className="shrink-0 rounded-md p-0.5 text-muted-foreground/70 hover:text-foreground transition-colors"
+        >
+          <X size={12} />
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={() => dismiss(notification.id)}
-        className="shrink-0 rounded-md p-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
-      >
-        <X size={12} />
-      </button>
     </div>
   )
 }

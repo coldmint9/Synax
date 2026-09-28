@@ -53,8 +53,8 @@ const sessionNotifications = new SessionNotifications(
   () => mainWindow,
   ensureMainWindow,
   isDev
-    ? getResourcePath("electron", "resources", "icon.png")
-    : getResourcePath("icon.png"),
+    ? getResourcePath("electron", "resources", "synax-icon.png")
+    : getResourcePath("synax-icon.png"),
 );
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
@@ -105,9 +105,11 @@ function createWindow(): BrowserWindow {
       ? getResourcePath(
           "electron",
           "resources",
-          process.platform === "win32" ? "icon.ico" : "icon.png",
+          process.platform === "win32" ? "synax-icon.ico" : "synax-icon.png",
         )
-      : getResourcePath(process.platform === "win32" ? "icon.ico" : "icon.png"),
+      : getResourcePath(
+          process.platform === "win32" ? "synax-icon.ico" : "synax-icon.png",
+        ),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     ...(process.platform === "darwin"
       ? { trafficLightPosition: { x: 14, y: 18 } }
