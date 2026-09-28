@@ -1,3 +1,4 @@
+import type { GlobalComputerUseSettings } from './config-types.js';
 import fs from "node:fs";
 import path from "node:path";
 import { getRawSqlite } from "../../db/index.js";
@@ -542,6 +543,10 @@ function normalizeTemplateConfig(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
     ),
+    computerUse: normalizeComputerUseSettings(
+      config.computerUse ?? defaults.computerUse,
+      includeSecrets,
+    ),
     webSearch: normalizeWebSearchConfig(
       config.webSearch ?? defaults.webSearch,
       includeSecrets,
@@ -578,6 +583,10 @@ function normalizeUserGlobalConfig(
       config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
+      includeSecrets,
+    ),
+    computerUse: normalizeComputerUseSettings(
+      config.computerUse ?? defaults.computerUse,
       includeSecrets,
     ),
     webSearch: normalizeWebSearchConfig(
@@ -618,6 +627,10 @@ function mergeGlobalConfigLayers(
     providerConnections,
     mcpServers: normalizeMcpServers(
       global.mcpServers ?? template.mcpServers ?? [],
+      includeSecrets,
+    ),
+    computerUse: normalizeComputerUseSettings(
+      global.computerUse ?? template.computerUse,
       includeSecrets,
     ),
     webSearch: normalizeWebSearchConfig(
@@ -698,6 +711,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.features) ||
     Boolean(patch.webSearch) ||
     Boolean(patch.mcpServers) ||
+    Boolean(patch.computerUse) ||
     Boolean(userPatchProviders?.length) ||
     Object.keys(userPatchConnections).length > 0;
   const templateTouched =
@@ -744,6 +758,12 @@ function applyGlobalConfigPatch(
     enabledAcpProviderIds:
       patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
     mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
+    computerUse: patch.computerUse
+      ? prepareComputerUseForStorage(
+          mergeComputerUsePatch(current.computerUse, patch.computerUse),
+          current.computerUse,
+        )
+      : current.computerUse,
     webSearch: patch.webSearch
       ? mergeWebSearchConfig(current.webSearch, patch.webSearch)
       : current.webSearch,
@@ -909,6 +929,74 @@ function normalizeProviderConnection(
     ...(apiKey ? { apiKey } : {}),
     ...(apiKeyMasked ? { apiKeyMasked } : {}),
     ...(!includeSecrets ? { apiKey: undefined } : {}),
+  };
+}
+
+function normalizeComputerUseSettings(
+  settings: GlobalComputerUseSettings | undefined,
+  includeSecrets: boolean,
+): GlobalComputerUseSettings | undefined {
+  if (!settings) return undefined;
+  const jev = settings.jev;
+  const decrypted = includeSecrets ? decryptSecret(jev?.apiKey) : undefined;
+  const masked = jev?.apiKeyMasked ?? maskSecret(jev?.apiKey);
+  return {
+    enabled: settings.enabled !== false,
+    strategy: settings.strategy ?? "auto",
+    perception: settings.perception ?? "disabled",
+    ...(jev
+      ? {
+          jev: {
+            ...jev,
+            enabled: jev.enabled === true,
+            fallback: jev.fallback ?? "fail_closed",
+            ...(decrypted ? { apiKey: decrypted } : {}),
+            ...(masked ? { apiKeyMasked: masked } : {}),
+            ...(!includeSecrets ? { apiKey: undefined } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function mergeComputerUsePatch(
+  current: GlobalComputerUseSettings | undefined,
+  patch: GlobalComputerUseSettings,
+): GlobalComputerUseSettings {
+  const jev = patch.jev ? { ...current?.jev, ...patch.jev } : current?.jev;
+  return { ...current, ...patch, ...(jev ? { jev } : {}) };
+}
+
+function prepareComputerUseForStorage(
+  settings: GlobalComputerUseSettings | undefined,
+  current: GlobalComputerUseSettings | undefined,
+): GlobalComputerUseSettings | undefined {
+  if (!settings) return undefined;
+  const jev = settings.jev;
+  if (!jev) return { ...settings };
+  const stored = current?.jev?.apiKey;
+  if (jev.apiKey === "") {
+    return { ...settings, jev: { ...jev, apiKey: undefined, apiKeyMasked: undefined } };
+  }
+  if (jev.apiKey === undefined) {
+    return {
+      ...settings,
+      jev: {
+        ...jev,
+        apiKey: stored ? encryptSecret(stored) : undefined,
+        apiKeyMasked: stored ? maskSecret(stored) : jev.apiKeyMasked,
+      },
+    };
+  }
+  const encrypted = encryptSecret(jev.apiKey);
+  return {
+    ...settings,
+    jev: {
+      ...jev,
+      ...(encrypted
+        ? { apiKey: encrypted, apiKeyMasked: maskSecret(jev.apiKey) }
+        : { apiKey: undefined, apiKeyMasked: undefined }),
+    },
   };
 }
 

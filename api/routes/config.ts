@@ -178,6 +178,25 @@ const globalConfigPatchSchema = z
       )
       .max(64)
       .optional(),
+    computerUse: z
+      .object({
+        enabled: z.boolean().optional(),
+        strategy: z.enum(["auto", "direct", "jev"]).optional(),
+        perception: z.enum(["disabled", "auto", "required"]).optional(),
+        jev: z
+          .object({
+            enabled: z.boolean().optional(),
+            fallback: z.enum(["direct", "fail_closed"]).optional(),
+            providerId: z.string().trim().max(512).nullable().optional(),
+            model: z.string().trim().max(512).nullable().optional(),
+            apiKey: z.string().max(4096).optional(),
+            apiKeyMasked: z.string().max(64).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     webSearch: webSearchConfigSchema.optional(),
     sessionArchiveRetentionDays: z
       .union([z.number().int().min(1).max(3650), z.null()])

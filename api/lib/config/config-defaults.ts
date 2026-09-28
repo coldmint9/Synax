@@ -103,6 +103,7 @@ export function createDefaultGlobalConfig(updatedBy = "system"): GlobalConfig {
     defaultApiProviderId: "openai",
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
+    computerUse: { enabled: true, strategy: "auto", perception: "disabled" },
     webSearch: createDefaultWebSearchConfig(),
     sessionArchiveRetentionDays: 7,
     providerConnections: {
@@ -180,6 +181,7 @@ export function createDefaultUserGlobalConfig(
     defaultApiProviderId: "openai",
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
+    computerUse: { enabled: true, strategy: "auto", perception: "disabled" },
     webSearch: createDefaultWebSearchConfig(),
     sessionArchiveRetentionDays: 7,
     providerConnections: {},
