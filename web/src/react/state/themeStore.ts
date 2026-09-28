@@ -22,10 +22,10 @@ const THEME_PREFERENCES_VERSION = 1 as const;
 const LEGACY_SHELL_STORAGE_KEY = "rumbling-shell-preferences";
 
 type PersistedThemePreferences = {
-  version: typeof THEME_PREFERENCES_VERSION;
+  schemaVersion: typeof THEME_PREFERENCES_VERSION;
   mode: ThemeMode;
-  activeTheme: PortableTheme;
-  source?: ThemeSource;
+  theme: PortableTheme;
+  source: ThemeSource;
 };
 
 export interface ThemeState {
@@ -68,9 +68,9 @@ function persistState(state: Pick<ThemeState, "mode" | "activeTheme" | "source">
   const storage = getStorage();
   if (!storage) return;
   const payload: PersistedThemePreferences = {
-    version: THEME_PREFERENCES_VERSION,
+    schemaVersion: THEME_PREFERENCES_VERSION,
     mode: state.mode,
-    activeTheme: themeToExport(state.activeTheme),
+    theme: themeToExport(state.activeTheme),
     source: state.source,
   };
   try {
@@ -95,15 +95,16 @@ function parsePersistedPayload(raw: string): {
 } | null {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed) || parsed.version !== THEME_PREFERENCES_VERSION) return null;
-    const mode = validMode(parsed.mode) ? parsed.mode : "system";
-    const rawTheme = parsed.activeTheme ?? parsed.theme;
-    const activeTheme = normalizeTheme(rawTheme ?? {
-      version: 1,
-      id: DEFAULT_THEME.id,
-      name: DEFAULT_THEME.name,
-    });
-    const source = parsed.source === "imported" ? "imported" : "builtin";
+    if (!isRecord(parsed)) return null;
+    const isCanonical = "schemaVersion" in parsed;
+    if ((isCanonical ? parsed.schemaVersion : parsed.version) !== THEME_PREFERENCES_VERSION)
+      return null;
+    if (!validMode(parsed.mode)) return null;
+    if (parsed.source !== "builtin" && parsed.source !== "imported") return null;
+    // The original Task 3 shape is a read-only fallback, never a write format.
+    const activeTheme = normalizeTheme(isCanonical ? parsed.theme : parsed.activeTheme);
+    const mode = parsed.mode;
+    const source = parsed.source;
     return { mode, activeTheme, source };
   } catch {
     return null;
@@ -134,10 +135,10 @@ function parseLegacyPayload(raw: string): { mode: ThemeMode; activeTheme: Normal
 function applyPersistedState(
   persisted: { mode: ThemeMode; activeTheme: NormalizedTheme; source: ThemeSource },
 ): void {
-  useThemeStore.setState((state) => ({
+  useThemeStore.setState({
     ...persisted,
     ...stateProjection(persisted.mode, persisted.activeTheme),
-  }));
+  });
 }
 
 function applyRawStorageValue(raw: string, persist = false): boolean {
@@ -237,8 +238,27 @@ export function hydrateThemePreferences(): void {
   persistState(migrated);
 }
 
+/** Refresh derived state and DOM synchronously without installing listeners. */
+export function applyCurrentThemeRuntime(): void {
+  const state = useThemeStore.getState();
+  const projection = stateProjection(state.mode, state.activeTheme);
+  useThemeStore.setState(projection);
+  applyThemeRuntime(state.activeTheme, projection.resolvedTheme);
+}
+
+let activeRuntimeCleanup: (() => void) | null = null;
+
 /** Apply the theme projection and connect browser/system/storage synchronisation. */
 export function startThemeRuntime(): () => void {
+  if (activeRuntimeCleanup) {
+    applyCurrentThemeRuntime();
+    return activeRuntimeCleanup;
+  }
+  if (typeof window === "undefined") {
+    applyCurrentThemeRuntime();
+    return () => {};
+  }
+  const runtimeWindow = window;
   let media: MediaQueryList | undefined;
   let mediaListener: (() => void) | undefined;
 
@@ -261,21 +281,22 @@ export function startThemeRuntime(): () => void {
     media = window.matchMedia("(prefers-color-scheme: dark)");
     mediaListener = () => {
       if (useThemeStore.getState().mode !== "system") return;
-      const state = useThemeStore.getState();
-      const projection = stateProjection(state.mode, state.activeTheme);
-      useThemeStore.setState(projection);
-      applyThemeRuntime(state.activeTheme, projection.resolvedTheme);
+      applyCurrent();
     };
     if (typeof media.addEventListener === "function") media.addEventListener("change", mediaListener);
     else media.addListener?.(mediaListener);
   };
 
+  let applying = false;
   const applyCurrent = () => {
-    const state = useThemeStore.getState();
-    const projection = stateProjection(state.mode, state.activeTheme);
-    if (projection.resolvedTheme !== state.resolvedTheme) useThemeStore.setState(projection);
-    applyThemeRuntime(state.activeTheme, projection.resolvedTheme);
-    syncMediaListener();
+    if (applying) return;
+    applying = true;
+    try {
+      applyCurrentThemeRuntime();
+      syncMediaListener();
+    } finally {
+      applying = false;
+    }
   };
 
   applyCurrent();
@@ -297,13 +318,21 @@ export function startThemeRuntime(): () => void {
     }
     applyRawStorageValue(event.newValue);
   };
-  if (typeof window !== "undefined") window.addEventListener("storage", onStorage);
+  runtimeWindow.addEventListener("storage", onStorage);
 
-  return () => {
+  const cleanup = () => {
     unsubscribe();
     removeMediaListener();
-    if (typeof window !== "undefined") window.removeEventListener("storage", onStorage);
+    runtimeWindow.removeEventListener("storage", onStorage);
+    if (activeRuntimeCleanup === cleanup) activeRuntimeCleanup = null;
   };
+  activeRuntimeCleanup = cleanup;
+  return cleanup;
+}
+
+/** Start the singleton runtime when a compatibility caller mutates the theme. */
+export function ensureThemeRuntime(): () => void {
+  return startThemeRuntime();
 }
 
 export async function importThemeFile(file: Blob): Promise<ThemeImportResult> {

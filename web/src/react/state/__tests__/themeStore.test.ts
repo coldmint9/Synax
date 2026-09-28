@@ -3,6 +3,7 @@ import { DEFAULT_ACCENT } from "../../../lib/appearance";
 import { DEFAULT_THEME } from "../../../lib/theme/defaults";
 import { mergeTheme } from "../../../lib/theme/normalize";
 import {
+  ensureThemeRuntime,
   exportActiveTheme,
   hydrateThemePreferences,
   importThemeFile,
@@ -10,6 +11,7 @@ import {
   THEME_STORAGE_KEY,
   useThemeStore,
 } from "../themeStore";
+import { hydrateShellPreferences, startShellAppearance, useShellStore } from "../shellStore";
 
 const legacyKey = "rumbling-shell-preferences";
 let stopRuntime: (() => void) | undefined;
@@ -76,10 +78,16 @@ describe("theme store", () => {
     expect(useThemeStore.getState().mode).toBe("dark");
     expect(useThemeStore.getState().activeTheme.colors.dark.accent).toBe("#98aecb");
     expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toMatchObject({
+      schemaVersion: 1,
       mode: "dark",
-      activeTheme: { colors: { dark: { accent: "#98aecb" } } },
+      theme: { colors: { dark: { accent: "#98aecb" } } },
+      source: "builtin",
     });
     expect(JSON.parse(localStorage.getItem(legacyKey)!)).toMatchObject({ locale: "zh" });
+    localStorage.setItem(legacyKey, JSON.stringify({ theme: "light", accentColor: "#123456" }));
+    hydrateThemePreferences();
+    expect(useThemeStore.getState().mode).toBe("dark");
+    expect(useThemeStore.getState().activeTheme.colors.dark.accent).toBe("#98aecb");
   });
 
   it("prefers a valid new payload over legacy appearance preferences", () => {
@@ -90,7 +98,7 @@ describe("theme store", () => {
     });
     localStorage.setItem(
       THEME_STORAGE_KEY,
-      JSON.stringify({ version: 1, mode: "light", activeTheme: imported, source: "imported" }),
+      JSON.stringify({ schemaVersion: 1, mode: "light", theme: imported, source: "imported" }),
     );
     localStorage.setItem(legacyKey, JSON.stringify({ theme: "dark", accentColor: "#98aecb" }));
 
@@ -109,7 +117,14 @@ describe("theme store", () => {
 
   it("persists mode and imported themes", async () => {
     useThemeStore.getState().setMode("dark");
-    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toMatchObject({ mode: "dark" });
+    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toMatchObject({
+      schemaVersion: 1,
+      mode: "dark",
+      theme: expect.any(Object),
+    });
+    expect(Object.keys(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).sort()).toEqual(
+      ["schemaVersion", "mode", "theme", "source"].sort(),
+    );
 
     const result = await importThemeFile(
       new File([JSON.stringify({ version: 1, id: "mist-blue", name: "Mist Blue", colors: { light: { accent: "#98aecb" } } })], "mist.json"),
@@ -117,9 +132,127 @@ describe("theme store", () => {
     expect(result.ok).toBe(true);
     expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toMatchObject({
       source: "imported",
-      activeTheme: { id: "mist-blue", colors: { light: { accent: "#98aecb" } } },
+      theme: { id: "mist-blue", colors: { light: { accent: "#98aecb" } } },
     });
     expect(exportActiveTheme().id).toBe("mist-blue");
+  });
+
+  it("does not write the legacy shell key when the theme changes", () => {
+    const legacy = JSON.stringify({ theme: "light", accentColor: "#a1bba8", locale: "en" });
+    localStorage.setItem(legacyKey, legacy);
+
+    const writes = vi.spyOn(localStorage, "setItem");
+    hydrateThemePreferences();
+    useThemeStore.getState().setMode("dark");
+    useThemeStore.getState().setAccentColor("#98aecb");
+    useThemeStore.getState().resetTheme();
+    useShellStore.getState().setTheme("light");
+    useShellStore.getState().setAccentColor("#b1a2c9");
+    stopRuntime = startThemeRuntime();
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: THEME_STORAGE_KEY,
+      newValue: JSON.stringify({ schemaVersion: 1, mode: "dark", theme: DEFAULT_THEME, source: "builtin" }),
+    }));
+
+    expect(localStorage.getItem(legacyKey)).toBe(legacy);
+    expect(writes.mock.calls.every(([key]) => key === THEME_STORAGE_KEY)).toBe(true);
+    useShellStore.getState().setLocale("en");
+    expect(writes).toHaveBeenLastCalledWith(legacyKey, expect.any(String));
+    expect(JSON.parse(localStorage.getItem(legacyKey)!)).toMatchObject({ locale: "en" });
+  });
+
+  it("refreshes resolved tokens when the mode stays the same", () => {
+    useThemeStore.getState().setMode("light");
+    const before = useThemeStore.getState().resolvedTokens;
+    const nextTheme = mergeTheme(DEFAULT_THEME, {
+      colors: { light: { accent: "#c49eaa" } },
+    });
+
+    useThemeStore.getState().setActiveTheme(nextTheme, "imported");
+
+    expect(useThemeStore.getState().resolvedTheme).toBe("light");
+    expect(useThemeStore.getState().resolvedTokens).not.toBe(before);
+    expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#c49eaa");
+    useThemeStore.getState().setAccentColor("#98aecb");
+    expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#98aecb");
+    const tokens = useThemeStore.getState().resolvedTokens;
+    useThemeStore.getState().setMode("light");
+    expect(useThemeStore.getState().resolvedTokens).not.toBe(tokens);
+    expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#98aecb");
+  });
+
+  it.each(["mode", "accent"])("applies the shell %s setter before runtime start without installing listeners", (first) => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.style.removeProperty("--theme-accent");
+    const listeners = vi.spyOn(window, "addEventListener");
+    if (first === "mode") {
+      useShellStore.getState().setTheme("dark");
+      expect(document.documentElement).toHaveClass("dark");
+      expect(useShellStore.getState().resolvedTheme).toBe("dark");
+    } else {
+      useShellStore.getState().setAccentColor("#98aecb");
+      expect(document.documentElement.style.getPropertyValue("--theme-accent")).toBe("#98aecb");
+      expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#98aecb");
+    }
+    expect(listeners.mock.calls.filter(([type]) => type === "storage")).toHaveLength(1);
+    stopRuntime = ensureThemeRuntime();
+    expect(ensureThemeRuntime()).toBe(stopRuntime);
+  });
+
+  it("refreshes same-mode tokens through startShellAppearance", () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, theme: "light", accentColor: "#c49eaa" },
+    }));
+    stopRuntime = startShellAppearance();
+    expect(useThemeStore.getState().resolvedTheme).toBe("light");
+    expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#c49eaa");
+    expect(document.documentElement.style.getPropertyValue("--theme-accent")).toBe("#c49eaa");
+  });
+
+  it("does not flatten imported mode-specific accents when starting compatibility runtime", () => {
+    const theme = mergeTheme(DEFAULT_THEME, { colors: { dark: { accent: "#c49eaa" } } });
+    useThemeStore.getState().setActiveTheme(theme);
+    stopRuntime = startShellAppearance();
+    expect(useThemeStore.getState().activeTheme).toBe(theme);
+    useThemeStore.getState().setMode("dark");
+    expect(useThemeStore.getState().resolvedTokens.colors.accent).toBe("#c49eaa");
+  });
+
+  it("hydrates shell preferences and changes font size without a DOM", () => {
+    localStorage.setItem(legacyKey, JSON.stringify({ theme: "dark", locale: "en", agentFontSize: 18 }));
+    vi.stubGlobal("document", undefined);
+    vi.stubGlobal("window", undefined);
+    try {
+      expect(() => hydrateShellPreferences()).not.toThrow();
+      expect(useShellStore.getState().preferences).toMatchObject({ locale: "en", agentFontSize: 18 });
+      expect(useThemeStore.getState().resolvedTheme).toBe("dark");
+      expect(() => useShellStore.getState().setAgentFontSize(16)).not.toThrow();
+      expect(() => startThemeRuntime()()).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("accepts the old Task 3 payload only for reads and writes canonical preferences next", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ version: 1, mode: "dark", activeTheme: DEFAULT_THEME, source: "builtin" }));
+    hydrateThemePreferences();
+    expect(useThemeStore.getState().mode).toBe("dark");
+    useThemeStore.getState().setMode("light");
+    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toEqual({
+      schemaVersion: 1, mode: "light", theme: exportActiveTheme(), source: "builtin",
+    });
+  });
+
+  it.each([
+    { schemaVersion: 2, version: 1, mode: "dark", activeTheme: DEFAULT_THEME, source: "builtin" },
+    { schemaVersion: 1, mode: "wrong", theme: DEFAULT_THEME, source: "builtin" },
+    { schemaVersion: 1, mode: "dark", source: "builtin" },
+    { schemaVersion: 1, mode: "dark", theme: DEFAULT_THEME, source: "wrong" },
+  ])("ignores invalid storage payloads without changing the active theme", (payload) => {
+    stopRuntime = startThemeRuntime();
+    const before = useThemeStore.getState();
+    window.dispatchEvent(new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: JSON.stringify(payload) }));
+    expect(useThemeStore.getState()).toBe(before);
   });
 
   it("resolves system mode, ignores system changes for manual modes, and syncs storage events", () => {
@@ -140,7 +273,7 @@ describe("theme store", () => {
     const nextTheme = mergeTheme(DEFAULT_THEME, { id: "from-window", colors: { light: { accent: "#c49eaa" } } });
     window.dispatchEvent(new StorageEvent("storage", {
       key: THEME_STORAGE_KEY,
-      newValue: JSON.stringify({ version: 1, mode: "dark", activeTheme: nextTheme, source: "imported" }),
+      newValue: JSON.stringify({ schemaVersion: 1, mode: "dark", theme: nextTheme, source: "imported" }),
     }));
     expect(useThemeStore.getState().mode).toBe("dark");
     expect(useThemeStore.getState().activeTheme.id).toBe("from-window");
@@ -150,6 +283,11 @@ describe("theme store", () => {
     vi.stubGlobal("localStorage", undefined);
     expect(() => hydrateThemePreferences()).not.toThrow();
     expect(() => useThemeStore.getState().setAccentColor(DEFAULT_ACCENT)).not.toThrow();
-    expect(() => startThemeRuntime()).not.toThrow();
+    vi.stubGlobal("window", undefined);
+    try {
+      expect(() => { stopRuntime = startThemeRuntime(); }).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

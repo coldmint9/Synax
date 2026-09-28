@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import { systemTheme } from "../../lib/appearance";
 import {
+  applyCurrentThemeRuntime,
+  ensureThemeRuntime,
   hydrateThemePreferences,
   startThemeRuntime,
   useThemeStore,
@@ -8,6 +11,7 @@ import {
 } from "./themeStore";
 import { useApiConnectivityStore } from "../../lib/apiConnectivity";
 import { mergeTheme } from "../../lib/theme/normalize";
+import { resolveThemeTokens } from "../../lib/theme/runtime";
 import { AppError } from "../../lib/appError";
 
 export interface ProjectSummary {
@@ -119,6 +123,7 @@ function applyUiFontSize(fontSize: number): void {
     MAX_UI_FONT_SIZE,
     Math.max(MIN_UI_FONT_SIZE, Math.round(fontSize)),
   );
+  if (typeof document === "undefined" || !document.documentElement) return;
   document.documentElement.style.setProperty(
     "--ui-font-size",
     `${normalized}px`,
@@ -161,9 +166,11 @@ export const useShellStore = create<ShellState>((set, get) => ({
   },
   setTheme: (theme) => {
     useThemeStore.getState().setMode(theme);
+    ensureThemeRuntime();
   },
   setAccentColor: (color) => {
     useThemeStore.getState().setAccentColor(color);
+    ensureThemeRuntime();
   },
   setLocale: (locale) => {
     set((state) => ({ preferences: { ...state.preferences, locale } }));
@@ -311,28 +318,6 @@ function persistShellPreferences(): void {
   }
 }
 
-function syncLegacyThemePreferences(): void {
-  const storage = getShellStorage();
-  if (!storage) return;
-  const { mode, activeTheme } = useThemeStore.getState();
-  let previous: Record<string, unknown> = {};
-  try {
-    const raw = storage.getItem(storageKey);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && typeof parsed === "object") previous = parsed;
-    storage.setItem(
-      storageKey,
-      JSON.stringify({
-        ...previous,
-        theme: mode,
-        accentColor: activeTheme.colors.light.accent,
-      }),
-    );
-  } catch {
-    // Compatibility projection is best effort and never owns theme state.
-  }
-}
-
 function syncShellThemeMirror(): void {
   const theme = useThemeStore.getState();
   useShellStore.setState((state) => ({
@@ -354,8 +339,8 @@ const stopThemeMirror = useThemeStore.subscribe((state) => {
     },
     resolvedTheme: state.resolvedTheme,
   }));
-  syncLegacyThemePreferences();
 });
+if (import.meta.hot) import.meta.hot.dispose(stopThemeMirror);
 syncShellThemeMirror();
 
 export function hydrateShellPreferences() {
@@ -413,19 +398,25 @@ export function startShellAppearance(): () => void {
   const shellTheme = useShellStore.getState().preferences.theme;
   const shellAccent = useShellStore.getState().preferences.accentColor;
   const currentTheme = useThemeStore.getState();
-  const activeTheme = mergeTheme(currentTheme.activeTheme, {
-    colors: {
-      light: { accent: shellAccent },
-      dark: { accent: shellAccent },
-    },
-  });
-  // Keep this legacy bridge in memory only. Theme persistence remains owned by
-  // themeStore, and the runtime will persist subsequent user changes there.
+  // Do not flatten imported light/dark accents when the mirror is unchanged.
+  const activeTheme = shellAccent === currentTheme.activeTheme.colors.light.accent
+    ? currentTheme.activeTheme
+    : mergeTheme(currentTheme.activeTheme, {
+      colors: {
+        light: { accent: shellAccent },
+        dark: { accent: shellAccent },
+      },
+    });
+  // Legacy in-memory fixtures are supported without writing either preference key.
+  const resolvedTheme = shellTheme === "system" ? systemTheme() : shellTheme;
   useThemeStore.setState({
     mode: shellTheme,
     activeTheme,
     source: currentTheme.source,
+    resolvedTheme,
+    resolvedTokens: resolveThemeTokens(activeTheme, resolvedTheme),
   });
+  applyCurrentThemeRuntime();
   const stopRuntime = startThemeRuntime();
   const onLegacyStorage = (event: StorageEvent) => {
     if (event.key !== storageKey || !event.newValue) return;
@@ -436,7 +427,7 @@ export function startShellAppearance(): () => void {
       if (typeof parsed.accentColor === "string")
         useThemeStore.getState().setAccentColor(parsed.accentColor);
     } catch {
-      // Ignore malformed compatibility payloads.
+      // Legacy storage is untrusted input.
     }
   };
   if (typeof window !== "undefined") window.addEventListener("storage", onLegacyStorage);
