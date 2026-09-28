@@ -13,7 +13,7 @@ const lightColors: ThemeColorTokens = {
   textMuted: "#626a76",
   textSubtle: "#8f96a1",
   border: "#dce2ea",
-  borderStrong: "#c7dbd0",
+  borderStrong: "#c7d0db",
   accent: "#a1bba8",
   accentForeground: "#2f3d34",
   accentSoft: "#edf4ef",
@@ -32,7 +32,7 @@ const lightColors: ThemeColorTokens = {
 const darkColors: ThemeColorTokens = {
   canvas: "#10141c",
   surface: "#171b23",
-  surfaceSecondary: "rgb(39 44 52 / 0.7)",
+  surfaceSecondary: "#272c34",
   text: "#bfbdb6",
   textMuted: "#a6a59f",
   textSubtle: "#85847f",
@@ -60,12 +60,20 @@ const shape: ThemeShapeTokens = {
   controlHeight: "32px",
 };
 
-const effects: ThemeEffectTokens = {
+const lightEffects: ThemeEffectTokens = {
   controlShadow:
     "0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7)",
   insetShadow: "inset 0 1px 2px rgb(26 34 48 / .04)",
   floatingShadow:
     "0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045)",
+};
+
+const darkEffects: ThemeEffectTokens = {
+  controlShadow:
+    "0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035)",
+  insetShadow: "inset 0 1px 2px rgb(0 0 0 / .14)",
+  floatingShadow:
+    "0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14)",
 };
 
 /** The complete built-in theme used as the normalization base. */
@@ -78,5 +86,9 @@ export const DEFAULT_THEME: NormalizedTheme = {
     dark: darkColors,
   },
   shape,
-  effects,
+  effects: {
+    ...lightEffects,
+    light: lightEffects,
+    dark: darkEffects,
+  },
 };

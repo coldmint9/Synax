@@ -66,6 +66,7 @@ export interface ThemeShapeTokens {
 
 export type PartialThemeShapeTokens = Partial<ThemeShapeTokens>;
 
+/** The v1 public effect token shape, retained for flat-effects compatibility. */
 export interface ThemeEffectTokens {
   controlShadow: string;
   insetShadow: string;
@@ -73,6 +74,20 @@ export interface ThemeEffectTokens {
 }
 
 export type PartialThemeEffectTokens = Partial<ThemeEffectTokens>;
+
+/** v1 may provide distinct effects for each color mode. */
+export interface ThemeEffectMap {
+  light: ThemeEffectTokens;
+  dark: ThemeEffectTokens;
+}
+
+export type PartialThemeEffects = PartialThemeEffectTokens & {
+  light?: PartialThemeEffectTokens;
+  dark?: PartialThemeEffectTokens;
+};
+
+/** Normalized effects retain flat light-mode aliases for existing consumers. */
+export type NormalizedThemeEffects = ThemeEffectMap & ThemeEffectTokens;
 
 export interface SynaxTheme {
   version: ThemeVersion;
@@ -84,7 +99,7 @@ export interface SynaxTheme {
     dark?: PartialThemeColorTokens;
   };
   shape?: PartialThemeShapeTokens;
-  effects?: PartialThemeEffectTokens;
+  effects?: PartialThemeEffects;
 }
 
 /** A normalized theme has every token filled and is safe to project to a runtime. */
@@ -94,7 +109,7 @@ export interface NormalizedTheme extends SynaxTheme {
     dark: ThemeColorTokens;
   };
   shape: ThemeShapeTokens;
-  effects: ThemeEffectTokens;
+  effects: NormalizedThemeEffects;
 }
 
 /** Top-level partial form accepted by mergeTheme before default filling. */
@@ -108,11 +123,12 @@ export interface ThemeOverride {
     dark?: PartialThemeColorTokens;
   };
   shape?: PartialThemeShapeTokens;
-  effects?: PartialThemeEffectTokens;
+  effects?: PartialThemeEffects;
 }
 
-export type PortableTheme = Omit<NormalizedTheme, "description"> & {
+export type PortableTheme = Omit<NormalizedTheme, "description" | "effects"> & {
   description?: string;
+  effects: ThemeEffectMap;
 };
 
 export interface ThemeImportSuccess {

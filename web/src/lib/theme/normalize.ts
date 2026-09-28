@@ -4,21 +4,22 @@ import {
   type NormalizedTheme,
   type PartialThemeColorTokens,
   type PortableTheme,
-  type SynaxTheme,
   type ThemeOverride,
   type ThemeColorTokens,
+  type ThemeEffectTokens,
+  type NormalizedThemeEffects,
   type ResolvedTheme,
 } from "./contract";
 import {
   SynaxThemeSchema,
   ThemeOverrideSchema,
   isSafeCssColor,
+  parseSafeCssColor,
   type ParsedSynaxTheme,
   type ParsedThemeOverride,
 } from "./schema";
 
-const DEFAULT_ACCENT = "#a1bba8";
-const LIGHT_ACCENT_SOFT = "#edf4ef";
+const LIGHT_ACCENT_MIX_TARGET = "#f9f9f9";
 
 function normalizeColor(value: string): string {
   const color = value.trim();
@@ -36,70 +37,8 @@ function normalizeTokenMap<T extends object>(tokens: Partial<T> | undefined): Pa
   ) as Partial<T>;
 }
 
-function rgbFromHex(hex: string): [number, number, number] | null {
-  if (!/^#[\da-f]{6}$/i.test(hex)) return null;
-  return [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255) as [
-    number,
-    number,
-    number,
-  ];
-}
-
-function parseRgbChannel(value: string): number | null {
-  const channel = value.trim();
-  if (channel.endsWith("%")) {
-    const percentage = Number.parseFloat(channel.slice(0, -1));
-    return Number.isFinite(percentage)
-      ? Math.min(100, Math.max(0, percentage)) / 100
-      : null;
-  }
-  const number = Number.parseFloat(channel);
-  return Number.isFinite(number) ? Math.min(255, Math.max(0, number)) / 255 : null;
-}
-
 function rgbFromCssColor(color: string): [number, number, number] | null {
-  const normalized = color.trim();
-  const hex = rgbFromHex(normalized);
-  if (hex) return hex;
-
-  const rgbMatch = normalized.match(/^rgba?\((.*)\)$/i);
-  if (rgbMatch) {
-    const channels = rgbMatch[1].split(/\s*[,/]\s*/).slice(0, 3);
-    if (channels.length !== 3) return null;
-    const values = channels.map(parseRgbChannel);
-    return values.every((value): value is number => value !== null)
-      ? (values as [number, number, number])
-      : null;
-  }
-
-  const hslMatch = normalized.match(/^hsla?\((.*)\)$/i);
-  if (hslMatch) {
-    const channels = hslMatch[1].split(/\s*[,/]\s*/).slice(0, 3);
-    if (channels.length !== 3 || !channels[1].endsWith("%") || !channels[2].endsWith("%"))
-      return null;
-    const hue = Number.parseFloat(channels[0]);
-    const saturation = Number.parseFloat(channels[1]) / 100;
-    const lightness = Number.parseFloat(channels[2]) / 100;
-    if (![hue, saturation, lightness].every(Number.isFinite)) return null;
-    const normalizedHue = ((hue % 360) + 360) % 360;
-    const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-    const x = chroma * (1 - Math.abs(((normalizedHue / 60) % 2) - 1));
-    const match = normalizedHue < 60
-      ? [chroma, x, 0]
-      : normalizedHue < 120
-        ? [x, chroma, 0]
-        : normalizedHue < 180
-          ? [0, chroma, x]
-          : normalizedHue < 240
-            ? [0, x, chroma]
-            : normalizedHue < 300
-              ? [x, 0, chroma]
-              : [chroma, 0, x];
-    const lightnessOffset = lightness - chroma / 2;
-    return match.map((channel) => channel + lightnessOffset) as [number, number, number];
-  }
-
-  return null;
+  return parseSafeCssColor(color)?.rgb ?? null;
 }
 
 function toHex(rgb: [number, number, number]): string {
@@ -145,12 +84,23 @@ function deriveAccentForeground(accent: string): string {
 }
 
 function deriveAccentSoft(accent: string, theme: ResolvedTheme): string {
-  if (accent === DEFAULT_ACCENT && theme === "light") return LIGHT_ACCENT_SOFT;
-  const background = theme === "dark" ? "#0f141d" : "#ffffff";
-  return (
-    mix(accent, background, theme === "dark" ? 0.8 : 0.87) ??
-    `color-mix(in srgb, ${accent} ${theme === "dark" ? "20%" : "13%"}, ${background})`
-  );
+  const background = theme === "dark" ? "#0f141d" : LIGHT_ACCENT_MIX_TARGET;
+  const soft = mix(accent, background, theme === "dark" ? 0.8 : 0.87);
+  if (soft === null) throw new Error("Accent must be a numeric CSS color");
+  return soft;
+}
+
+/** Composite translucent accents over the mode's canvas before deriving colors. */
+function opaqueAccent(accent: string, canvas: string): string {
+  const parsed = parseSafeCssColor(accent);
+  if (!parsed) throw new Error("Accent must be a numeric CSS color");
+  if (parsed.alpha === 1) return accent;
+  const background = parseSafeCssColor(canvas);
+  if (!background || background.alpha !== 1)
+    throw new Error("A translucent accent requires an opaque numeric canvas color");
+  return toHex(parsed.rgb.map((channel, index) =>
+    channel * parsed.alpha + background.rgb[index] * (1 - parsed.alpha),
+  ) as [number, number, number]);
 }
 
 function normalizeColors(
@@ -164,10 +114,13 @@ function normalizeColors(
     ...normalizedOverride,
   };
   const accentChanged = normalizedOverride.accent !== undefined;
-  if (accentChanged && normalizedOverride.accentForeground === undefined)
-    colors.accentForeground = deriveAccentForeground(colors.accent);
-  if (accentChanged && normalizedOverride.accentSoft === undefined)
-    colors.accentSoft = deriveAccentSoft(colors.accent, theme);
+  if (accentChanged && (normalizedOverride.accentForeground === undefined || normalizedOverride.accentSoft === undefined)) {
+    const accent = opaqueAccent(colors.accent, colors.canvas);
+    if (normalizedOverride.accentForeground === undefined)
+      colors.accentForeground = deriveAccentForeground(accent);
+    if (normalizedOverride.accentSoft === undefined)
+      colors.accentSoft = deriveAccentSoft(accent, theme);
+  }
   return colors;
 }
 
@@ -177,6 +130,28 @@ function assertSafeThemeColors(theme: NormalizedTheme): void {
       if (!isSafeCssColor(value)) throw new Error(`Invalid theme color: ${value}`);
     }
   }
+}
+
+function mergeEffects(
+  base: NormalizedTheme["effects"],
+  override: ParsedThemeOverride["effects"],
+): NormalizedThemeEffects {
+  const { light: lightOverride, dark: darkOverride, ...flatOverride } = override ?? {};
+  const light: ThemeEffectTokens = {
+    ...base.light,
+    ...flatOverride,
+    ...lightOverride,
+  };
+  const dark: ThemeEffectTokens = {
+    ...base.dark,
+    ...flatOverride,
+    ...darkOverride,
+  };
+  return {
+    ...light,
+    light,
+    dark,
+  };
 }
 
 function mergeParsedTheme(base: NormalizedTheme, override: ParsedThemeOverride): NormalizedTheme {
@@ -196,10 +171,7 @@ function mergeParsedTheme(base: NormalizedTheme, override: ParsedThemeOverride):
       ...base.shape,
       ...override.shape,
     },
-    effects: {
-      ...base.effects,
-      ...override.effects,
-    },
+    effects: mergeEffects(base.effects, override.effects),
   };
   assertSafeThemeColors(merged);
   return merged;
@@ -229,7 +201,10 @@ export function themeToExport(theme: NormalizedTheme): PortableTheme {
       dark: theme.colors.dark,
     },
     shape: theme.shape,
-    effects: theme.effects,
+    effects: {
+      light: theme.effects.light,
+      dark: theme.effects.dark,
+    },
   });
 
   return {
@@ -242,6 +217,9 @@ export function themeToExport(theme: NormalizedTheme): PortableTheme {
       dark: { ...normalized.colors.dark },
     },
     shape: { ...normalized.shape },
-    effects: { ...normalized.effects },
+    effects: {
+      light: { ...normalized.effects.light },
+      dark: { ...normalized.effects.dark },
+    },
   };
 }
