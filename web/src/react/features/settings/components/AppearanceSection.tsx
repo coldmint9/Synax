@@ -2,35 +2,124 @@ import { Description, Label, Radio, RadioGroup } from "@headlessui/react";
 import {
   ArrowUp,
   Check,
+  Download,
   Monitor,
   Moon,
   Palette,
   RotateCcw,
   Sparkles,
   Sun,
+  Upload,
 } from "lucide-react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../../lib/appearance";
+import { downloadThemeFile } from "../../../../lib/theme/io";
+import {
+  ensureThemeRuntime,
+  exportActiveTheme,
+  importThemeFile,
+  useThemeStore,
+  type ThemeMode,
+} from "../../../state/themeStore";
 import { useLocale } from "../../../../hooks/useLocale";
-import { useShellStore } from "../../../state/shellStore";
+import { useNotificationStore } from "../../../state/notificationStore";
 import { AccentColorPicker } from "./AccentColorPicker";
 import { SettingsCard } from "./SettingsCard";
 import "./appearance.css";
 
+type AppearanceFeedback = {
+  type: "success" | "error";
+  message: string;
+};
+
 export function AppearanceSection() {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const mode = useShellStore((s) => s.preferences.theme);
-  const resolved = useShellStore((s) => s.resolvedTheme);
-  const accent = useShellStore((s) => s.preferences.accentColor);
-  const setTheme = useShellStore((s) => s.setTheme);
-  const setAccent = useShellStore((s) => s.setAccentColor);
+  const mode = useThemeStore((s) => s.mode);
+  const resolved = useThemeStore((s) => s.resolvedTheme);
+  const activeTheme = useThemeStore((s) => s.activeTheme);
+  const source = useThemeStore((s) => s.source);
+  const accent = activeTheme.colors.light.accent;
+  const setMode = useThemeStore((s) => s.setMode);
+  const setAccent = useThemeStore((s) => s.setAccentColor);
+  const resetTheme = useThemeStore((s) => s.resetTheme);
+  const [feedback, setFeedback] = useState<AppearanceFeedback | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const preset = ACCENT_PRESETS.find((item) => item.color === accent);
   const colorName = preset ? preset[locale] : zh ? "自定义" : "Custom";
+  const themeSource =
+    source === "imported" ? (zh ? "已导入" : "Imported") : zh ? "内置" : "Built-in";
   const modes = [
     { id: "light", label: zh ? "浅色" : "Light", Icon: Sun },
     { id: "dark", label: zh ? "深色" : "Dark", Icon: Moon },
     { id: "system", label: zh ? "跟随系统" : "System", Icon: Monitor },
   ] as const;
+
+  const announce = (type: AppearanceFeedback["type"], message: string) => {
+    setFeedback({ type, message });
+    useNotificationStore.getState().push({ type, message });
+  };
+
+  const handleModeChange = (nextMode: ThemeMode) => {
+    setMode(nextMode);
+    ensureThemeRuntime();
+  };
+
+  const handleAccentChange = (nextAccent: string) => {
+    setAccent(nextAccent);
+    ensureThemeRuntime();
+  };
+
+  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+
+    try {
+      const result = await importThemeFile(file);
+      if (!result.ok) {
+        announce(
+          "error",
+          zh
+            ? "导入失败，请选择有效的 Synax 主题 JSON 文件。"
+            : "Import failed. Choose a valid Synax theme JSON file.",
+        );
+        return;
+      }
+      ensureThemeRuntime();
+      announce(
+        "success",
+        zh
+          ? `已导入主题「${result.theme.name}」`
+          : `Imported theme “${result.theme.name}”`,
+      );
+    } catch {
+      announce(
+        "error",
+        zh
+          ? "导入失败，请选择有效的 Synax 主题 JSON 文件。"
+          : "Import failed. Choose a valid Synax theme JSON file.",
+      );
+    }
+  };
+
+  const handleExport = () => {
+    try {
+      downloadThemeFile(exportActiveTheme());
+      announce("success", zh ? "主题已导出" : "Theme exported");
+    } catch {
+      announce("error", zh ? "主题导出失败" : "Theme export failed");
+    }
+  };
+
+  const handleReset = () => {
+    resetTheme();
+    ensureThemeRuntime();
+    announce(
+      "success",
+      zh ? "已恢复内置默认主题" : "Restored built-in default theme",
+    );
+  };
 
   return (
     <SettingsCard
@@ -40,7 +129,61 @@ export function AppearanceSection() {
         zh ? "即时生效，自动保存" : "Applied instantly · saved automatically"
       }
     >
-      <RadioGroup value={mode} onChange={setTheme} className="appearance-modes">
+      <p
+        className="appearance-visually-hidden"
+        role={feedback?.type === "error" ? "alert" : "status"}
+        aria-live={feedback?.type === "error" ? "assertive" : "polite"}
+      >
+        {feedback?.message}
+      </p>
+      <section
+        className="appearance-theme-management"
+        aria-labelledby="appearance-theme-management-title"
+      >
+        <h3
+          id="appearance-theme-management-title"
+          className="appearance-visually-hidden"
+        >
+          {zh ? "主题信息与操作" : "Theme information and actions"}
+        </h3>
+        <dl className="appearance-theme-meta">
+          <div>
+            <dt>{zh ? "主题名称" : "Theme name"}</dt>
+            <dd>{activeTheme.name}</dd>
+          </div>
+          <div>
+            <dt>{zh ? "来源" : "Source"}</dt>
+            <dd>{themeSource}</dd>
+          </div>
+        </dl>
+        <div className="appearance-theme-actions">
+          <button
+            type="button"
+            className="appearance-action"
+            onClick={() => importInputRef.current?.click()}
+          >
+            <Upload size={14} aria-hidden="true" />
+            <span>{zh ? "导入主题" : "Import theme"}</span>
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            aria-label={zh ? "导入主题 JSON 文件" : "Import theme JSON file"}
+            className="appearance-visually-hidden"
+            onChange={handleImport}
+          />
+          <button type="button" className="appearance-action" onClick={handleExport}>
+            <Download size={14} aria-hidden="true" />
+            <span>{zh ? "导出主题" : "Export theme"}</span>
+          </button>
+          <button type="button" className="appearance-action" onClick={handleReset}>
+            <RotateCcw size={14} aria-hidden="true" />
+            <span>{zh ? "恢复默认" : "Reset theme"}</span>
+          </button>
+        </div>
+      </section>
+      <RadioGroup value={mode} onChange={handleModeChange} className="appearance-modes">
         <div className="appearance-heading">
           <Label className="appearance-label">
             {zh ? "明暗模式" : "Color mode"}
@@ -110,7 +253,7 @@ export function AppearanceSection() {
           </p>
           <RadioGroup
             value={accent}
-            onChange={setAccent}
+            onChange={handleAccentChange}
             aria-label={zh ? "预设主题色" : "Accent presets"}
             className="appearance-swatches"
           >
@@ -133,7 +276,7 @@ export function AppearanceSection() {
           <div className="appearance-custom-row">
             <AccentColorPicker
               value={accent}
-              onChange={setAccent}
+              onChange={handleAccentChange}
               locale={locale}
             />
             <button
@@ -142,7 +285,7 @@ export function AppearanceSection() {
               disabled={accent === DEFAULT_ACCENT}
               aria-label={zh ? "恢复默认主题色" : "Reset accent color"}
               title={zh ? "恢复默认主题色" : "Reset accent color"}
-              onClick={() => setAccent(DEFAULT_ACCENT)}
+              onClick={() => handleAccentChange(DEFAULT_ACCENT)}
             >
               <RotateCcw size={14} aria-hidden="true" />
             </button>

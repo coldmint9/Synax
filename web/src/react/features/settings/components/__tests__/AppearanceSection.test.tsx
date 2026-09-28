@@ -10,6 +10,7 @@ import {
 } from "../../../../state/themeStore";
 import { DEFAULT_ACCENT } from "../../../../../lib/appearance";
 import { DEFAULT_THEME } from "../../../../../lib/theme/defaults";
+import { useNotificationStore } from "../../../../state/notificationStore";
 
 const storageKey = THEME_STORAGE_KEY;
 const fetchGuard = vi.fn(() =>
@@ -36,6 +37,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchGuard);
   localStorage.clear();
   resetThemeStore();
+  useNotificationStore.setState({ notifications: [], unreadCount: 0 });
   hydrateThemePreferences();
   useShellStore.setState((state) => ({
     preferences: { ...state.preferences, locale: "en" },
@@ -45,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   expect(fetchGuard).not.toHaveBeenCalled();
   resetThemeStore();
+  useNotificationStore.setState({ notifications: [], unreadCount: 0 });
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -171,6 +174,138 @@ describe("AppearanceSection", () => {
         .getAllByRole("radio")
         .every((radio) => radio.getAttribute("aria-checked") === "false"),
     ).toBe(true);
+  });
+
+  it("imports valid JSON with accessible metadata and localized success feedback", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+
+    const file = new File(
+      [
+        JSON.stringify({
+          version: 1,
+          id: "mist-blue",
+          name: "Mist Blue",
+          colors: { light: { accent: "#98aecb" } },
+        }),
+      ],
+      "mist.json",
+      { type: "application/json" },
+    );
+    await user.upload(screen.getByLabelText("Import theme JSON file"), file);
+
+    expect(useThemeStore.getState()).toMatchObject({
+      source: "imported",
+      activeTheme: {
+        id: "mist-blue",
+        name: "Mist Blue",
+        colors: { light: { accent: "#98aecb" } },
+      },
+    });
+    expect(screen.getByText("Mist Blue")).toBeInTheDocument();
+    expect(screen.getByText("Imported")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Imported theme “Mist Blue”");
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      type: "success",
+      message: "Imported theme “Mist Blue”",
+    });
+  });
+
+  it("rejects invalid imports with an alert and leaves the active theme unchanged", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+    const before = useThemeStore.getState();
+
+    await user.upload(
+      screen.getByLabelText("Import theme JSON file"),
+      new File(["{bad"], "broken.json", { type: "application/json" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Import failed. Choose a valid Synax theme JSON file.",
+    );
+    expect(useThemeStore.getState().activeTheme).toBe(before.activeTheme);
+    expect(useThemeStore.getState().source).toBe(before.source);
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      type: "error",
+      message: "Import failed. Choose a valid Synax theme JSON file.",
+    });
+  });
+
+  it("exports the normalized active theme and reports success", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn(() => "blob:theme");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<AppearanceSection />);
+
+    await user.click(screen.getByRole("button", { name: "Export theme" }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(JSON.parse(await blob.text())).toMatchObject({
+      version: 1,
+      id: "synax-default",
+      name: "Synax Default",
+      colors: { light: { accent: DEFAULT_ACCENT } },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Theme exported");
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      type: "success",
+      message: "Theme exported",
+    });
+  });
+
+  it("resets an imported theme to the built-in default without changing mode", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    await user.upload(
+      screen.getByLabelText("Import theme JSON file"),
+      new File(
+        [JSON.stringify({ version: 1, id: "mist-blue", name: "Mist Blue", colors: { light: { accent: "#98aecb" } } })],
+        "mist.json",
+        { type: "application/json" },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Reset theme" }));
+
+    expect(useThemeStore.getState()).toMatchObject({
+      mode: "dark",
+      source: "builtin",
+      activeTheme: DEFAULT_THEME,
+    });
+    expect(screen.getByText("Synax Default")).toBeInTheDocument();
+    expect(screen.getByText("Built-in")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Restored built-in default theme",
+    );
+  });
+
+  it("localizes theme metadata and import errors", async () => {
+    const user = userEvent.setup();
+    act(() =>
+      useShellStore.setState((state) => ({
+        preferences: { ...state.preferences, locale: "zh" },
+      })),
+    );
+    render(<AppearanceSection />);
+
+    expect(screen.getByText("主题名称")).toBeInTheDocument();
+    expect(screen.getByText("来源")).toBeInTheDocument();
+    await user.upload(
+      screen.getByLabelText("导入主题 JSON 文件"),
+      new File(["{bad"], "broken.json", { type: "application/json" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "导入失败，请选择有效的 Synax 主题 JSON 文件。",
+    );
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      type: "error",
+      message: "导入失败，请选择有效的 Synax 主题 JSON 文件。",
+    });
   });
 
   it("localizes mode, preset, field, description and validation labels", async () => {
