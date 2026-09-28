@@ -38,6 +38,7 @@ import {
 import { buildProtocolProviderOptions } from "./protocol-options.js";
 import { mergeProviderOptions } from "./custom-api-compat.js";
 import { createHash } from "node:crypto";
+import { applyChatCacheBreakpoints, chatCacheOptions } from "./chat-cache.js";
 
 const THINKING_DISABLED_PURPOSES = new Set([
   "session-title",
@@ -237,6 +238,7 @@ export async function executePipeline(
     request.providerOptions,
     thinkingStream.providerOptions,
     buildProtocolProviderOptions(selection, request),
+    chatCacheOptions(selection, request),
     ...(selection.apiFormat === "openai-responses" &&
     selection.provider.npm !== "@ai-sdk/open-responses"
       ? [{ openai: { passThroughUnsupportedFiles: true } }]
@@ -270,7 +272,7 @@ export async function executePipeline(
         enableCache,
         callOptions,
         selection.apiFormat === "openai-responses",
-        selection.apiFormat === "openai-responses",
+        selection,
         abortSignal,
       );
     case "text":
@@ -280,7 +282,7 @@ export async function executePipeline(
         callbacks,
         enableCache,
         callOptions,
-        selection.apiFormat === "openai-responses",
+        selection,
         abortSignal,
       );
     case "object":
@@ -290,7 +292,7 @@ export async function executePipeline(
         mode.schema,
         callbacks,
         callOptions,
-        selection.apiFormat === "openai-responses",
+        selection,
         abortSignal,
       );
   }
@@ -304,11 +306,12 @@ function dispatchStream(
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
   includeRawChunks: boolean,
-  moveRuntimeRemindersToInput: boolean,
+  selection: ResolvedModelSelection,
   abortSignal?: AbortSignal,
 ): GatewayStreamResult {
-  const { system, messages } = toModelPrompt(request.messages, enableCache, {
-    moveRuntimeRemindersToInput,
+  const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
+    moveRuntimeRemindersToInput:
+      selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
   });
   return streamText({
     model,
@@ -335,11 +338,12 @@ function dispatchText(
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
-  moveRuntimeRemindersToInput: boolean,
+  selection: ResolvedModelSelection,
   abortSignal?: AbortSignal,
 ) {
-  const { system, messages } = toModelPrompt(request.messages, enableCache, {
-    moveRuntimeRemindersToInput,
+  const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
+    moveRuntimeRemindersToInput:
+      selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
   });
   return generateText({
     maxRetries: 0,
@@ -361,13 +365,16 @@ function dispatchObject(
   schema: ZodType<unknown>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
   thinkingStream: ThinkingStreamOptions,
-  moveRuntimeRemindersToInput: boolean,
+  selection: ResolvedModelSelection,
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(
-    ensureJsonObjectResponseFormatInstruction(request.messages),
+    applyChatCacheBreakpoints(ensureJsonObjectResponseFormatInstruction(request.messages), selection, request),
     undefined,
-    { moveRuntimeRemindersToInput },
+    {
+      moveRuntimeRemindersToInput:
+        selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
+    },
   );
   return generateText({
     maxRetries: 0,

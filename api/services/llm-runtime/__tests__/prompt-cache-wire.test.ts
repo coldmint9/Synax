@@ -11,6 +11,7 @@ import {
 } from "../cache-policy.js";
 import { toModelPrompt } from "../prompt.js";
 import { buildProtocolProviderOptions } from "../protocol-options.js";
+import { applyChatCacheBreakpoints, chatCacheOptions } from "../chat-cache.js";
 import type { LlmGatewayMessage, ResolvedModelSelection } from "../types.js";
 
 const marker = { type: "ephemeral" };
@@ -503,6 +504,79 @@ describe("prompt cache policy actual SDK wire", () => {
         { role: "user", content: "different current input" },
       ]),
     ).toEqual(createHistoryCacheAnchor(messages));
+  });
+
+  it("serializes native Chat cache options on the real SDK wire", async () => {
+    const capture = transport({
+      id: "chat_test",
+      object: "chat.completion",
+      created: 1,
+      model: "gpt-4o-mini",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 },
+    });
+    const selected = selection("openai");
+    selected.config.options = { promptCaching: "auto", chatCacheBreakpoints: true };
+    const request = {
+      purpose: "test",
+      projectId: "project",
+      cacheControl: true,
+      hookContext: { sessionId: "session" },
+    } as any;
+    const messages = applyChatCacheBreakpoints(
+      [
+        { role: "system", content: "stable" },
+        { role: "user", content: "history" },
+        reminder("latest"),
+      ],
+      selected,
+      request,
+    );
+    const openai = createOpenAI({ apiKey: "local-test", fetch: capture.fetch });
+    await generateText({
+      model: openai.chat("gpt-4o-mini"),
+      ...toModelPrompt(messages, undefined, { moveRuntimeRemindersToInput: true }),
+      providerOptions: chatCacheOptions(selected, request),
+      maxRetries: 0,
+    });
+    expect(capture.requests[0].prompt_cache_key).toMatch(/^synax:chat:v1:/);
+    expect(capture.requests[0].messages[0].content[0]).toMatchObject({
+      prompt_cache_breakpoint: { mode: "explicit" },
+    });
+    expect(capture.requests[0].messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "<system-reminder>\nlatest\n</system-reminder>",
+    });
+  });
+
+  it("builds a stable native Chat cache key and marks stable boundaries", () => {
+    const selected = selection("openai");
+    selected.config.options = { promptCaching: "auto", chatCacheBreakpoints: true };
+    const request = {
+      purpose: "test",
+      projectId: "project",
+      cacheControl: true,
+      hookContext: { sessionId: "session" },
+    } as any;
+    const first = chatCacheOptions(selected, request);
+    const second = chatCacheOptions(selected, request);
+    expect(first).toEqual(second);
+    expect(first?.openai?.promptCacheKey).toMatch(/^synax:chat:v1:/);
+
+    const messages = applyChatCacheBreakpoints(
+      [
+        { role: "system", content: "stable" },
+        { role: "user", content: "history" },
+        reminder("latest"),
+      ],
+      selected,
+      request,
+    );
+    expect(messages[0].providerOptions?.openai?.promptCacheBreakpoint).toEqual({ mode: "explicit" });
+    expect(messages[1].content).toEqual([
+      expect.objectContaining({ providerOptions: { openai: { promptCacheBreakpoint: { mode: "explicit" } } } }),
+    ]);
+    expect(messages[2].providerOptions?.openai?.promptCacheBreakpoint).toBeUndefined();
   });
 
   it("keeps dynamic runtime reminders out of Responses instructions", () => {

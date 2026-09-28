@@ -36,13 +36,13 @@ export function toModelPrompt(
     };
   }
 
-  const conversation = messages.flatMap((message) => {
+  const conversation: ModelMessage[] = messages.flatMap((message): ModelMessage[] => {
     if (message.role === "system" && options.moveRuntimeRemindersToInput) {
       const content = typeof message.content === "string" ? message.content : "";
       if (RUNTIME_REMINDER_RE.test(content)) {
-        // OpenResponses serializes all system messages into one `instructions`
-        // string. Runtime state changes every step, so keep it in the input
-        // tail instead of invalidating the stable instructions prefix.
+        // Chat/Responses providers cache ordered prefixes. Runtime state changes
+        // every step, so keep it in the input tail instead of invalidating
+        // the stable system prefix.
         return [{ ...message, role: "user" as const }];
       }
     }
@@ -103,11 +103,7 @@ function isConversationMessage(
 }
 
 function toModelMessages(
-  messages: Array<
-    LlmGatewayRequest["messages"][number] & {
-      role: "user" | "assistant" | "tool";
-    }
-  >,
+  messages: ModelMessage[],
 ): ModelMessage[] {
   return messages.map((message) => ({
     ...message,
