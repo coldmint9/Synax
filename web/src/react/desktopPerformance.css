@@ -61,6 +61,17 @@ html.electron .agent-dock-composer .button--tertiary {
   backdrop-filter: blur(8px) !important;
 }
 
+/* Command island: command-deck.css sets --glass-blur: 8px and glass.css paints
+   blur(--glass-blur) saturate(1.15) on the decorative backdrop layer, so the
+   island reads as a lens over the transcript on Web. Keep that lens on desktop
+   instead of the flat, unblurred island the global opt-out produced. */
+html.electron
+  .synax-island-material.liquid-glass-surface[data-glass-state]
+  > .liquid-glass-backdrop {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px)) saturate(1.15) !important;
+  backdrop-filter: blur(var(--glass-blur, 8px)) saturate(1.15) !important;
+}
+
 /* Session file island pill. Mirrors index.css verbatim: the -webkit fallback is
    5px, the standard property (the one Chromium computes and paints) is 14px in
    both themes, so desktop keeps the Web value here too. */

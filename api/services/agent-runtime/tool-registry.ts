@@ -969,7 +969,13 @@ export class ToolRegistry {
           ])
           .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
       const result = checkpointMutation
-        ? await withCheckpointMutation(sessionId, executeTool, false, undoPaths)
+        ? await withCheckpointMutation(
+            sessionId,
+            executeTool,
+            false,
+            undoPaths,
+            abortSignal,
+          )
         : await executeTool();
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(

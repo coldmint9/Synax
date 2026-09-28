@@ -401,6 +401,90 @@ describe("durable cooperative work runtime", () => {
     expect(store.getRun(run.id).status).toBe("completed");
   });
 
+  it("rejects a superseded citation with the remedy and a stable message", async () => {
+    const { session, run } = setup();
+    store.updateSessionMetadata(session.id, { mode: "goal" });
+    const file = path.join(root, "source.txt");
+    fs.writeFileSync(file, "first");
+    const staged = workStore.current(session.id)!;
+    staged.hasChanges = true;
+    staged.changeVersion++;
+    workStore.save(staged);
+    const verified = await agentToolRegistry.execute(
+      session.id,
+      "verification.run",
+      { command: 'node -e "process.exit(0)"', criterion: "Source is correct", purpose: "Check the changed file", scope: ["source.txt"] },
+      { runId: run.id, stepId: step(session.id, run.id) },
+    );
+    expect((verified.record.outputRef as any).verification.status).toBe("success");
+    fs.writeFileSync(file, "later");
+    const cite = () =>
+      workRuntime.complete(input(session.id, run.id, {}), "Done", [
+        { criterion: "Source is correct", summary: "Reused an outdated receipt", toolCallIds: [verified.record.id] },
+      ]);
+    const firstError = await cite().then(() => null, (error: Error) => error.message);
+    expect(String(firstError)).toContain("Stale or unsuccessful verification evidence");
+    expect(String(firstError)).toContain("Source is correct");
+    expect(String(firstError)).toContain("verification.run");
+    const secondError = await cite().then(() => null, (error: Error) => error.message);
+    expect(String(secondError)).toBe(String(firstError));
+    expect(workStore.current(session.id)!.status).toBe("active");
+  });
+
+  it("marks superseded verification receipts as unusable in the runtime snapshot", async () => {
+    const { session, run } = setup();
+    store.updateSessionMetadata(session.id, { mode: "goal" });
+    const file = path.join(root, "source.txt");
+    fs.writeFileSync(file, "first");
+    const staged = workStore.current(session.id)!;
+    staged.hasChanges = true;
+    staged.changeVersion++;
+    workStore.save(staged);
+    await agentToolRegistry.execute(
+      session.id,
+      "verification.run",
+      { command: 'node -e "process.exit(0)"', criterion: "Source is correct", purpose: "Check the changed file", scope: ["source.txt"] },
+      { runId: run.id, stepId: step(session.id, run.id) },
+    );
+    const changed = workStore.current(session.id)!;
+    changed.changeVersion++;
+    workStore.save(changed);
+    const prompt = workRuntime.prompt(session.id);
+    expect(prompt).toContain('"superseded":true');
+    expect(prompt).toContain("rerun verification.run for the changed scope");
+  });
+
+  it("repoints a superseded verification citation at the current receipt", async () => {
+    const { session, run } = setup();
+    store.updateSessionMetadata(session.id, { mode: "goal" });
+    const file = path.join(root, "source.txt");
+    const verify = () =>
+      agentToolRegistry.execute(
+        session.id,
+        "verification.run",
+        { command: 'node -e "process.exit(0)"', criterion: "Source is correct", purpose: "Check the changed file", scope: ["source.txt"] },
+        { runId: run.id, stepId: step(session.id, run.id) },
+      );
+    fs.writeFileSync(file, "first");
+    const staged = workStore.current(session.id)!;
+    staged.hasChanges = true;
+    staged.changeVersion++;
+    workStore.save(staged);
+    const early = await verify();
+    expect((early.record.outputRef as any).verification.status).toBe("success");
+    fs.writeFileSync(file, "second");
+    const changed = workStore.current(session.id)!;
+    changed.changeVersion++;
+    workStore.save(changed);
+    const current = await verify();
+    expect(current.record.id).not.toBe(early.record.id);
+    await workRuntime.complete(input(session.id, run.id, {}), "Delivered", [
+      { criterion: "Source is correct", summary: "Cited the receipt from before the last change", toolCallIds: [early.record.id] },
+    ]);
+    expect(workStore.current(session.id)!.evidence[0].toolCallIds).toEqual([current.record.id]);
+    expect(store.getSession(session.id).status).toBe("completed");
+  });
+
   it("forbids automatic stash baselines and unscoped validation without a risk", async () => {
     const { session, run } = setup();
     store.updateSessionMetadata(session.id, { mode: 'goal' });

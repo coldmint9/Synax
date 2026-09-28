@@ -1,6 +1,8 @@
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 import css from "../desktopPerformance.css?raw";
+import commandDeckCss from "../design/command-deck.css?raw";
+import glassCss from "../components/ui/glass/glass.css?raw";
 import agentControlsCss from "../features/agent-workspace/agentControls.css?raw";
 import indexCss from "../../index.css?raw";
 
@@ -163,6 +165,24 @@ describe("desktop backdrop material parity", () => {
         "background",
       ),
     ).toBe("hsl(0 0% 17% / 0.17) !important");
+  });
+
+  it("keeps the command island glass lens on desktop", () => {
+    // Web sets the island blur radius in command-deck.css and paints it from
+    // glass.css on the decorative backdrop layer.
+    expect(commandDeckCss).toContain("--glass-blur: 8px;");
+    expect(glassCss).toContain(
+      "backdrop-filter: blur(var(--glass-blur)) saturate(1.15);",
+    );
+    const fragments = [
+      "html.electron",
+      ".synax-island-material.liquid-glass-surface[data-glass-state]",
+      ".liquid-glass-backdrop",
+    ];
+    for (const property of ["backdrop-filter", "-webkit-backdrop-filter"])
+      expect(desktopValue(fragments, property)).toBe(
+        "blur(var(--glass-blur, 8px)) saturate(1.15) !important",
+      );
   });
 
   it("scopes every blur declaration in the file to the electron shell", () => {

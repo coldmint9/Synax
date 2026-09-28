@@ -285,3 +285,153 @@ describe("file undo cleanup boundaries", () => {
   });
 
 });
+
+describe("checkpoint mutation write conflicts", () => {
+  const target = () => path.join(root, "file");
+  /** Holds an open mutation on `file` until the returned release is called. */
+  async function hold() {
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((r) => (entered = r));
+    const gate = new Promise<void>((r) => (release = r));
+    const operation = withCheckpointMutation(
+      id,
+      async () => {
+        entered();
+        await gate;
+      },
+      false,
+      [target()],
+    );
+    await started;
+    return { operation, release };
+  }
+  const withBudget = async <T>(ms: string, run: () => Promise<T>): Promise<T> => {
+    const previous = process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS;
+    process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS = ms;
+    try {
+      return await run();
+    } finally {
+      if (previous === undefined)
+        delete process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS;
+      else process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS = previous;
+    }
+  };
+
+  it("waits out a short-lived competing writer instead of failing", async () => {
+    const { operation, release } = await hold();
+    const write = withCheckpointMutation(
+      id,
+      () => fs.writeFile(target(), "waited"),
+      false,
+      [target()],
+    );
+    setTimeout(release, 60);
+    await expect(write).resolves.toBeUndefined();
+    await operation;
+    expect(await fs.readFile(target(), "utf8")).toBe("waited");
+  });
+
+  it("fails only after the budget, naming the holder and the retry delay", async () => {
+    const { operation, release } = await hold();
+    const error = await withBudget("80", () =>
+      withCheckpointMutation(
+        id,
+        () => fs.writeFile(target(), "loser"),
+        false,
+        [target()],
+      ).then(
+        () => null,
+        (e) =>
+          e as Error & {
+            code?: string;
+            retryAfterMs?: number;
+            conflict?: { kind: string; holderSessionId: string };
+          },
+      ),
+    );
+    expect(error?.code).toBe("FILE_WRITE_BUSY");
+    expect(error?.retryAfterMs).toBe(250);
+    expect(error?.conflict?.kind).toBe("path");
+    expect(error?.conflict?.holderSessionId).toBe(id);
+    expect(error?.message).toContain("Retry after it finishes.");
+    expect(error?.message).toContain("retryAfterMs=250");
+    // The loser left nothing open: only the holder's row survives.
+    const open = getRawSqlite()
+      .prepare(
+        "SELECT COUNT(*) AS c FROM conversation_mutations WHERE state='open'",
+      )
+      .get() as { c: number };
+    expect(open.c).toBe(1);
+    release();
+    await operation;
+  });
+
+  it("leaves the wait immediately when the run is cancelled", async () => {
+    const { operation, release } = await hold();
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const waiting = withCheckpointMutation(
+      id,
+      () => fs.writeFile(target(), "cancelled"),
+      false,
+      [target()],
+      controller.signal,
+    );
+    setTimeout(() => controller.abort(), 40);
+    await expect(waiting).rejects.toThrow();
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    release();
+    await operation;
+  });
+
+  it("never replays the native write when a claim is retried", async () => {
+    const { operation, release } = await hold();
+    let runs = 0;
+    const write = withCheckpointMutation(
+      id,
+      () => {
+        runs++;
+        return fs.writeFile(target(), "once");
+      },
+      false,
+      [target()],
+    );
+    setTimeout(release, 60);
+    await write;
+    await operation;
+    expect(runs).toBe(1);
+    expect(await fs.readFile(target(), "utf8")).toBe("once");
+  });
+
+  it("reaps a dead holder instead of waiting out the budget", async () => {
+    const canonicalRoot = await fs.realpath(root);
+    getRawSqlite()
+      .prepare(
+        "INSERT INTO conversation_mutations(id,session_id,owner_session_id,roots_json,paths_json,state,uncertain,created_at,owner_pid) VALUES(?,?,?,?,?,'open',0,?,?)",
+      )
+      .run(
+        "stale-holder",
+        id,
+        id,
+        JSON.stringify([canonicalRoot]),
+        JSON.stringify([{ root: canonicalRoot, path: "file" }]),
+        new Date().toISOString(),
+        2 ** 30,
+      );
+    await withBudget("80", async () => {
+      await expect(
+        withCheckpointMutation(
+          id,
+          () => fs.writeFile(target(), "after-reap"),
+          false,
+          [target()],
+        ),
+      ).resolves.toBeUndefined();
+    });
+    const stale = getRawSqlite()
+      .prepare("SELECT state FROM conversation_mutations WHERE id=?")
+      .get("stale-holder") as { state: string };
+    expect(stale.state).toBe("closed");
+    expect(await fs.readFile(target(), "utf8")).toBe("after-reap");
+  });
+});
