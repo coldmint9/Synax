@@ -125,8 +125,8 @@ function acceptParentMessage(message: unknown): void {
   }
 }
 process.on('message', acceptParentMessage);
-const electronParentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (message: unknown) => void): void } }).parentPort;
-electronParentPort?.on('message', acceptParentMessage);
+const electronParentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data: unknown }) => void): void } }).parentPort;
+electronParentPort?.on('message', event => acceptParentMessage(event.data));
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
 void sweepAssets().catch((error) =>
