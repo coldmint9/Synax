@@ -1,27 +1,122 @@
-/* Paired cool-neutral surfaces; the dark canvas and panel follow the reference. */
+/* Semantic theme tokens. Runtime projection may override these values inline. */
 :root {
   /* Shared interface entry. The first family is reserved for the licensed,
      bundled face; until its files are supplied, platform/bundled fallbacks apply. */
   --font-interface: "Synax Avenir Next", "Avenir Next", "Inter Variable",
     "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+
+  --theme-canvas: #f7f8fa;
+  --theme-surface: rgb(255 255 255 / 1);
+  --theme-surface-secondary: rgb(237 240 244 / 1);
+  --theme-text: #242932;
+  --theme-text-muted: #626a76;
+  --theme-text-subtle: #8f96a1;
+  --theme-border: #dce2ea;
+  --theme-border-strong: #c7dbd0;
+  --theme-accent: #a1bba8;
+  --theme-accent-foreground: #2f3d34;
+  --theme-accent-soft: #edf4ef;
+  --theme-success: #00a240;
+  --theme-warning: #e25507;
+  --theme-danger: #e02e2a;
+  --theme-info: #0169cc;
+  --theme-input: #ffffff;
+  --theme-input-foreground: #242932;
+  --theme-selection: #d9e9dc;
+  --theme-focus: #3f6956;
+  --theme-tooltip: #272c34;
+  --theme-tooltip-foreground: #f7f8fa;
+
+  --theme-canvas-hsl: 220.00 23.08% 97.45%;
+  --theme-surface-hsl: 0.00 0.00% 100.00%;
+  --theme-surface-secondary-hsl: 214.29 24.14% 94.31%;
+  --theme-text-hsl: 218.57 16.28% 16.86%;
+  --theme-text-muted-hsl: 216.00 9.26% 42.35%;
+  --theme-text-subtle-hsl: 216.00 8.00% 59.80%;
+  --theme-border-hsl: 214.29 25.00% 89.02%;
+  --theme-border-strong-hsl: 150.00 17.39% 82.35%;
+  --theme-accent-hsl: 136.00 16.00% 68.00%;
+  --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
+  --theme-accent-soft-hsl: 138.00 24.00% 94.00%;
+  --theme-success-hsl: 144.00 100.00% 32.00%;
+  --theme-warning-hsl: 21.00 94.00% 46.00%;
+  --theme-danger-hsl: 1.00 75.00% 52.00%;
+  --theme-info-hsl: 209.00 100.00% 50.00%;
+  --theme-input-hsl: 0.00 0.00% 100.00%;
+  --theme-input-foreground-hsl: 218.57 16.28% 16.86%;
+  --theme-selection-hsl: 136.00 28.00% 88.00%;
+  --theme-focus-hsl: 154.00 26.00% 33.00%;
+  --theme-tooltip-hsl: 216.00 14.89% 18.24%;
+  --theme-tooltip-foreground-hsl: 220.00 23.08% 97.45%;
+
+  --theme-radius-sm: 6px;
+  --theme-radius-md: 8px;
+  --theme-radius-lg: 10px;
+  --theme-control-height: 32px;
+  --theme-shadow-control: 0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7);
+  --theme-shadow-inset: inset 0 1px 2px rgb(26 34 48 / .04);
+  --theme-shadow-floating: 0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045);
+
+  /* Static fallbacks keep the legacy token contract inspectable before the
+     compatibility bridge below resolves aliases through --theme-*. */
   --ui-canvas: #f7f8fa;
   --ui-panel: #ffffff;
   --ui-panel-soft: #edf0f4;
   --ui-text: #242932;
   --ui-subtle: #626a76;
   --ui-line: #dce2ea;
-  --ui-line-strong: #c7d0db;
-  --ui-signal: #aec478;
-  --ui-canvas-hsl: 220.00 23.08% 97.45%;
-  --ui-panel-hsl: 0.00 0.00% 100.00%;
-  --ui-panel-soft-hsl: 214.29 24.14% 94.31%;
-  --ui-text-hsl: 218.57 16.28% 16.86%;
-  --ui-subtle-hsl: 216.00 9.26% 42.35%;
-  --ui-line-hsl: 214.29 25.00% 89.02%;
-  --ui-line-strong-hsl: 213.00 21.74% 81.96%;
-  --ui-signal-hsl: 77.37 39.18% 61.96%;
+  --ui-line-strong: #c7dbd0;
 }
+
 .dark {
+  --theme-canvas: #10141c;
+  --theme-surface: #171b23;
+  --theme-surface-secondary: rgb(39 44 52 / 0.7);
+  --theme-text: #bfbdb6;
+  --theme-text-muted: #a6a59f;
+  --theme-text-subtle: #85847f;
+  --theme-border: #2d323b;
+  --theme-border-strong: #4c535e;
+  --theme-accent: #a1bba8;
+  --theme-accent-foreground: #2f3d34;
+  --theme-accent-soft: #2d3c34;
+  --theme-success: hsl(104.04 43.43% 50.78%);
+  --theme-warning: hsl(27 100% 64%);
+  --theme-danger: #ef6375;
+  --theme-info: #66b4ff;
+  --theme-input: #171b23;
+  --theme-input-foreground: #bfbdb6;
+  --theme-selection: #324638;
+  --theme-focus: #a1bba8;
+  --theme-tooltip: #f7f8fa;
+  --theme-tooltip-foreground: #10141c;
+
+  --theme-canvas-hsl: 220.00 27.27% 8.63%;
+  --theme-surface-hsl: 220.00 20.69% 11.37%;
+  --theme-surface-secondary-hsl: 216.92 14.29% 17.84%;
+  --theme-text-hsl: 46.67 6.57% 73.14%;
+  --theme-text-muted-hsl: 51.43 3.78% 63.73%;
+  --theme-text-subtle-hsl: 51.43 3.43% 51.96%;
+  --theme-border-hsl: 218.57 13.46% 20.39%;
+  --theme-border-strong-hsl: 216.67 10.59% 33.33%;
+  --theme-accent-hsl: 136.00 16.00% 68.00%;
+  --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
+  --theme-accent-soft-hsl: 144.00 15.69% 20.00%;
+  --theme-success-hsl: 104.04 43.43% 50.78%;
+  --theme-warning-hsl: 27.00 100.00% 64.00%;
+  --theme-danger-hsl: 352.29 81.40% 66.27%;
+  --theme-info-hsl: 209.00 100.00% 70.00%;
+  --theme-input-hsl: 220.00 20.69% 11.37%;
+  --theme-input-foreground-hsl: 46.67 6.57% 73.14%;
+  --theme-selection-hsl: 144.00 16.00% 24.00%;
+  --theme-focus-hsl: 136.00 16.00% 68.00%;
+  --theme-tooltip-hsl: 0.00 0.00% 97.45%;
+  --theme-tooltip-foreground-hsl: 220.00 27.27% 8.63%;
+
+  --theme-shadow-control: 0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035);
+  --theme-shadow-inset: inset 0 1px 2px rgb(0 0 0 / .14);
+  --theme-shadow-floating: 0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14);
+
   --ui-canvas: #10141c;
   --ui-panel: #171b23;
   --ui-panel-soft: #272c34;
@@ -29,72 +124,108 @@
   --ui-subtle: #a6a59f;
   --ui-line: #2d323b;
   --ui-line-strong: #4c535e;
-  --ui-signal: #c6db91;
-  --ui-canvas-hsl: 220.00 27.27% 8.63%;
-  --ui-panel-hsl: 220.00 20.69% 11.37%;
-  --ui-panel-soft-hsl: 216.92 14.29% 17.84%;
-  --ui-text-hsl: 46.67 6.57% 73.14%;
-  --ui-subtle-hsl: 51.43 3.78% 63.73%;
-  --ui-line-hsl: 218.57 13.46% 20.39%;
-  --ui-line-strong-hsl: 216.67 10.59% 33.33%;
-  --ui-signal-hsl: 77.03 50.68% 71.37%;
 }
 
-:root {
+/* Compatibility aliases are references, not a second source of theme truth. */
+:root,
+.dark {
   color-scheme: light;
-  --ui-accent: hsl(var(--primary));
-  --ui-accent-soft: color-mix(in srgb, var(--ui-accent) 9%, var(--ui-panel));
-  --ui-shadow-control: 0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7);
-  --ui-shadow-inset: inset 0 1px 2px rgb(26 34 48 / .04);
-  --ui-shadow-floating: 0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045);
-  --ui-tooltip-background: #272c34;
-  --ui-tooltip-foreground: #f7f8fa;
-  --radius: .625rem;
-  --background-hsl: var(--ui-canvas-hsl);
-  --foreground-hsl: var(--ui-text-hsl);
-  --border-hsl: var(--ui-line-hsl);
-  --muted-hsl: var(--ui-panel-soft-hsl);
-  --background: var(--ui-canvas);
-  --foreground: var(--ui-text);
-  --border: var(--ui-line);
-  --surface: var(--ui-panel);
-  --surface-foreground: var(--ui-text);
-  --surface-secondary: var(--ui-panel-soft);
-  --surface-shadow: 0 1px 2px rgb(26 34 48 / .03);
-  --overlay: var(--ui-panel);
-  --overlay-foreground: var(--ui-text);
-  --default: var(--ui-panel-soft);
-  --default-hover: var(--ui-line);
-  --default-foreground: var(--ui-text);
-  --muted: var(--ui-subtle);
-  --muted-foreground: var(--ui-subtle-hsl);
-  --card: var(--ui-panel-hsl);
-  --card-foreground: var(--ui-text-hsl);
-  --popover: var(--ui-panel-hsl);
-  --popover-foreground: var(--ui-text-hsl);
-  --secondary: var(--ui-panel-soft-hsl);
-  --secondary-foreground: var(--ui-text-hsl);
-  --input: var(--ui-line-hsl);
-  --field-background: var(--ui-panel);
-  --field-foreground: var(--ui-text);
-  --field-placeholder: var(--ui-subtle);
-  --field-border: var(--ui-line);
-  --field-border-hover: var(--ui-line-strong);
-  --field-hover: var(--ui-panel-soft);
-  --field-focus: var(--ui-panel);
-  --separator: var(--ui-line);
-  --segment: var(--ui-panel);
-  --segment-foreground: var(--ui-text);
-  --scrollbar: var(--ui-line-strong);
-  /* The editor is a solid writing surface; glass belongs to command islands. */
-  --agent-glass-bg: var(--ui-panel);
-  --agent-glass-border: var(--ui-line);
-  --agent-glass-shadow: var(--ui-shadow-control);
+  --ui-canvas: var(--theme-canvas);
+  --ui-panel: var(--theme-surface);
+  --ui-panel-soft: var(--theme-surface-secondary);
+  --ui-text: var(--theme-text);
+  --ui-subtle: var(--theme-text-muted);
+  --ui-line: var(--theme-border);
+  --ui-line-strong: var(--theme-border-strong);
+  --ui-signal: var(--theme-accent);
+  --ui-canvas-hsl: var(--theme-canvas-hsl);
+  --ui-panel-hsl: var(--theme-surface-hsl);
+  --ui-panel-soft-hsl: var(--theme-surface-secondary-hsl);
+  --ui-text-hsl: var(--theme-text-hsl);
+  --ui-subtle-hsl: var(--theme-text-muted-hsl);
+  --ui-line-hsl: var(--theme-border-hsl);
+  --ui-line-strong-hsl: var(--theme-border-strong-hsl);
+  --ui-signal-hsl: var(--theme-accent-hsl);
+
+  --ui-accent: var(--theme-accent);
+  --ui-accent-soft: var(--theme-accent-soft);
+  --ui-shadow-control: var(--theme-shadow-control);
+  --ui-shadow-inset: var(--theme-shadow-inset);
+  --ui-shadow-floating: var(--theme-shadow-floating);
+  --ui-tooltip-background: var(--theme-tooltip);
+  --ui-tooltip-foreground: var(--theme-tooltip-foreground);
+
+  --background-hsl: var(--theme-canvas-hsl);
+  --foreground-hsl: var(--theme-text-hsl);
+  --border-hsl: var(--theme-border-hsl);
+  --muted-hsl: var(--theme-surface-secondary-hsl);
+  --background: var(--theme-canvas);
+  --foreground: var(--theme-text);
+  --border: var(--theme-border);
+  --surface: var(--theme-surface);
+  --surface-foreground: var(--theme-text);
+  --surface-secondary: var(--theme-surface-secondary);
+  --surface-shadow: var(--theme-shadow-control);
+  --overlay: var(--theme-surface);
+  --overlay-foreground: var(--theme-text);
+  --default: var(--theme-surface-secondary);
+  --default-hover: var(--theme-border);
+  --default-foreground: var(--theme-text);
+  --muted: var(--theme-text-muted);
+  --muted-foreground: var(--theme-text-muted-hsl);
+  --card: var(--theme-surface-hsl);
+  --card-foreground: var(--theme-text-hsl);
+  --popover: var(--theme-surface-hsl);
+  --popover-foreground: var(--theme-text-hsl);
+  --secondary: var(--theme-surface-secondary-hsl);
+  --secondary-foreground: var(--theme-text-hsl);
+  --input: var(--theme-input-hsl);
+  --field-background: var(--theme-input);
+  --field-foreground: var(--theme-input-foreground);
+  --field-placeholder: var(--theme-text-muted);
+  --field-border: var(--theme-border);
+  --field-border-hover: var(--theme-border-strong);
+  --field-hover: var(--theme-surface-secondary);
+  --field-focus: var(--theme-surface);
+  --separator: var(--theme-border);
+  --segment: var(--theme-surface);
+  --segment-foreground: var(--theme-text);
+  --scrollbar: var(--theme-border-strong);
+  --agent-glass-bg: var(--theme-surface);
+  --agent-glass-border: var(--theme-border);
+  --agent-glass-shadow: var(--theme-shadow-control);
+
+  --accent-hsl: var(--theme-accent-hsl);
+  --accent-foreground-hsl: var(--theme-accent-foreground-hsl);
+  --accent: var(--theme-accent);
+  --accent-foreground: var(--theme-accent-foreground);
+  --primary: var(--theme-accent-hsl);
+  --primary-foreground: var(--theme-accent-foreground-hsl);
+  --secondary-foreground: var(--theme-text-hsl);
+  --success: var(--theme-success);
+  --success-foreground: var(--theme-tooltip-foreground);
+  --success-hsl: var(--theme-success-hsl);
+  --warning: var(--theme-warning);
+  --warning-foreground: var(--theme-tooltip-foreground);
+  --warning-hsl: var(--theme-warning-hsl);
+  --danger: var(--theme-danger);
+  --danger-foreground: var(--theme-tooltip-foreground);
+  --danger-hsl: var(--theme-danger-hsl);
+  --info: var(--theme-info);
+  --info-foreground: var(--theme-tooltip-foreground);
+  --info-hsl: var(--theme-info-hsl);
+  --destructive: var(--theme-danger-hsl);
+  --destructive-foreground: var(--theme-tooltip-foreground-hsl);
+  --ring: var(--theme-focus-hsl);
+  --focus: var(--theme-focus);
+  --field-border-focus: var(--theme-focus);
+
+  --radius: var(--theme-radius-md);
+  --radius-lg: var(--theme-radius-lg);
+  --radius-md: var(--theme-radius-md);
+  --radius-sm: var(--theme-radius-sm);
 }
+
 .dark {
   color-scheme: dark;
-  --ui-shadow-control: 0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035);
-  --ui-shadow-inset: inset 0 1px 2px rgb(0 0 0 / .14);
-  --ui-shadow-floating: 0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14);
-  --surface-shadow: 0 1px 2px rgb(0 0 0 / .10);
 }
