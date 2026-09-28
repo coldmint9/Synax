@@ -605,6 +605,8 @@ function mergeGlobalConfigLayers(
     terminalShellPath: global.terminalShellPath ?? "",
     wikiModel: global.wikiModel ?? "",
     inputOptimizationModel: global.inputOptimizationModel ?? "",
+    defaultImageModel: global.defaultImageModel,
+    defaultVideoModel: global.defaultVideoModel,
     providers,
     defaultProviderId: normalizeAcpProviderId(
       global.defaultProviderId ?? template.defaultProviderId,
@@ -687,6 +689,8 @@ function applyGlobalConfigPatch(
       : layers.global.providerConnections;
 
   const globalTouched =
+    patch.defaultImageModel !== undefined ||
+    patch.defaultVideoModel !== undefined ||
     patch.wikiModel !== undefined ||
     patch.inputOptimizationModel !== undefined ||
     patch.terminalShellPath !== undefined ||
@@ -731,6 +735,8 @@ function applyGlobalConfigPatch(
   const nextGlobal: GlobalConfig = {
     ...layers.global,
     wikiModel: patch.wikiModel ?? current.wikiModel ?? "",
+    defaultImageModel: patch.defaultImageModel !== undefined ? patch.defaultImageModel : current.defaultImageModel,
+    defaultVideoModel: patch.defaultVideoModel !== undefined ? patch.defaultVideoModel : current.defaultVideoModel,
     inputOptimizationModel:
       patch.inputOptimizationModel ?? current.inputOptimizationModel ?? "",
     terminalShellPath:

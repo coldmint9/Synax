@@ -2431,6 +2431,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "media_job":
+          if (streamVisible) scheduleLiveRefreshDetail();
+          break;
         case "runtime_state": {
           get().patchSession(event.sessionId, event.patch);
           if (get().selectedSessionId !== event.sessionId) break;

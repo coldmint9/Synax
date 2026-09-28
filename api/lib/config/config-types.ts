@@ -1,3 +1,4 @@
+import type { MediaAdapter, MediaCapabilities, MediaModelSelection } from "../../services/media/contracts.js";
 export type ProviderStatus = "live" | "experimental" | "inactive";
 export type ProviderKind = "acp" | "api";
 export type ApiFormat = "openai" | "openai-responses" | "anthropic";
@@ -27,6 +28,7 @@ export type ReasoningEffort =
   | "max";
 
 export interface ProviderModelDef {
+  media?: MediaCapabilities;
   inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
   outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
   id: string;
@@ -38,6 +40,7 @@ export interface ProviderModelDef {
 }
 
 export interface ProviderConnection {
+  mediaAdapter?: MediaAdapter;
   providerId: string;
   baseUrl?: string;
   apiKey?: string;
@@ -121,6 +124,8 @@ export interface McpDiscoveryResponse {
 }
 
 export interface GlobalConfig {
+  defaultImageModel?: MediaModelSelection | null;
+  defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
   wikiModel?: string;
   /** Empty means follow the model currently selected in the composer. */
@@ -179,6 +184,8 @@ export interface AnalyzerLlmConfig {
 }
 
 export interface UpdateGlobalConfigRequest {
+  defaultImageModel?: MediaModelSelection | null;
+  defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
   wikiModel?: string;
   /** Empty means follow the model currently selected in the composer. */
