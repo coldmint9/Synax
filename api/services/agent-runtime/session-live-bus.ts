@@ -9,6 +9,7 @@ import type {
 import { isSessionEventsQuiesced } from "./runtime-event-quiesce.js";
 
 export type SessionLiveEvent =
+  | { type: "media_job"; jobId: string; status: string | undefined; resultAssetIds: string[] }
   | {
       type: "context_compaction_state";
       state: ContextCompactionState;

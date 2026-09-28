@@ -17,6 +17,7 @@ import type {
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | { type: "media_job"; jobId: string; status: string; resultAssetIds: string[] }
   | {
       type: "context_compaction_state";
       state: ContextCompactionState;
@@ -86,6 +87,7 @@ export function sessionLiveStream(
     "context_compacted",
     "context_compaction_failed",
     "context_compaction_state",
+    "media_job",
   ] as const) {
     es.addEventListener(type, (event: MessageEvent) => {
       try {

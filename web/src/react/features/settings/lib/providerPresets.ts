@@ -170,6 +170,24 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
     allowBaseUrlEdit: true,
   },
   {
+    providerId: "custom-api:ark",
+    label: "ByteDance / Ark",
+    description: "ByteDance ModelArk OpenAI-compatible API",
+    format: "openai",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    defaultModel: "seedance-2.0",
+    allowBaseUrlEdit: true,
+  },
+  {
+    providerId: "custom-api:minimax",
+    label: "MiniMax",
+    description: "MiniMax media API",
+    format: "openai",
+    defaultBaseUrl: "https://api.minimax.io",
+    defaultModel: "MiniMax-H3",
+    allowBaseUrlEdit: true,
+  },
+  {
     providerId: "custom-api:xai",
     label: "xAI",
     description: "xAI OpenAI-compatible API",
@@ -195,6 +213,8 @@ export const PROVIDER_LOGO_ASSETS: Record<
     src: "/provider-logos/openrouter.svg",
     invertOnDark: true,
   },
+  "custom-api:ark": { src: "/provider-logos/volcengine.svg" },
+  "custom-api:minimax": { src: "/provider-logos/minimax.svg" },
   "custom-api:xai": { src: "/provider-logos/xai.ico", invertOnDark: true },
 };
 
@@ -535,6 +555,7 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
 export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
   return {
     providerId: draft.id,
+    mediaAdapter: draft.id === "openai" ? "openai" : draft.id.includes("openrouter") ? "openrouter" : draft.id.includes("xai") ? "xai" : draft.id.includes("ark") ? "ark" : draft.id.includes("minimax") ? "minimax" : undefined,
     baseUrl: draft.baseUrl || undefined,
     apiKey: draft.apiKey || undefined,
     apiKeyMasked: draft.apiKey ? undefined : draft.apiKeyMasked || undefined,

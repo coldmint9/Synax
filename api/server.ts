@@ -42,6 +42,7 @@ import { wslRoutes } from "./routes/wsl.js";
 import { webSearchOAuthRoutes } from "./routes/web-search-oauth.js";
 import { getDb } from "./db/index.js";
 import { agentRuntimeStore } from "./services/agent-runtime/session-store.js";
+import { recoverMediaJobs } from "./services/media/jobs.js";
 import { wikiStore } from "./services/wiki/wiki-store.js";
 import { ensureWikiProfileRegistered } from "./services/wiki/wiki-loop-profile.js";
 import { ensurePlanProfileRegistered } from "./services/wiki/wiki-plan-profile.js";
@@ -166,6 +167,8 @@ let stopFileUndoRetention = () => {};
 let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
   const recovery = await recoverRuntime(runtimeHost.hostId);
+  const mediaJobs = recoverMediaJobs();
+  if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
   if (recovery.reviewed)
     pinoLogger.warn(
       { count: recovery.reviewed },

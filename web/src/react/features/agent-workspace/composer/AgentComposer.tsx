@@ -14,6 +14,8 @@ import {
   useLayoutEffect,
   useRef,
   useCallback,
+  useMemo,
+  useState,
   type ReactNode,
   type RefObject,
   type KeyboardEvent,
@@ -43,6 +45,9 @@ import {
   type AgentModelSelection,
 } from "./modelSelection";
 import type { SynaxPermissionTier, SynaxWikiAttachMode } from "./composerTypes";
+import { MediaGenerationControls, useMediaGenerationModels } from "../../media/MediaGenerationControls";
+import { apiRequest } from "../../../../lib/api/origin";
+import type { MediaJob } from "../../../../lib/contracts/media-generation";
 
 export interface ComposerCommands {
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -148,6 +153,19 @@ export function AgentComposer({
   defaultExpanded = false,
 }: Props) {
   const { t, locale } = useLocale();
+  const [mediaMode, setMediaMode] = useState<"chat" | "image" | "video">("chat");
+  const [mediaParameters, setMediaParameters] = useState<Record<string, string | number | boolean>>({});
+  const [mediaJob, setMediaJob] = useState<MediaJob>();
+  const mediaCatalog = useMediaGenerationModels(mediaMode);
+  const mediaOperation = mediaMode === "image" ? (media?.parts.some((p) => p.type === "image") ? "image-to-image" : "text-to-image") : mediaMode === "video" ? (media?.parts.some((p) => p.type === "image") ? "image-to-video" : "text-to-video") : undefined;
+  useEffect(() => { setMediaParameters({}); setMediaJob(undefined); }, [sessionId, mediaMode, mediaCatalog.selected?.modelId]);
+  const submitMedia = useCallback(async () => {
+    if (!sessionId || !mediaCatalog.selected || !mediaOperation) { onSubmit(); return; }
+    const references = (media?.parts ?? []).filter((p): p is Extract<typeof p, { type: "image" }> => p.type === "image").map((p) => ({ assetId: p.assetId, role: "reference" as const }));
+    const response = await apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs`, { method: "POST", body: JSON.stringify({ providerId: mediaCatalog.selected.providerId, modelId: mediaCatalog.selected.modelId, operation: mediaOperation, prompt: content.trim(), references, parameters: mediaParameters, idempotencyKey: crypto.randomUUID() }) });
+    setMediaJob(response.job);
+  }, [sessionId, mediaCatalog.selected, mediaOperation, media?.parts, mediaParameters, content, onSubmit]);
+  useEffect(() => { if (!mediaJob || !sessionId || ["succeeded", "failed", "cancelled", "unknown"].includes(mediaJob.status)) return; const timer=window.setInterval(()=>{void apiRequest<{job:MediaJob}>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}`,{silent:true}).then(r=>setMediaJob(r.job)).catch(()=>{});},3000); return()=>window.clearInterval(timer); }, [mediaJob, sessionId]);
   const keyboardHintId = useId();
   const keyboardHints = [
     locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line",
@@ -231,10 +249,12 @@ export function AgentComposer({
         inputCapability.blocked
       )
         return;
-      onSubmit();
+      mediaMode === "chat" ? onSubmit() : void submitMedia();
     },
     [
       inputCapability.blocked,
+      mediaMode,
+      submitMedia,
       media,
       content,
       commands,
@@ -325,7 +345,7 @@ export function AgentComposer({
       data-queue-ready={queueMode && !sendDisabled ? "true" : undefined}
       className={`agent-dock-composer-chip agent-dock-composer-action ${stopMode ? "agent-dock-composer-stop" : "agent-dock-composer-send"} ms-auto inline-flex size-8 shrink-0 items-center justify-center !rounded-full transition-colors disabled:cursor-not-allowed`}
       disabled={stopMode ? !onStop : resumeMode ? disabled : sendDisabled}
-      onClick={stopMode ? onStop : resumeMode ? onResume : onSubmit}
+      onClick={stopMode ? onStop : resumeMode ? onResume : mediaMode === "chat" ? onSubmit : () => { void submitMedia(); }}
     >
       {stopMode ? (
         <Square size={12} fill="currentColor" />
@@ -417,6 +437,7 @@ export function AgentComposer({
           value={permissionTier}
           onChange={onPermissionTierChange}
         />
+        <MediaGenerationControls mode={mediaMode} onModeChange={setMediaMode} models={mediaCatalog.models} selected={mediaCatalog.selected} onSelected={mediaCatalog.onSelected} operation={mediaOperation as any} parameters={mediaParameters} onParameters={setMediaParameters} job={mediaJob} onCancel={() => { if (mediaJob && sessionId) void apiRequest(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}/cancel`, { method: "POST" }).then(() => setMediaJob(undefined)); }} media={media} />
         {modeControl}
       </div>
       <div className="agent-dock-composer-settings contents">
@@ -596,7 +617,8 @@ export function AgentComposer({
             value={permissionTier}
             onChange={onPermissionTierChange}
           />
-          {modeControl}
+          <MediaGenerationControls mode={mediaMode} onModeChange={setMediaMode} models={mediaCatalog.models} selected={mediaCatalog.selected} onSelected={mediaCatalog.onSelected} operation={mediaOperation as any} parameters={mediaParameters} onParameters={setMediaParameters} job={mediaJob} onCancel={() => { if (mediaJob && sessionId) void apiRequest(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}/cancel`, { method: "POST" }).then(() => setMediaJob(undefined)); }} media={media} />
+        {modeControl}
           {/* The keyed editor keeps the same parent and DOM node in either layout. */}
           <div key="editor" className="contents">
             <Tooltip
