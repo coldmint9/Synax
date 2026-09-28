@@ -1,3 +1,4 @@
+import { mediaAdapterSchema, mediaCapabilitiesSchema, mediaSelectionSchema } from "../services/media/schema.js";
 import path from "node:path";
 import { listFileOpeners, resolveFileOpener } from "../services/file-openers/index.js";
 import { Hono } from "hono";
@@ -67,6 +68,7 @@ configRoutes.post("/web-search/oauth/start", (c) => {
 const providerConnectionSchema = z
   .object({
     providerId: z.string().min(1),
+    mediaAdapter: mediaAdapterSchema.optional(),
     baseUrl: z.string().optional(),
     apiKey: z.string().optional(),
     apiKeyMasked: z.string().optional(),
@@ -89,6 +91,7 @@ const providerDefSchema = z.object({
       id: z.string().min(1),
       label: z.string().min(1),
       isDefault: z.boolean().optional(),
+      media: mediaCapabilitiesSchema.optional(),
       maxTokens: z.number().optional(),
       contextLimit: z.number().int().positive().max(10_000_000).optional(),
       inputModalities: z
@@ -155,6 +158,8 @@ const globalConfigPatchSchema = z
     terminalShellPath: z.string().trim().max(4096).optional(),
     wikiModel: z.string().trim().max(512).optional(),
     inputOptimizationModel: z.string().trim().max(512).optional(),
+    defaultImageModel: mediaSelectionSchema.nullable().optional(),
+    defaultVideoModel: mediaSelectionSchema.nullable().optional(),
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
     defaultApiProviderId: z.string().min(1).optional(),

@@ -109,6 +109,10 @@ import {
 import { sessionProcessManager } from "../services/agent-runtime/session-process-manager.js";
 import { logger } from "../lib/logger.js";
 import { getGlobalConfig } from "../lib/config/config-store.js";
+import { getGlobalConfigForRuntime } from "../lib/config/config-store.js";
+import { mediaModels, findMediaModel, discoverOpenRouterModels } from "../services/media/catalog.js";
+import { createMediaJob, getMediaJob, listMediaJobs, cancelJob } from "../services/media/jobs.js";
+import { mediaJobInputSchema } from "../services/media/schema.js";
 import { SseEventType } from "../lib/sse-events.js";
 import { assertLlmProviderConfigured } from "../services/llm-runtime/provider-check.js";
 import {
@@ -283,6 +287,58 @@ agentRuntimeRoutes.post("/input/optimize", async (c) => {
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.get("/media/models/discover", async (c) => {
+  try {
+    const providerId = c.req.query("providerId") ?? "custom-api:openrouter";
+    const config = getGlobalConfigForRuntime();
+    const connection = config.providerConnections[providerId];
+    if (!connection?.apiKey) return c.json({ error: "Provider API key is not configured." }, 422);
+    if (providerId !== "custom-api:openrouter") return c.json({ models: [] });
+    const baseUrl = connection.baseUrl ?? "https://openrouter.ai/api/v1";
+    return c.json({ models: await discoverOpenRouterModels(baseUrl, connection.apiKey) });
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get("/media/models", (c) => {
+  try { return c.json({ models: mediaModels(getGlobalConfigForRuntime()) }); }
+  catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
+  try {
+    const session = agentSessionRuntime.get(c.req.param("sessionId"));
+    const body = await c.req.json();
+    const parsed = mediaJobInputSchema.safeParse(body);
+    if (!parsed.success) return validationError(c, parsed.error);
+    findMediaModel(getGlobalConfigForRuntime(), parsed.data.providerId, parsed.data.modelId);
+    const job = createMediaJob(session.id, session.projectId, parsed.data);
+    return c.json({ job }, 202);
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/media-jobs", (c) => {
+  try { agentSessionRuntime.get(c.req.param("sessionId")); return c.json({ jobs: listMediaJobs(c.req.param("sessionId")) }); }
+  catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/media-jobs/:jobId", (c) => {
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    const job = getMediaJob(c.req.param("jobId"));
+    if (!job || job.sessionId !== c.req.param("sessionId")) return c.json({ error: "Media job not found." }, 404);
+    return c.json({ job });
+  } catch (error) { return runtimeError(c, error); }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs/:jobId/cancel", async (c) => {
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    const job = getMediaJob(c.req.param("jobId"));
+    if (!job || job.sessionId !== c.req.param("sessionId")) return c.json({ error: "Media job not found." }, 404);
+    return c.json({ job: await cancelJob(job.id) });
+  } catch (error) { return runtimeError(c, error); }
 });
 
 function withSessionPayload(sessionId: string) {
@@ -1045,6 +1101,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", (c) => {
             "context_compacted",
             "context_compaction_failed",
             "context_compaction_state",
+            "media_job",
           ].includes(event.type)
         )
           return;
