@@ -85,7 +85,9 @@ describe('canonical command deck', () => {
     expect(declaration(controls, 'text-shadow')).toContain('--island-ink-halo');
     expect(declaration(controls + ':hover:not(:disabled)', 'background')).toBe('transparent');
     expect(declaration('.synax-island :is(button, [role="radio"], select):focus-visible', 'outline')).toBe('2px solid var(--island-ink)');
-    expect(declaration('.synax-island', '--island-ink')).not.toBe(declaration('.dark .synax-island', '--island-ink'));
+    expect(declaration('.synax-island', '--island-ink')).toBe('var(--theme-text)');
+    expect(declaration('.dark .synax-island', '--island-ink')).toBe('var(--theme-text)');
+    expect(declaration('.dark .synax-island', '--island-ink-halo')).toContain('var(--theme-shadow-rgb)');
   });
   it('represents collapsible navigation as toggle buttons, not fake tabs with no panel', () => {
     const nav = headerSource.split('function MainNavTabs(')[1].split('function WikiToolbar(')[0];

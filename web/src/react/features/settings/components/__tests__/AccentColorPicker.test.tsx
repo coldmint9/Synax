@@ -80,6 +80,19 @@ describe("AccentColorPicker", () => {
     expect(hex).toHaveValue("#FF0000");
   });
 
+  it.each([
+    ["rgb(51 102 153)", "#336699"],
+    ["hsl(210 50% 40%)", "#336699"],
+  ])("uses HEX editor state without replacing an imported CSS preview", async (cssColor, expectedHex) => {
+    await openPicker(cssColor);
+
+    expect(screen.getByRole("textbox", { name: "HEX color" })).toHaveValue(expectedHex.toUpperCase());
+    expect(screen.getByRole("button", { name: "Custom accent color" })).toHaveTextContent(expectedHex.toUpperCase());
+    expect(document.querySelector(".appearance-color-preview")).toHaveStyle({
+      backgroundColor: cssColor,
+    });
+  });
+
   it("keeps partial drafts independent, and persists valid typing without rewriting the draft", async () => {
     const { user, onChange, hex } = await openPicker();
     await user.clear(hex);

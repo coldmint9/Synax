@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACCENT_PRESETS } from "../../../../../lib/appearance";
-import { hexToHsv, hsvToHex, normalizeHex } from "../accentColor";
+import { cssColorToHex, hexToHsv, hsvToHex, normalizeHex } from "../accentColor";
 
 describe("normalizeHex", () => {
   it.each([
@@ -27,6 +27,20 @@ describe("normalizeHex", () => {
   ])("rejects incomplete, invalid or non-opaque colors: %s", (input) =>
     expect(normalizeHex(input)).toBeNull(),
   );
+});
+
+describe("cssColorToHex", () => {
+  it.each([
+    ["rgb(51 102 153)", "#336699"],
+    ["hsl(210 50% 40%)", "#336699"],
+    ["rgba(51, 102, 153, 0.5)", "#336699"],
+  ])("converts supported CSS color %s for editor state", (input, expected) => {
+    expect(cssColorToHex(input)).toBe(expected);
+  });
+
+  it("rejects unsupported CSS values", () => {
+    expect(cssColorToHex("var(--accent)")).toBeNull();
+  });
 });
 
 describe("HSV conversion", () => {

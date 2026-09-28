@@ -17,6 +17,15 @@ export interface ResolvedThemeTokens {
 export type ThemeCssVariables = Record<string, string>;
 
 const LEGACY_RADIUS = "10px";
+
+function cssColorToHex(value: string): string | null {
+  const parsed = parseSafeCssColor(value);
+  if (!parsed) return null;
+  return `#${parsed.rgb
+    .map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
 const SURFACE_SHADOWS: Record<ResolvedTheme, string> = {
   light: "0 1px 2px rgb(26 34 48 / .03)",
   dark: "0 1px 2px rgb(0 0 0 / .10)",
@@ -89,7 +98,19 @@ export function resolveThemeTokens(
 function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: ResolvedTheme): ThemeCssVariables {
   const { colors, shape, effects } = tokens;
   const variables: ThemeCssVariables = {};
-  const accent = accentPalette(colors.accent, resolvedTheme);
+  const accentHex = cssColorToHex(colors.accent);
+  const generatedAccent = accentHex ? accentPalette(accentHex, resolvedTheme) : null;
+  const accent = {
+    // Semantic tokens are authoritative for the selected accent and its
+    // explicitly normalized foreground/soft values. The generated palette is
+    // only used for the legacy top/strong/muted variants.
+    top: generatedAccent?.top ?? colors.accent,
+    bottom: colors.accent,
+    strong: generatedAccent?.strong ?? colors.accent,
+    ink: colors.accentForeground,
+    soft: colors.accentSoft,
+    muted: generatedAccent?.muted ?? colors.accent,
+  };
 
   for (const key of COLOR_HSL_KEYS) {
     variables[`--theme-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`] = colors[key];
@@ -127,12 +148,12 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--foreground-hsl": hsl("text"),
     "--border-hsl": hsl("border"),
     "--muted-hsl": hsl("surfaceSecondary"),
-    "--primary": toHslChannels(accent.bottom),
-    "--primary-foreground": toHslChannels(accent.ink),
-    "--accent": accent.bottom,
-    "--accent-foreground": accent.ink,
-    "--accent-hsl": toHslChannels(accent.bottom),
-    "--accent-foreground-hsl": toHslChannels(accent.ink),
+    "--primary": hsl("accent"),
+    "--primary-foreground": hsl("accentForeground"),
+    "--accent": raw("accent"),
+    "--accent-foreground": raw("accentForeground"),
+    "--accent-hsl": hsl("accent"),
+    "--accent-foreground-hsl": hsl("accentForeground"),
     "--secondary": hsl("surfaceSecondary"),
     "--secondary-foreground": hsl("text"),
     "--input": hsl("input"),
@@ -192,7 +213,7 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--ui-subtle": raw("textMuted"),
     "--ui-line": raw("border"),
     "--ui-line-strong": raw("borderStrong"),
-    "--ui-signal": accent.bottom,
+    "--ui-signal": raw("accent"),
     "--ui-canvas-hsl": hsl("canvas"),
     "--ui-panel-hsl": hsl("surface"),
     "--ui-panel-soft-hsl": hsl("surfaceSecondary"),
@@ -200,9 +221,9 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--ui-subtle-hsl": hsl("textMuted"),
     "--ui-line-hsl": hsl("border"),
     "--ui-line-strong-hsl": hsl("borderStrong"),
-    "--ui-signal-hsl": toHslChannels(accent.bottom),
-    "--ui-accent": accent.bottom,
-    "--ui-accent-soft": accent.soft,
+    "--ui-signal-hsl": hsl("accent"),
+    "--ui-accent": raw("accent"),
+    "--ui-accent-soft": raw("accentSoft"),
     "--ui-shadow-control": effects.controlShadow,
     "--ui-shadow-inset": effects.insetShadow,
     "--ui-shadow-floating": effects.floatingShadow,
@@ -216,16 +237,16 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
   // The legacy accent aliases are still consumed by the settings and control
   // styles during the migration window.
   Object.assign(variables, {
-    "--cx-accent-bottom": accent.bottom,
-    "--cx-accent-bottom-hsl": toHslChannels(accent.bottom),
+    "--cx-accent-bottom": raw("accent"),
+    "--cx-accent-bottom-hsl": hsl("accent"),
     "--cx-accent-top": accent.top,
     "--cx-accent-top-hsl": toHslChannels(accent.top),
     "--cx-accent-strong": accent.strong,
     "--cx-accent-strong-hsl": toHslChannels(accent.strong),
-    "--cx-accent-ink": accent.ink,
-    "--cx-accent-ink-hsl": toHslChannels(accent.ink),
-    "--cx-accent-soft": accent.soft,
-    "--cx-accent-soft-hsl": toHslChannels(accent.soft),
+    "--cx-accent-ink": raw("accentForeground"),
+    "--cx-accent-ink-hsl": hsl("accentForeground"),
+    "--cx-accent-soft": raw("accentSoft"),
+    "--cx-accent-soft-hsl": hsl("accentSoft"),
     "--cx-accent-muted": accent.muted,
     "--cx-accent-muted-hsl": toHslChannels(accent.muted),
     "--cx-success-hsl": hsl("success"),
@@ -233,8 +254,8 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--cx-danger-hsl": hsl("danger"),
     "--cx-info-hsl": hsl("info"),
     "--radio-accent-top": accent.top,
-    "--radio-accent-bottom": accent.bottom,
-    "--radio-accent-text": accent.ink,
+    "--radio-accent-bottom": raw("accent"),
+    "--radio-accent-text": raw("accentForeground"),
     "--radio-idle-text": accent.muted,
   });
 

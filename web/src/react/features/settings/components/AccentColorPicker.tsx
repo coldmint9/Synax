@@ -2,7 +2,7 @@ import { useId, useRef, useState, type PointerEvent } from "react";
 import { Popover, PopoverButton, PopoverPanel } from "@headlessui/react";
 import { SlidersHorizontal, X } from "lucide-react";
 import { DEFAULT_ACCENT } from "../../../../lib/appearance";
-import { hexToHsv, hsvToHex, normalizeHex, type Hsv } from "./accentColor";
+import { cssColorToHex, hexToHsv, hsvToHex, normalizeHex, type Hsv } from "./accentColor";
 import "./appearance.css";
 
 interface AccentColorPickerProps {
@@ -58,6 +58,7 @@ function ColorChannel({
 
 interface ColorEditorProps {
   value: string;
+  previewValue: string;
   hsv: Hsv;
   zh: boolean;
   titleId: string;
@@ -67,6 +68,7 @@ interface ColorEditorProps {
 
 function ColorEditor({
   value,
+  previewValue,
   hsv,
   zh,
   titleId,
@@ -130,7 +132,7 @@ function ColorEditor({
         <div className="appearance-editor-actions">
           <span
             className="appearance-color-preview"
-            style={{ backgroundColor: value }}
+            style={{ backgroundColor: previewValue }}
             aria-hidden="true"
           />
           <button
@@ -271,7 +273,10 @@ export function AccentColorPicker({
 }: AccentColorPickerProps) {
   const titleId = useId();
   const zh = locale === "zh";
-  const hex = normalizeHex(value) ?? DEFAULT_ACCENT;
+  // The editor only speaks HEX, but the active semantic accent may be any
+  // supported CSS color. Keep the semantic value for preview and convert only
+  // the editor/HSV representation.
+  const hex = cssColorToHex(value) ?? DEFAULT_ACCENT;
   const [color, setColor] = useState(() => ({ hex, hsv: hexToHsv(hex) }));
   // Keep HSV outside the unmounted panel: HEX loses hue at zero saturation and
   // both hue and saturation at black. Reconcile only genuinely external colors.
@@ -303,6 +308,7 @@ export function AccentColorPicker({
         {({ close }) => (
           <ColorEditor
             value={hex}
+            previewValue={value}
             hsv={color.hsv}
             zh={zh}
             titleId={titleId}

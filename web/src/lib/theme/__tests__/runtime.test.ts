@@ -108,8 +108,38 @@ describe("theme runtime", () => {
     expect(root.getPropertyValue("--cx-accent-bottom")).toBe(palette.bottom);
     expect(root.getPropertyValue("--cx-accent-strong")).toBe(palette.strong);
     expect(root.getPropertyValue("--cx-accent-muted")).toBe(palette.muted);
-    expect(root.getPropertyValue("--cx-accent-soft")).toBe(palette.soft);
+    expect(root.getPropertyValue("--cx-accent-soft")).toBe(customTheme.colors.light.accentSoft);
     expect(root.getPropertyValue("--cx-accent-ink")).toBe(palette.ink);
+  });
+
+  it.each([
+    ["rgb(51 102 153)", "rgb(255 255 255)", "hsl(210 40% 95%)"],
+    ["hsl(210 50% 40%)", "#ffffff", "rgb(235 242 250)"],
+  ])("projects imported CSS accents through semantic and compatibility aliases", (accent, foreground, soft) => {
+    const customTheme = mergeTheme(DEFAULT_THEME, {
+      colors: {
+        light: {
+          accent,
+          accentForeground: foreground,
+          accentSoft: soft,
+        },
+      },
+    });
+    applyThemeRuntime(customTheme, "light");
+    const root = document.documentElement.style;
+
+    expect(root.getPropertyValue("--theme-accent")).toBe(accent);
+    expect(root.getPropertyValue("--theme-accent-foreground")).toBe(foreground);
+    expect(root.getPropertyValue("--theme-accent-soft")).toBe(soft);
+    expect(root.getPropertyValue("--accent")).toBe(accent);
+    expect(root.getPropertyValue("--primary")).toBe(root.getPropertyValue("--theme-accent-hsl"));
+    expect(root.getPropertyValue("--ui-accent")).toBe(accent);
+    expect(root.getPropertyValue("--cx-accent-bottom")).toBe(accent);
+    expect(root.getPropertyValue("--cx-accent-ink")).toBe(foreground);
+    expect(root.getPropertyValue("--cx-accent-soft")).toBe(soft);
+    expect(root.getPropertyValue("--cx-accent-top")).not.toBe("#a1bba8");
+    expect(root.getPropertyValue("--cx-accent-strong")).not.toBe("#a1bba8");
+    expect(root.getPropertyValue("--cx-accent-muted")).not.toBe("#a1bba8");
   });
 
   it("keeps legacy radius and surface shadow compatibility semantics", () => {

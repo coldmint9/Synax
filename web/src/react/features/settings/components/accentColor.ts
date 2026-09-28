@@ -1,4 +1,5 @@
 import { normalizeAccent } from "../../../../lib/appearance";
+import { parseSafeCssColor } from "../../../../lib/theme/schema";
 
 export interface Hsv {
   /** Degrees in [0, 360). */
@@ -11,6 +12,15 @@ export interface Hsv {
 export function normalizeHex(input: string): string | null {
   const hex = input.trim();
   return normalizeAccent(hex.startsWith("#") ? hex : `#${hex}`);
+}
+
+/** Convert a supported semantic CSS color into the editor's opaque HEX form. */
+export function cssColorToHex(input: string): string | null {
+  const parsed = parseSafeCssColor(input);
+  if (!parsed) return null;
+  return `#${parsed.rgb
+    .map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0"))
+    .join("")}`;
 }
 
 function wrapHue(hue: number): number {
