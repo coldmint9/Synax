@@ -741,10 +741,19 @@ function applyGlobalConfigPatch(
     ...nextTemplateConnections,
     ...nextGlobalConnections,
   };
-  const resolvedDefaultApiProviderId =
+  const requestedDefaultApiProviderId =
     patch.defaultApiProviderId ??
     autoSelectDefaultApiProvider(allProviders, allConnections) ??
     current.defaultApiProviderId;
+  // Deleting a provider must not leave it behind as the stored default.
+  const resolvedDefaultApiProviderId = isApiProviderInList(
+    allProviders,
+    requestedDefaultApiProviderId,
+  )
+    ? requestedDefaultApiProviderId
+    : (autoSelectDefaultApiProvider(allProviders, allConnections) ??
+      allProviders.find((provider) => provider.kind === "api")?.id ??
+      "openai");
 
   const nextGlobal: GlobalConfig = {
     ...layers.global,
@@ -1101,6 +1110,16 @@ function autoSelectDefaultApiProvider(
       p.kind === "api" && p.status !== "inactive" && connections[p.id]?.apiKey,
   );
   return configured.length === 1 ? configured[0].id : null;
+}
+
+function isApiProviderInList(
+  providers: ProviderDef[],
+  providerId: string | undefined,
+): boolean {
+  if (!providerId) return false;
+  return providers.some(
+    (provider) => provider.kind === "api" && provider.id === providerId,
+  );
 }
 
 function normalizeApiProviderId(

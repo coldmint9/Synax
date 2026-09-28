@@ -41,6 +41,9 @@ export function nativeInputCapabilities(
       "@ai-sdk/mistral",
       "@ai-sdk/xai",
       "@ai-sdk/perplexity",
+      // DeepSeek's Chat adapter ships the same image parts; without this entry
+      // the declared modalities were discarded and image input was rejected.
+      "@ai-sdk/deepseek",
     ].includes(npm ?? "")
   )
     return caps(declared, [

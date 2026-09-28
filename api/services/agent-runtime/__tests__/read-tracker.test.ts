@@ -111,8 +111,7 @@ describe("rebuildSessionFileReads", () => {
         }),
       ]);
 
-      // Without replaying the write, the tracker stays empty and this edit fails
-      // with "was not read in this session".
+      // The following edit must work after rebuilding the session history.
       const edited = await runEdit(
         session,
         { path: relPath, content: "edited\n" },
@@ -259,18 +258,22 @@ describe("read-before-write path identity", () => {
     expect(fs.readFileSync(filePath, "utf8")).toBe("final\n");
   });
 
-  it("still blocks a write to a file this session never read", async () => {
+  it("still blocks file.write to a file this session never read", async () => {
     const { sessionId, dir } = newWorkspace("synax-read-guard-");
     fs.writeFileSync(path.join(dir, "unread.txt"), "secret\n", "utf8");
 
-    const executeEdit = () =>
-      runEdit(sessionId, { path: "unread.txt", content: "overwritten\n" });
-    await expect(Promise.resolve().then(executeEdit)).rejects.toThrow(
+    const executeWrite = () =>
+      fileWriteTool.execute({
+        sessionId, runId: null, stepId: null, toolCallId: "unread-write",
+        toolId: "file.write", category: "write", mutability: "write",
+        args: { path: "unread.txt", content: "overwritten\n" },
+      });
+    await expect(Promise.resolve().then(executeWrite)).rejects.toThrow(
       /not read in this session/i,
     );
   });
 
-  it("still blocks a write when the file changed on disk after the read", async () => {
+  it("still blocks file.write when the file changed on disk after the read", async () => {
     const { sessionId, dir } = newWorkspace("synax-read-external-");
     const filePath = path.join(dir, "external.txt");
     fs.writeFileSync(filePath, "one\n", "utf8");
@@ -281,11 +284,37 @@ describe("read-before-write path identity", () => {
     fs.writeFileSync(filePath, "two\n", "utf8");
     fs.utimesSync(filePath, future, future);
 
-    const executeEdit = () =>
-      runEdit(sessionId, { path: "external.txt", content: "two\n" });
-    await expect(Promise.resolve().then(executeEdit)).rejects.toThrow(
+    const executeWrite = () =>
+      fileWriteTool.execute({
+        sessionId, runId: null, stepId: null, toolCallId: "external-write",
+        toolId: "file.write", category: "write", mutability: "write",
+        args: { path: "external.txt", content: "two\n" },
+      });
+    await expect(Promise.resolve().then(executeWrite)).rejects.toThrow(
       /changed on disk/i,
     );
+  });
+
+  it("edits an existing file without a prior read and uses current disk content", async () => {
+    const { sessionId, dir } = newWorkspace("synax-edit-no-read-");
+    const file = path.join(dir, "unread.txt");
+    fs.writeFileSync(file, "original\n", "utf8");
+
+    await runEdit(sessionId, { path: "unread.txt", patch: "-original\n+updated\n" });
+    expect(fs.readFileSync(file, "utf8")).toBe("updated\n");
+    await runEdit(sessionId, { path: "unread.txt", content: "replaced\n" });
+    expect(fs.readFileSync(file, "utf8")).toBe("replaced\n");
+  });
+
+  it("rejects an unmatched edit patch without overwriting the file", async () => {
+    const { sessionId, dir } = newWorkspace("synax-edit-stale-");
+    const file = path.join(dir, "unread.txt");
+    fs.writeFileSync(file, "current\n", "utf8");
+
+    await expect(Promise.resolve().then(() => runEdit(sessionId, {
+      path: "unread.txt", patch: "-outdated\n+updated\n",
+    }))).rejects.toThrow(/patch removal target not found/);
+    expect(fs.readFileSync(file, "utf8")).toBe("current\n");
   });
 });
 

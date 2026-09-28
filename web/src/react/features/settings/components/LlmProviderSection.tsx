@@ -88,8 +88,12 @@ function buildApiProviderPatch(
   const providers = Array.from(providerMap.values())
   const patch: Record<string, unknown> = { providers, providerConnections }
 
-  const defaultExists = providers.some(provider => provider.kind === 'api' && provider.id === nextDefaultId)
-  if (nextDefaultId && nextDefaultId !== config.defaultApiProviderId && defaultExists) {
+  const isApiProvider = (id: string) => providers.some(provider => provider.kind === 'api' && provider.id === id)
+  const defaultExists = isApiProvider(nextDefaultId)
+  // Deleting the provider that holds the default must repoint it within the
+  // same request, otherwise the server keeps rejecting the stale default.
+  const currentDefaultExists = isApiProvider(config.defaultApiProviderId)
+  if (nextDefaultId && defaultExists && (nextDefaultId !== config.defaultApiProviderId || !currentDefaultExists)) {
     patch.defaultApiProviderId = nextDefaultId
   }
 
@@ -155,7 +159,10 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
   }
 
   const handleRemove = async (draft: ApiProviderDraft) => {
-    if (!hasStoredApiKey(config, draft.id)) {
+    // A provider present in the saved config must always be removed server side,
+    // otherwise it reappears after the reload.
+    const persisted = config.providers.some(provider => provider.id === draft.id)
+    if (!persisted && !hasStoredApiKey(config, draft.id)) {
       setDrafts(prev => prev.filter(d => d.id !== draft.id))
       setDetailId(null)
       return
@@ -166,7 +173,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       : drafts.filter(d => d.id !== draft.id)
     const nextConfigured = next.filter(isConfiguredProvider)
     const nextDefaultId = defaultId === draft.id
-      ? nextConfigured[0]?.id ?? config.providers.find(p => p.kind === 'api')?.id ?? 'openai'
+      ? nextConfigured[0]?.id ?? config.providers.find(p => p.kind === 'api' && p.id !== draft.id)?.id ?? 'openai'
       : defaultId
     const providerIdsToPersist = storedApiProviderIds(config)
     providerIdsToPersist.delete(draft.id)

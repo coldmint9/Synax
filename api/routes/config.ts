@@ -590,20 +590,26 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
 
   const defaultApiProviderId =
     patch.defaultApiProviderId ?? current.defaultApiProviderId;
-  if (!providerMap.has(defaultApiProviderId)) {
-    throw new Error(`默认 API provider 不存在: ${defaultApiProviderId}`);
-  }
   const defaultApiProvider = providerMap.get(defaultApiProviderId);
-  if (!defaultApiProvider || defaultApiProvider.kind !== "api") {
+  if (!defaultApiProvider) {
+    // Deleting the provider that currently holds the default is allowed: the
+    // config store re-selects a valid default from the providers that remain.
+    // Only an explicitly requested, unknown default is a client error.
+    if (patch.defaultApiProviderId !== undefined) {
+      throw new Error(`默认 API provider 不存在: ${defaultApiProviderId}`);
+    }
+  } else if (defaultApiProvider.kind !== "api") {
     throw new Error("默认 API provider 必须是 API 类型");
   }
 
-  validateProviderConnection(
-    defaultApiProviderId,
-    mergedConnections[defaultApiProviderId],
-    current.providerConnections[defaultApiProviderId],
-    false,
-  );
+  if (defaultApiProvider) {
+    validateProviderConnection(
+      defaultApiProviderId,
+      mergedConnections[defaultApiProviderId],
+      current.providerConnections[defaultApiProviderId],
+      false,
+    );
+  }
 
   return patch as UpdateGlobalConfigRequest;
 }

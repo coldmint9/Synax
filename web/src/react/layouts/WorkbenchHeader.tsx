@@ -181,7 +181,6 @@ function ProjectSwitcher({
               <Trash2 size={13} aria-hidden="true" />
             </MenuAction>
           </div>)}
-          <div role="separator" className="my-1 h-px bg-border" />
           <MenuAction onClick={onCreateProject}><Plus size={14} aria-hidden="true" />{t("appImportProject")}</MenuAction>
         </IslandMenuItems>
       </>}

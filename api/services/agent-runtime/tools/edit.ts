@@ -3,7 +3,6 @@ import path from "node:path";
 import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import {
-  assertSessionFileReadForWrite,
   clearSessionFileRead,
   recordSessionFileMutation,
 } from "../read-tracker.js";
@@ -110,7 +109,6 @@ export const editTool: RegisteredTool = {
     if (!hasPatch && typeof args.content !== "string") {
       throw new Error("patch or content is required.");
     }
-    assertSessionFileReadForWrite(input.sessionId, args.path);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     const current = fs.existsSync(filePath)
       ? fs.readFileSync(filePath, "utf8")
@@ -158,9 +156,7 @@ export const editTool: RegisteredTool = {
       clearSessionFileRead(input.sessionId, filePath);
     } else {
       fs.writeFileSync(filePath, next, "utf8");
-      // Refresh the tracked mtime: this write satisfies the read-before-write
-      // guard, so a follow-up edit of the same file must not be rejected as
-      // "changed on disk".
+      // Keep the post-write snapshot current for other tools that use the read tracker.
       recordSessionFileMutation(input.sessionId, filePath, next);
     }
     return {

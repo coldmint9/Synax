@@ -3,7 +3,6 @@ import path from "node:path";
 import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import {
-  assertSessionFileReadForWrite,
   clearSessionFileRead,
   recordSessionFileMutation,
 } from "../read-tracker.js";
@@ -42,7 +41,6 @@ function planChanges(sessionId: string, hunks: PatchHunk[]): PlannedChange[] {
   for (const hunk of hunks) {
     claim(hunk.path);
     const source = resolveWorkspacePath(hunk.path, sessionId);
-    assertSessionFileReadForWrite(sessionId, hunk.path);
 
     if (hunk.type === "add") {
       if (fs.existsSync(source))
@@ -83,7 +81,6 @@ function planChanges(sessionId: string, hunks: PatchHunk[]): PlannedChange[] {
       target = resolveWorkspacePath(movePath, sessionId);
       if (fs.existsSync(target))
         throw new Error(`Move target already exists: ${movePath}`);
-      assertSessionFileReadForWrite(sessionId, movePath);
     }
     const current = fs.readFileSync(source, "utf8");
     changes.push({
@@ -105,7 +102,7 @@ export const patchTool: RegisteredTool = {
   id: "file.patch",
   label: "Apply Patch",
   description:
-    "Apply one *** Begin Patch / *** End Patch envelope that may add, update, move, or delete several files in a single call. Read each file first. Prefer edit for a change confined to one file.",
+    "Apply one *** Begin Patch / *** End Patch envelope that may add, update, move, or delete several files in a single call. Prefer edit for a change confined to one file.",
   category: "write",
   internalGate: "write",
   mutability: "write",
@@ -140,8 +137,7 @@ export const patchTool: RegisteredTool = {
       fs.mkdirSync(path.dirname(change.target), { recursive: true });
       fs.writeFileSync(change.target, change.contents ?? "", "utf8");
       bytes += Buffer.byteLength(change.contents ?? "", "utf8");
-      // Refresh the tracked mtime: this write satisfies the read-before-write
-      // guard for follow-up edits of the same file.
+      // Keep the post-write snapshot current for other tools that use the read tracker.
       recordSessionFileMutation(
         input.sessionId,
         change.targetPath,

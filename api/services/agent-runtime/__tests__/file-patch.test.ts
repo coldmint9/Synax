@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { patchTool } from "../tools/patch.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { toolRegistry } from "../tool-registry.js";
-import { recordSessionFileRead } from "../read-tracker.js";
 import {
   clearSessionWorkspaceRoot,
   setSessionWorkspaceRoot,
@@ -50,7 +49,7 @@ function input(sessionId: string, patch: string) {
 }
 
 describe("patchTool", () => {
-  it("applies add, update, move and delete hunks in one call", async () => {
+  it("applies add, update, move and delete without prior reads", async () => {
     const { sessionId, dir } = setupWorkspace("Synax-file-patch-");
     fs.writeFileSync(
       path.join(dir, "keep.ts"),
@@ -63,9 +62,6 @@ describe("patchTool", () => {
       "export const moved = true;\n",
       "utf8",
     );
-    for (const file of ["keep.ts", "drop.ts", "old-name.ts"]) {
-      recordSessionFileRead(sessionId, file);
-    }
 
     const result = await patchTool.execute(
       input(
@@ -115,7 +111,6 @@ describe("patchTool", () => {
       "export const keep = 1;\n",
       "utf8",
     );
-    recordSessionFileRead(sessionId, "keep.ts");
 
     expect(() =>
       patchTool.execute(
