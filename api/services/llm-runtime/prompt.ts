@@ -1,17 +1,22 @@
 import type { ModelMessage, SystemModelMessage } from "@ai-sdk/provider-utils";
 import type { LlmGatewayRequest } from "./types.js";
 
+const RUNTIME_REMINDER_RE = /^\s*<system-reminder>[\s\S]*<\/system-reminder>\s*$/;
+
 const JSON_OBJECT_RESPONSE_FORMAT_INSTRUCTION =
   "Return only valid json that matches the requested schema.";
 
 export function toModelPrompt(
   messages: LlmGatewayRequest["messages"],
   cacheControl?: boolean,
+  options: { moveRuntimeRemindersToInput?: boolean } = {},
 ): { system?: string | SystemModelMessage[]; messages: ModelMessage[] } {
   // Keep blocks separate: joining or trimming loses per-block metadata and bytes.
   const system = messages
     .filter(
-      (message): message is SystemModelMessage => message.role === "system",
+      (message): message is SystemModelMessage =>
+        message.role === "system" &&
+        !(options.moveRuntimeRemindersToInput && isRuntimeReminder(message)),
     )
     .map((message) => ({
       ...message,
@@ -31,9 +36,22 @@ export function toModelPrompt(
     };
   }
 
+  const conversation = messages.flatMap((message) => {
+    if (message.role === "system" && options.moveRuntimeRemindersToInput) {
+      const content = typeof message.content === "string" ? message.content : "";
+      if (RUNTIME_REMINDER_RE.test(content)) {
+        // OpenResponses serializes all system messages into one `instructions`
+        // string. Runtime state changes every step, so keep it in the input
+        // tail instead of invalidating the stable instructions prefix.
+        return [{ ...message, role: "user" as const }];
+      }
+    }
+    return isConversationMessage(message) ? [message] : [];
+  });
+
   return {
     ...(system.length > 0 ? { system } : {}),
-    messages: toModelMessages(messages.filter(isConversationMessage)),
+    messages: toModelMessages(conversation),
   };
 }
 
@@ -64,6 +82,16 @@ export function ensureJsonObjectResponseFormatInstruction(
     { role: "system", content: JSON_OBJECT_RESPONSE_FORMAT_INSTRUCTION },
     ...messages,
   ];
+}
+
+function isRuntimeReminder(
+  message: LlmGatewayRequest["messages"][number],
+): boolean {
+  return (
+    message.role === "system" &&
+    typeof message.content === "string" &&
+    RUNTIME_REMINDER_RE.test(message.content)
+  );
 }
 
 function isConversationMessage(
