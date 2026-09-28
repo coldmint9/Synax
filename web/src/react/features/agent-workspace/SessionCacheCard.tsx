@@ -32,6 +32,11 @@ export function SessionCacheCard({ cache }: { cache?: SessionCacheUsage }) {
       ratio: cache?.session.ratio,
       summary: cache?.session,
     },
+    {
+      label: zh ? "缓存率（Token 加权）" : "Cache rate (token weighted)",
+      ratio: cache?.session.weightedRatio,
+      summary: cache?.session,
+    },
   ];
   return (
     <section

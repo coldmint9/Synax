@@ -66,12 +66,12 @@ describe("cache statistics evidence", () => {
         }}
       />,
     );
-    expect(screen.getByText("部分数据 8/10")).toBeTruthy();
+    expect(screen.getAllByText("部分数据 8/10")).toHaveLength(2);
     expect(screen.getByText("—")).toBeTruthy();
   });
   it("renders unavailable data without claiming a zero hit", () => {
     render(<SessionCacheCard />);
-    expect(screen.getAllByText("—")).toHaveLength(2);
+    expect(screen.getAllByText("—")).toHaveLength(3);
     expect(screen.queryByText("0.0%")).toBeNull();
   });
 });

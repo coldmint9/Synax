@@ -2630,6 +2630,7 @@ export class AgentLoopRuntime {
       },
       "[agent-runtime] generating step",
     );
+    const requestPreparationStartedAt = performance.now();
     const availableTools = this.tools
       .listForSession(input.sessionId)
       .filter(
@@ -3068,6 +3069,9 @@ export class AgentLoopRuntime {
           : {}),
         ...(diagnostics ? { cacheDiagnostics: diagnostics } : {}),
         runtimeReminderTokens: reminderTokens,
+        requestPreparationMs: Math.round(
+          performance.now() - requestPreparationStartedAt,
+        ),
         requestComposition: {
           version: 1,
           systemMeaning: "static-instructions-and-references",
