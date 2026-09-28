@@ -7,7 +7,7 @@ import { mcpClientManager } from '../mcp/mcp-client-manager.js';
 import { resolveComputerUseStrategy } from './strategy.js';
 import { enableDirectFallback } from './fallback.js';
 import { visualCandidates } from './visual-regions.js';
-import { LiveJevDecisionService, MockJevDecisionService, validateJevDecision, type Candidate, type JevDecisionService } from './jev-decision.js';
+import { LiveJevDecisionService, MockJevDecisionService, JevInvalidDecisionError, validateJevDecision, type Candidate, type JevDecisionService } from './jev-decision.js';
 
 const schema = z.object({
   goal: z.string().min(1).max(2000),
@@ -103,7 +103,7 @@ export const jevSessionToolProvider: SessionToolProvider = {
         try {
           decision = validateJevDecision(await client.choose({ goal: args.goal, observation: compactObservation, candidates }, signal), candidates);
         } catch (error) {
-          if (configured.jev?.fallback !== 'direct' || input.abortSignal?.aborted) throw error;
+          if (error instanceof JevInvalidDecisionError || configured.jev?.fallback !== 'direct' || input.abortSignal?.aborted) throw error;
           enableDirectFallback(sessionId);
           return {
             result: { acted: false, fallback: 'direct', reason: 'Jev unavailable; use Direct Cua tools after they are mounted on the next step.' },

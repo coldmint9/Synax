@@ -14,20 +14,22 @@ export interface JevDecision {
   confidence: number;
 }
 
+export class JevInvalidDecisionError extends Error {}
+
 export function validateJevDecision(raw: unknown, candidates: readonly Candidate[]): JevDecision {
-  if (!raw || typeof raw !== 'object') throw new Error('Jev returned an invalid decision');
+  if (!raw || typeof raw !== 'object') throw new JevInvalidDecisionError('Jev returned an invalid decision');
   const value = raw as Record<string, unknown>;
   if (typeof value.selectedId !== 'string' || !candidates.some(c => c.id === value.selectedId))
-    throw new Error('Jev selected an unknown candidate');
+    throw new JevInvalidDecisionError('Jev selected an unknown candidate');
   if (typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1)
-    throw new Error('Jev returned invalid confidence');
+    throw new JevInvalidDecisionError('Jev returned invalid confidence');
   if (value.probabilities !== undefined) {
     if (!value.probabilities || typeof value.probabilities !== 'object' || Array.isArray(value.probabilities))
-      throw new Error('Jev returned invalid probabilities');
+      throw new JevInvalidDecisionError('Jev returned invalid probabilities');
     const validIds = new Set(candidates.map(candidate => candidate.id));
     for (const [id, probability] of Object.entries(value.probabilities)) {
       if (!validIds.has(id) || typeof probability !== 'number' || !Number.isFinite(probability) || probability < 0 || probability > 1)
-        throw new Error('Jev returned invalid probabilities');
+        throw new JevInvalidDecisionError('Jev returned invalid probabilities');
     }
   }
   return { selectedId: value.selectedId, confidence: value.confidence };
@@ -57,7 +59,7 @@ export class LiveJevDecisionService implements JevDecisionService {
     }, { signal, timeout: 15_000, retry: { maxRetries: 0 } });
     signal?.throwIfAborted();
     const answer = response.answers.candidate;
-    if (answer.type !== 'choice') throw new Error('Jev returned an unexpected response type');
+    if (answer.type !== 'choice') throw new JevInvalidDecisionError('Jev returned an unexpected response type');
     return validateJevDecision({ selectedId: answer.choice, confidence: answer.confidence, probabilities: answer.probabilities }, input.candidates);
   }
 }
