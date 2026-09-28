@@ -126,13 +126,14 @@ export interface GlobalComputerUseSettings {
 - 凭据来源提示：显示 `describeJevCredentialSource()` 的结果（环境变量 / 设置 / 未配置）。
 - 保存走 `updateGlobalConfig`；失败就地提示，不静默降级、不自动回退到 Direct。
 
-## 10. 项目级与全局级的合并语义
+## 10. 项目级与全局级的合并语义（实现后修订）
 
-- 现状：`getProjectSettings().computerUse` 总是返回默认值（`api/lib/config/project-settings-store.ts:214`、`:226`），无法区分「未设置」与「显式设为默认」。
-- 方案：`ProjectSettings.computerUse` 增加可选 `inheritGlobal?: boolean`（缺省视为 true）。项目卡片提供「跟随全局设置」开关。
-- 兼容策略：老数据缺该字段时按「跟随全局」处理；一旦用户在项目页改动任一电脑操作字段，即写入 `inheritGlobal: false` 并保留项目值。
-- 解析入口：`resolveComputerUseStrategy()` 保持纯函数；调用方先经 `mergeComputerUseSettings(global, project)` 得到最终设置再传入。
-- `api/services/computer-use/jev-tool-provider.ts:48`、`:58` 与 `exposure.test.ts` 的调用点都改走合并函数。
+- 现状：`getProjectSettings().computerUse` 总是返回默认值（`api/lib/config/project-settings-store.ts:214`、`:226`），存储层无法区分「未设置」与「显式设为默认值」。
+- 最终采用的规则（字段级继承，见 `api/services/computer-use/strategy.ts` 的 `mergeComputerUseSettings`）：
+  项目字段若**等于项目默认值**（enabled=true / strategy='auto' / perception='disabled'）则视为未覆盖，回落全局；一旦偏离默认值即视为显式覆盖。
+- 已知限制：项目若想显式选择与默认相同的值（例如全局 perception='auto' 而项目要 'disabled'），当前模型无法表达。本轮不引入额外标记字段，保持存储向后兼容；如需该能力，后续可加显式 `inheritGlobal` 标记（原设计草案方案，已弃用）。
+- 解析入口：`resolveComputerUseStrategy()` 保持纯函数；消费方（`jev-tool-provider.ts`、`mcp-session-tool-provider.ts`）改为调用 `resolveEffectiveComputerUseSettings(projectId)`（`api/services/computer-use/effective-settings.ts`），由它读取全局配置与项目设置后合并。
+- 验证：`api/services/computer-use/effective-settings.test.ts` 覆盖未覆盖项目的全局回落、显式覆盖、部分覆盖三种情形。
 
 ## 11. 测试与验收
 

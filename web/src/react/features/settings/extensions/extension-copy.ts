@@ -2,6 +2,10 @@ import { useLocale } from '../../../../hooks/useLocale'
 const zh = {
   settings: '设置',
   extensions: '扩展',
+  services: '服务',
+  mcpServers: 'MCP 服务器',
+  computerUse: '电脑操作',
+  mcpServersHint: '这里的 MCP 服务器对所有项目生效。',
   general: '常规设置',
   archive: '会话归档',
   project: '项目设置',
@@ -104,6 +108,10 @@ const zh = {
 const en: typeof zh = {
   settings: 'Settings',
   extensions: 'Extensions',
+  services: 'Services',
+  mcpServers: 'MCP servers',
+  computerUse: 'Computer Use',
+  mcpServersHint: 'These MCP servers apply to every project.',
   general: 'General',
   archive: 'Session Archive',
   project: 'Project',

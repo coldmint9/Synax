@@ -1,7 +1,6 @@
 import * as z from 'zod/v4';
 import type { RegisteredTool, SessionToolProvider } from '../agent-runtime/contracts.js';
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
-import { getProjectSettings } from '../../lib/config/project-settings-store.js';
 import { CUA_SERVER_ID, getRuntimeCuaConfig } from '../mcp/runtime-cua-config.js';
 import { mcpClientManager } from '../mcp/mcp-client-manager.js';
 import { resolveJevCredentials } from './jev-credentials.js';
@@ -9,6 +8,7 @@ import { resolveComputerUseStrategy } from './strategy.js';
 import { enableDirectFallback } from './fallback.js';
 import { visualCandidates } from './visual-regions.js';
 import { LiveJevDecisionService, MockJevDecisionService, JevInvalidDecisionError, validateJevDecision, type Candidate, type JevDecisionService } from './jev-decision.js';
+import { resolveEffectiveComputerUseSettings } from './effective-settings.js';
 
 const schema = z.object({
   goal: z.string().min(1).max(2000),
@@ -46,7 +46,7 @@ export const jevSessionToolProvider: SessionToolProvider = {
   getTools(sessionId) {
     const session = agentRuntimeStore.tryGetSession(sessionId);
     if (!session || !getRuntimeCuaConfig()) return [];
-    const settings = getProjectSettings(session.projectId).computerUse;
+    const settings = resolveEffectiveComputerUseSettings(session.projectId);
     try { if (resolveComputerUseStrategy(settings) !== 'jev') return []; } catch { return []; }
     const tool: RegisteredTool = {
       id: 'computer.use', label: 'Computer Use (Jev)', category: 'mcp', mutability: 'task', resumeBehavior: 'wait_permission',
@@ -56,7 +56,7 @@ export const jevSessionToolProvider: SessionToolProvider = {
       async execute(input) {
         const args = schema.parse(input.args);
         input.abortSignal?.throwIfAborted();
-        const configured = getProjectSettings(session.projectId).computerUse;
+        const configured = resolveEffectiveComputerUseSettings(session.projectId);
         if (resolveComputerUseStrategy(configured) !== 'jev' || !getRuntimeCuaConfig()) throw new Error('Jev Computer Use is unavailable');
         const key = resolveJevCredentials()?.apiKey;
         const mock = process.env.NODE_ENV !== 'production' && process.env.SYNAX_JEV_MOCK === '1';

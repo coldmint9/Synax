@@ -119,6 +119,24 @@ export interface McpDiscoveryResponse {
   warnings: Array<{ client: string; path: string; message: string }>;
 }
 
+export type ComputerUseStrategyValue = 'auto' | 'direct' | 'jev'
+export type ComputerUsePerceptionValue = 'disabled' | 'auto' | 'required'
+export interface GlobalComputerUseJevSettings {
+  enabled?: boolean
+  fallback?: 'direct' | 'fail_closed'
+  providerId?: string | null
+  model?: string | null
+  /** Never returned by the API; only apiKeyMasked is exposed. */
+  apiKey?: string
+  apiKeyMasked?: string
+}
+export interface GlobalComputerUseSettings {
+  enabled?: boolean
+  strategy?: ComputerUseStrategyValue
+  perception?: ComputerUsePerceptionValue
+  jev?: GlobalComputerUseJevSettings
+}
+
 export interface GlobalConfig {
   terminalShellPath?: string;
   wikiModel?: string;
@@ -131,6 +149,7 @@ export interface GlobalConfig {
   enabledAcpProviderIds: string[];
   providerConnections: Record<string, ProviderConnection>;
   mcpServers: McpServerConfig[];
+  computerUse?: GlobalComputerUseSettings;
   webSearch: WebSearchConfig;
   sessionArchiveRetentionDays?: number | null;
   limits: {
@@ -179,6 +198,7 @@ export interface UpdateGlobalConfigRequest {
   enabledAcpProviderIds?: string[];
   providerConnections?: Record<string, ProviderConnection>;
   mcpServers?: McpServerConfig[];
+  computerUse?: GlobalComputerUseSettings;
   webSearch?: WebSearchConfig;
   sessionArchiveRetentionDays?: number | null;
   limits?: GlobalConfig["limits"];

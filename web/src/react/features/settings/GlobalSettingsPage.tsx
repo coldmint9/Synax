@@ -17,15 +17,17 @@ import { OpenConfigFile } from "./components/OpenConfigFile";
 import { WebSearchSettings } from "./components/WebSearchSettings";
 import { UpdateSettings } from "./components/UpdateSettings";
 import { SessionArchiveSettings } from "./components/SessionArchiveSettings";
+import { McpServersSection } from "./components/McpServersSection";
+import { ComputerUseGlobalSettings } from "./components/ComputerUseGlobalSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const copy = useExtensionCopy();
   const projectId = useShellStore(state => state.currentProjectId);
   const [params, setParams] = useSearchParams();
   const selected = params.get('section') ?? 'general';
-  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'general';
+  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse'].includes(selected) ? selected as SettingsSection : 'general';
   const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
 
   useEffect(() => {
@@ -51,6 +53,19 @@ export default function GlobalSettingsPage() {
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
           {section === "archive" ? (
             <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
+          ) : section === "mcpServers" ? (
+            <McpServersSection
+              servers={globalConfig.mcpServers}
+              title={copy.mcpServers}
+              description={copy.mcpServersHint}
+              onSave={async servers => { await updateGlobalConfig({ mcpServers: servers }); }}
+            />
+          ) : section === "computerUse" ? (
+            <ComputerUseGlobalSettings
+              value={globalConfig.computerUse}
+              locale={locale}
+              onUpdate={updateGlobalConfig}
+            />
           ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
           <div className="mb-8">
             <Text variant="h5">{t("settingsSystemConfig")}</Text>

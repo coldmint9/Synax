@@ -85,3 +85,21 @@ it("rejects unknown computer use fields", async () => {
   const res = await put({ computerUse: { nope: true } });
   expect(res.status).toBe(400);
 });
+
+it("round-trips global MCP servers", async () => {
+  const servers = [
+    {
+      id: "docs",
+      name: "Docs",
+      command: "docs-server",
+      args: ["--root", "docs"],
+      env: { DOCS_TOKEN: "token" },
+      enabled: false,
+    },
+  ];
+  const res = await put({ mcpServers: servers });
+  expect(res.status).toBe(200);
+  const config = await getGlobal();
+  expect(config.mcpServers).toEqual(servers);
+  expect((await readStored()).mcpServers).toEqual(servers);
+});

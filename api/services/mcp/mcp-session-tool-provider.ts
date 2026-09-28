@@ -14,6 +14,7 @@ import { getProjectSettings } from '../../lib/config/project-settings-store.js'
 import { agentRuntimeStore } from '../agent-runtime/session-store.js'
 import { logger } from '../../lib/logger.js'
 import { mcpClientManager, sanitizeName, type McpRuntimeToolDef } from './mcp-client-manager.js'
+import { resolveEffectiveComputerUseSettings } from '../computer-use/effective-settings.js';
 
 export const MCP_TOOL_PROVIDER_ID = 'synax-mcp'
 const TOOL_PREFIX = 'mcp.'
@@ -22,7 +23,7 @@ const JEV_OBSERVATION_TOOLS = new Set(['list_apps', 'list_windows', 'get_window_
 function cuaExposure(sessionId: string, projectId: string): 'disabled' | 'direct' | 'observation' {
   if (!getRuntimeCuaConfig()) return 'disabled';
   try {
-    const settings = getProjectSettings(projectId).computerUse;
+    const settings = resolveEffectiveComputerUseSettings(projectId);
     const strategy = resolveComputerUseStrategy(settings);
     if (strategy === 'direct' || (strategy === 'jev' && settings.jev?.fallback === 'direct' && canUseDirectFallback(sessionId))) return 'direct';
     return strategy === 'jev' ? 'observation' : 'disabled';
