@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useShellStore } from "../react/state/shellStore";
+import { useThemeStore } from "../react/state/themeStore";
 import { useAgentSessionStore } from "../react/features/agent-workspace/state/agentSessionStore";
 import {
   useSessionWorkspace,
@@ -17,7 +18,7 @@ export function useElectronMenu() {
   const location = useLocation();
   const projects = useShellStore((s) => s.projects);
   const currentProjectId = useShellStore((s) => s.currentProjectId);
-  const theme = useShellStore((s) => s.resolvedTheme);
+  const theme = useThemeStore((s) => s.resolvedTheme);
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const workspace = useSessionWorkspace(selectedSessionId);
   const projectId =
@@ -56,11 +57,9 @@ export function useElectronMenu() {
         case "workspace:refresh":
           if (sessionId) refreshWorkspace(sessionId);
           break;
-        case "theme:toggle": {
-          const shell = useShellStore.getState();
-          shell.setTheme(shell.resolvedTheme === "dark" ? "light" : "dark");
+        case "theme:toggle":
+          useThemeStore.getState().toggleMode();
           break;
-        }
       }
     });
     return () => {

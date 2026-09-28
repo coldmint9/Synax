@@ -2,13 +2,16 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppearanceSection } from "../AppearanceSection";
+import { useShellStore } from "../../../../state/shellStore";
 import {
-  useShellStore,
-  hydrateShellPreferences,
-} from "../../../../state/shellStore";
+  hydrateThemePreferences,
+  THEME_STORAGE_KEY,
+  useThemeStore,
+} from "../../../../state/themeStore";
 import { DEFAULT_ACCENT } from "../../../../../lib/appearance";
+import { DEFAULT_THEME } from "../../../../../lib/theme/defaults";
 
-const storageKey = "rumbling-shell-preferences";
+const storageKey = THEME_STORAGE_KEY;
 const fetchGuard = vi.fn(() =>
   Promise.reject(new Error("Appearance tests must not use an API")),
 );
@@ -25,6 +28,18 @@ beforeEach(() => {
     },
     resolvedTheme: "light",
   }));
+  useThemeStore.setState((state) => ({
+    ...state,
+    mode: "system",
+    activeTheme: DEFAULT_THEME,
+    source: "builtin",
+    resolvedTheme: "light",
+    resolvedTokens: {
+      colors: { ...DEFAULT_THEME.colors.light },
+      shape: { ...DEFAULT_THEME.shape },
+      effects: { ...DEFAULT_THEME.effects.light },
+    },
+  }));
 });
 
 afterEach(() => {
@@ -37,7 +52,7 @@ describe("AppearanceSection", () => {
     render(<AppearanceSection />);
     expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
-    expect(useShellStore.getState().preferences.theme).toBe("dark");
+    expect(useThemeStore.getState().mode).toBe("dark");
     fireEvent.click(screen.getByRole("radio", { name: "System" }));
     act(() => useShellStore.setState({ resolvedTheme: "dark" }));
     expect(screen.getByText("System is currently dark")).toBeInTheDocument();
@@ -51,12 +66,14 @@ describe("AppearanceSection", () => {
     const swatch = screen.getByRole("radio", { name: "Iris" });
     fireEvent.click(swatch);
     expect(swatch).toBeChecked();
-    expect(useShellStore.getState().preferences.accentColor).toBe("#b1a2c9");
+    expect(useThemeStore.getState().activeTheme.colors.light.accent).toBe(
+      "#b1a2c9",
+    );
     expect(screen.getByText("#B1A2C9")).toBeInTheDocument();
     fireEvent.click(reset);
-    expect(useShellStore.getState().preferences).toMatchObject({
-      accentColor: DEFAULT_ACCENT,
-      theme: "system",
+    expect(useThemeStore.getState()).toMatchObject({
+      mode: "system",
+      activeTheme: { colors: { light: { accent: DEFAULT_ACCENT } } },
     });
     expect(reset).toBeDisabled();
   });
@@ -71,14 +88,14 @@ describe("AppearanceSection", () => {
     modes.getByRole("radio", { name: "System" }).focus();
     await user.keyboard("{ArrowLeft}");
     expect(modes.getByRole("radio", { name: "Dark" })).toHaveFocus();
-    expect(useShellStore.getState().preferences.theme).toBe("dark");
+    expect(useThemeStore.getState().mode).toBe("dark");
     await user.keyboard("{ArrowLeft}");
     expect(modes.getByRole("radio", { name: "Light" })).toBeChecked();
-    expect(useShellStore.getState().preferences.theme).toBe("light");
+    expect(useThemeStore.getState().mode).toBe("light");
     await user.keyboard("{ArrowLeft}");
     expect(modes.getByRole("radio", { name: "System" })).toBeChecked();
     expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({
-      theme: "system",
+      mode: "system",
     });
     expect(
       modes.getAllByRole("radio").filter((radio) => radio.tabIndex === 0),
@@ -91,7 +108,9 @@ describe("AppearanceSection", () => {
     presets.getByRole("radio", { name: "Sage" }).focus();
     await user.keyboard("{ArrowRight}");
     expect(presets.getByRole("radio", { name: "Celadon" })).toBeChecked();
-    expect(useShellStore.getState().preferences.accentColor).toBe("#94b8b5");
+    expect(useThemeStore.getState().activeTheme.colors.light.accent).toBe(
+      "#94b8b5",
+    );
     expect(
       presets.getAllByRole("radio").filter((radio) => radio.tabIndex === 0),
     ).toHaveLength(1);
@@ -110,27 +129,27 @@ describe("AppearanceSection", () => {
       target: { value: "240" },
     });
     expect(hex).toHaveValue("#0000FF");
-    expect(useShellStore.getState().preferences).toMatchObject({
-      accentColor: "#0000ff",
-      theme: "dark",
+    expect(useThemeStore.getState()).toMatchObject({
+      mode: "dark",
+      activeTheme: { colors: { light: { accent: "#0000ff" } } },
     });
     expect(
       document.documentElement.style.getPropertyValue("--cx-accent-bottom"),
     ).toBe("#0000ff");
     expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({
-      accentColor: "#0000ff",
-      theme: "dark",
+      mode: "dark",
+      theme: { colors: { light: { accent: "#0000ff" } } },
     });
     fireEvent.change(hex, { target: { value: "#12" } });
     expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({
-      accentColor: "#0000ff",
+      theme: { colors: { light: { accent: "#0000ff" } } },
     });
     unmount();
     act(() => {
       useShellStore.setState((state) => ({
         preferences: { ...state.preferences, accentColor: DEFAULT_ACCENT },
       }));
-      hydrateShellPreferences();
+      hydrateThemePreferences();
     });
     render(<AppearanceSection />);
     expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();

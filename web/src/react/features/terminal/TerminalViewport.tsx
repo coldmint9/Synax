@@ -2,35 +2,25 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { accentPalette, type ResolvedTheme } from "../../../lib/appearance";
+import type { ResolvedThemeTokens } from "../../../lib/theme/runtime";
 import { TerminalConnection } from "../../../lib/api/terminalConnection";
 import { type TerminalSession } from "../../../lib/api/terminal";
-import { useShellStore } from "../../state/shellStore";
+import { getResolvedThemeTokens, useThemeStore } from "../../state/themeStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { terminalChanged, useTerminalStore } from "./terminalStore";
 import { TerminalOutputBuffer } from "./terminalOutputBuffer";
 import { enableWebglRenderer } from "./terminalRenderer";
 
-const themes = {
-  dark: {
-    background: "#141618",
-    foreground: "#e4e7eb",
-    black: "#202226",
-    brightBlack: "#7b818a",
-  },
-  light: {
-    background: "#fafbfc",
-    foreground: "#263238",
-    black: "#263238",
-    brightBlack: "#68737d",
-  },
-};
-function terminalTheme(theme: ResolvedTheme, accent: string) {
-  const palette = accentPalette(accent, theme);
+/** Map the resolved semantic theme tokens to xterm's color surface. */
+export function terminalTheme(tokens: ResolvedThemeTokens) {
+  const { colors } = tokens;
   return {
-    ...themes[theme],
-    cursor: palette.strong,
-    selectionBackground: palette.soft,
+    background: colors.canvas,
+    foreground: colors.text,
+    cursor: colors.accent,
+    selectionBackground: colors.selection,
+    black: colors.surfaceSecondary,
+    brightBlack: colors.textMuted,
   };
 }
 
@@ -43,8 +33,7 @@ export function TerminalViewport({
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const theme = useShellStore((state) => state.resolvedTheme);
-  const accent = useShellStore((state) => state.preferences.accentColor);
+  const resolvedTokens = useThemeStore((state) => state.resolvedTokens);
   const host = useRef<HTMLDivElement>(null);
   const instance = useRef<{
     terminal: Terminal;
@@ -83,10 +72,7 @@ export function TerminalViewport({
       // Desktop can query the OS and enable the full accessibility tree only
       // when assistive technology is active. Browsers retain xterm's a11y path.
       screenReaderMode: !desktop?.getAccessibilitySupportEnabled,
-      theme: terminalTheme(
-        useShellStore.getState().resolvedTheme,
-        useShellStore.getState().preferences.accentColor,
-      ),
+      theme: terminalTheme(getResolvedThemeTokens()),
       allowProposedApi: false,
       disableStdin: true,
       linkHandler: {
@@ -323,8 +309,8 @@ export function TerminalViewport({
   }, [session.id]);
   useEffect(() => {
     if (instance.current)
-      instance.current.terminal.options.theme = terminalTheme(theme, accent);
-  }, [theme, accent]);
+      instance.current.terminal.options.theme = terminalTheme(resolvedTokens);
+  }, [resolvedTokens]);
   useLayoutEffect(() => {
     instance.current?.syncInput();
     instance.current?.setVisible(visible);

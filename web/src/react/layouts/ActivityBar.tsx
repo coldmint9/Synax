@@ -8,7 +8,7 @@ import {
   Moon,
   Home,
 } from "lucide-react";
-import { useShellStore } from "../state/shellStore";
+import { useThemeStore } from "../state/themeStore";
 import { useLocale } from "../../hooks/useLocale";
 
 export type ActivityPanel =
@@ -33,8 +33,8 @@ export function ActivityBar({
   hasProject,
 }: ActivityBarProps) {
   const { t } = useLocale();
-  const theme = useShellStore((s) => s.resolvedTheme);
-  const setTheme = useShellStore((s) => s.setTheme);
+  const theme = useThemeStore((s) => s.resolvedTheme);
+  const setMode = useThemeStore((s) => s.setMode);
 
   const topItems: {
     id: ActivityPanel;
@@ -112,7 +112,7 @@ export function ActivityBar({
           type="button"
           title={theme === "dark" ? t("appLightMode") : t("appDarkMode")}
           className="ab-item"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={() => setMode(theme === "dark" ? "light" : "dark")}
         >
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>

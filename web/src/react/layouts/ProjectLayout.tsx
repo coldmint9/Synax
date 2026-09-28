@@ -12,6 +12,7 @@ import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 import { formatProjectPath } from "../../lib/formatProjectPath";
 import { projectApi } from "../../lib/api/project";
 import { addProject, useShellStore } from "../state/shellStore";
+import { useThemeStore } from "../state/themeStore";
 import { useLocale } from "../../hooks/useLocale";
 
 export default function ProjectLayout() {
@@ -46,8 +47,8 @@ export default function ProjectLayout() {
     sidebarMissingProject && notFoundForId !== projectId;
 
   const projectName = project?.name ?? (projectId || "—");
-  const theme = useShellStore((s) => s.resolvedTheme);
-  const setTheme = useShellStore((s) => s.setTheme);
+  const theme = useThemeStore((s) => s.resolvedTheme);
+  const setMode = useThemeStore((s) => s.setMode);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const navItems = [
     { to: `/projects/${projectId}/wiki`, label: "Wiki", icon: BookOpen },
@@ -157,7 +158,7 @@ export default function ProjectLayout() {
         <button
           type="button"
           className="mt-auto inline-flex items-center justify-center gap-2 rounded-xl border border-border/50 px-3 py-2 text-xs text-muted-foreground hover:bg-secondary/60"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={() => setMode(theme === "dark" ? "light" : "dark")}
         >
           {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
           {theme === "dark" ? t("appLightMode") : t("appDarkMode")}
