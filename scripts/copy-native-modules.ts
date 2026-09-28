@@ -114,6 +114,14 @@ function copyRuntimePackage(
   }
 }
 copyRuntimePackage("trash");
+// Electron Main dynamically loads Cua from Resources, outside ASAR. The SDK
+// and its platform native library must be colocated with their runtime packages.
+copyRuntimePackage("@trycua/cua-driver");
+for (const name of readdirSync(join(src, "@trycua")).filter(name => name.startsWith("cua-driver-")))
+  copyRuntimePackage(`@trycua/${name}`);
+for (const name of readdirSync(join(src, "@ubjs")).filter(name => name.startsWith("node-") || name === "node"))
+  copyRuntimePackage(`@ubjs/${name}`);
+
 
 // Drop stale packaged skills when upgrading from the retired prototype platform.
 rmSync(join(serverDist, "skills/builtin"), { recursive: true, force: true });

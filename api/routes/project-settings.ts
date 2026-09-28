@@ -56,6 +56,7 @@ function discoveryDirectories(
 const sectionSchema = z.enum([
   "basics",
   "provider",
+  "computerUse",
   "mcp",
   "collaboration",
   "notifications",

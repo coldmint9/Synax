@@ -56,6 +56,8 @@ import { rebuildWikiFtsIndex } from "./services/wiki/wiki-fts.js";
 import { startPermissionTimeoutSweeper } from "./services/agent-runtime/permission-timeout-sweeper.js";
 import { startSessionArchiveRetention } from "./services/agent-runtime/session-archive-retention.js";
 import { closeAllBrowserSessions } from "./services/agent-runtime/tools/browser/browser-manager.js";
+import { setRuntimeCuaConnection } from "./services/mcp/runtime-cua-config.js";
+import { mcpClientManager } from "./services/mcp/mcp-client-manager.js";
 
 export const app = new Hono();
 const observations = new ObservationTransport(request => app.fetch(request));
@@ -110,6 +112,21 @@ app.route("/api/wsl", wslRoutes);
 // OAuth providers redirect from a different site, so this state-validated callback
 // intentionally lives outside the cookie-protected /api namespace.
 app.route("/oauth/web-search", webSearchOAuthRoutes);
+
+// Only the Electron parent may inject a Cua connection. Never expose a public
+// HTTP endpoint or persist its private socket/launch environment.
+function acceptParentMessage(message: unknown): void {
+  if (!message || typeof message !== 'object' || (message as { type?: unknown }).type !== 'synax:cua-connection') return;
+  try {
+    const changed = setRuntimeCuaConnection((message as { connection?: unknown }).connection ?? null);
+    if (changed) mcpClientManager.closeCua();
+  } catch (error) {
+    pinoLogger.warn({ error: error instanceof Error ? error.message : String(error) }, '[cua] rejected parent connection');
+  }
+}
+process.on('message', acceptParentMessage);
+const electronParentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data: unknown }) => void): void } }).parentPort;
+electronParentPort?.on('message', event => acceptParentMessage(event.data));
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
 void sweepAssets().catch((error) =>
@@ -273,6 +290,7 @@ async function shutdownRuntime(): Promise<void> {
     );
   }
   await closeAllBrowserSessions("Runtime host is shutting down.");
+  mcpClientManager.closeAll();
   runtimeHost.release();
   closeDb();
   process.exit(failed ? 1 : 0);

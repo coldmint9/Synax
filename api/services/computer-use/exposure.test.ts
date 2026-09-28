@@ -1,0 +1,32 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const fixture = fileURLToPath(new URL('../mcp/__tests__/fixtures/fake-mcp-server.mjs', import.meta.url));
+const original = process.env.DATA_ROOT;
+let root: string;
+beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-cua-exposure-')); process.env.DATA_ROOT = root; vi.resetModules(); });
+afterEach(() => { process.env.DATA_ROOT = original; fs.rmSync(root, { recursive: true, force: true }); vi.resetModules(); });
+
+it('Jev mode exposes observations but not actions until configured fallback actually activates', async () => {
+  const { resetAgentRuntimeFixtures } = await import('../agent-runtime/__tests__/agent-runtime-fixtures.js');
+  const { agentSessionRuntime } = await import('../agent-runtime/session-runtime.js');
+  const { updateProjectSettings } = await import('../../lib/config/project-settings-store.js');
+  const { mcpSessionToolProvider, warmupMcpForSession } = await import('../mcp/mcp-session-tool-provider.js');
+  const { mcpClientManager } = await import('../mcp/mcp-client-manager.js');
+  const { setRuntimeCuaConnection } = await import('../mcp/runtime-cua-config.js');
+  const { enableDirectFallback } = await import('./fallback.js');
+  resetAgentRuntimeFixtures();
+  const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
+  updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'direct' } } }, 'test');
+  setRuntimeCuaConnection({ generation: 'test', command: process.execPath, args: [fixture], environment: [] });
+  try {
+    await warmupMcpForSession(session.id);
+    const initial = mcpSessionToolProvider.getTools(session.id).map(tool => tool.id);
+    expect(initial).toContain('mcp.builtin-cua-driver.list_windows');
+    expect(initial).not.toContain('mcp.builtin-cua-driver.danger');
+    enableDirectFallback(session.id);
+    expect(mcpSessionToolProvider.getTools(session.id).map(tool => tool.id)).toContain('mcp.builtin-cua-driver.danger');
+  } finally { mcpClientManager.closeAll(); setRuntimeCuaConnection(null); }
+}, 20_000);

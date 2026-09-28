@@ -505,6 +505,32 @@ describe("prompt cache policy actual SDK wire", () => {
     ).toEqual(createHistoryCacheAnchor(messages));
   });
 
+  it("keeps dynamic runtime reminders out of Responses instructions", () => {
+    const converted = toModelPrompt(
+      [
+        { role: "system", content: "stable instructions" },
+        {
+          role: "system",
+          content: "<system-reminder>\nstep 2\n</system-reminder>",
+        },
+        { role: "user", content: "original request" },
+      ],
+      undefined,
+      { moveRuntimeRemindersToInput: true },
+    );
+
+    expect(converted.system).toEqual([
+      { role: "system", content: "stable instructions" },
+    ]);
+    expect(converted.messages).toEqual([
+      {
+        role: "user",
+        content: "<system-reminder>\nstep 2\n</system-reminder>",
+      },
+      { role: "user", content: "original request" },
+    ]);
+  });
+
   it("copies message/content metadata and keeps separate system bytes and ordering", () => {
     const messages: LlmGatewayMessage[] = [
       {

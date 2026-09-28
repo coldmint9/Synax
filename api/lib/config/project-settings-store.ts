@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import * as z from 'zod/v4'
 import path from 'node:path'
 import { DATA_ROOT } from '../env.js'
 import { logger } from '../logger.js'
@@ -11,6 +12,18 @@ import type {
   HighRiskAuthEnvelope,
 } from './project-settings-types.js'
 import { createDefaultProjectSettings } from './project-settings-types.js'
+
+const computerUsePatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  strategy: z.enum(['auto', 'direct', 'jev']).optional(),
+  jev: z.object({
+    enabled: z.boolean(),
+    fallback: z.enum(['direct', 'fail_closed']),
+    providerId: z.string().max(128).optional(),
+    model: z.string().max(128).optional(),
+  }).strict().optional(),
+  perception: z.enum(['disabled', 'auto', 'required']).optional(),
+}).strict();
 
 const PROJECT_SETTINGS_DIR = 'project-settings'
 
@@ -122,6 +135,7 @@ export function updateProjectSettings(
     basics: patch.basics ? { ...existing.basics, ...patch.basics } : existing.basics,
     provider: patch.provider ? mergeProvider(existing.provider, patch.provider) : existing.provider,
     mcpServers: patch.mcpServers ?? existing.mcpServers ?? [],
+    computerUse: patch.computerUse ? { ...existing.computerUse, ...computerUsePatchSchema.parse(patch.computerUse) } : existing.computerUse,
     collaboration: patch.collaboration
       ? { ...existing.collaboration, ...patch.collaboration, reviewPolicy: patch.collaboration.reviewPolicy ?? existing.collaboration.reviewPolicy }
       : existing.collaboration,
@@ -197,6 +211,7 @@ function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): 
   return {
     ...settings,
     mcpServers: settings.mcpServers ?? [],
+    computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,
       providerConnection: normalizeConnection(settings.provider.providerConnection, includeSecrets) as ProviderConnection | null | undefined,
@@ -208,6 +223,7 @@ function prepareSettingsForStorage(settings: ProjectSettings): ProjectSettings {
   return {
     ...settings,
     mcpServers: settings.mcpServers ?? [],
+    computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,
       providerConnection: prepareConnectionForStorage(settings.provider.providerConnection) as ProviderConnection | null | undefined,

@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { createMcpTransport } from "./mcp-transport.js";
 import { extensionStore } from "../extensions/extension-store.js";
+import { CUA_SERVER_ID, getRuntimeCuaConfig } from "./runtime-cua-config.js";
 
 import { readWorkspaceProject, projectSourceLocation } from "../project-workspace.js";
 import { workspaceLocationHostPath } from "../workspace-location.js";
@@ -20,6 +21,8 @@ export interface McpRuntimeToolDef {
   title?: string;
   description?: string;
   readOnlyHint?: boolean;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }
 
 const START_TIMEOUT_MS = 10_000;
@@ -33,6 +36,7 @@ type ServerState =
       client: Client;
       transport: Transport;
       tools: McpRuntimeToolDef[];
+      lastUsed: number;
     }
   | { status: "failed"; error: string };
 
@@ -52,6 +56,8 @@ function toToolDefs(
       readOnlyHint: Boolean(
         (tool.annotations as Record<string, unknown> | undefined)?.readOnlyHint,
       ),
+      inputSchema: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema as Record<string, unknown> : undefined,
+      outputSchema: tool.outputSchema && typeof tool.outputSchema === "object" ? tool.outputSchema as Record<string, unknown> : undefined,
     }))
     .filter((tool) => tool.name);
 }
@@ -91,15 +97,59 @@ function toText(content: unknown): string {
 export class McpClientManager {
   private readonly servers = new Map<string, ServerState>();
   private readonly inflight = new Map<string, Promise<ServerState>>();
+  private cuaQueue: Promise<void> = Promise.resolve();
+  private cuaSweep: ReturnType<typeof setInterval> | null = null;
+
+  /** Serialize access to the shared physical desktop without blocking Node's event loop. */
+  private async withCuaTurn<T>(action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const previous = this.cuaQueue;
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    this.cuaQueue = previous.then(() => current);
+    try {
+      if (signal) {
+        signal.throwIfAborted();
+        let onAbort: (() => void) | undefined;
+        try {
+          const aborted = new Promise<never>((_, reject) => {
+            onAbort = () => reject(signal.reason ?? new Error('Cua operation cancelled'));
+            signal.addEventListener('abort', onAbort, { once: true });
+          });
+          await Promise.race([previous, aborted]);
+        } finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
+        signal.throwIfAborted();
+      } else await previous;
+      return await action();
+    } finally { release(); }
+  }
+
+  private startCuaSweep(): void {
+    if (this.cuaSweep) return;
+    this.cuaSweep = setInterval(() => {
+      const now = Date.now();
+      for (const [key, state] of this.servers) {
+        const [projectId, serverId, sessionId] = JSON.parse(key) as [string | null, string, string | null];
+        if (serverId === CUA_SERVER_ID && state.status === 'ready' && now - state.lastUsed > 10 * 60_000)
+          this.closeServer(serverId, projectId ?? undefined, sessionId ?? undefined);
+      }
+    }, 60_000);
+    this.cuaSweep.unref?.();
+  }
+
+  private key(serverId: string, projectId?: string, sessionId?: string): string {
+    return JSON.stringify([projectId ?? null, serverId, serverId === CUA_SERVER_ID ? sessionId ?? null : null]);
+  }
 
   private configById(projectId?: string): Map<string, McpServerConfig> {
     // MCP is project-scoped. Keep the global list only for backward-compatible
     // probe/config reads; never make global servers available to Agent runs.
     if (projectId) {
+      const cua = getRuntimeCuaConfig();
       const project = getProjectSettings(projectId, true);
-      return new Map(
-        (project.mcpServers ?? []).map((server) => [server.id, server]),
-      );
+      return new Map([
+        ...(project.mcpServers ?? []).map((server) => [server.id, server] as const),
+        ...(cua ? [[CUA_SERVER_ID, cua] as const] : []),
+      ]);
     }
     const config = getGlobalConfigForRuntime();
     return new Map(
@@ -107,10 +157,10 @@ export class McpClientManager {
     );
   }
 
-  private async startServer(config: McpServerConfig, projectId?: string): Promise<ServerState> {
-    const key = JSON.stringify([projectId ?? null, config.id]);
+  private async startServer(config: McpServerConfig, projectId?: string, sessionId?: string): Promise<ServerState> {
+    const key = this.key(config.id, projectId, sessionId);
     const existing = this.servers.get(key);
-    if (existing?.status === "ready") return existing;
+    if (existing?.status === "ready") { existing.lastUsed = Date.now(); return existing; }
     if (existing?.status === "starting") {
       const pending = this.inflight.get(key);
       if (pending) return pending;
@@ -122,11 +172,11 @@ export class McpClientManager {
       try {
         const project = projectId ? readWorkspaceProject(projectId) : undefined;
         const location = project ? projectSourceLocation(project) : undefined;
-        if (config.transport !== "http" && projectId && !location && !config.cwd)
+        if (config.id !== CUA_SERVER_ID && config.transport !== "http" && projectId && !location && !config.cwd)
           throw new Error("The MCP project has no registered workspace. Set an explicit cwd.");
-        transport = createMcpTransport(config, location ? workspaceLocationHostPath(location) : undefined);
+        transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         const client = new Client(
-          { name: "synax-host", version: "1.2.0" },
+          { name: "synax-host", version: "1.3.0" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -143,8 +193,10 @@ export class McpClientManager {
           client,
           transport,
           tools,
+          lastUsed: Date.now(),
         };
         this.servers.set(key, state);
+        if (config.id === CUA_SERVER_ID) this.startCuaSweep();
         logger.info(
           { serverId: key, toolCount: tools.length },
           "[mcp] server ready",
@@ -171,21 +223,21 @@ export class McpClientManager {
   }
 
   /** Warm up (start + list tools) for the given server ids. Missing/unconfigured servers are skipped. */
-  async warmup(serverIds: string[], projectId?: string): Promise<void> {
+  async warmup(serverIds: string[], projectId?: string, sessionId?: string): Promise<void> {
     const byId = this.configById(projectId);
     for (const id of serverIds) {
       const config = byId.get(id);
-      if (!config || config.enabled === false || !extensionStore.active(projectId, "mcp", id)) continue;
+      if (!config || config.enabled === false || (id !== CUA_SERVER_ID && !extensionStore.active(projectId, "mcp", id))) continue;
       try {
-        await this.startServer(config, projectId);
+        await this.startServer(config, projectId, sessionId);
       } catch {
         /* warm-up best effort */
       }
     }
   }
 
-  getCachedTools(serverId: string, projectId?: string): McpRuntimeToolDef[] {
-    const state = this.servers.get(JSON.stringify([projectId ?? null, serverId]));
+  getCachedTools(serverId: string, projectId?: string, sessionId?: string): McpRuntimeToolDef[] {
+    const state = this.servers.get(this.key(serverId, projectId, sessionId));
     return state?.status === "ready" ? state.tools : [];
   }
 
@@ -194,21 +246,24 @@ export class McpClientManager {
     toolName: string,
     args: unknown,
     projectId?: string,
+    sessionId?: string,
+    abortSignal?: AbortSignal,
   ): Promise<{
     ok: boolean;
     text: string;
     error?: string;
     contentParts?: RuntimeContentPart[];
+    structuredContent?: unknown;
   }> {
     const byId = this.configById(projectId);
     const config = byId.get(serverId);
     if (!config)
       return { ok: false, text: "", error: `MCP server ${serverId} 未配置` };
 
-    if (config.enabled === false || !extensionStore.active(projectId, "mcp", serverId))
+    if (config.enabled === false || (serverId !== CUA_SERVER_ID && !extensionStore.active(projectId, "mcp", serverId)))
       return { ok: false, text: "", error: `MCP server ${serverId} 已关闭` };
 
-    const state = await this.startServer(config, projectId);
+    const state = await this.startServer(config, projectId, sessionId);
     if (state.status !== "ready") {
       const reason = state.status === "failed" ? state.error : undefined;
       return {
@@ -225,24 +280,19 @@ export class McpClientManager {
       text: string;
       error?: string;
       contentParts?: RuntimeContentPart[];
+      structuredContent?: unknown;
     }> => {
       const current = this.configById(projectId).get(serverId);
-      if (!current || current.enabled === false || !extensionStore.active(projectId, 'mcp', serverId)) {
+      if (!current || current.enabled === false || (serverId !== CUA_SERVER_ID && !extensionStore.active(projectId, 'mcp', serverId))) {
         return { ok: false, text: '', error: `MCP server ${serverId} is disabled or removed` };
       }
-      const timeout = new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error(`MCP tool ${toolName} 调用超时`)),
-          CALL_TIMEOUT_MS,
-        );
-      });
-      const result = (await Promise.race([
-        client.callTool({
-          name: toolName,
-          arguments: (args ?? {}) as Record<string, unknown>,
-        }),
-        timeout,
-      ])) as { content?: unknown; isError?: boolean };
+      abortSignal?.throwIfAborted();
+      const result = (await client.callTool(
+        { name: toolName, arguments: (args ?? {}) as Record<string, unknown> },
+        undefined,
+        { timeout: CALL_TIMEOUT_MS, signal: abortSignal },
+      )) as { content?: unknown; isError?: boolean; structuredContent?: unknown };
+      abortSignal?.throwIfAborted();
       let contentParts: RuntimeContentPart[] = [];
       try {
         if (!projectId && hasInlineMedia(result.content))
@@ -269,30 +319,38 @@ export class McpClientManager {
           ok: false,
           text,
           contentParts,
+          structuredContent: result.structuredContent,
           error: text || `MCP tool ${toolName} 执行失败`,
         };
       }
       return {
         ok: true,
         text,
+        structuredContent: result.structuredContent,
         ...(contentParts.some((p) => p.type !== "text")
           ? { contentParts }
           : {}),
       };
     };
     try {
-      return await callOnce(state.client);
+      return await (serverId === CUA_SERVER_ID ? this.withCuaTurn(() => callOnce(state.client), abortSignal) : callOnce(state.client));
     } catch (err) {
       // Server may have died between runs — drop the cached state and retry once.
       const message = err instanceof Error ? err.message : String(err);
       const current = this.configById(projectId).get(serverId);
-      if (!current || current.enabled === false || !extensionStore.active(projectId, 'mcp', serverId)) return { ok: false, text: '', error: message };
+      if (!current || current.enabled === false || (serverId !== CUA_SERVER_ID && !extensionStore.active(projectId, 'mcp', serverId))) return { ok: false, text: '', error: message };
       logger.warn(
         { serverId, toolName, err: message },
-        "[mcp] tool call failed; attempting restart",
+        serverId === CUA_SERVER_ID ? '[cua] operation outcome unknown' : '[mcp] tool call failed; attempting restart',
       );
-      this.servers.delete(JSON.stringify([projectId ?? null, serverId]));
-      const restarted = await this.startServer(config, projectId);
+      // Desktop actions have unknown outcomes if the transport drops after dispatch.
+      // Never replay a Cua action (including a supposedly read-only observation).
+      if (serverId === CUA_SERVER_ID || abortSignal?.aborted) {
+        this.closeServer(serverId, projectId, sessionId);
+        return { ok: false, text: "", error: `Cua operation outcome unknown: ${message}. Reobserve before any further action; do not repeat it automatically.` };
+      }
+      this.servers.delete(this.key(serverId, projectId, sessionId));
+      const restarted = await this.startServer(config, projectId, sessionId);
       if (restarted.status === "ready") {
         try {
           return await callOnce(restarted.client);
@@ -317,7 +375,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "1.2.0" },
+      { name: "synax-host-probe", version: "1.3.0" },
       { capabilities: {} },
     );
     try {
@@ -344,8 +402,8 @@ export class McpClientManager {
     }
   }
 
-  closeServer(serverId: string, projectId?: string): void {
-    const key = JSON.stringify([projectId ?? null, serverId]);
+  closeServer(serverId: string, projectId?: string, sessionId?: string): void {
+    const key = this.key(serverId, projectId, sessionId);
     const state = this.servers.get(key);
     this.servers.delete(key);
     if (state?.status === 'ready') {
@@ -362,7 +420,15 @@ export class McpClientManager {
     });
   }
 
+  closeCua(): void {
+    for (const key of [...this.servers.keys()]) {
+      const [projectId, serverId, sessionId] = JSON.parse(key) as [string | null, string, string | null];
+      if (serverId === CUA_SERVER_ID) this.closeServer(CUA_SERVER_ID, projectId ?? undefined, sessionId ?? undefined);
+    }
+  }
+
   closeAll(): void {
+    if (this.cuaSweep) { clearInterval(this.cuaSweep); this.cuaSweep = null; }
     for (const [id, state] of this.servers.entries()) {
       if (state.status === "ready") {
         void state.client.close().catch(() => undefined);

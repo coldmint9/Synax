@@ -97,6 +97,10 @@ npm run make:desktop
 
 Artifacts are written to `out/make/`. Build on the target operating system **and CPU architecture** — libSQL, tree-sitter, and node-pty ship native binaries. Packaged apps include their own runtime, so end users do not need a separate Node.js installation.
 
+Computer Use is available in the Electron desktop app through an app-hosted Cua Driver. Desktop packaging downloads a pinned Cua Driver 0.30.2 executable and verifies its SHA-256 before bundling; `SYNAX_CUA_DRIVER_PATH` may point to an already installed **matching** executable. Development mode uses that override or finds `cua-driver` on `PATH` (the executable must also be 0.30.2). On macOS, grant **Synax** Accessibility and Screen Recording permissions in System Settings, then relaunch Synax. The project settings page displays the Driver status and permission shortcuts. Cua starts asynchronously after the UI loads; a missing grant or incompatible binary does not block the rest of the app.
+
+The default **Auto** strategy uses Direct Cua without a Jev account or network request. Jev-assisted operation is optional: set `TYPESAFE_API_KEY` in the environment that launches the desktop app, then enable Jev in the project Computer Use settings. The controller chooses from bounded semantic actions and verifies a fresh window state after each action. `cua-perception` visual-region parsing is optional and disabled by default; the visual extension is **not** bundled in the Synax installer.
+
 You can also start the two servers separately, for example when running the API in one terminal and the frontend in another:
 
 ```bash
