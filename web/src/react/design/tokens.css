@@ -6,13 +6,13 @@
     "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
   --theme-canvas: #f7f8fa;
-  --theme-surface: rgb(255 255 255 / 1);
-  --theme-surface-secondary: rgb(237 240 244 / 1);
+  --theme-surface: #ffffff;
+  --theme-surface-secondary: #edf0f4;
   --theme-text: #242932;
   --theme-text-muted: #626a76;
   --theme-text-subtle: #8f96a1;
   --theme-border: #dce2ea;
-  --theme-border-strong: #c7dbd0;
+  --theme-border-strong: #c7d0db;
   --theme-accent: #a1bba8;
   --theme-accent-foreground: #2f3d34;
   --theme-accent-soft: #edf4ef;
@@ -34,7 +34,7 @@
   --theme-text-muted-hsl: 216.00 9.26% 42.35%;
   --theme-text-subtle-hsl: 216.00 8.00% 59.80%;
   --theme-border-hsl: 214.29 25.00% 89.02%;
-  --theme-border-strong-hsl: 150.00 17.39% 82.35%;
+  --theme-border-strong-hsl: 213.00 21.74% 81.96%;
   --theme-accent-hsl: 136.00 16.00% 68.00%;
   --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
   --theme-accent-soft-hsl: 138.00 24.00% 94.00%;
@@ -53,9 +53,13 @@
   --theme-radius-md: 8px;
   --theme-radius-lg: 10px;
   --theme-control-height: 32px;
-  --theme-shadow-control: 0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7);
-  --theme-shadow-inset: inset 0 1px 2px rgb(26 34 48 / .04);
-  --theme-shadow-floating: 0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045);
+  --theme-control-shadow: 0 1px 2px rgb(26 34 48 / .04), inset 0 1px rgb(255 255 255 / .7);
+  --theme-inset-shadow: inset 0 1px 2px rgb(26 34 48 / .04);
+  --theme-floating-shadow: 0 8px 24px rgb(26 34 48 / .08), 0 1px 3px rgb(26 34 48 / .045);
+  --theme-shadow-control: var(--theme-control-shadow);
+  --theme-shadow-inset: var(--theme-inset-shadow);
+  --theme-shadow-floating: var(--theme-floating-shadow);
+  --theme-surface-shadow: 0 1px 2px rgb(26 34 48 / .03);
 
   /* Static fallbacks keep the legacy token contract inspectable before the
      compatibility bridge below resolves aliases through --theme-*. */
@@ -65,13 +69,13 @@
   --ui-text: #242932;
   --ui-subtle: #626a76;
   --ui-line: #dce2ea;
-  --ui-line-strong: #c7dbd0;
+  --ui-line-strong: #c7d0db;
 }
 
 .dark {
   --theme-canvas: #10141c;
   --theme-surface: #171b23;
-  --theme-surface-secondary: rgb(39 44 52 / 0.7);
+  --theme-surface-secondary: #272c34;
   --theme-text: #bfbdb6;
   --theme-text-muted: #a6a59f;
   --theme-text-subtle: #85847f;
@@ -113,9 +117,13 @@
   --theme-tooltip-hsl: 0.00 0.00% 97.45%;
   --theme-tooltip-foreground-hsl: 220.00 27.27% 8.63%;
 
-  --theme-shadow-control: 0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035);
-  --theme-shadow-inset: inset 0 1px 2px rgb(0 0 0 / .14);
-  --theme-shadow-floating: 0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14);
+  --theme-control-shadow: 0 1px 2px rgb(0 0 0 / .14), inset 0 1px rgb(255 255 255 / .035);
+  --theme-inset-shadow: inset 0 1px 2px rgb(0 0 0 / .14);
+  --theme-floating-shadow: 0 10px 28px rgb(0 0 0 / .20), 0 1px 3px rgb(0 0 0 / .14);
+  --theme-shadow-control: var(--theme-control-shadow);
+  --theme-shadow-inset: var(--theme-inset-shadow);
+  --theme-shadow-floating: var(--theme-floating-shadow);
+  --theme-surface-shadow: 0 1px 2px rgb(0 0 0 / .10);
 
   --ui-canvas: #10141c;
   --ui-panel: #171b23;
@@ -149,9 +157,9 @@
 
   --ui-accent: var(--theme-accent);
   --ui-accent-soft: var(--theme-accent-soft);
-  --ui-shadow-control: var(--theme-shadow-control);
-  --ui-shadow-inset: var(--theme-shadow-inset);
-  --ui-shadow-floating: var(--theme-shadow-floating);
+  --ui-shadow-control: var(--theme-control-shadow);
+  --ui-shadow-inset: var(--theme-inset-shadow);
+  --ui-shadow-floating: var(--theme-floating-shadow);
   --ui-tooltip-background: var(--theme-tooltip);
   --ui-tooltip-foreground: var(--theme-tooltip-foreground);
 
@@ -165,7 +173,7 @@
   --surface: var(--theme-surface);
   --surface-foreground: var(--theme-text);
   --surface-secondary: var(--theme-surface-secondary);
-  --surface-shadow: var(--theme-shadow-control);
+  --surface-shadow: var(--theme-surface-shadow);
   --overlay: var(--theme-surface);
   --overlay-foreground: var(--theme-text);
   --default: var(--theme-surface-secondary);
@@ -220,7 +228,8 @@
   --focus: var(--theme-focus);
   --field-border-focus: var(--theme-focus);
 
-  --radius: var(--theme-radius-md);
+  --theme-radius-compat: 10px;
+  --radius: var(--theme-radius-compat);
   --radius-lg: var(--theme-radius-lg);
   --radius-md: var(--theme-radius-md);
   --radius-sm: var(--theme-radius-sm);

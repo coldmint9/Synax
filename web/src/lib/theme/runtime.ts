@@ -5,6 +5,7 @@ import type {
   ThemeEffectTokens,
   ThemeShapeTokens,
 } from "./contract";
+import { accentPalette } from "../appearance";
 import { parseSafeCssColor } from "./schema";
 
 export interface ResolvedThemeTokens {
@@ -14,6 +15,12 @@ export interface ResolvedThemeTokens {
 }
 
 export type ThemeCssVariables = Record<string, string>;
+
+const LEGACY_RADIUS = "10px";
+const SURFACE_SHADOWS: Record<ResolvedTheme, string> = {
+  light: "0 1px 2px rgb(26 34 48 / .03)",
+  dark: "0 1px 2px rgb(0 0 0 / .10)",
+};
 
 const COLOR_HSL_KEYS = [
   "canvas",
@@ -67,10 +74,6 @@ function toHslChannels(value: string): string {
   return `${hue.toFixed(2)} ${(saturation * 100).toFixed(2)}% ${(lightness * 100).toFixed(2)}%`;
 }
 
-function statusForeground(resolvedTheme: ResolvedTheme): string {
-  return resolvedTheme === "dark" ? "#0d0d0d" : "#ffffff";
-}
-
 /** Select the resolved color/effect set without reading from the DOM. */
 export function resolveThemeTokens(
   theme: NormalizedTheme,
@@ -86,6 +89,7 @@ export function resolveThemeTokens(
 function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: ResolvedTheme): ThemeCssVariables {
   const { colors, shape, effects } = tokens;
   const variables: ThemeCssVariables = {};
+  const accent = accentPalette(colors.accent, resolvedTheme);
 
   for (const key of COLOR_HSL_KEYS) {
     variables[`--theme-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`] = colors[key];
@@ -96,13 +100,20 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
   variables["--theme-radius-md"] = shape.radiusMd;
   variables["--theme-radius-lg"] = shape.radiusLg;
   variables["--theme-control-height"] = shape.controlHeight;
+  variables["--theme-radius-compat"] = LEGACY_RADIUS;
+  variables["--theme-control-shadow"] = effects.controlShadow;
+  variables["--theme-inset-shadow"] = effects.insetShadow;
+  variables["--theme-floating-shadow"] = effects.floatingShadow;
+  // Reversed names are retained for the migration window.
   variables["--theme-shadow-control"] = effects.controlShadow;
   variables["--theme-shadow-inset"] = effects.insetShadow;
   variables["--theme-shadow-floating"] = effects.floatingShadow;
+  variables["--theme-surface-shadow"] = SURFACE_SHADOWS[resolvedTheme];
 
   const hsl = (key: keyof ThemeColorTokens) => variables[`--theme-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-hsl`];
   const raw = (key: keyof ThemeColorTokens) => variables[`--theme-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`];
-  const foreground = statusForeground(resolvedTheme);
+  const foreground = raw("tooltipForeground");
+  const foregroundHsl = hsl("tooltipForeground");
 
   // Core semantic aliases.
   Object.assign(variables, {
@@ -116,12 +127,12 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--foreground-hsl": hsl("text"),
     "--border-hsl": hsl("border"),
     "--muted-hsl": hsl("surfaceSecondary"),
-    "--primary": hsl("accent"),
-    "--primary-foreground": hsl("accentForeground"),
-    "--accent": raw("accent"),
-    "--accent-foreground": raw("accentForeground"),
-    "--accent-hsl": hsl("accent"),
-    "--accent-foreground-hsl": hsl("accentForeground"),
+    "--primary": toHslChannels(accent.bottom),
+    "--primary-foreground": toHslChannels(accent.ink),
+    "--accent": accent.bottom,
+    "--accent-foreground": accent.ink,
+    "--accent-hsl": toHslChannels(accent.bottom),
+    "--accent-foreground-hsl": toHslChannels(accent.ink),
     "--secondary": hsl("surfaceSecondary"),
     "--secondary-foreground": hsl("text"),
     "--input": hsl("input"),
@@ -135,7 +146,7 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--popover": hsl("surface"),
     "--popover-foreground": hsl("text"),
     "--destructive": hsl("danger"),
-    "--destructive-foreground": foreground === "#ffffff" ? "0 0% 100%" : "0 0% 5.1%",
+    "--destructive-foreground": foregroundHsl,
     "--success": raw("success"),
     "--success-foreground": foreground,
     "--success-hsl": hsl("success"),
@@ -148,11 +159,11 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--info": raw("info"),
     "--info-foreground": foreground,
     "--info-hsl": hsl("info"),
-    "--success-foreground-hsl": toHslChannels(foreground),
-    "--warning-foreground-hsl": toHslChannels(foreground),
-    "--danger-foreground-hsl": toHslChannels(foreground),
-    "--info-foreground-hsl": toHslChannels(foreground),
-    "--surface-shadow": effects.controlShadow,
+    "--success-foreground-hsl": foregroundHsl,
+    "--warning-foreground-hsl": foregroundHsl,
+    "--danger-foreground-hsl": foregroundHsl,
+    "--info-foreground-hsl": foregroundHsl,
+    "--surface-shadow": SURFACE_SHADOWS[resolvedTheme],
     "--overlay": raw("surface"),
     "--overlay-foreground": raw("text"),
     "--default": raw("surfaceSecondary"),
@@ -169,6 +180,7 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--segment": raw("surface"),
     "--segment-foreground": raw("text"),
     "--scrollbar": raw("borderStrong"),
+    "--radius": LEGACY_RADIUS,
   });
 
   // Existing --ui-* aliases remain valid for legacy component CSS.
@@ -180,7 +192,7 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--ui-subtle": raw("textMuted"),
     "--ui-line": raw("border"),
     "--ui-line-strong": raw("borderStrong"),
-    "--ui-signal": raw("accent"),
+    "--ui-signal": accent.bottom,
     "--ui-canvas-hsl": hsl("canvas"),
     "--ui-panel-hsl": hsl("surface"),
     "--ui-panel-soft-hsl": hsl("surfaceSecondary"),
@@ -188,9 +200,9 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
     "--ui-subtle-hsl": hsl("textMuted"),
     "--ui-line-hsl": hsl("border"),
     "--ui-line-strong-hsl": hsl("borderStrong"),
-    "--ui-signal-hsl": hsl("accent"),
-    "--ui-accent": raw("accent"),
-    "--ui-accent-soft": raw("accentSoft"),
+    "--ui-signal-hsl": toHslChannels(accent.bottom),
+    "--ui-accent": accent.bottom,
+    "--ui-accent-soft": accent.soft,
     "--ui-shadow-control": effects.controlShadow,
     "--ui-shadow-inset": effects.insetShadow,
     "--ui-shadow-floating": effects.floatingShadow,
@@ -204,26 +216,26 @@ function buildThemeVariables(tokens: ResolvedThemeTokens, resolvedTheme: Resolve
   // The legacy accent aliases are still consumed by the settings and control
   // styles during the migration window.
   Object.assign(variables, {
-    "--cx-accent-bottom": raw("accent"),
-    "--cx-accent-bottom-hsl": hsl("accent"),
-    "--cx-accent-top": raw("accent"),
-    "--cx-accent-top-hsl": hsl("accent"),
-    "--cx-accent-strong": raw("focus"),
-    "--cx-accent-strong-hsl": hsl("focus"),
-    "--cx-accent-ink": raw("accentForeground"),
-    "--cx-accent-ink-hsl": hsl("accentForeground"),
-    "--cx-accent-soft": raw("accentSoft"),
-    "--cx-accent-soft-hsl": hsl("accentSoft"),
-    "--cx-accent-muted": raw("textMuted"),
-    "--cx-accent-muted-hsl": hsl("textMuted"),
+    "--cx-accent-bottom": accent.bottom,
+    "--cx-accent-bottom-hsl": toHslChannels(accent.bottom),
+    "--cx-accent-top": accent.top,
+    "--cx-accent-top-hsl": toHslChannels(accent.top),
+    "--cx-accent-strong": accent.strong,
+    "--cx-accent-strong-hsl": toHslChannels(accent.strong),
+    "--cx-accent-ink": accent.ink,
+    "--cx-accent-ink-hsl": toHslChannels(accent.ink),
+    "--cx-accent-soft": accent.soft,
+    "--cx-accent-soft-hsl": toHslChannels(accent.soft),
+    "--cx-accent-muted": accent.muted,
+    "--cx-accent-muted-hsl": toHslChannels(accent.muted),
     "--cx-success-hsl": hsl("success"),
     "--cx-warning-hsl": hsl("warning"),
     "--cx-danger-hsl": hsl("danger"),
     "--cx-info-hsl": hsl("info"),
-    "--radio-accent-top": raw("accent"),
-    "--radio-accent-bottom": raw("accent"),
-    "--radio-accent-text": raw("accentForeground"),
-    "--radio-idle-text": raw("textMuted"),
+    "--radio-accent-top": accent.top,
+    "--radio-accent-bottom": accent.bottom,
+    "--radio-accent-text": accent.ink,
+    "--radio-idle-text": accent.muted,
   });
 
   return variables;
