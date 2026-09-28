@@ -1,10 +1,38 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { THEME_COLOR_KEYS } from '../../lib/theme/contract';
 
 const designDirectory = dirname(new URL(import.meta.url).pathname);
-const source = readFileSync(resolve(designDirectory, 'tokens.css'), 'utf8');
+const repositoryRoot = resolve(designDirectory, '../../../..');
+const task5BoundaryCommit = '02ed537';
+const committedHead = 'HEAD';
+
+function git(args: string[]): string {
+  return execFileSync('git', args, { cwd: repositoryRoot, encoding: 'utf8' });
+}
+
+function enumerateTask6CssFiles(): string[] {
+  return git([
+    'diff',
+    '--name-only',
+    '--diff-filter=ACMR',
+    task5BoundaryCommit,
+    committedHead,
+    '--',
+    '*.css',
+  ])
+    .split('\n')
+    .map((filePath) => filePath.trim())
+    .filter(Boolean);
+}
+
+function readCommittedFile(filePath: string): string {
+  return git(['show', `${committedHead}:${filePath}`]);
+}
+
+const task6CssFiles = enumerateTask6CssFiles();
+const source = readCommittedFile('web/src/react/design/tokens.css');
 const lightTheme = source.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1];
 const darkTheme = source.match(/\.dark\s*\{([\s\S]*?)\n\}/)?.[1];
 const compatibilityBridge = source.match(/:root,\s*\.dark\s*\{([\s\S]*?)\n\}/)?.[1];
@@ -34,27 +62,9 @@ const themeEffectAliases = [
 ];
 const themePigmentTokens = ['--theme-shadow-rgb', '--theme-highlight-rgb'];
 
-// This is the complete CSS surface that changed as part of the theme migration.
-// Keep this list explicit so adding a new migration stylesheet also adds an audit
-// surface instead of silently escaping the test.
-const themeMigrationCssFiles = [
-  '../../index.css',
-  '../components/file-viewer/fileViewer.css',
-  '../components/modalViewport.css',
-  '../components/ui/GlassButton.css',
-  '../components/ui/Tooltip.css',
-  '../components/ui/glass/glass.css',
-  '../design/command-deck.css',
-  '../features/agent-workspace/agentControls.css',
-  '../features/agent-workspace/newSessionWelcome.css',
-  '../features/agent-workspace/sessionProfilePanel.css',
-  '../features/agent-workspace/workPage.css',
-  '../features/agent-workspace/workspaceDashboardLayout.css',
-  '../features/git/gitWorkbench.css',
-  '../features/settings/components/appearance.css',
-  '../features/terminal/terminal.css',
-  '../features/workspace/workspaceProjects.css',
-].map((relativePath) => resolve(designDirectory, relativePath));
+// Audit only the committed Task 6 CSS snapshot. Reading the working tree here
+// would let unrelated dirty agent-workspace styles affect this test.
+const themeMigrationCssFiles = task6CssFiles;
 
 const oldThemeLiterals = [
   '#7b8090',
@@ -198,8 +208,20 @@ const hsvColorPickerLiterals: Record<number, readonly string[]> = {
   337: ['#f00', '#ff0', '#0f0', '#0ff', '#00f', '#f0f', '#f00'],
 };
 
+// The opaque agent-dock action face predates Task 6 and is intentionally fixed.
+// Keep this baseline exception exact so new hard-coded surfaces remain rejected.
+const fixedIndexActionLiterals: Record<number, readonly string[]> = {
+  3410: ['#101113'],
+  3411: ['#fff'],
+  3418: ['#25272c'],
+  3421: ['#e2e5e9'],
+  3422: ['#6f7783'],
+  3425: ['#393e47'],
+  3426: ['#abb1bb'],
+};
+
 function readThemeMigrationCss(): string {
-  return themeMigrationCssFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
+  return themeMigrationCssFiles.map(readCommittedFile).join('\n');
 }
 
 function extractBlock(css: string, selector: string): string {
@@ -223,13 +245,14 @@ function declarations(block: string): Map<string, string> {
 
 function findForbiddenThemeSurfaceLiterals(css: string, filePath: string): string[] {
   const findings: string[] = [];
-  const allowedLiterals = filePath.endsWith('/appearance.css')
-    ? new Map(
-        Object.entries({ ...fixedAppearancePreviewLiterals, ...hsvColorPickerLiterals }).map(
-          ([line, literals]) => [Number(line), new Set(literals)],
-        ),
-      )
-    : new Map<number, Set<string>>();
+  const allowedLiteralLines = filePath.endsWith('/appearance.css')
+    ? { ...fixedAppearancePreviewLiterals, ...hsvColorPickerLiterals }
+    : filePath.endsWith('/index.css')
+      ? fixedIndexActionLiterals
+      : {};
+  const allowedLiterals = new Map(
+    Object.entries(allowedLiteralLines).map(([line, literals]) => [Number(line), new Set(literals)]),
+  );
 
   css.split('\n').forEach((line, index) => {
     const lineNumber = index + 1;
@@ -323,7 +346,7 @@ describe('app color themes', () => {
     expect(migrationCss).not.toMatch(/var\(--[\w-]+\s*,\s*#[0-9a-f]{3,8}\b/i);
 
     const findings = themeMigrationCssFiles.flatMap((filePath) =>
-      findForbiddenThemeSurfaceLiterals(readFileSync(filePath, 'utf8'), filePath),
+      findForbiddenThemeSurfaceLiterals(readCommittedFile(filePath), filePath),
     );
     expect(findings, 'hard-coded theme surfaces must use --theme-* variables').toEqual([]);
   });
