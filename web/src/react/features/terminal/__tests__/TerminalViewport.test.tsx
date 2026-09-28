@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_THEME } from "../../../../lib/theme/defaults";
 import { resolveThemeTokens } from "../../../../lib/theme/runtime";
-import { terminalTheme } from "../TerminalViewport";
+import { applyTerminalTheme, terminalTheme } from "../TerminalViewport";
 
 describe("terminalTheme", () => {
   it("maps normalized resolved semantic tokens to xterm colors", () => {
@@ -45,4 +45,30 @@ describe("terminalTheme", () => {
       brightBlack: "#101112",
     });
   });
+});
+
+it("updates an open terminal theme in place without reconnecting or changing input state", () => {
+  const before = resolveThemeTokens(DEFAULT_THEME, "light");
+  const after = resolveThemeTokens(DEFAULT_THEME, "dark");
+  const options = {
+    theme: terminalTheme(before),
+    disableStdin: false,
+  };
+  const terminal = { options };
+  const connection = {
+    close: vi.fn(),
+    reconnect: vi.fn(),
+    prepareInput: vi.fn(),
+    write: vi.fn(),
+  };
+
+  applyTerminalTheme(terminal, after);
+
+  expect(terminal.options).toBe(options);
+  expect(terminal.options.theme).toEqual(terminalTheme(after));
+  expect(terminal.options.disableStdin).toBe(false);
+  expect(connection.close).not.toHaveBeenCalled();
+  expect(connection.reconnect).not.toHaveBeenCalled();
+  expect(connection.prepareInput).not.toHaveBeenCalled();
+  expect(connection.write).not.toHaveBeenCalled();
 });

@@ -24,6 +24,14 @@ export function terminalTheme(tokens: ResolvedThemeTokens) {
   };
 }
 
+/** Update only xterm's visual theme; connection and input state stay untouched. */
+export function applyTerminalTheme(
+  terminal: Pick<Terminal, "options">,
+  tokens: ResolvedThemeTokens,
+): void {
+  terminal.options.theme = terminalTheme(tokens);
+}
+
 export function TerminalViewport({
   session,
   visible,
@@ -309,7 +317,7 @@ export function TerminalViewport({
   }, [session.id]);
   useEffect(() => {
     if (instance.current)
-      instance.current.terminal.options.theme = terminalTheme(resolvedTokens);
+      applyTerminalTheme(instance.current.terminal, resolvedTokens);
   }, [resolvedTokens]);
   useLayoutEffect(() => {
     instance.current?.syncInput();

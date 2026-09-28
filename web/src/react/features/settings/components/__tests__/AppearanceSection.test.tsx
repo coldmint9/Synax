@@ -16,18 +16,7 @@ const fetchGuard = vi.fn(() =>
   Promise.reject(new Error("Appearance tests must not use an API")),
 );
 
-beforeEach(() => {
-  fetchGuard.mockClear();
-  vi.stubGlobal("fetch", fetchGuard);
-  useShellStore.setState((state) => ({
-    preferences: {
-      ...state.preferences,
-      theme: "system",
-      accentColor: DEFAULT_ACCENT,
-      locale: "en",
-    },
-    resolvedTheme: "light",
-  }));
+function resetThemeStore(): void {
   useThemeStore.setState((state) => ({
     ...state,
     mode: "system",
@@ -40,10 +29,24 @@ beforeEach(() => {
       effects: { ...DEFAULT_THEME.effects.light },
     },
   }));
+}
+
+beforeEach(() => {
+  fetchGuard.mockClear();
+  vi.stubGlobal("fetch", fetchGuard);
+  localStorage.clear();
+  resetThemeStore();
+  hydrateThemePreferences();
+  useShellStore.setState((state) => ({
+    preferences: { ...state.preferences, locale: "en" },
+  }));
 });
 
 afterEach(() => {
   expect(fetchGuard).not.toHaveBeenCalled();
+  resetThemeStore();
+  localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -54,7 +57,18 @@ describe("AppearanceSection", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
     expect(useThemeStore.getState().mode).toBe("dark");
     fireEvent.click(screen.getByRole("radio", { name: "System" }));
-    act(() => useShellStore.setState({ resolvedTheme: "dark" }));
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+      media: "(prefers-color-scheme: dark)",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList);
+    act(() => useThemeStore.getState().setMode("system"));
+    expect(useThemeStore.getState().mode).toBe("system");
+    expect(useThemeStore.getState().resolvedTheme).toBe("dark");
     expect(screen.getByText("System is currently dark")).toBeInTheDocument();
   });
 
@@ -146,9 +160,7 @@ describe("AppearanceSection", () => {
     });
     unmount();
     act(() => {
-      useShellStore.setState((state) => ({
-        preferences: { ...state.preferences, accentColor: DEFAULT_ACCENT },
-      }));
+      resetThemeStore();
       hydrateThemePreferences();
     });
     render(<AppearanceSection />);
