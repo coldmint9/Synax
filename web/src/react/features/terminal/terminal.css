@@ -1,5 +1,5 @@
 .terminal-drawer {
-  --terminal-bg: #fafbfc;
+  --terminal-bg: var(--theme-canvas);
   position: relative;
   z-index: 40;
   display: flex;
@@ -10,12 +10,9 @@
   min-width: 0;
   border-top: 1px solid hsl(var(--border-hsl) / 0.6);
   background: var(--terminal-bg);
-  color: hsl(var(--foreground-hsl));
-  box-shadow: 0 -5px 20px hsl(0 0% 0% / 0.04);
+  color: var(--theme-text);
+  box-shadow: 0 -5px 20px rgb(var(--theme-shadow-rgb) / .04);
   -webkit-app-region: no-drag;
-}
-.dark .terminal-drawer {
-  --terminal-bg: #141618;
 }
 .terminal-drawer--maximized {
   position: fixed;
@@ -127,7 +124,7 @@
   color: hsl(var(--muted-foreground));
 }
 .terminal-icon:hover:not(:disabled) {
-  color: hsl(var(--foreground-hsl));
+  color: var(--theme-text);
   background: hsl(var(--secondary));
 }
 .terminal-icon:disabled {

@@ -61,6 +61,12 @@
   --theme-shadow-floating: var(--theme-floating-shadow);
   --theme-surface-shadow: 0 1px 2px rgb(26 34 48 / .03);
 
+  /* CSS-only material pigments, not portable theme fields. Shadows/scrims
+     darken and specular rims lighten in both modes; keep their neutral baseline
+     rather than deriving them from text (which becomes light in dark mode). */
+  --theme-shadow-rgb: 0 0 0;
+  --theme-highlight-rgb: 255 255 255;
+
   /* Static fallbacks keep the legacy token contract inspectable before the
      compatibility bridge below resolves aliases through --theme-*. */
   --ui-canvas: #f7f8fa;

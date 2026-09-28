@@ -23,7 +23,7 @@
 
 .glass-button-surface[data-glass-state] {
   --glass-blur: 8px;
-  border-radius: var(--radius-lg, var(--radius, 0.625rem));
+  border-radius: var(--theme-radius-lg);
 }
 
 .glass-button-surface[data-glass-state].liquid-glass-surface--strong {
@@ -31,12 +31,12 @@
 }
 
 .glass-button-surface--primary[data-glass-state] {
-  --glass-border: color-mix(in srgb, var(--ui-accent, currentColor) 32%, transparent);
+  --glass-border: color-mix(in srgb, var(--theme-accent) 32%, transparent);
 }
 
 .glass-button-surface--danger[data-glass-state],
 .glass-button-surface--danger-soft[data-glass-state] {
-  --glass-border: hsl(var(--destructive) / 0.28);
+  --glass-border: color-mix(in srgb, var(--theme-danger) 28%, transparent);
 }
 
 /* Remove just the floating shadow through its token. The renderer keeps its
@@ -56,11 +56,11 @@
   border-color: transparent;
   border-radius: inherit;
   background: transparent;
-  color: var(--ui-text, var(--foreground));
+  color: var(--theme-text);
   box-shadow: none;
 }
 
 .glass-button--danger.ui-button,
 .glass-button--danger-soft.ui-button {
-  color: hsl(var(--destructive));
+  color: var(--theme-danger);
 }

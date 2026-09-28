@@ -187,15 +187,15 @@
 .synax-island .wh-pill-btn--danger-soft { color: hsl(var(--destructive)); }
 .synax-island :is(button, [role="radio"], select):focus-visible { outline: 2px solid var(--island-ink); outline-offset: 2px; }
 .synax-island {
-  --island-ink: #18221c;
-  --island-ink-halo: rgb(255 255 255 / .85);
+  --island-ink: var(--theme-text);
+  --island-ink-halo: rgb(var(--theme-highlight-rgb) / .85);
   --island-pill-background: var(--ui-panel);
-  --island-pill-shadow: 0 3px 9px rgb(30 47 38 / .13);
+  --island-pill-shadow: 0 3px 9px color-mix(in srgb, var(--theme-text) 13%, transparent);
 }
 .dark .synax-island {
-  --island-ink: #f4f8f3;
-  --island-ink-halo: rgb(0 0 0 / .9);
-  --island-pill-shadow: 0 3px 9px rgb(0 0 0 / .28);
+  --island-ink: var(--theme-text);
+  --island-ink-halo: rgb(var(--theme-shadow-rgb) / .9);
+  --island-pill-shadow: 0 3px 9px rgb(var(--theme-shadow-rgb) / .28);
 }
 @media (prefers-contrast: more), (forced-colors: active) {
   .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) {

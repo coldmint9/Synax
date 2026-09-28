@@ -78,6 +78,7 @@
 .appearance-mode[data-checked] .appearance-mode__check svg {
   opacity: 1;
 }
+/* Fixed light/dark mode illustrations: previews must not follow the active mode. */
 .appearance-mini {
   display: flex;
   width: 100%;
@@ -166,7 +167,8 @@
   gap: 6px;
   margin: 18px 0;
 }
-/* These states belong to Headless UI radios, not legacy swatch anatomy. */
+/* Fixed sample ink contrasts with the preset colors, not the active theme.
+   These states belong to Headless UI radios, not legacy swatch anatomy. */
 .appearance-swatch {
   display: grid;
   place-items: center;
@@ -178,7 +180,7 @@
   border-radius: 50%;
   color: #181818;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px #00000018;
+  box-shadow: inset 0 0 0 1px rgb(var(--theme-shadow-rgb) / 0.0941176471);
 }
 .appearance-swatch[data-checked] {
   border-color: var(--foreground);
@@ -228,7 +230,7 @@
   border-radius: 14px;
   color: var(--foreground);
   background: var(--surface);
-  box-shadow: 0 12px 36px #00000026;
+  box-shadow: 0 12px 36px rgb(var(--theme-shadow-rgb) / 0.1490196078);
 }
 .appearance-color-popover p {
   margin: 0;
@@ -277,6 +279,7 @@
   cursor: default;
   opacity: 0.45;
 }
+/* HSV planes and hue spectra describe colors, not theme surfaces. */
 .appearance-color-area {
   position: relative;
   width: 100%;
@@ -285,7 +288,7 @@
   background-image:
     linear-gradient(to top, #000, transparent),
     linear-gradient(to right, #fff, transparent);
-  box-shadow: inset 0 0 0 1px #00000020;
+  box-shadow: inset 0 0 0 1px rgb(var(--theme-shadow-rgb) / 0.1254901961);
   touch-action: none;
   user-select: none;
   cursor: crosshair;
@@ -295,11 +298,11 @@
   box-sizing: border-box;
   width: 14px;
   height: 14px;
-  border: 2px solid #fff;
+  border: 2px solid rgb(var(--theme-highlight-rgb));
   border-radius: 50%;
   box-shadow:
-    0 0 0 1px #0009,
-    0 1px 3px #0005;
+    0 0 0 1px rgb(var(--theme-shadow-rgb) / .6),
+    0 1px 3px rgb(var(--theme-shadow-rgb) / .3333333333);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -345,18 +348,18 @@
   appearance: none;
   width: 16px;
   height: 16px;
-  border: 2px solid #fff;
+  border: 2px solid rgb(var(--theme-highlight-rgb));
   border-radius: 50%;
   background: transparent;
-  box-shadow: 0 0 0 1px #0009;
+  box-shadow: 0 0 0 1px rgb(var(--theme-shadow-rgb) / .6);
 }
 .appearance-channel__range--hue::-moz-range-thumb {
   width: 12px;
   height: 12px;
-  border: 2px solid #fff;
+  border: 2px solid rgb(var(--theme-highlight-rgb));
   border-radius: 50%;
   background: transparent;
-  box-shadow: 0 0 0 1px #0009;
+  box-shadow: 0 0 0 1px rgb(var(--theme-shadow-rgb) / .6);
 }
 .appearance-hex-field input {
   box-sizing: border-box;
@@ -372,10 +375,10 @@
   font-family: var(--font-mono);
 }
 .appearance-hex-field input[aria-invalid="true"] {
-  border-color: var(--danger, #d22f42);
+  border-color: var(--theme-danger);
 }
 .appearance-color-error {
-  color: var(--danger, #d22f42);
+  color: var(--theme-danger);
   font-size: 0.75rem;
 }
 .appearance-swatch:focus-visible,
@@ -391,7 +394,7 @@
   border: 1px solid var(--border);
   border-radius: 11px;
   background: var(--background);
-  box-shadow: 0 4px 16px #00000005;
+  box-shadow: 0 4px 16px rgb(var(--theme-shadow-rgb) / 0.0196078431);
 }
 .appearance-preview__header {
   display: flex;

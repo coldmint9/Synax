@@ -64,8 +64,8 @@ body > .dialog-overlay > .dialog-content {
   max-height: 100%;
   border: 0;
   padding: 48px 16px 16px;
-  color: white;
-  background: rgb(0 0 0 / 0.8);
+  color: rgb(var(--theme-highlight-rgb));
+  background: rgb(var(--theme-shadow-rgb) / 0.8);
   overflow: auto;
 }
 .media-preview-dialog[open] {
@@ -74,7 +74,7 @@ body > .dialog-overlay > .dialog-content {
   justify-content: center;
 }
 .media-preview-dialog::backdrop {
-  background: rgb(0 0 0 / 0.8);
+  background: rgb(var(--theme-shadow-rgb) / 0.8);
 }
 .media-preview-dialog > img {
   min-width: 0;

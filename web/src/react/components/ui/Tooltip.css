@@ -2,11 +2,11 @@
   z-index: 1500;
   max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px;
-  border: 1px solid rgb(255 255 255 / 0.09);
+  border: 1px solid rgb(var(--theme-highlight-rgb) / 0.09);
   border-radius: 7px;
-  background: var(--ui-tooltip-background, rgb(31 34 40 / 0.97));
-  color: var(--ui-tooltip-foreground, #f9fafb);
-  box-shadow: 0 3px 12px rgb(0 0 0 / 0.12);
+  background: var(--theme-tooltip);
+  color: var(--theme-tooltip-foreground);
+  box-shadow: 0 3px 12px rgb(var(--theme-shadow-rgb) / 0.12);
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;

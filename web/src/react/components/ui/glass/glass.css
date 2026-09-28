@@ -24,10 +24,10 @@
 .liquid-glass-surface[data-glass-state] {
   --glass-radius: 16px;
   --glass-shoulder: 5px;
-  --glass-base: color-mix(in srgb, var(--ui-panel, #fafbf7) 94%, transparent);
-  --glass-transparent: color-mix(in srgb, var(--ui-panel, #fafbf7) 66%, transparent);
-  --glass-solid: var(--ui-panel, #fafbf7);
-  --glass-border: rgb(105 122 139 / 0.22);
+  --glass-base: color-mix(in srgb, var(--theme-surface) 94%, transparent);
+  --glass-transparent: color-mix(in srgb, var(--theme-surface) 66%, transparent);
+  --glass-solid: var(--theme-surface);
+  --glass-border: color-mix(in srgb, var(--theme-border-strong) 22%, transparent);
   --glass-blur: 18px;
   position: relative;
   isolation: isolate;
@@ -43,10 +43,10 @@
 }
 
 .liquid-glass-surface[data-glass-theme="dark"] {
-  --glass-base: color-mix(in srgb, var(--ui-panel, #1e221f) 94%, transparent);
-  --glass-transparent: color-mix(in srgb, var(--ui-panel, #1e221f) 80%, transparent);
-  --glass-solid: var(--ui-panel, #1e221f);
-  --glass-border: rgb(209 224 240 / 0.19);
+  --glass-base: color-mix(in srgb, var(--theme-surface) 94%, transparent);
+  --glass-transparent: color-mix(in srgb, var(--theme-surface) 80%, transparent);
+  --glass-solid: var(--theme-surface);
+  --glass-border: color-mix(in srgb, var(--theme-border-strong) 19%, transparent);
 }
 
 .liquid-glass-surface[data-glass-state].liquid-glass-surface--strong {
@@ -67,7 +67,7 @@
 .liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
   z-index: -3;
   background: var(--glass-base);
-  box-shadow: inset 0 0 0 1px var(--glass-border), var(--ui-shadow-floating, 0 5px 16px rgb(0 0 0 / .07));
+  box-shadow: inset 0 0 0 1px var(--glass-border), var(--ui-shadow-floating);
 }
 
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
