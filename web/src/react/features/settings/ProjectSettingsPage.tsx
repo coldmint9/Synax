@@ -89,7 +89,12 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
     );
   }
   const extensionSection =
-    section === "general" || section === "archive" ? null : section;
+    section === "general" ||
+    section === "archive" ||
+    section === "mcpServers" ||
+    section === "computerUse"
+      ? null
+      : section;
 
   return (
     <ScrollArea className="settings-scroll-viewport">
