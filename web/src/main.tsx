@@ -8,16 +8,18 @@ import "@fontsource-variable/noto-sans-sc/wght.css";
 import "./index.css";
 import "./react/design/fonts.css";
 import "katex/dist/katex.min.css";
+import { hydrateShellPreferences } from "./react/state/shellStore";
 import {
-  hydrateShellPreferences,
-  startShellAppearance,
-} from "./react/state/shellStore";
+  hydrateThemePreferences,
+  startThemeRuntime,
+} from "./react/state/themeStore";
 import { installScrollRevealScrollbar } from "./lib/scrollRevealScrollbar";
 
+hydrateThemePreferences();
 hydrateShellPreferences();
 installScrollRevealScrollbar();
-const stopAppearance = startShellAppearance();
-if (import.meta.hot) import.meta.hot.dispose(stopAppearance);
+const stopThemeRuntime = startThemeRuntime();
+if (import.meta.hot) import.meta.hot.dispose(stopThemeRuntime);
 
 function bootstrap() {
   ReactDOM.createRoot(document.getElementById("app")!).render(

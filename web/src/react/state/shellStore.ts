@@ -1,13 +1,13 @@
 import { create } from "zustand";
 import {
-  applyAppearance,
-  DEFAULT_ACCENT,
-  normalizeAccent,
-  systemTheme,
+  hydrateThemePreferences,
+  startThemeRuntime,
+  useThemeStore,
   type ThemeMode,
   type ResolvedTheme,
-} from "../../lib/appearance";
+} from "./themeStore";
 import { useApiConnectivityStore } from "../../lib/apiConnectivity";
+import { mergeTheme } from "../../lib/theme/normalize";
 import { AppError } from "../../lib/appError";
 
 export interface ProjectSummary {
@@ -132,10 +132,11 @@ function applyUiFontSize(fontSize: number): void {
 export const useShellStore = create<ShellState>((set, get) => ({
   projects: [],
   projectsLoaded: false,
-  resolvedTheme: systemTheme(),
+  resolvedTheme: useThemeStore.getState().resolvedTheme,
   preferences: {
-    theme: "system",
-    accentColor: DEFAULT_ACCENT,
+    // Deprecated compatibility projection. Theme ownership lives in themeStore.
+    theme: useThemeStore.getState().mode,
+    accentColor: useThemeStore.getState().activeTheme.colors.light.accent,
     defaultHome: "global-home",
     notifications: true,
     locale: "zh",
@@ -159,48 +160,30 @@ export const useShellStore = create<ShellState>((set, get) => ({
     sortOrder: "desc",
   },
   setTheme: (theme) => {
-    set((state) => ({ preferences: { ...state.preferences, theme } }));
-    syncShellAppearance();
-    persistAppearance();
+    useThemeStore.getState().setMode(theme);
   },
   setAccentColor: (color) => {
-    const accentColor = normalizeAccent(color);
-    if (!accentColor) return;
-    set((state) => ({ preferences: { ...state.preferences, accentColor } }));
-    syncShellAppearance();
-    persistAppearance();
+    useThemeStore.getState().setAccentColor(color);
   },
   setLocale: (locale) => {
     set((state) => ({ preferences: { ...state.preferences, locale } }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   setDefaultHome: (defaultHome) => {
     set((state) => ({ preferences: { ...state.preferences, defaultHome } }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   setNotifications: (notifications) => {
     set((state) => ({ preferences: { ...state.preferences, notifications } }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   setEditor: (editor) => {
     set((state) => ({ preferences: { ...state.preferences, editor } }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   setWikiEnabled: (wikiEnabled) => {
     set((state) => ({ preferences: { ...state.preferences, wikiEnabled } }));
-    localStorage.setItem(storageKey, JSON.stringify(get().preferences));
+    persistShellPreferences();
   },
   setAgentFontSize: (fontSize) => {
     const normalized = Math.min(
@@ -210,29 +193,20 @@ export const useShellStore = create<ShellState>((set, get) => ({
     set((state) => ({
       preferences: { ...state.preferences, agentFontSize: normalized },
     }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
     applyUiFontSize(normalized);
   },
   setSessionFoldWorkRuns: (value) => {
     set((state) => ({
       preferences: { ...state.preferences, sessionFoldWorkRuns: value },
     }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   setSessionListDisplayMode: (value) => {
     set((state) => ({
       preferences: { ...state.preferences, sessionListDisplayMode: value },
     }));
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
+    persistShellPreferences();
   },
   addProject: (project) => {
     projectMutationVersion++;
@@ -318,20 +292,80 @@ export function startProjectRecovery(): () => void {
   };
 }
 
-export function hydrateShellPreferences() {
+function getShellStorage(): Storage | null {
+  if (typeof globalThis === "undefined" || !("localStorage" in globalThis)) return null;
   try {
-    const raw = localStorage.getItem(storageKey);
+    return globalThis.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function persistShellPreferences(): void {
+  const storage = getShellStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(storageKey, JSON.stringify(useShellStore.getState().preferences));
+  } catch {
+    // Non-theme shell preferences remain usable when browser storage is unavailable.
+  }
+}
+
+function syncLegacyThemePreferences(): void {
+  const storage = getShellStorage();
+  if (!storage) return;
+  const { mode, activeTheme } = useThemeStore.getState();
+  let previous: Record<string, unknown> = {};
+  try {
+    const raw = storage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === "object") previous = parsed;
+    storage.setItem(
+      storageKey,
+      JSON.stringify({
+        ...previous,
+        theme: mode,
+        accentColor: activeTheme.colors.light.accent,
+      }),
+    );
+  } catch {
+    // Compatibility projection is best effort and never owns theme state.
+  }
+}
+
+function syncShellThemeMirror(): void {
+  const theme = useThemeStore.getState();
+  useShellStore.setState((state) => ({
+    preferences: {
+      ...state.preferences,
+      theme: theme.mode,
+      accentColor: theme.activeTheme.colors.light.accent,
+    },
+    resolvedTheme: theme.resolvedTheme,
+  }));
+}
+
+const stopThemeMirror = useThemeStore.subscribe((state) => {
+  useShellStore.setState((shell) => ({
+    preferences: {
+      ...shell.preferences,
+      theme: state.mode,
+      accentColor: state.activeTheme.colors.light.accent,
+    },
+    resolvedTheme: state.resolvedTheme,
+  }));
+  syncLegacyThemePreferences();
+});
+syncShellThemeMirror();
+
+export function hydrateShellPreferences() {
+  hydrateThemePreferences();
+  try {
+    const storage = getShellStorage();
+    const raw = storage?.getItem(storageKey);
     const parsed = (raw ? JSON.parse(raw) : {}) as Partial<ShellPreferences>;
     if (!parsed || typeof parsed !== "object") return;
     const patch: Partial<ShellPreferences> = {};
-    if (
-      parsed.theme === "light" ||
-      parsed.theme === "dark" ||
-      parsed.theme === "system"
-    )
-      patch.theme = parsed.theme;
-    const accentColor = normalizeAccent(parsed.accentColor);
-    if (accentColor) patch.accentColor = accentColor;
     if (parsed.locale === "zh" || parsed.locale === "en")
       patch.locale = parsed.locale;
     if (
@@ -369,53 +403,46 @@ export function hydrateShellPreferences() {
     applyUiFontSize(agentFontSize);
   } catch {
     // Ignore unavailable storage or broken preference payloads.
-  } finally {
-    syncShellAppearance();
   }
-}
-
-function persistAppearance() {
-  try {
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(useShellStore.getState().preferences),
-    );
-  } catch {
-    // Appearance remains usable when browser storage is unavailable.
-  }
-}
-
-function syncShellAppearance() {
-  const { preferences, resolvedTheme } = useShellStore.getState();
-  const next =
-    preferences.theme === "system" ? systemTheme() : preferences.theme;
-  applyAppearance(next, preferences.accentColor);
-  if (next !== resolvedTheme) useShellStore.setState({ resolvedTheme: next });
+  syncShellThemeMirror();
 }
 
 export function startShellAppearance(): () => void {
-  syncShellAppearance();
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const onSystemChange = () => {
-    if (useShellStore.getState().preferences.theme === "system")
-      syncShellAppearance();
-  };
-  media.addEventListener("change", onSystemChange);
-  const unsubscribe = useShellStore.subscribe((state, previous) => {
-    if (
-      state.preferences.theme !== previous.preferences.theme ||
-      state.preferences.accentColor !== previous.preferences.accentColor
-    )
-      syncShellAppearance();
+  // Legacy callers can continue to start appearance handling while the actual
+  // runtime and persistence are owned by themeStore.
+  const shellTheme = useShellStore.getState().preferences.theme;
+  const shellAccent = useShellStore.getState().preferences.accentColor;
+  const currentTheme = useThemeStore.getState();
+  const activeTheme = mergeTheme(currentTheme.activeTheme, {
+    colors: {
+      light: { accent: shellAccent },
+      dark: { accent: shellAccent },
+    },
   });
-  const onStorage = (event: StorageEvent) => {
-    if (event.key === storageKey && event.newValue) hydrateShellPreferences();
+  // Keep this legacy bridge in memory only. Theme persistence remains owned by
+  // themeStore, and the runtime will persist subsequent user changes there.
+  useThemeStore.setState({
+    mode: shellTheme,
+    activeTheme,
+    source: currentTheme.source,
+  });
+  const stopRuntime = startThemeRuntime();
+  const onLegacyStorage = (event: StorageEvent) => {
+    if (event.key !== storageKey || !event.newValue) return;
+    try {
+      const parsed = JSON.parse(event.newValue) as Partial<ShellPreferences>;
+      if (parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system")
+        useThemeStore.getState().setMode(parsed.theme);
+      if (typeof parsed.accentColor === "string")
+        useThemeStore.getState().setAccentColor(parsed.accentColor);
+    } catch {
+      // Ignore malformed compatibility payloads.
+    }
   };
-  window.addEventListener("storage", onStorage);
+  if (typeof window !== "undefined") window.addEventListener("storage", onLegacyStorage);
   return () => {
-    media.removeEventListener("change", onSystemChange);
-    window.removeEventListener("storage", onStorage);
-    unsubscribe();
+    stopRuntime();
+    if (typeof window !== "undefined") window.removeEventListener("storage", onLegacyStorage);
   };
 }
 
