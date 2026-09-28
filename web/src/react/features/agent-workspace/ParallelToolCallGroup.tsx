@@ -1,4 +1,4 @@
-import { Chip } from "@/react/components/ui";
+import { Badge } from "@/react/components/ui/Display";
 import { Layers } from "lucide-react";
 import type { ToolCallView } from "./buildInterleavedTurns";
 import { EnhancedToolCallCard } from "./EnhancedToolCallCard";
@@ -18,14 +18,14 @@ export function ParallelToolCallGroup({ calls }: Props) {
         <span className="text-[10px] font-medium text-muted-foreground/70">
           Parallel ({calls.length})
         </span>
-        <Chip
+        <Badge
           size="sm"
           variant="soft"
-          color={allCompleted ? "success" : anyRunning ? "accent" : "default"}
+          tone={allCompleted ? "success" : anyRunning ? "accent" : "default"}
           className="h-4 text-[9px]"
         >
           {allCompleted ? "done" : anyRunning ? "running" : "pending"}
-        </Chip>
+        </Badge>
       </div>
       <div className="grid grid-cols-1 gap-1.5">
         {calls.map((call, i) => (

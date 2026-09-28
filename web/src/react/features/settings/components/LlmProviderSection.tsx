@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertDialog, Button } from "@/react/components/ui"
+import { AlertDialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button, CloseButton } from "@/react/components/ui/Button";
 import { KeyRound, Plus } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
@@ -248,7 +249,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       trailing={
         <div className="flex items-center gap-2">
           <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
-          <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm" onPress={handleAddCustom}>
+          <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm" onClick={handleAddCustom}>
             <Plus size={12} />
             {t('llmProviderAdd')}
           </Button>
@@ -286,25 +287,25 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
         />
       )}
 
-      <AlertDialog.Backdrop
-        isOpen={!!pendingRemoveDraft}
-        onOpenChange={(open) => { if (!open) setPendingRemoveDraft(null) }}
+      <AlertDialog
+        open={!!pendingRemoveDraft}
+        onClose={() => setPendingRemoveDraft(null)}
       >
-        <AlertDialog.Container>
-          <AlertDialog.Dialog className="sm:max-w-[400px]">
-            <AlertDialog.CloseTrigger />
-            <AlertDialog.Header>
-              <AlertDialog.Icon status="danger" />
-              <AlertDialog.Heading>删除 {pendingRemoveDraft?.label}？</AlertDialog.Heading>
-            </AlertDialog.Header>
-            <AlertDialog.Body>
+        <DialogContainer>
+          <DialogPanel className="sm:max-w-[400px]">
+            <DialogCloseButton />
+            <DialogHeader>
+              <DialogIcon tone="danger" />
+              <DialogTitle>删除 {pendingRemoveDraft?.label}？</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               <p>删除后该供应商的 API Key 和配置将被移除，此操作不可撤销。</p>
-            </AlertDialog.Body>
-            <AlertDialog.Footer>
-              <Button slot="close" variant="tertiary">取消</Button>
+            </DialogBody>
+            <DialogFooter>
+              <CloseButton  variant="tertiary">取消</CloseButton>
               <Button
                 variant="danger"
-                onPress={() => {
+                onClick={() => {
                   if (pendingRemoveDraft) {
                     void handleRemove(pendingRemoveDraft)
                     setPendingRemoveDraft(null)
@@ -313,10 +314,10 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
               >
                 删除
               </Button>
-            </AlertDialog.Footer>
-          </AlertDialog.Dialog>
-        </AlertDialog.Container>
-      </AlertDialog.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </AlertDialog>
     </SettingsCard>
   )
 }

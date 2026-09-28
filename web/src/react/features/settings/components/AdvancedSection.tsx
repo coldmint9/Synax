@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { Button, Switch } from "@/react/components/ui"
+import { Button } from "@/react/components/ui/Button";
+import { Switch } from "@/react/components/ui/Toggle";
 import { Wrench, FileCode } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { FormRow } from './FormRow'
@@ -41,19 +42,17 @@ export function AdvancedSection({ config, onUpdate }: AdvancedSectionProps) {
           <FormRow label={t('settingsAllowProjectOverride')} description={t('settingsAllowProjectOverrideDesc')}>
             <Switch
               size="sm"
-              isSelected={config.features.allowProjectConnectionOverride}
+              checked={config.features.allowProjectConnectionOverride}
               onChange={(v) => handleToggle('allowProjectConnectionOverride', v)}
               aria-label={t('settingsAllowProjectOverride')}
-            >
-              <Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content>
-            </Switch>
+            />
           </FormRow>
 
           <div className="settings-action-row">
             <Button
               size="sm"
               variant="secondary"
-              onPress={openConfigFile}
+              onClick={openConfigFile}
             >
               <FileCode size={13} />
               {t('settingsOpenConfigFile')}

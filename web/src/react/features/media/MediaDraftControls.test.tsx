@@ -75,9 +75,12 @@ describe("MediaDraftPreview", () => {
     });
 
     expect(screen.queryByText("已就绪 / Ready")).not.toBeInTheDocument();
-    expect(screen.getAllByText("image.png")).toHaveLength(1);
+    expect(screen.queryByText("image.png")).not.toBeInTheDocument();
     expect(removeButton).toHaveClass("absolute", "right-1.5", "top-1.5");
     expect(container.querySelector('img[alt="image.png"]')).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "下载 image.png" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(removeButton);
     expect(remove).toHaveBeenCalledWith("draft-1");

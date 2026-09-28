@@ -7,7 +7,7 @@ import {
   Pencil,
   Target,
 } from "lucide-react";
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { memo, useMemo, useState, useEffect, useCallback } from "react";
 import { WikiMarkdown } from "./WikiMarkdown";
 import type {
   WikiDocument,
@@ -248,7 +248,7 @@ function ReferencesSection({
   );
 }
 
-export default function WikiDocumentView({
+export default memo(function WikiDocumentView({
   document,
   projectId,
 }: {
@@ -352,4 +352,4 @@ export default function WikiDocumentView({
       />
     </article>
   );
-}
+});

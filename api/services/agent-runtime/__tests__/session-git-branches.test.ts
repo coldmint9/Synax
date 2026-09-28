@@ -81,3 +81,59 @@ it('protects a checkout with a manually opened terminal, even without an AI-sess
   finally { await terminalManager.stop(terminal.id); }
   expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
 });
+
+function createBranch(id: string, branch: string, rootId = 'primary') {
+  return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/create`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ branch, rootId }),
+  });
+}
+it('reports the active checkout dirty-file count, including untracked files', async () => {
+  const owner = session(one, false);
+  fs.writeFileSync(path.join(one, 'file.txt'), 'modified');
+  fs.writeFileSync(path.join(one, 'new file.txt'), 'new');
+  const result = await agentRuntimeRoutes.request(`/sessions/${owner.id}/git/branches?rootId=primary`);
+  expect(result.status).toBe(200);
+  expect((await result.json()).dirtyFileCount).toBe(2);
+});
+it('creates and checks out a branch from the current HEAD', async () => {
+  const owner = session(one, false);
+  git(one, 'branch', '-m', 'feature', 'feature/existing');
+  git(one, 'switch', 'feature/existing');
+  fs.writeFileSync(path.join(one, 'file.txt'), 'feature content');
+  git(one, 'add', '.'); git(one, 'commit', '-m', 'feature-only');
+  const result = await createBranch(owner.id, 'feature/new-ui');
+  expect(result.status).toBe(200);
+  expect((await result.json()).current).toBe('feature/new-ui');
+  expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'feature/existing'));
+  expect(git(one, 'branch', '--show-current')).toBe('feature/new-ui');
+});
+it('never creates a branch when changes, invalid names, or another active session block checkout', async () => {
+  const owner = session(one, false);
+  fs.writeFileSync(path.join(one, 'untracked.txt'), 'keep');
+  expect((await createBranch(owner.id, 'feature/keep')).status).toBe(409);
+  expect(fs.existsSync(path.join(one, 'untracked.txt'))).toBe(true);
+  expect(git(one, 'branch', '--list', 'feature/keep')).toBe('');
+  fs.unlinkSync(path.join(one, 'untracked.txt'));
+  expect((await createBranch(owner.id, 'invalid name')).status).toBe(400);
+  expect((await createBranch(owner.id, 'feature')).status).toBe(409);
+  const other = session(one, false);
+  agentRuntimeStore.updateSession(other.id, { status: 'running' });
+  expect((await createBranch(owner.id, 'feature/blocked')).status).toBe(409);
+  expect(git(one, 'branch', '--list', 'feature/blocked')).toBe('');
+});
+
+it('counts a staged rename as one changed file', async () => {
+  const owner = session(one, false);
+  git(one, 'mv', 'file.txt', 'renamed file.txt');
+  const result = await agentRuntimeRoutes.request(`/sessions/${owner.id}/git/branches?rootId=primary`);
+  expect((await result.json()).dirtyFileCount).toBe(1);
+});
+it('does not require a local main branch to create a branch', async () => {
+  const owner = session(one, false);
+  git(one, 'branch', '-m', 'main', 'master');
+  const result = await createBranch(owner.id, 'codex/from-master');
+  expect(result.status).toBe(200);
+  expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'master'));
+});

@@ -36,10 +36,22 @@ export const SessionProfilePanel = memo(function SessionProfilePanel({
 });
 
 function readContextComposition(
-  stats: { contextComposition?: ContextComposition | null } | null,
+  stats: {
+    contextComposition?: ContextComposition | null;
+    context?: { requestId: string | null };
+  } | null,
   steps: AgentRunStep[],
 ): ContextComposition | null {
   if (stats?.contextComposition) return stats.contextComposition;
+  if (stats?.context?.requestId) {
+    const matchingStep = steps.find(
+      (step) => step.id === stats.context?.requestId,
+    );
+    const composition = matchingStep?.metadata?.contextComposition;
+    return composition && typeof composition === "object"
+      ? (composition as ContextComposition)
+      : null;
+  }
   for (const step of [...steps].sort((a, b) => b.index - a.index)) {
     const composition = step.metadata?.contextComposition;
     if (composition && typeof composition === "object")
@@ -49,11 +61,17 @@ function readContextComposition(
 }
 
 const COMPOSITION_COLORS = {
-  tools: "var(--profile-accent)",
-  mcp: "light-dark(#a498b8, #b4a4cc)",
-  skills: "light-dark(#b29e83, #c1ad8d)",
-  messages: "var(--profile-green)",
-  system: "var(--profile-muted)",
+  messages: "var(--profile-messages)",
+  tools: "var(--profile-tools)",
+  mcp: "var(--profile-mcp)",
+  skills: "var(--profile-skills)",
+} as const;
+
+const COMPOSITION_LABELS = {
+  messages: { zh: "消息", en: "Messages" },
+  tools: { zh: "工具", en: "Tools" },
+  mcp: { zh: "MCP", en: "MCP" },
+  skills: { zh: "Skill", en: "Skills" },
 } as const;
 
 function ContextCompositionMeter({
@@ -61,47 +79,56 @@ function ContextCompositionMeter({
   percent,
   label,
   valueText,
+  zh,
 }: {
   composition: ContextComposition | null;
   percent: number | null;
   label: string;
   valueText: string;
+  zh: boolean;
 }) {
-  const values = composition
-    ? (["system", "messages", "tools", "mcp", "skills"] as const)
-        .map((kind) => ({
-          kind,
-          value: Number(composition[kind] ?? 0),
-        }))
-        .filter((item) => item.value > 0)
+  const total = composition?.total;
+  const validTotal =
+    typeof total === "number" && Number.isFinite(total) && total > 0;
+  const values = validTotal && composition
+    ? (["messages", "tools", "mcp", "skills"] as const)
+        .map((kind) => ({ kind, value: Number(composition[kind] ?? 0) }))
+        .filter((item) => Number.isFinite(item.value) && item.value > 0)
     : [];
-  const total = values.reduce((sum, item) => sum + item.value, 0);
-  const width = percent === null ? 0 : Math.min(100, percent);
+  const width = percent === null ? 0 : Math.max(0, Math.min(100, percent));
+  const categoryTotal = values.reduce((sum, item) => sum + item.value, 0);
+  const segmented = categoryTotal > 0 && validTotal && categoryTotal <= total;
+  const categoryHint = zh
+    ? "颜色段为分类估算；未着色部分包含系统提示词等未单独展示内容。"
+    : "Colored segments are category estimates; the uncolored portion includes system prompts and other content not shown separately.";
+
   return (
     <div
-      className={`runtime-profile-meter${values.length ? " runtime-profile-meter--segmented" : ""}`}
+      className={`runtime-profile-meter${segmented ? " runtime-profile-meter--segmented" : ""}`}
       role="meter"
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={width}
-      aria-valuetext={valueText}
+      aria-valuetext={`${valueText} · ${categoryHint}`}
+      title={categoryHint}
     >
       <div
         className="runtime-profile-meter-fill"
         style={{ width: `${width}%` }}
       >
-        {values.map(({ kind, value }) => (
-          <span
-            key={kind}
-            data-context-category={kind}
-            title={`${kind}: ${value.toLocaleString()} tokens`}
-            style={{
-              width: `${(value / total) * 100}%`,
-              background: COMPOSITION_COLORS[kind],
-            }}
-          />
-        ))}
+        {segmented &&
+          values.map(({ kind, value }) => (
+            <span
+              key={kind}
+              data-context-category={kind}
+              title={`${COMPOSITION_LABELS[kind][zh ? "zh" : "en"]}: ${value.toLocaleString()} ${zh ? "Token（分类估算）" : "tokens (category estimate)"}`}
+              style={{
+                width: `${(value / total) * 100}%`,
+                background: COMPOSITION_COLORS[kind],
+              }}
+            />
+          ))}
       </div>
     </div>
   );
@@ -236,10 +263,9 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                 <span className="runtime-profile-value">
                   {pending ? (zh ? "加载中" : "Loading") : tokenLabel}
                 </span>
-                {summary.available && summary.limit !== null && (
+                {summary.limit !== null && (
                   <span className="runtime-profile-limit">
-                    {" "}
-                    / {formatContextLimit(summary.limit)}
+                    {` / ${formatContextLimit(summary.limit)}`}
                   </span>
                 )}
               </span>
@@ -278,6 +304,7 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
               percent={summary.percent}
               label={compositionLabel}
               valueText={`${summary.stale ? (zh ? "上次记录 · " : "Last sample · ") : ""}${tokenLabel}${summary.limit !== null ? ` / ${formatContextLimit(summary.limit)}` : ""} · ${percentLabel ?? "—"}`}
+              zh={zh}
             />
           )}
         </div>
@@ -325,9 +352,7 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                     {backend && (
                       <>
                         <dt>{zh ? "执行环境" : "Execution backend"}</dt>
-                        <dd>
-                          {backend === "native" ? "Synax · Native" : backend}
-                        </dd>
+                        <dd>{backend}</dd>
                       </>
                     )}
                     {runtime.reasoningEffort && (

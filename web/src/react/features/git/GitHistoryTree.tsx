@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Table } from "@heroui/react";
 import { GitBranch, GitCommitHorizontal, GitMerge, Search } from "lucide-react";
 import type { GitCommitSummary, GitWorkspaceSummary } from "../../../lib/api/project";
 
@@ -76,7 +75,7 @@ export default function GitHistoryTree({ workspace }: { workspace: GitWorkspaceS
   });
   const topology = useMemo(() => buildTopology(filteredCommits), [filteredCommits]);
   const selected = commits.find((commit) => commit.id === selectedId);
-  const graphHeight = Math.max(1, filteredCommits.length) * ROW_HEIGHT;
+  const graphHeight = filteredCommits.length * ROW_HEIGHT;
 
   if (!commits.length) return <div className="history-tree-empty">当前仓库没有可展示的提交记录。</div>;
   return (
@@ -88,13 +87,13 @@ export default function GitHistoryTree({ workspace }: { workspace: GitWorkspaceS
         </label>
         <div className="history-tree-filters" role="group" aria-label="提交筛选">
           {([["all", "全部"], ["merge", "合并提交"], ["workspace", "工作区"]] as const).map(([id, label]) => (
-            <button key={id} type="button" className={filter === id ? "is-active" : ""} onClick={() => setFilter(id)}>{label}</button>
+            <button key={id} type="button" className={filter === id ? "is-active" : ""} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>
           ))}
         </div>
         <span className="history-tree-count">{filteredCommits.length} / {commits.length} 条活动</span>
       </header>
       <div className="history-tree-table-wrap">
-        <svg className="history-tree-rail" viewBox={`0 0 ${RAIL_WIDTH} ${graphHeight}`} aria-hidden="true" preserveAspectRatio="none">
+        {filteredCommits.length > 0 && <svg className="history-tree-rail" width={RAIL_WIDTH} height={graphHeight} viewBox={`0 0 ${RAIL_WIDTH} ${graphHeight}`} aria-hidden="true" preserveAspectRatio="none">
           {topology.flatMap((row, index) => row.connections.map((connection, connectionIndex) => (
             <path key={`${index}-${connectionIndex}`} d={topologyPath(connection.from, connection.to, index)} className={connection.merge ? "is-merge" : connection.from === 0 ? "is-main" : "is-branch"} />
           )))}
@@ -103,51 +102,51 @@ export default function GitHistoryTree({ workspace }: { workspace: GitWorkspaceS
             const merge = commit.parents.length > 1;
             return <circle key={commit.id} cx={laneX(lane)} cy={index * ROW_HEIGHT + ROW_HEIGHT / 2} r={merge ? 7 : 5} className={merge ? "is-merge" : currentHeads.has(commit.id) ? "is-current" : ""} />;
           })}
-        </svg>
-        <Table variant="secondary" className="history-tree-table">
-          <Table.ScrollContainer className="history-tree-scroll">
-            <Table.Content aria-label="Git 提交历史" className="history-tree-content">
-              <Table.Header>
-                <Table.Column isRowHeader>提交标题</Table.Column>
-                <Table.Column>分支标签</Table.Column>
-                <Table.Column>作者</Table.Column>
-                <Table.Column>时间</Table.Column>
-                <Table.Column aria-label="状态" />
-              </Table.Header>
-              <Table.Body>
-                {filteredCommits.map((commit, index) => {
+        </svg>}
+        <div className="history-tree-table min-w-0">
+          <div className="history-tree-scroll overflow-auto">
+            <table aria-label="Git 提交历史" className="history-tree-content w-full border-collapse text-left text-xs">
+              <thead><tr>
+                <th scope="col">提交标题</th>
+                <th scope="col">分支标签</th>
+                <th scope="col">作者</th>
+                <th scope="col">时间</th>
+                <th scope="col"><span className="sr-only">状态</span></th>
+              </tr></thead>
+              <tbody>
+                {filteredCommits.map((commit) => {
                   const isCurrent = currentHeads.has(commit.id);
                   const isDirty = dirtyHeads.has(commit.id);
                   const isMerge = commit.parents.length > 1;
                   const isRebase = commit.rebase;
                   return (
-                    <Table.Row key={commit.id} className={selectedId === commit.id ? "history-table-row-selected" : undefined}>
-                      <Table.Cell>
+                    <tr key={commit.id} className={selectedId === commit.id ? "history-table-row-selected" : undefined}>
+                      <td>
                         <button type="button" className="history-table-title-button" title={commit.subject || "无提交说明"} onClick={() => setSelectedId(commit.id)}>
                           <strong>{commit.subject || "无提交说明"}</strong>
                         </button>
-                      </Table.Cell>
-                      <Table.Cell>
+                      </td>
+                      <td>
                         <div className="history-tree-ref-list">
                           {commit.refs.map((ref) => <span className="history-tree-ref" key={ref}><GitBranch size={12} />{ref}</span>)}
                           {isMerge && <span className="history-tree-ref is-merge"><GitMerge size={12} />合并</span>}
                           {isRebase && <span className="history-tree-ref is-rebase">↻ rebase</span>}
                         </div>
-                      </Table.Cell>
-                      <Table.Cell><span className="history-tree-author">{commit.author}</span></Table.Cell>
-                      <Table.Cell><time dateTime={commit.authoredAt}>{shortDate(commit.authoredAt)}</time></Table.Cell>
-                      <Table.Cell>
+                      </td>
+                      <td><span className="history-tree-author">{commit.author}</span></td>
+                      <td><time dateTime={commit.authoredAt}>{shortDate(commit.authoredAt)}</time></td>
+                      <td>
                         <span className={`history-tree-status ${isDirty ? "is-dirty" : isCurrent ? "is-current" : isMerge ? "is-merge" : isRebase ? "is-rebase" : ""}`} aria-label={isDirty ? "有未提交更改" : isCurrent ? "当前工作区 HEAD" : isMerge ? "合并提交" : isRebase ? "rebase 重写" : "普通提交"}>
                           {isDirty ? "!" : isCurrent ? "HEAD" : isMerge ? "↗" : isRebase ? "R" : "·"}
                         </span>
-                      </Table.Cell>
-                    </Table.Row>
+                      </td>
+                    </tr>
                   );
                 })}
-              </Table.Body>
-            </Table.Content>
-          </Table.ScrollContainer>
-        </Table>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
       {selected && <aside className="history-tree-detail"><div className="history-tree-detail-mark"><GitCommitHorizontal size={16} /></div><div><strong>{selected.subject}</strong><p>{selected.id.slice(0, 12)} · {selected.author} · {shortDate(selected.authoredAt)}</p></div></aside>}
     </div>

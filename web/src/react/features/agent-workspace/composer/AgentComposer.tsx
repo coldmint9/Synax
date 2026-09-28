@@ -1,3 +1,6 @@
+import { Button } from "@/react/components/ui/Button";
+import { Tooltip } from "@/react/components/ui/Tooltip";
+import { WelcomeTypewriter } from "../WelcomeTypewriter";
 import { useInputOptimization } from "./useInputOptimization";
 import { useInputCapability } from "../../media/useInputCapability";
 import {
@@ -64,7 +67,8 @@ interface Props {
   modelControl?: ReactNode;
   modeControl?: ReactNode;
   placeholder?: string;
-  keyboardHintPlacement?: "placeholder" | "tooltip";
+  /** New-session-only visual hint; never changes the textarea value. */
+  welcomePlaceholderDelay?: number;
   projectId: string;
   content: string;
   onContentChange: (value: string) => void;
@@ -108,7 +112,7 @@ export function AgentComposer({
   backendId,
   modeControl,
   placeholder,
-  keyboardHintPlacement = "placeholder",
+  welcomePlaceholderDelay,
   projectId,
   media,
   sessionId,
@@ -145,10 +149,14 @@ export function AgentComposer({
 }: Props) {
   const { t, locale } = useLocale();
   const keyboardHintId = useId();
-  const separateKeyboardHints = keyboardHintPlacement === "tooltip";
+  const keyboardHints = [
+    locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line",
+    commands ? (locale === "zh" ? "/ 打开命令" : "/ for commands") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  const inputPlaceholder =
-      (placeholder ?? t("agentPlaceholder"))
+  const inputPlaceholder = placeholder ?? t("agentPlaceholder");
 
   const inputCapability = useInputCapability(
     projectId,
@@ -299,7 +307,10 @@ export function AgentComposer({
     Boolean(media && !media.ready) ||
     inputCapability.blocked;
   const actionButton = (
-    <button
+    <Button
+      size="md"
+      iconOnly
+      variant="ghost"
       type="button"
       aria-label={t(
         stopMode
@@ -312,7 +323,7 @@ export function AgentComposer({
       )}
       title={queueMode ? t("inputQueueSend") : undefined}
       data-queue-ready={queueMode && !sendDisabled ? "true" : undefined}
-      className={`agent-dock-composer-chip ${stopMode ? "agent-dock-composer-stop" : "agent-dock-composer-send"} ms-auto inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed`}
+      className={`agent-dock-composer-chip agent-dock-composer-action ${stopMode ? "agent-dock-composer-stop" : "agent-dock-composer-send"} ms-auto inline-flex size-8 shrink-0 items-center justify-center !rounded-full transition-colors disabled:cursor-not-allowed`}
       disabled={stopMode ? !onStop : resumeMode ? disabled : sendDisabled}
       onClick={stopMode ? onStop : resumeMode ? onResume : onSubmit}
     >
@@ -323,7 +334,7 @@ export function AgentComposer({
       ) : (
         <ArrowUp size={15} />
       )}
-    </button>
+    </Button>
   );
 
   const optimizeLabel =
@@ -465,6 +476,9 @@ export function AgentComposer({
       data-multiline={expandedLayout ? "true" : undefined}
       data-expanded={defaultExpanded ? "true" : undefined}
     >
+      <span id={keyboardHintId} className="sr-only">
+        {keyboardHints}
+      </span>
       {media && <MediaDraftPreview media={media} />}
       {inputCapability.error && inputCapability.text && (
         <p
@@ -475,57 +489,91 @@ export function AgentComposer({
         </p>
       )}
       {expandedLayout ? (
-        <>
+        <div className="contents">
           {commands?.header}
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => {
-              if (
-                compositionScopeRef.current &&
-                compositionScopeRef.current !== composerScope
-              ) {
-                e.target.value = content;
-                return;
-              }
-              onContentChange(e.target.value);
-              commands?.onInput(e.target.value, e.target.selectionStart);
-            }}
-            onSelect={(e) =>
-              commands?.onInput(
-                e.currentTarget.value,
-                e.currentTarget.selectionStart,
-              )
+          <div
+            key="editor"
+            className={
+              welcomePlaceholderDelay !== undefined
+                ? "welcome-editor"
+                : "contents"
             }
-            aria-autocomplete={commands ? "list" : undefined}
-            aria-controls={commands?.open ? commands.listId : undefined}
-            aria-activedescendant={
-              commands?.open ? commands.activeId : undefined
-            }
-            onKeyDown={handleKeyDown}
-            {...compositionProps}
-            placeholder={inputPlaceholder}
-
-            aria-label={t("agentPlaceholder")}
-            aria-describedby={
-              separateKeyboardHints ? keyboardHintId : undefined
-            }
-            disabled={disabled && !queueWhileGenerating}
-            rows={
-              isSessionComposer ? 2 : defaultExpanded && !isMultiline ? 4 : 1
-            }
-            className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[13px] font-semibold leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
-              isSessionComposer
-                ? "min-h-12 max-h-48"
-                : defaultExpanded && !isMultiline
-                  ? "min-h-[5.5rem] max-h-48"
-                  : "min-h-[1.5rem] max-h-32"
-            }`}
-          />
+          >
+            <Tooltip
+              content={keyboardHints}
+              openOnFocus={false}
+              placement="top-start"
+            >
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={(e) => {
+                  if (
+                    compositionScopeRef.current &&
+                    compositionScopeRef.current !== composerScope
+                  ) {
+                    e.target.value = content;
+                    return;
+                  }
+                  onContentChange(e.target.value);
+                  commands?.onInput(e.target.value, e.target.selectionStart);
+                }}
+                onSelect={(e) =>
+                  commands?.onInput(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart,
+                  )
+                }
+                aria-autocomplete={commands ? "list" : undefined}
+                aria-controls={commands?.open ? commands.listId : undefined}
+                aria-activedescendant={
+                  commands?.open ? commands.activeId : undefined
+                }
+                onKeyDown={handleKeyDown}
+                {...compositionProps}
+                placeholder={
+                  welcomePlaceholderDelay !== undefined
+                    ? undefined
+                    : inputPlaceholder
+                }
+                aria-label={t("agentPlaceholder")}
+                aria-describedby={keyboardHintId}
+                disabled={disabled && !queueWhileGenerating}
+                rows={
+                  isSessionComposer
+                    ? 2
+                    : defaultExpanded && !isMultiline
+                      ? 4
+                      : 1
+                }
+                className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[14px] font-normal leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
+                  isSessionComposer
+                    ? "min-h-12 max-h-48"
+                    : defaultExpanded && !isMultiline
+                      ? "min-h-[5.5rem] max-h-48"
+                      : "min-h-[1.5rem] max-h-32"
+                }`}
+              />
+            </Tooltip>
+            {welcomePlaceholderDelay !== undefined && (
+              <div
+                className="welcome-editor-hint"
+                aria-hidden="true"
+                hidden={Boolean(content)}
+              >
+                <WelcomeTypewriter
+                  text={inputPlaceholder}
+                  delay={welcomePlaceholderDelay}
+                  finish={Boolean(content)}
+                  decorative
+                />
+              </div>
+            )}
+          </div>
           <div className="agent-dock-composer-toolbar flex items-center gap-1.5">
             {toolbar}
           </div>
-        </>
+        </div>
       ) : (
         <div className="agent-dock-composer-inline flex h-11 items-center gap-1.5 px-1.5 pl-2.5">
           <ComposerAttachMenu
@@ -539,6 +587,7 @@ export function AgentComposer({
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
             disabled={disabled && !queueWhileGenerating}
+            wikiAttachDisabled={wikiAttachDisabled}
             onOverlayOpenChange={onOverlayOpenChange}
           />
           <ComposerPermissionPicker
@@ -548,43 +597,49 @@ export function AgentComposer({
             onChange={onPermissionTierChange}
           />
           {modeControl}
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => {
-              if (
-                compositionScopeRef.current &&
-                compositionScopeRef.current !== composerScope
-              ) {
-                e.target.value = content;
-                return;
-              }
-              onContentChange(e.target.value);
-              commands?.onInput(e.target.value, e.target.selectionStart);
-            }}
-            onSelect={(e) =>
-              commands?.onInput(
-                e.currentTarget.value,
-                e.currentTarget.selectionStart,
-              )
-            }
-            aria-autocomplete={commands ? "list" : undefined}
-            aria-controls={commands?.open ? commands.listId : undefined}
-            aria-activedescendant={
-              commands?.open ? commands.activeId : undefined
-            }
-            onKeyDown={handleKeyDown}
-            {...compositionProps}
-            placeholder={inputPlaceholder}
-
-            aria-label={t("agentPlaceholder")}
-            aria-describedby={
-              separateKeyboardHints ? keyboardHintId : undefined
-            }
-            disabled={disabled && !queueWhileGenerating}
-            rows={1}
-            className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] font-semibold leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
-          />
+          {/* The keyed editor keeps the same parent and DOM node in either layout. */}
+          <div key="editor" className="contents">
+            <Tooltip
+              content={keyboardHints}
+              openOnFocus={false}
+              placement="top-start"
+            >
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={(e) => {
+                  if (
+                    compositionScopeRef.current &&
+                    compositionScopeRef.current !== composerScope
+                  ) {
+                    e.target.value = content;
+                    return;
+                  }
+                  onContentChange(e.target.value);
+                  commands?.onInput(e.target.value, e.target.selectionStart);
+                }}
+                onSelect={(e) =>
+                  commands?.onInput(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart,
+                  )
+                }
+                aria-autocomplete={commands ? "list" : undefined}
+                aria-controls={commands?.open ? commands.listId : undefined}
+                aria-activedescendant={
+                  commands?.open ? commands.activeId : undefined
+                }
+                onKeyDown={handleKeyDown}
+                {...compositionProps}
+                placeholder={inputPlaceholder}
+                aria-label={t("agentPlaceholder")}
+                aria-describedby={keyboardHintId}
+                disabled={disabled && !queueWhileGenerating}
+                rows={1}
+                className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[14px] font-normal leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
+              />
+            </Tooltip>
+          </div>
           {modelControl ?? (
             <ComposerModelPicker
               backendId={backendId}
@@ -624,7 +679,6 @@ export function AgentComposer({
           {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
         </span>
       )}
-      {separateKeyboardHints}
     </div>
   );
 }

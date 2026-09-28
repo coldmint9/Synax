@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Button } from "@/react/components/ui";
+import { Button } from "@/react/components/ui/Button";
 import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { ChevronDown } from "lucide-react";
 
@@ -16,6 +16,7 @@ export function WorkspaceSection({
   storageKey,
   className,
   hideTitle = false,
+  collapsible = true,
 }: {
   icon: ReactNode;
   title: string;
@@ -29,8 +30,11 @@ export function WorkspaceSection({
   className?: string;
   /** Keep the section collapsible but let the row carry only icon and metrics. */
   hideTitle?: boolean;
+  /** Render a static heading and ignore saved collapse state. */
+  collapsible?: boolean;
 }) {
-  const [open, toggle] = useWorkspaceDisclosure(storageKey, defaultOpen);
+  const [disclosed, toggle] = useWorkspaceDisclosure(storageKey, defaultOpen);
+  const open = !collapsible || disclosed;
   const id = useId();
   return (
     <section
@@ -38,14 +42,14 @@ export function WorkspaceSection({
       data-open={open ? "true" : "false"}
     >
       <div className="ws-card-head">
-        <Button
+        {collapsible ? <Button
           variant="ghost"
           size="sm"
           className="ws-card-toggle"
           aria-expanded={open}
           aria-controls={id}
           aria-label={hideTitle ? title : undefined}
-          onPress={toggle}
+          onClick={toggle}
         >
           <span className="ws-card-icon">{icon}</span>
           {!hideTitle && <span className="ws-card-title">{title}</span>}
@@ -53,7 +57,12 @@ export function WorkspaceSection({
             <span className="ws-card-count">{count}</span>
           )}
           <ChevronDown size={11} className="ws-card-chevron" aria-hidden />
-        </Button>
+        </Button> : (
+          <h3 className="ws-card-heading">
+            <span className="ws-card-icon" aria-hidden="true">{icon}</span>
+            <span className="ws-card-title">{title}</span>
+          </h3>
+        )}
         {(summary || actions) && (
           <div className="ws-card-tail">
             {summary && <span className="ws-card-summary">{summary}</span>}

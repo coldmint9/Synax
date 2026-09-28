@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Spinner } from "@/react/components/ui";
+import { Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import { Download, Save, RotateCw } from "lucide-react";
 import { useLocale } from "../../../../hooks/useLocale";
 import {
@@ -164,7 +165,7 @@ function DesktopUpdateSettings({ api }: { api: DesktopUpdateSettingsApi }) {
             type="submit"
             size="sm"
             variant="secondary"
-            isDisabled={saving || !changed}
+            disabled={saving || !changed}
             aria-label={zh ? "保存更新设置" : "Save update settings"}
           >
             <Save size={14} />
@@ -175,7 +176,7 @@ function DesktopUpdateSettings({ api }: { api: DesktopUpdateSettingsApi }) {
             type="button"
             size="sm"
             variant="secondary"
-            onPress={() => setAttempt((value) => value + 1)}
+            onClick={() => setAttempt((value) => value + 1)}
           >
             <RotateCw size={14} />
             {zh ? "重试" : "Retry"}

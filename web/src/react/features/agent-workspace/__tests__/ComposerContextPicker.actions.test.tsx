@@ -75,7 +75,7 @@ describe("unified composer plus menu", () => {
     await open();
     await userEvent.click(screen.getByRole("button", { name: "项目文件" }));
     await userEvent.click(
-      await screen.findByRole("button", { name: "README.md" }),
+      await screen.findByRole("option", { name: "README.md" }),
     );
     expect(onChange).toHaveBeenCalledWith([
       { kind: "file", id: "README.md", label: "README.md" },
@@ -86,8 +86,12 @@ describe("unified composer plus menu", () => {
     render(<ComposerContextPicker {...props} mode="goal" modeDisabled />);
     await open();
     expect(screen.getByRole("radio", { name: "目标" })).toBeChecked();
-    for (const radio of screen.getAllByRole("radio"))
-      expect(radio).toBeDisabled();
+    const change = props.onModeChange.mock.calls.length;
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).toHaveAttribute("aria-disabled", "true");
+      await userEvent.click(radio);
+    }
+    expect(props.onModeChange).toHaveBeenCalledTimes(change);
     expect(screen.getByRole("button", { name: "项目文件" })).toBeEnabled();
   });
 
@@ -100,4 +104,32 @@ describe("unified composer plus menu", () => {
       screen.getByRole("button", { name: /添加附件.*图片/ }),
     ).toBeEnabled();
   });
+});
+
+it("supports searchable context keyboard selection, Back navigation and actual overlay notifications", async () => {
+  vi.spyOn(agentRuntimeApi, "listReferenceOptions").mockResolvedValue({
+    items: [
+      { kind: "file", id: "already.md", label: "Already added" },
+      { kind: "file", id: "src/new.ts", label: "New file", recent: true },
+    ],
+  });
+  const user = userEvent.setup(), changed = vi.fn(), overlay = vi.fn(), opened = vi.fn();
+  render(<ComposerContextPicker {...props} references={[{ kind: "file", id: "already.md" }]} onChange={changed} onOpen={opened} onOpenChange={overlay} />);
+  await open();
+  await user.click(screen.getByRole("button", { name: "项目文件" }));
+  expect(await screen.findByRole("option", { name: /Already added/ })).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("button", { name: "返回上下文类型" }));
+  expect(screen.getByRole("button", { name: "项目文件" })).toBeVisible();
+  expect(opened).toHaveBeenCalledOnce();
+  expect(overlay).toHaveBeenLastCalledWith(true);
+  await user.click(screen.getByRole("button", { name: "项目文件" }));
+  const option = await screen.findByRole("option", { name: /New file/ });
+  const search = screen.getByRole("combobox", { name: "搜索上下文" });
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() => expect(search).toHaveAttribute("aria-activedescendant", option.id));
+  await user.keyboard("{Enter}");
+  expect(changed).toHaveBeenCalledWith([{ kind: "file", id: "already.md" }, { kind: "file", id: "src/new.ts", label: "New file" }]);
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "添加附件、上下文或切换模式" })).toHaveFocus();
+  expect(overlay.mock.calls).toEqual([[false], [true], [false]]);
 });

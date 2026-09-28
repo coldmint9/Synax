@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { FileIcon } from "@react-symbols/icons/utils";
+import { fileTypeIconForName } from "./fileTypeIcons";
 
 interface FileTypeIconProps {
   path: string;
@@ -15,10 +15,12 @@ export const FileTypeIcon = memo(function FileTypeIcon({
 }: FileTypeIconProps) {
   const fileName = path.split(/[\\/]/).pop() || path;
 
+  const Icon = fileTypeIconForName(fileName);
+
   return (
-    <FileIcon
-      fileName={fileName}
-      autoAssign
+    <Icon
+      color="currentColor"
+      strokeWidth={2}
       width={size}
       height={size}
       className={`file-type-icon ${className}`.trim()}

@@ -1,86 +1,59 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
+import { useGlassSurface } from "./glass/useGlassSurface";
+import "./glass/glass.css";
 
-interface LiquidGlassSurfaceProps {
+export interface LiquidGlassSurfaceProps {
   children: ReactNode;
   className?: string;
   intensity?: "subtle" | "strong";
   interactive?: boolean;
+  finish?: "rounded" | "flat";
 }
 
-function drawShader(canvas: HTMLCanvasElement, pointer: { x: number; y: number }) {
-  const gl = canvas.getContext("webgl2", { alpha: true, antialias: true, premultipliedAlpha: true });
-  if (!gl) return () => {};
-  const vertex = `#version 300 es
-    in vec2 position;
-    void main() { gl_Position = vec4(position, 0.0, 1.0); }
-  `;
-  const fragment = `#version 300 es
-    precision highp float;
-    uniform float uTime;
-    uniform vec2 uPointer;
-    out vec4 color;
-    void main() {
-      vec2 uv = gl_FragCoord.xy / vec2(${Math.max(canvas.width, 1)}.0, ${Math.max(canvas.height, 1)}.0);
-      float edge = smoothstep(0.02, 0.28, uv.x) * smoothstep(0.02, 0.28, 1.0 - uv.x) * smoothstep(0.02, 0.28, uv.y) * smoothstep(0.02, 0.28, 1.0 - uv.y);
-      float wave = sin((uv.x + uTime * .035) * 8.0) * .5 + sin((uv.y - uTime * .025) * 7.0) * .5;
-      float focus = exp(-distance(uv, uPointer) * 5.2);
-      vec3 cool = vec3(.27, .60, 1.0);
-      vec3 warm = vec3(.94, .55, .98);
-      vec3 tint = mix(cool, warm, smoothstep(-1.0, 1.0, wave + focus * .45));
-      float alpha = (.035 + edge * .045 + focus * .06) * (0.72 + 0.28 * sin(uTime * .4));
-      color = vec4(tint, alpha);
-    }
-  `;
-  const compile = (type: number, source: string) => { const shader = gl.createShader(type)!; gl.shaderSource(shader, source); gl.compileShader(shader); return shader; };
-  const program = gl.createProgram()!;
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, vertex));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragment));
-  gl.linkProgram(program);
-  const buffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const position = gl.getAttribLocation(program, "position");
-  gl.enableVertexAttribArray(position); gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-  const time = gl.getUniformLocation(program, "uTime");
-  const pointerLocation = gl.getUniformLocation(program, "uPointer");
-  const start = performance.now();
-  let raf = 0;
-  const frame = (now: number) => {
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(program); gl.uniform1f(time, (now - start) / 1000); gl.uniform2f(pointerLocation, pointer.x, 1 - pointer.y);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    raf = requestAnimationFrame(frame);
-  };
-  raf = requestAnimationFrame(frame);
-  return () => { cancelAnimationFrame(raf); gl.deleteProgram(program); if (buffer) gl.deleteBuffer(buffer); };
-}
-
-export function LiquidGlassSurface({ children, className, intensity = "subtle", interactive = true }: LiquidGlassSurfaceProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointer = useRef({ x: 0.5, y: 0.5 });
-  const id = useId();
-  const filterId = `liquid-glass-${id.replace(/:/g, "")}`;
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let cleanup = () => {};
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      const scale = Math.min(window.devicePixelRatio || 1, 1.5);
-      canvas.width = Math.max(1, Math.floor(rect.width * scale));
-      canvas.height = Math.max(1, Math.floor(rect.height * scale));
-      cleanup(); cleanup = drawShader(canvas, pointer.current);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => { window.removeEventListener("resize", resize); cleanup(); };
-  }, []);
-  const style = { "--liquid-filter": `url(#${filterId})` } as CSSProperties;
-  return <div className={`liquid-glass-surface liquid-glass-surface--${intensity} ${className ?? ""}`} style={style}
-    onPointerMove={interactive ? (event) => { const rect = event.currentTarget.getBoundingClientRect(); pointer.current = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }; } : undefined}>
-    <svg className="liquid-glass-svg" aria-hidden="true"><defs><filter id={filterId} x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.018 0.032" numOctaves="2" seed="7" result="noise" /><feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G" /></filter></defs></svg>
-    <canvas ref={canvasRef} className="liquid-glass-canvas" aria-hidden="true" />
-    <span className="liquid-glass-rim" aria-hidden="true" />
-    <div className="liquid-glass-content">{children}</div>
-  </div>;
+export function LiquidGlassSurface({ children, className, intensity = "subtle", interactive = true, finish = "rounded" }: LiquidGlassSurfaceProps) {
+  const { surfaceRef, gpuHostRef, state } = useGlassSurface(interactive, intensity, finish === "rounded");
+  const id = `glass-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  return (
+    <div ref={surfaceRef} className={`liquid-glass-surface liquid-glass-surface--${intensity}${className ? ` ${className}` : ""}`}
+      data-glass-finish={finish} data-glass-state={state.mode} data-glass-reason={state.reason}>
+      {/* Only this empty decorative layer filters the real DOM backdrop. */}
+      <span className="liquid-glass-backdrop" aria-hidden="true" />
+      {finish === "rounded" && <svg className="liquid-glass-svg" aria-hidden="true" focusable="false" width="100%" height="100%">
+        <defs>
+          <linearGradient id={`${id}-light`} x1="0" y1="0" x2="0.75" y2="1">
+            <stop offset="0" stopColor="white" stopOpacity="0.82" />
+            <stop offset="0.42" stopColor="white" stopOpacity="0.13" />
+            <stop offset="0.7" stopColor="#d7e6ec" stopOpacity="0.08" />
+            <stop offset="1" stopColor="white" stopOpacity="0.45" />
+          </linearGradient>
+          <linearGradient id={`${id}-shoulder-light`} x1="0" y1="0" x2="0.3" y2="1">
+            <stop offset="0" stopColor="white" stopOpacity="0.3" />
+            <stop offset="0.3" stopColor="white" stopOpacity="0.07" />
+            <stop offset="0.62" stopColor="#293944" stopOpacity="0.08" />
+            <stop offset="1" stopColor="#e6f1f5" stopOpacity="0.18" />
+          </linearGradient>
+          <mask id={`${id}-shoulder-mask`} maskContentUnits="userSpaceOnUse">
+            <rect className="liquid-glass-mask-outer" width="100%" height="100%" fill="white" />
+            <rect className="liquid-glass-shoulder-inner" fill="black" />
+          </mask>
+          <filter id={`${id}-edge`} x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
+            <feTurbulence type="fractalNoise" baseFrequency="0.015 0.035" numOctaves="1" seed="7" result="edge-noise" />
+            <feDisplacementMap in="SourceGraphic" in2="edge-noise" scale="0.45" xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+          <mask id={`${id}-mask`} maskContentUnits="userSpaceOnUse">
+            <rect className="liquid-glass-mask-outer" width="100%" height="100%" fill="white" />
+            <rect className="liquid-glass-mask-inner" x="1.5" y="1.5" fill="black" />
+          </mask>
+        </defs>
+        {/* Static shoulder survives reduced-motion, context-budget and GPU failures. */}
+        <rect data-glass-shoulder="" width="100%" height="100%" fill={`url(#${id}-shoulder-light)`}
+          mask={`url(#${id}-shoulder-mask)`} />
+        <rect data-glass-rim="" width="100%" height="100%" fill={`url(#${id}-light)`}
+          filter={`url(#${id}-edge)`} mask={`url(#${id}-mask)`} />
+      </svg>}
+      <span ref={gpuHostRef} className="liquid-glass-gpu-host" aria-hidden="true" />
+      {/* display:contents preserves the caller's flex/grid children and gap. */}
+      <div className="liquid-glass-content" style={{ display: "contents" }}>{children}</div>
+    </div>
+  );
 }

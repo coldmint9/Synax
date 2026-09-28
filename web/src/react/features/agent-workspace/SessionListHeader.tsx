@@ -7,7 +7,7 @@ import {
   Search,
   SquarePen,
 } from "lucide-react";
-import { Button } from "@/react/components/ui";
+import { Button } from "@/react/components/ui/Button";
 import { useLocale } from "../../../hooks/useLocale";
 import { useShellStore } from "../../state/shellStore";
 import type { SessionListView } from "./sessionBuckets";
@@ -91,8 +91,8 @@ export function SessionListHeader({
               size="sm"
               variant="ghost"
               className="h-7 min-w-0 gap-2 px-2 text-[11px] font-semibold text-foreground"
-              onPress={onNewSession}
-              isDisabled={isCreatingSession}
+              onClick={onNewSession}
+              disabled={isCreatingSession}
             >
               <SquarePen
                 size={14}
@@ -102,11 +102,11 @@ export function SessionListHeader({
             </Button>
           ) : null}
           <Button
-            isIconOnly
+            iconOnly
             variant="ghost"
             size="sm"
             className="h-7 w-7 min-w-0 text-muted-foreground hover:text-foreground"
-            onPress={onClearInactive}
+            onClick={onClearInactive}
             aria-label={t("sessionClearInactive")}
           >
             <Archive size={14} />

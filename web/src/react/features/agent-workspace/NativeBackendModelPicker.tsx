@@ -1,5 +1,16 @@
-import { useEffect, useState } from "react";
-import { Popover } from "@/react/components/ui";
+import { useEffect, useRef, useState } from "react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxOption,
+  ComboboxOptions,
+} from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
 import { ChevronDown } from "lucide-react";
 import {
   agentRuntimeApi,
@@ -8,15 +19,7 @@ import {
 } from "../../../lib/api/agentRuntime";
 import { useLocale } from "../../../hooks/useLocale";
 
-export function NativeBackendModelPicker({
-  backendId,
-  model,
-  onChange,
-  disabled,
-  onEffortsChange,
-  nativeMetadata,
-  onOpenChange,
-}: {
+interface Props {
   backendId: BackendId;
   model: string | null;
   onChange: (value: string) => void;
@@ -24,19 +27,41 @@ export function NativeBackendModelPicker({
   onOpenChange?: (open: boolean) => void;
   onEffortsChange?: (efforts: ReasoningEffort[] | undefined) => void;
   nativeMetadata?: unknown;
-}) {
+}
+
+export function NativeBackendModelPicker(props: Props) {
+  return (
+    <Popover key={props.backendId}>
+      {({ open, close }) => (
+        <NativeModelContent {...props} open={open} close={close} />
+      )}
+    </Popover>
+  );
+}
+
+function NativeModelContent({
+  backendId,
+  model,
+  onChange,
+  disabled,
+  onEffortsChange,
+  nativeMetadata,
+  onOpenChange,
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [open, setOpen] = useState(false),
-    [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const loaded = useRef(false);
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open, close]);
   const [models, setModels] = useState<
     Array<{ id: string; label: string; efforts?: string[] }>
   >([]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
-  useEffect(() => {
-    onOpenChange?.(open && !disabled);
-    return () => onOpenChange?.(false);
-  }, [open, disabled, onOpenChange]);
   const native = nativeMetadata as
     | {
         version?: string;
@@ -63,32 +88,47 @@ export function NativeBackendModelPicker({
     );
   }, [model, models, defaultModel, onEffortsChange]);
   const [error, setError] = useState<string | null>(null);
-  const load = () => {
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    if (loaded.current) return;
+    let active = true;
     setLoading(true);
     setError(null);
     void agentRuntimeApi
       .listBackendModels(backendId)
       .then((result) => {
+        if (!active) return;
+        loaded.current = true;
         setModels(result.models);
         setDefaultModel(result.defaultModel ?? null);
       })
-      .catch((cause) =>
-        setError(
-          cause instanceof Error ? cause.message : "CLI is unavailable.",
-        ),
-      )
-      .finally(() => setLoading(false));
-  };
+      .catch((cause: unknown) => {
+        if (active)
+          setError(
+            cause instanceof Error ? cause.message : "CLI is unavailable.",
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, backendId]);
+  const search = query.trim().toLowerCase();
+  const options = [
+    { id: "default", label: zh ? "CLI 默认模型" : "CLI default" },
+    ...models.filter((item) => item.id !== "default"),
+  ].filter(
+    (item) =>
+      !search || `${item.id} ${item.label}`.toLowerCase().includes(search),
+  );
+  const custom = query.trim();
   return (
-    <Popover
-      isOpen={open && !disabled}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next && !models.length) load();
-      }}
-    >
-      <Popover.Trigger<"button">
-        render={(props) => <button {...props} type="button" />}
+    <>
+      <OverlayStateObserver open={open} onOpenChange={onOpenChange} />
+      <PopoverButton
         disabled={disabled}
         aria-label={zh ? "CLI 模型" : "CLI model"}
         className="agent-dock-composer-chip agent-mode-trigger"
@@ -101,30 +141,75 @@ export function NativeBackendModelPicker({
               : "CLI default"}
         </span>
         <ChevronDown size={10} aria-hidden />
-      </Popover.Trigger>
-      <Popover.Content
-        placement="top end"
-        offset={8}
+      </PopoverButton>
+      <PopoverPanel
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
+        focus
+        anchor={{ to: "top end", gap: 8, padding: 8 }}
         className="w-72 rounded-xl border border-border bg-background p-3 shadow-lg"
       >
-        <label className="block text-xs">
-          {zh ? "原生模型 ID" : "Native model ID"}
-          <input
-            aria-label="Native model ID"
-            list={`native-models-${backendId}`}
-            value={model ?? "default"}
-            onChange={(event) => onChange(event.target.value)}
-            className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2"
-          />
-        </label>
-        <datalist id={`native-models-${backendId}`}>
-          <option value="default" />
-          {models.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </datalist>
+        <Combobox
+          value={model ?? "default"}
+          disabled={disabled}
+          immediate
+          onChange={(value) => {
+            if (value) {
+              onChange(value);
+              close();
+            }
+          }}
+        >
+          <label className="block text-xs">
+            {zh ? "原生模型 ID" : "Native model ID"}
+            <ComboboxInput
+              autoFocus
+              aria-label="Native model ID"
+              displayValue={(value: string) => value}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                onChange(event.target.value);
+              }}
+              className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2"
+            />
+          </label>
+          <ComboboxOptions
+            modal={false}
+            static
+            aria-label={zh ? "CLI 模型" : "CLI models"}
+            className="mt-2 max-h-48 overflow-auto text-xs"
+          >
+            {options.map((item) => (
+              <ComboboxOption
+                key={item.id}
+                value={item.id}
+                className="cursor-default rounded-md px-2 py-1.5 data-focus:bg-muted data-selected:text-primary"
+              >
+                {item.label}
+                {item.id !== "default" && item.label !== item.id && (
+                  <small className="ml-2 text-muted-foreground">
+                    {item.id}
+                  </small>
+                )}
+              </ComboboxOption>
+            ))}
+            {custom &&
+              custom !== "default" &&
+              !models.some((item) => item.id === custom) && (
+                <ComboboxOption
+                  value={custom}
+                  className="cursor-default rounded-md px-2 py-1.5 data-focus:bg-muted"
+                >
+                  {zh ? "使用" : "Use"} {custom}
+                </ComboboxOption>
+              )}
+          </ComboboxOptions>
+        </Combobox>
         {loading && (
           <p className="mt-2 text-xs text-muted-foreground">
             {zh ? "正在读取 CLI 模型…" : "Reading CLI models…"}
@@ -170,7 +255,7 @@ export function NativeBackendModelPicker({
             ? "默认隔离本机 MCP、插件与 Hooks；不会修改全局配置。"
             : "Local MCP/plugins/hooks are isolated by default; global config is not changed."}
         </p>
-      </Popover.Content>
-    </Popover>
+      </PopoverPanel>
+    </>
   );
 }

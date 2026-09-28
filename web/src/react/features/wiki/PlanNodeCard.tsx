@@ -1,5 +1,6 @@
 import { CheckCircle2, Circle, Loader2, ChevronUp, ChevronDown, Trash2, Pencil, Eye } from 'lucide-react'
-import { Button, Card } from "@/react/components/ui"
+import { Card } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import { type WikiPlanNode } from '../../../lib/api/goal'
 
 export type NodeCardMode = 'compact' | 'expanded'
@@ -104,16 +105,16 @@ function NodeActions({ index, isLast, node, onMoveUp, onMoveDown, onEdit, onDele
   return (
     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
       {onMoveUp && index > 0 && (
-        <Button variant="ghost" size="sm" isIconOnly aria-label="上移" onPress={() => onMoveUp(node.id)} className="min-w-6 h-6"><ChevronUp size={12} /></Button>
+        <Button variant="ghost" size="sm" iconOnly aria-label="上移" onClick={() => onMoveUp(node.id)} className="min-w-6 h-6"><ChevronUp size={12} /></Button>
       )}
       {onMoveDown && !isLast && (
-        <Button variant="ghost" size="sm" isIconOnly aria-label="下移" onPress={() => onMoveDown(node.id)} className="min-w-6 h-6"><ChevronDown size={12} /></Button>
+        <Button variant="ghost" size="sm" iconOnly aria-label="下移" onClick={() => onMoveDown(node.id)} className="min-w-6 h-6"><ChevronDown size={12} /></Button>
       )}
       {onEdit && (
-        <Button variant="ghost" size="sm" isIconOnly aria-label="编辑" onPress={() => onEdit(node)} className="min-w-6 h-6"><Pencil size={12} /></Button>
+        <Button variant="ghost" size="sm" iconOnly aria-label="编辑" onClick={() => onEdit(node)} className="min-w-6 h-6"><Pencil size={12} /></Button>
       )}
       {onDelete && (
-        <Button variant="ghost" size="sm" isIconOnly aria-label="删除" onPress={() => onDelete(node.id)} className="min-w-6 h-6 text-destructive/70"><Trash2 size={12} /></Button>
+        <Button variant="ghost" size="sm" iconOnly aria-label="删除" onClick={() => onDelete(node.id)} className="min-w-6 h-6 text-destructive/70"><Trash2 size={12} /></Button>
       )}
     </div>
   )

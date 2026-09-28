@@ -28,46 +28,84 @@
   gap: 0.75rem;
 }
 .git-workspace-popover {
-  width: min(40rem, calc(100vw - 2rem));
-  max-width: calc(100vw - 2rem);
-  max-height: min(32rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  width: min(336px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(440px, calc(100vh - 24px));
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: 17px;
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow-floating);
+}
+.dark .git-workspace-popover { background: var(--ui-panel-soft); }
+.git-workspace-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  color: var(--ui-subtle);
+}
+.git-workspace-search:focus-within {
+  background: color-mix(in srgb, var(--ui-canvas) 55%, transparent);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.git-workspace-search svg { flex: 0 0 auto; }
+.git-workspace-search input {
+  width: 100%; min-width: 0; padding: 0; border: 0; outline: none;
+  background: transparent; color: var(--ui-text); font: inherit; font-size: 13px;
+}
+.git-workspace-search input::placeholder { color: var(--ui-subtle); opacity: .8; }
+.git-workspace-list {
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px 2px;
+  scroll-padding-block: 4px;
+}
+.git-workspace-group + .git-workspace-group { border-top: 1px solid var(--ui-line); padding-top: 7px; margin-top: 7px; }
+.git-workspace-heading {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  color: var(--ui-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
 }
 .git-workspace-option {
-  align-items: flex-start;
-  gap: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin-block: 2px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  color: var(--ui-text);
+  cursor: pointer;
 }
-.git-workspace-option-copy {
-  flex: 1;
-  min-width: 0;
-  line-height: 1.4;
+.git-workspace-option[data-focus] { background: color-mix(in srgb, var(--ui-canvas) 78%, transparent); }
+.git-workspace-option-icon, .git-workspace-check { flex: 0 0 auto; color: var(--ui-subtle); }
+.git-workspace-check { margin-left: auto; }
+.git-workspace-option-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: 1.35; }
+.git-workspace-option-label { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.git-workspace-option-copy small {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ui-subtle);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.git-workspace-option-label {
-  overflow-wrap: anywhere;
-  color: var(--foreground);
-  font-weight: 500;
-}
-.git-workspace-option-meta {
-  margin-top: 0.125rem;
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-.git-workspace-option-detail {
-  margin-top: 0.25rem;
-  color: hsl(var(--muted-foreground));
-  font-family: var(
-    --font-mono,
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    monospace
-  );
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
+.git-workspace-empty { padding: 12px 10px; color: var(--ui-subtle); font-size: 12px; }
 .agent-controls-stack {
   pointer-events: auto;
   display: flex;
@@ -751,26 +789,37 @@ textarea.agent-request-input {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
+/* The primary action owns its opaque surface, even inside session controls. */
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > :is(.agent-dock-composer-send, .agent-dock-composer-stop) {
-  background: hsl(var(--foreground-hsl));
-  color: var(--background);
+  > .agent-dock-composer-action {
+  border: 0;
+  background: #101113;
+  color: #fff;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > :is(.agent-dock-composer-send, .agent-dock-composer-stop):not(:disabled):hover {
-  background: hsl(var(--foreground-hsl) / 0.85);
+  > .agent-dock-composer-action:not(:disabled):hover {
+  background: #25272c;
 }
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
-  > :is(.agent-dock-composer-send, .agent-dock-composer-stop):disabled {
-  border-color: transparent;
-  background: hsl(var(--foreground-hsl) / 0.06);
-  color: hsl(var(--muted-foreground) / 0.45);
+  > .agent-dock-composer-action:disabled {
+  background: #e2e5e9;
+  color: #6f7783;
+}
+.dark .agent-session-controls
+  .agent-dock-composer[data-session-controls]
+  .agent-dock-composer-actions
+  > .agent-dock-composer-action:disabled {
+  background: #393e47;
+  color: #abb1bb;
 }
 @container (max-width: 32rem) {
   .agent-dock-composer[data-session-controls] .agent-dock-composer-leading {

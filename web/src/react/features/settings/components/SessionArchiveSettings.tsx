@@ -1,4 +1,6 @@
-import { Button, Modal, Switch } from "@/react/components/ui";
+import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Button } from "@/react/components/ui/Button";
+import { Switch } from "@/react/components/ui/Toggle";
 import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "../../../../hooks/useLocale";
@@ -177,19 +179,15 @@ export function SessionArchiveSettings({
           >
             <Switch
               size="sm"
-              isSelected={retention !== null}
-              isDisabled={saving}
+              checked={retention !== null}
+              disabled={saving}
               onChange={(selected) =>
                 void saveRetention(selected ? days : null)
               }
               aria-label={
                 zh ? "自动清理归档会话" : "Automatically clean up archives"
               }
-            >
-              <Switch.Content>
-                <Switch.Control><Switch.Thumb /></Switch.Control>
-              </Switch.Content>
-            </Switch>
+            />
           </FormRow>
           {retention !== null && (
             <FormRow label={zh ? "保留天数" : "Retention days"}>
@@ -281,9 +279,9 @@ export function SessionArchiveSettings({
                     <Button
                       size="sm"
                       variant="secondary"
-                      isPending={busy}
-                      isDisabled={busyBatchId !== null}
-                      onPress={() => void restore(item)}
+                      pending={busy}
+                      disabled={busyBatchId !== null}
+                      onClick={() => void restore(item)}
                     >
                       <ArchiveRestore size={13} />
                       {zh ? "恢复" : "Restore"}
@@ -291,8 +289,8 @@ export function SessionArchiveSettings({
                     <Button
                       size="sm"
                       variant="danger"
-                      isDisabled={busyBatchId !== null}
-                      onPress={() => setDeleteItem(item)}
+                      disabled={busyBatchId !== null}
+                      onClick={() => setDeleteItem(item)}
                     >
                       <Trash2 size={13} />
                       {zh ? "彻底删除" : "Delete permanently"}
@@ -313,16 +311,16 @@ export function SessionArchiveSettings({
               <Button
                 size="sm"
                 variant="ghost"
-                isDisabled={offset === 0}
-                onPress={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
               >
                 {zh ? "上一页" : "Previous"}
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                isDisabled={offset + PAGE_SIZE >= totalCount}
-                onPress={() => setOffset(offset + PAGE_SIZE)}
+                disabled={offset + PAGE_SIZE >= totalCount}
+                onClick={() => setOffset(offset + PAGE_SIZE)}
               >
                 {zh ? "下一页" : "Next"}
               </Button>
@@ -331,39 +329,37 @@ export function SessionArchiveSettings({
         )}
       </SettingsCard>
 
-      <Modal.Backdrop
-        isOpen={deleteItem !== null}
-        onOpenChange={(open) => {
-          if (!open && busyBatchId === null) setDeleteItem(null);
-        }}
+      <Dialog
+        open={deleteItem !== null}
+        onClose={() => { if (busyBatchId === null) setDeleteItem(null); }}
       >
-        <Modal.Container size="sm">
-          <Modal.Dialog>
-            <Modal.Header>
-              <Modal.Icon><Trash2 className="text-danger" size={18} /></Modal.Icon>
-              <Modal.Heading>{zh ? "彻底删除归档会话" : "Permanently delete archive"}</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
+        <DialogContainer size="sm">
+          <DialogPanel>
+            <DialogHeader>
+              <DialogIcon><Trash2 className="text-danger" size={18} /></DialogIcon>
+              <DialogTitle>{zh ? "彻底删除归档会话" : "Permanently delete archive"}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               {deleteItem && (zh
                 ? `彻底删除「${deleteItem.title || deleteItem.prompt}」及其归档批次中的 ${deleteItem.sessionCount} 个会话？相关消息、步骤、事件、历史和产物将永久删除，此操作不可撤销。`
                 : `Permanently delete “${deleteItem.title || deleteItem.prompt}” and the ${deleteItem.sessionCount} sessions in its archive batch? Their messages, steps, events, history, and artifacts will be permanently removed. This cannot be undone.`)}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="ghost" size="sm" onPress={() => setDeleteItem(null)}>
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="ghost" size="sm" onClick={() => setDeleteItem(null)}>
                 {zh ? "取消" : "Cancel"}
               </Button>
               <Button
                 variant="danger"
                 size="sm"
-                isPending={busyBatchId === deleteItem?.archiveBatchId}
-                onPress={() => void permanentlyDelete()}
+                pending={busyBatchId === deleteItem?.archiveBatchId}
+                onClick={() => void permanentlyDelete()}
               >
                 {zh ? "彻底删除" : "Delete permanently"}
               </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </Dialog>
     </div>
   );
 }

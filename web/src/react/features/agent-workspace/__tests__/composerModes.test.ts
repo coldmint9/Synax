@@ -10,17 +10,13 @@ const welcome = readFileSync(
   "utf8",
 );
 describe("composer mode borders", () => {
-  it("uses a thick blue dashed plan border and a purple solid goal border", () => {
-    expect(css).toMatch(
-      /\[data-composer-mode="plan"\]\s*\{\s*--composer-mode-border: #2563eb;/,
-    );
-    expect(css).toMatch(
-      /\[data-composer-mode="goal"\]\s*\{\s*--composer-mode-border: #8b5cf6;/,
-    );
-    expect(css).toMatch(
-      /:root\s+\.agent-session-controls\[data-composer-mode="plan"\]\s*\.agent-session-composer-shell.agent-dock-shell\s*\{\s*border: 2px dashed var\(--composer-mode-border\);/,
-    );
-    expect(css).toContain("border: 2px solid var(--composer-mode-border)");
+  it("preserves distinct mode cues without a heavy permanent outline", () => {
+    expect(css).toContain('[data-composer-mode="plan"]');
+    expect(css).toContain('[data-composer-mode="goal"]');
+    expect(css).toContain("border: 1px solid var(--ui-line)");
+    expect(css).toContain("border-inline-start: 2px solid color-mix");
+    expect(css).not.toContain("border: 2px dashed");
+    expect(css).not.toContain("border: 2px solid var(--composer-mode-border)");
   });
   it("has no chat-mode tint and removes the old centered green focus override", () => {
     expect(css).not.toContain('[data-composer-mode="chat"]');

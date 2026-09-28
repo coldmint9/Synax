@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  AlertDialog,
-  Button,
-  InputGroup,
-  Spinner,
-  TextField,
-} from "@/react/components/ui"
+import { AlertDialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Spinner } from "@/react/components/ui/Display";
+import { InputGroup, Field, InputPrefix, Input, InputSuffix } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import {
   Compass,
   Plus,
@@ -220,53 +217,53 @@ export function ExtensionCenter({
             <Button
               size="sm"
               variant="ghost"
-              isIconOnly
+              iconOnly
               aria-label={copy.sources}
-              onPress={() => setShowSources(true)}
+              onClick={() => setShowSources(true)}
             >
               <SlidersHorizontal size={16} />
             </Button>
           )}
-          <Button size="sm" variant="secondary" onPress={() => setEditor({})}>
+          <Button size="sm" variant="secondary" onClick={() => setEditor({})}>
             <Plus size={15} />
             {copy.custom}
           </Button>
         </div>
       </header>
       <div className={`extension-toolbar${market ? ' is-market' : ''}`}>
-        <TextField
+        <Field
           className="extension-search"
-          aria-label={copy.search}
-          value={query}
-          onChange={(value) => {
+
+
+
+        >
+          <InputGroup>
+            <InputPrefix>
+              <Search size={15} />
+            </InputPrefix>
+            <Input type="search" placeholder={copy.search} aria-label={copy.search} value={query} onChange={(event) => { const value = event.currentTarget.value;
             generation.current++
             setQuery(value)
             setLoading(true)
-          }}
-        >
-          <InputGroup>
-            <InputGroup.Prefix>
-              <Search size={15} />
-            </InputGroup.Prefix>
-            <InputGroup.Input type="search" placeholder={copy.search} />
+           }} />
             {query && (
-              <InputGroup.Suffix>
+              <InputSuffix>
                 <Button
                   size="sm"
                   variant="ghost"
-                  isIconOnly
+                  iconOnly
                   aria-label={copy.clear}
-                  onPress={() => {
+                  onClick={() => {
                     generation.current++
                     setQuery('')
                   }}
                 >
                   <X size={13} />
                 </Button>
-              </InputGroup.Suffix>
+              </InputSuffix>
             )}
           </InputGroup>
-        </TextField>
+        </Field>
         {market && (
           <>
             <AppSelect
@@ -306,10 +303,10 @@ export function ExtensionCenter({
         <Button
           size="sm"
           variant="ghost"
-          isIconOnly
+          iconOnly
           aria-label={copy.refresh}
-          isDisabled={loading || busy}
-          onPress={() => void reload()}
+          disabled={loading || busy}
+          onClick={() => void reload()}
         >
           <RefreshCw size={15} />
         </Button>
@@ -389,7 +386,7 @@ export function ExtensionCenter({
               <Button
                 size="sm"
                 variant="secondary"
-                onPress={() => onNavigate('market')}
+                onClick={() => onNavigate('market')}
               >
                 {copy.browse}
               </Button>
@@ -402,8 +399,8 @@ export function ExtensionCenter({
           <Button
             size="sm"
             variant="ghost"
-            isDisabled={offset === 0 || loading || busy}
-            onPress={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+            disabled={offset === 0 || loading || busy}
+            onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
           >
             {copy.previous}
           </Button>
@@ -411,8 +408,8 @@ export function ExtensionCenter({
           <Button
             size="sm"
             variant="ghost"
-            isDisabled={!result.hasMore || loading || busy}
-            onPress={() => setOffset((value) => value + PAGE_SIZE)}
+            disabled={!result.hasMore || loading || busy}
+            onClick={() => setOffset((value) => value + PAGE_SIZE)}
           >
             {copy.next}
           </Button>
@@ -459,20 +456,18 @@ export function ExtensionCenter({
           onChanged={() => void refresh.current()}
         />
       )}
-      <AlertDialog.Backdrop
-        isOpen={Boolean(remove)}
-        isDismissable={!busy}
-        isKeyboardDismissDisabled={busy}
-        onOpenChange={(open) => {
-          if (!open && !busy) setRemove(null)
-        }}
+      <AlertDialog
+        open={Boolean(remove)}
+        dismissible={!busy}
+
+        onClose={() => { if (!busy) setRemove(null); }}
       >
-        <AlertDialog.Container>
-          <AlertDialog.Dialog className="sm:max-w-[420px]">
-            <AlertDialog.Header>
-              <AlertDialog.Heading>{copy.removeTitle}</AlertDialog.Heading>
-            </AlertDialog.Header>
-            <AlertDialog.Body>
+        <DialogContainer>
+          <DialogPanel className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>{copy.removeTitle}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
               <p className="mb-2 text-sm font-medium">{remove?.name}</p>
               <p className="text-sm leading-6 text-muted-foreground">
                 {copy.removeHint}
@@ -482,13 +477,13 @@ export function ExtensionCenter({
                   {error}
                 </p>
               )}
-            </AlertDialog.Body>
-            <AlertDialog.Footer>
+            </DialogBody>
+            <DialogFooter>
               <Button
                 size="sm"
                 variant="tertiary"
-                isDisabled={busy}
-                onPress={() => {
+                disabled={busy}
+                onClick={() => {
                   setRemove(null)
                   setError('')
                 }}
@@ -498,8 +493,8 @@ export function ExtensionCenter({
               <Button
                 size="sm"
                 variant="danger"
-                isPending={busy}
-                onPress={() => {
+                pending={busy}
+                onClick={() => {
                   if (remove)
                     void act(
                       () =>
@@ -514,10 +509,10 @@ export function ExtensionCenter({
               >
                 {copy.uninstall}
               </Button>
-            </AlertDialog.Footer>
-          </AlertDialog.Dialog>
-        </AlertDialog.Container>
-      </AlertDialog.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </AlertDialog>
     </section>
   )
 }

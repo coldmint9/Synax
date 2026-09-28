@@ -1,29 +1,32 @@
-import { ProgressBar } from "@/react/components/ui"
+import { Progress } from "@/react/components/ui/Progress";
 
 type WikiProgressBarProps = {
-  'aria-label': string
-  done?: number
-  total?: number
-  value?: number
-  isIndeterminate?: boolean
-  color?: 'accent' | 'success' | 'warning' | 'danger'
-  className?: string
-}
+  "aria-label": string;
+  done?: number;
+  total?: number;
+  value?: number;
+  isIndeterminate?: boolean;
+  color?: "accent" | "success" | "warning" | "danger";
+  className?: string;
+};
 
-/** Synax UI v3 ProgressBar requires Track + Fill children to render the bar. */
+/** Shared progress semantics for both determinate and indeterminate wiki work. */
 export default function WikiProgressBar({
-  'aria-label': ariaLabel,
+  "aria-label": ariaLabel,
   done,
   total,
   value,
   isIndeterminate,
-  color = 'accent',
-  className = 'w-full',
+  color = "accent",
+  className = "w-full",
 }: WikiProgressBarProps) {
-  const showCount = done != null && total != null && total > 0
+  const showCount = done != null && total != null && total > 0;
   const fillValue = isIndeterminate
     ? undefined
-    : (value ?? (showCount ? Math.min(100, Math.round((done / total) * 100)) : undefined))
+    : (value ??
+      (showCount
+        ? Math.min(100, Math.round((done / total) * 100))
+        : undefined));
 
   return (
     <div className={`flex flex-col gap-1 ${className}`}>
@@ -32,20 +35,13 @@ export default function WikiProgressBar({
           {done}/{total}
         </span>
       )}
-      <ProgressBar
+      <Progress
         aria-label={ariaLabel}
-        value={isIndeterminate ? undefined : (fillValue ?? 0)}
-        isIndeterminate={isIndeterminate}
-        minValue={0}
-        maxValue={100}
-        size="sm"
-        color={color}
+        value={fillValue ?? 0}
+        indeterminate={isIndeterminate}
+        tone={color}
         className="w-full"
-      >
-        <ProgressBar.Track>
-          <ProgressBar.Fill />
-        </ProgressBar.Track>
-      </ProgressBar>
+      />
     </div>
-  )
+  );
 }

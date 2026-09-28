@@ -17,7 +17,7 @@ export default defineConfig({
     deps: {
       optimizer: {
         web: {
-          include: ['react-aria', 'react-aria-components', '@headlessui/react'],
+          include: ['@headlessui/react'],
         },
       },
     },

@@ -1,0 +1,33 @@
+/* Expand appended rows in normal flow so the footer moves down with the batch. */
+.session-list-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.session-list-reveal-content {
+  min-height: 0;
+}
+.session-list-reveal[data-revealing="true"] {
+  animation: session-list-reveal 250ms ease-out both;
+}
+.session-list-reveal[data-revealing="true"] > .session-list-reveal-content {
+  overflow: hidden;
+}
+@keyframes session-list-reveal {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+.session-list-expand-more {
+  min-height: 32px;
+  border-radius: 8px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.session-list-expand-more:hover:not(:disabled),
+.session-list-expand-more:focus-visible {
+  background: color-mix(in srgb, var(--ui-text) 8%, transparent);
+  color: var(--foreground);
+}
+.session-list-expand-more:disabled { opacity: 0.6; }
+@media (prefers-reduced-motion: reduce) {
+  .session-list-reveal[data-revealing="true"] { animation: none; }
+  .session-list-expand-more { transition: none; }
+}

@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from 'react'
-import { Button } from "@/react/components/ui"
+import { Button } from "@/react/components/ui/Button";
 import { ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import type { SkillSourceRecord } from '../../../lib/api/skills'
 
@@ -60,15 +60,15 @@ export function SkillMarketSidebar({
       <div className="border-b border-border/20 px-3 pb-3 pt-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="hidden text-xs font-semibold text-foreground sm:block">{labels.title}</h2>
-          <Button size="sm" variant="ghost" className="min-w-0 justify-start sm:hidden" aria-label={labels.title} aria-expanded={filtersOpen} aria-controls={filtersId} onPress={() => setFiltersOpen(open => !open)}>
+          <Button size="sm" variant="ghost" className="min-w-0 justify-start sm:hidden" aria-label={labels.title} aria-expanded={filtersOpen} aria-controls={filtersId} onClick={() => setFiltersOpen(open => !open)}>
             <span className="truncate">{selectedLabel}</span><ChevronDown size={14} className={filtersOpen ? 'rotate-180' : ''} />
           </Button>
           <Button
             size="sm"
             variant="ghost"
-            isIconOnly
+            iconOnly
             className="h-7 w-7 min-w-0 text-primary"
-            onPress={onAddSource}
+            onClick={onAddSource}
             aria-label={labels.addSource}
           >
             <Plus size={14} />
@@ -212,10 +212,10 @@ function RemoteSourceRow({
         <Button
           size="sm"
           variant="ghost"
-          isIconOnly
+          iconOnly
           className="h-7 w-7 min-w-0"
-          isDisabled={busy}
-          onPress={onSync}
+          disabled={busy}
+          onClick={onSync}
           aria-label={labels.sync}
         >
           <RefreshCw size={13} className={busy ? 'animate-spin' : ''} />
@@ -224,10 +224,10 @@ function RemoteSourceRow({
           <Button
             size="sm"
             variant="ghost"
-            isIconOnly
+            iconOnly
             className="h-7 w-7 min-w-0 text-muted-foreground hover:text-destructive"
-            isDisabled={busy}
-            onPress={onRemove}
+            disabled={busy}
+            onClick={onRemove}
             aria-label={labels.remove}
           >
             <Trash2 size={13} />

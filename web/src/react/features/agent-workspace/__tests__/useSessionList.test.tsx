@@ -131,7 +131,7 @@ describe("pinned session sections", () => {
     });
   });
 
-  it("separates pins, keeps independently collapsed rows mounted, and hides all controls after the last unpin", () => {
+  it("keeps ordinary sessions open, collapses only pins, and hides headers after the last unpin", () => {
     const { container } = render(<List />, { wrapper });
     const headers = () =>
       Array.from(
@@ -141,27 +141,26 @@ describe("pinned session sections", () => {
       );
     expect(headers().map((button) => button.textContent)).toEqual([
       "置顶· 1",
-      "普通会话· 1",
     ]);
     expect(
       container.querySelectorAll(".session-list-section--separated"),
     ).toHaveLength(1);
-    expect(container.querySelectorAll(".session-list-pin")).toHaveLength(1);
+    expect(container.querySelectorAll(".session-list-pin, .lucide-pin")).toHaveLength(0);
+    const ordinaryLabel = container.querySelector(".session-list-section-label")!;
+    expect(ordinaryLabel).toHaveTextContent("会话· 1");
+    expect(ordinaryLabel.tagName).not.toBe("BUTTON");
     fireEvent.click(headers()[0]);
     expect(headers()[0].getAttribute("aria-expanded")).toBe("false");
-    expect(headers()[1].getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("普通测试")).toBeVisible();
     expect(
       document.getElementById(headers()[0].getAttribute("aria-controls")!),
     ).toHaveAttribute("inert");
     expect(screen.getByText("置顶测试")).toBeInTheDocument();
-    fireEvent.click(headers()[1]);
-    expect(
-      headers().every(
-        (button) => button.getAttribute("aria-expanded") === "false",
-      ),
-    ).toBe(true);
+    fireEvent.click(ordinaryLabel);
+    expect(screen.getByText("普通测试")).toBeVisible();
+    expect(headers()[0]).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(headers()[0]);
-    expect(headers()[1].getAttribute("aria-expanded")).toBe("false");
+    expect(headers()[0]).toHaveAttribute("aria-expanded", "true");
     act(() =>
       useAgentSessionStore.setState((state) => ({
         sessions: state.sessions.map((session) => ({
@@ -191,23 +190,25 @@ describe("pinned session sections", () => {
       fireEvent.click(row.querySelector(".session-list-delete")!);
       await act(async () =>
         fireEvent.click(
-          document.querySelector('[role="menuitem"][data-key="pin"]')!,
+          screen.getByRole("menuitem", { name: /^(置顶|取消置顶)$/ }),
         ),
       );
       expect(pin).toHaveBeenCalledWith("new", true);
       expect(useAgentSessionStore.getState().sessionListOffset).toBe(0);
-      expect(container.querySelectorAll(".session-list-pin")).toHaveLength(2);
+      expect(container.querySelectorAll(".session-list-pin, .lucide-pin")).toHaveLength(0);
+      expect(container.querySelector(".session-list-section-toggle")).toHaveTextContent("置顶· 2");
       const pinnedRow = screen
         .getByText("普通测试")
         .closest(".session-list-item")!;
       fireEvent.click(pinnedRow.querySelector(".session-list-delete")!);
       await act(async () =>
         fireEvent.click(
-          document.querySelector('[role="menuitem"][data-key="pin"]')!,
+          screen.getByRole("menuitem", { name: /^(置顶|取消置顶)$/ }),
         ),
       );
       expect(pin).toHaveBeenLastCalledWith("new", false);
-      expect(container.querySelectorAll(".session-list-pin")).toHaveLength(1);
+      expect(container.querySelectorAll(".session-list-pin, .lucide-pin")).toHaveLength(0);
+      expect(container.querySelector(".session-list-section-toggle")).toHaveTextContent("置顶· 1");
       expect(
         useAgentSessionStore.getState().refreshSessions,
       ).toHaveBeenCalledTimes(2);

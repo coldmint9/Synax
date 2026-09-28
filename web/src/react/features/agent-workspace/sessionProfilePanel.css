@@ -5,6 +5,10 @@
   --profile-line: hsl(var(--border-hsl) / 0.42);
   --profile-accent: light-dark(#8195ae, #94a9c5);
   --profile-green: light-dark(#53846f, #91b6a2);
+  --profile-messages: light-dark(#5c8f78, #91c3a8);
+  --profile-tools: light-dark(#6f89a8, #9bb5d5);
+  --profile-mcp: light-dark(#8d78a6, #bba6d3);
+  --profile-skills: light-dark(#a98a61, #d0b486);
   container-type: inline-size;
 }
 .runtime-profile .runtime-profile-card {
@@ -154,13 +158,6 @@
 }
 .runtime-profile-meter--segmented .runtime-profile-meter-fill > span:last-child {
   border-radius: 0 4px 4px 0;
-}
-.runtime-profile-meter[data-high="true"] > span {
-  background: var(--warning);
-}
-.runtime-profile-meter[data-stale="true"] > span {
-  background: var(--profile-muted);
-  opacity: 0.5;
 }
 .runtime-profile-hint {
   display: flex;

@@ -9,18 +9,8 @@ import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 
-export interface ContextCompactionState {
-  id: string;
-  status: "running" | "completed" | "failed";
-  startedAt: string;
-  completedAt?: string;
-  requestId: string | null;
-  originalTokens?: number;
-  compressedTokens?: number;
-  messageCount?: number;
-  compacted?: boolean;
-  error?: string;
-}
+import type { ContextCompactionState } from "./context-compaction-types.js";
+export type { ContextCompactionState } from "./context-compaction-types.js";
 
 export function readContextCompaction(
   session: AgentSession,

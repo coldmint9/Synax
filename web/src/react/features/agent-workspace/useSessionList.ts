@@ -148,15 +148,15 @@ export function useSessionList(
         key: listView,
         label: hasPinned
           ? locale === "zh"
-            ? "普通会话"
-            : "Other sessions"
+            ? "会话"
+            : "sessions"
           : listView === "sessions"
             ? locale === "zh"
               ? "会话"
               : "Sessions"
             : "Workflows",
         sessions: regular,
-        collapsed: hasPinned && collapsedGroups.has(listView),
+        collapsed: false,
         count: regular.length,
       },
     ];
@@ -231,12 +231,14 @@ export function useSessionList(
   }, [routeProjectId, isProjectReady, hasMore, storeLoadMore]);
 
   const toggleGroup = useCallback(
-    (key: string) =>
+    (key: string) => {
+      if (!key.startsWith("pinned:")) return;
       setCollapsedGroups((p) => {
         const n = new Set(p);
         n.has(key) ? n.delete(key) : n.add(key);
         return n;
-      }),
+      });
+    },
     [],
   );
 

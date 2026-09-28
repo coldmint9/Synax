@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Spinner } from "@/react/components/ui"
+import { Drawer, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import {
   extensionsApi,
   type ExtensionItem,
@@ -65,19 +67,17 @@ export function ExtensionDetails({
           : item?.sourceLabel
   return (
     <Drawer
-      isOpen={Boolean(item)}
-      onOpenChange={(open) => {
-        if (!open) onClose()
-      }}
+      open={Boolean(item)}
+      onClose={onClose}
     >
-      <Drawer.Backdrop>
-        <Drawer.Content placement="right">
-          <Drawer.Dialog className="extension-drawer">
-            <Drawer.CloseTrigger aria-label={copy.close} />
-            <Drawer.Header>
-              <Drawer.Heading>{item?.name}</Drawer.Heading>
-            </Drawer.Header>
-            <Drawer.Body className="extension-detail-body">
+      <>
+        <DialogContainer >
+          <DialogPanel className="extension-drawer">
+            <DialogCloseButton aria-label={copy.close} />
+            <DialogHeader>
+              <DialogTitle>{item?.name}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="extension-detail-body">
               <p className="extension-detail-description">
                 {item?.description}
               </p>
@@ -140,23 +140,23 @@ export function ExtensionDetails({
                   {item.detail}
                 </p>
               )}
-            </Drawer.Body>
-            <Drawer.Footer>
+            </DialogBody>
+            <DialogFooter>
               {item?.installed ? (
                 <>
                   <Button
                     size="sm"
                     variant="danger-soft"
-                    isDisabled={busy}
-                    onPress={() => onUninstall(item)}
+                    disabled={busy}
+                    onClick={() => onUninstall(item)}
                   >
                     {copy.uninstall}
                   </Button>
                   {item.editable && (
                     <Button
                       size="sm"
-                      isDisabled={!detail || busy}
-                      onPress={() => {
+                      disabled={!detail || busy}
+                      onClick={() => {
                         if (detail) onEdit(detail)
                       }}
                     >
@@ -168,17 +168,17 @@ export function ExtensionDetails({
                 item && (
                   <Button
                     size="sm"
-                    isDisabled={busy || Boolean(item.conflict)}
-                    onPress={() => onInstall(item)}
+                    disabled={busy || Boolean(item.conflict)}
+                    onClick={() => onInstall(item)}
                   >
                     {copy.install}
                   </Button>
                 )
               )}
-            </Drawer.Footer>
-          </Drawer.Dialog>
-        </Drawer.Content>
-      </Drawer.Backdrop>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </>
     </Drawer>
   )
 }

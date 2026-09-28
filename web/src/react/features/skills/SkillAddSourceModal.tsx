@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  Button,
-  Description,
-  FieldError,
-  Input,
-  Label,
-  Modal,
-  TextField,
-} from "@/react/components/ui"
+import { Dialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
+import { Description, FieldError, Input, Label, Field } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
 import { SettingsSelect } from '../settings/components/SettingsSelect'
 
 export interface NewSourceForm {
@@ -18,14 +12,9 @@ export interface NewSourceForm {
   url: string
 }
 
-interface ModalState {
-  close: () => void
-  open: () => void
-  isOpen: boolean
-}
-
 interface Props {
-  state: ModalState
+  open: boolean
+  onClose: () => void
   form: NewSourceForm
   busy: boolean
   error: string | null
@@ -65,12 +54,12 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-export function SkillAddSourceModal({ state, form, busy, error, labels, onChange, onSubmit }: Props) {
+export function SkillAddSourceModal({ open, onClose, form, busy, error, labels, onChange, onSubmit }: Props) {
   const [attempted, setAttempted] = useState(false)
 
   useEffect(() => {
-    if (!state.isOpen) setAttempted(false)
-  }, [state.isOpen])
+    if (!open) setAttempted(false)
+  }, [open])
 
   const fieldErrors = useMemo(() => {
     const id = form.id.trim()
@@ -105,15 +94,15 @@ export function SkillAddSourceModal({ state, form, busy, error, labels, onChange
   }
 
   return (
-    <Modal isOpen={state.isOpen} onOpenChange={open => open ? state.open() : state.close()}>
-      <Modal.Backdrop>
-        <Modal.Container size="sm">
-          <Modal.Dialog className="sm:max-w-md">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>{labels.title}</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body className="space-y-4 px-6">
+    <Dialog open={open} onClose={onClose} dismissible={!busy}>
+      <>
+        <DialogContainer size="sm">
+          <DialogPanel className="sm:max-w-md">
+            <DialogCloseButton />
+            <DialogHeader>
+              <DialogTitle>{labels.title}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-4 px-6">
               <SettingsSelect
                 label={labels.type}
                 selectedKey={form.type}
@@ -129,56 +118,52 @@ export function SkillAddSourceModal({ state, form, busy, error, labels, onChange
                 ]}
               />
 
-              <TextField
-                isRequired
-                isInvalid={attempted && Boolean(fieldErrors.id)}
-                value={form.id}
-                onChange={(value) => onChange({ id: value })}
+              <Field
+                invalid={attempted && Boolean(fieldErrors.id)}
+
+
               >
                 <Label className="text-xs">{labels.id}</Label>
-                <Input placeholder="my-skill-source" autoComplete="off" />
+                <Input placeholder="my-skill-source" autoComplete="off" required value={form.id} onChange={(event) => { const value = event.currentTarget.value; return onChange({ id: value }); }} />
                 <Description className="text-[11px]">{labels.idHint}</Description>
                 {attempted && fieldErrors.id ? <FieldError>{fieldErrors.id}</FieldError> : null}
-              </TextField>
+              </Field>
 
-              <TextField
-                isRequired
-                isInvalid={attempted && Boolean(fieldErrors.label)}
-                value={form.label}
-                onChange={(value) => onChange({ label: value })}
+              <Field
+                invalid={attempted && Boolean(fieldErrors.label)}
+
+
               >
                 <Label className="text-xs">{labels.label}</Label>
-                <Input placeholder="My Skill Source" autoComplete="off" />
+                <Input placeholder="My Skill Source" autoComplete="off" required value={form.label} onChange={(event) => { const value = event.currentTarget.value; return onChange({ label: value }); }} />
                 {attempted && fieldErrors.label ? <FieldError>{fieldErrors.label}</FieldError> : null}
-              </TextField>
+              </Field>
 
               {form.type === 'git-index' ? (
-                <TextField
-                  isRequired
-                  isInvalid={attempted && Boolean(fieldErrors.repo)}
-                  value={form.repo}
-                  onChange={(value) => onChange({ repo: value })}
+                <Field
+                  invalid={attempted && Boolean(fieldErrors.repo)}
+
+
                 >
                   <Label className="text-xs">{labels.repo}</Label>
-                  <Input placeholder="owner/repo" autoComplete="off" />
+                  <Input placeholder="owner/repo" autoComplete="off" required value={form.repo} onChange={(event) => { const value = event.currentTarget.value; return onChange({ repo: value }); }} />
                   <Description className="text-[11px]">{labels.repoHint}</Description>
                   {attempted && fieldErrors.repo ? <FieldError>{fieldErrors.repo}</FieldError> : null}
-                </TextField>
+                </Field>
               ) : (
-                <TextField
-                  isRequired
-                  isInvalid={attempted && Boolean(fieldErrors.url)}
-                  value={form.url}
-                  onChange={(value) => onChange({ url: value })}
+                <Field
+                  invalid={attempted && Boolean(fieldErrors.url)}
+
+
                 >
                   <Label className="text-xs">{labels.url}</Label>
                   <Input
                     placeholder="https://example.com/.well-known/agent-skills/index.json"
-                    autoComplete="off"
+                    autoComplete="off" required value={form.url} onChange={(event) => { const value = event.currentTarget.value; return onChange({ url: value }); }}
                   />
                   <Description className="text-[11px]">{labels.urlHint}</Description>
                   {attempted && fieldErrors.url ? <FieldError>{fieldErrors.url}</FieldError> : null}
-                </TextField>
+                </Field>
               )}
 
               {error ? (
@@ -186,24 +171,24 @@ export function SkillAddSourceModal({ state, form, busy, error, labels, onChange
                   {error}
                 </p>
               ) : null}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="ghost" size="sm" onPress={state.close} isDisabled={busy}>
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
                 {labels.cancel}
               </Button>
               <Button
                 variant="primary"
                 size="sm"
-                isPending={busy}
-                onPress={handleSubmit}
+                pending={busy}
+                onClick={handleSubmit}
               >
                 {labels.add}
               </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </>
+    </Dialog>
   )
 }
 

@@ -2,6 +2,8 @@ import { getRawSqlite } from "../../db/index.js";
 import {
   listGitWorkspaces,
   switchGitBranch,
+  createAndSwitchGitBranch,
+  countGitCheckoutChanges,
   GitWorkspaceError,
 } from "../git-workspaces.js";
 import {
@@ -109,12 +111,13 @@ export function listSessionGitBranches(sessionId: string, rootId?: string) {
       rootId,
       true,
     );
-    const summary = await listGitWorkspaces(
-      workspaceRootLocation(root),
-      session.projectId,
-    );
+    const [summary, dirtyFileCount] = await Promise.all([
+      listGitWorkspaces(workspaceRootLocation(root), session.projectId),
+      countGitCheckoutChanges(workspaceRootLocation(root)),
+    ]);
     return {
       rootId: root.id,
+      dirtyFileCount,
       current:
         summary.worktrees.find((item) => item.path === summary.defaultPath)
           ?.branch ?? "",
@@ -152,6 +155,27 @@ export function switchSessionGitBranch(
       },
     );
     // Several sessions can share one physical checkout; invalidate every snapshot.
+    for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
+      if (sharesRepository(item.id, item.projectId, checkoutPath))
+        invalidateSessionEnvironment(item.id);
+    }
+    return listSessionGitBranches(sessionId, root.id);
+  });
+}
+
+export function createSessionGitBranch(
+  sessionId: string,
+  branch: string,
+  rootId?: string,
+) {
+  return withGitErrors(async () => {
+    const session = agentRuntimeStore.getSession(sessionId);
+    const root = resolveSessionRepository(sessionId, session.projectId, rootId, true);
+    let checkoutPath = root.path;
+    await createAndSwitchGitBranch(workspaceRootLocation(root), branch, (physicalRoot) => {
+      assertRepositoryIdle(physicalRoot);
+      checkoutPath = physicalRoot;
+    });
     for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
       if (sharesRepository(item.id, item.projectId, checkoutPath))
         invalidateSessionEnvironment(item.id);

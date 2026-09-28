@@ -1,0 +1,168 @@
+/* Layout defaults live below Tailwind utilities so className="flex/grid/gap-…"
+   can still override them. The wrapper inherits a flex caller's layout. */
+@layer components {
+  .liquid-glass-surface[data-glass-state] {
+    /* The parent remains responsible for the control's outside dimensions/padding. */
+    display: inherit;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-self: stretch;
+    flex-direction: inherit;
+    flex-wrap: inherit;
+    align-items: inherit;
+    align-content: inherit;
+    justify-content: inherit;
+    gap: inherit;
+    grid-template-columns: inherit;
+    grid-template-rows: inherit;
+    grid-auto-flow: inherit;
+  }
+}
+
+/* The extra data selector isolates these rules from the temporary global glass
+   rules while the independent UI migration removes those competing styles. */
+.liquid-glass-surface[data-glass-state] {
+  --glass-radius: 16px;
+  --glass-shoulder: 5px;
+  --glass-base: color-mix(in srgb, var(--ui-panel, #fafbf7) 94%, transparent);
+  --glass-transparent: color-mix(in srgb, var(--ui-panel, #fafbf7) 66%, transparent);
+  --glass-solid: var(--ui-panel, #fafbf7);
+  --glass-border: rgb(105 122 139 / 0.22);
+  --glass-blur: 18px;
+  position: relative;
+  isolation: isolate;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  box-shadow: none;
+  /* Never filter or clip the content/focus ring/popovers. */
+  overflow: visible;
+  filter: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.liquid-glass-surface[data-glass-theme="dark"] {
+  --glass-base: color-mix(in srgb, var(--ui-panel, #1e221f) 94%, transparent);
+  --glass-transparent: color-mix(in srgb, var(--ui-panel, #1e221f) 80%, transparent);
+  --glass-solid: var(--ui-panel, #1e221f);
+  --glass-border: rgb(209 224 240 / 0.19);
+}
+
+.liquid-glass-surface[data-glass-state].liquid-glass-surface--strong {
+  --glass-blur: 24px;
+}
+
+.liquid-glass-surface[data-glass-state] > :is(.liquid-glass-backdrop, .liquid-glass-svg, .liquid-glass-gpu-host),
+.liquid-glass-surface[data-glass-state] .liquid-glass-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  user-select: none;
+}
+
+.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+  z-index: -3;
+  background: var(--glass-base);
+  box-shadow: inset 0 0 0 1px var(--glass-border), var(--ui-shadow-floating, 0 5px 16px rgb(0 0 0 / .07));
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+    background: var(--glass-transparent);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  }
+}
+
+.liquid-glass-surface[data-glass-state] > .liquid-glass-svg {
+  z-index: -2;
+  overflow: hidden;
+  opacity: 0.72;
+  filter: none;
+}
+
+.liquid-glass-surface[data-glass-state] :is(.liquid-glass-mask-outer, [data-glass-rim], [data-glass-shoulder]) {
+  rx: var(--glass-radius);
+  ry: var(--glass-radius);
+}
+
+.liquid-glass-surface[data-glass-state] .liquid-glass-mask-inner {
+  width: calc(100% - 3px);
+  height: calc(100% - 3px);
+  rx: max(0px, calc(var(--glass-radius) - 1.5px));
+  ry: max(0px, calc(var(--glass-radius) - 1.5px));
+}
+
+.liquid-glass-surface[data-glass-state] .liquid-glass-shoulder-inner {
+  /* Percent limits keep the center clear even on very small controls. */
+  x: min(var(--glass-shoulder), 16%);
+  y: min(var(--glass-shoulder), 16%);
+  width: max(calc(100% - var(--glass-shoulder) * 2), 68%);
+  height: max(calc(100% - var(--glass-shoulder) * 2), 68%);
+  rx: max(0px, calc(var(--glass-radius) - var(--glass-shoulder)));
+  ry: max(0px, calc(var(--glass-radius) - var(--glass-shoulder)));
+}
+
+/* GPU draws the rounded shoulder itself. Keep only a quiet static foundation
+   underneath it rather than stacking two equally bright optical treatments. */
+.liquid-glass-surface[data-glass-state="gpu"] > .liquid-glass-svg {
+  opacity: 0.28;
+}
+
+.liquid-glass-surface[data-glass-state] > .liquid-glass-gpu-host {
+  z-index: -1;
+  overflow: hidden;
+}
+
+.liquid-glass-surface[data-glass-state] .liquid-glass-canvas {
+  display: block;
+  mix-blend-mode: normal;
+}
+
+.liquid-glass-surface[data-glass-state] .liquid-glass-canvas[hidden] { display: none; }
+
+.liquid-glass-surface[data-glass-state] > .liquid-glass-content {
+  display: contents;
+  filter: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.liquid-glass-surface:is([data-glass-reason="reduced-transparency"], [data-glass-reason="high-contrast"]) > .liquid-glass-backdrop {
+  background: var(--glass-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+    background: var(--glass-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .liquid-glass-surface[data-glass-state] > :is(.liquid-glass-svg, .liquid-glass-gpu-host) { display: none; }
+}
+
+@media (forced-colors: active) {
+  .liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-surface[data-glass-state] > .liquid-glass-gpu-host { display: none; }
+}
+
+/* Flat surfaces retain backdrop handling and accessibility fallback only. */
+.liquid-glass-surface[data-glass-finish="flat"] > .liquid-glass-backdrop {
+  box-shadow: none;
+}
+.liquid-glass-surface[data-glass-finish="flat"] > .liquid-glass-gpu-host {
+  display: none;
+}

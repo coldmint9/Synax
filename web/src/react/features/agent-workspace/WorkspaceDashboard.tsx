@@ -2,7 +2,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -45,7 +44,10 @@ import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
 import { useLocale } from "../../../hooks/useLocale";
 import { useContextMenu } from "../../components/context-menu/ContextMenuProvider";
-import { fileContextEntries, sourceContextEntries } from "./workspaceContextMenus";
+import {
+  fileContextEntries,
+  sourceContextEntries,
+} from "./workspaceContextMenus";
 import type { I18nKey } from "../../../lib/i18n";
 import { agentRuntimeApi } from "../../../lib/api/agentRuntime";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -57,7 +59,6 @@ import {
   useSessionWorkspaceStore,
 } from "./state/sessionWorkspaceStore";
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
-import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
@@ -213,51 +214,23 @@ function subagentPreview(sub: SessionEnvironmentSubagent): string {
   return body || sub.prompt.trim();
 }
 
-function ProjectSection({
-  storageKey,
-  icon,
-  title,
-  count,
-  actions,
-  children,
-}: {
-  storageKey: string;
+/** Git changes remain visible; only individual directories can collapse. */
+function GitChangesSection({ icon, title, actions, children }: {
   icon: React.ReactNode;
   title: string;
-  count: number;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const [open, toggle] = useWorkspaceDisclosure(storageKey);
-  const id = useId();
   return (
-    <section className="ws-project-section" data-open={open}>
+    <section className="ws-project-section" data-open="true">
       <div className="ws-project-section-head">
-        <button
-          type="button"
-          className="ws-project-section-toggle"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={toggle}
-        >
-          <span className="ws-card-icon">{icon}</span>
+        <h3 className="ws-project-section-heading">
+          <span className="ws-card-icon" aria-hidden="true">{icon}</span>
           <span>{title}</span>
-          <span className="ws-card-count">{count}</span>
-          <ChevronRight
-            size={11}
-            className="ws-project-section-chevron"
-            aria-hidden
-          />
-        </button>
-        {actions && (
-          <span className="ws-project-section-actions">{actions}</span>
-        )}
+        </h3>
+        {actions && <span className="ws-project-section-actions">{actions}</span>}
       </div>
-      {open && (
-        <div id={id} className="ws-project-section-body">
-          {children}
-        </div>
-      )}
+      <div className="ws-project-section-body">{children}</div>
     </section>
   );
 }
@@ -324,11 +297,9 @@ function RepositoryProjectCard({
       }
     >
       {changedFiles.length > 0 && (
-        <ProjectSection
+        <GitChangesSection
           icon={<FileDiff size={13} />}
-          storageKey={`${sessionId}:${repository.rootId}:changes`}
           title={t("workspaceCardGitChanges")}
-          count={changedFiles.length}
           actions={
             <div className="ws-project-section-actions-group">
               <div
@@ -381,7 +352,10 @@ function RepositoryProjectCard({
                 file={file}
                 onOpen={() => openDiff(file.path)}
                 onRevert={onRevert}
-                reverting={revertingPaths?.has(`${repository.rootId}:${file.path}`) ?? false}
+                reverting={
+                  revertingPaths?.has(`${repository.rootId}:${file.path}`) ??
+                  false
+                }
                 sessionId={sessionId}
                 rootId={repository.rootId}
                 rootName={repository.name}
@@ -389,7 +363,7 @@ function RepositoryProjectCard({
               />
             ))
           )}
-        </ProjectSection>
+        </GitChangesSection>
       )}
     </WorkspaceCard>
   );
@@ -705,7 +679,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                     aria-label={root.name}
                     onClick={() => selectRepository(sessionId, root.rootId)}
                   >
-                    <span className="ws-project-option-top" data-project-color={getProjectThemeColor(root.rootId)}>
+                    <span
+                      className="ws-project-option-top"
+                      data-project-color={getProjectThemeColor(root.rootId)}
+                    >
                       <Folder size={13} />
                       <strong title={root.name}>{root.name}</strong>
                       {root.role === "primary" && (
@@ -763,7 +740,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                 <WorkspaceCard
                   icon={<FileDiff size={13} />}
                   title={t("workspaceCardGitChanges")}
-                  count={changedFiles.length}
+                  collapsible={false}
                   actions={
                     <div
                       className="ws-view-toggle"
@@ -816,8 +793,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                         key={`${file.status}:${file.path}`}
                         file={file}
                         onOpen={() => openDiff(file.path)}
-                        onRevert={(revertTarget, rootId) => void revertFile(revertTarget, rootId)}
-                        reverting={revertingPaths.has(`${repository?.rootId ?? "primary"}:${file.path}`)}
+                        onRevert={(revertTarget, rootId) =>
+                          void revertFile(revertTarget, rootId)
+                        }
+                        reverting={revertingPaths.has(
+                          `${repository?.rootId ?? "primary"}:${file.path}`,
+                        )}
                         sessionId={sessionId}
                         rootId={repository?.rootId}
                         rootName={repository?.name}
@@ -906,7 +887,12 @@ interface ChangeRowContext {
   revertingPaths?: ReadonlySet<string>;
 }
 
-function ChangedFileTree({ directory, onOpen, depth = 0, ...context }: {
+function ChangedFileTree({
+  directory,
+  onOpen,
+  depth = 0,
+  ...context
+}: {
   directory: ChangedFileDirectory;
   onOpen: (path: string) => void;
   depth?: number;
@@ -914,7 +900,13 @@ function ChangedFileTree({ directory, onOpen, depth = 0, ...context }: {
   return (
     <>
       {directory.directories.map((child) => (
-        <ChangedFileFolder key={child.path} directory={child} onOpen={onOpen} depth={depth} {...context} />
+        <ChangedFileFolder
+          key={child.path}
+          directory={child}
+          onOpen={onOpen}
+          depth={depth}
+          {...context}
+        />
       ))}
       {directory.files.map((file) => (
         <ChangedFileRow
@@ -922,7 +914,11 @@ function ChangedFileTree({ directory, onOpen, depth = 0, ...context }: {
           file={file}
           depth={depth}
           onOpen={() => onOpen(file.path)}
-          reverting={context.revertingPaths?.has(`${context.rootId ?? "primary"}:${file.path}`) ?? false}
+          reverting={
+            context.revertingPaths?.has(
+              `${context.rootId ?? "primary"}:${file.path}`,
+            ) ?? false
+          }
           {...context}
         />
       ))}
@@ -930,7 +926,12 @@ function ChangedFileTree({ directory, onOpen, depth = 0, ...context }: {
   );
 }
 
-function ChangedFileFolder({ directory, onOpen, depth, ...context }: {
+function ChangedFileFolder({
+  directory,
+  onOpen,
+  depth,
+  ...context
+}: {
   directory: ChangedFileDirectory;
   onOpen: (path: string) => void;
   depth: number;
@@ -952,7 +953,12 @@ function ChangedFileFolder({ directory, onOpen, depth, ...context }: {
         <span>{directory.name}</span>
       </button>
       {expanded && (
-        <ChangedFileTree directory={directory} onOpen={onOpen} depth={depth + 1} {...context} />
+        <ChangedFileTree
+          directory={directory}
+          onOpen={onOpen}
+          depth={depth + 1}
+          {...context}
+        />
       )}
     </div>
   );
@@ -979,10 +985,30 @@ function RepositoryCard({
   const menu = useContextMenu(() => ({
     label: repository?.name ?? environment.branch,
     entries: [
-      { type: "action", id: "refresh", label: t("workspaceRefresh"), disabled: loading, run: () => reload() },
-      { type: "action", id: "branch", label: t("contextSwitchBranch"), disabled: Boolean(loading || unavailable), restoreFocus: false, run: () => setBranchRequest((value) => value + 1) },
+      {
+        type: "action",
+        id: "refresh",
+        label: t("workspaceRefresh"),
+        disabled: loading,
+        run: () => reload(),
+      },
+      {
+        type: "action",
+        id: "branch",
+        label: t("contextSwitchBranch"),
+        disabled: Boolean(loading || unavailable),
+        restoreFocus: false,
+        run: () => setBranchRequest((value) => value + 1),
+      },
       { type: "separator" },
-      { type: "action", id: "commit", label: t("workspaceCommitPush"), disabled: Boolean(loading || unavailable || changedCount === 0), restoreFocus: false, run: () => setCommitOpen(true) },
+      {
+        type: "action",
+        id: "commit",
+        label: t("workspaceCommitPush"),
+        disabled: Boolean(loading || unavailable || changedCount === 0),
+        restoreFocus: false,
+        run: () => setCommitOpen(true),
+      },
     ],
   }));
   return (
@@ -991,53 +1017,61 @@ function RepositoryCard({
       onContextMenu={menu.onContextMenu}
       onKeyDown={menu.onKeyDown}
     >
-      {repository && !embedded && (
-        <div className="ws-repo-project">
-          <Folder size={12} />
-          <strong>{repository.name}</strong>
-        </div>
-      )}
-      <div className="ws-repo-head">
-        <RepositoryBranchPicker
-          key={`${environment.sessionId}:${repository?.rootId ?? "primary"}`}
-          sessionId={environment.sessionId}
-          rootId={repository?.rootId}
-          branch={environment.branch}
-          openRequest={branchRequest}
-          disabled={loading || unavailable}
-          onSwitched={() => void reload()}
-        />
-        {unavailable && (
-          <span className="ws-repo-state bg-warning/15 text-warning">
-            {t(
-              repository.status === "missing"
-                ? "workspaceRepositoryMissing"
-                : repository.status === "not_repository"
-                  ? "workspaceRepositoryNotGit"
-                  : "workspaceRepositoryError",
-            )}
-          </span>
+      <div
+        className={
+          embedded
+            ? "ws-repository-heading"
+            : "ws-card-head ws-repository-heading"
+        }
+      >
+        {repository && !embedded && (
+          <div className="ws-repo-project">
+            <Folder size={12} />
+            <strong>{repository.name}</strong>
+          </div>
         )}
-        <button
-          type="button"
-          className="ws-repo-action"
-          onClick={() => setCommitOpen(true)}
-          disabled={loading || unavailable || changedCount === 0}
-          title={t("workspaceCommitPush")}
-        >
-          <GitCommit size={10} />
-          <span>{t("workspaceCommitPush")}</span>
-        </button>
-        <button
-          type="button"
-          className="ws-icon-button"
-          onClick={() => void reload()}
-          disabled={loading}
-          aria-label={t("workspaceRefresh")}
-          title={t("workspaceRefresh")}
-        >
-          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="ws-repo-head">
+          <RepositoryBranchPicker
+            key={`${environment.sessionId}:${repository?.rootId ?? "primary"}`}
+            sessionId={environment.sessionId}
+            rootId={repository?.rootId}
+            branch={environment.branch}
+            openRequest={branchRequest}
+            disabled={loading || unavailable}
+            onSwitched={() => void reload()}
+          />
+          {unavailable && (
+            <span className="ws-repo-state bg-warning/15 text-warning">
+              {t(
+                repository.status === "missing"
+                  ? "workspaceRepositoryMissing"
+                  : repository.status === "not_repository"
+                    ? "workspaceRepositoryNotGit"
+                    : "workspaceRepositoryError",
+              )}
+            </span>
+          )}
+          <button
+            type="button"
+            className="ws-repo-action"
+            onClick={() => setCommitOpen(true)}
+            disabled={loading || unavailable || changedCount === 0}
+            title={t("workspaceCommitPush")}
+          >
+            <GitCommit size={10} />
+            <span>{t("workspaceCommitPush")}</span>
+          </button>
+          <button
+            type="button"
+            className="ws-icon-button"
+            onClick={() => void reload()}
+            disabled={loading}
+            aria-label={t("workspaceRefresh")}
+            title={t("workspaceRefresh")}
+          >
+            <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
       {commitOpen && (
         <SessionCommitDialog
@@ -1048,7 +1082,10 @@ function RepositoryCard({
           rootName={repository?.name}
           branch={environment.branch}
           changedFiles={changedCount}
-          onClose={() => setCommitOpen(false)}
+          onClose={() => {
+            setCommitOpen(false);
+            void reload();
+          }}
           onCommitted={() => void reload()}
         />
       )}
@@ -1092,7 +1129,17 @@ function SubagentRow({
   );
 }
 
-function ChangedFileRow({ file, onOpen, depth = 0, onRevert, reverting = false, sessionId, rootId, rootName, workspacePath }: {
+function ChangedFileRow({
+  file,
+  onOpen,
+  depth = 0,
+  onRevert,
+  reverting = false,
+  sessionId,
+  rootId,
+  rootName,
+  workspacePath,
+}: {
   file: SessionEnvironmentFile;
   onOpen: () => void;
   depth?: number;
@@ -1102,56 +1149,148 @@ function ChangedFileRow({ file, onOpen, depth = 0, onRevert, reverting = false, 
   const meta = CHANGE_META[file.status] ?? CHANGE_META.unknown;
   const name = fileName(file.path);
   const hasStats = file.additions > 0 || file.deletions > 0;
-  const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
-    t, path: file.path, workspacePath, sessionId, rootId, onDiff: onOpen,
-    onOpen: () => openWorkspaceFile(sessionId, file.path, null, rootId, rootName),
-    canOpenFile: file.status !== "deleted", canRevert: Boolean(onRevert),
-    onRevert: () => onRevert?.(file, rootId), busy: reverting,
-  }) }));
+  const menu = useContextMenu(() => ({
+    label: file.path,
+    entries: fileContextEntries({
+      t,
+      path: file.path,
+      workspacePath,
+      sessionId,
+      rootId,
+      onDiff: onOpen,
+      onOpen: () =>
+        openWorkspaceFile(sessionId, file.path, null, rootId, rootName),
+      canOpenFile: file.status !== "deleted",
+      canRevert: Boolean(onRevert),
+      onRevert: () => onRevert?.(file, rootId),
+      busy: reverting,
+    }),
+  }));
 
   return (
-    <div className="ws-row" style={{ paddingLeft: `${6 + depth * 14}px` }} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
-      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" title={file.path} onClick={onOpen} aria-haspopup="menu">
+    <div
+      className="ws-row"
+      style={{ paddingLeft: `${6 + depth * 14}px` }}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
+    >
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        title={file.path}
+        onClick={onOpen}
+        aria-haspopup="menu"
+      >
+        <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>
+          {meta.letter}
+        </span>
         <FileTypeIcon path={file.path} size={11} />
-        <span className={`ws-badge ${meta.tone}`} title={t(meta.labelKey)}>{meta.letter}</span>
-        <span className="ws-row-main ws-row-main--file"><span className="ws-row-file">{name}</span></span>
-        {hasStats && <span className="ws-row-diff ws-mono">
-          {file.additions > 0 && <span className="text-success">+{file.additions}</span>}
-          {file.deletions > 0 && <span className="text-danger">-{file.deletions}</span>}
-        </span>}
+        <span className="ws-row-main ws-row-main--file">
+          <span className="ws-row-file">{name}</span>
+        </span>
+        {hasStats && (
+          <span className="ws-row-diff ws-mono">
+            {file.additions > 0 && (
+              <span className="text-success">+{file.additions}</span>
+            )}
+            {file.deletions > 0 && (
+              <span className="text-danger">-{file.deletions}</span>
+            )}
+          </span>
+        )}
       </button>
-      <button type="button" className="ws-icon-button" aria-label={t("contextMoreActions")} aria-haspopup="menu" onClick={(event) => menu.openFromAnchor(event.currentTarget)}>
+      <button
+        type="button"
+        className="ws-icon-button"
+        aria-label={t("contextMoreActions")}
+        aria-haspopup="menu"
+        onClick={(event) => menu.openFromAnchor(event.currentTarget)}
+      >
         <MoreHorizontal size={12} />
       </button>
     </div>
   );
 }
 
-function OutputFileRow({ file, onOpen }: {
-  file: { path: string; rootId: string; rootName: string; workspacePath: string; sessionId: string };
+function OutputFileRow({
+  file,
+  onOpen,
+}: {
+  file: {
+    path: string;
+    rootId: string;
+    rootName: string;
+    workspacePath: string;
+    sessionId: string;
+  };
   onOpen: () => void;
 }) {
   const { t } = useLocale();
-  const menu = useContextMenu(() => ({ label: file.path, entries: fileContextEntries({
-    t, path: file.path, workspacePath: file.workspacePath, sessionId: file.sessionId, rootId: file.rootId, onOpen,
-  }) }));
-  return <button type="button" className="ws-row" title={file.path} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
-    <FileTypeIcon path={file.path} size={11} />
-    <span className="ws-row-main">
-      <span className="ws-row-file">{fileName(file.path)}</span>
-      <span className="ws-row-sub">{file.rootName} · {file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : t("workspaceRootDirectory")}</span>
-    </span>
-  </button>;
+  const menu = useContextMenu(() => ({
+    label: file.path,
+    entries: fileContextEntries({
+      t,
+      path: file.path,
+      workspacePath: file.workspacePath,
+      sessionId: file.sessionId,
+      rootId: file.rootId,
+      onOpen,
+    }),
+  }));
+  return (
+    <button
+      type="button"
+      className="ws-row"
+      title={file.path}
+      onClick={onOpen}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
+      aria-haspopup="menu"
+    >
+      <FileTypeIcon path={file.path} size={11} />
+      <span className="ws-row-main">
+        <span className="ws-row-file">{fileName(file.path)}</span>
+        <span className="ws-row-sub">
+          {file.rootName} ·{" "}
+          {file.path.includes("/")
+            ? file.path.slice(0, file.path.lastIndexOf("/"))
+            : t("workspaceRootDirectory")}
+        </span>
+      </span>
+    </button>
+  );
 }
 
-function OutputFiles({ files, onOpen }: {
-  files: Array<{ path: string; rootId: string; rootName: string; workspacePath: string; sessionId: string }>;
+function OutputFiles({
+  files,
+  onOpen,
+}: {
+  files: Array<{
+    path: string;
+    rootId: string;
+    rootName: string;
+    workspacePath: string;
+    sessionId: string;
+  }>;
   onOpen: (file: { path: string; rootId: string; rootName: string }) => void;
 }) {
-  return files.map((file) => <OutputFileRow key={`${file.rootId}:${file.path}`} file={file} onOpen={() => onOpen(file)} />);
+  return files.map((file) => (
+    <OutputFileRow
+      key={`${file.rootId}:${file.path}`}
+      file={file}
+      onOpen={() => onOpen(file)}
+    />
+  ));
 }
 
-function InputSourceRow({ source, rootName, workspacePath, sessionId, rootId, onOpen }: {
+function InputSourceRow({
+  source,
+  rootName,
+  workspacePath,
+  sessionId,
+  rootId,
+  onOpen,
+}: {
   source: SessionEnvironmentInputSource;
   sessionId: string;
   rootId: string;
@@ -1161,12 +1300,35 @@ function InputSourceRow({ source, rootName, workspacePath, sessionId, rootId, on
 }) {
   const { t } = useLocale();
   const label = source.path ? fileName(source.path) : source.label;
-  const menu = useContextMenu(() => ({ label: source.label, entries: sourceContextEntries({
-    t, label: source.label, path: source.kind === "file" ? source.path : undefined,
-    workspacePath: source.kind === "file" ? workspacePath : undefined, sessionId, rootId, onOpen,
-  }) }));
-  return <button type="button" className="ws-row" title={source.label} onClick={onOpen} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} aria-haspopup="menu">
-    <FileTypeIcon path={source.path ?? source.label} size={11} />
-    <span className="ws-row-main ws-row-main--file"><span className="ws-row-file">{label}</span><span className="ws-row-sub">{rootName} · {source.kind}</span></span>
-  </button>;
+  const menu = useContextMenu(() => ({
+    label: source.label,
+    entries: sourceContextEntries({
+      t,
+      label: source.label,
+      path: source.kind === "file" ? source.path : undefined,
+      workspacePath: source.kind === "file" ? workspacePath : undefined,
+      sessionId,
+      rootId,
+      onOpen,
+    }),
+  }));
+  return (
+    <button
+      type="button"
+      className="ws-row"
+      title={source.label}
+      onClick={onOpen}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
+      aria-haspopup="menu"
+    >
+      <FileTypeIcon path={source.path ?? source.label} size={11} />
+      <span className="ws-row-main ws-row-main--file">
+        <span className="ws-row-file">{label}</span>
+        <span className="ws-row-sub">
+          {rootName} · {source.kind}
+        </span>
+      </span>
+    </button>
+  );
 }

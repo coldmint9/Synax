@@ -125,6 +125,7 @@ import {
 import {
   listSessionGitBranches,
   switchSessionGitBranch,
+  createSessionGitBranch,
 } from "../services/agent-runtime/session-git-branches.js";
 import { commitSessionWorkspace } from "../services/agent-runtime/session-git-commit.js";
 import { restoreSessionFile } from "../services/agent-runtime/session-git-files.js";
@@ -1437,6 +1438,23 @@ agentRuntimeRoutes.post(
   },
 );
 
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/git/branches/create",
+  async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const parsed = switchBranchSchema.safeParse(body.data);
+    if (!parsed.success) return validationError(c, parsed.error);
+    try {
+      return c.json(await createSessionGitBranch(
+        c.req.param("sessionId"), parsed.data.branch, parsed.data.rootId,
+      ));
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
   model: z.string().trim().min(1).max(256),
@@ -1486,6 +1504,7 @@ agentRuntimeRoutes.post(
 
 const commitSessionWorkspaceSchema = z.object({
   rootId: z.string().min(1).optional(),
+  branchName: z.string().min(1).max(1024).optional(),
   message: z.string().trim().min(1).max(2000),
   // Absent means "push after committing" so existing senders keep working.
   push: z.boolean().optional(),

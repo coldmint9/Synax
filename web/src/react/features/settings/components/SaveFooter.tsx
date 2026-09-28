@@ -1,4 +1,5 @@
-import { Button, Spinner } from "@/react/components/ui"
+import { Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import { Check, Save } from 'lucide-react'
 import { useLocale } from '../../../../hooks/useLocale'
 
@@ -14,8 +15,8 @@ export function SaveFooter({ saving, saved, error, onSave, saveLabel }: SaveFoot
   const { t } = useLocale()
   return (
     <div className="flex items-center gap-3 pt-4 border-t border-border/30">
-      <Button size="sm" isPending={saving} onPress={onSave}>
-        {({ isPending }) => (
+      <Button size="sm" pending={saving} onClick={onSave}>
+        {({ pending: isPending }) => (
           <>
             {isPending ? <Spinner color="current" size="sm" /> : <Save size={13} />}
             {saveLabel ?? t('commonSave')}

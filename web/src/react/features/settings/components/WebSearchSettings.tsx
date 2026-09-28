@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Button, InputGroup, Switch, TextField } from "@/react/components/ui";
+import { InputGroup, Field as FormField, Input } from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
+import { Switch } from "@/react/components/ui/Toggle";
 import { ExternalLink, Search } from "lucide-react";
 import type {
   GlobalConfig,
@@ -164,18 +166,14 @@ export function WebSearchSettings({
             >
               <Switch
                 size="sm"
-                isSelected={draft.remote.externalWebAccess}
+                checked={draft.remote.externalWebAccess}
                 onChange={(value) =>
                   setDraft((current) => ({
                     ...current,
                     remote: { ...current.remote, externalWebAccess: value },
                   }))
                 }
-              >
-                <Switch.Content><Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control></Switch.Content>
-              </Switch>
+              />
             </FormRow>
             <FormRow label={zh ? "远程搜索上下文" : "Remote search context"}>
               <SettingsSelect
@@ -402,8 +400,8 @@ export function WebSearchSettings({
                   <Button
                     size="sm"
                     variant="secondary"
-                    isDisabled={authorizing}
-                    onPress={connectOAuth}
+                    disabled={authorizing}
+                    onClick={connectOAuth}
                   >
                     <ExternalLink size={13} />
                     {authorizing
@@ -424,8 +422,8 @@ export function WebSearchSettings({
           <Button
             size="sm"
             variant="primary"
-            isDisabled={saving}
-            onPress={() => void save()}
+            disabled={saving}
+            onClick={() => void save()}
           >
             {zh ? "保存网页搜索设置" : "Save web search settings"}
           </Button>
@@ -448,11 +446,11 @@ function Field({
 }) {
   return (
     <FormRow label={label}>
-      <TextField value={value} onChange={onChange}>
+      <FormField>
         <InputGroup>
-          <InputGroup.Input placeholder={placeholder} />
+          <Input placeholder={placeholder} value={value} onChange={(event) => (onChange)(event.currentTarget.value)} />
         </InputGroup>
-      </TextField>
+      </FormField>
     </FormRow>
   );
 }
@@ -465,11 +463,11 @@ function SecretField(props: {
 }) {
   return (
     <FormRow label={props.label}>
-      <TextField type="password" value={props.value} onChange={props.onChange}>
+      <FormField>
         <InputGroup>
-          <InputGroup.Input placeholder={props.placeholder} />
+          <Input placeholder={props.placeholder} type="password" value={props.value} onChange={(event) => (props.onChange)(event.currentTarget.value)} />
         </InputGroup>
-      </TextField>
+      </FormField>
     </FormRow>
   );
 }

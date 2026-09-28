@@ -1,5 +1,7 @@
-import { ChevronDown, Pin } from "lucide-react";
-import { useCallback, useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { SESSION_PAGE_SIZE } from "../../../lib/sessionListPaging";
+import "./sessionListReveal.css";
 import { useLocale } from "../../../hooks/useLocale";
 import { SynaxWordmark } from "./SynaxWordmark";
 import { SessionTreeItem } from "./SessionTreeItem";
@@ -18,9 +20,33 @@ interface Props {
   onSelect: (id: string) => void;
   onToggleGroup: (key: string) => void;
   onToggleExpand: (id: string) => void;
-  onLoadMore: () => void;
+  onLoadMore: () => void | Promise<void>;
   onDelete: (id: string) => void;
   onTogglePin?: (id: string) => Promise<void>;
+}
+
+/** Initial rows do not animate; a newly mounted page expands only once. */
+function SessionListReveal({ reveal, children }: { reveal: boolean; children: ReactNode }) {
+  const [revealing, setRevealing] = useState(reveal);
+  useEffect(() => {
+    if (!revealing) return;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const settle = () => { if (motion.matches) setRevealing(false); };
+    settle();
+    motion.addEventListener("change", settle);
+    return () => motion.removeEventListener("change", settle);
+  }, [revealing]);
+  return (
+    <div
+      className="session-list-reveal"
+      data-revealing={revealing || undefined}
+      onAnimationEnd={(event) => {
+        if (event.target === event.currentTarget) setRevealing(false);
+      }}
+    >
+      <div className="session-list-reveal-content">{children}</div>
+    </div>
+  );
 }
 
 export function SessionTimeGroups({
@@ -42,32 +68,51 @@ export function SessionTimeGroups({
 }: Props) {
   const { locale } = useLocale();
   const groupId = useId();
-  // ponytail: retain mounted rows in batches of 30; window only if profiling shows long-scroll DOM growth matters.
-  const [visibleCount, setVisibleCount] = useState(30);
-  const totalRows = Math.max(
-    0,
-    ...groups
-      .filter((group) => !group.collapsed)
-      .map((group) => group.sessions.length),
-  );
-  const anyExpanded = groups.some((group) => !group.collapsed);
-  const revealMore = useCallback(() => {
-    if (visibleCount < totalRows) setVisibleCount((count) => count + 30);
-    else if (hasMore && !isLoadingMore) onLoadMore();
-  }, [visibleCount, totalRows, hasMore, isLoadingMore, onLoadMore]);
-  const onScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const el = e.currentTarget;
-      if (
-        el.scrollHeight - el.scrollTop - el.clientHeight < 120 &&
-        !isLoadingMore &&
-        anyExpanded
-      ) {
-        revealMore();
-      }
-    },
-    [isLoadingMore, revealMore, anyExpanded],
-  );
+  const listId = `${groupId}-list`;
+  const [visibleCount, setVisibleCount] = useState(SESSION_PAGE_SIZE);
+  const [revealBaseline, setRevealBaseline] = useState<Set<string> | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [pageFailed, setPageFailed] = useState(false);
+  const pageRequested = useRef(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  // One budget across all groups. Only pinned sections can collapse;
+  // keep their rows mounted without hiding ordinary conversations.
+  let remaining = visibleCount;
+  const visibleGroups = groups.map((group) => {
+    const rows = group.sessions.slice(0, remaining);
+    remaining -= rows.length;
+    return { ...group, rows, collapsed: group.key.startsWith("pinned:") && group.collapsed };
+  });
+  const totalRows = groups.reduce((sum, group) => sum + group.sessions.length, 0);
+  const anyExpanded = visibleGroups.some((group) => !group.collapsed);
+  const busy = isLoadingMore || requesting;
+  const canReveal = hasMore || visibleCount < totalRows;
+  const revealMore = async () => {
+    if (pending.current || busy || !canReveal) return;
+    setPageFailed(false);
+    setRevealBaseline(new Set(visibleGroups.flatMap((group) => group.rows.map((node) => node.session.id))));
+    // Base the next batch on actual rows. A failed request must not accumulate
+    // unused page allowances and reveal 40+ rows on a later retry.
+    setVisibleCount(Math.min(visibleCount, totalRows) + SESSION_PAGE_SIZE);
+    if (visibleCount < totalRows) return;
+    pending.current = true;
+    pageRequested.current = true;
+    setRequesting(true);
+    try {
+      await onLoadMore();
+    } catch {
+      if (mounted.current) setPageFailed(true);
+    } finally {
+      pending.current = false;
+      if (mounted.current) setRequesting(false);
+    }
+  };
 
   // Filter out empty groups
   const nonEmptyGroups = groups.filter((g) => g.count > 0);
@@ -101,10 +146,11 @@ export function SessionTimeGroups({
   return (
     <div
       className="session-list-groups flex-1 overflow-y-auto pl-2 pr-0.5 py-1"
-      onScroll={onScroll}
+      id={listId}
+      aria-busy={busy}
     >
-      {groups.map((g, index) => {
-        const rows = g.sessions.slice(0, visibleCount);
+      {visibleGroups.map((g, index) => {
+        const rows = g.rows;
         const contentId = `${groupId}-${g.key}`;
         return (
           <div
@@ -115,7 +161,7 @@ export function SessionTimeGroups({
                 : "session-list-section"
             }
           >
-            {!hideGroupHeaders ? (
+            {!hideGroupHeaders && g.key.startsWith("pinned:") ? (
               <button
                 type="button"
                 className="list-section-label session-list-section-toggle w-full cursor-pointer"
@@ -128,12 +174,14 @@ export function SessionTimeGroups({
                   className="session-list-section-chevron"
                   aria-hidden="true"
                 />
-                {g.key.startsWith("pinned:") && (
-                  <Pin size={12} aria-hidden="true" />
-                )}
                 {g.label}
                 <span className="text-muted-foreground/60">· {g.count}</span>
               </button>
+            ) : !hideGroupHeaders ? (
+              <div className="list-section-label session-list-section-label w-full">
+                {g.label}
+                <span className="text-muted-foreground/60">· {g.count}</span>
+              </div>
             ) : null}
             <div
               id={contentId}
@@ -144,27 +192,26 @@ export function SessionTimeGroups({
             >
               <div className="session-list-section-rows">
                 {rows.map((n) => (
-                  <SessionTreeItem
+                  <SessionListReveal
                     key={n.session.id}
-                    node={n}
-                    isSelected={n.session.id === selectedId}
-                    onSelect={onSelect}
-                    onToggleExpand={onToggleExpand}
-                    onDelete={onDelete}
-                    onTogglePin={onTogglePin}
-                  />
+                    reveal={revealBaseline !== null && !revealBaseline.has(n.session.id)}
+                  >
+                    <SessionTreeItem
+                      node={n}
+                      isSelected={n.session.id === selectedId}
+                      onSelect={onSelect}
+                      onToggleExpand={onToggleExpand}
+                      onDelete={onDelete}
+                      onTogglePin={onTogglePin}
+                    />
+                  </SessionListReveal>
                 ))}
               </div>
             </div>
           </div>
         );
       })}
-      {isLoadingMore && (
-        <div className="py-3 text-center text-[10px] text-muted-foreground animate-pulse">
-          Loading more…
-        </div>
-      )}
-      {error ? (
+      {(error || pageFailed) && !busy ? (
         <div
           role="alert"
           className="p-3 text-center text-xs text-muted-foreground"
@@ -174,19 +221,26 @@ export function SessionTimeGroups({
               ? "加载失败，已保留现有会话"
               : "Loading failed. Existing sessions were kept."}
           </p>
-          <button type="button" onClick={onRetry} className="mt-2 underline">
+          <button
+            type="button"
+            onClick={pageRequested.current ? () => void revealMore() : onRetry}
+            className="mt-2 underline"
+          >
             {locale === "zh" ? "重试" : "Retry"}
           </button>
         </div>
       ) : null}
-      {anyExpanded && (hasMore || visibleCount < totalRows) && (
+      {(anyExpanded || totalRows === 0) && (canReveal || busy) && (
         <button
           type="button"
-          disabled={isLoadingMore}
-          onClick={revealMore}
-          className="w-full py-3 text-xs text-muted-foreground"
+          disabled={busy}
+          onClick={() => void revealMore()}
+          aria-controls={listId}
+          className="session-list-expand-more w-full py-3 text-xs text-muted-foreground"
         >
-          {locale === "zh" ? "加载更多" : "Load more"}
+          {busy
+            ? locale === "zh" ? "正在加载…" : "Loading…"
+            : locale === "zh" ? "展开更多" : "Show more"}
         </button>
       )}
     </div>

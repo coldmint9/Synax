@@ -142,10 +142,13 @@ describe('extension center', () => {
       .setup()
       .click(await screen.findByRole('button', { name: '详情: 读取文件' }))
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('extension-drawer')
-    const wrapper = dialog.closest('[data-slot="drawer-content"]')
-    expect(wrapper).toHaveAttribute('data-placement', 'right')
-    expect(wrapper?.className).not.toContain('max-w-')
+    expect(dialog).toHaveAttribute('data-surface', 'drawer')
+    const viewport = dialog.querySelector('.ui-dialog-viewport')
+    expect(viewport).toHaveClass('fixed', 'inset-0', 'justify-end')
+    expect(viewport?.className).not.toContain('max-w-')
+    const panel = dialog.querySelector('.ui-dialog-panel')
+    expect(panel).toHaveClass('extension-drawer', 'h-full')
+    expect(panel?.parentElement).toHaveClass('max-w-xl')
   })
 
   it('shows local discovery as a market source alongside type filters', async () => {

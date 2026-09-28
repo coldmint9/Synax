@@ -1,0 +1,66 @@
+/* Undo the island's growing/stretching layout without taking precedence over
+   surfaceClassName utilities. The native button still supplies its size/gap. */
+@layer components {
+  .glass-button-surface[data-glass-state] {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: fit-content;
+    height: fit-content;
+    min-width: 0;
+    align-self: auto;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .glass-button.ui-button {
+    flex-grow: 1;
+  }
+}
+
+.glass-button-surface[data-glass-state] {
+  --glass-blur: 8px;
+  border-radius: var(--radius-lg, var(--radius, 0.625rem));
+}
+
+.glass-button-surface[data-glass-state].liquid-glass-surface--strong {
+  --glass-blur: 10px;
+}
+
+.glass-button-surface--primary[data-glass-state] {
+  --glass-border: color-mix(in srgb, var(--ui-accent, currentColor) 32%, transparent);
+}
+
+.glass-button-surface--danger[data-glass-state],
+.glass-button-surface--danger-soft[data-glass-state] {
+  --glass-border: hsl(var(--destructive) / 0.28);
+}
+
+/* Remove just the floating shadow through its token. The renderer keeps its
+   inset rim and remains free to remove all shadows in forced-colors mode. */
+.glass-button-surface > .liquid-glass-backdrop {
+  --ui-shadow-floating: 0 0 0 0 transparent;
+}
+
+/* display:contents does not make border-radius inherit automatically. */
+.glass-button-surface > .liquid-glass-content {
+  border-radius: inherit;
+}
+
+/* An opaque primary face would cover the SVG/GPU rim behind this button.
+   Preserve Button's outline focus ring, sizing, disabled and pending states. */
+.glass-button.ui-button {
+  border-color: transparent;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ui-text, var(--foreground));
+  box-shadow: none;
+}
+
+.glass-button--danger.ui-button,
+.glass-button--danger-soft.ui-button {
+  color: hsl(var(--destructive));
+}

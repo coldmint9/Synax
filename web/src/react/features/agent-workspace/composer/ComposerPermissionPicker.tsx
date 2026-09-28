@@ -1,7 +1,12 @@
-import { useRef, useState } from "react";
-import { ListBox, Popover } from "@/react/components/ui";
+import { useEffect, useRef, useState } from "react";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOptions,
+  ListboxOption,
+} from "@headlessui/react";
 import "../agentControls.css";
-import { ChevronDown, LoaderCircle, Shield } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, Shield } from "lucide-react";
 import { useLocale } from "../../../../hooks/useLocale";
 import { SYNAX_PERMISSION_TIER_LABELS } from "../synaxSessionTypes";
 import type { SynaxPermissionTier } from "./composerTypes";
@@ -23,6 +28,14 @@ export function ComposerPermissionPicker({
   backendId,
 }: Props) {
   const { locale, t } = useLocale();
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const previousScope = useRef({ sessionId, disabled });
+  useEffect(() => {
+    if (previousScope.current.sessionId !== sessionId || previousScope.current.disabled !== disabled) {
+      optionsRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    }
+    previousScope.current = { sessionId, disabled };
+  }, [sessionId, disabled]);
   const zh = locale === "zh";
   const scope = useRef({ sessionId });
   if (scope.current.sessionId !== sessionId) scope.current = { sessionId };
@@ -31,7 +44,6 @@ export function ComposerPermissionPicker({
     pending: boolean;
     error: string | null;
   }>({ scope: scope.current, pending: false, error: null });
-  const [openScope, setOpenScope] = useState<typeof scope.current | null>(null);
   const pending = state.scope === scope.current && state.pending;
   const error = state.scope === scope.current ? state.error : null;
   if (backendId === "codex" || backendId === "claude-code") {
@@ -51,14 +63,29 @@ export function ComposerPermissionPicker({
   const description = `${t(SYNAX_PERMISSION_TIER_LABELS[value].descKey as Parameters<typeof t>[0])} · ${zh ? "下一步生效" : "Applies from the next step"}`;
   return (
     <div className="relative">
-      <Popover
-        isOpen={!disabled && !pending && openScope === scope.current}
-        onOpenChange={(open) =>
-          setOpenScope(open && !disabled && !pending ? scope.current : null)
-        }
+      <Listbox
+        value={value}
+        disabled={disabled || pending}
+        onChange={async (tier) => {
+          if (disabled || pending || tier === value) return;
+          const requestScope = scope.current;
+          setState({ scope: requestScope, pending: true, error: null });
+          try {
+            await onChange(tier);
+          } catch (err) {
+            if (scope.current === requestScope)
+              setState({
+                scope: requestScope,
+                pending: false,
+                error: err instanceof Error ? err.message : String(err),
+              });
+          } finally {
+            if (scope.current === requestScope)
+              setState((previous) => ({ ...previous, pending: false }));
+          }
+        }}
       >
-        <Popover.Trigger<"button">
-          render={(props) => <button {...props} type="button" />}
+        <ListboxButton
           aria-label={zh ? "审批模式" : "Approval mode"}
           aria-description={description}
           disabled={disabled || pending}
@@ -83,75 +110,49 @@ export function ComposerPermissionPicker({
             )}
           </span>
           <ChevronDown size={10} aria-hidden />
-        </Popover.Trigger>
-        <Popover.Content
-          placement="top start"
-          offset={8}
-          className="agent-mode-popover agent-workflow-popover"
+        </ListboxButton>
+        <ListboxOptions
+          ref={optionsRef}
+          anchor={{ to: "top start", gap: 8, padding: 8 }}
+          portal
+          modal={false}
+          aria-label={zh ? "审批模式" : "Approval mode"}
+          className="agent-mode-popover agent-workflow-popover ui-select-options z-[1200] max-h-80 overflow-y-auto rounded-xl border border-border bg-card p-1 text-card-foreground shadow-lg outline-none"
         >
-          <ListBox
-            autoFocus
-            aria-label={zh ? "审批模式" : "Approval mode"}
-            selectionMode="single"
-            disallowEmptySelection
-            selectedKeys={new Set([value])}
-            onSelectionChange={async (keys) => {
-              if (disabled || pending || keys === "all") return;
-              const tier = ORDER.find((item) => keys.has(item));
-              if (!tier) return;
-              setOpenScope(null);
-              if (tier === value) return;
-              const requestScope = scope.current;
-              setState({ scope: requestScope, pending: true, error: null });
-              try {
-                await onChange(tier);
-              } catch (err) {
-                if (scope.current === requestScope)
-                  setState({
-                    scope: requestScope,
-                    pending: false,
-                    error: err instanceof Error ? err.message : String(err),
-                  });
-              } finally {
-                if (scope.current === requestScope)
-                  setState((previous) => ({ ...previous, pending: false }));
-              }
-            }}
-          >
-            {ORDER.map((tier) => (
-              <ListBox.Item
-                key={tier}
-                id={tier}
-                textValue={t(
-                  SYNAX_PERMISSION_TIER_LABELS[tier].titleKey as Parameters<
-                    typeof t
-                  >[0],
-                )}
-                className="agent-mode-option agent-mode-option--workflow"
-              >
-                <Shield size={17} aria-hidden />
-                <span className="agent-mode-option-copy">
-                  <strong>
-                    {t(
-                      SYNAX_PERMISSION_TIER_LABELS[tier].titleKey as Parameters<
-                        typeof t
-                      >[0],
-                    )}
-                  </strong>
-                  <small>
-                    {t(
-                      SYNAX_PERMISSION_TIER_LABELS[tier].descKey as Parameters<
-                        typeof t
-                      >[0],
-                    )}
-                  </small>
-                </span>
-                <ListBox.ItemIndicator />
-              </ListBox.Item>
-            ))}
-          </ListBox>
-        </Popover.Content>
-      </Popover>
+          {ORDER.map((tier) => (
+            <ListboxOption
+              key={tier}
+              value={tier}
+              className="agent-mode-option agent-mode-option--workflow flex cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-2 text-xs outline-none data-focus:bg-muted data-selected:bg-primary/10"
+            >
+              {({ selected }) => (
+                <>
+                  <Shield size={17} aria-hidden />
+                  <span className="agent-mode-option-copy">
+                    <strong>
+                      {t(
+                        SYNAX_PERMISSION_TIER_LABELS[tier]
+                          .titleKey as Parameters<typeof t>[0],
+                      )}
+                    </strong>
+                    <small>
+                      {t(
+                        SYNAX_PERMISSION_TIER_LABELS[tier]
+                          .descKey as Parameters<typeof t>[0],
+                      )}
+                    </small>
+                  </span>
+                  <Check
+                    size={14}
+                    aria-hidden
+                    className={selected ? "shrink-0" : "invisible shrink-0"}
+                  />
+                </>
+              )}
+            </ListboxOption>
+          ))}
+        </ListboxOptions>
+      </Listbox>
       {error && (
         <span
           role="alert"

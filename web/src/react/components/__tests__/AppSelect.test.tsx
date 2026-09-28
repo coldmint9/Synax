@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppSelect } from "../AppSelect";
 
-it("uses the Synax UI Select anatomy and changes a single value", async () => {
+it("opens an accessible listbox and changes a single value", async () => {
   const onChange = vi.fn();
   const user = userEvent.setup();
-  const { container } = render(
+  render(
     <AppSelect
       aria-label="Language"
       value="zh"
@@ -19,10 +19,9 @@ it("uses the Synax UI Select anatomy and changes a single value", async () => {
   );
 
   const trigger = screen.getByRole("button", { name: /Language/ });
-  expect(trigger).toHaveAttribute("data-slot", "select-trigger");
-  expect(
-    container.querySelector('[data-slot="select-default-indicator"]'),
-  ).not.toBeNull();
+  expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveTextContent("中文");
   await user.click(trigger);
   await user.click(await screen.findByRole("option", { name: "English" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("en");

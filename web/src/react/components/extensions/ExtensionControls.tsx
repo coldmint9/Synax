@@ -1,4 +1,5 @@
-import { Button, Dropdown, Switch } from "@/react/components/ui"
+import { Menu, MenuButton, MenuItems, MenuAction } from "@/react/components/ui/Menu";
+import { Switch } from "@/react/components/ui/Toggle";
 import { MoreHorizontal } from 'lucide-react'
 import { useLocale } from '../../../hooks/useLocale'
 
@@ -32,49 +33,20 @@ export function ExtensionControls({
       </span>
       <Switch
         size="md"
-        isSelected={enabled}
-        isDisabled={busy}
+        checked={enabled}
+        disabled={busy}
         onChange={onToggle}
         aria-label={t('extensionToggle', { name })}
-      >
-        <Switch.Content>
-          <Switch.Control>
-            <Switch.Thumb />
-          </Switch.Control>
-        </Switch.Content>
-      </Switch>
+      />
       {actions.length > 0 ? (
-        <Dropdown>
-          <Button
-            size="sm"
-            variant="ghost"
-            isIconOnly
-            isDisabled={busy}
-            aria-label={t('extensionActions', { name })}
-          >
+        <Menu>
+          <MenuButton className="size-7 text-muted-foreground hover:bg-muted" disabled={busy} aria-label={t('extensionActions', { name })}>
             <MoreHorizontal size={16} />
-          </Button>
-          <Dropdown.Popover placement="bottom end">
-            <Dropdown.Menu
-              aria-label={t('extensionActions', { name })}
-              onAction={(key) =>
-                actions.find((action) => action.id === key)?.onAction()
-              }
-            >
-              {actions.map((action) => (
-                <Dropdown.Item
-                  key={action.id}
-                  id={action.id}
-                  textValue={action.label}
-                  isDisabled={action.disabled}
-                  className={action.danger ? 'text-danger' : undefined}
-                >
-                  {action.label}
-                </Dropdown.Item>
-              ))}
-            </Dropdown.Menu>
-          </Dropdown.Popover>
-        </Dropdown>
+          </MenuButton>
+          <MenuItems aria-label={t('extensionActions', { name })}>
+            {actions.map(action => <MenuAction key={action.id} disabled={action.disabled} danger={action.danger} onClick={action.onAction}>{action.label}</MenuAction>)}
+          </MenuItems>
+        </Menu>
       ) : (
         <span aria-hidden="true" className="size-8" />
       )}

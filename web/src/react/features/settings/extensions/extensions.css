@@ -104,7 +104,7 @@
   width: 140px;
   flex-shrink: 0;
 }
-.extension-filter .select__trigger {
+.extension-filter [aria-haspopup="listbox"] {
   min-height: 36px;
   height: 36px;
   border-radius: 8px;

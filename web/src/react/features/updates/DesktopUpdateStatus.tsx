@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { createPortal } from "react-dom";
-import { Button, Spinner } from "@/react/components/ui";
+import { Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import { ChevronDown, ChevronUp, Download, RotateCw } from "lucide-react";
 import { useLocale } from "../../../hooks/useLocale";
 import { useDesktopUpdate } from "./DesktopUpdateProvider";
@@ -130,8 +131,8 @@ export function DesktopUpdateStatus({
             type="button"
             size="sm"
             variant="primary"
-            isDisabled={requesting}
-            onPress={() => void install()}
+            disabled={requesting}
+            onClick={() => void install()}
           >
             <RotateCw size={14} />
             {zh ? "安装并重启" : "Install and restart"}
@@ -141,8 +142,8 @@ export function DesktopUpdateStatus({
             type="button"
             size="sm"
             variant="secondary"
-            isDisabled={busy || requesting}
-            onPress={() => void check()}
+            disabled={busy || requesting}
+            onClick={() => void check()}
           >
             <RotateCw size={14} />
             {phase === "error"

@@ -1,49 +1,22 @@
-/* Native titlebar islands must not float over modal surfaces. Keep the
-   library's overlay level so nested select menus retain their portal order. */
-body:has(.modal__backdrop, .drawer__backdrop, .dialog-overlay) .workbench-header {
-  z-index: 30;
-}
-/* A dialog's available space is the viewport, never the size of its form.
-   Keep the heading/actions visible while long forms scroll between them. */
-.modal__backdrop {
-  z-index: 50;
+/* Dialogs own the modal layer; native-titlebar islands stay below it. */
+body:has(.ui-dialog-root, .dialog-overlay) .workbench-header { z-index: 30; }
+
+/* The available space is the viewport, never the form's intrinsic height. */
+.ui-dialog-viewport {
   height: min(100dvh, var(--visual-viewport-height, 100dvh));
 }
-.modal__backdrop > .modal__container {
-  height: 100%;
-  max-height: 100%;
-  min-height: 0;
-  max-width: 100%;
+.ui-dialog-root[data-surface="dialog"] .ui-dialog-viewport {
   padding: max(12px, env(safe-area-inset-top))
     max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
     max(12px, env(safe-area-inset-left));
 }
-.modal__container > .modal__dialog {
-  min-height: 0;
-  min-width: 0;
-  max-height: 100%;
+.ui-dialog-container { min-height: 0; max-height: 100%; }
+.ui-dialog-panel {
   overflow-y: auto;
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
 }
-.modal__dialog > .modal__body {
-  min-height: 0;
-  min-width: 0;
-}
-.modal__dialog > :is(.modal__header, .modal__footer) {
-  flex-shrink: 0;
-  min-width: 0;
-}
-.modal__dialog .modal__footer {
-  flex-wrap: wrap;
-}
-.modal__dialog:has(> .modal__close-trigger) > .modal__header {
-  padding-right: 28px;
-}
-.modal__dialog :is(fieldset, .text-field, .input-group) {
-  min-width: 0;
-  max-width: 100%;
-}
+.ui-dialog-panel :is(fieldset, .ui-field) { min-width: 0; max-width: 100%; }
 
 .dialog-content {
   width: min(26rem, 100%);
@@ -109,13 +82,13 @@ body > .dialog-overlay > .dialog-content {
 }
 
 @media (max-width: 480px) {
-  .modal__container > .modal__dialog {
+  .ui-dialog-panel {
     padding: 16px;
   }
-  .modal__dialog > .modal__body {
+  .ui-dialog-panel > .ui-dialog-body {
     padding-inline: 3px;
   }
-  .modal__footer > :is(span, div) {
+  .ui-dialog-footer > :is(span, div) {
     min-width: 0;
     max-width: 100%;
   }
@@ -126,10 +99,10 @@ body > .dialog-overlay > .dialog-content {
 /* With very little height, allow the entire form to scroll instead of letting
    fixed headers/footers squeeze the form's scroll area down to zero. */
 @media (max-height: 420px) {
-  .modal__container > .modal__dialog:not(.work-details-dialog) {
+  .ui-dialog-panel:not(.work-details-dialog) {
     display: block;
   }
-  .modal__dialog:not(.work-details-dialog) > .modal__body {
+  .ui-dialog-panel:not(.work-details-dialog) > .ui-dialog-body {
     overflow: visible;
     max-height: none;
   }

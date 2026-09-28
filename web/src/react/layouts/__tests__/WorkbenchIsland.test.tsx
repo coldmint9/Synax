@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { StrictMode, useEffect, useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WorkbenchIsland,
@@ -7,6 +8,12 @@ import {
   WorkbenchIslandSlot,
 } from "../WorkbenchIsland";
 
+
+const motion = vi.hoisted(() => ({ kill: vi.fn(), fromTo: vi.fn() }));
+vi.mock("../../design/motion", () => ({
+  loadMotion: async () => ({ fromTo: motion.fromTo.mockImplementation(() => ({ kill: motion.kill })) }),
+  reducedMotion: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+}));
 const mounted = vi.fn();
 function Controls({ compact }: { compact: boolean }) {
   const [count, setCount] = useState(0);
@@ -16,6 +23,7 @@ function Controls({ compact }: { compact: boolean }) {
   return (
     <div className="wh-pill" data-compact={compact}>
       <button onClick={() => setCount(count + 1)}>Menu {count}</button>
+      <input aria-label="Island search" defaultValue="Search draft" />
     </div>
   );
 }
@@ -34,6 +42,7 @@ function Workbench({
         {(compact) => <Controls compact={compact} />}
       </WorkbenchIsland>
       <main>
+        <button>Outside the island</button>
         <WorkbenchIslandSlot placement="conversation" />
         {viewer && (
           <header>
@@ -75,6 +84,39 @@ describe("WorkbenchIsland", () => {
     expect(pill.isConnected).toBe(false);
   });
 
+  it("restores the actual focused descendant with preventScroll in both directions", () => {
+    const { rerender } = render(<Workbench />);
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Island search" });
+    input.focus();
+    input.setSelectionRange(1, 4, "backward");
+    const focus = vi.spyOn(input, "focus");
+    const menuFocus = vi.spyOn(screen.getByRole("button", { name: "Menu 0" }), "focus");
+    for (const viewer of [true, false]) {
+      rerender(<Workbench viewer={viewer} />);
+      expect(screen.getByRole("textbox", { name: "Island search" })).toBe(input);
+      expect(input).toHaveFocus();
+      expect(input).toHaveValue("Search draft");
+      expect([input.selectionStart, input.selectionEnd, input.selectionDirection]).toEqual([1, 4, "backward"]);
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      focus.mockClear();
+    }
+    expect(menuFocus).not.toHaveBeenCalled();
+  });
+
+  it("never steals unrelated focus when the island is reparented", () => {
+    const { rerender } = render(<Workbench />);
+    const button = screen.getByRole("button", { name: "Menu 0" });
+    const outside = screen.getByRole("button", { name: "Outside the island" });
+    button.focus();
+    outside.focus();
+    const focus = vi.spyOn(button, "focus");
+    rerender(<Workbench viewer />);
+    expect(outside).toHaveFocus();
+    rerender(<Workbench />);
+    expect(outside).toHaveFocus();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it("takes the header out of an inactive cached viewer on another route", () => {
     const { container, rerender } = render(<Workbench viewer />);
     const button = screen.getByRole("button", { name: "Menu 0" });
@@ -105,9 +147,9 @@ describe("WorkbenchIsland", () => {
     expect(screen.getAllByRole("button", { name: "Menu 0" })).toHaveLength(1);
   });
 
-  it("measures before labels collapse, animates only the island, and honors reduced motion", () => {
-    const cancel = vi.fn();
-    const animate = vi.fn(() => ({ cancel }) as unknown as Animation);
+  it("measures before labels collapse, animates only the island with GSAP, and honors reduced motion", async () => {
+    motion.kill.mockClear();
+    motion.fromTo.mockClear();
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         const compact = this.dataset.compact === "true";
@@ -126,22 +168,20 @@ describe("WorkbenchIsland", () => {
     );
     vi.stubGlobal("matchMedia", () => ({ matches: false }));
     const { container, rerender } = render(<Workbench />);
-    container.querySelector<HTMLElement>(".wh-pill")!.animate = animate;
-    rerender(<Workbench viewer />);
-    expect(animate).toHaveBeenCalledWith(
-      [
-        { transform: "translate(220px, 0px) scale(2, 1.2)" },
-        { transform: "none" },
-      ],
-      expect.objectContaining({ duration: 280 }),
+    await act(async () => { rerender(<Workbench viewer />); });
+    expect(motion.fromTo).toHaveBeenCalledWith(
+      container.querySelector(".wh-pill"),
+      expect.objectContaining({ x: 220, y: 0, scaleX: 2, scaleY: 1.2 }),
+      expect.objectContaining({ x: 0, y: 0, duration: .24, clearProps: "transform,transformOrigin" }),
     );
+    const cancelledBeforeUnchangedRender = motion.kill.mock.calls.length;
     rerender(<Workbench viewer />);
-    expect(cancel).not.toHaveBeenCalled();
-    animate.mockClear();
+    expect(motion.kill).toHaveBeenCalledTimes(cancelledBeforeUnchangedRender);
+    motion.fromTo.mockClear();
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     rerender(<Workbench />);
-    expect(animate).not.toHaveBeenCalled();
-    expect(cancel).toHaveBeenCalled();
+    expect(motion.fromTo).not.toHaveBeenCalled();
+    expect(motion.kill).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

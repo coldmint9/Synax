@@ -124,3 +124,54 @@
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
+
+/* Island's flat material architecture, with a tinted blur for pop readability. */
+.message-fork-pop.ui-menu-items {
+  width: max-content;
+  min-width: 176px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+.message-fork-material.liquid-glass-surface[data-glass-state] {
+  --fork-ink: #18221c;
+  --glass-base: rgb(255 255 255 / .94);
+  --glass-transparent: rgb(255 255 255 / .78);
+  --glass-blur: 18px;
+  --fork-shadow: 0 8px 24px rgb(25 35 30 / .12), 0 2px 6px rgb(25 35 30 / .06);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border-radius: inherit;
+}
+.message-fork-material.liquid-glass-surface[data-glass-state][data-glass-theme="dark"] {
+  --glass-base: rgb(0 0 0 / .94);
+  --glass-transparent: rgb(0 0 0 / .66);
+  --fork-shadow: 0 8px 24px rgb(0 0 0 / .3), 0 2px 6px rgb(0 0 0 / .16);
+  --fork-ink: #f4f8f3;
+}
+.message-fork-material.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+  box-shadow: var(--fork-shadow);
+}
+.message-fork-material .ui-menu-action {
+  min-height: 34px;
+  border: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--fork-ink);
+  text-shadow: none;
+}
+.message-fork-material .ui-menu-action[data-focus] {
+  background: var(--ui-panel);
+  box-shadow: 0 2px 6px rgb(0 0 0 / .1);
+}
+@media (forced-colors: active) {
+  .message-fork-material.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop { box-shadow: none; }
+  .message-fork-material .ui-menu-action { color: CanvasText; text-shadow: none; }
+  .message-fork-material .ui-menu-action[data-focus] { outline: 1px solid Highlight; }
+}

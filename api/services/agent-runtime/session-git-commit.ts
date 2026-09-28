@@ -1,4 +1,5 @@
 import path from "node:path";
+import { attachDetachedGitBranch, GitWorkspaceError } from "../git-workspaces.js";
 import { logger } from "../../lib/logger.js";
 import {
   invalidateSessionEnvironment,
@@ -22,6 +23,8 @@ const MAX_COMMIT_MESSAGE_LEN = 200;
 
 export interface SessionGitCommitInput {
   rootId?: string;
+  /** Name a branch at a detached session worktree's HEAD before committing. */
+  branchName?: string;
   /** Explicit, reviewed commit message; empty messages are rejected. */
   message?: string | null;
   /** Defaults to `true`. `false` commits locally without touching the remote. */
@@ -126,7 +129,7 @@ export function normalizeCommitMessage(raw: string): string {
 }
 
 /**
- * Commit everything in the session workspace on its current branch.
+ * Commit everything in the session workspace, attaching a branch first when detached.
  *
  * Explicit user action from the workspace panel: the commit message is either
  * explicitly supplied by the user after optional separate generation.
@@ -166,12 +169,17 @@ export async function commitSessionWorkspace(
     throw new AgentValidationError(
       "The selected project must be a Git repository root.",
     );
-  const branch = (
+  let branch = (
     await runGit(workspacePath, ["branch", "--show-current"])
   ).stdout.trim();
-  if (!branch) {
+  if (!branch && !input.branchName) {
     throw new AgentValidationError(
-      "Cannot commit: the workspace is in a detached HEAD state.",
+      "Name a branch before committing from a detached worktree.",
+    );
+  }
+  if (branch && input.branchName && input.branchName !== branch) {
+    throw new AgentValidationError(
+      "The requested branch does not match this worktree's current branch.",
     );
   }
 
@@ -205,6 +213,17 @@ export async function commitSessionWorkspace(
       "GIT_COMMIT_MESSAGE_MISSING",
       422,
     );
+  }
+
+  if (!branch) {
+    try {
+      branch = await attachDetachedGitBranch(rootLocation, input.branchName!);
+      invalidateSessionEnvironment(sessionId);
+    } catch (error) {
+      if (error instanceof GitWorkspaceError)
+        throw new AgentRuntimeError(error.message, "GIT_BRANCH_ERROR", error.status);
+      throw error;
+    }
   }
 
   await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u"]);

@@ -298,3 +298,58 @@ describe('session workspace Git roots', () => {
     expect(await getSessionEnvironment(sessionId)).toMatchObject({ headCommitSha: after.head, dirty: false, changedFiles: [] })
   })
 })
+
+describe('detached session commit', () => {
+  it('requires a branch name before committing, then attaches at HEAD and preserves edits', async () => {
+    git(primary, 'switch', '--detach')
+    expect((await getSessionEnvironment(sessionId)).repositories.find(root => root.rootId === primary.id)?.branch).toBe('HEAD')
+    const before = git(primary, 'rev-parse', 'HEAD').trim()
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'test: detached', push: false }))
+      .rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+    expect(git(primary, 'branch', '--show-current').trim()).toBe('')
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: detached', branchName: 'topic/new-session', push: false,
+    })
+    expect(result.branch).toBe('topic/new-session')
+    expect(git(primary, 'branch', '--show-current').trim()).toBe('topic/new-session')
+    expect(result.commitSha).not.toBe(before)
+    expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('primary working\n')
+    expect(git(reference, 'branch', '--show-current').trim()).toBe('main')
+  }, 20_000)
+
+  it('creates the branch before push and publishes that branch, never a detached HEAD', async () => {
+    git(primary, 'switch', '--detach')
+    const remote = path.join(fixtureDirectory, 'remote.git')
+    execFileSync('git', ['init', '--bare', remote], { cwd: fixtureDirectory })
+    git(primary, 'remote', 'add', 'origin', remote)
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: push detached', branchName: 'topic/push-session',
+    })
+    expect(result).toMatchObject({ branch: 'topic/push-session', pushed: true, upstream: 'origin/topic/push-session' })
+    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/topic/push-session'], { encoding: 'utf8' }).trim()).toBe(result.commitSha)
+  }, 20_000)
+})
+
+describe('detached branch creation retry', () => {
+  it('does not create a branch for an invalid commit, and retries safely after a failed hook', async () => {
+    git(primary, 'switch', '--detach')
+    await expect(commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: '', branchName: 'topic/retry', push: false,
+    })).rejects.toMatchObject({ code: 'GIT_COMMIT_MESSAGE_MISSING' })
+    expect(git(primary, 'branch', '--show-current').trim()).toBe('')
+
+    const hooks = path.join(fixtureDirectory, 'hooks')
+    fs.mkdirSync(hooks)
+    fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    git(primary, 'config', 'core.hooksPath', hooks)
+    await expect(commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: retry', branchName: 'topic/retry', push: false,
+    })).rejects.toMatchObject({ code: 'GIT_COMMIT_FAILED' })
+    expect(git(primary, 'branch', '--show-current').trim()).toBe('topic/retry')
+    git(primary, 'config', '--unset', 'core.hooksPath')
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: retry', branchName: 'topic/retry', push: false,
+    })
+    expect(result.branch).toBe('topic/retry')
+  }, 20_000)
+})

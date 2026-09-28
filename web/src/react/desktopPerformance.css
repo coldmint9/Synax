@@ -34,7 +34,7 @@ html.electron {
     .session-file-island-pill,
     .session-nav-preview,
     .settings-section__body,
-    .modal__dialog,
+    .ui-dialog-panel,
     .popover
   ) {
   background: hsl(var(--card)) !important;

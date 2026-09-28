@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render as testingRender } from "@testing-library/react";
+import { fireEvent, screen, render as testingRender } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ContextMenuProvider } from "../../../components/context-menu/ContextMenuProvider";
 
@@ -218,7 +218,7 @@ describe("SessionTreeItem", () => {
     );
     fireEvent.click(container.querySelector(".session-list-expand")!);
     fireEvent.click(container.querySelector(".session-list-delete")!);
-    fireEvent.click(document.querySelector('[role="menuitem"][data-key="archive"]')!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "归档" }));
     expect(onToggleExpand).toHaveBeenCalledWith("sess-1");
     expect(onDelete).toHaveBeenCalledWith("sess-1");
     expect(onSelect).not.toHaveBeenCalled();

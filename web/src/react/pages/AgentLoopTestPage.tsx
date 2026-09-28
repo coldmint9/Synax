@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, RefreshCw, Send, X } from "lucide-react";
-import { Button, Card, Chip, ScrollShadow, Spinner } from "@/react/components/ui";
+import { Card, Badge, ScrollArea, Spinner } from "@/react/components/ui/Display";
+import { Button } from "@/react/components/ui/Button";
 import {
   agentRuntimeApi,
   type AgentSession,
@@ -192,11 +193,11 @@ export default function AgentLoopTestPage() {
             variant="outline"
             size="sm"
             className="mt-6 w-full"
-            onPress={() => {
+            onClick={() => {
               void refreshSessionData();
               void sessionStore.refreshDetail();
             }}
-            isDisabled={!sessionIdRef.current}
+            disabled={!sessionIdRef.current}
           >
             <RefreshCw size={14} />
             Refresh
@@ -263,20 +264,20 @@ export default function AgentLoopTestPage() {
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
-                            onPress={() =>
+                            onClick={() =>
                               void replyPermission(permission.id, "once")
                             }
-                            isDisabled={approvingId === permission.id}
+                            disabled={approvingId === permission.id}
                           >
                             <Check size={13} /> Allow
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
-                            onPress={() =>
+                            onClick={() =>
                               void replyPermission(permission.id, "reject")
                             }
-                            isDisabled={approvingId === permission.id}
+                            disabled={approvingId === permission.id}
                           >
                             <X size={13} /> Reject
                           </Button>
@@ -322,7 +323,7 @@ export default function AgentLoopTestPage() {
             {/* Events sidebar */}
             <aside className="hidden min-h-0 overflow-auto bg-card/50 p-4 lg:block">
               <h3 className="text-sm font-semibold mb-3">Runtime Events</h3>
-              <ScrollShadow className="flex-1">
+              <ScrollArea className="flex-1">
                 {events.length === 0 ? (
                   <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
                     No events yet.
@@ -340,13 +341,13 @@ export default function AgentLoopTestPage() {
                         >
                           <div className="px-3 py-2">
                             <div className="flex items-center justify-between gap-2">
-                              <Chip
+                              <Badge
                                 size="sm"
                                 variant="soft"
                                 className="text-[9px] h-4"
                               >
                                 {event.type}
-                              </Chip>
+                              </Badge>
                               <span className="shrink-0 text-[10px] text-muted-foreground">
                                 {formatTime(event.timestamp)}
                               </span>
@@ -359,7 +360,7 @@ export default function AgentLoopTestPage() {
                       ))}
                   </div>
                 )}
-              </ScrollShadow>
+              </ScrollArea>
             </aside>
           </div>
         </main>

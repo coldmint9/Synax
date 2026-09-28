@@ -1,5 +1,16 @@
-import { useMemo, useState } from "react";
-import { Popover, useOverlayState } from "@/react/components/ui";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxOptions,
+  ComboboxOption,
+} from "@headlessui/react";
+import {
+  Popover,
+  PopoverButton,
+  PopoverPanel,
+} from "@/react/components/ui/Popover";
+import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
 import type {
   GlobalConfig,
   ProviderDef,
@@ -12,9 +23,6 @@ import {
   type AgentModelSelection,
 } from "./modelSelection";
 import { useAcpDiscovery } from "./useAcpDiscovery";
-
-/** Above this many options the list gets a search field. */
-const LARGE_LIST_THRESHOLD = 40;
 
 interface Props {
   backendId?: string;
@@ -39,36 +47,17 @@ function matchesQuery(
   );
 }
 
-/** Provider names live in group headings; each option only displays its model. */
-function ModelOption({
-  option,
-  selected,
-  onPick,
-}: {
-  option: AgentModelSelection;
-  selected: boolean;
-  onPick: () => void;
-}) {
+export function ComposerModelPicker(props: Props) {
   return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={selected}
-      onClick={onPick}
-      className={`flex w-full items-center gap-2 rounded-item px-2.5 py-1.5 text-left transition-colors ${
-        selected
-          ? "bg-primary/10 text-primary"
-          : "text-foreground/80 hover:bg-secondary/60"
-      }`}
-    >
-      <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
-        {option.label}
-      </span>
-    </button>
+    <Popover>
+      {({ open, close }) => (
+        <ModelPickerContent {...props} open={open} close={close} />
+      )}
+    </Popover>
   );
 }
 
-export function ComposerModelPicker({
+function ModelPickerContent({
   backendId,
   globalConfig,
   providers,
@@ -77,14 +66,19 @@ export function ComposerModelPicker({
   onSelect,
   disabled,
   onOverlayOpenChange,
-}: Props) {
+  open,
+  close,
+}: Props & { open: boolean; close: () => void }) {
   const { t } = useLocale();
-  const state = useOverlayState({
-    onOpenChange: onOverlayOpenChange,
-  });
+  useEffect(() => {
+    if (disabled && open) close();
+  }, [disabled, open, close]);
   const [searchQuery, setSearchQuery] = useState("");
   // Only probe ACP when the picker opens — keep session select off the critical path.
-  const acpDiscovery = useAcpDiscovery({ enabled: state.isOpen });
+  const acpDiscovery = useAcpDiscovery({ enabled: open });
+  useEffect(() => {
+    if (!open) setSearchQuery("");
+  }, [open]);
 
   const { apiModels, acpEndpoints } = useMemo(() => {
     const options = buildAgentModelOptions(
@@ -105,14 +99,12 @@ export function ComposerModelPicker({
     () => [...apiModels, ...acpEndpoints],
     [apiModels, acpEndpoints],
   );
-  const showSearch = allOptions.length > LARGE_LIST_THRESHOLD;
 
   const selected = useMemo(
     () => findAgentModelSelection(apiModels, acpEndpoints, providerId, modelId),
     [apiModels, acpEndpoints, providerId, modelId],
   );
 
-  const currentKey = selected ? selectionKey(selected) : null;
   const selectedProviderLabel = providerId
     ? (providers.find((provider) => provider.id === providerId)?.label ??
       providerId)
@@ -148,76 +140,92 @@ export function ComposerModelPicker({
   function handlePick(option: AgentModelSelection) {
     onSelect(option);
     setSearchQuery("");
-    state.close();
+    close();
   }
 
   const triggerDisabled = Boolean(disabled);
 
   return (
-    <Popover
-      isOpen={triggerDisabled ? false : state.isOpen}
-      onOpenChange={(open) => {
-        if (triggerDisabled) return;
-        state.setOpen(open);
-        if (!open) setSearchQuery("");
-      }}
-    >
-      <Popover.Trigger
+    <>
+      <OverlayStateObserver open={open} onOpenChange={onOverlayOpenChange} />
+      <PopoverButton
         aria-label={t("agentModelSelect")}
-        aria-disabled={triggerDisabled}
+        disabled={triggerDisabled}
         title={triggerLabel}
         className={`button button--sm button--tertiary agent-dock-composer-chip agent-model-picker-trigger inline-flex h-7 max-w-[18rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? " pointer-events-none opacity-50" : ""}`}
       >
         <span className="truncate">{triggerLabel}</span>
-      </Popover.Trigger>
-      <Popover.Content
-        placement="top end"
-        offset={8}
+      </PopoverButton>
+      <PopoverPanel
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
+        focus
+        anchor={{ to: "top end", gap: 8, padding: 8 }}
         className="z-50 w-[20rem] overflow-hidden p-0"
       >
-        {showSearch && (
+        <Combobox
+          value={selected ?? null}
+          by={(a, b) =>
+            a === b || Boolean(a && b && selectionKey(a) === selectionKey(b))
+          }
+          onChange={(option) => {
+            if (option) handlePick(option);
+          }}
+          immediate
+          disabled={disabled}
+        >
           <div className="border-b border-border/30 p-1.5">
-            <input
+            <ComboboxInput
               autoFocus
-              value={searchQuery}
+              aria-label={t("agentModelSearch")}
+              displayValue={() => searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t("agentModelSearch")}
               className="h-7 w-full rounded-item bg-muted/40 px-2 text-[11px] outline-none placeholder:text-muted-foreground/50"
             />
           </div>
-        )}
-        <div
-          role="listbox"
-          aria-label={t("agentModelSelect")}
-          className="max-h-64 overflow-y-auto p-1.5"
-        >
-          {groups.map((group) => (
-            <div
-              key={group.id}
-              role="group"
-              aria-label={group.label}
-              className="mb-1 last:mb-0"
-            >
-              <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
-                {group.label}
+          <ComboboxOptions
+            modal={false}
+            static
+            aria-label={t("agentModelSelect")}
+            className="max-h-64 overflow-y-auto p-1.5"
+          >
+            {groups.map((group) => (
+              <div
+                key={group.id}
+                role="group"
+                aria-label={group.label}
+                className="mb-1 last:mb-0"
+              >
+                <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+                  {group.label}
+                </div>
+                {group.options.map((option) => (
+                  <ComboboxOption
+                    key={selectionKey(option)}
+                    value={option}
+                    className="flex w-full cursor-default items-center gap-2 rounded-item px-2.5 py-1.5 text-left text-foreground/80 outline-none transition-colors data-focus:bg-secondary/60 data-selected:bg-primary/10 data-selected:text-primary"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
+                      {option.label}
+                    </span>
+                  </ComboboxOption>
+                ))}
               </div>
-              {group.options.map((option) => (
-                <ModelOption
-                  key={selectionKey(option)}
-                  option={option}
-                  selected={currentKey === selectionKey(option)}
-                  onPick={() => handlePick(option)}
-                />
-              ))}
-            </div>
-          ))}
-          {groups.length === 0 && (
-            <p className="px-2 py-3 text-center text-[10px] text-muted-foreground/50">
-              {query ? t("agentModelNoMatch") : t("agentModelEmpty")}
-            </p>
-          )}
-        </div>
-      </Popover.Content>
-    </Popover>
+            ))}
+            {groups.length === 0 && (
+              <p className="px-2 py-3 text-center text-[10px] text-muted-foreground/50">
+                {query ? t("agentModelNoMatch") : t("agentModelEmpty")}
+              </p>
+            )}
+          </ComboboxOptions>
+        </Combobox>
+      </PopoverPanel>
+    </>
   );
 }

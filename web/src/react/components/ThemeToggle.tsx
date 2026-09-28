@@ -1,3 +1,4 @@
+import { Tooltip } from "./ui/Tooltip";
 import { Moon, Sun } from "lucide-react";
 import { useShellStore } from "../state/shellStore";
 import { useLocale } from "../../hooks/useLocale";
@@ -16,14 +17,13 @@ export function ThemeToggle() {
         ? "Switch to light mode"
         : "Switch to dark mode";
   return (
-    <button
+    <Tooltip content={label}><button
       type="button"
       className="wh-btn"
-      title={label}
       aria-label={label}
       onClick={() => setTheme(dark ? "light" : "dark")}
     >
       {dark ? <Sun size={15} /> : <Moon size={15} />}
-    </button>
+    </button></Tooltip>
   );
 }
