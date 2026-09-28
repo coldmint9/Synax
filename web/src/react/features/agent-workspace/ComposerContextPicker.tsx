@@ -97,7 +97,7 @@ function ContextPickerContent({
   const attachmentInput = useRef<HTMLInputElement>(null);
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
   const unified = Boolean(onAttachFiles || hasModes);
-  const selectedMode = mode === "plan" ? "chat" : mode;
+  const selectedMode = mode === "plan" || mode === "plan_node" ? "chat" : mode;
   const modeOptions = [
     { id: "chat", label: zh ? "对话" : "Chat", Icon: MessageCircle },
     { id: "goal", label: zh ? "目标" : "Goal", Icon: Target },
