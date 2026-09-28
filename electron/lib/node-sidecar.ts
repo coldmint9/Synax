@@ -6,11 +6,24 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { getDataRoot, getResourcePath } from "./data-paths.js";
 import { resolveDesktopPath } from "./desktop-path.js";
+import type { CuaRuntimeConnection } from "./cua-runtime.js";
 
 const require = createRequire(import.meta.url);
 let sidecar: UtilityProcess | ChildProcess | null = null;
 let assignedPort = 0;
 let starting: Promise<number> | null = null;
+let cuaConnection: CuaRuntimeConnection | null = null;
+export function setSidecarCuaConnection(connection: CuaRuntimeConnection | null): void {
+  cuaConnection = connection;
+  if (sidecar && assignedPort) sendCuaConnection(sidecar);
+}
+function sendCuaConnection(child: UtilityProcess | ChildProcess): void {
+  const message = { type: 'synax:cua-connection', connection: cuaConnection
+    ? { generation: cuaConnection.generation, ...cuaConnection.mcp } : null };
+  if ('postMessage' in child && typeof child.postMessage === 'function') child.postMessage(message);
+  else if ('send' in child && typeof child.send === 'function') child.send(message);
+}
+
 
 export function getSidecarPort(): number {
   return assignedPort;
@@ -49,7 +62,7 @@ async function launchSidecar(): Promise<number> {
         {
           cwd: app.getAppPath(),
           env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["ignore", "pipe", "pipe", "ipc"],
         },
       );
   sidecar = child;
@@ -85,6 +98,7 @@ async function launchSidecar(): Promise<number> {
       });
     });
     assignedPort = port;
+    sendCuaConnection(child);
     return port;
   } catch (error) {
     stopSidecar();
@@ -102,4 +116,18 @@ export function stopSidecar(): void {
   sidecar = null;
   assignedPort = 0;
   child?.kill();
+}
+
+/** Wait asynchronously for the sidecar to close MCP clients before stopping Cua. */
+export async function stopSidecarGracefully(): Promise<void> {
+  const child = sidecar;
+  if (!child) return;
+  setSidecarCuaConnection(null);
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => { child.kill(); resolve(); }, 3_000);
+    timer.unref?.();
+    (child as EventEmitter).once('exit', () => { clearTimeout(timer); resolve(); });
+    child.kill();
+  });
+  stopSidecar();
 }

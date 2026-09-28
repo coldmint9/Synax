@@ -130,14 +130,14 @@ export async function recoverRuntime(
         !embedded &&
         !session.parentSessionId;
       if (recoverableCheckpoint) {
-        agentRuntimeStore.updateRun(run.id, {
+        agentRuntimeStore.updateRun(checkpointRun.id, {
           status: checkpoint.status,
           completedAt: null,
           stopReason: null,
         });
         agentRuntimeStore.updateSession(session.id, {
           status: checkpoint.status,
-          activeRunId: run.id,
+          activeRunId: checkpointRun.id,
           pendingResumeToken: checkpoint.pendingResumeToken,
           blockedReason: checkpoint.blockedReason,
           resultSummary: null,
@@ -157,12 +157,12 @@ export async function recoverRuntime(
             .prepare(
               "SELECT p.id FROM agent_runtime_permissions p JOIN agent_runtime_tool_calls t ON t.id=p.tool_call_id WHERE p.run_id=? AND p.user_reply IS NOT NULL AND t.status='pending' LIMIT 1",
             )
-            .get(run.id);
+            .get(checkpointRun.id);
           const answeredInput = db
             .prepare(
               "SELECT id FROM agent_runtime_interactions WHERE run_id=? AND consumed_at IS NULL AND response_json IS NOT NULL LIMIT 1",
             )
-            .get(run.id);
+            .get(checkpointRun.id);
           if (answeredPermission || answeredInput) resumable.push(session.id);
         }
         continue;

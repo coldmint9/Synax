@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
+import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
 import {
@@ -20,6 +21,7 @@ const config: ForgeConfig = {
       ensureDmgNative();
     },
     prePackage: async (_config, platform, arch) => {
+      await stageCuaDriver(platform, arch);
       if (platform !== process.platform || arch !== process.arch) {
         throw new Error(
           `Native dependencies must be built on ${platform}/${arch}; use the matching desktop CI runner, not ${process.platform}/${process.arch}.`,
@@ -40,7 +42,7 @@ const config: ForgeConfig = {
     win32metadata: windowsMetadata(),
     appBundleId: "com.Synax.desktop",
     icon,
-    asar: true,
+    asar: { unpack: "**/*.{node,dylib,dll,so}" },
     extraResource: [
       "./server-dist",
       "./web/dist",

@@ -57,6 +57,9 @@ if (process.isMainFrame)
     showSaveDialog: (options: Electron.SaveDialogOptions) =>
       ipcRenderer.invoke("dialog:save", options),
     getAppVersion: () => ipcRenderer.invoke("app:version"),
+    getComputerUseStatus: () => ipcRenderer.invoke("app:computer-use-status"),
+    openComputerUsePermissions: (kind: 'accessibility' | 'screen-recording') =>
+      ipcRenderer.invoke("app:computer-use-open-permissions", kind),
     getUpdateNetworkSettings: () => ipcRenderer.invoke("updates:get-network"),
     getDesktopUpdateState: () => ipcRenderer.invoke("updates:state"),
     checkDesktopUpdate: () => ipcRenderer.invoke("updates:check"),

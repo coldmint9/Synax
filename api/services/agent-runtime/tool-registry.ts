@@ -62,6 +62,7 @@ import { sessionHooks } from "./session-hooks.js";
 import { logger } from "../../lib/logger.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { mcpSessionToolProvider } from "../mcp/mcp-session-tool-provider.js";
+import { jevSessionToolProvider } from "../computer-use/jev-tool-provider.js";
 import { INVALID_TOOL, INVALID_TOOL_ID } from "./tool-invalid.js";
 import { diffReadTool } from "./tools/diff-read.js";
 import { fileListTool } from "./tools/file-list.js";
@@ -154,6 +155,7 @@ export class ToolRegistry {
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
     this.registerProvider(mcpSessionToolProvider);
+    this.registerProvider(jevSessionToolProvider);
     this.registerProvider(customToolProvider);
     this.register({
       id: "subagent.delegate",

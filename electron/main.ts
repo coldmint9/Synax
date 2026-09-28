@@ -19,7 +19,8 @@ import path from "node:path";
 import { nativeTemplate, parseContextMenu, resolveRevealTarget, textContextTemplate } from "./lib/context-menu.js";
 import { copyFileToSystemClipboard } from "./lib/file-clipboard.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { startSidecar, stopSidecar } from "./lib/node-sidecar.js";
+import { startSidecar, stopSidecarGracefully, setSidecarCuaConnection } from "./lib/node-sidecar.js";
+import { CuaRuntimeManager } from "./lib/cua-runtime.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
 import {
@@ -60,6 +61,7 @@ let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
 let updateSettings: UpdateSettingsStore;
+const cuaRuntime = new CuaRuntimeManager(setSidecarCuaConnection);
 let uiReadyTimer: NodeJS.Timeout | null = null;
 const terminalAccessibilitySupportEnabled = (
   systemEnabled = app.accessibilitySupportEnabled,
@@ -315,6 +317,17 @@ function registerIPC(): void {
       throw new Error("Desktop updates are unavailable in this build");
     await desktopUpdates.install();
   });
+  ipcMain.handle("app:computer-use-status", (event) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted Computer Use status request");
+    return cuaRuntime.status();
+  });
+  ipcMain.handle("app:computer-use-open-permissions", async (event, kind: unknown) => {
+    if (!trustedNotificationSender(event) || process.platform !== 'darwin')
+      throw new Error('Untrusted Computer Use permissions request');
+    if (kind !== 'accessibility' && kind !== 'screen-recording') throw new Error('Invalid permission type');
+    const setting = kind === 'accessibility' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture';
+    await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${setting}`);
+  });
   ipcMain.handle("app:accessibility-support-enabled", () =>
     terminalAccessibilitySupportEnabled(),
   );
@@ -475,6 +488,10 @@ async function bootstrap(): Promise<void> {
   // Paint the shell before waiting for the backend. The renderer requests the
   // actual bound port over IPC and owns the retryable connection gate.
   mainWindow = createWindow();
+  // Never hold up the first paint, menu, or API sidecar for an optional desktop runtime.
+  mainWindow.webContents.once("did-finish-load", () => {
+    setImmediate(() => { void cuaRuntime.start(); });
+  });
 
   if (isDev) {
     const webPort = process.env.WEB_PORT || "5173";
@@ -538,8 +555,20 @@ app.on("activate", () => {
   }
 });
 
-app.on("before-quit", () => {
+let exiting = false;
+let cleanupComplete = false;
+app.on("before-quit", (event) => {
+  if (cleanupComplete) return;
+  event.preventDefault();
+  if (exiting) return;
+  exiting = true;
   sessionNotifications.dispose();
   desktopUpdates?.stop();
-  stopSidecar();
+  void (async () => {
+    try {
+      await stopSidecarGracefully();
+      await cuaRuntime.stop();
+    } catch (error) { console.error('[cua] shutdown failed', error); }
+    finally { cleanupComplete = true; app.quit(); }
+  })();
 });
