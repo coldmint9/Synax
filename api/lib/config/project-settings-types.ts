@@ -1,3 +1,4 @@
+import { DEFAULT_COMPUTER_USE_SETTINGS, type ComputerUseSettings } from '../../services/computer-use/strategy.js';
 import type { McpServerConfig, ProviderConnection } from './config-types.js'
 
 export type ProjectVisibility = 'private' | 'internal' | 'public'
@@ -57,6 +58,7 @@ export interface ProjectSettings {
   basics: ProjectBasics
   provider: ProjectProviderOverride
   mcpServers: McpServerConfig[]
+  computerUse: ComputerUseSettings
   collaboration: CollaborationSettings
   notifications: NotificationSettings
   compliance: ComplianceSettings
@@ -69,12 +71,13 @@ export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
   mcpServers?: McpServerConfig[]
+  computerUse?: Partial<ComputerUseSettings>
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>
   compliance?: Partial<ComplianceSettings>
 }
 
-export type ProjectSettingsSection = 'basics' | 'provider' | 'mcp' | 'collaboration' | 'notifications' | 'compliance'
+export type ProjectSettingsSection = 'basics' | 'provider' | 'computerUse' | 'mcp' | 'collaboration' | 'notifications' | 'compliance'
 
 export interface HighRiskAuthEnvelope {
   confirmPhrase: string
@@ -97,6 +100,7 @@ export function createDefaultProjectSettings(projectId: string, updatedBy = 'sys
     },
     provider: {},
     mcpServers: [],
+    computerUse: DEFAULT_COMPUTER_USE_SETTINGS,
     collaboration: {
       agentsAllowDirectCommit: false,
       reviewPolicy: {

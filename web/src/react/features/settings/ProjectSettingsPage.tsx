@@ -12,6 +12,7 @@ import { SettingsCard } from "./components/SettingsCard";
 import { GitWorktreesSection } from "./components/GitWorktreesSection";
 import { ProjectReferencesSection } from "./components/ProjectReferencesSection";
 import { ProjectToolGrantsSection } from "./components/ProjectToolGrantsSection";
+import { ComputerUseSettings } from "./components/ComputerUseSettings";
 
 function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
   const { t } = useLocale();
@@ -54,7 +55,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
   const { settings, loading, error, reload, patchSection } =
     useProjectSettings(projectId);
   const { globalConfig, providers } = useConfig(projectId);
-  const { t } = useLocale();
+  const { t, locale: useShellLocale } = useLocale();
   const [params, setParams] = useSearchParams();
   const selected = params.get('section') ?? 'skill';
   const section: SettingsSection = ['general', 'tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'skill';
@@ -118,6 +119,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
           </div>
 
           <div className="space-y-8">
+            <ComputerUseSettings value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
             <ProjectToolGrantsSection projectId={projectId} />
             <ProjectReferencesSection projectId={projectId} />
             <ProviderTab

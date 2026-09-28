@@ -51,12 +51,20 @@ export interface ComplianceSettings {
   piiMasking: boolean
 }
 
+export interface ComputerUseSettings {
+  enabled: boolean
+  strategy: 'auto' | 'direct' | 'jev'
+  jev?: { enabled: boolean; fallback: 'direct' | 'fail_closed'; providerId?: string; model?: string }
+  perception: 'disabled' | 'auto' | 'required'
+}
+
 export interface ProjectSettings {
   projectId: string
   version: number
   basics: ProjectBasics
   provider: ProjectProviderOverride
   mcpServers: McpServerConfig[]
+  computerUse: ComputerUseSettings
   collaboration: CollaborationSettings
   notifications: NotificationSettings
   compliance: ComplianceSettings
@@ -69,6 +77,7 @@ export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
   mcpServers?: McpServerConfig[]
+  computerUse?: Partial<ComputerUseSettings>
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>
   compliance?: Partial<ComplianceSettings>
