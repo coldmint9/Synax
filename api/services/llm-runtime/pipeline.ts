@@ -37,6 +37,7 @@ import {
 } from "./thinking-mode-strategy.js";
 import { buildProtocolProviderOptions } from "./protocol-options.js";
 import { mergeProviderOptions } from "./custom-api-compat.js";
+import { createHash } from "node:crypto";
 
 const THINKING_DISABLED_PURPOSES = new Set([
   "session-title",
@@ -136,6 +137,27 @@ export async function executePipeline(
       request.projectId,
     ),
   };
+  if (
+    selection.apiFormat === "openai-responses" &&
+    selection.provider.npm !== "@ai-sdk/open-responses" &&
+    request.hookContext?.sessionId &&
+    !request.responseOptions?.promptCacheKey
+  ) {
+    const identity = [
+      "synax-prompt-cache-v1",
+      selection.providerId,
+      selection.modelId,
+      request.projectId ?? "global",
+      request.hookContext.sessionId,
+    ].join("\0");
+    request = {
+      ...request,
+      responseOptions: {
+        ...request.responseOptions,
+        promptCacheKey: `synax:v1:${createHash("sha256").update(identity).digest("hex").slice(0, 40)}`,
+      },
+    };
+  }
   // Apply once to the complete request, including tools; all dispatch paths share the same budget.
   const cached = applyPromptCachePolicy(
     mode.kind === "object"
@@ -248,6 +270,7 @@ export async function executePipeline(
         enableCache,
         callOptions,
         selection.apiFormat === "openai-responses",
+        selection.apiFormat === "openai-responses",
         abortSignal,
       );
     case "text":
@@ -257,6 +280,7 @@ export async function executePipeline(
         callbacks,
         enableCache,
         callOptions,
+        selection.apiFormat === "openai-responses",
         abortSignal,
       );
     case "object":
@@ -266,6 +290,7 @@ export async function executePipeline(
         mode.schema,
         callbacks,
         callOptions,
+        selection.apiFormat === "openai-responses",
         abortSignal,
       );
   }
@@ -279,9 +304,12 @@ function dispatchStream(
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
   includeRawChunks: boolean,
+  moveRuntimeRemindersToInput: boolean,
   abortSignal?: AbortSignal,
 ): GatewayStreamResult {
-  const { system, messages } = toModelPrompt(request.messages, enableCache);
+  const { system, messages } = toModelPrompt(request.messages, enableCache, {
+    moveRuntimeRemindersToInput,
+  });
   return streamText({
     model,
     system,
@@ -307,9 +335,12 @@ function dispatchText(
   callbacks: ReturnType<typeof buildHookCallbacks>,
   enableCache: boolean | undefined,
   thinkingStream: ThinkingStreamOptions,
+  moveRuntimeRemindersToInput: boolean,
   abortSignal?: AbortSignal,
 ) {
-  const { system, messages } = toModelPrompt(request.messages, enableCache);
+  const { system, messages } = toModelPrompt(request.messages, enableCache, {
+    moveRuntimeRemindersToInput,
+  });
   return generateText({
     maxRetries: 0,
     model,
@@ -330,10 +361,13 @@ function dispatchObject(
   schema: ZodType<unknown>,
   callbacks: ReturnType<typeof buildHookCallbacks>,
   thinkingStream: ThinkingStreamOptions,
+  moveRuntimeRemindersToInput: boolean,
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(
     ensureJsonObjectResponseFormatInstruction(request.messages),
+    undefined,
+    { moveRuntimeRemindersToInput },
   );
   return generateText({
     maxRetries: 0,

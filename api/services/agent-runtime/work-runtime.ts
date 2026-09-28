@@ -388,9 +388,20 @@ class WorkRuntime {
         : 'Finish this turn with a concise answer describing delivered results, actual checks, and any unverified or remaining work. Checks may use normal execution tools. No structured acceptance or automatic continuation is required.';
     }
     const proof = this.calls(work).filter(successfulEvidence);
+    const objective = resolveSessionUserRequest(session, work.objective);
+    // The original user request is already present in the conversation history.
+    // Repeating a large request (for example a pasted source file) in every
+    // runtime reminder both inflates local token accounting and invalidates
+    // provider prompt-cache prefixes. Keep a bounded preview plus identity.
+    const preview = (value: string, limit = 2_400) =>
+      value.length <= limit
+        ? value
+        : `${value.slice(0, limit)}\n[…full content is in the original conversation message…]`;
     const snapshot = {
-      id: work.id, status: work.status, objective: resolveSessionUserRequest(session, work.objective),
-      ...(work.requirements.length > 1 ? { requirements: work.requirements.map(r => ({ ...r, text: resolveSessionUserRequest(session, r.text) })) } : {}),
+      id: work.id, status: work.status,
+      objective: preview(objective),
+      objectiveHash: digest(objective),
+      ...(work.requirements.length > 1 ? { requirements: work.requirements.map(r => ({ ...r, text: preview(resolveSessionUserRequest(session, r.text)) })) } : {}),
       ...(work.planRevision ? { planRevision: work.planRevision, acceptanceCriteria: work.acceptanceCriteria } : {}),
       ...(work.remaining.length ? { remaining: work.remaining } : {}),
       ...(work.nextAction ? { nextAction: work.nextAction, expectedEvidence: work.expectedEvidence } : {}),
