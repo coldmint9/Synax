@@ -78,21 +78,26 @@ describe("AppearanceSection", () => {
   it("selects a preset and restores the Synax accent without changing mode", () => {
     render(<AppearanceSection />);
     const reset = screen.getByRole("button", { name: "Reset accent color" });
+    const resetTheme = screen.getByRole("button", { name: "Reset theme" });
     expect(reset).toBeDisabled();
+    expect(resetTheme).toBeDisabled();
     // The old option role was invalid inside a radiogroup; test actual radio semantics.
     const swatch = screen.getByRole("radio", { name: "Iris" });
     fireEvent.click(swatch);
     expect(swatch).toBeChecked();
+    expect(resetTheme).toBeEnabled();
     expect(useThemeStore.getState().activeTheme.colors.light.accent).toBe(
       "#b1a2c9",
     );
     expect(screen.getByText("#B1A2C9")).toBeInTheDocument();
     fireEvent.click(reset);
+    fireEvent.click(resetTheme);
     expect(useThemeStore.getState()).toMatchObject({
       mode: "system",
       activeTheme: { colors: { light: { accent: DEFAULT_ACCENT } } },
     });
     expect(reset).toBeDisabled();
+    expect(resetTheme).toBeDisabled();
   });
 
   it("supports radio arrow navigation with one tab stop, correct roles and all three persisted modes", async () => {
@@ -211,6 +216,94 @@ describe("AppearanceSection", () => {
     });
   });
 
+  it("uses the resolved mode accent without flattening imported light and dark accents", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    await user.upload(
+      screen.getByLabelText("Import theme JSON file"),
+      new File(
+        [
+          JSON.stringify({
+            version: 1,
+            id: "mist-blue",
+            name: "Mist Blue",
+            colors: {
+              light: { accent: "#98aecb" },
+              dark: { accent: "#b1a2c9" },
+            },
+          }),
+        ],
+        "mist.json",
+        { type: "application/json" },
+      ),
+    );
+
+    expect(useThemeStore.getState().activeTheme.colors).toMatchObject({
+      light: { accent: "#98aecb" },
+      dark: { accent: "#b1a2c9" },
+    });
+    expect(screen.getByText("#B1A2C9")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Light" }));
+    expect(screen.getByText("#98AECB")).toBeInTheDocument();
+  });
+
+  it("reports localized errors for unreadable, malformed, invalid, and unsupported theme files", async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+    const input = screen.getByLabelText("Import theme JSON file");
+
+    const unreadable = new File(["{}"], "unreadable.json", { type: "application/json" });
+    Object.defineProperty(unreadable, "text", {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(new Error("read failed")),
+    });
+    await user.upload(input, unreadable);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not read the theme file. Please try again.",
+    );
+
+    await user.upload(
+      input,
+      new File(["{bad"], "malformed.json", { type: "application/json" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The theme file contains invalid JSON.",
+    );
+
+    await user.upload(
+      input,
+      new File(
+        [
+          JSON.stringify({
+            version: 1,
+            id: "invalid",
+            name: "Invalid",
+            colors: { light: { accent: "var(--unsafe)" } },
+          }),
+        ],
+        "invalid.json",
+        { type: "application/json" },
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The theme file has an invalid Synax theme format.",
+    );
+
+    await user.upload(
+      input,
+      new File(
+        [JSON.stringify({ version: 2, id: "future", name: "Future" })],
+        "future.json",
+        { type: "application/json" },
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This theme version is not supported. Choose a compatible Synax theme file.",
+    );
+  });
+
   it("rejects invalid imports with an alert and leaves the active theme unchanged", async () => {
     const user = userEvent.setup();
     render(<AppearanceSection />);
@@ -222,13 +315,13 @@ describe("AppearanceSection", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Import failed. Choose a valid Synax theme JSON file.",
+      "The theme file contains invalid JSON.",
     );
     expect(useThemeStore.getState().activeTheme).toBe(before.activeTheme);
     expect(useThemeStore.getState().source).toBe(before.source);
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       type: "error",
-      message: "Import failed. Choose a valid Synax theme JSON file.",
+      message: "The theme file contains invalid JSON.",
     });
   });
 
@@ -300,11 +393,11 @@ describe("AppearanceSection", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "导入失败，请选择有效的 Synax 主题 JSON 文件。",
+      "主题文件包含无效的 JSON。",
     );
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       type: "error",
-      message: "导入失败，请选择有效的 Synax 主题 JSON 文件。",
+      message: "主题文件包含无效的 JSON。",
     });
   });
 

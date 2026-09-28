@@ -13,7 +13,12 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ChangeEvent } from "react";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../../lib/appearance";
-import { downloadThemeFile } from "../../../../lib/theme/io";
+import { DEFAULT_THEME } from "../../../../lib/theme/defaults";
+import { themeToExport } from "../../../../lib/theme/normalize";
+import {
+  downloadThemeFile,
+  getThemeImportErrorKind,
+} from "../../../../lib/theme/io";
 import {
   ensureThemeRuntime,
   exportActiveTheme,
@@ -32,6 +37,33 @@ type AppearanceFeedback = {
   message: string;
 };
 
+function themesEquivalent(first: typeof DEFAULT_THEME, second: typeof DEFAULT_THEME): boolean {
+  return JSON.stringify(themeToExport(first)) === JSON.stringify(themeToExport(second));
+}
+
+function importErrorMessage(error: Error, zh: boolean): string {
+  switch (getThemeImportErrorKind(error)) {
+    case "file-read":
+      return zh ? "无法读取主题文件，请重试。" : "Could not read the theme file. Please try again.";
+    case "json-syntax":
+      return zh ? "主题文件包含无效的 JSON。" : "The theme file contains invalid JSON.";
+    case "schema-invalid":
+      return zh
+        ? "主题文件格式无效，请选择有效的 Synax 主题文件。"
+        : "The theme file has an invalid Synax theme format.";
+    case "unsupported-version":
+      return zh
+        ? "不支持的主题版本，请使用兼容的 Synax 主题文件。"
+        : "This theme version is not supported. Choose a compatible Synax theme file.";
+    case "file-too-large":
+      return zh ? "主题文件过大。" : "The theme file is too large.";
+    default:
+      return zh
+        ? "导入失败，请选择有效的 Synax 主题 JSON 文件。"
+        : "Import failed. Choose a valid Synax theme JSON file.";
+  }
+}
+
 export function AppearanceSection() {
   const { locale } = useLocale();
   const zh = locale === "zh";
@@ -39,7 +71,7 @@ export function AppearanceSection() {
   const resolved = useThemeStore((s) => s.resolvedTheme);
   const activeTheme = useThemeStore((s) => s.activeTheme);
   const source = useThemeStore((s) => s.source);
-  const accent = activeTheme.colors.light.accent;
+  const accent = activeTheme.colors[resolved].accent;
   const setMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccentColor);
   const resetTheme = useThemeStore((s) => s.resetTheme);
@@ -49,6 +81,8 @@ export function AppearanceSection() {
   const colorName = preset ? preset[locale] : zh ? "自定义" : "Custom";
   const themeSource =
     source === "imported" ? (zh ? "已导入" : "Imported") : zh ? "内置" : "Built-in";
+  const resetDisabled =
+    source === "builtin" && themesEquivalent(activeTheme, DEFAULT_THEME);
   const modes = [
     { id: "light", label: zh ? "浅色" : "Light", Icon: Sun },
     { id: "dark", label: zh ? "深色" : "Dark", Icon: Moon },
@@ -78,12 +112,7 @@ export function AppearanceSection() {
     try {
       const result = await importThemeFile(file);
       if (!result.ok) {
-        announce(
-          "error",
-          zh
-            ? "导入失败，请选择有效的 Synax 主题 JSON 文件。"
-            : "Import failed. Choose a valid Synax theme JSON file.",
-        );
+        announce("error", importErrorMessage(result.error, zh));
         return;
       }
       ensureThemeRuntime();
@@ -177,7 +206,12 @@ export function AppearanceSection() {
             <Download size={14} aria-hidden="true" />
             <span>{zh ? "导出主题" : "Export theme"}</span>
           </button>
-          <button type="button" className="appearance-action" onClick={handleReset}>
+          <button
+            type="button"
+            className="appearance-action"
+            disabled={resetDisabled}
+            onClick={handleReset}
+          >
             <RotateCcw size={14} aria-hidden="true" />
             <span>{zh ? "恢复默认" : "Reset theme"}</span>
           </button>
