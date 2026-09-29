@@ -57,3 +57,31 @@ it('recovers observation tools on the next warm-up after a late connection or re
     }
   } finally { mcpClientManager.closeAll(); setRuntimeCuaConnection(null); }
 }, 20_000);
+
+
+it('hides Cua and Jev tools when globally disabled and restores them when enabled', async () => {
+  const { resetAgentRuntimeFixtures } = await import('../agent-runtime/__tests__/agent-runtime-fixtures.js');
+  const { agentSessionRuntime } = await import('../agent-runtime/session-runtime.js');
+  const { updateGlobalConfig } = await import('../../lib/config/config-store.js');
+  const { updateProjectSettings } = await import('../../lib/config/project-settings-store.js');
+  const { mcpSessionToolProvider, warmupMcpForSession } = await import('../mcp/mcp-session-tool-provider.js');
+  const { jevSessionToolProvider } = await import('./jev-tool-provider.js');
+  const { mcpClientManager } = await import('../mcp/mcp-client-manager.js');
+  const { setRuntimeCuaConnection } = await import('../mcp/runtime-cua-config.js');
+  resetAgentRuntimeFixtures();
+  const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
+  updateGlobalConfig({ computerUse: { enabled: true, strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
+  setRuntimeCuaConnection({ generation: 'toggle', command: process.execPath, args: [fixture], environment: [] });
+  const ids = () => [...mcpSessionToolProvider.getTools(session.id), ...jevSessionToolProvider.getTools(session.id)].map(tool => tool.id);
+  try {
+    await warmupMcpForSession(session.id);
+    expect(ids()).toEqual(expect.arrayContaining(['mcp.builtin-cua-driver.list_windows', 'computer.use']));
+    updateGlobalConfig({ computerUse: { enabled: false } }, 'test');
+    expect(ids()).toEqual([]);
+    updateGlobalConfig({ computerUse: { enabled: true } }, 'test');
+    await warmupMcpForSession(session.id);
+    expect(ids()).toEqual(expect.arrayContaining(['mcp.builtin-cua-driver.list_windows', 'computer.use']));
+    updateProjectSettings(session.projectId, { computerUse: { enabled: false } }, 'test');
+    expect(ids()).toEqual([]);
+  } finally { mcpClientManager.closeAll(); setRuntimeCuaConnection(null); }
+}, 20_000);

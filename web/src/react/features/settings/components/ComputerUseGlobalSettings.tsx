@@ -9,6 +9,7 @@ import type {
 } from '../../../../lib/contracts/config'
 import {
   openComputerUsePermission,
+  useComputerUsePermissions,
   useComputerUseStatus,
 } from '../useComputerUseStatus'
 
@@ -41,6 +42,7 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
   const current = value ?? DEFAULT
   const jev: Jev = current.jev ?? {}
   const status = useComputerUseStatus()
+  const { permissions, refresh: refreshPermissions } = useComputerUsePermissions()
   const statusView = driverStatus(status?.state, zh)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,6 +73,14 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
       label: `${jev.providerId} (${zh ? '当前不可用' : 'unavailable'})`,
     })
   const permissionIssue = status?.error?.includes('Accessibility and Screen Recording')
+  const isMac = permissions?.platform === 'darwin'
+  const modernScreenName = (permissions?.macOSMajorVersion ?? 0) >= 26
+  const permissionRows = [
+    { key: 'accessibility' as const, label: zh ? '辅助功能' : 'Accessibility', target: 'accessibility' as const },
+    { key: 'screenRecording' as const, label: modernScreenName
+      ? (zh ? '屏幕与系统音频录制' : 'Screen & System Audio Recording')
+      : (zh ? '屏幕录制' : 'Screen Recording'), target: 'screen-recording' as const },
+  ]
 
   return (
     <SettingsCard
@@ -106,6 +116,41 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
             </div>
           </div>
         ) : null}
+
+        <section className="computer-use-panel" aria-labelledby="computer-use-permissions-heading">
+          <div className="computer-use-panel__header">
+            <div className="computer-use-panel__title-row">
+              <ShieldCheck size={16} aria-hidden="true" />
+              <h3 id="computer-use-permissions-heading">{zh ? '桌面权限' : 'Desktop permissions'}</h3>
+            </div>
+            <p>{isMac
+              ? (zh
+                ? `路径：系统设置 → 隐私与安全性${modernScreenName ? '；macOS 26 及以后请使用“屏幕与系统音频录制”。' : '。'}`
+                : `System Settings → Privacy & Security${modernScreenName ? '; macOS 26+ uses “Screen & System Audio Recording”.' : '.'}`)
+              : (zh ? '仅 macOS 桌面应用支持检测。' : 'Detection is available in the macOS desktop app.')}</p>
+          </div>
+          <div className="space-y-2" role="list">
+            {permissionRows.map(row => {
+              const value = permissions?.[row.key] ?? null
+              const tone = !isMac || !permissions ? 'muted' : value === true ? 'ready' : value === false ? 'danger' : 'muted'
+              const text = !isMac || !permissions ? (zh ? '无法检测' : 'Unavailable') : value === true ? (zh ? '已允许' : 'Allowed') : value === false ? (zh ? '缺少权限' : 'Missing') : (zh ? '无法检测' : 'Unavailable')
+              return (
+                <div key={row.key} className="computer-use-overview" role="listitem">
+                  <div className="computer-use-overview__copy">
+                    <div className="computer-use-overview__topline">
+                      <span className="computer-use-overview__eyebrow">{row.label}</span>
+                      <span className={`computer-use-status computer-use-status--${tone}`}><span className="computer-use-status__dot" aria-hidden="true" />{text}</span>
+                    </div>
+                  </div>
+                  {isMac ? <button type="button" className="computer-use-button computer-use-button--secondary" onClick={() => openComputerUsePermission(row.target)}>{zh ? '打开设置' : 'Open Settings'}</button> : null}
+                </div>
+              )
+            })}
+          </div>
+          <div className="computer-use-alert__actions">
+            <button type="button" className="computer-use-button computer-use-button--ghost" onClick={refreshPermissions}>{zh ? '重新检测' : 'Refresh detection'}</button>
+          </div>
+        </section>
 
         <section className="computer-use-panel" aria-labelledby="computer-use-runtime-heading">
           <div className="computer-use-panel__header">

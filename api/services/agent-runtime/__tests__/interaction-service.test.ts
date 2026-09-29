@@ -12,6 +12,7 @@ import { agentSessionRuntime } from "../session-runtime.js";
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { executeStoredPlan } from "../plan-execution.js";
 import { interactionService } from "../interaction-service.js";
+import { planProposeTool } from "../control-tools.js";
 import { validateControlBatch, controlToolError } from "../control-policy.js";
 import { toolRegistry } from "../tool-registry.js";
 import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
@@ -20,12 +21,16 @@ beforeEach(() => {
   resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
 });
-function setup() {
+function setup(
+  mode: "plan" | "goal" = "plan",
+  permissionTier?: "auto" | "unrestricted",
+) {
   const session = agentSessionRuntime.create({
     projectId: "project-alpha",
     profileId: "synax",
     prompt: "Design a change",
-    sessionMetadata: { mode: "plan" },
+    sessionMetadata: { mode },
+    permissionTier,
   });
   const now = new Date().toISOString();
   const run = store.appendRun({
@@ -85,6 +90,66 @@ const questions = [
   },
 ];
 describe("persistent human input", () => {
+  it("auto-approves and executes a proposal in goal mode with unrestricted permissions", async () => {
+    const { session, run, step, call } = setup("goal", "unrestricted");
+    const result = await planProposeTool.execute({
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      toolCallId: call.id,
+      toolId: "plan.propose",
+      category: "task",
+      mutability: "task",
+      args: {
+        title: "Ship the change",
+        objective: "Deliver the verified change",
+        steps: [{ id: "one", title: "Implement", description: "Implement it", dependsOn: [], expectedFiles: [] }],
+        acceptanceCriteria: ["Verified"],
+        humanAcceptanceCriteria: [],
+        assumptions: [],
+        risks: [],
+      },
+    });
+
+    expect(result.suspend).toBeUndefined();
+    expect(result.result).toMatchObject({ status: "approved", title: "Ship the change" });
+    expect(interactionService.pending(session.id)).toBeNull();
+    expect(store.getSession(session.id).sessionMetadata).toMatchObject({
+      mode: "goal",
+      plan: { status: "approved" },
+      goal: { status: "executing" },
+    });
+  });
+
+  it("keeps plan approval interactive outside the auto-approved scope", async () => {
+    const { session, run, step, call } = setup("goal", "auto");
+    const result = await planProposeTool.execute({
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      toolCallId: call.id,
+      toolId: "plan.propose",
+      category: "task",
+      mutability: "task",
+      args: {
+        title: "Review the change",
+        objective: "Deliver the reviewed change",
+        steps: [{ id: "one", title: "Review", description: "Review it", dependsOn: [], expectedFiles: [] }],
+        acceptanceCriteria: ["Reviewed"],
+        humanAcceptanceCriteria: [],
+        assumptions: [],
+        risks: [],
+      },
+    });
+
+    expect(result.suspend?.interactionId).toBeTruthy();
+    expect(interactionService.pending(session.id)?.kind).toBe("plan_approval");
+    expect(store.getSession(session.id).sessionMetadata).toMatchObject({
+      plan: { status: "draft" },
+      goal: { status: "planning" },
+    });
+  });
+
   it("validates answers, resumes the original call once, and retains the durable reply", () => {
     const { session, run, step, call } = setup();
     const interaction = interactionService.request({

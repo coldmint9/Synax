@@ -321,12 +321,23 @@ function registerIPC(): void {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted Computer Use status request");
     return cuaRuntime.status();
   });
+  ipcMain.handle("app:computer-use-permissions", async (event) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted Computer Use permissions status request");
+    const permissions = await cuaRuntime.permissions();
+    const systemVersion = process.platform === 'darwin' ? process.getSystemVersion() : null;
+    const macOSMajorVersion = systemVersion ? Number.parseInt(systemVersion.split('.')[0] ?? '', 10) || null : null;
+    return { ...permissions, platform: process.platform, macOSMajorVersion };
+  });
   ipcMain.handle("app:computer-use-open-permissions", async (event, kind: unknown) => {
     if (!trustedNotificationSender(event) || process.platform !== 'darwin')
       throw new Error('Untrusted Computer Use permissions request');
     if (kind !== 'accessibility' && kind !== 'screen-recording') throw new Error('Invalid permission type');
+    const majorVersion = process.getSystemVersion ? Number.parseInt(process.getSystemVersion().split('.')[0] ?? '', 10) : 0;
+    const pane = majorVersion >= 26
+      ? 'com.apple.settings.PrivacySecurity.extension'
+      : 'com.apple.preference.security';
     const setting = kind === 'accessibility' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture';
-    await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${setting}`);
+    await shell.openExternal(`x-apple.systempreferences:${pane}?${setting}`);
   });
   ipcMain.handle("app:accessibility-support-enabled", () =>
     terminalAccessibilitySupportEnabled(),

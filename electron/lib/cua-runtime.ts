@@ -51,6 +51,12 @@ export interface CuaHelperLaunch {
   artifactPath?: string;
 }
 
+export interface CuaPermissionStatus {
+  accessibility: boolean | null;
+  screenRecording: boolean | null;
+  error: string | null;
+}
+
 function environmentEntries(
   values: Record<string, string | undefined>,
 ): Array<{ name: string; value: string }> {
@@ -193,6 +199,44 @@ export class CuaRuntimeManager {
 
   status(): { state: CuaRuntimeStatus; error: string | null } {
     return { state: this.currentStatus, error: this.lastError };
+  }
+
+  async permissions(): Promise<CuaPermissionStatus> {
+    if (process.platform !== 'darwin')
+      return { accessibility: null, screenRecording: null, error: null };
+    try {
+      const launch = resolveHelperLaunch({
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        env: process.env,
+      });
+      const result = await execFileAsync(
+        launch.command,
+        [...launch.baseArgs, '--permissions'],
+        {
+          timeout: 5_000,
+          maxBuffer: 64 * 1024,
+          env: {
+            ...process.env,
+            ...Object.fromEntries(launch.environment.map(({ name, value }) => [name, value])),
+          },
+        },
+      );
+      const parsed = JSON.parse(result.stdout.trim()) as Partial<CuaPermissionStatus>;
+      return {
+        accessibility: typeof parsed.accessibility === 'boolean' ? parsed.accessibility : null,
+        screenRecording: typeof parsed.screenRecording === 'boolean' ? parsed.screenRecording : null,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        accessibility: null,
+        screenRecording: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   start(): Promise<CuaRuntimeConnection | null> {

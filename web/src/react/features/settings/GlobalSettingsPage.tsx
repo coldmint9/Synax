@@ -65,6 +65,8 @@ export default function GlobalSettingsPage() {
             </div>
           ) : section === "mcpServers" ? (
             <McpServersSection
+              builtinComputerUse={globalConfig.computerUse}
+              onSaveBuiltinComputerUse={async computerUse => { await updateGlobalConfig({ computerUse }); }}
               servers={globalConfig.mcpServers}
               title={copy.mcpServers}
               description={copy.mcpServersHint}

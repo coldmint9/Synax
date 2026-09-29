@@ -58,6 +58,7 @@ if (process.isMainFrame)
       ipcRenderer.invoke("dialog:save", options),
     getAppVersion: () => ipcRenderer.invoke("app:version"),
     getComputerUseStatus: () => ipcRenderer.invoke("app:computer-use-status"),
+    getComputerUsePermissions: () => ipcRenderer.invoke("app:computer-use-permissions"),
     openComputerUsePermissions: (kind: 'accessibility' | 'screen-recording') =>
       ipcRenderer.invoke("app:computer-use-open-permissions", kind),
     getUpdateNetworkSettings: () => ipcRenderer.invoke("updates:get-network"),

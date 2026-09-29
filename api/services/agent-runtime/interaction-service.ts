@@ -19,6 +19,7 @@ import {
   agentPlanSchema,
   interactionReplySchema,
   validateAnswers,
+  type AgentPlan,
   type AgentInteraction,
   type InteractionReply,
 } from "./control-contracts.js";
@@ -69,6 +70,29 @@ const map = (r: Row): AgentInteraction => ({
 const conflict = (message: string): never => {
   throw new AgentRuntimeError(message, "INTERACTION_CONFLICT", 409);
 };
+
+export function persistPlanProposal(sessionId: string, plan: AgentPlan) {
+  const artifact = createPlanArtifact({
+    sessionId,
+    plan,
+    status: "draft",
+  });
+  const session = store.getSession(sessionId);
+  store.updateSessionMetadata(sessionId, {
+    plan: { ...artifact, status: "draft" },
+  });
+  const goal = session.sessionMetadata?.goal;
+  if (
+    session.sessionMetadata?.mode === "goal" &&
+    goal &&
+    typeof goal === "object"
+  ) {
+    store.updateSessionMetadata(sessionId, {
+      goal: { ...goal, status: "planning" },
+    });
+  }
+  return artifact;
+}
 
 export const interactionService = {
   list(sessionId: string): AgentInteraction[] {
@@ -204,23 +228,7 @@ export const interactionService = {
           );
       });
       if ("plan" in request) {
-        const artifact = createPlanArtifact({
-          sessionId: i.sessionId,
-          plan: request.plan!,
-          status: "draft",
-        });
-        store.updateSessionMetadata(i.sessionId, {
-          plan: { ...artifact, status: "draft" },
-        });
-        const goal = session.sessionMetadata?.goal;
-        if (
-          session.sessionMetadata?.mode === "goal" &&
-          goal &&
-          typeof goal === "object"
-        )
-          store.updateSessionMetadata(i.sessionId, {
-            goal: { ...goal, status: "planning" },
-          });
+        persistPlanProposal(i.sessionId, request.plan!);
       }
       if (
         !store

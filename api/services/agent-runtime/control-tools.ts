@@ -6,9 +6,13 @@ import {
   humanAskSchema,
   agentPlanSchema,
 } from "./control-contracts.js";
-import { interactionService } from "./interaction-service.js";
+import {
+  interactionService,
+  persistPlanProposal,
+} from "./interaction-service.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { getGoalState, initializeGoal } from "./goal-control.js";
+import { isUnrestrictedPermissionRules } from "./permission-tiers.js";
 import {
   assertUserInstructionTurn,
   executeStoredPlan,
@@ -60,6 +64,30 @@ export const planProposeTool: RegisteredTool = {
   execute(input) {
     if (!input.runId || !input.stepId)
       throw new AgentValidationError("A plan requires an active run step.");
+    const session = store.getSession(input.sessionId);
+    if (
+      session.sessionMetadata?.mode === "goal" &&
+      isUnrestrictedPermissionRules(session.permissionRules)
+    ) {
+      const planArgs = agentPlanSchema.parse(input.args);
+      const artifact = persistPlanProposal(input.sessionId, planArgs);
+      const plan = executeStoredPlan({
+        sessionId: input.sessionId,
+        runId: input.runId,
+        stepId: input.stepId,
+        expectedRevision: artifact.revision,
+      });
+      return {
+        result: plan,
+        displaySummary: `Started plan revision ${plan.revision}.`,
+        artifacts: [{
+          kind: "decision" as const,
+          title: "Plan execution started",
+          summary: `Started plan revision ${plan.revision}: ${plan.title}.`,
+          risk: "low" as const,
+        }],
+      };
+    }
     const interaction = interactionService.request({
       ...input,
       runId: input.runId,

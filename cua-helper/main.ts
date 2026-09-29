@@ -65,6 +65,24 @@ type SdkModule = {
   currentMacOsPermissionStatus?: () => { accessibility: boolean; screenRecording: boolean };
 };
 
+export type HelperPermissionStatus = {
+  accessibility: boolean | null;
+  screenRecording: boolean | null;
+};
+
+export function readHelperPermissionStatus(
+  sdk: Pick<SdkModule, 'currentMacOsPermissionStatus'>,
+  platform: NodeJS.Platform,
+): HelperPermissionStatus {
+  if (platform !== 'darwin' || !sdk.currentMacOsPermissionStatus)
+    return { accessibility: null, screenRecording: null };
+  try {
+    return sdk.currentMacOsPermissionStatus();
+  } catch {
+    return { accessibility: null, screenRecording: null };
+  }
+}
+
 function describePermissions(status: { accessibility: boolean; screenRecording: boolean }): string {
   const missing = [
     !status.accessibility ? 'Accessibility' : null,
@@ -101,6 +119,11 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes(CUA_VERSION_FLAG)) {
     process.stdout.write(`synax-cua ${CUA_SDK_VERSION}\n`);
+    return;
+  }
+  if (argv.includes('--permissions')) {
+    const sdk = await loadSdk();
+    process.stdout.write(`${JSON.stringify(readHelperPermissionStatus(sdk, process.platform))}\n`);
     return;
   }
 

@@ -13,8 +13,11 @@ import type {
   McpServerConfig,
 } from "../../../../lib/contracts/config";
 import { useLocale } from "../../../../hooks/useLocale";
+import { BuiltinMcpSection } from "./BuiltinMcpSection";
 
 interface Props {
+  builtinComputerUse?: GlobalConfig["computerUse"];
+  onSaveBuiltinComputerUse?: (value: NonNullable<GlobalConfig["computerUse"]>) => Promise<void>;
   projectId?: string;
   /** Global settings mode (legacy/administrative use). */
   config?: GlobalConfig;
@@ -93,6 +96,8 @@ function randomId(): string {
 }
 
 export function McpServersSection({
+  builtinComputerUse,
+  onSaveBuiltinComputerUse,
   projectId,
   config,
   servers: initialServers,
@@ -238,7 +243,8 @@ export function McpServersSection({
       }
     >
       <p className="settings-note">{description ?? t("settingsMcpDesc")}</p>
-      {servers.length === 0 && !editing && (
+      {onSaveBuiltinComputerUse && <BuiltinMcpSection value={builtinComputerUse} onSave={onSaveBuiltinComputerUse} />}
+      {servers.length === 0 && !editing && !onSaveBuiltinComputerUse && (
         <p className="settings-note">{t("settingsMcpEmpty")}</p>
       )}
       <div className="settings-list">
