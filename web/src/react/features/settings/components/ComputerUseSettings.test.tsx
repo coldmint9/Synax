@@ -11,7 +11,7 @@ describe('Computer Use settings', () => {
     const getComputerUseStatus = vi.fn().mockResolvedValue({ state: 'ready', error: null })
     Object.defineProperty(window, 'electronAPI', { configurable: true, value: { getComputerUseStatus } })
     render(<ComputerUseSettings locale="en" onSave={onSave} />)
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('ready'))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Ready'))
     expect(screen.getByRole('combobox', { name: 'Computer Use strategy' })).toHaveValue('auto')
     expect(screen.getByRole('checkbox', { name: /Enable Jev/ })).not.toBeChecked()
     expect(onSave).not.toHaveBeenCalled()

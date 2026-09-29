@@ -11,7 +11,7 @@ const host = {
   waitForExit: vi.fn(() => new Promise(() => {})),
   uniffiDestroy: vi.fn(),
 };
-vi.mock('@trycua/cua-driver', () => ({ currentMacOsPermissionStatus: () => ({ accessibility: true, screenRecording: true }), EmbeddedCuaDriverHost: class { constructor() { return host } } }));
+vi.mock('@trycua/cua-driver', () => ({ requestMacOsPermissions: vi.fn(() => ({ accessibility: true, screenRecording: true })), EmbeddedCuaDriverHost: class { constructor() { return host } } }));
 const oldPath = process.env.SYNAX_CUA_DRIVER_PATH;
 afterEach(() => { process.env.SYNAX_CUA_DRIVER_PATH = oldPath; vi.clearAllMocks() });
 
@@ -23,16 +23,17 @@ describe('non-blocking Cua host lifecycle', () => {
     process.env.SYNAX_CUA_DRIVER_PATH = binary;
     try {
       const { CuaRuntimeManager } = await import('./cua-runtime.js');
+      const { requestMacOsPermissions } = await import('@trycua/cua-driver');
       const emitted = vi.fn();
       const runtime = new CuaRuntimeManager(emitted);
       const pending = runtime.start();
       expect(runtime.start()).toBe(pending);
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       expect(runtime.status().state).toBe('starting');
-      for (let i = 0; i < 50 && !finishStart; i++) await new Promise<void>(resolve => setTimeout(resolve, 10));
-      expect(finishStart).toBeDefined();
+      await vi.waitFor(() => expect(finishStart).toBeDefined(), { timeout: 5_000, interval: 10 });
       finishStart?.({ generation: 'g1', mcp: { command: binary, args: ['mcp'], environment: [] } });
       expect((await pending)?.generation).toBe('g1');
+      expect(requestMacOsPermissions).toHaveBeenCalledOnce();
       expect(emitted).toHaveBeenCalledWith(expect.objectContaining({ generation: 'g1' }));
       await runtime.stop();
       expect(host.stop).toHaveBeenCalledOnce();

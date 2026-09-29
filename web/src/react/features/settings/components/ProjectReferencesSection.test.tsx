@@ -263,7 +263,7 @@ describe('ProjectReferencesSection', () => {
     vi.mocked(openDirectoryPicker).mockReturnValueOnce(picker.promise)
     const view = render(<ProjectReferencesSection projectId="project-a" />)
     await ready()
-    await user.click(screen.getByRole('button', { name: 'Browse' }))
+    await user.click(screen.getByRole('button', { name: 'Choose folder' }))
     expect(openDirectoryPicker).toHaveBeenCalledTimes(1)
 
     view.rerender(<ProjectReferencesSection projectId="project-b" />)
@@ -282,7 +282,7 @@ describe('ProjectReferencesSection', () => {
     expect(pathInput()).toHaveValue('/work/b-draft')
     expect(nameInput()).toHaveValue('')
     expect(addButton()).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Browse' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Choose folder' })).toBeEnabled()
     expect(projectApi.addReference).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()

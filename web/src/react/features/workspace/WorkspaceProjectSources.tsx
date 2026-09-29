@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type Ref } from "react";
+import { useId, useState, type ReactNode, type Ref } from "react";
 import {
   Tab,
   TabGroup,
@@ -9,6 +9,7 @@ import {
 import { Input, Label, Field } from "@/react/components/ui/Field";
 import { Button } from "@/react/components/ui/Button";
 import {
+  ArrowRight,
   Check,
   FolderOpen,
   Layers2,
@@ -19,6 +20,7 @@ import {
 import type { ProjectSummary } from "../../state/shellStore";
 import { useWorkspaceCopy, workspacePathKey } from "./workspaceCopy";
 import "./workspaceProjects.css";
+import "./workspaceProjectSources.css";
 
 const sourcePath = (project: ProjectSummary) =>
   project.source?.kind === "wsl"
@@ -47,6 +49,8 @@ export function WorkspaceProjectSources({
   wslSelector,
   locationSelector,
   simplified = false,
+  compact = false,
+  onCompactChange,
 }: {
   localLabel?: string;
   directoryKind?: "host" | "wsl";
@@ -54,6 +58,9 @@ export function WorkspaceProjectSources({
   wslSelector?: ReactNode;
   locationSelector?: ReactNode;
   simplified?: boolean;
+  /** Keep the first-run path focused on folder picking; reveal manual paths on demand. */
+  compact?: boolean;
+  onCompactChange?: (compact: boolean) => void;
   projects: ProjectSummary[];
   loading: boolean;
   error?: string | null;
@@ -72,6 +79,7 @@ export function WorkspaceProjectSources({
 }) {
   const c = useWorkspaceCopy();
   const [search, setSearch] = useState("");
+  const pathFieldId = useId();
   const query = search.trim().toLowerCase();
   const filtered = projects.filter((project) =>
     `${project.name} ${sourcePath(project)}`.toLowerCase().includes(query),
@@ -88,57 +96,83 @@ export function WorkspaceProjectSources({
       <Button
         ref={browseRef}
         variant="outline"
-        className="workspace-browse"
+        className="workspace-directory-trigger"
         disabled={disabled}
         onClick={onBrowse}
-        aria-label={c.browse}
       >
-        <span className="workspace-browse-icon" aria-hidden="true">
-          <FolderOpen size={22} strokeWidth={1.7} />
-        </span>
-        <span className="workspace-browse-copy">
-          <strong>{c.browseTitle}</strong>
-          <span className="workspace-hint">
-            {onAddPath ? c.browseHint : c.singleBrowseHint}
-          </span>
-        </span>
-        <span className="workspace-browse-action">
-          {c.browse}
-          <Plus size={13} />
-        </span>
+        <FolderOpen size={20} strokeWidth={1.7} aria-hidden="true" />
+        <span>{c.chooseFolder}</span>
+        <ArrowRight size={16} aria-hidden="true" />
       </Button>
-      <Field disabled={disabled} className="workspace-path-field">
-        <Label>{c.path}</Label>
-        <div className="workspace-path-control">
-          <Input
-            placeholder="/path/to/project"
-            spellCheck={false}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                onAddPath &&
-                !event.nativeEvent.isComposing
-              ) {
-                event.preventDefault();
-                if (!duplicate) onAddPath();
-              }
-            }}
-            value={path}
-            onChange={(event) => onPathChange(event.currentTarget.value)}
-          />
-          {onAddPath && (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={disabled || !path.trim() || duplicate}
-              onClick={onAddPath}
-            >
-              {c.add}
-            </Button>
+      {simplified && (
+        <div className="workspace-directory-alternatives">
+          {onCompactChange && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={disabled}
+                aria-expanded={!compact}
+                aria-controls={pathFieldId}
+                onClick={() => onCompactChange(!compact)}
+              >
+                {c.manualPath}
+              </Button>
+              <span aria-hidden="true">·</span>
+            </>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={disabled}
+            onClick={() => onModeChange("existing")}
+          >
+            {c.existing}
+          </Button>
+          {locationSelector && <span aria-hidden="true">·</span>}
+          {locationSelector}
         </div>
-      </Field>
-      {duplicate && <p className="workspace-hint">{c.duplicate}</p>}
+      )}
+      {!compact && (
+        <>
+          <Field
+            id={pathFieldId}
+            disabled={disabled}
+            className="workspace-path-field"
+          >
+            <Label>{c.path}</Label>
+            <div className="workspace-path-control">
+              <Input
+                placeholder="/path/to/project"
+                spellCheck={false}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    onAddPath &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    if (!duplicate) onAddPath();
+                  }
+                }}
+                value={path}
+                onChange={(event) => onPathChange(event.currentTarget.value)}
+              />
+              {onAddPath && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={disabled || !path.trim() || duplicate}
+                  onClick={onAddPath}
+                >
+                  {c.add}
+                </Button>
+              )}
+            </div>
+          </Field>
+          {duplicate && <p className="workspace-hint">{c.duplicate}</p>}
+        </>
+      )}
     </>
   );
 
@@ -243,26 +277,7 @@ export function WorkspaceProjectSources({
             {existingPanel}
           </>
         ) : (
-          <>
-            <div className="workspace-simple-source-toolbar">
-              <span className="workspace-source-caption">
-                {c.localDirectory ?? c.local}
-              </span>
-              <div className="workspace-simple-source-actions">
-                {locationSelector}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="workspace-existing-link"
-                  disabled={disabled}
-                  onClick={() => onModeChange("existing")}
-                >
-                  {c.existing}
-                </Button>
-              </div>
-            </div>
-            {localPanel}
-          </>
+          localPanel
         )}
       </div>
     );

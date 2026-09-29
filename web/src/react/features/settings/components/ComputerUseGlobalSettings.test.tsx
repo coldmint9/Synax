@@ -46,10 +46,10 @@ describe('Computer Use global settings', () => {
         onUpdate={onUpdate}
       />,
     )
-    expect(screen.getByText(/Stored key: \*\*\*\*/)).toBeInTheDocument()
+    expect(screen.getByText(/Stored: \*\*\*\*/)).toBeInTheDocument()
     const input = container.querySelector('input[type="password"]') as HTMLInputElement
     await user.type(input, 'sk-new-secret')
-    await user.click(screen.getByRole('button', { name: 'Save key' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     expect(onUpdate).toHaveBeenCalledWith({
       computerUse: expect.objectContaining({
         jev: expect.objectContaining({ apiKey: 'sk-new-secret', apiKeyMasked: '****' }),

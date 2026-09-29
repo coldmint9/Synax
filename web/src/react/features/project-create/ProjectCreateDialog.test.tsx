@@ -275,7 +275,7 @@ describe("ProjectCreateDialog", () => {
     );
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveFocus();
 
-    const browse = screen.getByRole("button", { name: "浏览" });
+    const browse = screen.getByRole("button", { name: "选择文件夹" });
     await user.click(browse);
     expect(dialog.closest(".dialog-overlay")).toHaveAttribute("inert");
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
@@ -500,7 +500,7 @@ describe("ProjectCreateDialog", () => {
     expect(screen.getByRole("button", { name: "创建工作区" })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
-    const browse = screen.getByRole("button", { name: "浏览" });
+    const browse = screen.getByRole("button", { name: "选择文件夹" });
     await user.click(browse);
     await user.click(await screen.findByRole("checkbox", { name: "选择 api" }));
     await user.keyboard("{Escape}");
@@ -523,6 +523,7 @@ describe("ProjectCreateDialog", () => {
     await user.click(opener);
     await waitFor(() => expect(projectApi.listProjects).toHaveBeenCalled());
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "手动输入路径" }));
     expect(screen.getByRole("textbox", { name: "项目目录路径" })).toHaveValue(
       "",
     );

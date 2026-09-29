@@ -45,6 +45,7 @@ const config: ForgeConfig = {
     asar: { unpack: "**/*.{node,dylib,dll,so}" },
     extraResource: [
       "./server-dist",
+      "./dist/cua-driver",
       "./web/dist",
       "./api/db/migrations",
       "./electron/resources/synax-icon.png",

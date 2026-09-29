@@ -1,0 +1,64 @@
+/* Shared by workspace creation and project management. The row has its own
+   height instead of inheriting the generic button's fixed h-8 utility. */
+.workspace-directory-trigger.ui-button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 52px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 12px;
+  background: hsl(var(--card) / 0.36);
+  box-shadow: none;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  white-space: normal;
+}
+.workspace-directory-trigger > svg {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+.workspace-directory-trigger > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-directory-trigger.ui-button:enabled:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary) / 0.07);
+}
+.workspace-directory-trigger.ui-button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 3px;
+}
+.workspace-directory-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.workspace-directory-alternatives > span {
+  color: hsl(var(--muted-foreground));
+}
+.workspace-directory-alternatives .ui-button {
+  height: auto;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 20px;
+}
+.workspace-directory-alternatives .ui-button:enabled:hover {
+  color: var(--foreground);
+}
+@media (pointer: coarse) {
+  .workspace-directory-alternatives .ui-button {
+    min-height: 44px;
+  }
+}

@@ -65,9 +65,11 @@ export class CuaRuntimeManager {
     const sdkEntry = app.isPackaged
       ? pathToFileURL(path.join(process.resourcesPath, 'server-dist', 'node_modules', '@trycua', 'cua-driver', 'dist', 'index.js')).href
       : '@trycua/cua-driver';
-    const { EmbeddedCuaDriverHost, currentMacOsPermissionStatus } = await import(sdkEntry) as typeof import('@trycua/cua-driver');
+    const { EmbeddedCuaDriverHost, requestMacOsPermissions } = await import(sdkEntry) as typeof import('@trycua/cua-driver');
     if (process.platform === 'darwin') {
-      const permissions = currentMacOsPermissionStatus();
+      // Request from the Electron host before checking status so macOS registers
+      // Synax in its Screen Recording permission list.
+      const permissions = requestMacOsPermissions();
       if (!permissions.accessibility || !permissions.screenRecording)
         throw new Error('Grant Synax Accessibility and Screen Recording in macOS System Settings, then relaunch Synax.');
     }

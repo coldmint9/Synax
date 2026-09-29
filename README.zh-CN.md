@@ -34,7 +34,7 @@ npm install
 
 ### 3. 启动应用
 
-下面两种方式二选一，二者共用同一套本地 API 与 Agent 运行服务。
+下面两种方式可按需启动。开发命令默认使用独立 Profile，桌面生产版、Web 开发版和桌面开发版不会共用运行时数据。
 
 #### Web 端（浏览器）
 
@@ -44,7 +44,7 @@ npm install
 npm run dev:all
 ```
 
-`npm run dev` 是同一脚本的别名。API 监听 `3210` 端口，Web 开发服务监听 `5173` 端口，然后打开 [localhost:5173](http://localhost:5173) 即可使用。
+`npm run dev` 是同一脚本的别名。Web 开发 Profile 使用 `3211` 端口运行 API、使用 `5174` 端口运行 Web 开发服务，并将数据放在 `~/.synax/web-dev`，然后打开 [localhost:5174](http://localhost:5174) 即可使用。
 
 #### 日常使用的 Web 生产模式（推荐）
 
@@ -89,6 +89,8 @@ npm run dev:desktop
 
 先编译 Electron 的 TypeScript 源码，再启动 API 与 Web 服务，等两者就绪后通过 `electronmon` 启动 Electron 并开启热重载。桌面窗口会自动打开，无需浏览器。
 
+桌面生产版继续使用 `~/.synax`，Web 开发 Profile 使用 `~/.synax/web-dev`，两者不会共享数据库、会话、运行时 Token 或项目索引。如果还需要同时运行桌面开发版，`npm run dev:desktop` 会自动使用 `~/.synax/desktop-dev`，继续使用 `5173` 作为 Vite 端口，Sidecar API 则由操作系统分配临时端口。也可以通过 `DATA_ROOT`、`PORT` 和 `WEB_PORT` 显式覆盖当前 Profile 的默认值。
+
 如果需要打包出可安装的桌面应用，而不是以开发模式运行：
 
 ```bash
@@ -104,8 +106,8 @@ Electron 桌面版通过应用托管的 Cua Driver 提供电脑操作能力。�
 也可以分别启动这两个服务，例如在两个终端里各跑一个：
 
 ```bash
-npm run dev:api   # 仅 API，3210 端口
-npm run dev:web   # 仅 Web，5173 端口
+npm run dev:api   # 仅 API，3211 端口，~/.synax/web-dev
+npm run dev:web   # 仅 Web，5174 端口，~/.synax/web-dev
 ```
 
 ### 4. 首次配置
@@ -116,13 +118,13 @@ npm run dev:web   # 仅 Web，5173 端口
 
 ### 端口
 
-| 变量       | 默认值    | 用途                 |
-| ---------- | --------- | -------------------- |
-| `PORT`     | `3210`    | API 端口             |
-| `WEB_PORT` | `5173`    | Web 开发服务端口     |
-| `WEB_HOST` | `0.0.0.0` | Web 开发服务监听地址 |
+| 变量       | 独立运行默认值 | 开发 Profile | 用途                 |
+| ---------- | -------------- | ------------ | -------------------- |
+| `PORT`     | `3210`         | `3211`       | API 端口             |
+| `WEB_PORT` | `5173`         | `5174`       | Web 开发服务端口     |
+| `WEB_HOST` | `0.0.0.0`      | 继承         | Web 开发服务监听地址 |
 
-这些变量需要在启动开发脚本的终端中设置。
+独立运行默认值适用于 `start:api` 和 `start:web`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:api`、`dev:web` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
 
 ## 本地 Git 合并请求
 

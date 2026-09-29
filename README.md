@@ -34,7 +34,7 @@ npm install
 
 ### 3. Start the app
 
-Pick one of the two entry points below. Both share the same local API and agent runtime.
+The entry points below can be started as needed. Development commands use isolated profiles by default, so the production desktop app, Web development build, and Electron development build do not share runtime data.
 
 #### Web (browser)
 
@@ -44,7 +44,7 @@ One command starts both the API and the frontend:
 npm run dev:all
 ```
 
-`npm run dev` is an alias for the same script. The API listens on `3210` and the web development server on `5173`; then open [localhost:5173](http://localhost:5173).
+`npm run dev` is an alias for the same script. The Web development profile uses the API on `3211`, the web development server on `5174`, and the data root `~/.synax/web-dev`; then open [localhost:5174](http://localhost:5174).
 
 #### Production Web mode for everyday use (recommended)
 
@@ -89,6 +89,8 @@ npm run dev:desktop
 
 This compiles the Electron TypeScript sources, starts the API and web servers, waits for both to be ready, and then launches Electron with hot reload (`electronmon`). A desktop window opens automatically; no browser is needed.
 
+The installed production desktop app continues to use `~/.synax`, while the Web development profile uses `~/.synax/web-dev`, so the two runtimes do not share the database, sessions, runtime token, or project index. If you also run the Electron development build, `npm run dev:desktop` automatically uses `~/.synax/desktop-dev`, keeps Vite on `5173`, and lets the Sidecar API use an OS-assigned port. `DATA_ROOT`, `PORT`, and `WEB_PORT` can be used to override the active profile defaults.
+
 To produce an installable desktop build instead of running it in development mode:
 
 ```bash
@@ -104,8 +106,8 @@ The default **Auto** strategy uses Direct Cua without a Jev account or network r
 You can also start the two servers separately, for example when running the API in one terminal and the frontend in another:
 
 ```bash
-npm run dev:api   # API only, port 3210
-npm run dev:web   # Web only, port 5173
+npm run dev:api   # API only, port 3211, ~/.synax/web-dev
+npm run dev:web   # Web only, port 5174, ~/.synax/web-dev
 ```
 
 ### 4. Configure and start working
@@ -116,13 +118,13 @@ npm run dev:web   # Web only, port 5173
 
 ### Ports
 
-| Variable   | Default   | Purpose                             |
-| ---------- | --------- | ----------------------------------- |
-| `PORT`     | `3210`    | API port                            |
-| `WEB_PORT` | `5173`    | Web development server port         |
-| `WEB_HOST` | `0.0.0.0` | Web development server bind address |
+| Variable   | Standalone default | Development profile | Purpose                         |
+| ---------- | ------------------ | ------------------- | ------------------------------- |
+| `PORT`     | `3210`             | `3211`              | API port                        |
+| `WEB_PORT` | `5173`             | `5174`              | Web development server port     |
+| `WEB_HOST` | `0.0.0.0`          | inherited           | Web development server bind address |
 
-Set these in the shell that launches the development scripts.
+The standalone defaults apply to `start:api` and `start:web`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:api`, `dev:web`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
 
 ## Local Git merge requests
 

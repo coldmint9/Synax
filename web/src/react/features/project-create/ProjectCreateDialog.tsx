@@ -69,6 +69,7 @@ function ProjectCreateForm({
   const [sourceType, setSourceType] = useState<"local" | "remote">("local");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [name, setName] = useState("");
+  const [compactSources, setCompactSources] = useState(true);
   const [pathInput, setPathInput] = useState("");
   const [locationKind, setLocationKind] = useState<"host" | "wsl">("host");
   const [distributions, setDistributions] = useState<WslDistribution[]>([]);
@@ -297,7 +298,10 @@ function ProjectCreateForm({
                 selectedIndex={sourceType === "local" ? 0 : 1}
                 onChange={(index) => {
                   setSourceType(index === 0 ? "local" : "remote");
-                  if (index === 0) setMode("local");
+                  if (index === 0) {
+                    setMode("local");
+                    setCompactSources(false);
+                  }
                   if (index === 0 && locationKind === "wsl") {
                     setLocationKind("host");
                     setPathInput("");
@@ -314,6 +318,7 @@ function ProjectCreateForm({
                     disabled={submitting}
                     onClick={() => {
                       setMode("local");
+                      setCompactSources(false);
                       if (locationKind === "wsl") {
                         setLocationKind("host");
                         setPathInput("");
@@ -373,6 +378,7 @@ function ProjectCreateForm({
                               disabled={submitting}
                               onClick={() => {
                                 setMode("local");
+                                setCompactSources(false);
                                 if (locationKind !== "wsl") {
                                   setLocationKind("wsl");
                                   setPathInput("");
@@ -388,6 +394,8 @@ function ProjectCreateForm({
                         ) : undefined
                       }
                       simplified
+                      compact={compactSources}
+                      onCompactChange={setCompactSources}
                       projects={existing}
                       loading={loadingExisting}
                       error={existingError}
@@ -431,7 +439,10 @@ function ProjectCreateForm({
                 </TabPanels>
               </TabGroup>
             </section>
-            <section className="workspace-create-members">
+            <section
+              className="workspace-create-members"
+              data-empty={members.length === 0 || undefined}
+            >
               <div className="workspace-section-label">
                 <span>{c.members}</span>
                 <span className="workspace-count">

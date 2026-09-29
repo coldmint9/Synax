@@ -60,7 +60,7 @@ describe('ProjectReferencesSection in the browser build', () => {
     await screen.findByText('/work/project-a')
     await user.click(screen.getByRole('button', { name: 'Add project', exact: true }))
 
-    const browse = screen.getByRole('button', { name: 'Browse' })
+    const browse = screen.getByRole('button', { name: 'Choose folder' })
     expect(browse).toBeEnabled()
     await user.click(browse)
 
@@ -83,7 +83,7 @@ describe('ProjectReferencesSection in the browser build', () => {
     await screen.findByText('/work/project-a')
     await user.click(screen.getByRole('button', { name: 'Add project', exact: true }))
 
-    await user.click(screen.getByRole('button', { name: 'Browse' }))
+    await user.click(screen.getByRole('button', { name: 'Choose folder' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Directory is not readable: /root')
     expect(pathInput()).toHaveValue('')
