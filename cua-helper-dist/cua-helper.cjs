@@ -16953,7 +16953,7 @@ function describePermissions(status) {
     !status.accessibility ? "Accessibility" : null,
     !status.screenRecording ? "Screen Recording" : null
   ].filter((value) => value !== null);
-  return `Grant the Synax CUA helper ${missing.join(" and ")} permission in macOS System Settings > Privacy & Security, then retry Computer Use. Synax itself does not need these permissions.`;
+  return `Grant Synax ${missing.join(" and ")} permission in macOS System Settings > Privacy & Security, then retry Computer Use. Synax itself does not need these permissions.`;
 }
 function requestHelperPermissions(sdk, platform) {
   if (platform !== "darwin") return;

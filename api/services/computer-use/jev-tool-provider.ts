@@ -60,10 +60,10 @@ export function makeCandidates(structured: unknown, pid: number, windowId: numbe
     const role = typeof element.role === 'string' ? element.role.toLowerCase() : '';
     if (!Number.isInteger(index) || (index as number) < 0 || !label) continue;
     if (['button', 'checkbox', 'radio', 'link', 'menu item'].some(kind => role.includes(kind))) {
-      result.push({ id: `click_${index}`, description: `Click ${label} (${role})`, tool: 'click', args: { pid, window_id: windowId, snapshot_id: snapshotId, element_index: index, delivery_mode: 'background' } });
+      result.push({ id: `click_${index}`, description: `Click ${label} (${role})`, tool: 'click', args: { pid, window_id: windowId, snapshot_id: snapshotId, element_index: index, delivery_mode: 'foreground' } });
     }
     if (text && ['text field', 'textfield', 'input', 'textbox'].some(kind => role.includes(kind))) {
-      result.push({ id: `type_${index}`, description: `Type the user-provided text into ${label}`, tool: 'type_text', args: { pid, window_id: windowId, snapshot_id: snapshotId, element_index: index, text, delivery_mode: 'background' } });
+      result.push({ id: `type_${index}`, description: `Type the user-provided text into ${label}`, tool: 'type_text', args: { pid, window_id: windowId, snapshot_id: snapshotId, element_index: index, text, delivery_mode: 'foreground' } });
     }
     if (result.length >= 30) break;
   }

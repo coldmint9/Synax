@@ -13,7 +13,7 @@ Cua controls the user's actual desktop, including signed-in applications and sen
 
 1. Observe first: list apps and windows, then get a fresh window state or accessibility tree. Never guess a window identifier or coordinate.
 2. Prefer fresh semantic elements and snapshot-bound tokens. Use pixels only when the semantic path cannot address the target. Do not invent `capture_id` or `element_token` values.
-3. Use `delivery_mode: "background"` unless the user has approved foreground interaction; an unavailable background action is not permission to change modes automatically.
+3. On macOS 27, use `delivery_mode: "foreground"` for native window actions; background delivery is not reliable for the current CUA runtime. On other platforms, use background only when the runtime explicitly supports it.
 4. Perform one consequential action at a time. Reobserve after window changes, page navigation, and actions; verify the user's desired postcondition before claiming success.
 5. A timeout or lost response may mean the action already happened. Never repeat click, typing, submit, launch, kill, or clipboard write without reobserving and user approval when appropriate.
 6. Avoid unnecessary full-screen captures, clipboard reads, secrets, and account data. Do not copy desktop content into logs or unrelated tools.

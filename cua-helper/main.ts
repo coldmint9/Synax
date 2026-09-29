@@ -15,10 +15,10 @@ import { generationEnvironment, startCuaHelperBridge } from './mcp-bridge.js';
  * Standalone Computer Use helper.
  *
  * Synax spawns this process and speaks MCP stdio to it. Everything that needs a
- * desktop permission identity lives here: the CUA embedded host, the native
+ * desktop permission operation lives here: the CUA embedded host, the native
  * driver daemon, and the macOS Accessibility / Screen Recording requests. Synax
- * itself never loads the CUA SDK, so a helper permission state can no longer
- * cascade into the main app's permissions.
+ * itself never loads the CUA SDK in its API sidecar, so helper failures stay
+ * isolated from the backend.
  *
  * Contract with the supervisor:
  * - stdout carries MCP stdio frames only; diagnostics go to stderr.
@@ -71,15 +71,15 @@ function describePermissions(status: { accessibility: boolean; screenRecording: 
     !status.screenRecording ? 'Screen Recording' : null,
   ].filter((value): value is string => value !== null);
   return (
-    `Grant the Synax CUA helper ${missing.join(' and ')} permission in ` +
+    `Grant Synax ${missing.join(' and ')} permission in ` +
     'macOS System Settings > Privacy & Security, then retry Computer Use. ' +
     'Synax itself does not need these permissions.'
   );
 }
 
 /**
- * macOS attributes desktop permissions to the helper bundle. Requesting from this
- * process is what registers `Synax CUA` in the System Settings lists.
+ * macOS attributes desktop permissions to the host application. Requesting from this
+ * process makes the packaged Synax identity visible in the System Settings lists.
  */
 export function requestHelperPermissions(
   sdk: Pick<SdkModule, 'requestMacOsPermissions'>,

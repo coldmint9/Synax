@@ -1,6 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
-
 import {
   runCommand,
   runShellCommand,
@@ -22,6 +19,7 @@ import {
 } from "./bash-command-policy.js";
 import { resolveWorkspacePath, workspaceRoot } from "./workspace.js";
 import { parseWslUncPath } from "../../workspace-location.js";
+import { sessionHomeDir } from "./session-home.js";
 
 const SAFE_REDIRECT_TARGETS = new Set([
   "/dev/null",
@@ -354,13 +352,6 @@ interface BashExecutionInput {
   stdin?: string;
 }
 
-// Keep tool caches out of the repository without exposing the real user HOME.
-async function sessionHomeDir(sessionId: string): Promise<string> {
-  const directory = path.join(DATA_ROOT, "agent-home", sessionId);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  return directory;
-}
-
 async function executeBashCommand(
   input: BashExecutionInput,
 ): Promise<ToolExecutionResult> {
@@ -424,7 +415,7 @@ async function executeBashCommand(
       cwd,
       env: {
         ...globalThis.process.env,
-        HOME: await sessionHomeDir(input.sessionId),
+        HOME: await sessionHomeDir(DATA_ROOT, input.sessionId),
       },
       stdin: input.stdin,
       waitForJobs: hasBackgroundBashOperator(command),
@@ -442,7 +433,7 @@ async function executeBashCommand(
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
     timeoutMs: input.timeoutMs,
-    env: { ...process.env, HOME: await sessionHomeDir(input.sessionId) },
+    env: { ...process.env, HOME: await sessionHomeDir(DATA_ROOT, input.sessionId) },
     stdin: input.stdin ?? undefined,
   });
   const elapsedMs = Date.now() - startedAtMs;

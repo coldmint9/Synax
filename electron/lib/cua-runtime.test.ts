@@ -82,6 +82,25 @@ describe('Synax CUA helper supervisor', () => {
     expect(emitted).toHaveBeenLastCalledWith(null);
   });
 
+  it('resolves the packaged helper bundle shipped by Electron Forge', async () => {
+    delete process.env.SYNAX_CUA_HELPER_PATH;
+    delete process.env.SYNAX_CUA_DRIVER_PATH;
+    const { resolveHelperLaunch } = await import('./cua-runtime.js');
+    const launch = resolveHelperLaunch({
+      platform: 'darwin',
+      isPackaged: true,
+      appPath: '/Applications/Synax.app/Contents/Resources/app.asar',
+      resourcesPath: '/Applications/Synax.app/Contents/Resources',
+      env: {},
+    });
+    expect(launch.helperRoot).toBe('/Applications/Synax.app/Contents/Resources/cua-helper-dist');
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.baseArgs).toEqual([
+      '/Applications/Synax.app/Contents/Resources/cua-helper-dist/cua-helper.cjs',
+    ]);
+    expect(launch.artifactPath).toBe(launch.baseArgs[0]);
+  });
+
   it('refuses a helper that does not match the pinned SDK version', async () => {
     fs.writeFileSync(helperPath, "process.stdout.write('synax-cua 0.0.1\\n');");
     const { runtime } = await supervisor();

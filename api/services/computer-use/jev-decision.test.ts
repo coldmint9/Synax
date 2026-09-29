@@ -13,7 +13,7 @@ const observation = {
 describe('Jev candidate boundary', () => {
   it('constructs complete semantic actions from a fresh snapshot', () => {
     const candidates = makeCandidates(observation, 42, 123, 'user provided');
-    expect(candidates.find(c => c.id === 'click_3')).toMatchObject({ tool: 'click', args: { pid: 42, window_id: 123, snapshot_id: 'snapshot-001', element_index: 3, delivery_mode: 'background' } });
+    expect(candidates.find(c => c.id === 'click_3')).toMatchObject({ tool: 'click', args: { pid: 42, window_id: 123, snapshot_id: 'snapshot-001', element_index: 3, delivery_mode: 'foreground' } });
     expect(candidates.find(c => c.id === 'type_4')).toMatchObject({ tool: 'type_text', args: { text: 'user provided' } });
     expect(candidates.map(c => c.id)).toEqual(expect.arrayContaining(['abstain', 'reobserve']));
   });

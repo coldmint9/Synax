@@ -32,7 +32,7 @@ export function cuaHelperExecutableName(platform: NodeJS.Platform): string {
 export const CUA_HELPER_MACOS_APP_NAME = 'Synax CUA.app';
 
 /** Resource-relative directory that owns the packaged helper artifact. */
-export const CUA_HELPER_RESOURCE_DIR = 'cua-helper';
+export const CUA_HELPER_RESOURCE_DIR = 'cua-helper-dist';
 
 /** Process exit codes the supervisor maps to user-facing guidance. */
 export const CUA_EXIT_CODES = {

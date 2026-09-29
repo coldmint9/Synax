@@ -8,11 +8,9 @@ import { app } from 'electron';
 import {
   CUA_GENERATION_FLAG,
   CUA_HELPER_BUNDLE_ID,
-  CUA_HELPER_MACOS_APP_NAME,
   CUA_HELPER_RESOURCE_DIR,
   CUA_SDK_VERSION,
   CUA_VERSION_FLAG,
-  cuaHelperExecutableName,
 } from './cua-helper-contracts.js';
 
 const execFileAsync = promisify(execFile);
@@ -42,10 +40,7 @@ export interface CuaRuntimeConnection {
 
 export interface CuaHelperLaunch {
   command: string;
-  /**
-   * Ordered helper executables. macOS lists the signed helper app bundle first so
-   * its permissions belong to `Synax CUA` rather than to Synax.
-   */
+  /** Ordered command candidates used for native executable overrides. */
   commandCandidates: string[];
   baseArgs: string[];
   environment: Array<{ name: string; value: string }>;
@@ -71,9 +66,10 @@ export function driverExecutableName(platform: NodeJS.Platform): string {
 /**
  * Resolve the standalone helper artifact and the driver binary it must use.
  *
- * Dev runs the tsup-built `.cjs` bundle through Node (`ELECTRON_RUN_AS_NODE`),
- * production runs the packaged per-platform executable. macOS uses the helper app
- * bundle so the helper owns its own permission identity.
+ * Both dev and packaged desktop builds run the tsup-built `.cjs` helper through
+ * Electron's Node mode. The helper is shipped in `cua-helper-dist`, which is the
+ * resource directory configured by forge; keeping one launch shape avoids a
+ * production-only lookup of an artifact that was never packaged.
  */
 export function resolveHelperLaunch(options: {
   platform: NodeJS.Platform;
@@ -83,10 +79,10 @@ export function resolveHelperLaunch(options: {
   env: NodeJS.ProcessEnv;
 }): CuaHelperLaunch {
   const { platform, isPackaged, appPath, resourcesPath, env } = options;
-  const executable = cuaHelperExecutableName(platform);
-  const helperRoot = isPackaged
-    ? path.join(resourcesPath, CUA_HELPER_RESOURCE_DIR)
-    : path.join(appPath, 'cua-helper-dist');
+  const helperRoot = path.join(
+    isPackaged ? resourcesPath : appPath,
+    CUA_HELPER_RESOURCE_DIR,
+  );
   const driverPath = env.SYNAX_CUA_DRIVER_PATH?.trim()
     ? path.resolve(env.SYNAX_CUA_DRIVER_PATH.trim())
     : isPackaged
@@ -126,46 +122,18 @@ export function resolveHelperLaunch(options: {
         };
   }
 
-  if (!isPackaged) {
-    const bundle = path.join(helperRoot, 'cua-helper.cjs');
-    return {
-      command: process.execPath,
-      commandCandidates: [process.execPath],
-      baseArgs: [bundle],
-      environment: environmentEntries({
-        ELECTRON_RUN_AS_NODE: '1',
-        ...Object.fromEntries(shared.map(({ name, value }) => [name, value])),
-      }),
-      driverPath,
-      helperRoot,
-      artifactPath: bundle,
-    };
-  }
-
-  // macOS prefers the helper app bundle: a helper inside its own signed bundle
-  // holds its own Accessibility / Screen Recording identity instead of inheriting
-  // Synax's. The plain resource binary stays as a fallback so an unsigned local
-  // build still runs without the bundle.
-  const commandCandidates =
-    platform === 'darwin'
-      ? [
-          path.join(
-            helperRoot,
-            CUA_HELPER_MACOS_APP_NAME,
-            'Contents',
-            'MacOS',
-            executable,
-          ),
-          path.join(helperRoot, executable),
-        ]
-      : [path.join(helperRoot, executable)];
+  const bundle = path.join(helperRoot, 'cua-helper.cjs');
   return {
-    command: commandCandidates[0]!,
-    commandCandidates,
-    baseArgs: [],
-    environment: shared,
+    command: process.execPath,
+    commandCandidates: [process.execPath],
+    baseArgs: [bundle],
+    environment: environmentEntries({
+      ELECTRON_RUN_AS_NODE: '1',
+      ...Object.fromEntries(shared.map(({ name, value }) => [name, value])),
+    }),
     driverPath,
     helperRoot,
+    artifactPath: bundle,
   };
 }
 
@@ -180,11 +148,7 @@ async function assertReadable(target: string, label: string): Promise<void> {
   }
 }
 
-/**
- * Prefer the first available helper executable. On macOS the signed helper app
- * bundle is listed before the plain resource binary, so the helper can hold its
- * own desktop permissions instead of inheriting Synax's.
- */
+/** Resolve the configured helper command and fail with its exact artifact path. */
 async function resolveHelperCommand(launch: CuaHelperLaunch): Promise<string> {
   if (launch.artifactPath) {
     try {

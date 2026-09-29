@@ -43,7 +43,7 @@ export function visualCandidates(payload: unknown, captureId: string, pid: numbe
       description: `Click the unique visual ${region.kind} ${label.slice(0, 100)}`,
       tool: 'click',
       args: { pid, window_id: windowId, x: (bounds.x as number) + bounds.width / 2,
-        y: (bounds.y as number) + bounds.height / 2, capture_id: captureId, delivery_mode: 'background' },
+        y: (bounds.y as number) + bounds.height / 2, capture_id: captureId, delivery_mode: 'foreground' },
     });
     if (candidates.length >= 30) break;
   }
