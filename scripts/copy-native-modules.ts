@@ -114,13 +114,17 @@ function copyRuntimePackage(
   }
 }
 copyRuntimePackage("trash");
-// Electron Main dynamically loads Cua from Resources, outside ASAR. The SDK
-// and its platform native library must be colocated with their runtime packages.
-copyRuntimePackage("@trycua/cua-driver");
+// The standalone Computer Use helper owns the CUA SDK and its native driver.
+// Synax never loads them itself, so they ship beside the helper instead of with
+// the API sidecar. Keeping them out of server-dist also keeps the helper's
+// permission identity separate from the main app's bundle contents.
+const cuaHelperModules = join(root, "cua-helper-dist", "node_modules");
+mkdirSync(cuaHelperModules, { recursive: true });
+copyRuntimePackage("@trycua/cua-driver", src, cuaHelperModules);
 for (const name of readdirSync(join(src, "@trycua")).filter(name => name.startsWith("cua-driver-")))
-  copyRuntimePackage(`@trycua/${name}`);
+  copyRuntimePackage(`@trycua/${name}`, src, cuaHelperModules);
 for (const name of readdirSync(join(src, "@ubjs")).filter(name => name.startsWith("node-") || name === "node"))
-  copyRuntimePackage(`@ubjs/${name}`);
+  copyRuntimePackage(`@ubjs/${name}`, src, cuaHelperModules);
 
 
 // Drop stale packaged skills when upgrading from the retired prototype platform.

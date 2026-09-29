@@ -33,7 +33,7 @@ type CuaWindowObservation = {
  */
 export function describeCuaObservationFailure(structured: unknown): string | null {
   if (!structured || typeof structured !== 'object') {
-    return 'CUA Driver returned no window observation. Grant Synax Accessibility and Screen Recording permissions, then restart Synax.';
+    return 'CUA Driver returned no window observation. Grant the Synax CUA helper Accessibility and Screen Recording permissions in macOS System Settings, then retry Computer Use. Synax itself does not need these permissions.';
   }
   const state = structured as CuaWindowObservation;
   if (state.degraded === true) {
@@ -41,7 +41,7 @@ export function describeCuaObservationFailure(structured: unknown): string | nul
       .flatMap(value => Array.isArray(value) ? value : [value])
       .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       .join('; ');
-    return `CUA Driver is running in degraded mode${detail ? ` (${detail})` : ''}. Grant Synax Accessibility and Screen Recording permissions, then restart Synax.`;
+    return `CUA Driver is running in degraded mode${detail ? ` (${detail})` : ''}. Grant the Synax CUA helper Accessibility and Screen Recording permissions in macOS System Settings, then retry Computer Use. Synax itself does not need these permissions.`;
   }
   return null;
 }

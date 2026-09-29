@@ -191,16 +191,16 @@ describe("lightweight history stack", () => {
     });
     expect(store.listMessages(id).map((m) => m.id)).toEqual(["a"]);
   });
-  it("requires a fresh read after trimming history without restoring current files", async () => {
+  it("re-reads the file itself after trimming history without restoring current files", async () => {
     const db=getRawSqlite();
     const addRead=(key:string)=>db.prepare("INSERT INTO agent_runtime_tool_calls(id,session_id,tool_id,category,input_summary,input_ref_json,status,started_at,ended_at) VALUES (?,?,'file.read','read','file',?,'completed',?,?)").run(key,id,JSON.stringify({path:"file"}),new Date().toISOString(),new Date().toISOString());
     await fs.writeFile(path.join(root,"file"),"old");addRead("old-read");recordSessionFileRead(id,"file");message("point");const cp=(await captureCheckpoint(id,"reply","point"))!;
     await fs.writeFile(path.join(root,"file"),"new protected contents");addRead("future-read");recordSessionFileRead(id,"file");
     await applyHistory(id,{action:"rollback",checkpointId:cp.id,revision:0,requestId:"read-reset",includeFiles:false});
     rebuildSessionFileReads(id,filterHistoryFileReads(id,store.listToolCalls(id)));
-    expect(()=>assertSessionFileReadForWrite(id,"file")).toThrow(/not read/);
+    expect(assertSessionFileReadForWrite(id,"file")).toBe(true);
     addRead("fresh-read");rebuildSessionFileReads(id,filterHistoryFileReads(id,store.listToolCalls(id)));
-    expect(()=>assertSessionFileReadForWrite(id,"file")).not.toThrow();
+    expect(assertSessionFileReadForWrite(id,"file")).toBe(false);
   });
 
 });

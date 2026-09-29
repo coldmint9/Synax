@@ -194,25 +194,48 @@ export function recordBashFileReads(
   }
 }
 
+/**
+ * Ensure the tracker holds a current read record for a file a write tool is
+ * about to overwrite.
+ *
+ * A missing record no longer fails the call: write tools absorb the requirement
+ * by reading the file themselves and registering that read, so overwriting an
+ * unread-but-existing target costs no file.read round trip. Returns `true` when
+ * that implicit read happened, letting the caller tell the model it overwrote
+ * content this session never saw.
+ *
+ * A recorded read whose file changed on disk afterwards still throws: that is an
+ * external edit the write would silently clobber, which is a different failure
+ * from missing bookkeeping.
+ */
 export function assertSessionFileReadForWrite(
   sessionId: string,
   workspaceRelativePath: string,
-): void {
+): boolean {
   const filePath = resolveTrackedPath(sessionId, workspaceRelativePath);
-  if (!filePath) return;
-  if (!fs.existsSync(filePath)) return;
+  if (!filePath) return false;
+  if (!fs.existsSync(filePath)) return false;
 
   const stat = fs.statSync(filePath);
-  if (!stat.isFile()) return;
+  if (!stat.isFile()) return false;
 
   const record = sessionMap(sessionId).get(filePath);
   if (!record) {
-    throw new Error(
-      `File "${normalizePath(workspaceRelativePath)}" was not read in this session. Call file.read first.`,
-    );
+    // The pre-read stat is kept on purpose: it becomes the snapshot metadata, so
+    // a file mutated during this read is still caught as "changed on disk"
+    // instead of being recorded as freshly read.
+    let content: Buffer | undefined;
+    try {
+      content = fs.readFileSync(filePath);
+    } catch {
+      // Unreadable bytes are not fatal here; the write itself reports the real
+      // failure and the metadata-only record stays conservative.
+    }
+    recordSessionFileRead(sessionId, workspaceRelativePath, content, stat);
+    return true;
   }
   const snapshot = touchSnapshot(record);
-  if (stat.mtimeMs === record.mtimeMs && stat.size === record.size) return;
+  if (stat.mtimeMs === record.mtimeMs && stat.size === record.size) return false;
 
   // Only metadata changes take this slow path. Different sizes or an evicted
   // snapshot fail closed without loading the file. No hashing is involved.
@@ -225,7 +248,7 @@ export function assertSessionFileReadForWrite(
       snapshot.equals(current)
     ) {
       record.mtimeMs = stat.mtimeMs;
-      return;
+      return false;
     }
   }
   throw new Error(

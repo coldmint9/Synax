@@ -748,7 +748,11 @@ describe("AgentInteractionPanel", () => {
     const { unmount } = render(<AgentInteractionPanel session={session} />);
     await screen.findByLabelText("Clarify scope v1 — Answered");
     expect(screen.queryByText("Interaction history")).not.toBeInTheDocument();
-    expect(screen.getByText("Earlier answer")).toBeVisible();
+    // A resolved ask stays folded into its mini title until the reader opens it.
+    const resolved = screen.getByLabelText("Clarify scope v1 \u2014 Answered");
+    expect(resolved).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(resolved);
+    expect(await screen.findByText("Earlier answer")).toBeVisible();
     expect(
       screen.getByLabelText("Approve plan v3 — Saved for later execution"),
     ).toBeVisible();

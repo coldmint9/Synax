@@ -46,6 +46,7 @@ const config: ForgeConfig = {
     extraResource: [
       "./server-dist",
       "./dist/cua-driver",
+      "./cua-helper-dist",
       "./web/dist",
       "./api/db/migrations",
       "./electron/resources/synax-icon.png",

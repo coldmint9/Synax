@@ -18,7 +18,7 @@ export const fileWriteTool: RegisteredTool = {
   mutability: "write",
   resumeBehavior: "wait_permission",
   progressiveDetails:
-    "Accepts { path: string, content: string }. Read the file first before overwriting existing content, and avoid creating docs or README files unless explicitly requested.",
+    "Accepts { path: string, content: string }. Reading the file first is recommended but not required: file.write reads it automatically when this session has not, and flags the overwrite. Avoid creating docs or README files unless explicitly requested.",
   inputSchema: z.object({
     path: z.string().min(1).describe("Workspace-relative file path to write."),
     content: z.string().describe("Complete text content to write."),
@@ -36,24 +36,32 @@ export const fileWriteTool: RegisteredTool = {
     if (!args?.path) throw new Error("path is required.");
     if (typeof args.content !== "string")
       throw new Error("content must be a string.");
-    assertSessionFileReadForWrite(input.sessionId, args.path);
+    const implicitRead = assertSessionFileReadForWrite(
+      input.sessionId,
+      args.path,
+    );
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, args.content, "utf8");
     // Refresh the tracked mtime so a follow-up edit of this same file is not
     // rejected as "changed on disk since last read".
     recordSessionFileMutation(input.sessionId, filePath, args.content);
+    const relativePath = toWorkspaceRelative(filePath, input.sessionId);
+    const bytes = Buffer.byteLength(args.content, "utf8");
     return {
       result: {
-        path: toWorkspaceRelative(filePath, input.sessionId),
-        bytes: Buffer.byteLength(args.content, "utf8"),
+        path: relativePath,
+        bytes,
+        ...(implicitRead ? { implicitRead: true } : {}),
       },
-      displaySummary: `Wrote ${Buffer.byteLength(args.content, "utf8")} bytes to ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+      displaySummary: implicitRead
+        ? `Wrote ${bytes} bytes to ${relativePath} (overwrote content this session had not read).`
+        : `Wrote ${bytes} bytes to ${relativePath}.`,
       artifacts: [
         {
           kind: "decision",
           title: "File write",
-          summary: `Updated ${toWorkspaceRelative(filePath, input.sessionId)}.`,
+          summary: `Updated ${relativePath}.`,
           risk: "medium",
         },
       ],

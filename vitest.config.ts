@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       "api/**/*.{test,spec}.{ts,tsx}",
       "cli/**/*.{test,spec}.{ts,tsx}",
+      "cua-helper/**/*.{test,spec}.ts",
       "electron/**/*.test.ts",
       "scripts/**/*.test.ts",
     ],

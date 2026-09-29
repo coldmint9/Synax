@@ -1,24 +1,230 @@
-import fs, { constants } from 'node:fs/promises';
-import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { constants } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { app } from 'electron';
-import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from '@trycua/cua-driver';
+import {
+  CUA_GENERATION_FLAG,
+  CUA_HELPER_BUNDLE_ID,
+  CUA_HELPER_MACOS_APP_NAME,
+  CUA_HELPER_RESOURCE_DIR,
+  CUA_SDK_VERSION,
+  CUA_VERSION_FLAG,
+  cuaHelperExecutableName,
+} from './cua-helper-contracts.js';
 
-export const CUA_SDK_VERSION = '0.30.2';
+const execFileAsync = promisify(execFile);
 
-export type CuaRuntimeStatus = 'idle' | 'starting' | 'ready' | 'restarting' | 'unavailable' | 'stopped';
-export type CuaRuntimeConnection = Pick<EmbeddedDriverConnection, 'generation' | 'mcp'>;
+export { CUA_SDK_VERSION };
 
-/** Electron owns the permission chain; slow desktop work runs in the Driver child. */
+export type CuaRuntimeStatus =
+  | 'idle'
+  | 'starting'
+  | 'ready'
+  | 'restarting'
+  | 'unavailable'
+  | 'stopped';
+
+/**
+ * Handed to the API sidecar, which spawns the helper as an MCP stdio server.
+ * Shape must stay compatible with `api/services/mcp/runtime-cua-config.ts`.
+ */
+export interface CuaRuntimeConnection {
+  generation: string;
+  mcp: {
+    command: string;
+    args: string[];
+    environment: Array<{ name: string; value: string }>;
+  };
+}
+
+export interface CuaHelperLaunch {
+  command: string;
+  /**
+   * Ordered helper executables. macOS lists the signed helper app bundle first so
+   * its permissions belong to `Synax CUA` rather than to Synax.
+   */
+  commandCandidates: string[];
+  baseArgs: string[];
+  environment: Array<{ name: string; value: string }>;
+  /** Driver binary the helper must use; surfaced for early, readable failures. */
+  driverPath: string;
+  helperRoot: string;
+  /** Artifact that must exist when the helper is hosted by another runtime. */
+  artifactPath?: string;
+}
+
+function environmentEntries(
+  values: Record<string, string | undefined>,
+): Array<{ name: string; value: string }> {
+  return Object.entries(values)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .map(([name, value]) => ({ name, value }));
+}
+
+export function driverExecutableName(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
+}
+
+/**
+ * Resolve the standalone helper artifact and the driver binary it must use.
+ *
+ * Dev runs the tsup-built `.cjs` bundle through Node (`ELECTRON_RUN_AS_NODE`),
+ * production runs the packaged per-platform executable. macOS uses the helper app
+ * bundle so the helper owns its own permission identity.
+ */
+export function resolveHelperLaunch(options: {
+  platform: NodeJS.Platform;
+  isPackaged: boolean;
+  appPath: string;
+  resourcesPath: string;
+  env: NodeJS.ProcessEnv;
+}): CuaHelperLaunch {
+  const { platform, isPackaged, appPath, resourcesPath, env } = options;
+  const executable = cuaHelperExecutableName(platform);
+  const helperRoot = isPackaged
+    ? path.join(resourcesPath, CUA_HELPER_RESOURCE_DIR)
+    : path.join(appPath, 'cua-helper-dist');
+  const driverPath = env.SYNAX_CUA_DRIVER_PATH?.trim()
+    ? path.resolve(env.SYNAX_CUA_DRIVER_PATH.trim())
+    : isPackaged
+      ? path.join(resourcesPath, 'cua-driver', driverExecutableName(platform))
+      : path.join(appPath, 'dist', 'cua-driver', driverExecutableName(platform));
+
+  const shared = environmentEntries({
+    SYNAX_CUA_HELPER_ROOT: helperRoot,
+    SYNAX_CUA_BUNDLE_ID: CUA_HELPER_BUNDLE_ID,
+    SYNAX_CUA_DRIVER_PATH: driverPath,
+  });
+
+  const override = env.SYNAX_CUA_HELPER_PATH?.trim();
+  if (override) {
+    if (!path.isAbsolute(override))
+      throw new Error('SYNAX_CUA_HELPER_PATH must be an absolute path');
+    return override.endsWith('.cjs') || override.endsWith('.js')
+      ? {
+          command: process.execPath,
+          commandCandidates: [process.execPath],
+          baseArgs: [override],
+          environment: environmentEntries({
+            ELECTRON_RUN_AS_NODE: '1',
+            ...Object.fromEntries(shared.map(({ name, value }) => [name, value])),
+          }),
+          driverPath,
+          helperRoot,
+          artifactPath: override,
+        }
+      : {
+          command: override,
+          commandCandidates: [override],
+          baseArgs: [],
+          environment: shared,
+          driverPath,
+          helperRoot,
+        };
+  }
+
+  if (!isPackaged) {
+    const bundle = path.join(helperRoot, 'cua-helper.cjs');
+    return {
+      command: process.execPath,
+      commandCandidates: [process.execPath],
+      baseArgs: [bundle],
+      environment: environmentEntries({
+        ELECTRON_RUN_AS_NODE: '1',
+        ...Object.fromEntries(shared.map(({ name, value }) => [name, value])),
+      }),
+      driverPath,
+      helperRoot,
+      artifactPath: bundle,
+    };
+  }
+
+  // macOS prefers the helper app bundle: a helper inside its own signed bundle
+  // holds its own Accessibility / Screen Recording identity instead of inheriting
+  // Synax's. The plain resource binary stays as a fallback so an unsigned local
+  // build still runs without the bundle.
+  const commandCandidates =
+    platform === 'darwin'
+      ? [
+          path.join(
+            helperRoot,
+            CUA_HELPER_MACOS_APP_NAME,
+            'Contents',
+            'MacOS',
+            executable,
+          ),
+          path.join(helperRoot, executable),
+        ]
+      : [path.join(helperRoot, executable)];
+  return {
+    command: commandCandidates[0]!,
+    commandCandidates,
+    baseArgs: [],
+    environment: shared,
+    driverPath,
+    helperRoot,
+  };
+}
+
+async function assertReadable(target: string, label: string): Promise<void> {
+  try {
+    await fs.access(
+      target,
+      process.platform === 'win32' ? constants.F_OK : constants.X_OK,
+    );
+  } catch {
+    throw new Error(`${label} is unavailable: ${target}`);
+  }
+}
+
+/**
+ * Prefer the first available helper executable. On macOS the signed helper app
+ * bundle is listed before the plain resource binary, so the helper can hold its
+ * own desktop permissions instead of inheriting Synax's.
+ */
+async function resolveHelperCommand(launch: CuaHelperLaunch): Promise<string> {
+  if (launch.artifactPath) {
+    try {
+      await fs.access(launch.artifactPath, constants.F_OK);
+      return launch.command;
+    } catch {
+      throw new Error(`Synax CUA helper is unavailable: ${launch.artifactPath}`);
+    }
+  }
+  for (const candidate of launch.commandCandidates) {
+    try {
+      await fs.access(
+        candidate,
+        process.platform === 'win32' ? constants.F_OK : constants.X_OK,
+      );
+      return candidate;
+    } catch {
+      /* Try the next candidate. */
+    }
+  }
+  throw new Error(
+    `Synax CUA helper is unavailable: ${launch.commandCandidates.join(', ')}`,
+  );
+}
+
+/**
+ * Helper supervisor.
+ *
+ * It owns helper discovery, version agreement and the ephemeral MCP connection
+ * metadata. It deliberately does not spawn the helper: the API sidecar owns the
+ * MCP stdio session, so the helper's lifetime follows that session. When the
+ * sidecar exits, its pipes close, the helper sees EOF and shuts the driver down.
+ */
 export class CuaRuntimeManager {
-  private host: EmbeddedCuaDriverHost | null = null;
   private connection: CuaRuntimeConnection | null = null;
   private pending: Promise<CuaRuntimeConnection | null> | null = null;
   private currentStatus: CuaRuntimeStatus = 'idle';
   private lastError: string | null = null;
   private stopped = false;
+
   constructor(private readonly onConnection: (connection: CuaRuntimeConnection | null) => void) {}
 
   status(): { state: CuaRuntimeStatus; error: string | null } {
@@ -30,109 +236,105 @@ export class CuaRuntimeManager {
     if (this.connection) return Promise.resolve(this.connection);
     if (this.pending) return this.pending;
     this.currentStatus = 'starting';
-    this.pending = this.startHost().catch((error: unknown) => {
-      this.currentStatus = 'unavailable';
-      this.lastError = error instanceof Error ? error.message : String(error);
-      console.warn('[cua] runtime unavailable:', this.lastError);
-      return null;
-    }).finally(() => { this.pending = null; });
+    this.pending = this.launch()
+      .catch((error: unknown) => {
+        this.currentStatus = 'unavailable';
+        this.lastError = error instanceof Error ? error.message : String(error);
+        console.warn('[cua] helper unavailable:', this.lastError);
+        return null;
+      })
+      .finally(() => {
+        this.pending = null;
+      });
     return this.pending;
   }
 
-  private async resolveExecutable(): Promise<string> {
-    const override = process.env.SYNAX_CUA_DRIVER_PATH?.trim();
-    const executableName = process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
-    if (override && !path.isAbsolute(override)) throw new Error('SYNAX_CUA_DRIVER_PATH must be absolute');
+  private async launch(): Promise<CuaRuntimeConnection> {
+    const launch = resolveHelperLaunch({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: (process as NodeJS.Process & { resourcesPath?: string })
+        .resourcesPath ?? path.join(app.getAppPath(), 'resources'),
+      env: process.env,
+    });
+    const command = await resolveHelperCommand(launch);
+    await assertReadable(launch.driverPath, 'Cua Driver binary');
+    await this.assertHelperVersion(command, launch);
+    if (this.stopped) throw new Error('Cua helper supervisor stopped during startup');
 
-    // Never prefer an unrelated global `cua-driver` binary in development.
-    // Synax's SDK and driver are a version-locked pair; the common macOS PATH
-    // install may be an older daemon and causes the embedded runtime to fail or
-    // silently fall back to degraded native-window observations.
-    const candidates = override ? [override] : [
-      ...(app.isPackaged ? [] : [path.join(app.getAppPath(), 'dist', 'cua-driver', executableName)]),
-      path.join(process.resourcesPath, 'cua-driver', executableName),
-    ];
-    if (!override && !app.isPackaged) {
-      try {
-        const { stdout } = await promisify(execFile)(process.platform === 'win32' ? 'where.exe' : 'which', ['cua-driver'], { timeout: 1_500 });
-        candidates.push(...stdout.trim().split(/\r?\n/).filter(Boolean));
-      } catch { /* Report the version/path error below. */ }
-    }
-
-    let lastError: unknown;
-    for (const executable of candidates) {
-      try {
-        await fs.access(executable, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
-        const { stdout } = await promisify(execFile)(executable, ['--version'], { timeout: 3_000 });
-        const found = /\bcua-driver\s+(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1];
-        if (found !== CUA_SDK_VERSION) {
-          lastError = new Error(`Cua Driver ${found ?? 'unknown'} is incompatible with Synax SDK ${CUA_SDK_VERSION}`);
-          continue;
-        }
-        return executable;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw new Error(`Unable to find Cua Driver ${CUA_SDK_VERSION}. Set SYNAX_CUA_DRIVER_PATH to a matching executable.${lastError instanceof Error ? ` Last error: ${lastError.message}` : ''}`);
-  }
-
-  private async startHost(): Promise<CuaRuntimeConnection> {
-    const executable = await this.resolveExecutable();
-    // Import only after the window is painted; native library initialization must
-    // not delay Electron startup. The native host's start() is asynchronous.
-    const sdkEntry = app.isPackaged
-      ? pathToFileURL(path.join(process.resourcesPath, 'server-dist', 'node_modules', '@trycua', 'cua-driver', 'dist', 'index.js')).href
-      : '@trycua/cua-driver';
-    const { EmbeddedCuaDriverHost, requestMacOsPermissions } = await import(sdkEntry) as typeof import('@trycua/cua-driver');
-    if (process.platform === 'darwin') {
-      // Request from the Electron host before checking status so macOS registers
-      // Synax in its Screen Recording permission list.
-      const permissions = requestMacOsPermissions();
-      if (!permissions.accessibility || !permissions.screenRecording)
-        throw new Error('Grant Synax Accessibility and Screen Recording in macOS System Settings, then relaunch Synax.');
-    }
-    if (this.stopped) throw new Error('Cua runtime stopped during startup');
-    this.host ??= new EmbeddedCuaDriverHost(executable, 'com.Synax.desktop');
-    const started = await this.host.start();
-    if (this.stopped) {
-      await this.host.stop();
-      throw new Error('Cua runtime stopped during startup');
-    }
-    this.connection = { generation: started.generation, mcp: started.mcp };
+    const generation = randomUUID();
+    const connection: CuaRuntimeConnection = {
+      generation,
+      mcp: {
+        command,
+        args: [...launch.baseArgs, CUA_GENERATION_FLAG, generation],
+        environment: launch.environment,
+      },
+    };
+    this.connection = connection;
     this.currentStatus = 'ready';
     this.lastError = null;
-    this.onConnection(this.connection);
-    void this.host.waitForExit(started.generation).then(() => {
-      if (this.connection?.generation !== started.generation || this.stopped) return;
-      this.connection = null;
-      this.currentStatus = 'unavailable';
-      this.lastError = 'Cua Driver exited unexpectedly';
-      this.onConnection(null);
-    }).catch((error: unknown) => console.warn('[cua] exit monitor:', error));
-    return this.connection;
+    this.onConnection(connection);
+    return connection;
   }
 
+  /** Fail early and legibly when the helper artifact does not match the SDK. */
+  private async assertHelperVersion(
+    command: string,
+    launch: CuaHelperLaunch,
+  ): Promise<void> {
+    let stdout: string;
+    try {
+      const result = await execFileAsync(
+        command,
+        [...launch.baseArgs, CUA_VERSION_FLAG],
+        {
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            ...Object.fromEntries(
+              launch.environment.map(({ name, value }) => [name, value]),
+            ),
+          },
+        },
+      );
+      stdout = result.stdout;
+    } catch (error) {
+      throw new Error(
+        `Synax CUA helper failed to report its version: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    const found = /\bsynax-cua\s+(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1];
+    if (found !== CUA_SDK_VERSION)
+      throw new Error(
+        `Synax CUA helper ${found ?? 'unknown'} is incompatible with Synax ${CUA_SDK_VERSION}`,
+      );
+  }
+
+  /** Re-issue a fresh connection so the sidecar spawns a new helper process. */
   async restart(): Promise<CuaRuntimeConnection | null> {
     if (this.stopped) return null;
     this.currentStatus = 'restarting';
     this.connection = null;
     this.onConnection(null);
     await this.pending;
-    if (!this.host) return this.start();
-    try {
-      const started = await this.host.restart();
-      if (this.stopped) { await this.host.stop(); return null; }
-      this.connection = { generation: started.generation, mcp: started.mcp };
-      this.currentStatus = 'ready';
-      this.lastError = null;
-      this.onConnection(this.connection);
-      return this.connection;
-    } catch (error) {
-      this.currentStatus = 'unavailable';
-      this.lastError = error instanceof Error ? error.message : String(error);
-      return null;
-    }
+    if (this.stopped) return null;
+    return this.start();
+  }
+
+  /**
+   * Called when the sidecar reports that the helper's MCP session ended, so a
+   * crashed helper is visible instead of pretending Computer Use still works.
+   */
+  markUnavailable(error: string): void {
+    if (this.stopped || !this.connection) return;
+    this.connection = null;
+    this.currentStatus = 'unavailable';
+    this.lastError = error;
+    this.onConnection(null);
   }
 
   async stop(): Promise<void> {
@@ -141,11 +343,6 @@ export class CuaRuntimeManager {
     this.connection = null;
     this.onConnection(null);
     await this.pending;
-    try { await this.host?.stop(); }
-    finally {
-      this.host?.uniffiDestroy();
-      this.host = null;
-      this.currentStatus = 'stopped';
-    }
+    this.currentStatus = 'stopped';
   }
 }

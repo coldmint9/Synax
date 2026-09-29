@@ -1,10 +1,16 @@
 import {
+  Disclosure,
+  DisclosureButton,
+  DisclosurePanel,
+} from "@headlessui/react";
+import {
   ArrowDown,
   ArrowUpRight,
   Check,
   ChevronRight,
   ListTodo,
   MessageCircle,
+  MessageCircleQuestion,
   Loader2,
   PenLine,
   X,
@@ -498,7 +504,7 @@ function InteractionForm({
     >
       <header className="agent-request-header">
         <span className="agent-interaction-icon" aria-hidden>
-          {isPlan ? <ListTodo size={18} /> : <MessageCircle size={18} />}
+          {isPlan ? <ListTodo size={15} /> : <MessageCircle size={15} />}
         </span>
         <div className="agent-request-heading">
           <span className="agent-interaction-eyebrow">
@@ -546,7 +552,7 @@ function InteractionForm({
           disabled={disabled || submitting}
           onClick={() => void reply("cancel")}
         >
-          <X size={19} aria-hidden="true" />
+          <X size={15} aria-hidden="true" />
         </button>
         <span role="status" className="sr-only">
           {submitting
@@ -760,34 +766,38 @@ function InteractionHistory({
                 : "Answered";
   const summaryLabel = `${interaction.request.title} v${interaction.revision} — ${status}`;
   return (
-    <details
+    <Disclosure
+      as="div"
       className="agent-history-item agent-interaction-record"
       data-tone={tone}
-      open={interaction.kind === "clarification" ? true : undefined}
     >
-      <summary aria-label={summaryLabel}>
+      <DisclosureButton
+        className="agent-interaction-summary"
+        aria-label={summaryLabel}
+        title={summaryLabel}
+      >
         <span className="agent-interaction-icon" aria-hidden>
           {interaction.kind === "plan_approval" ? (
-            <ListTodo size={16} />
+            <ListTodo size={13} />
           ) : (
-            <MessageCircle size={16} />
+            <MessageCircleQuestion size={13} />
           )}
         </span>
         <span className="agent-history-item-title">
           {interaction.request.title}
         </span>
         <span className="agent-history-version">v{interaction.revision}</span>
+        <span className="agent-history-status" data-tone={tone}>
+          <span className="agent-history-status-dot" aria-hidden />
+          {status}
+        </span>
         <ChevronRight
           size={12}
           aria-hidden
           className="agent-history-item-arrow"
         />
-        <span className="agent-history-status" data-tone={tone}>
-          <span className="agent-history-status-dot" aria-hidden />
-          {status}
-        </span>
-      </summary>
-      <div className="agent-history-detail">
+      </DisclosureButton>
+      <DisclosurePanel className="agent-history-detail">
         {interaction.request.plan && (
           <PlanDetails
             plan={interaction.request.plan}
@@ -799,7 +809,11 @@ function InteractionHistory({
           {interaction.request.questions?.map((question) => {
             const value = reply?.answers?.[question.id];
             return (
-              <div key={question.id} className="agent-history-answer">
+              <div
+                key={question.id}
+                className="agent-history-answer"
+                data-unanswered={value === undefined || undefined}
+              >
                 <dt>{question.label}</dt>
                 <dd>
                   {value === undefined
@@ -852,8 +866,8 @@ function InteractionHistory({
         {reply?.message && (
           <p className="agent-history-message">{reply.message}</p>
         )}
-      </div>
-    </details>
+      </DisclosurePanel>
+    </Disclosure>
   );
 }
 

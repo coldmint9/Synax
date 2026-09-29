@@ -61,13 +61,14 @@ describe('read-before-write', () => {
     resetAgentRuntimeFixtures();
   });
 
-  it('blocks file.write on unread existing files', async () => {
+  it('auto-reads an unread existing file instead of blocking file.write', async () => {
     const session = agentSessionRuntime.create(executorInput);
     clearSessionFileReads(session.id);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-write-guard-'));
     const relPath = 'write-guard-test.txt';
-    fs.writeFileSync(path.join(tmpDir, relPath), 'original', 'utf8');
+    const filePath = path.join(tmpDir, relPath);
+    fs.writeFileSync(filePath, 'original', 'utf8');
     setSessionWorkspaceRoot(session.id, tmpDir);
 
     try {
@@ -76,10 +77,15 @@ describe('read-before-write', () => {
         toolId: 'file.write', category: 'write', mutability: 'write',
         args: { path: relPath, content: 'updated' },
       });
-      await expect(Promise.resolve().then(executeWrite)).rejects.toThrow(/not read in this session/i);
+      const first = await executeWrite();
+      expect(first.displaySummary).toContain('Wrote');
+      expect(first.result).toMatchObject({ implicitRead: true });
+      expect(fs.readFileSync(filePath, 'utf8')).toBe('updated');
+
+      // Once the session holds a read record, the write stops flagging itself.
       recordSessionFileRead(session.id, relPath);
-      const result = await executeWrite();
-      expect(result.displaySummary).toContain('Wrote');
+      const second = await executeWrite();
+      expect(second.result).not.toMatchObject({ implicitRead: true });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -278,19 +278,25 @@ describe("read-before-write path identity", () => {
     expect(fs.readFileSync(filePath, "utf8")).toBe("final\n");
   });
 
-  it("still blocks file.write to a file this session never read", async () => {
+  it("auto-reads an existing file this session never read instead of failing", async () => {
     const { sessionId, dir } = newWorkspace("synax-read-guard-");
-    fs.writeFileSync(path.join(dir, "unread.txt"), "secret\n", "utf8");
+    const filePath = path.join(dir, "unread.txt");
+    fs.writeFileSync(filePath, "secret\n", "utf8");
 
-    const executeWrite = () =>
+    const executeWrite = (content: string) =>
       fileWriteTool.execute({
         sessionId, runId: null, stepId: null, toolCallId: "unread-write",
         toolId: "file.write", category: "write", mutability: "write",
-        args: { path: "unread.txt", content: "overwritten\n" },
+        args: { path: "unread.txt", content },
       });
-    await expect(Promise.resolve().then(executeWrite)).rejects.toThrow(
-      /not read in this session/i,
-    );
+
+    const first = await executeWrite("overwritten\n");
+    expect(first.result).toMatchObject({ implicitRead: true });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("overwritten\n");
+
+    // The implicit read leaves a current record, so the next write needs none.
+    const second = await executeWrite("again\n");
+    expect(second.result).not.toMatchObject({ implicitRead: true });
   });
 
   it("still blocks file.write when the file changed on disk after the read", async () => {
@@ -505,7 +511,9 @@ describe("content snapshot guard and patch precedence", () => {
       await setup("d".repeat(1024 * 1024));
       kept.touch();
       expect(kept.check).not.toThrow();
-      expect(removed.check).toThrow(/not read/);
+      // A cleared record no longer blocks: the write-path check reads the file
+      // itself, which re-caches it inside the budget instead of failing.
+      expect(removed.check()).toBe(true);
     },
   );
 
