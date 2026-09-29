@@ -16,6 +16,14 @@ afterEach(() => {
   process.env.DATA_ROOT = saved.root; process.env.SYNAX_JEV_MOCK = saved.mock; process.env.TYPESAFE_API_KEY = saved.key;
   fs.rmSync(root, { recursive: true, force: true }); vi.resetModules();
 });
+
+it('reports degraded CUA observations instead of hiding them as abstain', async () => {
+  const { describeCuaObservationFailure } = await import('./jev-tool-provider.js');
+  expect(describeCuaObservationFailure({ degraded: true, reason: 'ax_window_unresolved' }))
+    .toContain('ax_window_unresolved');
+  expect(describeCuaObservationFailure({ degraded: false, elements: [] })).toBeNull();
+});
+
 it('mock Jev runs one immutable action without API credentials and reobserves', async () => {
   const { resetAgentRuntimeFixtures } = await import('../agent-runtime/__tests__/agent-runtime-fixtures.js');
   const { agentSessionRuntime } = await import('../agent-runtime/session-runtime.js');

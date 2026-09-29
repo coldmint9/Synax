@@ -41,21 +41,40 @@ export class CuaRuntimeManager {
 
   private async resolveExecutable(): Promise<string> {
     const override = process.env.SYNAX_CUA_DRIVER_PATH?.trim();
-    const packaged = override ? '' : path.join(process.resourcesPath, 'cua-driver', process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver');
+    const executableName = process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
     if (override && !path.isAbsolute(override)) throw new Error('SYNAX_CUA_DRIVER_PATH must be absolute');
-    let executable = override ?? packaged;
+
+    // Never prefer an unrelated global `cua-driver` binary in development.
+    // Synax's SDK and driver are a version-locked pair; the common macOS PATH
+    // install may be an older daemon and causes the embedded runtime to fail or
+    // silently fall back to degraded native-window observations.
+    const candidates = override ? [override] : [
+      ...(app.isPackaged ? [] : [path.join(app.getAppPath(), 'dist', 'cua-driver', executableName)]),
+      path.join(process.resourcesPath, 'cua-driver', executableName),
+    ];
     if (!override && !app.isPackaged) {
       try {
         const { stdout } = await promisify(execFile)(process.platform === 'win32' ? 'where.exe' : 'which', ['cua-driver'], { timeout: 1_500 });
-        executable = stdout.trim().split(/\r?\n/)[0];
-      } catch { /* Use the packaged-resource lookup for a clear error. */ }
+        candidates.push(...stdout.trim().split(/\r?\n/).filter(Boolean));
+      } catch { /* Report the version/path error below. */ }
     }
-    await fs.access(executable, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
-    const { stdout } = await promisify(execFile)(executable, ['--version'], { timeout: 3_000 });
-    const found = /\bcua-driver\s+(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1];
-    if (found !== CUA_SDK_VERSION)
-      throw new Error(`Cua Driver ${found ?? 'unknown'} is incompatible with Synax SDK ${CUA_SDK_VERSION}; install a matching executable or set SYNAX_CUA_DRIVER_PATH.`);
-    return executable;
+
+    let lastError: unknown;
+    for (const executable of candidates) {
+      try {
+        await fs.access(executable, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+        const { stdout } = await promisify(execFile)(executable, ['--version'], { timeout: 3_000 });
+        const found = /\bcua-driver\s+(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1];
+        if (found !== CUA_SDK_VERSION) {
+          lastError = new Error(`Cua Driver ${found ?? 'unknown'} is incompatible with Synax SDK ${CUA_SDK_VERSION}`);
+          continue;
+        }
+        return executable;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(`Unable to find Cua Driver ${CUA_SDK_VERSION}. Set SYNAX_CUA_DRIVER_PATH to a matching executable.${lastError instanceof Error ? ` Last error: ${lastError.message}` : ''}`);
   }
 
   private async startHost(): Promise<CuaRuntimeConnection> {

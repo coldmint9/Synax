@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-vi.mock('electron', () => ({ app: { isPackaged: false } }));
+vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() } }));
 let finishStart: ((value: unknown) => void) | undefined;
 const host = {
   start: vi.fn(() => new Promise(resolve => { finishStart = resolve })),

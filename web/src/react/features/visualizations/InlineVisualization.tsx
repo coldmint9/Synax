@@ -52,7 +52,9 @@ function VisualizationInstance({
     const element = document.createElement("iframe");
     element.className = "inline-visualization__frame";
     element.title = title || "交互预览";
-    element.loading = "lazy";
+    // Previews are conversation content, not below-the-fold media. Lazy iframe
+    // loading can prevent the document from ever reaching the ready handshake.
+    element.loading = "eager";
     element.referrerPolicy = "no-referrer";
     element.setAttribute("sandbox", "allow-scripts");
     element.setAttribute(
@@ -67,7 +69,13 @@ function VisualizationInstance({
     let connected = false;
     let received = 0;
     let windowStart = performance.now();
-    const fail = () => setError("预览未能运行，请让助手修正后重新生成。");
+    let failed = false;
+    const fail = () => {
+      if (failed) return;
+      failed = true;
+      clearTimeout(timeout);
+      setError("预览未能运行，请让助手修正后重新生成。");
+    };
     const sendTheme = () =>
       element.contentWindow?.postMessage(
         { ...binding, type: "theme", theme: currentTheme() },
@@ -106,26 +114,19 @@ function VisualizationInstance({
         element.style.height = `${Math.max(48, Math.min(MAX_HEIGHT, Math.ceil(data.height)))}px`;
     };
     const loaded = () => {
+      // A second load means the opaque srcdoc document navigated. Keep this
+      // guard for the parent frame-src boundary; the initial about:blank load
+      // cannot race because srcdoc is assigned before insertion.
       if (++loadCount > 1) {
         fail();
         return;
       }
       sendTheme();
     };
-    const startTimeout = () => {
-      if (!connected) timeout ??= setTimeout(fail, 10_000);
-    };
-    const intersection =
-      typeof IntersectionObserver === "undefined"
-        ? null
-        : new IntersectionObserver(
-            (entries) => {
-              if (entries.some((entry) => entry.isIntersecting)) startTimeout();
-            },
-            { rootMargin: "200px" },
-          );
-    intersection?.observe(element);
-    if (!intersection) startTimeout();
+    // Start the handshake timeout as soon as the frame is mounted. The browser
+    // may defer iframe visibility notifications, but it should never defer the
+    // preview's readiness contract.
+    timeout = setTimeout(fail, 10_000);
     window.addEventListener("message", onMessage);
     element.addEventListener("load", loaded);
     const observer = new MutationObserver(sendTheme);
@@ -142,7 +143,6 @@ function VisualizationInstance({
     host.append(element);
     return () => {
       clearTimeout(timeout);
-      intersection?.disconnect();
       observer.disconnect();
       window.removeEventListener("message", onMessage);
       element.removeEventListener("load", loaded);

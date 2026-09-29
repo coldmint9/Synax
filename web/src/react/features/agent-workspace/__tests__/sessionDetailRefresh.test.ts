@@ -245,6 +245,38 @@ describe("loaded history across refreshes", () => {
   });
 });
 
+describe("session switch loading snapshot", () => {
+  it("keeps a cached inactive transcript visible during a background refresh", () => {
+    const completed = {
+      ...session,
+      id: "completed",
+      status: "completed",
+    } as AgentSession;
+    const cachedMessage = { ...message("cached"), sessionId: completed.id };
+    store.setState({
+      projectId: "p",
+      panelOpen: true,
+      selectedSessionId: session.id,
+      sessions: [session, completed],
+      sessionDetailCache: {
+        [completed.id]: {
+          runs: [], steps: [], events: [], messages: [cachedMessage],
+          toolCalls: [], permissions: [], sessionStats: null, sessionTodos: [],
+          sessionInvocationUsage: null, cachedAt: 1,
+        },
+      },
+    });
+    vi.mocked(api.listMessages).mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+
+    store.getState().openPanel(completed.id, { forceFresh: true });
+    expect(store.getState().messages.map((item) => item.id)).toEqual(["cached"]);
+    expect(store.getState().detailLoading).toBe(false);
+    expect(store.getState().detailRefreshing).toBe(true);
+  });
+});
+
 describe("detail refresh freshness", () => {
   it("performs a trailing refresh when completion arrives during a running stats request", async () => {
     let resolve!: (value: SessionStats) => void;

@@ -3,6 +3,7 @@ import {
   persistInlineVisualization,
   hydrateCompletedVisualizations,
   persistedVisualizationAppendix,
+  withoutVisualizationDeclarations,
 } from "./visualization-integration.js";
 import { isVisualizationIntent } from "./visualization-intent.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
@@ -2137,17 +2138,21 @@ export class AgentLoopRuntime {
       session.sessionMetadata?.mode === "goal" &&
       getGoalState(session.sessionMetadata)?.status === "completed" &&
       work.status === "completed";
+    const baseSummary = work.result ?? work.reason ?? "Work completed.";
     const visualizationAppendix = acceptedGoal
       ? persistedVisualizationAppendix(
           this.store.listMessages(sessionId),
           workRunIds,
+          { sessionId, content: baseSummary, id: `goal-source:${work.id}` },
         )
       : { content: "", visualizations: [] };
-    const baseSummary = work.result ?? work.reason ?? "Work completed.";
+    const goalSummaryText = acceptedGoal
+      ? withoutVisualizationDeclarations(baseSummary) || "交互预览已生成。"
+      : baseSummary;
     const goalPrefix = [
       "目标已完成",
       "",
-      `结论：${baseSummary}`,
+      `结论：${goalSummaryText}`,
       "",
       "验证结果：",
       ...(work.evidence.length

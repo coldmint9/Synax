@@ -8,7 +8,11 @@ import {
 } from "./agent-runtime-fixtures.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore as store } from "../session-store.js";
-import { persistInlineVisualization } from "../visualization-integration.js";
+import {
+  persistInlineVisualization,
+  persistedVisualizationAppendix,
+  withoutVisualizationDeclarations,
+} from "../visualization-integration.js";
 import { getRawSqlite } from "../../../db/index.js";
 import { agentRuntimeRoutes } from "../../../routes/agent-runtime.js";
 import { skillRegistry } from "../../skills/skill-registry.js";
@@ -91,6 +95,22 @@ it("finishes snapshot persistence even when the originating turn is aborted", ()
   persistInlineVisualization(m);
   expect(store.getMessage(sessionId, m.id)).toBeUndefined();
 });
+it("snapshots a goal final reply even when no intermediate assistant message exists", () => {
+  const file = path.join(workspace, "goal-demo.html");
+  fs.writeFileSync(file, '<button id="goal-demo">Goal</button>');
+  const content = `结论：已完成\n\nvisualize${JSON.stringify({ path: file, title: "Goal demo" })}`;
+  const appendix = persistedVisualizationAppendix([], new Set(), {
+    sessionId,
+    content,
+    id: "goal-source:work-1",
+  });
+  expect(appendix.content).toBe(`\n\n[交互预览]`);
+  expect(appendix.visualizations).toMatchObject([
+    { html: '<button id="goal-demo">Goal</button>', title: "Goal demo" },
+  ]);
+  expect(withoutVisualizationDeclarations(content)).toBe("结论：已完成");
+});
+
 it("stores a small error instead of executing invalid markup", () => {
   const m = message({
     content: "Done\n```synax-visualize\n<iframe></iframe>\n```",

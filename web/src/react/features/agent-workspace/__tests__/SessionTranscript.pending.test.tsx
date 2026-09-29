@@ -88,6 +88,23 @@ it("renders a sent message and the thinking grid before the request completes, w
   expect(screen.getByText("正在思考")).toBeVisible();
 });
 
+it("does not show thinking while a session detail snapshot is refreshing", () => {
+  const session = {
+    id: "s1",
+    status: "running",
+    activeRunId: run.id,
+  } as AgentSession;
+  useAgentSessionStore.setState({
+    sessions: [session],
+    detailLoading: false,
+    detailRefreshing: true,
+    runs: [],
+    messages: [],
+  });
+  render(<SessionTranscript />);
+  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+});
+
 it("shows the thinking placeholder for an already-running session without local pending state", () => {
   const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
   const previousReply = {
@@ -102,6 +119,8 @@ it("shows the thinking placeholder for an already-running session without local 
   };
   useAgentSessionStore.setState({
     sessions: [session],
+    detailLoading: false,
+    detailRefreshing: false,
     runs: [{ ...run, status: "running" }],
     messages: [],
   });

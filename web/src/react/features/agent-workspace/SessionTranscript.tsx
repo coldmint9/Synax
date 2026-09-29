@@ -31,6 +31,7 @@ function useSessionTranscriptStatic() {
       return {
         sessionId: id,
         loading: s.detailLoading,
+        refreshing: s.detailRefreshing,
         error: s.detailError,
         session: id ? s.sessions.find((ss) => ss.id === id) : undefined,
         runs: s.runs,
@@ -60,6 +61,7 @@ export function SessionTranscript({
     session,
     sessionId,
     loading,
+    refreshing,
     error,
     runs,
     steps,
@@ -170,7 +172,11 @@ export function SessionTranscript({
   const runFinished = Boolean(
     responseRun && RUN_TERMINAL_STATUSES.includes(responseRun.status),
   );
+  // A running session row is not enough to show thinking: during a switch its
+  // detail snapshot may still be loading.
+  const detailReady = !loading && !refreshing;
   const showThinking =
+    (Boolean(pending) || detailReady) &&
     session?.status !== "waiting_input" &&
     responseRun?.status !== "waiting_input" &&
     !hasAssistantText &&
@@ -197,7 +203,8 @@ export function SessionTranscript({
   }, [sessionId, pending, projected.confirmed, hasAssistantText, runFinished]);
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
-  const showLiveBlock = Boolean(streamingStepId);
+  const showLiveBlock =
+    Boolean(streamingStepId) && (detailReady || Boolean(pending));
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
@@ -247,7 +254,7 @@ export function SessionTranscript({
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
           className="session-chat-scroll h-full overflow-y-auto"
-          aria-busy={loading || olderHistory.loading}
+          aria-busy={loading || refreshing || olderHistory.loading}
         >
           <div className="session-transcript-body">
             {olderHistory.loading && (
@@ -315,7 +322,10 @@ export function SessionTranscript({
                 </button>
               </div>
             ) : (
-              <>
+              <div
+                key={sessionId ?? "empty-session"}
+                className="session-transcript-content"
+              >
                 <AgentConversationView
                   session={session}
                   runs={runs}
@@ -324,7 +334,7 @@ export function SessionTranscript({
                   messages={projected.messages}
                   childSessions={childSessions}
                   excludeStepId={showLiveBlock ? streamingStepId : null}
-                  unifiedLive={active}
+                  unifiedLive={active && (detailReady || Boolean(pending))}
                   submitting={Boolean(pending)}
                   scrollRootRef={scrollRef}
                   liveTurn={
@@ -345,7 +355,7 @@ export function SessionTranscript({
                     ) : undefined
                   }
                 />
-              </>
+              </div>
             )}
           </div>
         </div>

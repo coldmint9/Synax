@@ -749,6 +749,8 @@ export interface AgentSessionStoreState {
   sessionListLoading: boolean;
   sessionListError: string | null;
   detailLoading: boolean;
+  /** A complete cached snapshot remains visible during a background refresh. */
+  detailRefreshing: boolean;
   detailError: string | null;
   selectedSessionId: string | null;
   panelOpen: boolean;
@@ -938,6 +940,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     sessionListLoading: false,
     sessionListError: null,
     detailLoading: false,
+    detailRefreshing: false,
     detailError: null,
     selectedSessionId: null,
     panelOpen: false,
@@ -1254,6 +1257,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       set({
         panelOpen: false,
         detailLoading: false,
+        detailRefreshing: false,
         detailError: null,
         selectedSessionId: null,
         interactionState: null,
@@ -1450,13 +1454,20 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Active sessions must always render from a fresh request. The live
       // stream remains the fast path, but an old detail snapshot must not be
       // restored when the conversation page is mounted again.
-      const cached =
-        liveSession || forceFresh
-          ? undefined
-          : get().sessionDetailCache[sessionId];
+      // Reuse complete inactive snapshots even for a forced refresh. The
+      // refresh runs in the background, so switching stays instant without
+      // showing a half-built transcript. Active sessions remain live-only.
+      const cached = liveSession
+        ? undefined
+        : get().sessionDetailCache[sessionId];
+      const needsRefresh =
+        forceFresh ||
+        !cached?.cachedAt ||
+        isActiveSessionStatus(session?.status);
       set((state) => ({
         panelOpen: true,
         detailLoading: !cached?.cachedAt,
+        detailRefreshing: needsRefresh && Boolean(cached?.cachedAt),
         detailError: null,
         selectedSessionId: sessionId,
         sessionDetailCache: cached
@@ -1508,10 +1519,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Completed/failed/cancelled pages are immutable from the transcript
       // perspective. Reuse their cached payload until an explicit refresh or
       // a runtime mutation invalidates it; only active pages keep polling.
-      const needsRefresh =
-        forceFresh ||
-        !cached?.cachedAt ||
-        isActiveSessionStatus(session?.status);
       if (needsRefresh) {
         void get().refreshDetail({
           joinPending: true,
@@ -1849,11 +1856,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         (session) => session.id === targetSessionId,
       );
       const targetSessionIsLive = isActiveSessionStatus(targetSession?.status);
+      const hasReadyCache = Boolean(
+        get().sessionDetailCache[targetSessionId]?.cachedAt,
+      );
       set({
-        detailLoading:
-          forceFresh ||
-          targetSessionIsLive ||
-          !get().sessionDetailCache[targetSessionId]?.cachedAt,
+        // Only show the blocking skeleton when no complete transcript exists.
+        detailLoading: !hasReadyCache,
+        detailRefreshing: true,
         detailError: null,
       });
       const refresh = {
@@ -2097,6 +2106,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     const preserveLive = isActiveSessionStatus(currentStatus);
                     return {
                       detailLoading: false,
+                      detailRefreshing: false,
                       detailError: null,
                       runs: merged.runs,
                       steps: merged.steps,
@@ -2143,7 +2153,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               .catch((error) => {
                 if (discardIfMissing(error)) return;
                 if (isCurrent()) {
-                  set({ detailLoading: false, detailError: String(error) });
+                  set({
+                    detailLoading: false,
+                    detailRefreshing: false,
+                    detailError: String(error),
+                  });
                   if (
                     get().streamingCompletedSteps.length > 0 &&
                     isTerminalSessionStatus(

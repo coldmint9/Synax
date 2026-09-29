@@ -17,6 +17,35 @@ const schema = z.object({
   text: z.string().max(1000).optional(),
 }).strict();
 
+type CuaWindowObservation = {
+  degraded?: unknown;
+  error?: unknown;
+  errors?: unknown;
+  reason?: unknown;
+  elements?: unknown;
+};
+
+/**
+ * A CUA process can be alive while macOS has denied the capabilities needed to
+ * resolve a native window. Do not turn that state into an empty candidate list:
+ * an empty list makes Jev choose `abstain` and hides the actionable permission
+ * error from the user.
+ */
+export function describeCuaObservationFailure(structured: unknown): string | null {
+  if (!structured || typeof structured !== 'object') {
+    return 'CUA Driver returned no window observation. Grant Synax Accessibility and Screen Recording permissions, then restart Synax.';
+  }
+  const state = structured as CuaWindowObservation;
+  if (state.degraded === true) {
+    const detail = [state.error, state.reason, state.errors]
+      .flatMap(value => Array.isArray(value) ? value : [value])
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join('; ');
+    return `CUA Driver is running in degraded mode${detail ? ` (${detail})` : ''}. Grant Synax Accessibility and Screen Recording permissions, then restart Synax.`;
+  }
+  return null;
+}
+
 export function makeCandidates(structured: unknown, pid: number, windowId: number, text?: string): Candidate[] {
   if (!structured || typeof structured !== 'object') return [{ id: 'reobserve', description: 'Reobserve the window' }, { id: 'abstain', description: 'Stop: insufficient evidence' }];
   const state = structured as { snapshot_id?: unknown; elements?: unknown };
@@ -68,6 +97,8 @@ export const jevSessionToolProvider: SessionToolProvider = {
         }
         const observer = await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
         if (!observer.ok) throw new Error(observer.error ?? 'Cua observation failed');
+        const observationFailure = describeCuaObservationFailure(observer.structuredContent);
+        if (observationFailure) throw new Error(observationFailure);
         let candidates = makeCandidates(observer.structuredContent, args.pid, args.windowId, args.text);
         if (configured.perception !== 'disabled' && !candidates.some(candidate => candidate.tool)) {
           const tools = mcpClientManager.getCachedTools(CUA_SERVER_ID, session.projectId, sessionId);
@@ -128,9 +159,10 @@ export const jevSessionToolProvider: SessionToolProvider = {
         const executed = await mcpClientManager.callTool(CUA_SERVER_ID, selected.tool, selected.args, session.projectId, sessionId, signal);
         if (!executed.ok) throw new Error(executed.error ?? 'Cua action failed; reobserve before retrying');
         const after = await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
+        const afterFailure = after.ok ? describeCuaObservationFailure(after.structuredContent) : null;
         return {
-          result: { acted: true, selected: selected.id, confidence: decision.confidence, action: executed.structuredContent, after: after.structuredContent, verification: after.ok ? 'fresh_observation' : 'unverified', observationError: after.error },
-          displaySummary: `Jev selected ${selected.id}; ${after.ok ? 'fresh window state captured' : 'post-action verification unavailable'}`,
+          result: { acted: true, selected: selected.id, confidence: decision.confidence, action: executed.structuredContent, after: after.structuredContent, verification: after.ok && !afterFailure ? 'fresh_observation' : 'unverified', observationError: after.error ?? afterFailure },
+          displaySummary: `Jev selected ${selected.id}; ${after.ok && !afterFailure ? 'fresh window state captured' : 'post-action verification unavailable'}`,
           artifacts: [],
         };
       },

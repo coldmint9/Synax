@@ -17,6 +17,7 @@
   min-height: 100%;
 }
 .session-transcript-skeleton,
+.session-transcript-content,
 .session-workspace-panel--content .workspace-viewer-body {
   animation: session-content-enter 120ms ease-out;
 }
