@@ -48,7 +48,7 @@ it("persists computer use settings and never returns the Jev key", async () => {
       jev: {
         enabled: true,
         fallback: "fail_closed",
-        providerId: "typesafe",
+        providerId: "openai",
         model: "jev-1",
         apiKey: "sk-test-secret",
       },
@@ -62,7 +62,7 @@ it("persists computer use settings and never returns the Jev key", async () => {
   const config = await getGlobal();
   expect(config.computerUse.strategy).toBe("jev");
   expect(config.computerUse.perception).toBe("auto");
-  expect(config.computerUse.jev.providerId).toBe("typesafe");
+  expect(config.computerUse.jev.providerId).toBe("openai");
   expect(config.computerUse.jev.model).toBe("jev-1");
   expect(config.computerUse.jev.apiKey).toBeUndefined();
   expect(config.computerUse.jev.apiKeyMasked).toBeTruthy();
@@ -84,6 +84,33 @@ it("keeps the stored key when apiKey is omitted and clears it on empty string", 
 it("rejects unknown computer use fields", async () => {
   const res = await put({ computerUse: { nope: true } });
   expect(res.status).toBe(400);
+});
+
+it("rejects a Jev provider that is not configured", async () => {
+  const res = await put({
+    computerUse: { jev: { enabled: true, providerId: "custom-api:missing" } },
+  });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("Jev 供应商不存在");
+  const config = await getGlobal();
+  expect(config.computerUse?.jev?.providerId ?? null).toBeNull();
+});
+
+it("round-trips a configured Jev provider and clears it on null", async () => {
+  const accepted = await put({
+    computerUse: { jev: { enabled: true, providerId: "openai", model: "jev-1.13" } },
+  });
+  expect(accepted.status).toBe(200);
+  let config = await getGlobal();
+  expect(config.computerUse.jev.providerId).toBe("openai");
+  expect(config.computerUse.jev.model).toBe("jev-1.13");
+
+  const cleared = await put({
+    computerUse: { jev: { enabled: true, providerId: null } },
+  });
+  expect(cleared.status).toBe(200);
+  config = await getGlobal();
+  expect(config.computerUse.jev.providerId ?? null).toBeNull();
 });
 
 it("round-trips global MCP servers", async () => {

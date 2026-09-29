@@ -15,7 +15,9 @@ export function patchAgentSession(
       : merged;
   if (next.profileId !== "synax" && next.profileId !== "goal") return next;
   if (next.status === "stopping") return { ...next, status: "running" };
-  if (["failed", "cancelled", "interrupted"].includes(next.status)) {
+  // A failed run keeps its own state so the session list can flag it with a red
+  // dot; cancelled/interrupted still fold into the resting state.
+  if (["cancelled", "interrupted"].includes(next.status)) {
     return { ...next, status: "completed" };
   }
   return next;
@@ -88,9 +90,10 @@ export function canEnqueueSessionInput(
   return false;
 }
 
-/** Statuses where the send key becomes a resume (play) control. */
+/** Statuses where the send key becomes a resume (play) control. A failed Run is
+ *  not resumable server-side (it has no pending Run), so it never gets one. */
 export function isSessionResumable(session: AgentSession | undefined): boolean {
-  return Boolean(session && ["interrupted", "failed"].includes(session.status));
+  return Boolean(session && session.status === "interrupted");
 }
 
 export function sessionHasPendingPermissions(

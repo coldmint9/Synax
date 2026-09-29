@@ -48,9 +48,20 @@ export interface RuntimeAsset {
   sha256: string;
   createdAt: string;
 }
+/**
+ * How media acceptance was established:
+ * - `verified`   the model declared modalities and the adapter's wire parts are known
+ * - `declared`   the model declared modalities, but the adapter's parts are unverified
+ * - `undeclared` nothing was declared, so media input stays blocked
+ */
+export type InputTransportStatus = "verified" | "declared" | "undeclared";
 export interface InputCapabilities {
   modalities: InputModality[];
   verified: boolean;
+  /** Set by the capability resolver so the UI can explain what is missing. */
+  status?: InputTransportStatus;
+  /** Operator-facing reason, present whenever media input is blocked. */
+  reason?: string;
   mediaTypes?: string[];
   maxFileBytes: number;
   maxTotalBytes: number;

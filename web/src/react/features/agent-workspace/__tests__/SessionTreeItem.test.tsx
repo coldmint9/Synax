@@ -186,6 +186,32 @@ describe("SessionTreeItem", () => {
     expect(container.querySelector(".session-list-dot")).not.toBeNull();
   });
 
+  it("renders a red dot for a session that ended with an error", () => {
+    const session = makeSession({ status: "completed" });
+    useAgentSessionStore.setState({ sessions: [session] });
+    const { container, rerender } = render(
+      <SessionTreeItem
+        node={makeNode(session)}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+    expect(container.querySelector(".session-list-dot")).toBeNull();
+
+    rerender(
+      <SessionTreeItem
+        node={makeNode({ ...session, status: "failed" })}
+        isSelected={false}
+        onSelect={noop}
+        onToggleExpand={noop}
+      />,
+    );
+    const dot = container.querySelector(".session-list-dot");
+    expect(dot).not.toBeNull();
+    expect(dot?.classList.contains("bg-destructive")).toBe(true);
+  });
+
   it("keeps the running indicator after selection", () => {
     const session = makeSession();
     useAgentSessionStore.setState({ sessions: [session] });

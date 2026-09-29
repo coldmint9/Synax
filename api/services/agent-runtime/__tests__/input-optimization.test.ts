@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ config: vi.fn(), generate: vi.fn() }));
 
@@ -9,7 +9,7 @@ vi.mock("../../llm-runtime/gateway.js", () => ({
   generateGatewayTextResult: mocks.generate,
 }));
 
-import { optimizeInput } from "../input-optimization.js";
+import { INPUT_OPTIMIZATION_TIMEOUT_MS, optimizeInput } from "../input-optimization.js";
 
 const input = {
   projectId: "p1",
@@ -19,7 +19,7 @@ const input = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.config.mockReturnValue({
     inputOptimizationModel: "",
     providers: [{ id: "codex-acp", kind: "acp" }],
@@ -30,16 +30,20 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 it("uses the selected API model without tools and sends a conservative editing contract", async () => {
   expect(await optimizeInput(input)).toEqual({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
+    status: "optimized",
   });
   const [request, signal] = mocks.generate.mock.calls[0];
   expect(request).toMatchObject({
     projectId: "p1",
     model: "openai/current",
     purpose: "input-optimization",
-    maxTokens: 512,
+    maxTokens: 2_048,
+    maxRetries: 0,
   });
   expect(request.tools).toBeUndefined();
   expect(request.messages[0].content).toContain(
@@ -67,6 +71,7 @@ it("does not force a generic expansion for a concise request", async () => {
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: "做成可视化的动态交互页面。",
+    status: "optimized",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(
@@ -96,6 +101,7 @@ it("keeps structured drafts and protected literals intact", async () => {
   });
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    status: "optimized",
     text: [
       "请修复登录流程：",
       "- 保留接口 `POST /api/login`",
@@ -119,6 +125,7 @@ it("repairs a provider response that drops protected content, then accepts a val
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: repaired,
+    status: "optimized",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(2);
   expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
@@ -135,6 +142,7 @@ it("falls back to the original draft when the provider keeps violating the contr
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: draft,
+    status: "preserved",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(2);
 });
@@ -146,7 +154,8 @@ it("does not add confirmation templates to a short draft", async () => {
     finishReason: "stop",
   });
   expect(await optimizeInput({ ...input, text: `  ${draft}  ` })).toEqual({
-    text: draft,
+    text: `  ${draft}  `,
+    status: "preserved",
   });
 });
 
@@ -158,6 +167,7 @@ it("preserves confirmation content that was already in the draft", async () => {
   });
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: "做成一个可交互的页面，数据源待确认。",
+    status: "optimized",
   });
 });
 
@@ -192,12 +202,125 @@ it.each(["", "  ", "x".repeat(32_001)])(
 );
 
 it.each([
-  { text: " ", finishReason: "stop" },
+  { text: " ", finishReason: "stop", code: "INPUT_OPTIMIZATION_EMPTY", calls: 3 },
+  { text: "partial", finishReason: "length", code: "INPUT_OPTIMIZATION_TRUNCATED", calls: 3 },
+  { text: "partial", finishReason: "content-filter", code: "INPUT_OPTIMIZATION_FILTERED", calls: 1 },
+  { text: "looks complete", finishReason: "other", code: "INPUT_OPTIMIZATION_INCOMPLETE", calls: 1 },
+  { text: "looks complete", finishReason: "tool-calls", code: "INPUT_OPTIMIZATION_INCOMPLETE", calls: 1 },
+  { text: "looks complete", finishReason: "error", code: "INPUT_OPTIMIZATION_INCOMPLETE", calls: 1 },
+  { text: "x".repeat(32_001), finishReason: "stop", code: "INPUT_OPTIMIZATION_TOO_LONG", calls: 1 },
+])("rejects $finishReason results with $code after $calls calls", async ({ text, finishReason, code, calls }) => {
+  mocks.generate.mockResolvedValue({ text, finishReason });
+  await expect(optimizeInput(input)).rejects.toMatchObject({ code });
+  expect(mocks.generate).toHaveBeenCalledTimes(calls);
+});
+
+it.each([
   { text: "partial", finishReason: "length" },
-  { text: "partial", finishReason: "content-filter" },
-])("rejects incomplete or empty results", async (result) => {
-  mocks.generate.mockResolvedValue(result);
-  await expect(optimizeInput(input)).rejects.toThrow();
+  { text: " ", finishReason: "stop" },
+])("recovers from $finishReason without accepting incomplete text", async (result) => {
+  mocks.generate
+    .mockResolvedValueOnce(result)
+    .mockResolvedValueOnce({ text: "请整理我的需求。", finishReason: "stop" });
+  expect(await optimizeInput(input)).toEqual({ text: "请整理我的需求。", status: "optimized" });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+  const [[first, signal], [second, retrySignal]] = mocks.generate.mock.calls;
+  expect(second.maxTokens).toBeGreaterThan(first.maxTokens);
+  expect(second.messages).toEqual(first.messages);
+  expect(second.model).toBe(input.model);
+  expect(second.tools).toBeUndefined();
+  expect(second.maxRetries).toBe(0);
+  expect(retrySignal).toBe(signal);
+});
+
+it("shares the attempt limit between truncation recovery and semantic repair", async () => {
+  const draft = "修复 `src/login.ts`。";
+  mocks.generate
+    .mockResolvedValueOnce({ text: "请修复", finishReason: "length" })
+    .mockResolvedValueOnce({ text: "请修复登录。", finishReason: "stop" })
+    .mockResolvedValueOnce({ text: "请修复 `src/login.ts`。", finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: "请修复 `src/login.ts`。", status: "optimized",
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(3);
+  expect(mocks.generate.mock.calls[2][0].messages[0].content).toContain("previous rewrite violated");
+});
+
+it("can recover a truncated semantic repair within the shared attempt limit", async () => {
+  const draft = "修复 `src/login.ts`。";
+  mocks.generate
+    .mockResolvedValueOnce({ text: "请修复登录。", finishReason: "stop" })
+    .mockResolvedValueOnce({ text: "请修复", finishReason: "length" })
+    .mockResolvedValueOnce({ text: "请修复 `src/login.ts`。", finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toMatchObject({ status: "optimized" });
+  expect(mocks.generate).toHaveBeenCalledTimes(3);
+  expect(mocks.generate.mock.calls[2][0].maxTokens).toBeGreaterThan(mocks.generate.mock.calls[1][0].maxTokens);
+  expect(mocks.generate.mock.calls[2][0].messages).toEqual(mocks.generate.mock.calls[1][0].messages);
+});
+
+it("preserves the exact draft when recovery leaves no semantic repair attempts", async () => {
+  const draft = " \n  修复 `src/login.ts`。\n ";
+  mocks.generate
+    .mockResolvedValueOnce({ text: "", finishReason: "stop" })
+    .mockResolvedValueOnce({ text: "partial", finishReason: "length" })
+    .mockResolvedValueOnce({ text: "请修复登录。", finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({ text: draft, status: "preserved" });
+  expect(mocks.generate).toHaveBeenCalledTimes(3);
+});
+
+it("keeps already clear text byte-for-byte, including whitespace and answer-like wording", async () => {
+  const draft = " \n我会检查 `src/login.ts`。\n ";
+  mocks.generate.mockResolvedValue({ text: draft.trim(), finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({ text: draft, status: "unchanged" });
+  expect(mocks.generate).toHaveBeenCalledTimes(1);
+});
+
+it("validates completion before treating identical text as unchanged", async () => {
+  mocks.generate.mockResolvedValue({ text: input.text, finishReason: "length" });
+  await expect(optimizeInput(input)).rejects.toMatchObject({ code: "INPUT_OPTIMIZATION_TRUNCATED" });
+  expect(mocks.generate).toHaveBeenCalledTimes(3);
+});
+
+it("protects tables even without headings or list markers", async () => {
+  const draft = "| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 2 |";
+  mocks.generate.mockResolvedValue({ text: "苹果有两个。", finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({ text: draft, status: "preserved" });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+});
+
+it("increases bounded budgets for a long non-Latin draft", async () => {
+  mocks.generate.mockResolvedValue({ text: "partial", finishReason: "length" });
+  await expect(optimizeInput({ ...input, text: "中".repeat(32_000) })).rejects.toMatchObject({ code: "INPUT_OPTIMIZATION_TRUNCATED" });
+  const budgets = mocks.generate.mock.calls.map(([request]) => request.maxTokens);
+  expect(budgets).toHaveLength(3);
+  expect(budgets[1]).toBeGreaterThan(budgets[0]);
+  expect(budgets[2]).toBeGreaterThan(budgets[1]);
+  expect(budgets[2]).toBeLessThanOrEqual(65_536);
+});
+
+it("does not retry or accept a late result after caller cancellation", async () => {
+  const controller = new AbortController();
+  mocks.generate.mockImplementationOnce(async () => {
+    controller.abort();
+    return { text: "partial", finishReason: "length" };
+  });
+  await expect(optimizeInput(input, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+  expect(mocks.generate).toHaveBeenCalledTimes(1);
+});
+
+it("uses one deadline across recovery and rejects a late provider result", async () => {
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  mocks.generate
+    .mockResolvedValueOnce({ text: "partial", finishReason: "length" })
+    .mockImplementationOnce(async () => {
+      deadline.abort(new DOMException("Timed out", "TimeoutError"));
+      return { text: "请整理我的需求。", finishReason: "stop" };
+    });
+  await expect(optimizeInput(input)).rejects.toMatchObject({ name: "TimeoutError" });
+  expect(timeout).toHaveBeenCalledExactlyOnceWith(INPUT_OPTIMIZATION_TIMEOUT_MS);
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+  expect(mocks.generate.mock.calls[1][1]).toBe(mocks.generate.mock.calls[0][1]);
 });
 
 it("propagates aborts and provider failures", async () => {

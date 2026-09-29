@@ -48,6 +48,7 @@ export function useInputCapability(
   const deferred = backendId.endsWith("-acp") && !sessionId;
   if (cap && !cap.verified && !deferred)
     reason =
+      cap.reason ??
       "输入模态未确认，请在设置声明或选择兼容模型 / Input modalities unconfirmed";
   if (cap?.verified && media) {
     for (const item of media.items) {
@@ -85,7 +86,11 @@ export function useInputCapability(
         : reason ||
           (!cap?.verified
             ? "创建会话时协商附件能力 / Negotiated on session creation"
-            : `输入 / Input: ${cap.modalities.join(" · ")}`),
+            : `输入 / Input: ${cap.modalities.join(" · ")}${
+                cap.status === "declared"
+                  ? "（传输未确认 / transport unverified）"
+                  : ""
+              }`),
     error: Boolean(reason),
   };
 }

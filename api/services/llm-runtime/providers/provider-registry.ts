@@ -197,3 +197,12 @@ function responsesEndpoint(baseUrl: string | undefined): string {
     ? normalized
     : `${normalized}/responses`;
 }
+
+/**
+ * Adapter npm names the runtime can instantiate. The media capability table is
+ * keyed by these names, and its coverage test walks this list so a new adapter
+ * cannot ship without an explicit media declaration.
+ */
+export function registeredAdapterPackages(): string[] {
+  return Object.keys(REGISTRY).sort();
+}

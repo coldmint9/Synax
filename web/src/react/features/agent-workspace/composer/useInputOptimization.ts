@@ -69,6 +69,10 @@ export function useInputOptimization(options: Options) {
     if (request.current || !current.current.content.trim()) return;
     const initial = current.current;
     const controller = new AbortController();
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(INPUT_OPTIMIZATION_TIMEOUT_MS),
+    ]);
     request.current = controller;
     setPending(true);
     setError(null);
@@ -81,20 +85,37 @@ export function useInputOptimization(options: Options) {
           model: initial.model,
           backendId: initial.backendId,
         },
-        AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(INPUT_OPTIMIZATION_TIMEOUT_MS),
-        ]),
+        signal,
       );
       if (request.current !== controller || controller.signal.aborted) return;
+      signal.throwIfAborted();
       // Clear the in-flight request before updating the draft: our own edit is not cancellation.
       request.current = null;
       setPending(false);
+      if (result.status === "preserved") {
+        setNotice(
+          zh
+            ? "优化结果未能保留原意，已保留原文。可重试或更换输入优化模型。"
+            : "The rewrite did not preserve your draft. The original was kept. Retry or choose another input optimization model.",
+        );
+        return;
+      }
+      if (result.status === "unchanged" || result.text === initial.content) {
+        setNotice(zh ? "输入已清晰，无需修改。" : "Your draft is already clear; no changes needed.");
+        return;
+      }
       setSnapshot({ original: initial.content, optimized: result.text });
       current.current.onContentChange(result.text);
     } catch (err) {
-      if (request.current === controller && !controller.signal.aborted)
-        setError(err instanceof Error ? err.message : String(err));
+      if (request.current === controller && !controller.signal.aborted) {
+        setError(
+          signal.aborted && signal.reason?.name === "TimeoutError"
+            ? zh
+              ? "输入优化超时，原文已保留，请重试。"
+              : "Input optimization timed out. Your draft was kept; please retry."
+            : err instanceof Error ? err.message : String(err),
+        );
+      }
     } finally {
       if (request.current === controller) {
         request.current = null;

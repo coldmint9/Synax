@@ -566,6 +566,15 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
     ...(patch.providerConnections ?? {}),
   };
 
+  // Jev may be pointed at any configured provider: OpenRouter serves the TypeSafe System One API.
+  // An empty or null value clears the setting, so only a non-empty unknown id is a client error.
+  const jevProviderId = patch.computerUse?.jev?.providerId;
+  if (jevProviderId && !providerMap.has(jevProviderId)) {
+    throw new Error(
+      `Jev 供应商不存在: ${jevProviderId} / Select a configured provider for Jev.`,
+    );
+  }
+
   for (const [providerId, connection] of Object.entries(
     patch.providerConnections ?? {},
   )) {

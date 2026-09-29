@@ -7,6 +7,19 @@ import { ComposerEffortPicker, type ComposerReasoningEffort } from "../ComposerE
 vi.mock("../../../../../hooks/useLocale", () => ({ useLocale: () => ({ t: (key: string) => key }) }));
 
 describe("Headless effort choices", () => {
+  it("sorts and deduplicates allowed levels while retaining the selected semantic value", async () => {
+    const user = userEvent.setup();
+    const change = vi.fn();
+    const view = render(<ComposerEffortPicker effort="medium" allowed={["high", "low", "medium", "high"]} onChange={change} />);
+    await user.click(screen.getByRole("button", { name: "effortLabel" }));
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    expect(radios[1]).toBeChecked();
+    expect(radios.map(radio => radio.getAttribute('aria-label'))).toEqual(["低", "中", "高"]);
+    view.rerender(<ComposerEffortPicker effort="medium" allowed={["medium", "high", "low"]} onChange={change} />);
+    expect(screen.getAllByRole("radio")[1]).toBeChecked();
+    expect(change).not.toHaveBeenCalled();
+  });
   it("uses arrow-key radio selection, stays open for adjustments, resets and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const overlay = vi.fn();

@@ -15,6 +15,7 @@ import {
   draftToConnection,
   draftToProviderDef,
   effectiveReasoningEfforts,
+  parseReasoningEfforts,
   mergeModelOptions,
   modelsWithContextLimit,
   providerReasoningEfforts,
@@ -76,6 +77,16 @@ function makeConfig(
 }
 
 describe("providerPresets model metadata", () => {
+  it("normalizes unordered old effort lists and writes a canonical set", () => {
+    const source = ["max", "low", "high", "low", "invalid", "none", "medium", "xhigh"];
+    expect(parseReasoningEfforts(source)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(source[0]).toBe("max");
+    expect(parseReasoningEfforts(null)).toEqual([]);
+    expect(parseReasoningEfforts(["invalid"])).toEqual([]);
+    const provider = makeProvider();
+    expect(effectiveReasoningEfforts(makeConfig(provider, { reasoningEfforts: source }), provider.id)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(draftToConnection({ ...createCustomDraft([]), reasoningEfforts: ["high", "low", "high"] }).extra?.reasoningEfforts).toEqual(["low", "high"]);
+  });
   it("round-trips output modalities for arbitrary model IDs", () => {
     const draft = {
       ...createCustomDraft([]),

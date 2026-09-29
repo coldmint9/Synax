@@ -103,6 +103,8 @@ Computer Use is available in the Electron desktop app through an app-hosted Cua 
 
 The default **Auto** strategy uses Direct Cua without a Jev account or network request. Jev-assisted operation is optional: set `TYPESAFE_API_KEY` in the environment that launches the desktop app, then enable Jev in the project Computer Use settings. The controller chooses from bounded semantic actions and verifies a fresh window state after each action. `cua-perception` visual-region parsing is optional and disabled by default; the visual extension is **not** bundled in the Synax installer.
 
+Jev can also run through a configured provider instead of TypeSafe. Add an OpenRouter connection under **Settings -> Providers** (OpenAI-compatible format, Base URL `https://openrouter.ai/api/v1`, your OpenRouter API key), then select that provider for Jev in the Computer Use settings. OpenRouter serves the TypeSafe System One API at `https://openrouter.ai/api`, so Synax normalizes the connection base URL before the SDK appends `/v1/systemone`, and the connection API key is used instead of `TYPESAFE_API_KEY`. The Jev model field takes a System One model id such as `jev-1.13`, `typesafe/jev-1.13`, or `~typesafe/jev-latest`, not a chat model id. The `client.models.list()` limitation noted by OpenRouter does not affect Synax, which never lists models. Leaving the Jev provider unset keeps the original TypeSafe behavior.
+
 You can also start the two servers separately, for example when running the API in one terminal and the frontend in another:
 
 ```bash

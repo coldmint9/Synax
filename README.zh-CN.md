@@ -103,6 +103,8 @@ Electron 桌面版通过应用托管的 Cua Driver 提供电脑操作能力。�
 
 默认的「自动」策略直接使用 Cua，**不需要 Jev API，也不会请求 Jev 网络服务**。Jev 辅助模式是可选项：在启动桌面应用的环境中设置 `TYPESAFE_API_KEY`，再在项目的「电脑操作」设置中启用 Jev。控制器从有限的语义动作候选中选择，并在动作后重新观察窗口。`cua-perception` 视觉区域解析默认关闭，其可选扩展**不随 Synax 安装包分发**。
 
+Jev 也可以改走已配置的供应商，而不直接使用 TypeSafe：在「设置 → 供应商」中添加 OpenRouter 连接（OpenAI 兼容协议，Base URL 填 `https://openrouter.ai/api/v1`，填入你的 OpenRouter API Key），再在「电脑操作」设置里把 Jev 供应商指向该连接。OpenRouter 在 `https://openrouter.ai/api` 提供 TypeSafe 的 System One API，因此 Synax 会先把连接 Base URL 归一化，再由 SDK 拼接 `/v1/systemone`，并使用该连接的 API Key 而非 `TYPESAFE_API_KEY`。模型字段需填写 System One 模型 ID，例如 `jev-1.13`、`typesafe/jev-1.13` 或 `~typesafe/jev-latest`，不是 chat 模型 ID。OpenRouter 提到的 `client.models.list()` 不可用限制对 Synax 无影响，因为 Synax 从不列出模型。供应商留空时保持原有的 TypeSafe 行为。
+
 也可以分别启动这两个服务，例如在两个终端里各跑一个：
 
 ```bash

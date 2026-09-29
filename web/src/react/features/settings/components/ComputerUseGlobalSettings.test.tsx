@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ComputerUseGlobalSettings } from './ComputerUseGlobalSettings'
+import type { ProviderDef } from '../../../../lib/contracts/config'
 
 afterEach(() => { Reflect.deleteProperty(window, 'electronAPI') })
 
@@ -55,5 +56,64 @@ describe('Computer Use global settings', () => {
         jev: expect.objectContaining({ apiKey: 'sk-new-secret', apiKeyMasked: '****' }),
       }),
     })
+  })
+
+  it('offers the configured providers for Jev and saves the selection', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    const onConfigureProvider = vi.fn()
+    const user = userEvent.setup()
+    const providers: ProviderDef[] = [
+      { id: 'openai', label: 'OpenAI', status: 'live', kind: 'api', caps: { canFollowUp: true, canCancel: true }, models: [] },
+      { id: 'custom-api:openrouter', label: 'OpenRouter', status: 'live', kind: 'api', caps: { canFollowUp: true, canCancel: true }, models: [] },
+    ]
+    render(
+      <ComputerUseGlobalSettings
+        locale="en"
+        value={{ enabled: true, strategy: 'jev', perception: 'disabled', jev: { enabled: true, fallback: 'fail_closed' } }}
+        providers={providers}
+        onConfigureProvider={onConfigureProvider}
+        onUpdate={onUpdate}
+      />,
+    )
+    const select = screen.getByRole('combobox', { name: 'Jev provider' })
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'OpenRouter' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure OpenRouter' })).not.toBeInTheDocument()
+    await user.selectOptions(select, 'custom-api:openrouter')
+    expect(onUpdate).toHaveBeenCalledWith({
+      computerUse: expect.objectContaining({
+        jev: expect.objectContaining({ providerId: 'custom-api:openrouter' }),
+      }),
+    })
+  })
+
+  it('offers a configuration entry when OpenRouter is not configured', async () => {
+    const onConfigureProvider = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <ComputerUseGlobalSettings
+        locale="en"
+        value={{ enabled: true, strategy: 'jev', perception: 'disabled', jev: { enabled: true, fallback: 'fail_closed' } }}
+        providers={[]}
+        onConfigureProvider={onConfigureProvider}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Configure OpenRouter' }))
+    expect(onConfigureProvider).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('option', { name: 'Not set' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'OpenRouter' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an unconfigured Jev provider visible as unavailable', () => {
+    render(
+      <ComputerUseGlobalSettings
+        locale="en"
+        value={{ enabled: true, strategy: 'jev', perception: 'disabled', jev: { enabled: true, fallback: 'fail_closed', providerId: 'custom-api:gone' } }}
+        providers={[]}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    expect(screen.getByRole('option', { name: 'custom-api:gone (unavailable)' })).toBeInTheDocument()
   })
 })

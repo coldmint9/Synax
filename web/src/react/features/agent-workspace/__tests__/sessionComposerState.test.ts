@@ -6,6 +6,7 @@ import type {
 import {
   canEnqueueSessionInput,
   isSessionComposerLocked,
+  isSessionResumable,
   patchAgentSession,
   sessionHasPendingPermissions,
 } from "../sessionComposerState";
@@ -133,9 +134,16 @@ describe("sessionComposerState", () => {
 
   it.each([
     ["waiting_permission", "waiting_permission"],
-    ["failed", "completed"],
+    ["failed", "failed"],
+    ["interrupted", "completed"],
   ] as const)("projects Synax %s patches as %s", (status, expected) => {
     expect(patchAgentSession(makeSession(), { status }).status).toBe(expected);
+  });
+
+  it("offers the resume control only for interrupted sessions", () => {
+    expect(isSessionResumable(makeSession({ status: "interrupted" }))).toBe(true);
+    expect(isSessionResumable(makeSession({ status: "failed" }))).toBe(false);
+    expect(isSessionResumable(makeSession({ status: "completed" }))).toBe(false);
   });
 
   it.each(["blocked", "paused"] as const)(

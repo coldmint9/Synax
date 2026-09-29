@@ -68,3 +68,27 @@ it("exposes actionable model errors instead of an empty success", async () => {
     code: "INPUT_OPTIMIZATION_MODEL_UNAVAILABLE",
   });
 });
+
+it.each(["optimized", "unchanged", "preserved"])(
+  "forwards %s status without changing draft whitespace",
+  async (status) => {
+    const result = { text: "  原文\n\n", status };
+    mocks.optimize.mockResolvedValue(result);
+    const response = await request({ projectId: "p1", text: result.text });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(result);
+  },
+);
+
+it.each([
+  "INPUT_OPTIMIZATION_EMPTY",
+  "INPUT_OPTIMIZATION_TRUNCATED",
+  "INPUT_OPTIMIZATION_FILTERED",
+  "INPUT_OPTIMIZATION_INCOMPLETE",
+  "INPUT_OPTIMIZATION_TOO_LONG",
+])("exposes the classified failure %s", async (code) => {
+  mocks.optimize.mockRejectedValue(new AgentRuntimeError("保留原文", code, 422));
+  const response = await request({ projectId: "p1", text: "原文" });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({ code, error: "保留原文" });
+});

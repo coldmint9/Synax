@@ -4,6 +4,13 @@ import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 
 export const MAX_OPTIMIZATION_INPUT_CHARS = 32_000;
 export const INPUT_OPTIMIZATION_TIMEOUT_MS = 60_000;
+const MAX_GENERATION_ATTEMPTS = 3;
+const MAX_OUTPUT_TOKENS = 65_536;
+
+export interface InputOptimizationResult {
+  text: string;
+  status: "optimized" | "unchanged" | "preserved";
+}
 
 export interface InputOptimizationRequest {
   projectId: string;
@@ -46,7 +53,8 @@ function classifyInput(text: string): OptimizationMode {
     CODE_FENCE_PATTERN.test(trimmed) ||
     /(?:^|\n)\s*(?:#{1,6}\s|[-*•]\s+|\d+[.)]\s+)/m.test(trimmed) ||
     /(^|\n)\s*[[{].*[}\]]\s*$/s.test(trimmed) ||
-    COMMAND_LINE_PATTERN.test(trimmed);
+    COMMAND_LINE_PATTERN.test(trimmed) ||
+    TABLE_ROW_PATTERN.test(trimmed);
 
   // RegExp instances with the global flag retain lastIndex between calls.
   CODE_FENCE_PATTERN.lastIndex = 0;
@@ -140,7 +148,50 @@ function needsRepair(
 }
 
 function outputTokenBudget(text: string): number {
-  return Math.min(8_192, Math.max(512, Math.ceil(text.trim().length / 2)));
+  // Character counts are only an estimate. Leave room for non-Latin text and
+  // reasoning, then increase the budget only when the provider cannot finish.
+  return Math.min(16_384, Math.max(2_048, Math.ceil(text.length * 1.5) + 1_024));
+}
+
+type OutputIssue = "empty" | "length" | "filtered" | "unfinished" | "oversized";
+
+function classifyOutput(result: {
+  text: string;
+  finishReason: string;
+}): OutputIssue | null {
+  if (result.finishReason === "content-filter") return "filtered";
+  if (result.finishReason === "length") return "length";
+  if (result.finishReason !== "stop") return "unfinished";
+  if (!result.text.trim()) return "empty";
+  if (result.text.length > MAX_OPTIMIZATION_INPUT_CHARS) return "oversized";
+  return null;
+}
+
+function outputError(issue: OutputIssue): AgentRuntimeError {
+  const errors: Record<OutputIssue, [string, string]> = {
+    empty: [
+      "模型未返回可用的优化文本，原文已保留，请重试或更换输入优化模型 / The model returned no usable edited text. Your draft was kept. Retry or choose another input optimization model.",
+      "INPUT_OPTIMIZATION_EMPTY",
+    ],
+    length: [
+      "优化结果被输出上限截断，原文已保留，请缩短输入或更换输入优化模型 / The output limit truncated the result. Your draft was kept. Shorten the draft or choose another input optimization model.",
+      "INPUT_OPTIMIZATION_TRUNCATED",
+    ],
+    filtered: [
+      "模型服务的内容过滤阻止了本次优化，原文已保留 / The provider's content filter blocked optimization. Your draft was kept.",
+      "INPUT_OPTIMIZATION_FILTERED",
+    ],
+    unfinished: [
+      "模型未正常结束优化，原文已保留，请重试或更换输入优化模型 / The model did not finish normally. Your draft was kept. Retry or choose another input optimization model.",
+      "INPUT_OPTIMIZATION_INCOMPLETE",
+    ],
+    oversized: [
+      "优化结果超过 32000 字符，原文已保留，请缩短输入后重试 / The result exceeds 32000 characters. Your draft was kept. Shorten the draft and retry.",
+      "INPUT_OPTIMIZATION_TOO_LONG",
+    ],
+  };
+  const [message, code] = errors[issue];
+  return new AgentRuntimeError(message, code, 422);
 }
 
 function validateModelSelection(input: InputOptimizationRequest): string {
@@ -170,7 +221,7 @@ function validateModelSelection(input: InputOptimizationRequest): string {
 export async function optimizeInput(
   input: InputOptimizationRequest,
   signal?: AbortSignal,
-): Promise<{ text: string }> {
+): Promise<InputOptimizationResult> {
   if (!input.text.trim() || input.text.length > MAX_OPTIMIZATION_INPUT_CHARS)
     throw new AgentValidationError(
       "输入不能为空且不能超过 32000 字符 / Enter 1–32000 characters.",
@@ -191,13 +242,14 @@ export async function optimizeInput(
         ? "The draft is concise. Complete grammar only when useful; do not expand it with generic goals, outcomes, or assumptions."
         : "The draft is prose. Clarify relationships and requested action only when those ideas are already present; do not add a requirements template.";
   const systemPrompt = `${INPUT_OPTIMIZATION_SYSTEM_PROMPT}\n\nEditing mode: ${modeInstruction}`;
-  const generateRewrite = (prompt: string) =>
+  const generateRewrite = (prompt: string, maxTokens: number) =>
     generateGatewayTextResult(
       {
         projectId: input.projectId,
         purpose: "input-optimization",
         model,
-        maxTokens: outputTokenBudget(input.text),
+        maxTokens,
+        maxRetries: 0,
         messages: [
           { role: "system", content: prompt },
           { role: "user", content: input.text },
@@ -206,42 +258,34 @@ export async function optimizeInput(
       abortSignal,
     );
 
-  let result = await generateRewrite(systemPrompt);
-  abortSignal.throwIfAborted();
-  let text = result.text.trim();
-  if (
-    !text ||
-    text.length > MAX_OPTIMIZATION_INPUT_CHARS ||
-    result.finishReason !== "stop"
-  )
-    throw new AgentRuntimeError(
-      "模型未返回完整的优化结果，请重试 / The model did not return a complete result. Please retry.",
-      "INPUT_OPTIMIZATION_INCOMPLETE",
-      422,
-    );
-
-  if (needsRepair(input.text, text, mode)) {
-    result = await generateRewrite(`${systemPrompt}\n\n${REPAIR_PROMPT}`);
+  let maxTokens = outputTokenBudget(input.text);
+  let repairing = false;
+  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
     abortSignal.throwIfAborted();
-    text = result.text.trim();
-    if (
-      !text ||
-      text.length > MAX_OPTIMIZATION_INPUT_CHARS ||
-      result.finishReason !== "stop"
-    )
-      throw new AgentRuntimeError(
-        "模型未返回完整的优化结果，请重试 / The model did not return a complete result. Please retry.",
-        "INPUT_OPTIMIZATION_INCOMPLETE",
-        422,
-      );
-  }
+    const result = await generateRewrite(
+      repairing ? `${systemPrompt}\n\n${REPAIR_PROMPT}` : systemPrompt,
+      maxTokens,
+    );
+    abortSignal.throwIfAborted();
+    const issue = classifyOutput(result);
+    if (issue) {
+      const recoverable = issue === "empty" || issue === "length";
+      if (!recoverable || attempt === MAX_GENERATION_ATTEMPTS - 1)
+        throw outputError(issue);
+      maxTokens = Math.min(MAX_OUTPUT_TOKENS, maxTokens * 2);
+      continue;
+    }
 
-  // A conservative fallback is safer than silently damaging a request. The
-  // caller can still submit the original draft and retry with another model.
-  if (
-    needsRepair(input.text, text, mode) ||
-    !preservesProtectedSegments(input.text, text)
-  )
-    return { text: input.text.trim() };
-  return { text };
+    // A whitespace-only rewrite is not useful. Keep the exact original draft.
+    if (result.text.trim() === input.text.trim())
+      return { text: input.text, status: "unchanged" };
+
+    if (!needsRepair(input.text, result.text, mode))
+      return { text: result.text, status: "optimized" };
+
+    // Permit one semantic repair; recovery and repair share the same attempt cap.
+    if (repairing || attempt === MAX_GENERATION_ATTEMPTS - 1) break;
+    repairing = true;
+  }
+  return { text: input.text, status: "preserved" };
 }

@@ -289,6 +289,7 @@ const PROJECTED_STATUS_SQL = `CASE
         OR (json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'stopping')
       ) THEN 'running'
       WHEN profile_id IN ('synax', 'goal') AND status = 'queued' THEN 'queued'
+      WHEN profile_id IN ('synax', 'goal') AND status = 'failed' THEN 'failed'
       WHEN profile_id IN ('synax', 'goal') THEN 'completed'
       WHEN json_valid(session_metadata_json) AND json_extract(session_metadata_json, '$.runtimeControl.state') = 'stopping' THEN 'stopping'
       WHEN status IN ('blocked', 'paused') THEN 'completed'

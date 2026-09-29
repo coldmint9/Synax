@@ -44,6 +44,9 @@ export function projectSessionState(session: AgentSession): AgentSession {
     if (normalized.status === 'running' || normalized.status === 'stopping' || control?.state === 'stopping') {
       return { ...normalized, status: 'running' };
     }
+    // A run that ended with an error keeps its failure state: the session list
+    // must flag it (red dot) instead of reporting a successful completion.
+    if (normalized.status === 'failed') return normalized;
     return { ...normalized, status: 'completed' };
   }
   if (control?.state === 'stopping') {

@@ -1,51 +1,49 @@
-import { useState } from "react";
-import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/react/components/ui/Dialog";
-import { Description, FieldError, InputGroup, Label, Field, Input, InputSuffix } from "@/react/components/ui/Field";
-import { Button } from "@/react/components/ui/Button";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Check,
-  ChevronDown,
-  Eye,
-  EyeOff,
-  Plus,
-  RefreshCw,
-  Save,
-  Search,
-  Wifi,
-  X,
-} from "lucide-react";
+  Disclosure,
+  DisclosureButton,
+  DisclosurePanel,
+} from "@headlessui/react";
+import { Check, ChevronDown, Eye, EyeOff, Loader2, Search } from "lucide-react";
+import {
+  Dialog,
+  DialogContainer,
+  DialogPanel,
+  DialogHeader,
+  DialogTitle,
+  DialogBody,
+  DialogFooter,
+} from "@/react/components/ui/Dialog";
+import {
+  Description,
+  FieldError,
+  InputGroup,
+  Label,
+  Field,
+  Input,
+  InputSuffix,
+} from "@/react/components/ui/Field";
+import { Button } from "@/react/components/ui/Button";
+import { Checkbox } from "@/react/components/ui/Toggle";
 import {
   ALL_REASONING_EFFORTS,
   API_FORMAT_OPTIONS,
+  API_PROVIDER_PRESETS,
   REASONING_EFFORT_LABELS,
   applyProtocolDefaults,
   configuredModelList,
   mergeModelOptions,
+  parseReasoningEfforts,
   selectDefaultModel,
-  toggleModelContextLimit,
-  toggleModelSelection,
   type ApiProviderDraft,
 } from "../lib/providerPresets";
 import { validateProviderDraft } from "../lib/validation";
-import { formatContextLimit } from "../../../../lib/formatTokens";
 import { useLocale } from "../../../../hooks/useLocale";
 import { SettingsSelect } from "./SettingsSelect";
 import { SaveIndicator } from "./SaveIndicator";
 import { useProviderAutoSave } from "../useProviderAutoSave";
-import type {
-  ApiFormat,
-  ReasoningEffort,
-} from "../../../../lib/contracts/config";
-
-const INPUT_MODALITY_OPTIONS = [
-  { id: "text", zh: "文本", en: "Text" },
-  { id: "image", zh: "图片", en: "Image" },
-  { id: "audio", zh: "音频", en: "Audio" },
-  { id: "video", zh: "视频", en: "Video" },
-  { id: "file", zh: "文件", en: "File" },
-] as const;
-
-type InputModality = (typeof INPUT_MODALITY_OPTIONS)[number]["id"];
+import { ProviderModelCapabilities } from "./ProviderModelCapabilities";
+import type { ApiFormat } from "../../../../lib/contracts/config";
 
 interface LlmProviderModalProps {
   draft: ApiProviderDraft;
@@ -56,6 +54,21 @@ interface LlmProviderModalProps {
   onDiscoverModels: (draft: ApiProviderDraft) => Promise<string[]>;
 }
 
+function Advanced({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Disclosure as="div" className="border-t border-border pt-4">
+      <DisclosureButton className="group flex w-full items-center gap-2 rounded text-left text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
+        <ChevronDown
+          size={14}
+          className="-rotate-90 transition-transform group-data-open:rotate-0"
+        />
+        {title}
+      </DisclosureButton>
+      <DisclosurePanel className="space-y-4 pt-4">{children}</DisclosurePanel>
+    </Disclosure>
+  );
+}
+
 export function LlmProviderModal({
   draft: initialDraft,
   isNew = false,
@@ -64,717 +77,679 @@ export function LlmProviderModal({
   onValidate,
   onDiscoverModels,
 }: LlmProviderModalProps) {
-  const { t, locale } = useLocale();
+  const { locale } = useLocale();
   const zh = locale === "zh";
-  const [draft, setDraft] = useState<ApiProviderDraft>({ ...initialDraft });
-  const {
-    saving,
-    saved,
-    error: saveError,
-    flush,
-    valid,
-  } = useProviderAutoSave(draft, onSave);
+  // The parent reloads config after saving. Keep this dialog's mode stable until it closes.
+  const [creating] = useState(isNew);
+  const [draft, setDraft] = useState<ApiProviderDraft>(() => ({
+    ...initialDraft,
+    reasoningEfforts: parseReasoningEfforts(initialDraft.reasoningEfforts),
+  }));
+  const autoSave = useProviderAutoSave(draft, onSave, !creating);
+  const [step, setStep] = useState<1 | 2>(1);
   const [showApiKey, setShowApiKey] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [presetId, setPresetId] = useState(
+    initialDraft.custom ? "custom" : initialDraft.id,
+  );
   const [modelQuery, setModelQuery] = useState("");
-
+  const [manualModel, setManualModel] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
+  const [discoveryFailed, setDiscoveryFailed] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationMessage, setValidationMessage] = useState("");
+  const [validationFailed, setValidationFailed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+  const keyRef = useRef<HTMLInputElement>(null);
   const errors = validateProviderDraft(draft);
+  const connectionErrors = errors.filter((e) => e.field !== "model");
   const fieldError = (field: string) =>
-    errors.find((e) => e.field === field)?.message;
-
-  /** Models this provider would configure (the multi-select result). */
+    attempted
+      ? connectionErrors.find((e) => e.field === field)?.message
+      : undefined;
   const configuredModels = configuredModelList(draft);
-  /** Picker candidates: discovered models plus whatever is already configured. */
-  const candidateModels = mergeModelOptions(
-    draft.modelOptions,
-    configuredModels,
+  const candidates = mergeModelOptions(draft.modelOptions, configuredModels);
+  const filtered = candidates.filter((model) =>
+    model.toLowerCase().includes(modelQuery.trim().toLowerCase()),
   );
-  const normalizedQuery = modelQuery.trim().toLowerCase();
-  const filteredCandidates = normalizedQuery
-    ? candidateModels.filter((m) => m.toLowerCase().includes(normalizedQuery))
-    : candidateModels;
-  const hasExactCandidate = candidateModels.some(
-    (m) => m.toLowerCase() === normalizedQuery,
-  );
+  const saving = submitting || autoSave.saving;
+  const busy = saving || discovering || validating;
+  const saveError = submitError || autoSave.error;
 
-  async function handleClose() {
-    if (saving) return;
-    if (!valid || (await flush())) onClose();
+  useEffect(() => {
+    if (step === 2) searchRef.current?.focus();
+  }, [step]);
+
+  function changeConnection(patch: Partial<ApiProviderDraft>) {
+    setDraft((current) => ({ ...current, ...patch }));
+    setValidationMessage("");
+    setDiscoveryMessage("");
   }
 
-  async function handleValidate() {
-    setDraft((d) => ({ ...d, validating: true, validationMessage: null }));
-    try {
-      await onValidate(draft);
-      setDraft((d) => ({
-        ...d,
-        validating: false,
-        validationMessage: "✓ 连接成功",
-      }));
-    } catch (err) {
-      setDraft((d) => ({
-        ...d,
-        validating: false,
-        validationMessage: err instanceof Error ? err.message : "连接失败",
-      }));
-    }
-  }
-
-  async function handleDiscover() {
-    setDraft((d) => ({ ...d, discoveringModels: true, modelMessage: null }));
-    try {
-      const models = await onDiscoverModels(draft);
-      if (models.length > 0) {
-        // Discovery only fills the candidate pool; the user picks what to configure.
-        setDraft((d) => ({
-          ...d,
-          discoveringModels: false,
-          modelOptions: mergeModelOptions(
-            models,
-            d.modelOptions,
-            configuredModelList(d),
-          ),
-          modelMessage: `发现 ${models.length} 个模型，勾选需要启用的模型`,
-        }));
-        setModelMenuOpen(true);
-      } else {
-        setDraft((d) => ({
-          ...d,
-          discoveringModels: false,
-          modelMessage: "未发现可用模型",
-        }));
-      }
-    } catch (err) {
-      setDraft((d) => ({
-        ...d,
-        discoveringModels: false,
-        modelMessage: err instanceof Error ? err.message : "发现失败",
-      }));
-    }
-  }
-
-  /** Multi-select toggle: adds or removes a candidate from the configured models. */
-  function handleToggleModel(model: string) {
-    setDraft((d) =>
-      toggleModelSelection(
-        { ...d, modelOptions: mergeModelOptions(d.modelOptions, [model]) },
-        model,
-      ),
-    );
-  }
-
-  function handleSetDefaultModel(model: string) {
-    setDraft((d) =>
-      selectDefaultModel(
-        { ...d, modelOptions: mergeModelOptions(d.modelOptions, [model]) },
-        model,
-      ),
-    );
-  }
-
-  /** Enter or "添加" turns the typed text into a configured model and the default one. */
-  function addQueryModel() {
-    const typed = modelQuery.trim();
-    if (!typed) return;
-    setDraft((d) => {
-      const known = mergeModelOptions(
-        d.modelOptions,
-        configuredModelList(d),
-      ).find((m) => m.toLowerCase() === typed.toLowerCase());
-      const model = known ?? typed;
-      return {
-        ...d,
-        model,
-        models: mergeModelOptions(d.models, [model]),
-        modelOptions: mergeModelOptions(d.modelOptions, [model]),
-        modelMessage: null,
-      };
-    });
-    setModelQuery("");
-    setModelMenuOpen(false);
-  }
-
-  function toggleEffort(effort: ReasoningEffort) {
-    setDraft((d) => {
-      const current = d.reasoningEfforts ?? [];
-      const next = current.includes(effort)
-        ? current.filter((e) => e !== effort)
-        : [...current, effort];
-      return { ...d, reasoningEfforts: next };
-    });
-  }
-
-  function toggleModelModality(
-    modelId: string,
-    modality: InputModality,
-    checked: boolean,
-    direction: "inputModalities" | "outputModalities" = "inputModalities",
-  ) {
+  function selectModel(model: string, checked: boolean) {
     setDraft((current) => {
-      const metadata = current.modelMeta?.[modelId] ?? {};
-      const modalities = metadata[direction] ?? [];
+      const models = checked
+        ? mergeModelOptions(configuredModelList(current), [model])
+        : configuredModelList(current).filter((id) => id !== model);
       return {
         ...current,
-        modelMeta: {
-          ...current.modelMeta,
-          [modelId]: {
-            ...metadata,
-            [direction]: checked
-              ? [...new Set([...modalities, modality])]
-              : modalities.filter((value) => value !== modality),
-          },
-        },
+        models,
+        model: models.includes(current.model)
+          ? current.model
+          : (models[0] ?? ""),
       };
     });
+    setValidationMessage("");
   }
 
-  /** Drops every manual override for one model so it follows its catalog declaration again. */
-  function resetModelOverrides(modelId: string) {
-    setDraft((current) => ({
-      ...current,
-      modelMeta: {
-        ...current.modelMeta,
-        [modelId]: {
-          ...current.modelMeta?.[modelId],
-          inputModalities: undefined,
-          outputModalities: undefined,
-          contextLimit: undefined,
-        },
-      },
-    }));
+  function checkConnectionFields() {
+    setAttempted(true);
+    if (!connectionErrors.length) return true;
+    if (connectionErrors[0].field === "apiKey") keyRef.current?.focus();
+    else addressRef.current?.focus();
+    return false;
   }
 
-  /** The 1M input window is a per-model switch, so it never touches sibling models. */
-  function toggleModel1M(modelId: string, checked: boolean) {
-    setDraft((current) => toggleModelContextLimit(current, modelId, checked));
+  async function discover() {
+    if (busyRef.current || !checkConnectionFields()) return;
+    busyRef.current = true;
+    setDiscovering(true);
+    setDiscoveryFailed(false);
+    setDiscoveryMessage("");
+    try {
+      const models = mergeModelOptions(await onDiscoverModels(draft));
+      setDraft((current) => ({
+        ...current,
+        modelOptions: mergeModelOptions(
+          models,
+          current.modelOptions,
+          configuredModelList(current),
+        ),
+      }));
+      setDiscoveryMessage(
+        models.length
+          ? zh
+            ? `发现 ${models.length} 个模型`
+            : `Found ${models.length} models`
+          : zh
+            ? "未发现模型，请手动添加模型 ID。"
+            : "No models found. Add a model ID manually.",
+      );
+    } catch (error) {
+      setDiscoveryFailed(true);
+      setDiscoveryMessage(
+        `${error instanceof Error ? error.message : zh ? "获取模型失败" : "Could not load models"} · ${zh ? "可以重试或手动添加模型。" : "Retry or add a model manually."}`,
+      );
+    } finally {
+      busyRef.current = false;
+      setDiscovering(false);
+      setStep(2);
+    }
+  }
+
+  async function validate() {
+    if (busyRef.current || errors.length) return;
+    busyRef.current = true;
+    setValidating(true);
+    setValidationMessage("");
+    setValidationFailed(false);
+    try {
+      await onValidate(draft);
+      setValidationMessage(zh ? "连接成功" : "Connection successful");
+    } catch (error) {
+      setValidationFailed(true);
+      setValidationMessage(
+        error instanceof Error
+          ? error.message
+          : zh
+            ? "连接失败"
+            : "Connection failed",
+      );
+    } finally {
+      busyRef.current = false;
+      setValidating(false);
+    }
+  }
+
+  async function close() {
+    if (busy || busyRef.current) return;
+    if (creating || !autoSave.valid || (await autoSave.flush())) onClose();
+  }
+
+  async function save() {
+    if (busyRef.current || errors.length) return;
+    busyRef.current = true;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      if (creating) {
+        await onSave(draft);
+        onClose();
+      } else if (await autoSave.flush()) onClose();
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : zh
+            ? "保存失败，请重试"
+            : "Could not save. Please retry.",
+      );
+    } finally {
+      busyRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  function addModel() {
+    const value = manualModel.trim();
+    if (!value) return;
+    setDraft((current) => {
+      const model =
+        mergeModelOptions(
+          current.modelOptions,
+          configuredModelList(current),
+        ).find((m) => m.toLowerCase() === value.toLowerCase()) ?? value;
+      return {
+        ...current,
+        model: current.model || model,
+        models: mergeModelOptions(configuredModelList(current), [model]),
+        modelOptions: mergeModelOptions(current.modelOptions, [model]),
+      };
+    });
+    setManualModel("");
+    setModelQuery("");
   }
 
   return (
-    <Dialog
-      open
-      dismissible={false}
-      onClose={() => void handleClose()}
-    >
+    <Dialog open dismissible={false} onClose={() => void close()}>
       <DialogContainer size="lg">
         <DialogPanel>
           <DialogHeader>
-            <DialogTitle>
-              {isNew
-                ? zh
-                  ? "新增供应商"
-                  : "Add provider"
-                : `${draft.label} 配置`}
-            </DialogTitle>
-          </DialogHeader>
-          <DialogBody className="px-6">
-            <div className="space-y-4">
-              {
-                <Field>
-                  <Label className="text-xs">供应商名称</Label>
-                  <InputGroup>
-                    <Input placeholder="My Provider" value={draft.label} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, label: val })); }} />
-                  </InputGroup>
-                </Field>
-              }
-
-              <Field
-                invalid={!!fieldError("apiKey")}
-
-
-
+            <div className="space-y-2">
+              <DialogTitle>
+                {creating
+                  ? step === 1
+                    ? zh
+                      ? "连接供应商"
+                      : "Connect provider"
+                    : zh
+                      ? "选择模型"
+                      : "Choose models"
+                  : `${draft.label} ${zh ? "配置" : "settings"}`}
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                {step === 1
+                  ? zh
+                    ? "填好连接信息，再选择要使用的模型。"
+                    : "Connect your provider, then choose the models to use."
+                  : zh
+                    ? "只添加你要使用的模型，并选择一个默认模型。"
+                    : "Choose the models you need and set a default."}
+              </p>
+              <ol
+                className="flex gap-6 pt-2 text-sm"
+                aria-label={zh ? "配置步骤" : "Setup steps"}
               >
-                <Label className="text-xs">
-                  API Key <span className="text-destructive">*</span>
-                </Label>
-                <InputGroup>
-                  <Input
-                    placeholder={
-                      draft.apiKeyMasked || t("llmCardApiKeyPlaceholder")
-                    } type={showApiKey ? "text" : "password"} value={draft.apiKey} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, apiKey: val })); }}
-                  />
-                  <InputSuffix className="pr-0">
-                    <Button
-                      iconOnly
-                      size="sm"
-                      variant="ghost"
-                      aria-label={showApiKey ? "隐藏" : "显示"}
-                      onClick={() => setShowApiKey(!showApiKey)}
+                {[zh ? "连接" : "Connection", zh ? "模型" : "Models"].map(
+                  (label, i) => (
+                    <li
+                      key={label}
+                      aria-current={step === i + 1 ? "step" : undefined}
+                      className={
+                        step === i + 1
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground"
+                      }
                     >
-                      {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </Button>
-                  </InputSuffix>
-                </InputGroup>
-                {fieldError("apiKey") && (
-                  <FieldError>{fieldError("apiKey")}</FieldError>
-                )}
-              </Field>
-
-              <SettingsSelect
-                label="协议"
-                selectedKey={draft.format}
-                onSelectionChange={(key) => {
-                  if (key)
-                    setDraft((d) => applyProtocolDefaults(d, key as ApiFormat));
-                }}
-                disallowEmptySelection
-                options={API_FORMAT_OPTIONS.map((option) => ({
-                  key: option.key,
-                  label: option.label,
-                }))}
-              />
-
-              <Field
-                invalid={!!fieldError("baseUrl")}
-
-
-              >
-                <Label className="text-xs">Base URL</Label>
-                <InputGroup>
-                  <Input
-                    placeholder={
-                      draft.custom ? "https://api.example.com" : undefined
-                    } value={draft.baseUrl} onChange={(event) => { const val = event.currentTarget.value; return setDraft((d) => ({ ...d, baseUrl: val })); }}
-                  />
-                </InputGroup>
-                {fieldError("baseUrl") ? (
-                  <FieldError>{fieldError("baseUrl")}</FieldError>
-                ) : (
-                  draft.custom && (
-                    <Description className="text-[11px]">
-                      无需包含 /v1，系统会自动检测
-                    </Description>
-                  )
-                )}
-              </Field>
-
-              <div className="space-y-1">
-                <span className="block text-xs text-foreground pb-1">
-                  {t("llmCardModel")}
-                </span>
-                <div className="flex gap-1.5 items-end">
-                  <div className="relative flex-1">
-                    <div
-                      className={`flex h-9 items-center gap-2 rounded-lg border bg-transparent px-2.5 ${fieldError("model") ? "border-destructive" : "border-default"}`}
-                    >
-                      <input
-                        value={draft.model}
-                        onChange={(e) =>
-                          setDraft((d) => ({ ...d, model: e.target.value }))
-                        }
-                        placeholder="输入模型 ID"
-                        aria-label={t("llmCardModel")}
-                        className="h-full w-full bg-transparent font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
-                      />
-                      <button
-                        type="button"
-                        aria-label="候选模型"
-                        aria-expanded={modelMenuOpen}
-                        onClick={() => setModelMenuOpen((o) => !o)}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60"
+                      <span
+                        className={`mr-2 inline-flex size-6 items-center justify-center rounded-full ${step === i + 1 ? "bg-primary text-primary-foreground" : "bg-muted"}`}
                       >
-                        <ChevronDown size={13} />
-                      </button>
-                    </div>
-                    {modelMenuOpen && (
-                      <div className="mt-1 w-full overflow-hidden rounded-lg border border-default bg-background shadow-lg">
-                        <div className="flex items-center gap-1.5 border-b border-border/40 px-2">
-                          <Search
-                            size={12}
-                            className="shrink-0 text-muted-foreground"
-                          />
-                          <input
-                            autoFocus
-                            value={modelQuery}
-                            onChange={(e) => setModelQuery(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key !== "Enter") return;
-                              e.preventDefault();
-                              addQueryModel();
-                            }}
-                            placeholder="搜索或输入模型…"
-                            aria-label="搜索模型"
-                            className="h-8 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
-                          />
-                        </div>
-                        <ul className="max-h-52 space-y-0.5 overflow-y-auto p-1.5">
-                          {filteredCandidates.map((m) => {
-                            const selected = configuredModels.includes(m);
-                            return (
-                              <li key={m} className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleModel(m)}
-                                  aria-pressed={selected}
-                                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-full px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                                    selected
-                                      ? "bg-primary/10 font-medium text-primary"
-                                      : "text-foreground/85 hover:bg-muted/60"
-                                  }`}
-                                >
-                                  <span
-                                    aria-hidden
-                                    className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${selected ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
-                                  >
-                                    {selected && <Check size={10} />}
-                                  </span>
-                                  <span className="truncate font-mono">
-                                    {m}
-                                  </span>
-                                  {draft.modelMeta?.[m]?.contextLimit ===
-                                    1_000_000 && (
-                                    <span
-                                      aria-hidden
-                                      className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary"
-                                    >
-                                      1M
-                                    </span>
-                                  )}
-                                </button>
-                                {m === draft.model.trim() ? (
-                                  <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] font-medium text-primary">
-                                    默认
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSetDefaultModel(m)}
-                                    className="shrink-0 rounded-full px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60"
-                                  >
-                                    设为默认
-                                  </button>
-                                )}
-                              </li>
-                            );
-                          })}
-                          {normalizedQuery && !hasExactCandidate && (
-                            <li>
-                              <button
-                                type="button"
-                                onClick={addQueryModel}
-                                className="flex w-full items-center gap-1.5 rounded-full px-2.5 py-1.5 text-left text-[11px] text-foreground/85 transition-colors hover:bg-muted/60"
-                              >
-                                <Plus size={11} className="shrink-0" />
-                                {`添加 “${modelQuery.trim()}”`}
-                              </button>
-                            </li>
+                        {i + 1}
+                      </span>
+                      {label}
+                    </li>
+                  ),
+                )}
+              </ol>
+            </div>
+          </DialogHeader>
+          <DialogBody>
+            <fieldset
+              disabled={busy}
+              className="min-w-0 space-y-5 disabled:opacity-70"
+            >
+              {step === 1 ? (
+                <>
+                  {creating && initialDraft.custom ? (
+                    <SettingsSelect
+                      label={zh ? "供应商" : "Provider"}
+                      selectedKey={presetId}
+                      onSelectionChange={(value) => {
+                        if (!value) return;
+                        setPresetId(value);
+                        const preset = API_PROVIDER_PRESETS.find(
+                          (p) => p.providerId === value,
+                        );
+                        changeConnection({
+                          label: preset?.label ?? initialDraft.label,
+                          baseUrl: preset?.defaultBaseUrl ?? "",
+                          format: preset?.format ?? "openai",
+                          model: "",
+                          models: [],
+                          modelOptions: [],
+                          modelMeta: {},
+                        });
+                      }}
+                      options={[
+                        {
+                          key: "custom",
+                          label: zh
+                            ? "自定义 · OpenAI 兼容"
+                            : "Custom · OpenAI compatible",
+                        },
+                        ...API_PROVIDER_PRESETS.map((p) => ({
+                          key: p.providerId,
+                          label: p.label,
+                        })),
+                      ]}
+                    />
+                  ) : (
+                    <p className="text-sm font-medium">{draft.label}</p>
+                  )}
+                  <Field invalid={!!fieldError("baseUrl")}>
+                    <Label>{zh ? "服务地址" : "Service URL"}</Label>
+                    <Input
+                      ref={addressRef}
+                      autoFocus
+                      type="url"
+                      value={draft.baseUrl}
+                      placeholder="https://api.example.com/v1"
+                      onChange={(event) =>
+                        changeConnection({ baseUrl: event.currentTarget.value })
+                      }
+                    />
+                    {fieldError("baseUrl") ? (
+                      <FieldError>{fieldError("baseUrl")}</FieldError>
+                    ) : (
+                      <Description>
+                        {zh
+                          ? "填写供应商提供的 API 地址。"
+                          : "Enter the API URL supplied by your provider."}
+                      </Description>
+                    )}
+                  </Field>
+                  <Field invalid={!!fieldError("apiKey")}>
+                    <Label>API Key</Label>
+                    <InputGroup>
+                      <Input
+                        ref={keyRef}
+                        type={showApiKey ? "text" : "password"}
+                        autoComplete="off"
+                        value={draft.apiKey}
+                        placeholder={draft.apiKeyMasked || "sk-…"}
+                        onChange={(event) =>
+                          changeConnection({
+                            apiKey: event.currentTarget.value,
+                          })
+                        }
+                      />
+                      <InputSuffix>
+                        <button
+                          type="button"
+                          className="rounded p-1 focus-visible:outline-2 focus-visible:outline-ring"
+                          aria-label={
+                            showApiKey
+                              ? zh
+                                ? "隐藏 API Key"
+                                : "Hide API key"
+                              : zh
+                                ? "显示 API Key"
+                                : "Show API key"
+                          }
+                          aria-pressed={showApiKey}
+                          onClick={() => setShowApiKey((v) => !v)}
+                        >
+                          {showApiKey ? (
+                            <EyeOff size={16} />
+                          ) : (
+                            <Eye size={16} />
                           )}
-                          {filteredCandidates.length === 0 &&
-                            !normalizedQuery && (
-                              <li className="px-2.5 py-2 text-center text-[10px] text-muted-foreground/60">
-                                暂无候选模型，点击“{t("llmCardDiscover")}”获取
-                              </li>
-                            )}
-                        </ul>
-                        <div className="flex items-center justify-between gap-2 border-t border-border/40 px-2.5 py-1.5">
-                          <span className="text-[10px] text-muted-foreground/70">
-                            勾选要启用的模型，输入新模型名后回车可新增
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setModelMenuOpen(false)}
-                            className="shrink-0 rounded-full px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60"
+                        </button>
+                      </InputSuffix>
+                    </InputGroup>
+                    {fieldError("apiKey") && (
+                      <FieldError>{fieldError("apiKey")}</FieldError>
+                    )}
+                    {draft.apiKeyMasked && (
+                      <Description>
+                        {zh
+                          ? "留空以继续使用已保存的密钥。"
+                          : "Leave blank to keep the saved key."}
+                      </Description>
+                    )}
+                  </Field>
+                  <Advanced
+                    title={zh ? "高级连接设置" : "Advanced connection settings"}
+                  >
+                    <Field>
+                      <Label>{zh ? "显示名称" : "Display name"}</Label>
+                      <Input
+                        value={draft.label}
+                        onChange={(event) =>
+                          changeConnection({ label: event.currentTarget.value })
+                        }
+                      />
+                    </Field>
+                    <SettingsSelect
+                      label={zh ? "API 协议" : "API protocol"}
+                      selectedKey={draft.format}
+                      options={API_FORMAT_OPTIONS.map((option) => ({
+                        key: option.key,
+                        label: option.label,
+                      }))}
+                      onSelectionChange={(value) => {
+                        const next = applyProtocolDefaults(
+                          draft,
+                          value as ApiFormat,
+                        );
+                        changeConnection(next);
+                      }}
+                    />
+                  </Advanced>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      {zh
+                        ? `已选择 ${configuredModels.length} 个模型`
+                        : `${configuredModels.length} models selected`}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void discover()}
+                    >
+                      {zh ? "重新获取模型" : "Refresh models"}
+                    </Button>
+                  </div>
+                  {discoveryMessage && (
+                    <p
+                      role="status"
+                      className={`text-sm ${discoveryFailed ? "text-destructive" : "text-muted-foreground"}`}
+                    >
+                      {discoveryMessage}
+                    </p>
+                  )}
+                  <Field>
+                    <Label className="sr-only">
+                      {zh ? "搜索模型" : "Search models"}
+                    </Label>
+                    <InputGroup>
+                      <Input
+                        ref={searchRef}
+                        type="search"
+                        placeholder={zh ? "搜索模型…" : "Search models…"}
+                        value={modelQuery}
+                        onChange={(event) =>
+                          setModelQuery(event.currentTarget.value)
+                        }
+                      />
+                      <InputSuffix>
+                        <Search size={16} />
+                      </InputSuffix>
+                    </InputGroup>
+                  </Field>
+                  <div
+                    className="max-h-64 space-y-1 overflow-y-auto"
+                    aria-label={zh ? "模型列表" : "Models"}
+                  >
+                    {filtered.map((model) => (
+                      <div
+                        key={model}
+                        className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted/50"
+                      >
+                        <Field className="!flex min-w-0 flex-1 items-center gap-3">
+                          <Checkbox
+                            checked={configuredModels.includes(model)}
+                            onChange={(checked) => selectModel(model, checked)}
+                          />
+                          <Label className="min-w-0 cursor-pointer break-all text-sm">
+                            {model}
+                          </Label>
+                        </Field>
+                        {configuredModels.includes(model) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`${model} ${zh ? "设为默认" : "Set as default"}`}
+                            aria-pressed={draft.model === model}
+                            onClick={() => {
+                              setDraft((current) =>
+                                selectDefaultModel(current, model),
+                              );
+                              setValidationMessage("");
+                            }}
+                            className="shrink-0"
                           >
-                            完成
-                          </button>
-                        </div>
+                            {draft.model === model ? (
+                              <>
+                                <Check size={14} />
+                                {zh ? "默认" : "Default"}
+                              </>
+                            ) : zh ? (
+                              "设为默认"
+                            ) : (
+                              "Set default"
+                            )}
+                          </Button>
+                        )}
                       </div>
+                    ))}
+                    {!filtered.length && (
+                      <p className="py-5 text-center text-sm text-muted-foreground">
+                        {zh
+                          ? "没有匹配的模型，可以手动添加。"
+                          : "No matching models. Add one manually."}
+                      </p>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    pending={draft.discoveringModels}
-                    onClick={handleDiscover}
+                  <Advanced title={zh ? "手动添加模型" : "Add model manually"}>
+                    <Field>
+                      <Label>{zh ? "模型 ID" : "Model ID"}</Label>
+                      <Input
+                        placeholder={
+                          zh
+                            ? "供应商提供的模型 ID"
+                            : "Model ID from your provider"
+                        }
+                        value={manualModel}
+                        onChange={(event) =>
+                          setManualModel(event.currentTarget.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            addModel();
+                          }
+                        }}
+                      />
+                    </Field>
+                    <Button
+                      variant="secondary"
+                      disabled={!manualModel.trim()}
+                      onClick={addModel}
+                    >
+                      {zh ? "添加到列表" : "Add to list"}
+                    </Button>
+                  </Advanced>
+                  <Advanced
+                    title={zh ? "高级模型设置" : "Advanced model settings"}
                   >
-                    <RefreshCw size={12} />
-                    {t("llmCardDiscover")}
-                  </Button>
-                </div>
-                {fieldError("model") && (
-                  <FieldError>{fieldError("model")}</FieldError>
-                )}
-                {draft.modelMessage && (
-                  <div className="text-[10px] text-muted-foreground">
-                    {draft.modelMessage}
-                  </div>
-                )}
-                <div className="space-y-2 pt-1">
-                  <p className="text-[10px] text-muted-foreground/70">
-                    {zh
-                      ? "已启用模型 · 独立能力"
-                      : "Enabled models · Individual capabilities"}
-                  </p>
-                  <p className="text-[10px] leading-relaxed text-muted-foreground">
-                    {zh
-                      ? "逐个模型勾选实际支持的输入类型与 1M 上下文窗口；未手动配置时使用目录声明。"
-                      : "Configure input types and the 1M context window per model. Unconfigured models use their catalog declarations."}
-                  </p>
-                  {configuredModels.map((modelId) => {
-                    const modalities =
-                      draft.modelMeta?.[modelId]?.inputModalities;
-                    const contextLimit =
-                      draft.modelMeta?.[modelId]?.contextLimit;
-                    const hasOverride =
-                      modalities !== undefined ||
-                      contextLimit !== undefined ||
-                      draft.modelMeta?.[modelId]?.outputModalities !==
-                        undefined;
-                    const isDefault = modelId === draft.model.trim();
-                    return (
-                      <fieldset
-                        key={modelId}
-                        aria-label={`${modelId} ${zh ? "独立能力" : "capabilities"}`}
-                        className="group min-w-0 space-y-2 rounded-lg border border-border/40 px-2.5 py-2"
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span
-                            className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
-                            title={modelId}
+                    <ProviderModelCapabilities
+                      draft={draft}
+                      onChange={setDraft}
+                      zh={zh}
+                    />
+                    <fieldset className="space-y-2">
+                      <legend className="mb-2 text-sm">
+                        {zh
+                          ? "供应商允许的思考强度"
+                          : "Allowed reasoning efforts"}
+                      </legend>
+                      <div className="flex flex-wrap gap-3">
+                        {ALL_REASONING_EFFORTS.map((effort) => (
+                          <Field
+                            key={effort}
+                            className="!flex items-center gap-2"
                           >
-                            {modelId}
-                          </span>
-                          {isDefault ? (
-                            <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] text-primary">
-                              {t("llmCardDefault")}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              aria-label={zh ? `将 ${modelId} 设为默认` : `Set ${modelId} as default`}
-                              onClick={() => handleSetDefaultModel(modelId)}
-                              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-px text-[9px] text-primary opacity-0 transition-opacity hover:bg-primary/20 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-                            >
-                              {t("llmCardSetDefault")}
-                            </button>
-                          )}
-                          <span className="shrink-0 text-[9px] text-muted-foreground">
-                            {hasOverride
-                              ? zh
-                                ? "手动配置"
-                                : "Custom"
-                              : zh
-                                ? "使用目录"
-                                : "Catalog"}
-                          </span>
-                          {!isDefault && (
-                            <button
-                              type="button"
-                              aria-label={
-                                zh
-                                  ? `移除模型 ${modelId}`
-                                  : `Remove model ${modelId}`
+                            <Checkbox
+                              checked={draft.reasoningEfforts.includes(effort)}
+                              onChange={(checked) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  reasoningEfforts: parseReasoningEfforts(
+                                    checked
+                                      ? [...current.reasoningEfforts, effort]
+                                      : current.reasoningEfforts.filter(
+                                          (e) => e !== effort,
+                                        ),
+                                  ),
+                                }))
                               }
-                              onClick={() => handleToggleModel(modelId)}
-                              className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-                            >
-                              <X size={11} />
-                            </button>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                          {INPUT_MODALITY_OPTIONS.map((option) => (
-                            <label
-                              key={option.id}
-                              className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] text-foreground/85"
-                            >
-                              <input
-                                type="checkbox"
-                                aria-label={`${modelId} ${zh ? option.zh : option.en}`}
-                                checked={
-                                  modalities?.includes(option.id) ?? false
-                                }
-                                onChange={(event) =>
-                                  toggleModelModality(
-                                    modelId,
-                                    option.id,
-                                    event.target.checked,
-                                  )
-                                }
-                                className="size-3.5 accent-primary"
-                              />
-                              {zh ? option.zh : option.en}
-                            </label>
-                          ))}
-                          <button
-                            type="button"
-                            aria-label={
-                              zh
-                                ? `恢复 ${modelId} 的目录声明`
-                                : `Use catalog declarations for ${modelId}`
-                            }
-                            disabled={!hasOverride}
-                            onClick={() => resetModelOverrides(modelId)}
-                            className="ml-auto text-[10px] text-primary disabled:cursor-default disabled:text-muted-foreground/40"
-                          >
-                            {zh ? "恢复目录声明" : "Use catalog"}
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/30 pt-2">
-                          <span className="text-[10px] text-muted-foreground">
-                            {zh ? "输出类型" : "Output types"}
-                          </span>
-                          {INPUT_MODALITY_OPTIONS.map((option) => (
-                            <label
-                              key={option.id}
-                              className="inline-flex items-center gap-1.5 text-[10px]"
-                            >
-                              <input
-                                type="checkbox"
-                                aria-label={`${modelId} ${zh ? "输出" : "Output"} ${zh ? option.zh : option.en}`}
-                                className="size-3.5 accent-primary"
-                                checked={
-                                  draft.modelMeta?.[
-                                    modelId
-                                  ]?.outputModalities?.includes(option.id) ??
-                                  false
-                                }
-                                onChange={(event) =>
-                                  toggleModelModality(
-                                    modelId,
-                                    option.id,
-                                    event.target.checked,
-                                    "outputModalities",
-                                  )
-                                }
-                              />
-                              {zh ? option.zh : option.en}
-                            </label>
-                          ))}
-                        </div>
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/30 pt-2">
-                          <label className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-foreground/85">
-                            <input
-                              type="checkbox"
-                              aria-label={`${modelId} ${zh ? "输入上下文窗口支持 1M" : "1M input context window"}`}
-                              checked={contextLimit === 1_000_000}
-                              onChange={(event) =>
-                                toggleModel1M(modelId, event.target.checked)
-                              }
-                              className="size-3.5 accent-primary"
                             />
-                            {zh
-                              ? "输入上下文窗口支持 1M"
-                              : "1M input context window"}
-                          </label>
-                          <span className="min-w-0 text-[10px] leading-relaxed text-muted-foreground/70">
-                            {contextLimit === undefined
-                              ? zh
-                                ? "按目录声明的窗口计算"
-                                : "Uses the catalog window"
-                              : zh
-                                ? `按 ${formatContextLimit(contextLimit)} token 输入窗口计算，压缩/清窗阈值同步放大`
-                                : `Counts a ${formatContextLimit(contextLimit)}-token input window; compaction thresholds scale with it`}
-                          </span>
-                        </div>
-                      </fieldset>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <span className="block text-xs text-foreground pb-0.5">
-                  允许的思考强度（可多选）
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {ALL_REASONING_EFFORTS.map((effort) => {
-                    const selected = (draft.reasoningEfforts ?? []).includes(
-                      effort,
-                    );
-                    return (
-                      <button
-                        key={effort}
-                        type="button"
-                        onClick={() => toggleEffort(effort)}
-                        aria-pressed={selected}
-                        className={`inline-flex h-7 items-center rounded-full px-3 text-[11px] font-medium transition-colors ${
-                          selected
-                            ? "bg-primary text-primary-foreground"
-                            : "border border-border/50 bg-transparent text-muted-foreground hover:bg-muted/40"
-                        }`}
+                            <Label className="cursor-pointer text-sm">
+                              {zh ? REASONING_EFFORT_LABELS[effort] : effort}
+                            </Label>
+                          </Field>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {zh
+                          ? "不勾选时允许全部档位。输入框始终按强度从低到高排列。"
+                          : "Leave empty to allow all levels. The composer always orders levels from low to high."}
+                      </p>
+                    </fieldset>
+                  </Advanced>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={errors.length > 0}
+                      onClick={() => void validate()}
+                    >
+                      {validating
+                        ? zh
+                          ? "测试中…"
+                          : "Testing…"
+                        : zh
+                          ? "测试连接"
+                          : "Test connection"}
+                    </Button>
+                    {validationMessage && (
+                      <span
+                        role="status"
+                        className={`text-sm ${validationFailed ? "text-destructive" : "text-muted-foreground"}`}
                       >
-                        {REASONING_EFFORT_LABELS[effort]}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[10px] leading-relaxed text-muted-foreground">
-                  {draft.reasoningEfforts?.length
-                    ? "agent 输入框只能在这些已允许的档位中单选。"
-                    : "未勾选 = 不限制，agent 输入框可选全部档位。"}
-                </p>
-              </div>
-
-              {draft.validationMessage && (
-                <div
-                  className={`text-[11px] rounded px-2 py-1.5 ${draft.validationMessage.startsWith("✓") ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}
-                >
-                  {draft.validationMessage}
-                </div>
-              )}
-
-              {saveError && (
-                <div className="text-[11px] rounded px-2 py-1.5 bg-destructive/10 text-destructive">
-                  {saveError}
-                </div>
-              )}
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              size="sm"
-              variant="secondary"
-              pending={draft.validating}
-              onClick={handleValidate}
-            >
-              {({ pending: isPending }) => (
-                <>
-                  {isPending ? null : <Wifi size={12} />}
-                  {t("llmCardValidate")}
+                        {validationMessage}
+                      </span>
+                    )}
+                  </div>
                 </>
               )}
-            </Button>
-            <div className="flex-1" />
-            <span role="status" className="text-[11px] text-muted-foreground">
-              {saving ? (
-                zh ? (
-                  "正在保存…"
-                ) : (
-                  "Saving…"
-                )
-              ) : saved ? (
-                <SaveIndicator saving={false} saved />
-              ) : saveError ? (
-                zh ? (
-                  "未保存"
-                ) : (
-                  "Not saved"
-                )
-              ) : zh ? (
-                "填写完整后自动保存"
-              ) : (
-                "Changes save automatically when complete"
-              )}
-            </span>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={saving || !valid}
-              onClick={() => {
-                void flush();
-              }}
-            >
-              <Save size={12} />
-              {saveError ? (zh ? "重试保存" : "Retry save") : t("commonSave")}
-            </Button>
+            </fieldset>
+            {saveError && (
+              <p role="alert" className="mt-4 text-sm text-destructive">
+                {saveError}
+              </p>
+            )}
+          </DialogBody>
+          <DialogFooter className="flex-wrap">
+            {!creating && (
+              <SaveIndicator
+                saving={autoSave.saving}
+                saved={autoSave.saved}
+                error={null}
+              />
+            )}
             <Button
               variant="ghost"
-              size="sm"
-              disabled={saving}
-              onClick={handleClose}
+              disabled={busy}
+              onClick={() => void close()}
             >
-              {zh ? "关闭" : "Close"}
+              {creating ? (zh ? "取消" : "Cancel") : zh ? "关闭" : "Close"}
             </Button>
+            {step === 1 ? (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    if (checkConnectionFields()) setStep(2);
+                  }}
+                >
+                  {zh
+                    ? creating
+                      ? "手动添加"
+                      : "管理模型"
+                    : creating
+                      ? "Add manually"
+                      : "Manage models"}
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={() => void discover()}
+                >
+                  {discovering && (
+                    <Loader2 size={14} className="animate-spin" />
+                  )}
+                  {discovering
+                    ? zh
+                      ? "获取模型中…"
+                      : "Loading models…"
+                    : zh
+                      ? "连接并获取模型"
+                      : "Connect and load models"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setStep(1);
+                    setModelQuery("");
+                  }}
+                >
+                  {zh ? "上一步" : "Back"}
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={busy || errors.length > 0}
+                  onClick={() => void save()}
+                >
+                  {saving && <Loader2 size={14} className="animate-spin" />}
+                  {saveError
+                    ? zh
+                      ? "重试保存"
+                      : "Retry save"
+                    : creating
+                      ? zh
+                        ? "添加供应商"
+                        : "Add provider"
+                      : zh
+                        ? "完成"
+                        : "Done"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogPanel>
       </DialogContainer>

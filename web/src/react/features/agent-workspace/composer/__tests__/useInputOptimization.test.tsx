@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useInputOptimization } from "../useInputOptimization";
 const mocks = vi.hoisted(() => ({ optimize: vi.fn() }));
 vi.mock("../../../../../lib/api/inputOptimization", () => ({
@@ -30,7 +30,58 @@ function setup() {
   );
 }
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+});
+afterEach(() => vi.restoreAllMocks());
+
+it.each([
+  { status: "unchanged", notice: "无需修改" },
+  { status: "preserved", notice: "已保留原文" },
+  { status: "optimized", notice: "无需修改" },
+  { status: undefined, notice: "无需修改" },
+])("shows $status without creating an undo for identical content", async ({ status, notice }) => {
+  mocks.optimize.mockResolvedValue({ text: "原始需求", status });
+  const { result } = setup();
+  await act(async () => { await result.current.optimize(); });
+  expect(result.current.content).toBe("原始需求");
+  expect(result.current.notice).toContain(notice);
+  expect(result.current.canUndo).toBe(false);
+  expect(result.current.pending).toBe(false);
+  expect(result.current.error).toBeNull();
+});
+
+it.each(["unchanged", "preserved"])("does not apply response text with status %s", async (status) => {
+  mocks.optimize.mockResolvedValue({ text: "不应覆盖草稿", status });
+  const { result } = setup();
+  await act(async () => { await result.current.optimize(); });
+  expect(result.current.content).toBe("原始需求");
+  expect(result.current.canUndo).toBe(false);
+});
+
+it.each(["unchanged", "preserved"])("retains the last real undo after %s", async (status) => {
+  mocks.optimize.mockResolvedValueOnce({ text: "优化后的需求", status: "optimized" })
+    .mockResolvedValueOnce({ text: "优化后的需求", status });
+  const { result } = setup();
+  await act(async () => { await result.current.optimize(); });
+  await act(async () => { await result.current.optimize(); });
+  expect(result.current.canUndo).toBe(true);
+  act(() => result.current.undo());
+  expect(result.current.content).toBe("原始需求");
+});
+
+it("does not apply a late result after the shared request deadline", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let resolve!: (value: { text: string }) => void;
+  mocks.optimize.mockReturnValue(new Promise((r) => { resolve = r; }));
+  const { result } = setup();
+  act(() => { void result.current.optimize(); });
+  deadline.abort(new DOMException("deadline exceeded", "TimeoutError"));
+  await act(async () => resolve({ text: "过期的优化" }));
+  expect(result.current.content).toBe("原始需求");
+  expect(result.current.error).toContain("超时");
+  expect(result.current.canUndo).toBe(false);
+  expect(result.current.pending).toBe(false);
 });
 it("fills the draft without submitting and supports a one-step undo", async () => {
   mocks.optimize.mockResolvedValue({ text: "优化的需求" });

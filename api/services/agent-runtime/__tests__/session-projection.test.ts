@@ -37,7 +37,11 @@ describe('projectSessionState', () => {
     (status) => expect(projectSessionState(session(status)).status).toBe(status),
   )
 
-  it.each(['failed', 'cancelled', 'interrupted'] as const)(
+  it('preserves Synax failed so the session list can flag the failure', () => {
+    expect(projectSessionState(session('failed')).status).toBe('failed')
+  })
+
+  it.each(['cancelled', 'interrupted'] as const)(
     'projects terminal Synax %s as completed',
     (status) => expect(projectSessionState(session(status)).status).toBe('completed'),
   )

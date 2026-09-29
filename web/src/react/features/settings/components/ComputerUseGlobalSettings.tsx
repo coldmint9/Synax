@@ -3,6 +3,7 @@ import { AlertTriangle, KeyRound, MonitorCog, ShieldCheck } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import type {
   GlobalComputerUseSettings as Config,
+  ProviderDef,
   UpdateGlobalConfigRequest,
 } from '../../../../lib/contracts/config'
 import {
@@ -27,9 +28,12 @@ function driverStatus(state: string | undefined, zh: boolean): { label: string; 
   }
 }
 
-export function ComputerUseGlobalSettings({ value, locale, onUpdate }: {
+export function ComputerUseGlobalSettings({ value, locale, providers, onConfigureProvider, onUpdate }: {
   value?: Config
   locale: string
+  /** Configured providers; Jev may be routed through any of them. */
+  providers?: ProviderDef[]
+  onConfigureProvider?: () => void
   onUpdate: (patch: UpdateGlobalConfigRequest) => Promise<unknown>
 }) {
   const zh = locale.startsWith('zh')
@@ -56,6 +60,15 @@ export function ComputerUseGlobalSettings({ value, locale, onUpdate }: {
 
   const withJev = (patch: Partial<Jev>): Config => ({ ...current, jev: { ...jev, ...patch } })
   const saved = jev.apiKeyMasked
+  const jevProviderOptions = (providers ?? [])
+    .filter(provider => provider.kind === 'api' && provider.status !== 'inactive')
+    .map(provider => ({ id: provider.id, label: provider.label || provider.id }))
+  const hasOpenRouter = jevProviderOptions.some(option => option.id === 'custom-api:openrouter')
+  if (jev.providerId && !jevProviderOptions.some(option => option.id === jev.providerId))
+    jevProviderOptions.push({
+      id: jev.providerId,
+      label: `${jev.providerId} (${zh ? '当前不可用' : 'unavailable'})`,
+    })
   const permissionIssue = status?.error?.includes('Accessibility and Screen Recording')
 
   return (
@@ -174,17 +187,33 @@ export function ComputerUseGlobalSettings({ value, locale, onUpdate }: {
               </label>
               <label className="computer-use-row">
                 <span className="computer-use-field-copy">
-                  <span className="computer-use-field-title">{zh ? '供应商标识' : 'Provider ID'}</span>
-                  <span className="computer-use-field-description">{zh ? '可选，用于指定 Jev 供应商。' : 'Optional identifier for the Jev provider.'}</span>
+                  <span className="computer-use-field-title">{zh ? '供应商' : 'Provider'}</span>
+                  <span className="computer-use-field-description">{zh ? '留空则直接调用 TypeSafe（使用 TYPESAFE_API_KEY）。选择 OpenRouter 连接后，其 Base URL 填 https://openrouter.ai/api/v1 即可，内部会归一化为 https://openrouter.ai/api。' : 'Leave empty to call TypeSafe directly (TYPESAFE_API_KEY). An OpenRouter connection base URL of https://openrouter.ai/api/v1 is normalized to https://openrouter.ai/api.'}</span>
                 </span>
                 <span className="computer-use-control">
-                  <input className="computer-use-input" type="text" aria-label={zh ? 'Jev 供应商标识' : 'Jev provider id'} defaultValue={jev.providerId ?? ''} disabled={saving} onBlur={e => { const next = e.target.value.trim(); if (next !== (jev.providerId ?? '')) void save(withJev({ providerId: next || null })) }} />
+                  <select className="computer-use-select" aria-label={zh ? 'Jev 供应商' : 'Jev provider'} value={jev.providerId ?? ''} disabled={saving} onChange={e => void save(withJev({ providerId: e.target.value || null }))}>
+                    <option value="">{zh ? '未设置' : 'Not set'}</option>
+                    {jevProviderOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+                  </select>
                 </span>
               </label>
+              {!hasOpenRouter && onConfigureProvider ? (
+                <div className="computer-use-row computer-use-row--key">
+                  <div className="computer-use-field-copy">
+                    <span className="computer-use-field-title">{zh ? '需要 OpenRouter？' : 'Need OpenRouter?'}</span>
+                    <span className="computer-use-field-description">{zh ? '先在供应商设置中添加 OpenRouter 连接，配置完成后它才会出现在上面的列表中。' : 'Add an OpenRouter connection in Provider settings first. It will appear in the list above after it is configured.'}</span>
+                  </div>
+                  <div className="computer-use-button-group">
+                    <button type="button" className="computer-use-button computer-use-button--ghost" disabled={saving} onClick={onConfigureProvider}>
+                      {zh ? '配置 OpenRouter' : 'Configure OpenRouter'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <label className="computer-use-row">
                 <span className="computer-use-field-copy">
                   <span className="computer-use-field-title">{zh ? '模型' : 'Model'}</span>
-                  <span className="computer-use-field-description">{zh ? '可选，用于指定 Jev 模型。' : 'Optional model override for Jev.'}</span>
+                  <span className="computer-use-field-description">{zh ? 'System One 模型 ID，例如 jev-1.13、typesafe/jev-1.13 或 ~typesafe/jev-latest；留空使用默认 jev-latest。请勿填写 chat 模型 ID。' : 'A System One model id such as jev-1.13, typesafe/jev-1.13, or ~typesafe/jev-latest; empty keeps the default jev-latest. Do not use a chat model id.'}</span>
                 </span>
                 <span className="computer-use-control">
                   <input className="computer-use-input" type="text" aria-label={zh ? 'Jev 模型' : 'Jev model'} defaultValue={jev.model ?? ''} disabled={saving} onBlur={e => { const next = e.target.value.trim(); if (next !== (jev.model ?? '')) void save(withJev({ model: next || null })) }} />
@@ -193,7 +222,7 @@ export function ComputerUseGlobalSettings({ value, locale, onUpdate }: {
               <div className="computer-use-row computer-use-row--key">
                 <div className="computer-use-field-copy">
                   <span className="computer-use-field-title"><KeyRound size={14} aria-hidden="true" />{zh ? 'API 密钥' : 'API key'}</span>
-                  <span className="computer-use-field-description">{saved ? (zh ? `已保存：${saved}` : `Stored: ${saved}`) : (zh ? '未保存，将回退到 TYPESAFE_API_KEY。' : 'Not stored; falls back to TYPESAFE_API_KEY.')}</span>
+                  <span className="computer-use-field-description">{saved ? (zh ? `已保存：${saved}` : `Stored: ${saved}`) : jev.providerId ? (zh ? '已选择供应商，将优先使用该连接的 API 密钥。' : 'A provider is selected; its connection API key is used first.') : (zh ? '未保存，将回退到 TYPESAFE_API_KEY。' : 'Not stored; falls back to TYPESAFE_API_KEY.')}</span>
                 </div>
                 <div className="computer-use-key-control">
                   <input className="computer-use-input" type="password" aria-label={zh ? 'Jev API 密钥' : 'Jev API key'} placeholder={saved ? (zh ? '输入新密钥以替换' : 'Enter a replacement') : (zh ? '粘贴 API 密钥' : 'Paste API key')} value={keyDraft} disabled={saving} onChange={e => setKeyDraft(e.target.value)} />

@@ -560,6 +560,36 @@ describe("listSessionsPage projected-status pagination", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps a Synax error session projected as failed", () => {
+    insertRawSession({
+      id: "synax-failed",
+      profileId: "synax",
+      status: "failed",
+    });
+    agentRuntimeStore.createSession(
+      sessionFixture({
+        id: "synax-completed",
+        profileId: "synax",
+        status: "completed",
+      }),
+    );
+
+    expect(
+      agentRuntimeStore.listSessionsPage({}, { limit: 50, offset: 0 })
+        .countByStatus,
+    ).toEqual({ failed: 1, completed: 1 });
+    expect(
+      agentRuntimeStore
+        .listSessionsPage({ status: "failed" }, { limit: 50, offset: 0 })
+        .items.map((s) => s.id),
+    ).toEqual(["synax-failed"]);
+    expect(
+      agentRuntimeStore
+        .listSessionsPage({ status: "completed" }, { limit: 50, offset: 0 })
+        .items.map((s) => s.id),
+    ).toEqual(["synax-completed"]);
+  });
+
   it("pages with the updated_at DESC order and clamps a non-positive window", () => {
     seedStatuses();
     expect(

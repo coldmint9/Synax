@@ -114,7 +114,7 @@ export async function generateGatewayTextResult(
           executePipeline(request, selection, { kind: "text" }, abortSignal),
         abortSignal,
       ),
-    { signal: abortSignal },
+    { maxRetries: request.maxRetries ?? 5, signal: abortSignal },
   ) as Promise<AnyGenerateTextResult>;
 }
 

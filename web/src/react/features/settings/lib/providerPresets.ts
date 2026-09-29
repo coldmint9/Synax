@@ -42,12 +42,8 @@ export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
 
 export function parseReasoningEfforts(value: unknown): ReasoningEffort[] {
   if (!Array.isArray(value)) return [];
-  const allowed = new Set<ReasoningEffort>(ALL_REASONING_EFFORTS);
-  const out: ReasoningEffort[] = [];
-  for (const item of value) {
-    if (allowed.has(item as ReasoningEffort)) out.push(item as ReasoningEffort);
-  }
-  return out;
+  const configured = new Set(value);
+  return ALL_REASONING_EFFORTS.filter((effort) => configured.has(effort));
 }
 
 /**
@@ -564,7 +560,7 @@ export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
       apiFormat: draft.format,
       model: draft.model || undefined,
       ...(draft.reasoningEfforts?.length
-        ? { reasoningEfforts: draft.reasoningEfforts }
+        ? { reasoningEfforts: parseReasoningEfforts(draft.reasoningEfforts) }
         : {}),
     },
   };

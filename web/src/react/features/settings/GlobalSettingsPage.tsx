@@ -29,6 +29,12 @@ export default function GlobalSettingsPage() {
   const selected = params.get('section') ?? 'general';
   const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse'].includes(selected) ? selected as SettingsSection : 'general';
   const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
+  const goToProviders = () => {
+    select('general');
+    window.setTimeout(() => {
+      document.getElementById('settings-llm-providers')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
 
   useEffect(() => {
     const handler = () => {
@@ -64,6 +70,8 @@ export default function GlobalSettingsPage() {
             <ComputerUseGlobalSettings
               value={globalConfig.computerUse}
               locale={locale}
+              providers={providers}
+              onConfigureProvider={goToProviders}
               onUpdate={updateGlobalConfig}
             />
           ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
@@ -82,12 +90,14 @@ export default function GlobalSettingsPage() {
               configuredPath={globalConfig.terminalShellPath}
               onUpdate={updateGlobalConfig}
             />
-            <LlmProviderSection
-              config={globalConfig}
-              providers={providers}
-              onUpdate={updateGlobalConfig}
-              onReload={reload}
-            />
+            <div id="settings-llm-providers">
+              <LlmProviderSection
+                config={globalConfig}
+                providers={providers}
+                onUpdate={updateGlobalConfig}
+                onReload={reload}
+              />
+            </div>
             <InputOptimizationSettings
               config={globalConfig}
               onUpdate={updateGlobalConfig}

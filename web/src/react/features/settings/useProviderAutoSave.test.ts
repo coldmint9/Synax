@@ -6,6 +6,13 @@ import { useProviderAutoSave } from './useProviderAutoSave'
 const draft = { ...createCustomDraft([]), baseUrl: 'https://example.com', apiKey: 'test-key', model: 'original' }
 
 describe('provider auto-save', () => {
+  it('does not persist a new draft when automatic saving is disabled', async () => {
+    const save = vi.fn();
+    const { rerender } = renderHook(({ value }) => useProviderAutoSave(value, save, false), { initialProps: { value: draft } });
+    rerender({ value: { ...draft, model: 'new-model' } });
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(save).not.toHaveBeenCalled();
+  });
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => { cleanup(); vi.useRealTimers() })
 

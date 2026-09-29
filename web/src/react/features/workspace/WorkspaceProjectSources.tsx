@@ -34,8 +34,8 @@ export function WorkspaceProjectSources({
   onRetry,
   disabled,
   paths,
-  path,
-  onPathChange,
+  path = "",
+  onPathChange = () => {},
   onBrowse,
   browseRef,
   onAddPath,
@@ -51,6 +51,7 @@ export function WorkspaceProjectSources({
   simplified = false,
   compact = false,
   onCompactChange,
+  allowManualPath = true,
 }: {
   localLabel?: string;
   directoryKind?: "host" | "wsl";
@@ -61,14 +62,15 @@ export function WorkspaceProjectSources({
   /** Keep the first-run path focused on folder picking; reveal manual paths on demand. */
   compact?: boolean;
   onCompactChange?: (compact: boolean) => void;
+  allowManualPath?: boolean;
   projects: ProjectSummary[];
   loading: boolean;
   error?: string | null;
   onRetry: () => void;
   disabled?: boolean;
   paths: string[];
-  path: string;
-  onPathChange: (path: string) => void;
+  path?: string;
+  onPathChange?: (path: string) => void;
   onBrowse: () => void;
   browseRef?: Ref<HTMLButtonElement>;
   onAddPath?: () => void;
@@ -106,7 +108,7 @@ export function WorkspaceProjectSources({
       </Button>
       {simplified && (
         <div className="workspace-directory-alternatives">
-          {onCompactChange && (
+          {allowManualPath && onCompactChange && (
             <>
               <Button
                 size="sm"
@@ -133,7 +135,7 @@ export function WorkspaceProjectSources({
           {locationSelector}
         </div>
       )}
-      {!compact && (
+      {allowManualPath && !compact && (
         <>
           <Field
             id={pathFieldId}

@@ -8,13 +8,14 @@ export type DialogProps = Omit<HeadlessDialogProps<'div'>, 'as' | 'open' | 'onCl
   open: boolean;
   onClose: () => void;
   dismissible?: boolean;
+  backdropClassName?: string;
   className?: string;
   children: ReactNode;
 };
 const Surface = createContext<'dialog' | 'drawer'>('dialog');
-function DialogRoot({ open, onClose, dismissible = true, className, children, surface = 'dialog', placement = 'right', ...props }: DialogProps & { surface?: 'dialog' | 'drawer'; placement?: 'left' | 'right' }) {
+function DialogRoot({ open, onClose, dismissible = true, backdropClassName, className, children, surface = 'dialog', placement = 'right', ...props }: DialogProps & { surface?: 'dialog' | 'drawer'; placement?: 'left' | 'right' }) {
   return <HeadlessDialog {...props} open={open} onClose={() => { if (dismissible) onClose(); }} data-surface={surface} className={clsx('ui-dialog-root relative z-[1000]', className)}>
-    <DialogBackdrop className="fixed inset-0 bg-black/35" />
+    <DialogBackdrop className={clsx('fixed inset-0 bg-black/35', backdropClassName)} />
     <div className={clsx('ui-dialog-viewport fixed inset-0 flex min-h-0 overflow-y-auto overscroll-contain', surface === 'drawer' ? (placement === 'right' ? 'items-stretch justify-end' : 'items-stretch justify-start') : 'items-center justify-center p-3 sm:p-6')}>
       <Surface.Provider value={surface}>{children}</Surface.Provider>
     </div>

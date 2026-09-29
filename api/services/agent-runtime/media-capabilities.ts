@@ -16,6 +16,13 @@ import {
 import { getAsset, readAsset, validateAssets } from "./media-assets.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
+import { resolveMediaProfile } from "../llm-runtime/providers/media-profile.js";
+/**
+ * Media input stays blocked while no layer declares the model's modalities, so
+ * the message must name the action that works for every adapter.
+ */
+export const UNDECLARED_MODALITIES_REASON =
+  "输入模态未确认，请在设置声明或选择兼容模型 / Input modalities unconfirmed";
 const caps = (
   modalities?: InputModality[],
   mediaTypes?: string[],
@@ -25,6 +32,8 @@ const caps = (
 ): InputCapabilities => ({
   modalities: modalities ?? ["text"],
   verified: !!modalities,
+  status: modalities ? "verified" : "undeclared",
+  ...(modalities ? {} : { reason: UNDECLARED_MODALITIES_REASON }),
   mediaTypes,
   maxFileBytes,
   maxTotalBytes,
@@ -34,104 +43,45 @@ export function nativeInputCapabilities(
   selection: ResolvedModelSelection,
 ): InputCapabilities {
   const declared = selection.modelDef.inputModalities;
-  const npm = selection.provider.npm;
-  if (
-    [
-      "@ai-sdk/groq",
-      "@ai-sdk/mistral",
-      "@ai-sdk/xai",
-      "@ai-sdk/perplexity",
-      // DeepSeek's Chat adapter ships the same image parts; without this entry
-      // the declared modalities were discarded and image input was rejected.
-      "@ai-sdk/deepseek",
-    ].includes(npm ?? "")
-  )
-    return caps(declared, [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/gif",
-    ]);
-  // A model catalog alone cannot prove that an SDK preserves media on the wire.
-  if (
-    ![
-      "@ai-sdk/openai",
-      "@ai-sdk/openai-compatible",
-      "@ai-sdk/anthropic",
-      "@ai-sdk/google",
-    ].includes(npm ?? "")
-  )
-    return caps(undefined);
-  if (npm === "@ai-sdk/google")
-    return caps(
-      declared,
-      [
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "application/pdf",
-        "text/plain",
-        "audio/*",
-        "video/*",
-      ],
-      20 * 1024 * 1024,
-      20 * 1024 * 1024,
-    );
-  if (selection.apiFormat === "anthropic" || npm === "@ai-sdk/anthropic")
-    return caps(
-      declared,
-      [
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "application/pdf",
-        "text/plain",
-      ],
-      5 * 1024 * 1024,
-      24 * 1024 * 1024,
-    );
-  if (selection.apiFormat === "openai-responses")
-    return caps(
-      declared,
-      [
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "application/pdf",
-        "text/plain",
-        "text/csv",
-        "application/json",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      ],
-      MAX_FILE_BYTES,
-      MAX_FILE_BYTES,
-      500,
-    );
-  // The installed Chat adapter has native image, PDF and WAV/MP3 parts.
-  if (selection.apiFormat === "openai")
-    return caps(
-      declared,
-      [
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "application/pdf",
-        ...(["@ai-sdk/openai", "@ai-sdk/openai-compatible"].includes(npm ?? "")
-          ? ["audio/wav", "audio/mpeg"]
-          : []),
-      ],
-      MAX_FILE_BYTES,
-      MAX_FILE_BYTES,
-      500,
-    );
-  return caps(undefined);
+  const profile = resolveMediaProfile({
+    npm: selection.provider.npm,
+    apiFormat: selection.apiFormat,
+    providerId: selection.providerId,
+    modelId: selection.modelId,
+    baseUrl: selection.config.baseUrl ?? selection.provider.api,
+  });
+  // A declaration is what makes media reachable: neither the model catalog nor
+  // the adapter alone proves the model accepts media. The profile then narrows
+  // the declaration to what this connection can actually carry.
+  const usable = declared?.length
+    ? [
+        ...new Set<InputModality>([
+          "text",
+          ...declared.filter(
+            (modality) =>
+              modality === "text" ||
+              !profile.carriers ||
+              profile.carriers.includes(modality),
+          ),
+        ]),
+      ]
+    : undefined;
+  return {
+    modalities: usable ?? ["text"],
+    verified: Boolean(usable),
+    status: usable
+      ? profile.carriers
+        ? "verified"
+        : "declared"
+      : "undeclared",
+    ...(usable ? {} : { reason: UNDECLARED_MODALITIES_REASON }),
+    ...(profile.mediaTypes ? { mediaTypes: profile.mediaTypes } : {}),
+    maxFileBytes: profile.limits.maxFileBytes ?? MAX_FILE_BYTES,
+    maxTotalBytes: profile.limits.maxTotalBytes ?? MAX_INPUT_BYTES,
+    maxFiles: profile.limits.maxFiles ?? 10,
+  };
 }
+
 export function assertMediaCapabilities(
   assets: RuntimeAsset[],
   capability: InputCapabilities,

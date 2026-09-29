@@ -1,8 +1,18 @@
-import { DialogOverlay } from "../../components/DialogOverlay";
 import { AppSelect } from "../../components/AppSelect";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Tooltip } from "@/react/components/ui/Tooltip";
+import {
+  Dialog,
+  DialogBody,
+  DialogCloseButton,
+  DialogContainer,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogTitle,
+} from "@/react/components/ui/Dialog";
 import {
   Tab,
   TabGroup,
@@ -23,7 +33,6 @@ import {
 } from "../../../lib/api/wsl";
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { DirectoryPickerDialog } from "../../components/directory-picker/DirectoryPickerDialog";
-import { useDialogFocus } from "../../components/directory-picker/useDialogFocus";
 import { useShellStore, type ProjectSummary } from "../../state/shellStore";
 
 type Member = { location: WorkspaceLocation; name: string; projectId?: string };
@@ -69,8 +78,6 @@ function ProjectCreateForm({
   const [sourceType, setSourceType] = useState<"local" | "remote">("local");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [name, setName] = useState("");
-  const [compactSources, setCompactSources] = useState(true);
-  const [pathInput, setPathInput] = useState("");
   const [locationKind, setLocationKind] = useState<"host" | "wsl">("host");
   const [distributions, setDistributions] = useState<WslDistribution[]>([]);
   const [distribution, setDistribution] = useState("");
@@ -152,7 +159,6 @@ function ProjectCreateForm({
     active.current = false;
     onClose();
   };
-  const dialogRef = useDialogFocus(handleClose, pickerOpen);
   const addMembers = (items: Member[]) => {
     if (locked.current || !active.current) return;
     const additions = items.filter(
@@ -177,23 +183,6 @@ function ProjectCreateForm({
     setMembers((current) => [...current, ...additions]);
     setName((current) => current || items[0]?.name || "");
     setError(null);
-  };
-  const addPath = () => {
-    const selectedPath = pathInput.trim();
-    if (!selectedPath || (locationKind === "wsl" && !distribution)) return;
-    const location: WorkspaceLocation =
-      locationKind === "wsl"
-        ? { kind: "wsl", distribution, path: selectedPath }
-        : { kind: "host", path: selectedPath };
-    addMembers([
-      {
-        location,
-        name:
-          selectedPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ||
-          selectedPath,
-      },
-    ]);
-    setPathInput("");
   };
   const createWorkspace = async () => {
     if (
@@ -235,42 +224,33 @@ function ProjectCreateForm({
   };
   return (
     <>
-      <DialogOverlay
-        inert={pickerOpen}
-        aria-hidden={pickerOpen || undefined}
-        onClick={handleClose}
+      <Dialog
+        open
+        onClose={handleClose}
+        dismissible={!submitting}
+        backdropClassName="bg-background"
+        className="workspace-create-dialog"
       >
-        <div
-          ref={dialogRef}
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="workspace-create-title"
-          aria-describedby="workspace-create-intro"
-          className="dialog-content workspace-create"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <header className="workspace-create-header">
+        <DialogContainer size="lg">
+          <DialogPanel className="workspace-create">
+          <DialogHeader className="workspace-create-header">
             <div>
-              <h2 id="workspace-create-title">{c.title}</h2>
-              <p
-                id="workspace-create-intro"
-                className="workspace-create-description"
-              >
+              <DialogTitle>{c.title}</DialogTitle>
+              <DialogDescription className="workspace-create-description">
                 {c.intro}
-              </p>
+              </DialogDescription>
             </div>
-            <Button
+            <DialogCloseButton
               size="sm"
               variant="ghost"
               iconOnly
               aria-label={c.close}
               disabled={submitting}
-              onClick={handleClose}
             >
               <X size={17} />
-            </Button>
-          </header>
+            </DialogCloseButton>
+          </DialogHeader>
+          <DialogBody className="workspace-create-dialog-body">
           <div className="workspace-create-name">
             <Field disabled={submitting}>
               <Label className="sr-only">{c.workspaceName}</Label>
@@ -300,11 +280,9 @@ function ProjectCreateForm({
                   setSourceType(index === 0 ? "local" : "remote");
                   if (index === 0) {
                     setMode("local");
-                    setCompactSources(false);
                   }
                   if (index === 0 && locationKind === "wsl") {
                     setLocationKind("host");
-                    setPathInput("");
                     setMembers([]);
                   }
                   setError(null);
@@ -318,10 +296,8 @@ function ProjectCreateForm({
                     disabled={submitting}
                     onClick={() => {
                       setMode("local");
-                      setCompactSources(false);
                       if (locationKind === "wsl") {
                         setLocationKind("host");
-                        setPathInput("");
                         setMembers([]);
                         setError(null);
                       }
@@ -344,7 +320,6 @@ function ProjectCreateForm({
                       onDirectoryKindChange={(kind) => {
                         if (kind === locationKind) return;
                         setLocationKind(kind);
-                        setPathInput("");
                         setMembers([]);
                         setError(null);
                       }}
@@ -358,7 +333,6 @@ function ProjectCreateForm({
                             onChange={(value) => {
                               if (!value) return;
                               setDistribution(value);
-                              setPathInput("");
                               setMembers([]);
                               setError(null);
                             }}
@@ -378,10 +352,8 @@ function ProjectCreateForm({
                               disabled={submitting}
                               onClick={() => {
                                 setMode("local");
-                                setCompactSources(false);
                                 if (locationKind !== "wsl") {
                                   setLocationKind("wsl");
-                                  setPathInput("");
                                   setMembers([]);
                                 }
                                 setError(null);
@@ -394,17 +366,13 @@ function ProjectCreateForm({
                         ) : undefined
                       }
                       simplified
-                      compact={compactSources}
-                      onCompactChange={setCompactSources}
+                      allowManualPath={false}
                       projects={existing}
                       loading={loadingExisting}
                       error={existingError}
                       onRetry={() => setLoadAttempt((value) => value + 1)}
                       disabled={submitting}
                       paths={members.map(memberPath)}
-                      path={pathInput}
-                      onPathChange={setPathInput}
-                      onAddPath={addPath}
                       browseRef={browseRef}
                       onBrowse={() => setPickerOpen(true)}
                       onChoose={(item) => {
@@ -513,7 +481,8 @@ function ProjectCreateForm({
               {error}
             </div>
           )}
-          <footer className="workspace-create-footer">
+          </DialogBody>
+          <DialogFooter className="workspace-create-footer">
             <span role="status" className="workspace-hint">
               {c.count.replace("{count}", String(members.length))}
             </span>
@@ -542,13 +511,13 @@ function ProjectCreateForm({
                 {!submitting && <ArrowRight size={14} />}
               </Button>
             </div>
-          </footer>
-        </div>
-      </DialogOverlay>
+          </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </Dialog>
       <DirectoryPickerDialog
         open={pickerOpen}
         multiple
-        initialPath={pathInput.trim() || undefined}
         locationKind={locationKind}
         distribution={locationKind === "wsl" ? distribution : undefined}
         labels={{ title: c.pickerTitle, confirm: c.pickerConfirm }}

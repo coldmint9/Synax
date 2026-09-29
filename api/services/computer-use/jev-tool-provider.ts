@@ -3,7 +3,7 @@ import type { RegisteredTool, SessionToolProvider } from '../agent-runtime/contr
 import { agentRuntimeStore } from '../agent-runtime/session-store.js';
 import { CUA_SERVER_ID, getRuntimeCuaConfig } from '../mcp/runtime-cua-config.js';
 import { mcpClientManager } from '../mcp/mcp-client-manager.js';
-import { resolveJevCredentials } from './jev-credentials.js';
+import { configuredJevProviderId, resolveJevCredentials } from './jev-credentials.js';
 import { resolveComputerUseStrategy } from './strategy.js';
 import { enableDirectFallback } from './fallback.js';
 import { visualCandidates } from './visual-regions.js';
@@ -58,9 +58,14 @@ export const jevSessionToolProvider: SessionToolProvider = {
         input.abortSignal?.throwIfAborted();
         const configured = resolveEffectiveComputerUseSettings(session.projectId);
         if (resolveComputerUseStrategy(configured) !== 'jev' || !getRuntimeCuaConfig()) throw new Error('Jev Computer Use is unavailable');
-        const key = resolveJevCredentials()?.apiKey;
+        const credentials = resolveJevCredentials();
         const mock = process.env.NODE_ENV !== 'production' && process.env.SYNAX_JEV_MOCK === '1';
-        if (!key && !mock) throw new Error('Jev is enabled but no Jev API key is configured: set it in Settings -> Computer Use, or set TYPESAFE_API_KEY for the API sidecar');
+        if (!credentials && !mock) {
+          const providerId = configuredJevProviderId();
+          throw new Error(providerId
+            ? `Jev is enabled with provider "${providerId}" but that provider connection has no API key: add one under Settings -> Providers, or set TYPESAFE_API_KEY`
+            : 'Jev is enabled but no Jev API key is configured: set it in Settings -> Computer Use, or set TYPESAFE_API_KEY for the API sidecar');
+        }
         const observer = await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
         if (!observer.ok) throw new Error(observer.error ?? 'Cua observation failed');
         let candidates = makeCandidates(observer.structuredContent, args.pid, args.windowId, args.text);
@@ -97,7 +102,13 @@ export const jevSessionToolProvider: SessionToolProvider = {
           window_id: args.windowId,
           elements: candidates.filter(candidate => candidate.tool).map(candidate => ({ id: candidate.id, description: candidate.description })),
         }).slice(0, 12_000);
-        const client: JevDecisionService = mock ? new MockJevDecisionService() : new LiveJevDecisionService(key!);
+        const client: JevDecisionService = mock
+          ? new MockJevDecisionService()
+          : new LiveJevDecisionService({
+              apiKey: credentials!.apiKey,
+              ...(credentials!.baseURL ? { baseURL: credentials!.baseURL } : {}),
+              ...(credentials!.model ? { model: credentials!.model } : {}),
+            });
         const timeout = AbortSignal.timeout(15_000);
         const signal = input.abortSignal ? AbortSignal.any([input.abortSignal, timeout]) : timeout;
         let decision;

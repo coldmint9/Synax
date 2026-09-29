@@ -44,16 +44,29 @@ export class MockJevDecisionService implements JevDecisionService {
   }
 }
 
+export interface LiveJevDecisionOptions {
+  apiKey: string;
+  /** Provider connection base URL; the SDK default (`https://api.typesafe.ai`) applies when omitted. */
+  baseURL?: string;
+  /** System One model id; the SDK default (`jev-latest`) applies when omitted. */
+  model?: string;
+}
+
 /** Lazy import: Direct Cua neither imports the SDK nor contacts Jev. */
 export class LiveJevDecisionService implements JevDecisionService {
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly options: LiveJevDecisionOptions) {}
   async choose(input: JevDecisionInput, signal?: AbortSignal): Promise<JevDecision> {
     signal?.throwIfAborted();
     if (input.candidates.length < 2 || input.candidates.length > 40) throw new Error('Invalid Jev candidate count');
     const { choice, TypeSafeClient } = await import('@typesafe-ai/sdk');
     const criteria = Object.fromEntries(input.candidates.map(c => [c.id, c.description]));
-    const client = new TypeSafeClient({ apiKey: this.apiKey });
+    const client = new TypeSafeClient({
+      apiKey: this.options.apiKey,
+      ...(this.options.baseURL ? { baseURL: this.options.baseURL } : {}),
+      ...(this.options.model ? { defaultModel: this.options.model } : {}),
+    });
     const response = await client.systemOne({
+      ...(this.options.model ? { model: this.options.model } : {}),
       state: { observation: input.observation },
       questions: { candidate: choice(input.goal, criteria) },
     }, { signal, timeout: 15_000, retry: { maxRetries: 0 } });

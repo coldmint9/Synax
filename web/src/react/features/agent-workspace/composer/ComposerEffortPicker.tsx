@@ -8,21 +8,17 @@ import {
 } from "@/react/components/ui/Popover";
 import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver";
 import type { ReasoningEffort } from "../../../../lib/api/agentRuntime";
-import { REASONING_EFFORT_LABELS } from "../../settings/lib/providerPresets";
+import {
+  ALL_REASONING_EFFORTS,
+  parseReasoningEfforts,
+  REASONING_EFFORT_LABELS,
+} from "../../settings/lib/providerPresets";
 import { useLocale } from "../../../../hooks/useLocale";
 import "./composerEffortPicker.css";
 
 export type ComposerReasoningEffort = ReasoningEffort;
 
 const FALLBACK: ReasoningEffort = "high";
-const ALL_LEVELS: ReasoningEffort[] = [
-  "none",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-];
 
 interface Props {
   effort: ReasoningEffort;
@@ -57,10 +53,10 @@ function EffortPickerContent({
   useEffect(() => {
     if (disabled && open) close();
   }, [disabled, open, close]);
-  const levels = useMemo<ReasoningEffort[]>(
-    () => (allowed && allowed.length > 0 ? allowed : ALL_LEVELS),
-    [allowed],
-  );
+  const levels = useMemo<ReasoningEffort[]>(() => {
+    const configured = parseReasoningEfforts(allowed);
+    return configured.length > 0 ? configured : ALL_REASONING_EFFORTS;
+  }, [allowed]);
 
   // Keep an existing selection valid when the selected provider's allowed set changes.
   useEffect(() => {

@@ -7,7 +7,7 @@ function saveKey(draft: ApiProviderDraft) {
   return JSON.stringify([draftToProviderDef(draft), draftToConnection(draft)])
 }
 
-export function useProviderAutoSave(draft: ApiProviderDraft, onSave: (draft: ApiProviderDraft) => Promise<void>) {
+export function useProviderAutoSave(draft: ApiProviderDraft, onSave: (draft: ApiProviderDraft) => Promise<void>, enabled = true) {
   const key = saveKey(draft)
   const valid = validateProviderDraft(draft).length === 0
   const latest = useRef({ draft, key, valid, onSave })
@@ -60,10 +60,10 @@ export function useProviderAutoSave(draft: ApiProviderDraft, onSave: (draft: Api
 
   useEffect(() => {
     setError(null)
-    if (!valid || key === lastSaved.current) return
+    if (!enabled || !valid || key === lastSaved.current) return
     timer.current = setTimeout(() => { void flush() }, 500)
     return () => { if (timer.current) clearTimeout(timer.current) }
-  }, [key, valid, flush])
+  }, [key, valid, flush, enabled])
 
   return { saving, saved: savedKey === key, error, flush, valid }
 }

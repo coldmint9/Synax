@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { MockJevDecisionService, validateJevDecision } from './jev-decision.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LiveJevDecisionService, MockJevDecisionService, validateJevDecision } from './jev-decision.js';
 import { makeCandidates } from './jev-tool-provider.js';
 
 const observation = {
@@ -27,5 +27,57 @@ describe('Jev candidate boundary', () => {
     expect(() => validateJevDecision({ selectedId: 'click_999', confidence: 1 }, candidates)).toThrow(/unknown/);
     expect(() => validateJevDecision({ selectedId: 'click_3', confidence: NaN }, candidates)).toThrow(/confidence/);
     expect(() => validateJevDecision({ selectedId: 'click_3', confidence: 0.9, probabilities: { unknown: 0.9 } }, candidates)).toThrow(/probabilities/);
+  });
+});
+
+describe('Jev decision transport', () => {
+  afterEach(() => {
+    vi.doUnmock('@typesafe-ai/sdk');
+    vi.resetModules();
+  });
+
+  function mockSdk() {
+    const clientOptions: Record<string, unknown>[] = [];
+    const requests: Record<string, unknown>[] = [];
+    vi.doMock('@typesafe-ai/sdk', () => ({
+      TypeSafeClient: class {
+        constructor(options: Record<string, unknown>) {
+          clientOptions.push(options);
+        }
+        systemOne(request: Record<string, unknown>) {
+          requests.push(request);
+          return Promise.resolve({
+            answers: { candidate: { type: 'choice', choice: 'click_3', confidence: 0.9 } },
+          });
+        }
+      },
+      choice: (instructions: string, criteria: Record<string, string | null>) => ({ type: 'choice', instructions, criteria }),
+    }));
+    return { clientOptions, requests };
+  }
+
+  it('passes a provider connection endpoint, key, and model to the SDK', async () => {
+    const { clientOptions, requests } = mockSdk();
+    const candidates = makeCandidates(observation, 42, 123);
+    const decision = await new LiveJevDecisionService({
+      apiKey: 'sk-or-secret',
+      baseURL: 'https://openrouter.ai/api',
+      model: 'jev-1.13',
+    }).choose({ goal: 'submit', observation: 'safe', candidates });
+
+    expect(clientOptions).toEqual([
+      { apiKey: 'sk-or-secret', baseURL: 'https://openrouter.ai/api', defaultModel: 'jev-1.13' },
+    ]);
+    expect(requests[0]).toMatchObject({ model: 'jev-1.13' });
+    expect(decision).toEqual({ selectedId: 'click_3', confidence: 0.9 });
+  });
+
+  it('keeps the SDK defaults when no provider is configured', async () => {
+    const { clientOptions, requests } = mockSdk();
+    const candidates = makeCandidates(observation, 42, 123);
+    await new LiveJevDecisionService({ apiKey: 'ts-key' }).choose({ goal: 'submit', observation: 'safe', candidates });
+
+    expect(clientOptions).toEqual([{ apiKey: 'ts-key' }]);
+    expect(requests[0]).not.toHaveProperty('model');
   });
 });

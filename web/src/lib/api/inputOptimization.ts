@@ -7,11 +7,17 @@ export interface InputOptimizationRequest {
   backendId?: string;
 }
 
+export interface InputOptimizationResult {
+  text: string;
+  // Optional for compatibility with servers that only return text.
+  status?: "optimized" | "unchanged" | "preserved";
+}
+
 export function optimizeInput(
   input: InputOptimizationRequest,
   signal: AbortSignal,
 ) {
-  return apiRequest<{ text: string }>("/api/agent-runtime/input/optimize", {
+  return apiRequest<InputOptimizationResult>("/api/agent-runtime/input/optimize", {
     method: "POST",
     body: JSON.stringify(input),
     signal,

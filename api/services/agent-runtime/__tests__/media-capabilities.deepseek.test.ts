@@ -32,7 +32,9 @@ const EMPTY_CATALOG = {
 };
 
 /** The DeepSeek preset the settings UI ships (`custom-api:deepseek`). */
-async function setupDeepSeekProvider(): Promise<void> {
+async function setupDeepSeekProvider(
+  apiFormat: "openai" | "openai-responses" = "openai",
+): Promise<void> {
   const { getGlobalConfig, updateGlobalConfig } = await import(
     "../../../lib/config/config-store.js"
   );
@@ -54,6 +56,11 @@ async function setupDeepSeekProvider(): Promise<void> {
               isDefault: true,
               inputModalities: ["text", "image"],
             },
+            {
+              id: "deepseek-flash",
+              label: "deepseek-flash",
+              inputModalities: ["text", "image"],
+            },
             { id: "deepseek-reasoner", label: "deepseek-reasoner" },
           ],
         },
@@ -63,7 +70,7 @@ async function setupDeepSeekProvider(): Promise<void> {
           providerId: "custom-api:deepseek",
           baseUrl: "https://api.deepseek.com",
           apiKey: "sk-test",
-          extra: { kind: "api", apiFormat: "openai" },
+          extra: { kind: "api", apiFormat },
         },
       },
     },
@@ -114,4 +121,66 @@ describe("DeepSeek input capabilities", () => {
     expect(capabilities.verified).toBe(false);
     expect(capabilities.modalities).toEqual(["text"]);
   });
+
+  it("keeps the declaration alive when the connection uses the Responses protocol", async () => {
+    await setupDeepSeekProvider("openai-responses");
+
+    const { selection, capabilities } = await resolveCapabilities(
+      "custom-api:deepseek/deepseek-flash",
+    );
+
+    // Declaring `image` must survive the protocol-specific rewrite to
+    // @ai-sdk/open-responses; this is the reported regression.
+    expect(selection.provider.npm).toBe("@ai-sdk/open-responses");
+    expect(capabilities.verified).toBe(true);
+    expect(capabilities.status).toBe("verified");
+    expect(capabilities.modalities).toContain("image");
+  });
+
+  it("narrows Responses input to the documented DeepSeek endpoint limits", async () => {
+    await setupDeepSeekProvider("openai-responses");
+
+    const { capabilities } = await resolveCapabilities(
+      "custom-api:deepseek/deepseek-flash",
+    );
+    const { assertMediaCapabilities } =
+      await import("../media-capabilities.js");
+
+    // Vision limits: 32 MiB per inline image; Synax inlines assets as base64,
+    // so the 48 MiB request-body limit is the binding total.
+    expect(capabilities.maxFileBytes).toBe(32 * 1024 * 1024);
+    expect(capabilities.maxTotalBytes).toBe(48 * 1024 * 1024);
+    expect(capabilities.mediaTypes).toEqual([
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+    ]);
+
+    expect(() =>
+      assertMediaCapabilities(
+        [asset("shot.png", "image/png", 1024)],
+        capabilities,
+      ),
+    ).not.toThrow();
+    // The Responses guide states file inputs are unsupported.
+    expect(() =>
+      assertMediaCapabilities(
+        [asset("paper.pdf", "application/pdf", 1024)],
+        capabilities,
+      ),
+    ).toThrow(/cannot receive paper\.pdf/);
+  });
 });
+
+function asset(filename: string, mediaType: string, size: number) {
+  return {
+    id: `asset_${"a".repeat(32)}`,
+    projectId: "project-1",
+    filename,
+    mediaType,
+    size,
+    sha256: "0".repeat(64),
+    createdAt: new Date().toISOString(),
+  };
+}
