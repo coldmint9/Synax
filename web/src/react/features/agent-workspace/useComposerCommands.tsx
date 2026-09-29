@@ -7,7 +7,6 @@ import {
   useId,
   useRef,
   useState,
-  type KeyboardEvent,
   type CSSProperties,
 } from "react";
 import {
@@ -25,6 +24,7 @@ import {
 } from "../../../lib/api/agentRuntime";
 import { useShellStore } from "../../state/shellStore";
 import { useLocale } from "../../../hooks/useLocale";
+import type { ComposerEditorHandle } from "./composer/ComposerMarkdownEditor";
 
 const commands = [
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
@@ -89,7 +89,7 @@ export function useComposerCommands({
   const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const { locale } = useLocale(),
     zh = locale === "zh";
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<ComposerEditorHandle>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const [contextOpen, setContextOpen] = useState(false);
@@ -150,7 +150,7 @@ export function useComposerCommands({
     const dismiss = (event: PointerEvent) => {
       if (
         !menuRef.current?.contains(event.target as Node) &&
-        event.target !== inputRef.current
+        !inputRef.current?.dom?.contains(event.target as Node)
       )
         setQuery(null);
     };
@@ -167,7 +167,7 @@ export function useComposerCommands({
     if (!query) return;
     const measure = () => {
       const rect = (
-        inputRef.current?.closest(".agent-dock-composer") ?? inputRef.current
+        inputRef.current?.dom?.closest(".agent-dock-composer") ?? inputRef.current?.dom
       )?.getBoundingClientRect();
       if (!rect) return;
       const viewport = window.visualViewport;
@@ -186,7 +186,7 @@ export function useComposerCommands({
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(measure);
-    if (inputRef.current) observer?.observe(inputRef.current);
+    if (inputRef.current?.dom) observer?.observe(inputRef.current.dom);
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
     window.visualViewport?.addEventListener("resize", measure);
@@ -282,11 +282,11 @@ export function useComposerCommands({
       setActive(0);
     }
   };
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (event: globalThis.KeyboardEvent) => {
     if (
       !query ||
       disabled ||
-      event.nativeEvent.isComposing ||
+      event.isComposing ||
       event.keyCode === 229
     )
       return false;

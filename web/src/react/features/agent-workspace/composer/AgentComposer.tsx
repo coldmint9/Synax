@@ -2,6 +2,10 @@ import { Button } from "@/react/components/ui/Button";
 import { Tooltip } from "@/react/components/ui/Tooltip";
 import { WelcomeTypewriter } from "../WelcomeTypewriter";
 import { useInputOptimization } from "./useInputOptimization";
+import {
+  ComposerMarkdownEditor,
+  type ComposerEditorHandle,
+} from "./ComposerMarkdownEditor";
 import { useInputCapability } from "../../media/useInputCapability";
 import {
   MediaAttachButton,
@@ -18,7 +22,6 @@ import {
   useState,
   type ReactNode,
   type RefObject,
-  type KeyboardEvent,
 } from "react";
 import {
   Square,
@@ -53,9 +56,9 @@ import { apiRequest } from "../../../../lib/api/origin";
 import type { MediaJob, ModelCapability } from "../../../../lib/contracts/media-generation";
 
 export interface ComposerCommands {
-  inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputRef: RefObject<ComposerEditorHandle | null>;
   onInput: (value: string, cursor: number) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  onKeyDown: (event: globalThis.KeyboardEvent) => boolean;
   header: ReactNode;
   trigger: ReactNode;
   handlesAttachments?: boolean;
@@ -294,49 +297,23 @@ export function AgentComposer({
     backendId: backendId ?? "native",
     onContentChange,
   });
-  const localTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const textareaRef = commands?.inputRef ?? localTextareaRef;
-  const isComposingRef = useRef(false);
-  const composerScope = JSON.stringify([projectId, sessionId ?? null]);
-  const compositionScopeRef = useRef<string | null>(null);
+  const localEditorRef = useRef<ComposerEditorHandle>(null);
+  const editorRef = commands?.inputRef ?? localEditorRef;
   const suppressEnterRef = useRef(false);
   const isMultiline = content.includes("\n");
   const isSessionComposer = Boolean(modeControl);
   const expandedLayout = isSessionComposer || defaultExpanded || isMultiline;
 
-  const handleCompositionStart = useCallback(() => {
-    compositionScopeRef.current = composerScope;
-    isComposingRef.current = true;
-  }, [composerScope]);
-
   useLayoutEffect(() => {
-    if (
-      compositionScopeRef.current &&
-      compositionScopeRef.current !== composerScope
-    ) {
-      // Commit/cancel the old IME editor without writing its final input into
-      // the newly selected draft. Non-composing session switches keep focus.
-      textareaRef.current?.blur();
-      isComposingRef.current = false;
-    }
-  }, [composerScope, textareaRef]);
-
-  const handleCompositionEnd = useCallback(() => {
-    isComposingRef.current = false;
-    // IME commit Enter often fires keydown after compositionend (isComposing already false).
-    suppressEnterRef.current = true;
-    window.setTimeout(() => {
-      suppressEnterRef.current = false;
-      compositionScopeRef.current = null;
-    }, 20);
-  }, []);
+    if (!defaultExpanded) return;
+    editorRef.current?.focus();
+  }, [defaultExpanded, editorRef]);
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: globalThis.KeyboardEvent) => {
       if (
-        isComposingRef.current ||
         suppressEnterRef.current ||
-        e.nativeEvent.isComposing ||
+        e.isComposing ||
         e.keyCode === 229
       )
         return;
@@ -370,34 +347,6 @@ export function AgentComposer({
     ],
   );
 
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    // Inline pill stays single-line; scrollHeight includes placeholder padding and breaks alignment.
-    if (!expandedLayout) {
-      el.style.height = "";
-      return;
-    }
-    if (!isSessionComposer && defaultExpanded && !isMultiline) {
-      el.style.height = "";
-      return;
-    }
-    const maxHeight = isSessionComposer || defaultExpanded ? 192 : 128;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  }, [
-    content,
-    defaultExpanded,
-    expandedLayout,
-    isMultiline,
-    isSessionComposer,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!defaultExpanded) return;
-    textareaRef.current?.focus();
-  }, [defaultExpanded]);
-
   useEffect(() => {
     const levels =
       allowedReasoningEfforts && allowedReasoningEfforts.length > 0
@@ -416,11 +365,6 @@ export function AgentComposer({
       : (levels[0] ?? "high");
     if (fallback !== reasoningEffort) onReasoningEffortChange(fallback);
   }, [allowedReasoningEfforts, onReasoningEffortChange, reasoningEffort]);
-
-  const compositionProps = {
-    onCompositionStart: handleCompositionStart,
-    onCompositionEnd: handleCompositionEnd,
-  };
 
   const resumeMode = mediaMode === "chat" && !isGenerating && isResumable && Boolean(onResume);
   const hasInput = Boolean(content.trim() || media?.parts.length);
@@ -490,7 +434,7 @@ export function AgentComposer({
           title={undoLabel}
           onClick={() => {
             optimization.undo();
-            textareaRef.current?.focus();
+            editorRef.current?.focus();
           }}
           disabled={disabled && !queueWhileGenerating}
           className="agent-dock-composer-chip inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
@@ -591,6 +535,50 @@ export function AgentComposer({
     </>
   );
 
+  const markdownEditor = (
+    <Tooltip
+      content={keyboardHints}
+      openOnFocus={false}
+      placement="top-start"
+    >
+      <ComposerMarkdownEditor
+        ref={editorRef}
+        value={content}
+        onChange={onContentChange}
+        onInput={commands?.onInput}
+        onKeyDown={handleKeyDown}
+        placeholder={
+          welcomePlaceholderDelay !== undefined
+            ? undefined
+            : inputPlaceholder
+        }
+        ariaLabel={t("agentPlaceholder")}
+        ariaDescribedBy={keyboardHintId}
+        ariaAutocomplete={commands ? "list" : undefined}
+        ariaControls={commands?.open ? commands.listId : undefined}
+        ariaActiveDescendant={
+          commands?.open ? commands.activeId : undefined
+        }
+        disabled={disabled && !queueWhileGenerating}
+        minHeight={
+          expandedLayout
+            ? isSessionComposer
+              ? "3rem"
+              : defaultExpanded && !isMultiline
+                ? "5.5rem"
+                : "1.5rem"
+            : "1.25rem"
+        }
+        maxHeight={expandedLayout ? "12rem" : "1.25rem"}
+        className={
+          expandedLayout
+            ? "agent-dock-composer-input w-full text-[14px] font-normal leading-relaxed text-foreground/85"
+            : "agent-dock-composer-input min-w-0 flex-1 self-center text-[14px] font-normal leading-[1.25rem] text-foreground/85"
+        }
+      />
+    </Tooltip>
+  );
+
   return (
     <div
       className="agent-dock-composer w-full"
@@ -641,62 +629,7 @@ export function AgentComposer({
                 : "contents"
             }
           >
-            <Tooltip
-              content={keyboardHints}
-              openOnFocus={false}
-              placement="top-start"
-            >
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => {
-                  if (
-                    compositionScopeRef.current &&
-                    compositionScopeRef.current !== composerScope
-                  ) {
-                    e.target.value = content;
-                    return;
-                  }
-                  onContentChange(e.target.value);
-                  commands?.onInput(e.target.value, e.target.selectionStart);
-                }}
-                onSelect={(e) =>
-                  commands?.onInput(
-                    e.currentTarget.value,
-                    e.currentTarget.selectionStart,
-                  )
-                }
-                aria-autocomplete={commands ? "list" : undefined}
-                aria-controls={commands?.open ? commands.listId : undefined}
-                aria-activedescendant={
-                  commands?.open ? commands.activeId : undefined
-                }
-                onKeyDown={handleKeyDown}
-                {...compositionProps}
-                placeholder={
-                  welcomePlaceholderDelay !== undefined
-                    ? undefined
-                    : inputPlaceholder
-                }
-                aria-label={t("agentPlaceholder")}
-                aria-describedby={keyboardHintId}
-                disabled={disabled && !queueWhileGenerating}
-                rows={
-                  isSessionComposer
-                    ? 2
-                    : defaultExpanded && !isMultiline
-                      ? 4
-                      : 1
-                }
-                className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[14px] font-normal leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
-                  isSessionComposer
-                    ? "min-h-12 max-h-48"
-                    : defaultExpanded && !isMultiline
-                      ? "min-h-[5.5rem] max-h-48"
-                      : "min-h-[1.5rem] max-h-32"
-                }`}
-              />
-            </Tooltip>
+            {markdownEditor}
             {welcomePlaceholderDelay !== undefined && (
               <div
                 className="welcome-editor-hint"
@@ -742,46 +675,7 @@ export function AgentComposer({
         {modeControl}
           {/* The keyed editor keeps the same parent and DOM node in either layout. */}
           <div key="editor" className="contents">
-            <Tooltip
-              content={keyboardHints}
-              openOnFocus={false}
-              placement="top-start"
-            >
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => {
-                  if (
-                    compositionScopeRef.current &&
-                    compositionScopeRef.current !== composerScope
-                  ) {
-                    e.target.value = content;
-                    return;
-                  }
-                  onContentChange(e.target.value);
-                  commands?.onInput(e.target.value, e.target.selectionStart);
-                }}
-                onSelect={(e) =>
-                  commands?.onInput(
-                    e.currentTarget.value,
-                    e.currentTarget.selectionStart,
-                  )
-                }
-                aria-autocomplete={commands ? "list" : undefined}
-                aria-controls={commands?.open ? commands.listId : undefined}
-                aria-activedescendant={
-                  commands?.open ? commands.activeId : undefined
-                }
-                onKeyDown={handleKeyDown}
-                {...compositionProps}
-                placeholder={inputPlaceholder}
-                aria-label={t("agentPlaceholder")}
-                aria-describedby={keyboardHintId}
-                disabled={disabled && !queueWhileGenerating}
-                rows={1}
-                className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[14px] font-normal leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
-              />
-            </Tooltip>
+            {markdownEditor}
           </div>
           {modelControl ?? (
             <ComposerModelPicker
