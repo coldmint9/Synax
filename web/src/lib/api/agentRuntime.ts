@@ -158,7 +158,7 @@ export interface AgentSessionMetadata extends Record<string, unknown> {
 
 export interface AgentInteractionReply {
   revision: number;
-  action: "submit" | "decline" | "cancel" | "save" | "revise" | "execute";
+  action: "submit" | "skip" | "cancel" | "save" | "revise" | "execute";
   answers?: Record<string, string | string[] | number | boolean>;
   message?: string;
 }
@@ -171,7 +171,7 @@ export interface AgentInteraction {
   toolCallId: string;
   kind: "clarification" | "plan_approval";
   revision: number;
-  status: "pending" | "answered" | "declined" | "cancelled";
+  status: "pending" | "answered" | "cancelled";
   request: { title: string; questions?: HumanQuestion[]; plan?: AgentPlan };
   response: AgentInteractionReply | null;
   createdAt: string;

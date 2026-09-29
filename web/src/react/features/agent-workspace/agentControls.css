@@ -241,6 +241,7 @@ details[open] > summary > .agent-disclosure-arrow {
   background: currentColor;
 }
 .agent-history-status[data-tone="answered"],
+.agent-history-status[data-tone="skipped"],
 .agent-history-status[data-tone="executing"] {
   color: hsl(var(--success-hsl) / 0.88);
 }
@@ -250,7 +251,6 @@ details[open] > summary > .agent-disclosure-arrow {
 .agent-history-status[data-tone="revision"] {
   color: hsl(var(--warning-hsl) / 0.92);
 }
-.agent-history-status[data-tone="declined"],
 .agent-history-status[data-tone="cancelled"] {
   color: hsl(var(--muted-foreground) / 0.78);
 }

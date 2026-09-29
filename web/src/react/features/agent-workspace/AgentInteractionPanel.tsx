@@ -639,7 +639,12 @@ function InteractionForm({
               <button
                 type="button"
                 className={`${buttonClass} agent-request-skip`}
-                onClick={() => void reply("decline")}
+                title={
+                  zh
+                    ? "跳过作答，Agent 按推荐意图继续"
+                    : "Skip answering; the agent proceeds with its recommendation"
+                }
+                onClick={() => void reply("skip")}
               >
                 {zh ? "跳过" : "Skip"}
               </button>
@@ -731,8 +736,8 @@ function InteractionHistory({
         ? "revision"
         : action === "execute"
           ? "executing"
-          : interaction.status === "declined"
-            ? "declined"
+          : action === "skip"
+            ? "skipped"
             : interaction.status === "cancelled"
               ? "cancelled"
               : "answered";
@@ -749,10 +754,10 @@ function InteractionHistory({
           ? zh
             ? "已开始执行"
             : "Execution started"
-          : interaction.status === "declined"
+          : action === "skip"
             ? zh
-              ? "已拒绝"
-              : "Declined"
+              ? "已跳过 · 按推荐继续"
+              : "Skipped · used the recommendation"
             : interaction.status === "cancelled"
               ? interaction.request.plan
                 ? zh

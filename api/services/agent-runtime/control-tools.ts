@@ -21,7 +21,7 @@ export const humanAskTool: RegisteredTool = {
   id: "human.ask",
   label: "Ask the user",
   description:
-    "Ask up to five focused clarification questions as a durable form. This pauses execution until the user responds. For select questions, optionally include recommended option values in question.recommended; recommend at most one for single_select and any number for multi_select. Must be the only tool call in this step. Never ask for credentials.",
+    "Ask up to five focused clarification questions as a durable form. This pauses execution until the user responds. For select questions, optionally include recommended option values in question.recommended; recommend at most one for single_select and any number for multi_select. Must be the only tool call in this step. Never ask for credentials. The user may skip the form instead of answering: a skip is not a refusal, it resolves as action:\"skip\" and you are expected to continue with the intent you recommended rather than asking again.",
   category: "task",
   internalGate: "none",
   mutability: "task",

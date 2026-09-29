@@ -109,7 +109,7 @@ export interface RuntimeInteraction {
   toolCallId: string;
   kind: 'clarification' | 'plan_approval';
   revision: number;
-  status: 'pending' | 'answered' | 'declined' | 'cancelled';
+  status: 'pending' | 'answered' | 'cancelled';
   request: Record<string, unknown>;
   response: Record<string, unknown> | null;
   createdAt: string;
@@ -118,7 +118,7 @@ export interface RuntimeInteraction {
 
 export interface RuntimeInteractionReply {
   revision: number;
-  action: 'submit' | 'decline' | 'cancel' | 'save' | 'revise' | 'execute';
+  action: 'submit' | 'skip' | 'cancel' | 'save' | 'revise' | 'execute';
   answers?: Record<string, string | string[] | number | boolean>;
   message?: string;
 }

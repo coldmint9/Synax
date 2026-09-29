@@ -476,7 +476,7 @@ export class AgentLoopRuntime {
           stepId: resolved.stepId,
           toolCall: this.store.getToolCall(sessionId, resolved.toolCallId),
         };
-        if (["save", "cancel", "decline"].includes(resolved.response!.action)) {
+        if (["save", "cancel"].includes(resolved.response!.action)) {
           const saved = resolved.response!.action === "save";
           const cancelledPlan =
             resolved.kind === "plan_approval" &&
@@ -486,7 +486,7 @@ export class AgentLoopRuntime {
             ? "Plan saved without execution."
             : cancelledPlan
               ? "Plan saved; immediate execution cancelled."
-              : "User declined or cancelled the requested input.";
+              : "User cancelled the requested input.";
           const finished = this.store.updateRun(run.id, {
             status: completed ? "completed" : "blocked",
             completedAt: nowIso(),

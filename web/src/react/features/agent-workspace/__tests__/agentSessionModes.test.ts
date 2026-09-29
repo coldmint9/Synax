@@ -281,7 +281,7 @@ describe("session mode boundaries", () => {
       activeRunId: "r1",
     });
   });
-  it("keeps a declined round completed when the terminal event is followed by stream done", async () => {
+  it("keeps a cancelled round completed when the terminal event is followed by stream done", async () => {
     useAgentSessionStore.setState({
       sessions: [{ ...session, status: "created", activeRunId: null }],
       refreshDetail: vi.fn(async () => {}),
@@ -291,7 +291,7 @@ describe("session mode boundaries", () => {
       status: "completed",
       activeRunId: null,
       pendingResumeToken: null,
-      blockedReason: "User declined the requested input.",
+      blockedReason: "User cancelled the requested input.",
       updatedAt: "",
     });
     await useAgentSessionStore
@@ -300,7 +300,7 @@ describe("session mode boundaries", () => {
     expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
       status: "completed",
       activeRunId: null,
-      blockedReason: "User declined the requested input.",
+      blockedReason: "User cancelled the requested input.",
     });
   });
 });

@@ -118,6 +118,34 @@ describe("persistent human input", () => {
     expect(interactionService.ready(session.id)).toBeNull();
     expect(interactionService.list(session.id)[0].status).toBe("answered");
   });
+  it("treats a skipped form as an answer and tells the model to continue", () => {
+    const { session, run, step, call } = setup();
+    const interaction = interactionService.request({
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      toolCallId: call.id,
+      kind: "clarification",
+      request: { title: "Clarify", questions },
+    });
+    const skipped = interactionService.reply(session.id, interaction.id, {
+      revision: 1,
+      action: "skip",
+    });
+    // A skip is not a refusal: it resolves the form, keeps the call resumable
+    // and hands the model an explicit instruction instead of a blocked run.
+    // Stored as `answered`: the skip is carried by the response action, so the
+    // table keeps its three-outcome CHECK constraint.
+    expect(skipped.status).toBe("answered");
+    expect(interactionService.list(session.id)[0].status).toBe("answered");
+    expect(interactionService.ready(session.id)?.toolCallId).toBe(call.id);
+    interactionService.consume(session.id);
+    const payload = JSON.parse(
+      store.getToolCall(session.id, call.id).outputSummary ?? "{}",
+    ) as { action?: string; message?: string };
+    expect(payload.action).toBe("skip");
+    expect(payload.message).toContain("not treat it as a refusal");
+  });
   it("rejects a foreign session, stale answer and cancellation race", () => {
     const { session, run, step, call } = setup();
     const i = interactionService.request({

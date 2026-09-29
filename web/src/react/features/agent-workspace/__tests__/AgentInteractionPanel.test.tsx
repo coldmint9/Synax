@@ -498,7 +498,7 @@ describe("AgentInteractionPanel", () => {
   });
 
   it.each([
-    ["Skip", "decline"],
+    ["Skip", "skip"],
     ["Cancel request", "cancel"],
   ])("supports %s without filling required answers", async (label, action) => {
     render(<AgentInteractionPanel session={session} />);
@@ -716,7 +716,7 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
-  it("retains answered and declined history alongside pending forms after reload", async () => {
+  it("retains answered and skipped history alongside pending forms after reload", async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
       interactions: [
         {
@@ -737,10 +737,10 @@ describe("AgentInteractionPanel", () => {
         },
         {
           ...clarification,
-          id: "declined",
+          id: "skipped",
           revision: 2,
-          status: "declined",
-          response: { revision: 2, action: "decline" },
+          status: "answered",
+          response: { revision: 2, action: "skip" },
         },
         clarification,
       ],
@@ -756,7 +756,7 @@ describe("AgentInteractionPanel", () => {
     expect(
       screen.getByLabelText("Approve plan v3 — Saved for later execution"),
     ).toBeVisible();
-    expect(screen.getByLabelText("Clarify scope v2 — Declined")).toBeVisible();
+    expect(screen.getByLabelText("Clarify scope v2 — Skipped · used the recommendation")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Next" })).toHaveLength(1);
     unmount();
     useAgentSessionStore.setState({ interactionState: null });

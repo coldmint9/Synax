@@ -29,6 +29,11 @@ import {
   updatePlanArtifact,
 } from "./plan-artifact-store.js";
 
+/** Injected on a skipped form: the model continues on its own recommendation
+ *  instead of reading the skip as a refusal. */
+const SKIP_MESSAGE =
+  "The user skipped this form instead of answering. Do not treat it as a refusal and do not ask again: continue now with the intent you recommended while asking, preferring the options you marked as recommended and choosing sensible defaults for everything else.";
+
 type Row = {
   id: string;
   session_id: string;
@@ -37,12 +42,16 @@ type Row = {
   tool_call_id: string;
   kind: AgentInteraction["kind"];
   revision: number;
-  status: AgentInteraction["status"];
+  status: string;
   request_json: string;
   response_json: string | null;
   created_at: string;
   resolved_at: string | null;
 };
+/** `decline` was retired: a skipped form is not a refusal, so legacy rows
+ *  fold into `answered` and the stored domain keeps its three outcomes. */
+const normalizeStatus = (raw: string): AgentInteraction["status"] =>
+  raw === "declined" ? "answered" : (raw as AgentInteraction["status"]);
 const map = (r: Row): AgentInteraction => ({
   id: r.id,
   sessionId: r.session_id,
@@ -51,7 +60,7 @@ const map = (r: Row): AgentInteraction => ({
   toolCallId: r.tool_call_id,
   kind: r.kind,
   revision: r.revision,
-  status: r.status,
+  status: normalizeStatus(r.status),
   request: JSON.parse(r.request_json),
   response: r.response_json ? JSON.parse(r.response_json) : null,
   createdAt: r.created_at,
@@ -289,7 +298,7 @@ export const interactionService = {
         conflict("This run no longer accepts input.");
       const validActions =
         i.kind === "clarification"
-          ? ["submit", "decline", "cancel"]
+          ? ["submit", "skip", "cancel"]
           : ["execute", "cancel"];
       if (!validActions.includes(reply.action))
         throw new AgentValidationError("Invalid action for this interaction.");
@@ -343,19 +352,23 @@ export const interactionService = {
           });
         }
       }
+      // Skipping is not refusing: the run keeps going, and the model is told to
+      // fall back on the intent it recommended while asking.
+      const response: InteractionReply =
+        reply.action === "skip" && !reply.message?.trim()
+          ? { ...reply, message: SKIP_MESSAGE }
+          : reply;
       const status: AgentInteraction["status"] =
         reply.action === "cancel"
           ? "cancelled"
-          : reply.action === "decline"
-            ? "declined"
-            : "answered";
+          : "answered";
       const resolvedAt = nowIso();
-      persistInteraction({ ...i, status, response: reply, resolvedAt }, () => {
+      persistInteraction({ ...i, status, response, resolvedAt }, () => {
         getRawSqlite()
           .prepare(
             "UPDATE agent_runtime_interactions SET status=?, response_json=?,resolved_at=? WHERE id=? AND status='pending'",
           )
-          .run(status, JSON.stringify(reply), resolvedAt, id);
+          .run(status, JSON.stringify(response), resolvedAt, id);
       });
       events.append({
         sessionId,
@@ -363,7 +376,7 @@ export const interactionService = {
         summary: `${i.request.title}: ${reply.action}`,
         payload: { interactionId: id, runId: i.runId, action: reply.action },
       });
-      return { ...i, status, response: reply, resolvedAt };
+      return { ...i, status, response, resolvedAt };
     })();
   },
   deferPlan(sessionId: string, id: string): AgentInteraction {

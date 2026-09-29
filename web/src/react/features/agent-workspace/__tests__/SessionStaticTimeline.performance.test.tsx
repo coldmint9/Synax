@@ -278,7 +278,7 @@ it.each(["live", "snapshot"])(
     expect(text).not.toContain("interaction-question");
 
     const current = store.getState().interactionState!;
-    for (const status of ["answered", "declined", "cancelled"] as const) {
+    for (const status of ["answered", "cancelled"] as const) {
       act(() => store.setState({
         interactionState: {
           ...current,

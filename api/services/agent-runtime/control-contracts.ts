@@ -130,7 +130,7 @@ export const interactionReplySchema = z
     revision: z.number().int().positive(),
     action: z.enum([
       "submit",
-      "decline",
+      "skip",
       "cancel",
       "save",
       "revise",
@@ -159,7 +159,7 @@ export interface AgentInteraction {
   toolCallId: string;
   kind: "clarification" | "plan_approval";
   revision: number;
-  status: "pending" | "answered" | "declined" | "cancelled";
+  status: "pending" | "answered" | "cancelled";
   request: {
     title: string;
     questions?: HumanQuestion[];
