@@ -45,7 +45,7 @@ const READ_CAPABILITIES = [
   "wiki.read_section",
   "wiki.get_references",
 ];
-const WRITE_CAPABILITIES = ["file.write", "edit", "file.delete"];
+const WRITE_CAPABILITIES = ["file.write", "file.patch", "file.delete"];
 const SAFE_CAPABILITIES = [
   ...READ_CAPABILITIES,
   ...WRITE_CAPABILITIES,
@@ -521,6 +521,56 @@ export function assertSpecialistToolAllowed(
     return;
   }
 
+  if (toolId === "file.patch") {
+    const { patch } = parse(
+      z.object({ patch: z.string().min(1) }),
+      args,
+    );
+    const hunks = parseApplyPatchEnvelope(patch);
+    const withinScope = (candidate: string) =>
+      snapshot.writeScope!.some((scope) => {
+        const allowed = path.resolve(snapshot.workspaceRoot, scope);
+        return candidate === allowed || candidate.startsWith(allowed + path.sep);
+      });
+    const assertScopedPath = (candidatePath: string): string => {
+      const normalized = parse(relativePathSchema, candidatePath);
+      assertNoSymlinks(normalized, snapshot.workspaceRoot);
+      const target = sandboxPolicy.resolve(
+        normalized,
+        snapshot.workspaceRoot,
+        session.id,
+        toolId,
+      );
+      const absolute = path.resolve(snapshot.workspaceRoot, normalized);
+      const relativeTarget = path
+        .relative(snapshot.workspaceRoot, target)
+        .split(path.sep)
+        .join("/");
+      if (!withinScope(absolute) || !withinScope(target)) {
+        throw new AgentPermissionError(
+          `File ${normalized} is outside the specialist writeScope.`,
+        );
+      }
+      assertInheritedPermission(snapshot, toolId, normalized);
+      assertInheritedPermission(snapshot, toolId, relativeTarget);
+      return normalized;
+    };
+
+    for (const hunk of hunks) {
+      const sourcePath = assertScopedPath(hunk.path);
+      if (hunk.type === "delete" || (hunk.type === "update" && hunk.movePath)) {
+        if (!snapshot.capabilities.includes("file.delete"))
+          throw new AgentPermissionError(
+            "Deleting or moving through file.patch requires file.delete capability.",
+          );
+        assertInheritedPermission(snapshot, "file.delete", sourcePath);
+      }
+      if (hunk.type === "update" && hunk.movePath)
+        assertScopedPath(hunk.movePath);
+    }
+    return;
+  }
+
   const write = parse(
     z.object({
       path: relativePathSchema,
@@ -555,30 +605,4 @@ export function assertSpecialistToolAllowed(
     toolId,
     path.relative(snapshot.workspaceRoot, target).split(path.sep).join("/"),
   );
-  if (
-    toolId === "edit" &&
-    typeof write.content !== "string" &&
-    write.patch?.includes("*** Begin Patch")
-  ) {
-    const hunks = parseApplyPatchEnvelope(write.patch);
-    const hunk = hunks[0];
-    if (
-      hunks.length !== 1 ||
-      parse(relativePathSchema, hunk.path) !== write.path ||
-      (hunk.type === "update" &&
-        hunk.movePath &&
-        parse(relativePathSchema, hunk.movePath) !== write.path)
-    ) {
-      throw new AgentPermissionError(
-        "Specialist edit must affect exactly its scoped path, without moves.",
-      );
-    }
-    if (hunk.type === "delete") {
-      if (!snapshot.capabilities.includes("file.delete"))
-        throw new AgentPermissionError(
-          "Deleting through edit requires file.delete capability.",
-        );
-      assertInheritedPermission(snapshot, "file.delete", write.path);
-    }
-  }
 }

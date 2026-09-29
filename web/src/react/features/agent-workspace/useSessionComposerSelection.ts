@@ -11,9 +11,11 @@ import type {
   GlobalConfig,
   ProviderDef,
 } from "../../../lib/contracts/config";
+import type { ModelCapability } from "../../../lib/contracts/media-generation";
 import {
   buildAgentModelOptions,
   pickDefaultModelSelection,
+  type AgentModelSelection,
 } from "./composer/modelSelection";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { useAgentDockStore } from "./state/agentDockStore";
@@ -22,8 +24,26 @@ import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
 export interface SessionComposerSelection {
   providerId: string | null;
   modelId: string | null;
+  capability: ModelCapability;
   cliModel: string;
   reasoningEffort: ReasoningEffort;
+}
+
+/** The server-side selection is authoritative when local draft state is absent. */
+export function mediaSelectionFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  options: AgentModelSelection[],
+): AgentModelSelection | null {
+  const raw = metadata?.mediaGeneration;
+  if (!raw || typeof raw !== "object") return null;
+  const selection = raw as Record<string, unknown>;
+  if (typeof selection.providerId !== "string" || typeof selection.modelId !== "string") return null;
+  return options.find((item) =>
+    item.providerId === selection.providerId &&
+    item.modelId === selection.modelId &&
+    item.capability !== "chat" &&
+    (selection.capability === undefined || item.capability === selection.capability),
+  ) ?? null;
 }
 
 interface SubmittedSelection extends SessionComposerSelection {
@@ -141,14 +161,18 @@ export function useSessionComposerSelection(
           modelId: runtime.model.slice(separator + 1),
         }
       : null;
+  const sessionMedia = runtime.model ? null : mediaSelectionFromMetadata(session?.sessionMetadata, apiModels);
   const matchingModel =
-    qualifiedModel ??
+    (qualifiedModel && apiModels.find(
+      (item) => item.providerId === qualifiedModel.providerId && item.modelId === qualifiedModel.modelId,
+    )) ??
     apiModels.find(
       (item) =>
         item.modelId === runtime.model &&
         item.providerId === effectiveConfig?.providerId,
     ) ??
-    apiModels.find((item) => item.modelId === runtime.model);
+    apiModels.find((item) => item.modelId === runtime.model) ??
+    sessionMedia;
   const native = backendId === "native";
   const model = runtime.model;
   const submittedDefault =
@@ -158,7 +182,7 @@ export function useSessionComposerSelection(
   const initial: SessionComposerSelection = {
     providerId: native
       ? session
-        ? (matchingModel?.providerId ?? defaultSelection?.providerId ?? null)
+        ? (matchingModel?.providerId ?? qualifiedModel?.providerId ?? defaultSelection?.providerId ?? null)
         : (submittedDefault?.providerId ??
           draftProvider ??
           defaultSelection?.providerId ??
@@ -167,6 +191,7 @@ export function useSessionComposerSelection(
     modelId: native
       ? session
         ? (qualifiedModel?.modelId ??
+          matchingModel?.modelId ??
           model ??
           defaultSelection?.modelId ??
           null)
@@ -174,11 +199,15 @@ export function useSessionComposerSelection(
           draftModel ??
           defaultSelection?.modelId ??
           null)
-      : session
+        : session
         ? model?.startsWith(`${backendId}/`)
           ? model.slice(backendId.length + 1)
           : (model ?? "default")
         : (submittedDefault?.modelId ?? "default"),
+    capability:
+      (session ? matchingModel?.capability : submittedDefault?.capability) ??
+      defaultSelection?.capability ??
+      "chat",
     cliModel: session
       ? (model ?? "default")
       : (submittedDefault?.cliModel ?? "default"),
@@ -187,14 +216,26 @@ export function useSessionComposerSelection(
       (session ? "high" : (submittedDefault?.reasoningEffort ?? draftEffort)),
   };
   const selection = { ...initial, ...saved };
+  const available = native && globalConfig && apiModels.length > 0
+    ? apiModels.find((item) =>
+        item.providerId === selection.providerId &&
+        item.modelId === selection.modelId &&
+        item.capability === selection.capability,
+      ) ?? apiModels.find((item) => item.capability === selection.capability)
+        ?? apiModels.find((item) => item.capability === "chat")
+        ?? apiModels[0]
+    : null;
+  const resolved = available
+    ? { ...selection, providerId: available.providerId, modelId: available.modelId, capability: available.capability }
+    : selection;
   const setSelection = useCallback(
     (value: Partial<SessionComposerSelection>) => patch(key, value),
     [key, patch],
   );
   const markSubmitted = useCallback(
     (sessionId: string) =>
-      rememberSubmission(projectId, sessionId, backendId, selection),
-    [backendId, projectId, rememberSubmission, selection],
+      rememberSubmission(projectId, sessionId, backendId, resolved),
+    [backendId, projectId, rememberSubmission, resolved],
   );
-  return { ...selection, setSelection, markSubmitted };
+  return { ...resolved, setSelection, markSubmitted };
 }

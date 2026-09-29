@@ -189,7 +189,8 @@ export function resolveProviderApiFormat(input: {
   if (
     format === "anthropic" ||
     format === "openai-responses" ||
-    format === "openai"
+    format === "openai" ||
+    format === "jev"
   ) {
     return format;
   }

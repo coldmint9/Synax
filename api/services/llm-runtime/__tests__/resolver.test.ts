@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveLlmSelection } from "../resolver.js";
+import { resolveLlmSelection, resolveProviderApiFormat } from "../resolver.js";
 import type { RuntimeCatalog } from "../types.js";
 import type {
   GlobalConfig,
@@ -157,6 +157,16 @@ function createProjectConfig(
 }
 
 describe("resolveLlmSelection", () => {
+  it("preserves the Jev protocol for a configured connection", () => {
+    expect(
+      resolveProviderApiFormat({
+        providerId: "custom-api:openrouter",
+        apiFormat: "jev",
+        modelId: "jev-1.13",
+      }),
+    ).toBe("jev");
+  });
+
   it("keeps an explicitly selected Kiro model on Kiro while OpenAI remains the default", () => {
     const current = createGlobalConfig();
     const providerId = "custom-api:kiro-local";

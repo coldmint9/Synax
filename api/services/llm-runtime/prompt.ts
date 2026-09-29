@@ -9,7 +9,11 @@ const JSON_OBJECT_RESPONSE_FORMAT_INSTRUCTION =
 export function toModelPrompt(
   messages: LlmGatewayRequest["messages"],
   cacheControl?: boolean,
-  options: { moveRuntimeRemindersToInput?: boolean } = {},
+  options: {
+    moveRuntimeRemindersToInput?: boolean;
+    /** Merge the runtime tail into the preceding user turn instead of adding one. */
+    strictAlternation?: boolean;
+  } = {},
 ): { system?: string | SystemModelMessage[]; messages: ModelMessage[] } {
   // Keep blocks separate: joining or trimming loses per-block metadata and bytes.
   const system = messages
@@ -36,18 +40,27 @@ export function toModelPrompt(
     };
   }
 
-  const conversation: ModelMessage[] = messages.flatMap((message): ModelMessage[] => {
+  const conversation: ModelMessage[] = [];
+  for (const message of messages) {
     if (message.role === "system" && options.moveRuntimeRemindersToInput) {
       const content = typeof message.content === "string" ? message.content : "";
       if (RUNTIME_REMINDER_RE.test(content)) {
-        // Chat/Responses providers cache ordered prefixes. Runtime state changes
-        // every step, so keep it in the input tail instead of invalidating
-        // the stable system prefix.
-        return [{ ...message, role: "user" as const }];
+        // Every provider caches an ordered prefix. Runtime state changes every
+        // step, so keep it in the input tail instead of invalidating the stable
+        // system prefix. Strictly alternating adapters merge it into the
+        // preceding user turn rather than emitting a second consecutive one.
+        const previous = conversation.at(-1);
+        if (options.strictAlternation && previous?.role === "user") {
+          conversation[conversation.length - 1] = {
+            ...previous,
+            content: appendText(previous.content, content),
+          } as ModelMessage;
+        } else conversation.push({ ...message, role: "user" as const });
+        continue;
       }
     }
-    return isConversationMessage(message) ? [message] : [];
-  });
+    if (isConversationMessage(message)) conversation.push(message);
+  }
 
   return {
     ...(system.length > 0 ? { system } : {}),
@@ -100,6 +113,14 @@ function isConversationMessage(
   role: "user" | "assistant" | "tool";
 } {
   return message.role !== "system";
+}
+
+function appendText(
+  content: ModelMessage["content"],
+  text: string,
+): ModelMessage["content"] {
+  if (typeof content === "string") return `${content}\n\n${text}`;
+  return [...content, { type: "text" as const, text }] as ModelMessage["content"];
 }
 
 function toModelMessages(

@@ -67,7 +67,6 @@ import { jevSessionToolProvider } from "../computer-use/jev-tool-provider.js";
 import { INVALID_TOOL, INVALID_TOOL_ID } from "./tool-invalid.js";
 import { diffReadTool } from "./tools/diff-read.js";
 import { fileListTool } from "./tools/file-list.js";
-import { editTool } from "./tools/edit.js";
 import { patchTool } from "./tools/patch.js";
 import { bashTool } from "./tools/bash.js";
 import { fileReadTool } from "./tools/file-read.js";
@@ -146,7 +145,6 @@ export class ToolRegistry {
       webSearchTool,
       diffReadTool,
       fileWriteTool,
-      editTool,
       patchTool,
       fileDeleteTool,
       taskCreateTool,
@@ -287,7 +285,7 @@ export class ToolRegistry {
 
         if (
           args.specialist?.capabilities.some((c) =>
-            ["file.write", "edit", "file.delete"].includes(c),
+            ["file.write", "file.patch", "file.delete"].includes(c),
           ) &&
           siblings.some(
             (s) =>
@@ -303,7 +301,7 @@ export class ToolRegistry {
           );
         if (args.specialist?.writeScope?.length) {
           for (const capability of args.specialist.capabilities.filter((c) =>
-            ["file.write", "edit", "file.delete"].includes(c),
+            ["file.write", "file.patch", "file.delete"].includes(c),
           ))
             for (const scope of args.specialist.writeScope) {
               const action = resolvePermissionDecision({
@@ -957,7 +955,7 @@ export class ToolRegistry {
         tool.category === "mcp";
       let undoPaths: string[] | undefined;
       if (
-        ["file.write", "edit", "file.delete"].includes(tool.id) &&
+        ["file.write", "file.delete"].includes(tool.id) &&
         typeof (args as { path?: unknown }).path === "string"
       )
         undoPaths = [

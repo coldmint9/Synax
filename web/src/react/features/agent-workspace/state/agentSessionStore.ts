@@ -152,6 +152,7 @@ export type SessionInputBody = {
   /** Enriched create/turn prompt; defaults to `message` when omitted. */
   prompt?: string;
   model?: string | null;
+  mediaGeneration?: { providerId: string; modelId: string; capability?: "image_generation" | "video_generation" };
   reasoningEffort?: ReasoningEffort | null;
   permissionTier?: SynaxPermissionTier;
   skillIds?: string[];
@@ -1295,6 +1296,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         projectId,
         backendId: body.backendId ?? "native",
         model: body.model ?? undefined,
+        mediaGeneration: body.mediaGeneration,
         profileId: SYNAX_PROFILE_ID,
         prompt,
         reasoningEffort: body.reasoningEffort ?? undefined,
@@ -1305,6 +1307,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessionMetadata: createSynaxSessionMetadata(mode, {
           source: "session-page",
           userPrompt: message,
+          ...(body.mediaGeneration ? { mediaGeneration: body.mediaGeneration } : {}),
           ...(wikiAttachMode ? { wikiAttachMode, documentId } : {}),
         }),
       });

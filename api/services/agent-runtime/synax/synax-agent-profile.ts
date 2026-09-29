@@ -22,7 +22,6 @@ export const synaxAgentProfile: AgentProfile = {
     "webSearch",
     "diff.read",
     "file.write",
-    "edit",
     "file.patch",
     "file.delete",
     "wiki.get_snapshot",

@@ -136,6 +136,7 @@ describe("SessionCommitDialog", () => {
     );
     expect(streamCommitMessage.mock.calls[0][1]).toMatchObject({
       model: "p1/m1",
+      locale: "zh",
     });
     fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
     await waitFor(() =>

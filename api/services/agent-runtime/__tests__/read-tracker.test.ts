@@ -11,13 +11,14 @@ import {
   rebuildSessionFileReads,
 } from "../read-tracker.js";
 import type { ToolCallRecord, ToolExecutionResult } from "../contracts.js";
-import { editTool } from "../tools/edit.js";
 import { fileReadTool } from "../tools/file-read.js";
 import { fileWriteTool } from "../tools/file-write.js";
+import { patchTool } from "../tools/patch.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import {
   clearSessionWorkspaceRoot,
   setSessionWorkspaceRoot,
+  workspaceRoot,
 } from "../tools/workspace.js";
 
 describe("extractBashReadPaths", () => {
@@ -55,24 +56,43 @@ function makeRecord(partial: Partial<ToolCallRecord>): ToolCallRecord {
   };
 }
 
-/**
- * `edit` may resolve or reject synchronously, so callers assert through
- * `Promise.resolve().then(...)` (the pattern used elsewhere in this suite).
- */
-function runEdit(
+function replacementPatch(
+  sessionId: string,
+  relativePath: string,
+  content: string,
+): string {
+  const absolutePath = path.join(workspaceRoot(sessionId), relativePath);
+  const current = fs.existsSync(absolutePath)
+    ? fs.readFileSync(absolutePath, "utf8")
+    : "";
+  return [
+    "*** Begin Patch",
+    `*** Update File: ${relativePath}`,
+    "@@",
+    ...current.split("\n").map((line) => `-${line}`),
+    ...content.split("\n").map((line) => `+${line}`),
+    "*** End Patch",
+  ].join("\n");
+}
+
+function runPatch(
   sessionId: string,
   args: { path: string; content?: string; patch?: string },
-  toolCallId = "test-edit",
+  toolCallId = "test-file-patch",
 ): ToolExecutionResult | Promise<ToolExecutionResult> {
-  return editTool.execute({
+  return patchTool.execute({
     sessionId,
     runId: null,
     stepId: null,
     toolCallId,
-    toolId: "edit",
+    toolId: "file.patch",
     category: "write",
     mutability: "write",
-    args,
+    args: {
+      patch:
+        args.patch ??
+        replacementPatch(sessionId, args.path, args.content ?? ""),
+    },
   });
 }
 
@@ -89,7 +109,7 @@ describe("rebuildSessionFileReads", () => {
     expect(() => rebuildSessionFileReads(sessionId, [])).not.toThrow();
   });
 
-  it("replays this session own writes so a later edit is not rejected as unread", async () => {
+  it("replays this session own writes before a later patch", async () => {
     const session = "sess-read-tracker-own-write";
     const dir = fs.mkdtempSync(
       path.join(os.tmpdir(), "synax-read-tracker-replay-"),
@@ -111,13 +131,13 @@ describe("rebuildSessionFileReads", () => {
         }),
       ]);
 
-      // The following edit must work after rebuilding the session history.
-      const edited = await runEdit(
+      // A following patch must work after rebuilding the session history.
+      const edited = await runPatch(
         session,
         { path: relPath, content: "edited\n" },
-        "replay-edit",
+        "replay-patch",
       );
-      expect(edited.result).toMatchObject({ deleted: false });
+      expect(edited.result).toMatchObject({ files: [{ path: relPath, action: "update" }] });
       expect(fs.readFileSync(path.join(dir, relPath), "utf8")).toBe("edited\n");
     } finally {
       clearSessionFileReads(session);
@@ -155,19 +175,19 @@ describe("read-before-write path identity", () => {
 
     // Read through a `sub/..` alias, then write through the plain relative path.
     recordSessionFileRead(sessionId, "sub/../alias.txt");
-    const result = await runEdit(sessionId, {
+    const result = await runPatch(sessionId, {
       path: "alias.txt",
       content: "value\n",
     });
-    expect(result.result).toMatchObject({ deleted: false });
+    expect(result.result).toMatchObject({ files: [{ path: "alias.txt", action: "update" }] });
   });
 
-  it("matches an out-of-root file read via absolute path against a relative edit", async () => {
+  it("matches an out-of-root file read via absolute path against a relative patch", async () => {
     // Production shape: an unrestricted session works from
     // `.../project/.worktrees/feature` and edits `../../../other-project/src/x.vue`.
     // `toWorkspaceRelative` returns the ABSOLUTE path for targets that escape the
     // root, so recording reads by relative string and asserting by absolute string
-    // never matched and every edit failed as "was not read".
+    // never matched and every follow-up write failed as "was not read".
     const workDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "synax-read-escape-root-"),
     );
@@ -194,11 +214,11 @@ describe("read-before-write path identity", () => {
       .join("/");
     recordSessionFileRead(session.id, absTarget);
 
-    const result = await runEdit(session.id, {
+    const result = await runPatch(session.id, {
       path: relativeArg,
       content: "outside\n",
     });
-    expect(result.result).toMatchObject({ deleted: false });
+    expect(result.result).toMatchObject({ files: [{ path: fs.realpathSync(absTarget), action: "update" }] });
     expect(fs.readFileSync(absTarget, "utf8")).toBe("outside\n");
   });
 
@@ -212,25 +232,25 @@ describe("read-before-write path identity", () => {
 
     recordSessionFileRead(sessionId, "repeat.txt");
 
-    const first = await runEdit(
+    const first = await runPatch(
       sessionId,
       { path: "repeat.txt", content: "second\n" },
       "repeat-1",
     );
-    expect(first.result).toMatchObject({ deleted: false });
+    expect(first.result).toMatchObject({ files: [{ path: "repeat.txt", action: "update" }] });
 
     // Without refreshing the tracked mtime this second edit failed with
     // "changed on disk since last read" because the session's own write moved it.
-    const second = await runEdit(
+    const second = await runPatch(
       sessionId,
       { path: "repeat.txt", content: "third\n" },
       "repeat-2",
     );
-    expect(second.result).toMatchObject({ deleted: false });
+    expect(second.result).toMatchObject({ files: [{ path: "repeat.txt", action: "update" }] });
     expect(fs.readFileSync(filePath, "utf8")).toBe("third\n");
   });
 
-  it("allows an edit right after file.write of the same path", async () => {
+  it("allows a patch right after file.write of the same path", async () => {
     const { sessionId, dir } = newWorkspace("synax-read-after-write-");
     const filePath = path.join(dir, "created.txt");
     fs.writeFileSync(filePath, "seed\n", "utf8");
@@ -249,12 +269,12 @@ describe("read-before-write path identity", () => {
       args: { path: "created.txt", content: "rewritten\n" },
     });
 
-    const edited = await runEdit(
+    const edited = await runPatch(
       sessionId,
       { path: "created.txt", content: "final\n" },
       "write-2",
     );
-    expect(edited.result).toMatchObject({ deleted: false });
+    expect(edited.result).toMatchObject({ files: [{ path: "created.txt", action: "update" }] });
     expect(fs.readFileSync(filePath, "utf8")).toBe("final\n");
   });
 
@@ -296,24 +316,25 @@ describe("read-before-write path identity", () => {
   });
 
   it("edits an existing file without a prior read and uses current disk content", async () => {
-    const { sessionId, dir } = newWorkspace("synax-edit-no-read-");
+    const { sessionId, dir } = newWorkspace("synax-patch-no-read-");
     const file = path.join(dir, "unread.txt");
     fs.writeFileSync(file, "original\n", "utf8");
 
-    await runEdit(sessionId, { path: "unread.txt", patch: "-original\n+updated\n" });
+    await runPatch(sessionId, { path: "unread.txt", content: "updated\n" });
     expect(fs.readFileSync(file, "utf8")).toBe("updated\n");
-    await runEdit(sessionId, { path: "unread.txt", content: "replaced\n" });
+    await runPatch(sessionId, { path: "unread.txt", content: "replaced\n" });
     expect(fs.readFileSync(file, "utf8")).toBe("replaced\n");
   });
 
-  it("rejects an unmatched edit patch without overwriting the file", async () => {
-    const { sessionId, dir } = newWorkspace("synax-edit-stale-");
+  it("rejects an unmatched patch without overwriting the file", async () => {
+    const { sessionId, dir } = newWorkspace("synax-patch-stale-");
     const file = path.join(dir, "unread.txt");
     fs.writeFileSync(file, "current\n", "utf8");
 
-    await expect(Promise.resolve().then(() => runEdit(sessionId, {
-      path: "unread.txt", patch: "-outdated\n+updated\n",
-    }))).rejects.toThrow(/patch removal target not found/);
+    await expect(Promise.resolve().then(() => runPatch(sessionId, {
+      path: "unread.txt",
+      patch: "*** Begin Patch\n*** Update File: unread.txt\n@@\n-outdated\n+updated\n*** End Patch",
+    }))).rejects.toThrow();
     expect(fs.readFileSync(file, "utf8")).toBe("current\n");
   });
 });
@@ -430,14 +451,16 @@ describe("content snapshot guard and patch precedence", () => {
     expect(check).toThrow(/changed on disk/);
   });
 
-  it.each(["edit", "file.write"])(
+  it.each(["file.patch", "file.write"])(
     "reuses %s output as the next snapshot without extra reads",
     async (tool) => {
       const { sessionId, check, touch } = await setup();
       const spy = vi.spyOn(fs, "readFileSync");
-      if (tool === "edit") {
-        await runEdit(sessionId, { path: "file.txt", content: "after\n" });
-        expect(spy).toHaveBeenCalledTimes(1); // edit reads the current file, not a second snapshot
+      if (tool === "file.patch") {
+        const patch = replacementPatch(sessionId, "file.txt", "after\n");
+        spy.mockClear();
+        await runPatch(sessionId, { path: "file.txt", patch });
+        expect(spy).toHaveBeenCalledTimes(1); // patch reads the current file, not a second snapshot
       } else {
         await fileWriteTool.execute({
           sessionId,
@@ -498,7 +521,7 @@ describe("content snapshot guard and patch precedence", () => {
   it("applies the screenshot-style patch rather than empty replacement content", async () => {
     const { sessionId, file, touch } = await setup();
     touch();
-    await runEdit(sessionId, {
+    await runPatch(sessionId, {
       path: "file.txt",
       content: "",
       patch:
@@ -517,7 +540,7 @@ describe("content snapshot guard and patch precedence", () => {
       const { sessionId, file } = await setup();
       await expect(
         Promise.resolve().then(() =>
-          runEdit(sessionId, {
+          runPatch(sessionId, {
             path: "file.txt",
             patch,
             content: "",
@@ -529,21 +552,21 @@ describe("content snapshot guard and patch precedence", () => {
   );
 
   it.each(["", "ignored replacement"])(
-    "prioritizes a legacy patch over content %j",
+    "rejects a legacy patch even when replacement content is %j",
     async (content) => {
       const { sessionId, file } = await setup();
-      await runEdit(sessionId, {
+      await expect(Promise.resolve().then(() => runPatch(sessionId, {
         path: "file.txt",
         patch: "-before\n+after\n",
         content,
-      });
-      expect(fs.readFileSync(file, "utf8")).toBe("after\n");
+      }))).rejects.toThrow();
+      expect(fs.readFileSync(file, "utf8")).toBe("before\n");
     },
   );
 
   it("still supports intentional empty replacement without a patch", async () => {
     const { sessionId, file } = await setup();
-    await runEdit(sessionId, { path: "file.txt", content: "" });
+    await runPatch(sessionId, { path: "file.txt", content: "" });
     expect(fs.readFileSync(file, "utf8")).toBe("");
   });
 });

@@ -350,7 +350,7 @@ function readInputSources(
 
 /** Tools whose execution means "this session wrote to that path". */
 const AGENT_WRITE_TOOL_IDS = new Set([
-  "edit",
+  "edit", // Historical calls remain attributable after the tool is unmounted.
   "file.write",
   "file.delete",
   "file.patch",

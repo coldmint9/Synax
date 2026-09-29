@@ -16,6 +16,8 @@ export const goalStateSchema = z.object({
   // Kept readable for goals persisted before budget enforcement was removed.
   status: z.enum(['planning', 'executing', 'completed', 'blocked', 'budget_exhausted', 'cancelled']),
   acceptanceEvidence: z.array(evidenceSchema).optional(),
+  /** Criteria accepted by incremental goal.finish gates before final completion. */
+  acceptedCriteria: z.array(text).optional(),
   reason: text.optional(),
 }).refine(goal => goal.status !== 'completed' || Boolean(goal.acceptanceEvidence?.length),
   'A completed goal must retain acceptance evidence.');
@@ -64,17 +66,19 @@ export function buildGoalInstruction(goal: GoalState, plan?: GoalPlan): string {
     );
   }
   lines.push(
-    'Completion requires matching evidence for every approved acceptance criterion, referencing completed/successful tool calls or artifacts validated by the server.',
+    'goal.finish is an incremental acceptance gate: submit one or more criteria with evidence. The server returns the remaining criteria until all are accepted; only then is the goal completed.',
     'Never fabricate evidence or approvals. Subjective acceptance requires human.ask and explicit trusted user approval; a model-written humanApproved flag is not approval.',
     'Do not complete while there are unfinished tasks, active children, or pending interactions. Stop for input, approval, blockers, or cancellation.',
   );
   return lines.join('\n');
 }
 
-export function checkGoalCompletion(input: {
+export type GoalEvidence = z.infer<typeof evidenceSchema>;
+
+export interface GoalAcceptanceInput {
   goal: GoalState;
   plan: GoalPlan | null;
-  evidence: Array<z.infer<typeof evidenceSchema>>;
+  evidence: GoalEvidence[];
   pendingTaskCount: number;
   activeChildCount: number;
   pendingInteractionCount: number;
@@ -85,14 +89,31 @@ export function checkGoalCompletion(input: {
   subjectiveCriteria?: string[];
   /** Explicit user approvals for this exact plan revision, supplied by the caller, not the model. */
   trustedUserApprovedCriteria?: string[];
-}): GoalState {
+  /** Server-derived readiness blockers that keep the gate open without rejecting it. */
+  additionalBlockers?: string[];
+}
+
+export interface GoalAcceptanceEvaluation {
+  goal: GoalState;
+  complete: boolean;
+  acceptedCriteria: string[];
+  remainingCriteria: string[];
+  blockers: string[];
+}
+
+/** Replace prior evidence for a criterion with the newest attestation. */
+export function mergeGoalEvidence(previous: GoalEvidence[] | undefined, next: GoalEvidence[]): GoalEvidence[] {
+  const merged = new Map<string, GoalEvidence>();
+  for (const item of [...previous ?? [], ...next]) merged.set(item.criterion.trim(), item);
+  return [...merged.values()];
+}
+
+export function evaluateGoalAcceptance(input: GoalAcceptanceInput): GoalAcceptanceEvaluation {
   const goal = goalStateSchema.parse(input.goal);
   if (goal.status !== 'executing') throw new Error(`Cannot complete a goal with status ${goal.status}.`);
   const plan = planSchema.parse(input.plan);
   if (plan.status !== 'approved') throw new Error('Goal completion requires an approved plan.');
-  for (const field of ['pendingTaskCount', 'activeChildCount', 'pendingInteractionCount'] as const) {
-    if (count.parse(input[field]) !== 0) throw new Error(`Goal has unfinished work: ${field}.`);
-  }
+  for (const field of ['pendingTaskCount', 'activeChildCount', 'pendingInteractionCount'] as const) count.parse(input[field]);
 
   const criteria = new Set(plan.acceptanceCriteria);
   const subjective = new Set(z.array(text).parse(input.subjectiveCriteria === undefined ? [] : input.subjectiveCriteria));
@@ -102,7 +123,10 @@ export function checkGoalCompletion(input: {
   }
   const validTools = new Set(z.array(text).parse(input.validToolCallIds));
   const validArtifacts = new Set(z.array(text).parse(input.validArtifactIds));
-  const evidence = z.array(evidenceSchema).parse(input.evidence);
+  const evidence = mergeGoalEvidence(
+    goal.acceptanceEvidence,
+    z.array(evidenceSchema).parse(input.evidence),
+  );
   const covered = new Set<string>();
   for (const item of evidence) {
     if (!criteria.has(item.criterion)) throw new Error(`Evidence references an unknown criterion: ${item.criterion}.`);
@@ -122,10 +146,25 @@ export function checkGoalCompletion(input: {
     if (humanApproved) item.humanApproved = true;
     covered.add(item.criterion);
   }
-  for (const criterion of criteria) {
-    if (!covered.has(criterion)) throw new Error(`Missing acceptance evidence for criterion: ${criterion}.`);
-  }
-  const completed: GoalState = { ...goal, status: 'completed', acceptanceEvidence: evidence };
-  delete completed.reason;
-  return completed;
+  const acceptedCriteria = plan.acceptanceCriteria.filter((criterion) => covered.has(criterion));
+  const remainingCriteria = plan.acceptanceCriteria.filter((criterion) => !covered.has(criterion));
+  const blockers = [
+    input.pendingTaskCount ? `pending tasks: ${input.pendingTaskCount}` : null,
+    input.activeChildCount ? `active child work: ${input.activeChildCount}` : null,
+    input.pendingInteractionCount ? `pending interactions: ${input.pendingInteractionCount}` : null,
+    ...(input.additionalBlockers ?? []),
+  ].filter((value): value is string => Boolean(value));
+  const complete = remainingCriteria.length === 0 && blockers.length === 0;
+  const nextGoal: GoalState = complete
+    ? { ...goal, status: 'completed', acceptanceEvidence: evidence, acceptedCriteria }
+    : { ...goal, acceptanceEvidence: evidence, acceptedCriteria };
+  if (complete) delete nextGoal.reason;
+  return { goal: nextGoal, complete, acceptedCriteria, remainingCriteria, blockers };
+}
+
+export function checkGoalCompletion(input: GoalAcceptanceInput): GoalState {
+  const evaluated = evaluateGoalAcceptance(input);
+  if (evaluated.blockers.length) throw new Error(`Goal has unfinished work: ${evaluated.blockers.join(', ')}.`);
+  if (evaluated.remainingCriteria.length) throw new Error(`Missing acceptance evidence for criterion: ${evaluated.remainingCriteria[0]}.`);
+  return evaluated.goal;
 }

@@ -1,7 +1,7 @@
-import type { MediaAdapter, MediaCapabilities, MediaModelSelection } from "./media-generation";
+import type { MediaAdapter, MediaCapabilities, MediaModelSelection, ModelCapability } from "./media-generation";
 export type ProviderStatus = "live" | "experimental" | "inactive";
 export type ProviderKind = "acp" | "api";
-export type ApiFormat = "openai" | "openai-responses" | "anthropic";
+export type ApiFormat = "openai" | "openai-responses" | "anthropic" | "jev";
 
 export interface ProviderCaps {
   canFollowUp: boolean;
@@ -18,6 +18,7 @@ export type ReasoningEffort =
 
 export interface ProviderModelDef {
   media?: MediaCapabilities;
+  capabilities?: ModelCapability[];
   inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
   outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
   id: string;

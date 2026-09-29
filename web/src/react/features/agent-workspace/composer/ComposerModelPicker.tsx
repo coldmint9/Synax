@@ -15,6 +15,7 @@ import type {
   GlobalConfig,
   ProviderDef,
 } from "../../../../lib/contracts/config";
+import type { ModelCapability } from "../../../../lib/contracts/media-generation";
 import { useLocale } from "../../../../hooks/useLocale";
 import {
   buildAgentModelOptions,
@@ -30,6 +31,7 @@ interface Props {
   providers: ProviderDef[];
   providerId: string | null;
   modelId: string | null;
+  capability?: ModelCapability;
   onSelect: (selection: AgentModelSelection) => void;
   disabled?: boolean;
   onOverlayOpenChange?: (open: boolean) => void;
@@ -43,7 +45,8 @@ function matchesQuery(
   if (!query) return true;
   return (
     option.label.toLowerCase().includes(query) ||
-    providerLabel.toLowerCase().includes(query)
+    providerLabel.toLowerCase().includes(query) ||
+    option.capability.toLowerCase().includes(query)
   );
 }
 
@@ -63,6 +66,7 @@ function ModelPickerContent({
   providers,
   providerId,
   modelId,
+  capability,
   onSelect,
   disabled,
   onOverlayOpenChange,
@@ -101,8 +105,8 @@ function ModelPickerContent({
   );
 
   const selected = useMemo(
-    () => findAgentModelSelection(apiModels, acpEndpoints, providerId, modelId),
-    [apiModels, acpEndpoints, providerId, modelId],
+    () => findAgentModelSelection(apiModels, acpEndpoints, providerId, modelId, capability),
+    [apiModels, acpEndpoints, providerId, modelId, capability],
   );
 
   const selectedProviderLabel = providerId
@@ -110,9 +114,14 @@ function ModelPickerContent({
       providerId)
     : null;
   const selectedModelLabel = selected?.label ?? modelId;
+  const selectedCapabilityLabel = selected?.capability === "image_generation"
+    ? "生图"
+    : selected?.capability === "video_generation"
+      ? "生视频"
+      : "对话";
   const triggerLabel =
     selectedProviderLabel && selectedModelLabel
-      ? `${selectedProviderLabel} · ${selectedModelLabel}`
+      ? `${selectedProviderLabel} · ${selectedModelLabel} · ${selectedCapabilityLabel}`
       : (selectedModelLabel ?? t("agentModelSelect"));
 
   const query = searchQuery.trim().toLowerCase();
@@ -213,6 +222,13 @@ function ModelPickerContent({
                   >
                     <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
                       {option.label}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {option.capability === "image_generation"
+                        ? "生图"
+                        : option.capability === "video_generation"
+                          ? "生视频"
+                          : "对话"}
                     </span>
                   </ComboboxOption>
                 ))}

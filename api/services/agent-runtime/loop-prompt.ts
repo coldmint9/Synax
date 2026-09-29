@@ -88,7 +88,7 @@ function buildExecutionSection(availableToolIds: string[]): string {
     );
   if (tools.has("context.read"))
     lines.push(
-      "Use context.read to retrieve omitted evidence by reference instead of redoing it.",
+      "Use context.read only to recover compacted user input or assistant context; rerun tools for current evidence.",
     );
   if ([...tools].some((id) => id.startsWith("browser.")))
     lines.push(

@@ -174,7 +174,7 @@ export const goalFinishTool: RegisteredTool = {
   id: "goal.finish",
   label: "Finish goal",
   description:
-    "Finish an approved goal with proof for every acceptance criterion, or report a concrete blocker. Completed tasks alone are not proof. Must be the only call in a step.",
+    "Use as the acceptance gate for an approved goal. Submit evidence for one or more criteria; the tool records accepted criteria and returns remaining criteria until the whole goal is complete. Invalid or foreign evidence is still rejected. A concrete blocker may still be reported. Must be the only call in a step.",
   category: "task",
   internalGate: "none",
   mutability: "task",

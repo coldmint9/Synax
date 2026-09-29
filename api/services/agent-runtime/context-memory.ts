@@ -619,44 +619,20 @@ export function assembleContextMemory(input: {
         .slice(0, INDEX_LIMIT),
     };
   };
-  const render = (
-    snapshot: ContextMemorySnapshot,
-    refLimit: number,
-  ): string => {
+  const omissionFooter = (count: number) =>
+    `Omitted ${count}; context.read checkpoint.`;
+  const render = (snapshot: ContextMemorySnapshot): string => {
     if (!snapshot.entries.length && !snapshot.omittedCount) return "";
     const lines = [
       HEADER,
       ...snapshot.entries.map((entry) => entryRenders.get(entry.id)!),
     ];
-    if (snapshot.omittedCount) {
-      const stepIds = [
-        ...new Set(snapshot.omissionIndex.map((ref) => ref.source.stepId)),
-      ];
-      // Even a carried overflow has its exact step locator in the source coverage manifest.
-      if (!stepIds.length)
-        stepIds.push(
-          ...snapshot.sources
-            .filter((source) => source.omittedCount)
-            .map((source) => source.stepId),
-        );
-      lines.push(
-        `Omitted ${snapshot.omittedCount}; context.read step:${stepIds.slice(0, refLimit).join(",")}${stepIds.length > refLimit || snapshot.omittedCount > snapshot.omissionIndex.length ? "; more in snapshot index" : ""}.`,
-      );
-    }
+    if (snapshot.omittedCount) lines.push(omissionFooter(snapshot.omittedCount));
     return lines.join("\n");
   };
   const measure = (snapshot: ContextMemorySnapshot) => {
-    let summary = "",
-      tokens = Infinity;
-    // Do not spend a small memory budget on verbose reference/digest boilerplate.
-    for (const limit of [4, 2, 1]) {
-      const rendered = render(snapshot, limit);
-      // Adjacent index limits often produce identical text, especially on one step.
-      if (rendered !== summary || tokens === Infinity) tokens = count(rendered);
-      summary = rendered;
-      if (tokens <= input.tokenBudget) break;
-    }
-    return { snapshot, summary, tokens };
+    const summary = render(snapshot);
+    return { snapshot, summary, tokens: count(summary) };
   };
   // Token counts are estimates until the final whole-text count: real tokenizers
   // can merge across entry boundaries. Each entry is rendered/tokenized once.
@@ -705,24 +681,9 @@ export function assembleContextMemory(input: {
   const maxOmissions =
     optional.length +
     inheritedSources.reduce((sum, source) => sum + source.omittedCount, 0);
-  const sourceIds = new Set([
-    ...canonical.map((entry) => entry.source.stepId),
-    ...inheritedSources
-      .filter((source) => source.omittedCount)
-      .map((source) => source.stepId),
-  ]);
-  let referenceReserve = 0;
-  if (maxOmissions) {
-    // Reserve a compact, single-reference footer. Longer index renderings are
-    // opportunistic; measure() reduces them to one reference before any eviction.
-    for (const id of sourceIds)
-      referenceReserve = Math.max(
-        referenceReserve,
-        count(
-          `\nOmitted ${maxOmissions}; context.read step:${id}${maxOmissions > INDEX_LIMIT ? "; more in snapshot index" : ""}.`,
-        ),
-      );
-  }
+  const referenceReserve = maxOmissions
+    ? count(`\n${omissionFooter(maxOmissions)}`)
+    : 0;
   let estimatedTokens = headerTokens + referenceReserve;
   for (const entry of canonical)
     if (entry.required) estimatedTokens += entryCosts.get(entry.id)!;

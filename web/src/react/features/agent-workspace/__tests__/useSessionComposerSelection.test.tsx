@@ -1,9 +1,11 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, AgentRun } from "../../../../lib/api/agentRuntime";
+import type { GlobalConfig, ProviderDef } from "../../../../lib/contracts/config";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
 import {
+  mediaSelectionFromMetadata,
   useSessionComposerSelection,
   useSessionComposerSelections,
 } from "../useSessionComposerSelection";
@@ -44,6 +46,33 @@ beforeEach(() => {
 });
 
 describe("session composer selection", () => {
+  it("recovers media capability from session metadata without local storage and falls back within the same capability", () => {
+    const provider: ProviderDef = {
+      id: "custom-api:studio",
+      label: "Studio",
+      status: "live",
+      kind: "api",
+      caps: { canFollowUp: true, canCancel: true },
+      models: [
+        { id: "image-a", label: "Image A", capabilities: ["image_generation"], media: { operations: ["text-to-image"] } },
+        { id: "image-b", label: "Image B", capabilities: ["image_generation"], media: { operations: ["text-to-image"] } },
+      ],
+    };
+    const config = {
+      providers: [provider],
+      providerConnections: { [provider.id]: { providerId: provider.id, apiKeyMasked: "****", mediaAdapter: "openrouter" } },
+      defaultApiProviderId: provider.id,
+    } as GlobalConfig;
+    const metadata = { mediaGeneration: { providerId: provider.id, modelId: "image-a", capability: "image_generation" } };
+    const session = { ...a, model: undefined, sessionMetadata: metadata } as AgentSession;
+    const hook = renderHook(() => useSessionComposerSelection("p", session, "native", config, [provider], null));
+    expect(hook.result.current).toMatchObject({ providerId: provider.id, modelId: "image-a", capability: "image_generation" });
+    act(() => hook.result.current.setSelection({ modelId: "deleted-image" }));
+    expect(hook.result.current).toMatchObject({ providerId: provider.id, modelId: "image-a", capability: "image_generation" });
+    expect(mediaSelectionFromMetadata({ mediaGeneration: { providerId: provider.id, modelId: "image-a", capability: "video_generation" } }, [
+      { kind: "api", providerId: provider.id, modelId: "image-a", label: "Image", capability: "image_generation" },
+    ])).toBeNull();
+  });
   it("restores a qualified API model without switching provider or duplicating its prefix", () => {
     const providerId = "custom-api:kiro-local";
     const providers = [

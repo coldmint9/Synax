@@ -454,6 +454,11 @@ export const createSessionRequestSchema = z
   .object({
     backendId: backendIdSchema.optional(),
     model: z.string().min(1).max(256).optional(),
+    mediaGeneration: z.object({
+      providerId: z.string().min(1).max(128),
+      modelId: z.string().min(1).max(256),
+      capability: z.enum(["image_generation", "video_generation"]).optional(),
+    }).optional(),
     workDir: z.string().min(1).max(4096).optional(),
     projectId: z.string().min(1).max(128),
     nodeId: z.string().min(1).max(256).nullable().optional(),

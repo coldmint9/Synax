@@ -61,4 +61,19 @@ describe("commit message stream route", () => {
     const response = await request({ model: "p/m" });
     expect(await response.text()).toContain("model unavailable");
   });
+  it("forwards a supported locale and rejects an unsupported one", async () => {
+    const callsBefore = mocks.prepare.mock.calls.length;
+    expect((await request({ model: "p/m", locale: "fr" })).status).toBe(400);
+    expect(mocks.prepare.mock.calls.length).toBe(callsBefore);
+    mocks.prepare.mockResolvedValueOnce({ sessionId: "s1" });
+    mocks.stream.mockImplementationOnce(async function* () {
+      yield { type: "final", message: "fix: change" };
+    });
+    const response = await request({ model: "p/m", locale: "zh" });
+    expect(response.status).toBe(200);
+    expect(mocks.prepare).toHaveBeenCalledWith("s1", {
+      model: "p/m",
+      locale: "zh",
+    });
+  });
 });

@@ -83,7 +83,6 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       "webSearch",
       "diff.read",
       "file.write",
-      "edit",
       "file.patch",
       "file.delete",
       "wiki.search_content",

@@ -25,6 +25,7 @@ import {
   upsertDraft,
   type ApiProviderDraft,
 } from "../providerPresets";
+import { validateProviderDraft } from "../validation";
 
 function makeProvider(): ProviderDef {
   return {
@@ -120,6 +121,61 @@ describe("providerPresets model metadata", () => {
         (draft) => draft.id === provider.id,
       )!.modelMeta["future-model"].outputModalities,
     ).toEqual(["text", "image", "audio"]);
+  });
+
+  it("round-trips generation capabilities and media operations", () => {
+    const provider = draftToProviderDef({
+      ...createCustomDraft([]),
+      model: "media-model",
+      models: ["media-model"],
+      modelMeta: {
+        "media-model": {
+          capabilities: ["image_generation", "video_generation"],
+          media: {
+            operations: ["text-to-image", "image-to-image", "text-to-video"],
+          },
+        },
+      },
+    });
+    const draft = buildApiDrafts(
+      makeConfig(provider, { apiKey: "configured" }),
+      [provider],
+    ).find((item) => item.id === provider.id);
+    expect(draft?.modelMeta["media-model"]?.capabilities).toEqual([
+      "image_generation",
+      "video_generation",
+    ]);
+    expect(draft?.modelMeta["media-model"]?.media?.operations).toEqual([
+      "text-to-image",
+      "image-to-image",
+      "text-to-video",
+    ]);
+  });
+
+  it("retains a custom media adapter and rejects a generation model without operations", () => {
+    const draft: ApiProviderDraft = {
+      ...createCustomDraft([]),
+      id: 'custom-api:studio',
+      apiKeyMasked: '****',
+      baseUrl: 'https://studio.example/api',
+      model: 'image-model',
+      models: ['image-model'],
+      mediaAdapter: 'openrouter',
+      modelMeta: {
+        'image-model': {
+          capabilities: ['image_generation'],
+          media: { operations: ['text-to-image'], parameters: { quality: { values: ['low', 'high'] } } },
+        },
+      },
+    };
+    expect(validateProviderDraft(draft)).toEqual([]);
+    const provider = draftToProviderDef(draft);
+    const connection = draftToConnection(draft);
+    expect(connection.mediaAdapter).toBe('openrouter');
+    const loaded = buildApiDrafts(makeConfig(provider, { mediaAdapter: 'openrouter' }), [provider]);
+    expect(loaded.find((item) => item.id === provider.id)?.modelMeta['image-model']?.media?.parameters?.quality.values).toEqual(['low', 'high']);
+    expect(validateProviderDraft({ ...draft, modelMeta: { 'image-model': { capabilities: ['image_generation'], media: { operations: [] } } } }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ field: 'model' })]));
   });
   it("round-trips model contextLimit and allowed reasoning efforts", () => {
     const provider = makeProvider();
@@ -267,14 +323,16 @@ describe("per-model context window", () => {
 });
 
 describe("provider protocol selection", () => {
-  it("offers exactly the three supported protocols", () => {
+  it("offers the three chat protocols plus Jev System One", () => {
     expect(API_FORMAT_OPTIONS.map((option) => option.key)).toEqual([
       "openai",
       "openai-responses",
       "anthropic",
+      "jev",
     ]);
     expect(apiFormatLabel("openai-responses")).toBe("OpenAI Responses");
     expect(apiFormatLabel("anthropic")).toBe("Anthropic Messages");
+    expect(apiFormatLabel("jev")).toBe("Jev / TypeSafe System One");
   });
 
   it("switches untouched defaults to the new protocol and keeps edited values", () => {
@@ -310,6 +368,21 @@ describe("provider protocol selection", () => {
     expect(applyProtocolDefaults(customDraft, "anthropic").model).toBe(
       "deepseek-chat",
     );
+
+    const openRouter = API_PROVIDER_PRESETS.find(
+      (preset) => preset.providerId === "custom-api:openrouter",
+    )!;
+    const openRouterDraft = createDraftFromPreset(openRouter);
+    const jev = applyProtocolDefaults(openRouterDraft, "jev");
+    expect(jev.format).toBe("jev");
+    expect(jev.baseUrl).toBe("https://openrouter.ai/api");
+    expect(jev.model).toBe("jev-latest");
+
+    const existingV1 = applyProtocolDefaults(
+      { ...openRouterDraft, baseUrl: "https://openrouter.ai/api/v1" },
+      "jev",
+    );
+    expect(existingV1.baseUrl).toBe("https://openrouter.ai/api");
   });
 
   it("starts a custom endpoint without an assumed model", () => {

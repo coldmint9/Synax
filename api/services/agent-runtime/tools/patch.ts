@@ -102,7 +102,7 @@ export const patchTool: RegisteredTool = {
   id: "file.patch",
   label: "Apply Patch",
   description:
-    "Apply one *** Begin Patch / *** End Patch envelope that may add, update, move, or delete several files in a single call. Prefer edit for a change confined to one file.",
+    "Apply one *** Begin Patch / *** End Patch envelope that may add, update, move, or delete one or more files in a single call.",
   category: "write",
   internalGate: "write",
   mutability: "write",

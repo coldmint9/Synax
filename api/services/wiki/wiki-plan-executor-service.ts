@@ -82,19 +82,26 @@ function extractPatchesFromSession(sessionId: string): PlanNodeArtifactPatch[] {
       patch?: string;
       content?: string;
     } | null;
+    if (call.toolId === "file.patch" && input?.patch) {
+      for (const hunk of parseApplyPatchEnvelope(input.patch)) {
+        patches.push({
+          filePath: hunk.path,
+          diff: input.patch,
+          action:
+            hunk.type === "add"
+              ? "create"
+              : hunk.type === "delete"
+                ? "delete"
+                : "modify",
+        });
+      }
+      continue;
+    }
     if (!input?.path) continue;
     if (call.toolId === "file.write") {
       patches.push({
         filePath: input.path,
         diff: typeof input.content === "string" ? input.content : "",
-        action: "modify",
-      });
-      continue;
-    }
-    if (call.toolId === "edit" || call.toolId === "file.patch") {
-      patches.push({
-        filePath: input.path,
-        diff: input.patch ?? input.content ?? "",
         action: "modify",
       });
       continue;
@@ -125,14 +132,23 @@ function applyPatchToFile(
   const current = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
   let next = current;
   if (diff.includes("*** Begin Patch")) {
-    const hunks = parseApplyPatchEnvelope(diff);
-    if (hunks.length === 1) {
-      const hunk = hunks[0];
-      if (hunk.type === "add") next = hunk.contents;
-      else if (hunk.type === "delete") {
+    const hunk = parseApplyPatchEnvelope(diff).find(
+      (candidate) => candidate.path === filePath,
+    );
+    if (!hunk) throw new Error(`Patch hunk not found for ${filePath}`);
+    if (hunk.type === "add") next = hunk.contents;
+    else if (hunk.type === "delete") {
+      fs.rmSync(abs, { force: true });
+      return;
+    } else {
+      next = deriveNewContentsFromChunks(filePath, hunk.chunks, current);
+      if (hunk.movePath) {
+        const target = path.resolve(root, hunk.movePath);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, next, "utf8");
         fs.rmSync(abs, { force: true });
         return;
-      } else next = deriveNewContentsFromChunks(filePath, hunk.chunks, current);
+      }
     }
   } else if (diff && !diff.startsWith("---")) {
     next = diff;

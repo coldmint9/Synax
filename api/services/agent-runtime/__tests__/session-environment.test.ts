@@ -247,14 +247,14 @@ describe("session environment Git ignore filtering", () => {
     git("rm", "--quiet", "generated/deleted.js");
     mocks.listToolCalls.mockReturnValue([
       {
-        toolId: "edit",
+        toolId: "file.patch",
         status: "completed",
-        inputRef: { path: "src/main.ts" },
+        inputRef: { patch: "*** Begin Patch\n*** Update File: src/main.ts\n@@\n-after\n+extra\n*** End Patch" },
       },
       {
-        toolId: "edit",
+        toolId: "file.patch",
         status: "completed",
-        inputRef: { path: "generated/build.js" },
+        inputRef: { patch: "*** Begin Patch\n*** Update File: generated/build.js\n@@\n-after\n+ignored\n*** End Patch" },
       },
     ]);
 
@@ -406,9 +406,9 @@ describe("session output files", () => {
         inputRef: { path: "docs/output.md" },
       },
       {
-        toolId: "edit",
+        toolId: "file.patch",
         status: "completed",
-        inputRef: { path: "docs/output.md" },
+        inputRef: { patch: "*** Begin Patch\n*** Update File: docs/output.md\n@@\n-# Result\n+# Result\n*** End Patch" },
       },
       {
         toolId: "file.write",

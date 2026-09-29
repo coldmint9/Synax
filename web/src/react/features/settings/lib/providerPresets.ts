@@ -5,15 +5,17 @@ import type {
   ProviderDef,
   ReasoningEffort,
 } from "../../../../lib/contracts/config";
+import type { MediaAdapter, MediaCapabilities, ModelCapability } from "../../../../lib/contracts/media-generation";
 
 export const BUILTIN_API_PROVIDER_IDS = ["openai", "anthropic"] as const;
 export const CUSTOM_API_PREFIX = "custom-api:";
 
-/** The three wire protocols a provider connection can speak. */
+/** Wire protocols a provider connection can speak. */
 export const API_FORMAT_OPTIONS: { key: ApiFormat; label: string }[] = [
   { key: "openai", label: "OpenAI Chat Completions" },
   { key: "openai-responses", label: "OpenAI Responses" },
   { key: "anthropic", label: "Anthropic Messages" },
+  { key: "jev", label: "Jev / TypeSafe System One" },
 ];
 
 export function apiFormatLabel(format: ApiFormat | string): string {
@@ -97,6 +99,7 @@ export type ApiProviderDraft = {
   label: string;
   description: string;
   format: ApiFormat;
+  mediaAdapter?: MediaAdapter;
   baseUrl: string;
   apiKey: string;
   apiKeyMasked: string;
@@ -115,6 +118,8 @@ export type ApiProviderDraft = {
       contextLimit?: number;
       inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
       outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
+      capabilities?: ModelCapability[];
+      media?: MediaCapabilities;
     }
   >;
   /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
@@ -217,11 +222,30 @@ export const PROVIDER_LOGO_ASSETS: Record<
 export function defaultBaseUrl(format: ApiFormat) {
   return format === "anthropic"
     ? "https://api.anthropic.com/v1"
+    : format === "jev"
+      ? "https://openrouter.ai/api"
     : "https://api.openai.com/v1";
 }
 
 export function defaultModel(format: ApiFormat) {
-  return format === "anthropic" ? "claude-3-5-sonnet-latest" : "gpt-4o-mini";
+  if (format === "anthropic") return "claude-3-5-sonnet-latest";
+  if (format === "jev") return "jev-latest";
+  return "gpt-4o-mini";
+}
+
+function defaultBaseUrlForDraft(draft: ApiProviderDraft, format: ApiFormat): string {
+  if (draft.id.includes("openrouter")) {
+    return format === "jev"
+      ? "https://openrouter.ai/api"
+      : "https://openrouter.ai/api/v1";
+  }
+  return defaultBaseUrl(format);
+}
+
+function defaultModelForDraft(draft: ApiProviderDraft, format: ApiFormat): string {
+  if (format === "jev") return "jev-latest";
+  if (draft.id.includes("openrouter")) return "openai/gpt-4o-mini";
+  return defaultModel(format);
 }
 
 /**
@@ -235,13 +259,13 @@ export function applyProtocolDefaults(
   if (draft.format === next) return draft;
   const baseUrl =
     !draft.baseUrl.trim() ||
-    draft.baseUrl.trim() === defaultBaseUrl(draft.format)
-      ? defaultBaseUrl(next)
+    draft.baseUrl.trim() === defaultBaseUrlForDraft(draft, draft.format)
+      ? defaultBaseUrlForDraft(draft, next)
       : draft.baseUrl;
   const model = draft.custom
     ? draft.model
-    : !draft.model.trim() || draft.model.trim() === defaultModel(draft.format)
-      ? defaultModel(next)
+    : !draft.model.trim() || draft.model.trim() === defaultModelForDraft(draft, draft.format)
+      ? defaultModelForDraft(draft, next)
       : draft.model;
   return { ...draft, format: next, baseUrl, model };
 }
@@ -428,6 +452,7 @@ export function buildApiDrafts(
       label: provider.label || preset?.label || provider.id,
       description: provider.description ?? preset?.description ?? "",
       format,
+      mediaAdapter: connection?.mediaAdapter,
       baseUrl:
         connection?.baseUrl ?? preset?.defaultBaseUrl ?? defaultBaseUrl(format),
       apiKey: "",
@@ -447,7 +472,9 @@ export function buildApiDrafts(
             (m) =>
               typeof m.contextLimit === "number" ||
               m.inputModalities ||
-              m.outputModalities,
+              m.outputModalities ||
+              m.capabilities ||
+              m.media,
           )
           .map((m) => [
             m.id,
@@ -455,6 +482,8 @@ export function buildApiDrafts(
               contextLimit: m.contextLimit,
               inputModalities: m.inputModalities,
               outputModalities: m.outputModalities,
+              capabilities: m.capabilities,
+              media: m.media,
             },
           ]),
       ),
@@ -544,6 +573,12 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
       ...(draft.modelMeta?.[id]?.contextLimit
         ? { contextLimit: draft.modelMeta[id].contextLimit }
         : {}),
+      ...(draft.modelMeta?.[id]?.capabilities
+        ? { capabilities: draft.modelMeta[id].capabilities }
+        : {}),
+      ...(draft.modelMeta?.[id]?.media
+        ? { media: draft.modelMeta[id].media }
+        : {}),
     })),
   };
 }
@@ -551,7 +586,7 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
 export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
   return {
     providerId: draft.id,
-    mediaAdapter: draft.id === "openai" ? "openai" : draft.id.includes("openrouter") ? "openrouter" : draft.id.includes("xai") ? "xai" : draft.id.includes("ark") ? "ark" : draft.id.includes("minimax") ? "minimax" : undefined,
+    mediaAdapter: draft.mediaAdapter ?? (draft.id === "openai" ? "openai" : draft.id.includes("openrouter") ? "openrouter" : draft.id.includes("xai") ? "xai" : draft.id.includes("ark") ? "ark" : draft.id.includes("minimax") ? "minimax" : undefined),
     baseUrl: draft.baseUrl || undefined,
     apiKey: draft.apiKey || undefined,
     apiKeyMasked: draft.apiKey ? undefined : draft.apiKeyMasked || undefined,

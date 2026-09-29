@@ -7,25 +7,49 @@ import { AgentValidationError } from '../runtime-errors.js';
 import { resolveWorkspacePath } from './workspace.js';
 import { nowIso } from '../runtime-ids.js';
 
+function normalizeCriterion(criterion: string): string {
+  return criterion.trim().replace(/\s+/gu, ' ');
+}
+
+function resolveCriterion(candidate: string | undefined, approved: string[]): string {
+  if (!approved.length) {
+    if (candidate) return candidate;
+    throw new AgentValidationError('Verification requires a criterion when no approved acceptance criteria are available.');
+  }
+  if (candidate && approved.includes(candidate)) return candidate;
+  const matches = candidate
+    ? approved.filter((criterion) => normalizeCriterion(criterion) === normalizeCriterion(candidate))
+    : [];
+  if (matches.length === 1) return matches[0];
+  if (approved.length === 1) return approved[0];
+  throw new AgentValidationError(
+    `Verification must reference one approved acceptance criterion. Pass criterion exactly as listed:\n${approved.map((criterion) => `- ${JSON.stringify(criterion)}`).join('\n')}`,
+  );
+}
+
 export const verificationTool: RegisteredTool = {
   ...bashTool,
   id: 'verification.run', label: 'Verify work',
-  description: 'Run a focused verification and retain a version-bound receipt. Uses the same shell permissions as bash. Waits for the command without model polling. Supply the requirement, purpose and source/test scope; broader checks require a concrete unresolved risk. Never stash/reset user changes or detach background jobs. Every explicit invocation executes; prior receipts are reused for completion, not silently substituted for requested reruns.',
+  description: 'Run a focused verification and retain a version-bound receipt. Uses the same shell permissions as bash. Waits for the command without model polling. Supply the purpose and source/test scope; broader checks require a concrete unresolved risk. Never stash/reset user changes or detach background jobs. Omit criterion when there is one approved acceptance criterion; with multiple criteria, copy one verbatim from the approved plan. A wrong or missing criterion with multiple options returns the allowed list. Every explicit invocation executes; prior receipts are reused for completion, not silently substituted for requested reruns. Set timeoutMs from what the command costs (default 120s, max 600s): a check that runs out of time is recorded as interrupted and returns its partial output with a [TIMED OUT] marker plus the elapsed time, so raise timeoutMs and re-run instead of reporting the timeout as a failed check.',
   inputSchema: z.object({
     command: z.string().min(1).max(4000), workdir: z.string().optional(), stdin: z.string().max(50000).optional(),
-    criterion: z.string().trim().min(1).max(4000), purpose: z.string().trim().min(1).max(4000),
+    criterion: z.string().trim().min(1).max(4000).optional(), purpose: z.string().trim().min(1).max(4000),
     scope: z.array(z.string().trim().min(1)).min(1).max(40),
     broader: z.boolean().default(false), risk: z.string().trim().min(1).max(4000).optional(),
-    external: z.boolean().default(false), timeoutMs: z.number().int().min(1000).max(600000).default(120000),
+    external: z.boolean().default(false),
+    timeoutMs: z.number().int().min(1000).max(600000).default(120000).describe(
+      'Wall-clock limit for this check in ms (1000-600000), default 120000. Estimate it from the command: a focused unit test or single-file typecheck is usually 30s-120s, a build or broader suite 300s+. On timeout the partial output and the elapsed time are returned, so re-run with a larger timeoutMs instead of reporting a failure.',
+    ),
   }),
+  progressiveDetails:
+    'Accepts { command: string, workdir?: string, stdin?: string, criterion?: string, purpose: string, scope: string[], broader?: boolean, risk?: string, external?: boolean, timeoutMs?: number }. timeoutMs is the wall-clock window for the check and defaults to 120s; raise it for builds and broad suites, and re-run with a larger value after a [TIMED OUT] result. The check runs in the workspace with bash permissions, so it cannot stash/reset user changes or detach background jobs.',
   async execute(input) {
-    const args = input.args as { command: string; workdir?: string; stdin?: string; criterion: string; purpose: string; scope: string[]; broader: boolean; risk?: string; external: boolean; timeoutMs: number };
+    const args = input.args as { command: string; workdir?: string; stdin?: string; criterion?: string; purpose: string; scope: string[]; broader: boolean; risk?: string; external: boolean; timeoutMs: number };
     const work = workStore.current(input.sessionId);
     if (!work) throw new AgentValidationError('Verification requires an active work.');
     if (args.broader && (!args.risk || /^(再保险|再检查|just in case|to be safe)/i.test(args.risk)))
       throw new AgentValidationError('Broader verification requires a concrete unresolved risk, not a generic assurance.');
-    if (work.acceptanceCriteria.length && !work.acceptanceCriteria.includes(args.criterion))
-      throw new AgentValidationError('Verification must reference an approved acceptance criterion.');
+    const criterion = resolveCriterion(args.criterion, work.acceptanceCriteria);
     if (/\bgit\s+(?:stash|reset|clean|checkout|restore)\b|\bnohup\b|(^|[^&])&\s*(?:$|[;\n])/i.test(args.command))
       throw new AgentValidationError('Verification cannot stash/reset/restore user changes or detach a background process.');
     const broadCommand = /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|typecheck)\s*$|\bvitest\s+run\s*$/.test(args.command.trim());
@@ -39,7 +63,7 @@ export const verificationTool: RegisteredTool = {
     const after = await workspaceFingerprint(input.sessionId, args.scope);
     const current = workStore.current(input.sessionId)!;
     const receipt = {
-      runId: input.runId, toolCallId: input.toolCallId, criterion: args.criterion, purpose: args.purpose,
+      runId: input.runId, toolCallId: input.toolCallId, criterion, purpose: args.purpose,
       command: args.command, workdir: args.workdir ?? '.', scope: args.scope,
       fingerprint, changeVersion: current.changeVersion,
       status: (output.exitCode === 0 && fingerprint === after ? 'success' : output.exitCode == null ? 'interrupted' : 'failed') as 'success' | 'failed' | 'interrupted',

@@ -71,7 +71,7 @@ export function SessionCommitDialog({
   onClose,
   onCommitted,
 }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { globalConfig, providers } = useConfig(projectId);
   const apiModels = useMemo(
     () => buildAgentModelOptions(globalConfig, providers).apiModels,
@@ -170,7 +170,7 @@ export function SessionCommitDialog({
     try {
       await agentRuntimeApi.streamCommitMessage(
         sessionId,
-        { ...(rootId ? { rootId } : {}), model: selectedModelRef },
+        { ...(rootId ? { rootId } : {}), model: selectedModelRef, locale },
         (event) => {
           if (request !== generation.current || controller.signal.aborted)
             return;

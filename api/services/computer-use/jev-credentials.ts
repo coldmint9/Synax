@@ -68,7 +68,7 @@ export function normalizeJevBaseUrl(
 
 function connectionFor(
   providerId: string,
-): { apiKey?: string; baseUrl?: string } | undefined {
+): { apiKey?: string; baseUrl?: string; extra?: Record<string, unknown> } | undefined {
   try {
     return getGlobalConfigForRuntime().providerConnections?.[providerId];
   } catch {
@@ -92,6 +92,10 @@ export function resolveJevCredentials(): JevCredentials | null {
     const connection = connectionFor(providerId);
     const baseURL = normalizeJevBaseUrl(connection?.baseUrl);
     const connectionKey = plainSecret(connection?.apiKey);
+    const connectionModel = connection?.extra?.apiFormat === "jev" &&
+      typeof connection.extra.model === "string"
+      ? connection.extra.model.trim() || undefined
+      : undefined;
 
     let apiKey = connectionKey;
     let source: JevCredentialSource = "provider";
@@ -108,7 +112,7 @@ export function resolveJevCredentials(): JevCredentials | null {
     return {
       apiKey,
       ...(baseURL ? { baseURL } : {}),
-      ...(model ? { model } : {}),
+      ...(model || connectionModel ? { model: model ?? connectionModel } : {}),
       providerId,
       source,
     };

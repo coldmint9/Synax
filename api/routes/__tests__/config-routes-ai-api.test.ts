@@ -262,6 +262,39 @@ describe('config routes ai api provider auth', () => {
     )
   })
 
+  it('validates a Jev connection against OpenRouter System One and normalizes /api/v1', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      model: 'typesafe/jev-1.13',
+      answers: { ok: { type: 'choice', choice: 'yes', confidence: 1 } },
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configRoutes } = await import('../config.js')
+    const res = await configRoutes.request('http://localhost/ai-api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: 'custom-api:openrouter',
+        format: 'jev',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: 'sk-or-test',
+        model: 'jev-1.13',
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/systemone',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-or-test' }),
+        body: expect.stringContaining('"model":"jev-1.13"'),
+      }),
+    )
+  })
+
   it('accepts the Responses protocol on builtin providers and rejects unknown protocols', async () => {
     const { configRoutes } = await import('../config.js')
     const { getGlobalConfig } = await import('../../lib/config/config-store.js')
@@ -413,6 +446,49 @@ describe('config routes ai api provider auth', () => {
     expect(body.config.providerConnections.openai?.apiKeyMasked).toBeUndefined()
     expect(body.config.providers).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'custom-api:deepseek' })]),
+    )
+  })
+
+  it('saves an OpenRouter provider using the Jev protocol', async () => {
+    const { getGlobalConfig } = await import('../../lib/config/config-store.js')
+    const { configRoutes } = await import('../config.js')
+    const current = getGlobalConfig()
+    const provider = {
+      id: 'custom-api:openrouter',
+      label: 'OpenRouter',
+      description: 'OpenRouter System One',
+      status: 'live',
+      kind: 'api',
+      caps: { canFollowUp: true, canCancel: true },
+      models: [{ id: 'jev-1.13', label: 'jev-1.13', isDefault: true }],
+    }
+
+    const res = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providers: [...current.providers, provider],
+        providerConnections: {
+          'custom-api:openrouter': {
+            providerId: 'custom-api:openrouter',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'sk-or-test',
+            extra: {
+              kind: 'api',
+              apiFormat: 'jev',
+              model: 'jev-1.13',
+            },
+          },
+        },
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.config.providerConnections['custom-api:openrouter']?.apiKey).toBeUndefined()
+    expect(body.config.providerConnections['custom-api:openrouter']?.extra?.apiFormat).toBe('jev')
+    expect(body.config.providers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'custom-api:openrouter' })]),
     )
   })
 })

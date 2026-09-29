@@ -6124,6 +6124,36 @@ input[type="radio"] {
   font-size: 0.8125rem;
   font-weight: 650;
 }
+.computer-use-alert__steps {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 0;
+  color: hsl(var(--foreground-hsl) / 0.86);
+  font-size: 0.71875rem;
+  line-height: 1.4;
+  list-style: none;
+}
+.computer-use-alert__steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.computer-use-alert__step-number {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-top: 1px;
+  border: 1px solid hsl(var(--warning-hsl) / 0.35);
+  border-radius: 50%;
+  color: hsl(var(--warning-hsl));
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  background: hsl(var(--warning-hsl) / 0.1);
+}
 .computer-use-alert__actions,
 .computer-use-button-group {
   display: flex;

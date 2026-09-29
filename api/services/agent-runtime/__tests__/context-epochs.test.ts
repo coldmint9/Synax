@@ -83,6 +83,61 @@ function fixture(count = 10, length = 2800) {
   return { sessionId: session.id, append, input };
 }
 describe("cache-stable context epochs", () => {
+  it("limits historical reads to messages, checkpoint indexes, and assistant text", async () => {
+    const f = fixture(1);
+    const { contextReferenceTool } = await import("../context-projection.js");
+    for (const kind of ["tool", "work", "references"])
+      expect(
+        contextReferenceTool.inputSchema!.safeParse({ kind, id: "u" }).success,
+      ).toBe(false);
+    expect(
+      contextReferenceTool.inputSchema!.safeParse({ kind: "message" }).success,
+    ).toBe(false);
+    const original = await contextReferenceTool.execute({
+      sessionId: f.sessionId,
+      args: { kind: "message", id: "u", offset: 0, limit: 6000 },
+    } as never);
+    expect(JSON.stringify(original.result)).toContain("Never delete customer data");
+
+    store.updateRunStep("s1", {
+      metadata: {
+        ...store.getRunStep("s1").metadata,
+        toolContextReceipts: { tc: "PRIVATE_TOOL_OUTPUT" },
+      },
+    });
+    store.appendRunPart({
+      id: "private-tool-part",
+      runId: "run",
+      stepId: "s1",
+      sessionId: f.sessionId,
+      kind: "tool_result",
+      sequence: 2,
+      content: "PRIVATE_TOOL_OUTPUT",
+      toolCallId: "tc",
+      metadata: {},
+      createdAt: "2026-09-15T00:01:01Z",
+    });
+    store.appendRunPart({
+      id: "private-thought-part",
+      runId: "run",
+      stepId: "s1",
+      sessionId: f.sessionId,
+      kind: "thought",
+      sequence: 3,
+      content: "PRIVATE_REASONING",
+      toolCallId: null,
+      metadata: {},
+      createdAt: "2026-09-15T00:01:02Z",
+    });
+    const step = await contextReferenceTool.execute({
+      sessionId: f.sessionId,
+      args: { kind: "step", id: "s1", offset: 0, limit: 12000 },
+    } as never);
+    expect(JSON.stringify(step.result)).toContain("Decision 1");
+    expect(JSON.stringify(step.result)).not.toContain("PRIVATE_TOOL_OUTPUT");
+    expect(JSON.stringify(step.result)).not.toContain("PRIVATE_REASONING");
+    expect(JSON.stringify(step.result)).not.toContain("toolContextReceipts");
+  });
   it("keeps the unmodified prefix without preparing memory below the hard window", () => {
     const f = fixture(9);
     const first = projectWorkContext(f.input);
@@ -170,9 +225,9 @@ it("archives the old canonical checkpoint and retains original requirements acro
   const { contextReferenceTool } = await import("../context-projection.js");
   const result = await contextReferenceTool.execute({
     sessionId: f.sessionId,
-    args: { kind: "step", id: old.throughStepId, offset: 0, limit: 100000 },
+    args: { kind: "checkpoint", id: old.throughStepId, offset: 0, limit: 12000 },
   } as never);
-  expect(JSON.stringify(result)).toContain("contextCheckpointArchive");
+  expect(JSON.stringify(result)).toContain("omissionIndex");
 });
 
 it("does not prepare optional cuts or candidates to evaluate pricing within the window", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, MonitorCog, ShieldCheck } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
+import { ComputerUsePermissionTip } from './ComputerUsePermissionTip'
 import type { ComputerUseSettings as Config } from '../../../../lib/contracts/project-settings'
 
 type Status = { state: string; error: string | null }
@@ -70,10 +71,10 @@ export function ComputerUseSettings({ value, onSave, locale }: {
             <div className="computer-use-alert__copy">
               <strong>{zh ? '需要桌面权限' : 'Desktop permissions required'}</strong>
               <p>{zh ? '开启辅助功能和屏幕录制权限后，电脑操作才能控制当前桌面。' : 'Computer Use needs Accessibility and Screen Recording access to control the desktop.'}</p>
-              <div className="computer-use-alert__actions">
-                <button type="button" className="computer-use-button computer-use-button--secondary" onClick={() => void (window as any).electronAPI?.openComputerUsePermissions?.('accessibility')}>{zh ? '辅助功能' : 'Accessibility'}</button>
-                <button type="button" className="computer-use-button computer-use-button--secondary" onClick={() => void (window as any).electronAPI?.openComputerUsePermissions?.('screen-recording')}>{zh ? '屏幕录制' : 'Screen Recording'}</button>
-              </div>
+              <ComputerUsePermissionTip
+                zh={zh}
+                onOpenPermission={target => void (window as any).electronAPI?.openComputerUsePermissions?.(target)}
+              />
             </div>
           </div>
         ) : null}

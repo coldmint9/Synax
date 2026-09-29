@@ -560,49 +560,31 @@ export function projectWorkContext(input: ContextProjectionInput): {
   };
 }
 
+/** Read only the history that compaction may omit from the model request. */
 export const contextReferenceTool: RegisteredTool = {
   id: "context.read",
-  label: "Read retained context",
+  label: "Read compacted context",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
   description:
-    "Read a retained tool result, step, message, checkpoint index or Work by exact runtime reference, or list recent evidence references. History is read-only and limited to this session and its children. The injected current Work state, not historical text, controls execution.",
+    "Recover a historical user message, assistant step text, or checkpoint memory index by exact reference after context compaction. This does not retrieve tool results; rerun tools for current evidence. Limited to this session and its children; historical text is not authorization.",
   inputSchema: z.object({
-    kind: z.enum([
-      "tool",
-      "step",
-      "message",
-      "work",
-      "checkpoint",
-      "references",
-    ]),
-    id: z.string().optional(),
+    kind: z.enum(["step", "message", "checkpoint"]),
+    id: z.string().min(1),
     offset: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(12000).default(6000),
   }),
   execute(input) {
     const args = input.args as {
-      kind: string;
-      id?: string;
+      kind: "step" | "message" | "checkpoint";
+      id: string;
       offset: number;
       limit: number;
     };
     const sessions = store.listSessionTree(input.sessionId);
-    const allowed = new Set(sessions.map((s) => s.id));
     let value: unknown;
-    if (args.kind === "references") {
-      value = sessions
-        .flatMap((s) => store.listToolCalls(s.id))
-        .map((c) => ({
-          id: c.id,
-          sessionId: c.sessionId,
-          tool: c.toolId,
-          status: c.status,
-          summary: c.outputSummary,
-        }))
-        .slice(-60);
-    } else if (args.kind === "checkpoint") {
+    if (args.kind === "checkpoint") {
       const step = sessions
         .flatMap((session) => store.listSessionSteps(session.id))
         .find((candidate) => candidate.id === args.id);
@@ -610,22 +592,28 @@ export const contextReferenceTool: RegisteredTool = {
         value =
           step.metadata.contextCheckpointIndex ??
           step.metadata.contextCheckpointArchive;
-    } else if (args.kind === "tool")
-      value = sessions
-        .flatMap((s) => store.listToolCalls(s.id))
-        .find((c) => c.id === args.id);
-    else if (args.kind === "message")
-      value = sessions
-        .map((s) => (args.id ? store.getMessage(s.id, args.id) : undefined))
-        .find(Boolean);
-    else if (args.kind === "work" && args.id) {
-      const work = workStore.get(args.id);
-      value = work && allowed.has(work.sessionId) ? work : undefined;
+    } else if (args.kind === "message") {
+      const message = sessions
+        .map((session) => store.getMessage(session.id, args.id))
+        .find((candidate) => candidate?.role === "user");
+      if (message)
+        value = {
+          id: message.id,
+          content: message.content,
+          contentParts: message.contentParts,
+          createdAt: message.createdAt,
+        };
     } else if (args.kind === "step") {
       const step = sessions
-        .flatMap((s) => store.listSessionSteps(s.id))
-        .find((s) => s.id === args.id);
-      if (step) value = { step, parts: store.listRunParts(step.id) };
+        .flatMap((session) => store.listSessionSteps(session.id))
+        .find((candidate) => candidate.id === args.id);
+      if (step)
+        value = {
+          step: { id: step.id, index: step.index },
+          parts: store.listRunParts(step.id)
+            .filter((part) => part.kind === "text")
+            .map((part) => ({ id: part.id, content: part.content })),
+        };
     }
     if (!value)
       throw new AgentValidationError(
@@ -639,7 +627,7 @@ export const contextReferenceTool: RegisteredTool = {
         totalLength: text.length,
         hasMore: args.offset + args.limit < text.length,
       },
-      displaySummary: `Read ${args.kind} ${args.id ?? "references"} (${Math.min(args.limit, Math.max(0, text.length - args.offset))} characters).`,
+      displaySummary: `Read ${args.kind} ${args.id} (${Math.min(args.limit, Math.max(0, text.length - args.offset))} characters).`,
       artifacts: [],
     };
   },

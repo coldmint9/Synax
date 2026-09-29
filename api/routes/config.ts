@@ -32,6 +32,7 @@ import type {
 } from "../lib/config/config-types.js";
 import { discoverAcpProviders } from "../services/acp/discovery.js";
 import { listProviders as listAcpProviders } from "../services/acp/index.js";
+import { mergeMediaModelsIntoProviders } from "../services/media/catalog.js";
 import { beginWebSearchOAuth } from "../services/web-search/oauth.js";
 
 export const configRoutes = new Hono();
@@ -92,6 +93,7 @@ const providerDefSchema = z.object({
       label: z.string().min(1),
       isDefault: z.boolean().optional(),
       media: mediaCapabilitiesSchema.optional(),
+      capabilities: z.array(z.enum(["chat", "image_generation", "video_generation"])).min(1).optional(),
       maxTokens: z.number().optional(),
       contextLimit: z.number().int().positive().max(10_000_000).optional(),
       inputModalities: z
@@ -100,6 +102,20 @@ const providerDefSchema = z.object({
       outputModalities: z
         .array(z.enum(["text", "image", "audio", "video", "file"]))
         .optional(),
+    }).superRefine((model, context) => {
+      for (const [capability, output] of [
+        ["image_generation", "image"],
+        ["video_generation", "video"],
+      ] as const) {
+        if (model.capabilities?.includes(capability) &&
+            !model.media?.operations.some((operation) => operation.endsWith(output))) {
+          context.addIssue({
+            code: "custom",
+            path: ["media", "operations"],
+            message: `${model.id} does not declare an operation for ${capability}.`,
+          });
+        }
+      }
     }),
   ),
   connectionSchema: z.record(z.string(), z.unknown()).optional(),
@@ -224,7 +240,7 @@ const globalConfigPatchSchema = z
 
 const aiApiValidateSchema = z.object({
   providerId: z.string().min(1).optional(),
-  format: z.enum(["openai", "openai-responses", "anthropic"]),
+  format: z.enum(["openai", "openai-responses", "anthropic", "jev"]),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional(),
   model: z.string().min(1),
@@ -232,7 +248,7 @@ const aiApiValidateSchema = z.object({
 
 const aiApiModelsDiscoverSchema = z.object({
   providerId: z.string().min(1).optional(),
-  format: z.enum(["openai", "openai-responses", "anthropic"]),
+  format: z.enum(["openai", "openai-responses", "anthropic", "jev"]),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional(),
 });
@@ -243,7 +259,7 @@ configRoutes.get("/terminal-shell", (c) => {
 
 configRoutes.get("/global", (c) => {
   const config = getGlobalConfig();
-  return c.json({ config });
+  return c.json({ config: { ...config, providers: mergeMediaModelsIntoProviders(config) } });
 });
 
 configRoutes.put("/global", async (c) => {
@@ -687,15 +703,15 @@ function validateProviderConnection(
 
   const format = extra.apiFormat;
   // The protocol is independent of the provider brand: any API provider may be pointed at an
-  // OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages endpoint (proxy/gateway setups).
+  // OpenAI, Anthropic, or TypeSafe System One endpoint (proxy/gateway setups).
   if (format !== undefined && !isApiFormat(format)) {
     throw new Error(
-      `${providerId} 的 API 协议必须是 openai、openai-responses 或 anthropic`,
+      `${providerId} 的 API 协议必须是 openai、openai-responses、anthropic 或 jev`,
     );
   }
   if (isCustomApiProviderId(providerId) && format === undefined) {
     throw new Error(
-      `${providerId} 的 API 协议必须是 openai、openai-responses 或 anthropic`,
+      `${providerId} 的 API 协议必须是 openai、openai-responses、anthropic 或 jev`,
     );
   }
 
@@ -771,7 +787,10 @@ function isCustomApiProviderId(providerId: string): boolean {
 
 function isApiFormat(value: unknown): value is ApiFormat {
   return (
-    value === "openai" || value === "openai-responses" || value === "anthropic"
+    value === "openai" ||
+    value === "openai-responses" ||
+    value === "anthropic" ||
+    value === "jev"
   );
 }
 
@@ -790,6 +809,10 @@ function isValidUrl(value: string): boolean {
   }
 }
 
+function normalizeJevBaseUrl(value: string): string {
+  return value.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
 async function tryValidateOnce(
   baseUrl: string,
   format: ApiFormat,
@@ -797,6 +820,44 @@ async function tryValidateOnce(
   model: string,
   signal: AbortSignal,
 ): Promise<{ ok: boolean; status: number; message?: string; error?: string }> {
+  if (format === "jev") {
+    const root = normalizeJevBaseUrl(baseUrl);
+    const resp = await fetch(`${root}/v1/systemone`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        state: "ping",
+        questions: {
+          ok: {
+            type: "choice",
+            instructions: "Is the System One API available?",
+            criteria: {
+              yes: "The API is available.",
+              no: "The API is unavailable.",
+            },
+          },
+        },
+      }),
+      signal,
+    });
+    if (resp.ok) {
+      return {
+        ok: true,
+        status: resp.status,
+        message: "Jev / TypeSafe System One API 验证成功",
+      };
+    }
+    return {
+      ok: false,
+      status: resp.status,
+      error: await validationError(resp),
+    };
+  }
+
   if (format === "anthropic") {
     const resp = await fetch(`${baseUrl}/messages`, {
       method: "POST",
@@ -882,7 +943,9 @@ async function validateAiApi(
   error?: string;
   resolvedBaseUrl?: string;
 }> {
-  const baseUrl = input.baseUrl.replace(/\/+$/, "");
+  const baseUrl = input.format === "jev"
+    ? normalizeJevBaseUrl(input.baseUrl)
+    : input.baseUrl.replace(/\/+$/, "");
   const apiKey = resolveAiApiKey(input.providerId, input.apiKey);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -896,7 +959,7 @@ async function validateAiApi(
     );
     if (result.ok) return { ok: true, message: result.message };
 
-    if (result.status === 404 && !baseUrl.endsWith("/v1")) {
+    if (input.format !== "jev" && result.status === 404 && !baseUrl.endsWith("/v1")) {
       const altUrl = `${baseUrl}/v1`;
       const retry = await tryValidateOnce(
         altUrl,
@@ -918,7 +981,9 @@ async function validateAiApi(
 async function discoverAiApiModels(
   input: z.infer<typeof aiApiModelsDiscoverSchema>,
 ): Promise<AiApiModelsDiscoverResponse> {
-  const baseUrl = input.baseUrl.replace(/\/+$/, "");
+  const baseUrl = input.format === "jev"
+    ? normalizeJevBaseUrl(input.baseUrl)
+    : input.baseUrl.replace(/\/+$/, "");
   const apiKey = resolveAiApiKey(input.providerId, input.apiKey);
   if (!apiKey) {
     return {
@@ -1002,7 +1067,10 @@ async function tryDiscoverModels(
   error?: string;
   resolvedBaseUrl?: string;
 }> {
-  const resp = await fetch(`${baseUrl}/models`, {
+  const endpoint = format === "jev"
+    ? `${normalizeJevBaseUrl(baseUrl)}/v1/models`
+    : `${baseUrl}/models`;
+  const resp = await fetch(endpoint, {
     method: "GET",
     headers: buildModelDiscoveryHeaders(format, apiKey),
     signal,
@@ -1026,7 +1094,9 @@ async function tryDiscoverModels(
 }
 
 function modelDiscoverySource(format: ApiFormat): string {
-  return format === "anthropic" ? "anthropic/models" : "openai/models";
+  if (format === "anthropic") return "anthropic/models";
+  if (format === "jev") return "typesafe/models";
+  return "openai/models";
 }
 
 function resolveAiApiKey(

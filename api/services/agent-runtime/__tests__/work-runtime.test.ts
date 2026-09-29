@@ -101,6 +101,42 @@ function input(
   };
 }
 
+describe("incremental goal acceptance gates", () => {
+  it("records an early goal.finish as in-progress and exposes remaining criteria", async () => {
+    const { session, run } = setup("Complete the goal");
+    store.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Complete the goal", status: "executing" },
+      plan: {
+        status: "approved",
+        revision: 1,
+        acceptanceCriteria: ["First criterion", "Second criterion"],
+      },
+    });
+
+    const result = await workRuntime.complete(
+      input(session.id, run.id, {}),
+      "First criterion is not ready yet.",
+      [],
+    );
+
+    expect(result.result).toMatchObject({
+      status: "in_progress",
+      acceptedCriteria: [],
+      remainingCriteria: ["First criterion", "Second criterion"],
+    });
+    expect(workStore.current(session.id)).toMatchObject({
+      status: "active",
+      remaining: ["First criterion", "Second criterion"],
+    });
+    expect(store.getSession(session.id).status).toBe("running");
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({
+      status: "executing",
+      acceptedCriteria: [],
+    });
+  });
+});
+
 describe("durable cooperative work runtime", () => {
   it("keeps ordinary queued input waiting across an approved goal round handoff", () => {
     const { session, run } = setup();
@@ -507,13 +543,26 @@ describe("durable cooperative work runtime", () => {
     expect(result.record.error).toMatch(/unresolved risk/);
   });
 
+  it("context.read rejects historical tool and Work retrieval", async () => {
+    const { session, run } = setup();
+    for (const kind of ["tool", "work", "references"]) {
+      const result = await agentToolRegistry.execute(
+        session.id,
+        "context.read",
+        { kind, id: "anything" },
+        { runId: run.id, stepId: step(session.id, run.id) },
+      );
+      expect(result.record.error).toBeTruthy();
+    }
+  });
+
   it("context references cannot read another session", async () => {
     const a = setup();
     const b = setup();
     const result = await agentToolRegistry.execute(
       a.session.id,
       "context.read",
-      { kind: "work", id: workStore.current(b.session.id)!.id },
+      { kind: "message", id: b.run.triggerMessageId! },
       { runId: a.run.id, stepId: step(a.session.id, a.run.id) },
     );
     expect(result.record.error).toMatch(/accessible session/);

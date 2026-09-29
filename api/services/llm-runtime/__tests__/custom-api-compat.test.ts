@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildOpenAICompatibleClientSettings,
   buildOpenAICompatibleProviderOptions,
+  normalizeProviderOptionsNamespace,
   normalizeProviderBaseUrl,
   resolveOpenAICompatibleProviderName,
   resolveProviderOptionsNamespace,
@@ -48,6 +49,21 @@ describe('custom-api-compat', () => {
 
     expect(resolveProviderOptionsNamespace(customSelection)).toBe('custom-api:deepseek')
     expect(resolveProviderOptionsNamespace(nativeSelection)).toBe('deepseek')
+  })
+
+  it('normalizes dotted provider ids to the SDK providerOptions namespace', () => {
+    // The compatible SDK keys providerOptions by `provider.split('.')[0].trim()`,
+    // so an unnormalized dotted id would silently drop the field.
+    expect(normalizeProviderOptionsNamespace('gateway.local')).toBe('gateway')
+    expect(normalizeProviderOptionsNamespace('custom-api:deepseek')).toBe(
+      'custom-api:deepseek',
+    )
+    expect(normalizeProviderOptionsNamespace(' spaced.id ')).toBe('spaced')
+    const dottedSelection = {
+      providerId: 'gateway.local',
+      provider: { npm: '@ai-sdk/openai-compatible' },
+    } as ResolvedModelSelection
+    expect(resolveProviderOptionsNamespace(dottedSelection)).toBe('gateway')
   })
 
   it('wraps custom body fields under provider namespace', () => {

@@ -445,21 +445,30 @@ export function LlmProviderModal({
                         }
                       />
                     </Field>
-                    <SettingsSelect
-                      label={zh ? "API 协议" : "API protocol"}
-                      selectedKey={draft.format}
-                      options={API_FORMAT_OPTIONS.map((option) => ({
-                        key: option.key,
-                        label: option.label,
-                      }))}
-                      onSelectionChange={(value) => {
-                        const next = applyProtocolDefaults(
-                          draft,
-                          value as ApiFormat,
-                        );
-                        changeConnection(next);
-                      }}
-                    />
+                    <div className="space-y-2">
+                      <SettingsSelect
+                        label={zh ? "API 协议" : "API protocol"}
+                        selectedKey={draft.format}
+                        options={API_FORMAT_OPTIONS.map((option) => ({
+                          key: option.key,
+                          label: option.label,
+                        }))}
+                        onSelectionChange={(value) => {
+                          const next = applyProtocolDefaults(
+                            draft,
+                            value as ApiFormat,
+                          );
+                          changeConnection(next);
+                        }}
+                      />
+                      {draft.format === "jev" ? (
+                        <Description>
+                          {zh
+                            ? "Jev / TypeSafe System One：OpenRouter 地址使用 https://openrouter.ai/api（也接受 /api/v1，会在验证时归一化）；模型填写 jev-latest 或其他 System One 模型 ID，不要填写 chat 模型。"
+                            : "Jev / TypeSafe System One: use https://openrouter.ai/api for OpenRouter (the /api/v1 form is normalized during validation); use a System One model such as jev-latest, not a chat model."}
+                        </Description>
+                      ) : null}
+                    </div>
                   </Advanced>
                 </>
               ) : (

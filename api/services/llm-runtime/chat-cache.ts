@@ -5,6 +5,90 @@ import type {
   ResolvedModelSelection,
 } from "./types.js";
 import { resolvePromptCaching } from "./cache-policy.js";
+import { normalizeProviderOptionsNamespace } from "./custom-api-compat.js";
+
+/** Where a Chat Completions cache hint can physically reach the wire. */
+export interface PromptCacheCapability {
+  /** providerOptions namespace the adapter actually reads. */
+  namespace: string;
+  field: "promptCacheKey" | "prompt_cache_key";
+  /** Native schema-validated field vs. body passthrough on a compatible SDK. */
+  native: boolean;
+}
+
+/**
+ * Capability matrix for Chat Completions cache hints.
+ *
+ * `auto` (the default) sends the hint whenever a carrier exists, so no model is
+ * excluded by provider identity. Adapters outside this matrix never receive an
+ * invented field: only user-supplied providerOptions pass through for them.
+ */
+export function resolvePromptCacheCapability(
+  selection: ResolvedModelSelection,
+): PromptCacheCapability | undefined {
+  if (selection.apiFormat !== "openai") return undefined;
+  if (selection.provider.npm === "@ai-sdk/openai")
+    return { namespace: "openai", field: "promptCacheKey", native: true };
+  if (selection.provider.npm === "@ai-sdk/openai-compatible")
+    return {
+      namespace: normalizeProviderOptionsNamespace(selection.providerId),
+      field: "prompt_cache_key",
+      native: false,
+    };
+  return undefined;
+}
+
+/**
+ * Adapters whose wire format expects strictly alternating roles. The volatile
+ * runtime tail is merged into the preceding user turn for these instead of
+ * emitting a second consecutive user message.
+ *
+ * Anthropic is deliberately excluded: its SDK already combines same-role turns,
+ * and merging would place the changing reminder inside the message that carries
+ * the history cache marker, which is exactly what the tail placement avoids.
+ */
+const STRICT_ALTERNATION_ADAPTERS = new Set([
+  "@ai-sdk/mistral",
+  "@ai-sdk/cohere",
+]);
+
+export function requiresStrictAlternation(
+  selection: ResolvedModelSelection,
+): boolean {
+  return STRICT_ALTERNATION_ADAPTERS.has(selection.provider.npm ?? "");
+}
+
+/**
+ * Body-free report of the hint this request actually carries, derived from the
+ * same call that produces it so the two can never drift. Only a fingerprint of
+ * the key leaves this function; prompt bodies never do.
+ */
+export function describeChatCacheHint(
+  selection: ResolvedModelSelection,
+  request: LlmGatewayRequest,
+): {
+  kind: "native-key" | "passthrough-key" | "none";
+  namespace?: string;
+  field?: string;
+  valueHash?: string;
+} {
+  const capability = resolvePromptCacheCapability(selection);
+  const options = chatCacheOptions(selection, request) as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  if (!capability || !options) return { kind: "none" };
+  const value = options[capability.namespace]?.[capability.field];
+  return {
+    kind: capability.native ? "native-key" : "passthrough-key",
+    namespace: capability.namespace,
+    field: capability.field,
+    ...(typeof value === "string"
+      ? {
+          valueHash: createHash("sha256").update(value).digest("hex").slice(0, 16),
+        }
+      : {}),
+  };
+}
 
 /** The key is a routing hint, NOT an authorization or conversation identifier. */
 export function chatCacheOptions(
@@ -12,18 +96,13 @@ export function chatCacheOptions(
   request: LlmGatewayRequest,
 ): LlmGatewayRequest["providerOptions"] {
   if (
-    selection.apiFormat !== "openai" ||
     request.cacheControl === false ||
     resolvePromptCaching(selection.config.options?.promptCaching) === "off"
   )
     return undefined;
-  const native = selection.provider.npm === "@ai-sdk/openai";
-  const compatible =
-    selection.provider.npm === "@ai-sdk/openai-compatible" &&
-    selection.config.options?.promptCaching === "on";
-  if (!native && !compatible) return undefined;
-  const namespace = native ? "openai" : selection.providerId;
-  const field = native ? "promptCacheKey" : "prompt_cache_key";
+  const capability = resolvePromptCacheCapability(selection);
+  if (!capability) return undefined;
+  const { namespace, field } = capability;
   // User overrides win, including provider-native overrides on the connection.
   const explicit =
     request.responseOptions?.promptCacheKey ??

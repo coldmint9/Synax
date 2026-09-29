@@ -9,8 +9,12 @@ describe('normalizeCommitMessage', () => {
     expect(normalizeCommitMessage('feat: add commit and push button')).toBe('feat: add commit and push button');
   });
 
-  it('drops trailing lines so the message stays one line', () => {
-    expect(normalizeCommitMessage('fix: guard empty commit\n\nDetails here')).toBe('fix: guard empty commit');
+  it('keeps a subject with its optional body after one blank line', () => {
+    expect(normalizeCommitMessage('fix: guard empty commit\n\nDetails here')).toBe('fix: guard empty commit\n\nDetails here');
+  });
+
+  it('strips code fences and collapses extra blank lines', () => {
+    expect(normalizeCommitMessage('```text\nfeat: add flow\n\n\n\nBody line\n```')).toBe('feat: add flow\n\nBody line');
   });
 
   it('strips quotes and a leading preamble', () => {
@@ -27,5 +31,9 @@ describe('normalizeCommitMessage', () => {
 
   it('caps the message length', () => {
     expect(normalizeCommitMessage('x'.repeat(400))).toHaveLength(200);
+  });
+
+  it('caps the whole subject-plus-body message at 2000 characters', () => {
+    expect(normalizeCommitMessage(`feat: big\n\n${'y'.repeat(3000)}`)).toHaveLength(2000);
   });
 });

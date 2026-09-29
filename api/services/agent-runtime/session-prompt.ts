@@ -170,7 +170,7 @@ function buildPlanNodePrompt(
     feedbackBlock,
     "## Rules",
     "1. Read relevant code with rg and file.read before writing.",
-    "2. Use edit for targeted edits; file.write only for new files.",
+    "2. Use file.patch for edits; file.write only for complete new files.",
     "3. Prefer expected files; explain clearly if you must go outside that scope.",
     "4. Do not update wiki documentation — wiki refresh runs after the full plan completes.",
     "5. You may use shell to run tests and verify changes.",

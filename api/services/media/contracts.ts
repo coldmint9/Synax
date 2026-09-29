@@ -1,5 +1,6 @@
 /** Explicit generation capabilities; input modalities alone do not imply generation. */
 export type MediaAdapter = "openai" | "xai" | "ark" | "minimax" | "openrouter";
+export type ModelCapability = "chat" | "image_generation" | "video_generation";
 export type MediaOperation = "text-to-image" | "image-to-image" | "text-to-video" | "image-to-video";
 export type MediaReferenceRole = "reference" | "first_frame" | "last_frame";
 export interface MediaCapabilities {

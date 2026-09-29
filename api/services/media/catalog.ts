@@ -1,5 +1,5 @@
 import type { GlobalConfig, ProviderDef } from '../../lib/config/config-types.js';
-import type { MediaAdapter, MediaCapabilities, MediaModel } from './contracts.js';
+import type { MediaAdapter, MediaCapabilities, MediaModel, ModelCapability } from './contracts.js';
 
 const IMAGE: MediaCapabilities = { operations: ['text-to-image','image-to-image'], referenceRoles: ['reference'], maxReferences: 16, parameters: { n: { min: 1, max: 10 }, aspectRatio: {}, size: {}, quality: {} }, streaming: true };
 const VIDEO: MediaCapabilities = { operations: ['text-to-video','image-to-video'], referenceRoles: ['first_frame','last_frame','reference'], maxReferences: 9, parameters: { duration: { min: 1, max: 30 }, resolution: {}, aspectRatio: {}, generateAudio: {} }, polling: true, cancellation: true };
@@ -11,15 +11,36 @@ const BUILTINS: Array<{ providerId: string; adapter: MediaAdapter; label: string
  { providerId:'custom-api:openrouter', adapter:'openrouter', label:'OpenRouter', models:[{id:'openai/gpt-image-2.5-sunburst',label:'GPT Image 2.5 Sunburst',capabilities:IMAGE},{id:'openai/gpt-image-2.5-flare',label:'GPT Image 2.5 Flare',capabilities:IMAGE},{id:'x-ai/grok-imagine-image-2.0',label:'Grok Imagine Image 2.0',capabilities:IMAGE},{id:'x-ai/grok-imagine-video-1.5',label:'Grok Imagine Video 1.5',capabilities:VIDEO},{id:'bytedance/seedance-2.0',label:'Seedance 2.0',capabilities:VIDEO},{id:'minimax/hailuo-3',label:'MiniMax Hailuo 3',capabilities:VIDEO}] },
 ];
 export function mediaModels(config: GlobalConfig, providers = config.providers): MediaModel[] {
- const configured = new Set(providers.filter(p=>p.kind==='api').map(p=>p.id));
+ const configured = new Set(providers.filter(p=>p.kind==='api' && p.status!=='inactive').map(p=>p.id));
  const result: MediaModel[] = [];
- for (const preset of BUILTINS) if (configured.has(preset.providerId)) for (const model of preset.models) result.push({ providerId:preset.providerId, modelId:model.id, label:model.label, providerLabel:preset.label, adapter:preset.adapter, capabilities:model.capabilities });
- for (const provider of providers.filter(p=>p.kind==='api')) {
+ const configuredModelIds = new Set(providers.flatMap((provider) => provider.models.map((model) => `${provider.id}:${model.id}`)));
+ for (const preset of BUILTINS) if (configured.has(preset.providerId)) for (const model of preset.models) if (!configuredModelIds.has(`${preset.providerId}:${model.id}`)) result.push({ providerId:preset.providerId, modelId:model.id, label:model.label, providerLabel:preset.label, adapter:preset.adapter, capabilities:model.capabilities });
+ for (const provider of providers.filter(p=>p.kind==='api' && p.status!=='inactive')) {
    const adapter = (config.providerConnections[provider.id]?.mediaAdapter ?? adapterFor(provider.id)) as MediaAdapter | undefined;
    if (!adapter) continue;
-   for (const model of provider.models) if (model.media) result.push({providerId:provider.id,modelId:model.id,label:model.label,providerLabel:provider.label,adapter,capabilities:model.media});
+   for (const model of provider.models) if (model.media && (model.capabilities === undefined || model.capabilities.includes('image_generation') || model.capabilities.includes('video_generation'))) result.push({providerId:provider.id,modelId:model.id,label:model.label,providerLabel:provider.label,adapter,capabilities:model.media});
  }
  return result;
+}
+
+/**
+ * Compatibility bridge for the unified provider model directory. Older configs
+ * kept media models in the media catalog only; expose those models on their
+ * provider so the settings page and model picker share one source of truth.
+ */
+export function mergeMediaModelsIntoProviders(config: GlobalConfig): ProviderDef[] {
+ const models = mediaModels(config);
+ const byProvider = new Map(config.providers.map((provider) => [provider.id, provider]));
+ for (const model of models) {
+  const provider = byProvider.get(model.providerId);
+  if (!provider || provider.models.some((item) => item.id === model.modelId)) continue;
+  const capabilities: ModelCapability[] = [
+   ...(model.capabilities.operations.some((operation) => operation.endsWith('image')) ? ['image_generation' as const] : []),
+   ...(model.capabilities.operations.some((operation) => operation.endsWith('video')) ? ['video_generation' as const] : []),
+  ];
+  provider.models = [...provider.models, { id: model.modelId, label: model.label, capabilities, media: model.capabilities }];
+ }
+ return Array.from(byProvider.values());
 }
 export function adapterFor(providerId: string): MediaAdapter | undefined { if(providerId==='openai') return 'openai'; if(providerId.includes('openrouter')) return 'openrouter'; if(providerId.includes('xai')) return 'xai'; if(providerId.includes('ark')||providerId.includes('volc')) return 'ark'; if(providerId.includes('minimax')) return 'minimax'; return undefined; }
 export function findMediaModel(config: GlobalConfig, providerId: string, modelId: string): MediaModel {

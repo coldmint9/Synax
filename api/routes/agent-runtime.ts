@@ -496,8 +496,20 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         409,
       );
     }
-    if (!parsed.data.backendId || parsed.data.backendId === "native")
+    if (parsed.data.mediaGeneration) {
+      if (parsed.data.backendId && parsed.data.backendId !== "native")
+        return c.json({ error: "Media generation requires the native backend." }, 400);
+      const config = getGlobalConfigForRuntime();
+      const { providerId, modelId, capability } = parsed.data.mediaGeneration;
+      const mediaModel = findMediaModel(config, providerId, modelId);
+      if (capability && !mediaModel.capabilities.operations.some((operation) =>
+        operation.endsWith(capability === "image_generation" ? "image" : "video")))
+        return c.json({ error: "Media model does not support the selected capability." }, 422);
+      if (!config.providerConnections[providerId]?.apiKey)
+        return c.json({ error: "Media provider API key is not configured." }, 422);
+    } else if (!parsed.data.backendId || parsed.data.backendId === "native") {
       assertLlmProviderConfigured(parsed.data.projectId);
+    }
     let createInput = parsed.data;
     if (parsed.data.gitWorkspace) {
       const selected = await resolveGitWorkspaceSelection(
@@ -525,6 +537,12 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
       };
     }
     const session = agentSessionRuntime.create(createInput);
+    if (parsed.data.mediaGeneration) {
+      agentRuntimeStore.updateSession(session.id, {
+        status: "completed",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
@@ -1573,6 +1591,7 @@ agentRuntimeRoutes.post(
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
   model: z.string().trim().min(1).max(256),
+  locale: z.enum(["zh", "en"]).optional(),
 });
 
 agentRuntimeRoutes.post(

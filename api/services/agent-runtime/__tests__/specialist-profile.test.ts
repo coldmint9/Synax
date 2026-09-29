@@ -75,7 +75,7 @@ describe('specialist configuration', () => {
   it('exports a bounded static subagent profile without shell, external tools or delegation', () => {
     expect(specialistBaseProfile).toMatchObject({ id: SPECIALIST_PROFILE_ID, kind: 'executor', mode: 'subagent', allowsSubsessions: false });
     expect(specialistBaseProfile.toolPolicy?.allowSubtasks).toBe(false);
-    expect(specialistBaseProfile.allowedCapabilities).toEqual(expect.arrayContaining(['file.read', 'file.write', 'edit', 'file.delete', 'task.create', 'skill.load']));
+    expect(specialistBaseProfile.allowedCapabilities).toEqual(expect.arrayContaining(['file.read', 'file.write', 'file.patch', 'file.delete', 'task.create', 'skill.load']));
     expect(specialistBaseProfile.allowedCapabilities.some((id) => /bash|shell|mcp|delegate|human|adapt/.test(id))).toBe(false);
   });
 
@@ -170,7 +170,7 @@ describe('specialist configuration', () => {
   it('requires a safe explicit write scope and rejects all plan-mode writes', () => {
     expect(() => child({ capabilities: ['file.write'] })).toThrow(/writeScope/);
     parent.sessionMetadata!.mode = 'plan';
-    for (const capability of ['file.write', 'edit', 'file.delete']) {
+    for (const capability of ['file.write', 'file.patch', 'file.delete']) {
       expect(() => child({ capabilities: [capability], writeScope: ['src'] })).toThrow(/Plan specialists cannot write/);
     }
   });
@@ -241,7 +241,7 @@ describe('persisted specialist resolution and execution boundary', () => {
     const session = child();
     session.permissionRules = [{ gate: '*', pattern: '*', action: 'allow' }];
     session.skillIds.push('not-in-snapshot');
-    for (const tool of ['bash', 'mcp.run', 'human.ask', 'subagent.delegate', 'file.write', 'file.delete', 'edit']) {
+    for (const tool of ['bash', 'mcp.run', 'human.ask', 'subagent.delegate', 'file.write', 'file.delete', 'file.patch']) {
       expect(() => assertSpecialistToolAllowed(roundtrip(session), tool, { path: 'src/x' })).toThrow(/not assigned/);
     }
     expect(() => assertSpecialistToolAllowed(session, 'skill.load', { skillId: 'not-in-snapshot' })).toThrow(/outside/);
@@ -289,8 +289,8 @@ describe('persisted specialist resolution and execution boundary', () => {
   });
 
   it('enforces exact path or directory boundaries for all file mutations, not string prefixes', () => {
-    const session = child({ capabilities: ['file.write', 'file.delete', 'edit'], writeScope: ['src/module', 'src/single.ts'] });
-    for (const tool of ['file.write', 'file.delete', 'edit']) {
+    const session = child({ capabilities: ['file.write', 'file.delete', 'file.patch'], writeScope: ['src/module', 'src/single.ts'] });
+    for (const tool of ['file.write', 'file.delete']) {
       expect(() => assertSpecialistToolAllowed(session, tool, { path: 'src/module/nested/new.ts' })).not.toThrow();
       expect(() => assertSpecialistToolAllowed(session, tool, { path: 'src/single.ts' })).not.toThrow();
       expect(() => assertSpecialistToolAllowed(session, tool, { path: 'src/module-other/new.ts' })).toThrow(/writeScope/);
@@ -310,15 +310,18 @@ describe('persisted specialist resolution and execution boundary', () => {
     }
   });
 
-  it('does not permit deletion or movement hidden inside an edit patch', () => {
-    const session = child({ capabilities: ['edit'], writeScope: ['src'] });
-    expect(() => assertSpecialistToolAllowed(session, 'edit', { path: 'src/a.ts', patch: '*** Begin Patch\n*** Add File: src/a.ts\n+hello\n*** End Patch' })).not.toThrow();
+  it('scopes every file.patch hunk and requires deletion capability for deletes and moves', () => {
+    const session = child({ capabilities: ['file.patch'], writeScope: ['src'] });
+    const check = (patch: string, writer = session) => assertSpecialistToolAllowed(writer, 'file.patch', { patch });
+    expect(() => check('*** Begin Patch\n*** Add File: src/a.ts\n+hello\n*** Add File: src/b.ts\n+hello\n*** End Patch')).not.toThrow();
     const deletion = '*** Begin Patch\n*** Delete File: src/a.ts\n*** End Patch';
-    expect(() => assertSpecialistToolAllowed(session, 'edit', { path: 'src/a.ts', patch: deletion })).toThrow(/file.delete/);
-    expect(() => assertSpecialistToolAllowed(session, 'edit', { path: 'src/a.ts', patch: '*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: other/a.ts\n@@\n-old\n+new\n*** End Patch' })).toThrow(/without moves/);
-    expect(() => assertSpecialistToolAllowed(session, 'edit', { path: 'src/a.ts', patch: '*** Begin Patch\n*** Add File: other/a.ts\n+hello\n*** End Patch' })).toThrow(/scoped path/);
-    expect(() => assertSpecialistToolAllowed(session, 'edit', { path: 'src/a.ts', patch: '*** Begin Patch\n*** Add File: src/a.ts\n+hello\n*** Delete File: other/a.ts\n*** End Patch' })).toThrow(/exactly/);
-    const deleter = child({ capabilities: ['edit', 'file.delete'], writeScope: ['src'] });
-    expect(() => assertSpecialistToolAllowed(deleter, 'edit', { path: 'src/a.ts', patch: deletion })).not.toThrow();
+    expect(() => check(deletion)).toThrow(/file.delete/);
+    expect(() => check('*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: src/b.ts\n@@\n-old\n+new\n*** End Patch')).toThrow(/file.delete/);
+    expect(() => check('*** Begin Patch\n*** Add File: other/a.ts\n+hello\n*** End Patch')).toThrow(/writeScope/);
+    expect(() => check('*** Begin Patch\n*** Add File: src/a.ts\n+hello\n*** Add File: other/a.ts\n+hello\n*** End Patch')).toThrow(/writeScope/);
+    const deleter = child({ capabilities: ['file.patch', 'file.delete'], writeScope: ['src'] });
+    expect(() => check(deletion, deleter)).not.toThrow();
+    expect(() => check('*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: src/b.ts\n@@\n-old\n+new\n*** End Patch', deleter)).not.toThrow();
+    expect(() => check('*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: other/a.ts\n@@\n-old\n+new\n*** End Patch', deleter)).toThrow(/writeScope/);
   });
 });

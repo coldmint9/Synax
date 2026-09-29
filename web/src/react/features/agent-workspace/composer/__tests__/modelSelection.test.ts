@@ -6,6 +6,7 @@ import type {
 import {
   buildAgentModelOptions,
   formatModelReference,
+  pickDefaultModelSelection,
 } from "../modelSelection";
 
 const baseGlobalConfig: GlobalConfig = {
@@ -31,6 +32,14 @@ const cursorProvider: ProviderDef = {
 };
 
 describe("buildAgentModelOptions", () => {
+  it("prefers a chat model over an implicit media-only default", () => {
+    const options = [
+      { kind: "api" as const, providerId: "studio", modelId: "image", label: "Image", capability: "image_generation" as const },
+      { kind: "api" as const, providerId: "studio", modelId: "chat", label: "Chat", capability: "chat" as const },
+    ];
+    expect(pickDefaultModelSelection(options, [], {providerId:"studio",modelId:"image"})).toEqual(options[1]);
+    expect(pickDefaultModelSelection([options[0]], [])).toEqual(options[0]);
+  });
   it("hides registered ACP providers before discovery", () => {
     expect(
       buildAgentModelOptions(baseGlobalConfig, [cursorProvider]).acpEndpoints,
@@ -86,6 +95,7 @@ describe("buildAgentModelOptions", () => {
           providerId: "cursor-acp",
           modelId: "cursor-default",
           label: "Cursor Default",
+          capability: "chat",
         },
       ]);
     }
@@ -114,12 +124,13 @@ describe("buildAgentModelOptions", () => {
     );
 
     expect(acpEndpoints).toEqual([
-      { kind: "acp", providerId: "cursor-acp", modelId: "auto", label: "Auto" },
+      { kind: "acp", providerId: "cursor-acp", modelId: "auto", label: "Auto", capability: "chat" },
       {
         kind: "acp",
         providerId: "cursor-acp",
         modelId: "gpt-5.4",
         label: "GPT-5.4",
+        capability: "chat",
       },
     ]);
   });
@@ -182,13 +193,43 @@ describe("formatModelReference ACP provider/model refs", () => {
     );
 
     expect(acpEndpoints).toEqual([
-      { kind: "acp", providerId: "pi-acp", modelId: "auto", label: "Auto" },
+      { kind: "acp", providerId: "pi-acp", modelId: "auto", label: "Auto", capability: "chat" },
       {
         kind: "acp",
         providerId: "pi-acp",
         modelId: "gpt-5.4",
         label: "GPT-5.4",
+        capability: "chat",
       },
+    ]);
+  });
+
+  it("exposes configured image and video models as capability-aware options", () => {
+    const provider: ProviderDef = {
+      id: "custom-api:media",
+      label: "Media Provider",
+      status: "live",
+      kind: "api",
+      caps: { canFollowUp: true, canCancel: true },
+      models: [
+        {
+          id: "multi-model",
+          label: "Multi Model",
+          capabilities: ["chat", "image_generation", "video_generation"],
+          media: {
+            operations: ["text-to-image", "image-to-image", "text-to-video", "image-to-video"],
+          },
+        },
+      ],
+    };
+    const options = buildAgentModelOptions(
+      { ...baseGlobalConfig, providerConnections: { "custom-api:media": { providerId: "custom-api:media", apiKeyMasked: "***" } } },
+      [provider],
+    ).apiModels;
+    expect(options.map((option) => option.capability)).toEqual([
+      "chat",
+      "image_generation",
+      "video_generation",
     ]);
   });
 });

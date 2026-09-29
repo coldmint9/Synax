@@ -38,7 +38,12 @@ import {
 import { buildProtocolProviderOptions } from "./protocol-options.js";
 import { mergeProviderOptions } from "./custom-api-compat.js";
 import { createHash } from "node:crypto";
-import { applyChatCacheBreakpoints, chatCacheOptions } from "./chat-cache.js";
+import {
+  applyChatCacheBreakpoints,
+  chatCacheOptions,
+  describeChatCacheHint,
+  requiresStrictAlternation,
+} from "./chat-cache.js";
 
 const THINKING_DISABLED_PURPOSES = new Set([
   "session-title",
@@ -130,6 +135,11 @@ export async function executePipeline(
   mode: ExecutionMode,
   abortSignal?: AbortSignal,
 ): Promise<unknown> {
+  if (selection.apiFormat === "jev") {
+    throw new Error(
+      "Jev / TypeSafe System One connections are only available for Computer Use, not ordinary chat completion.",
+    );
+  }
   request = {
     ...request,
     messages: await resolveMediaMessages(
@@ -226,6 +236,7 @@ export async function executePipeline(
       protocol: selection.apiFormat,
       source: request.cacheDiagnosticsContext?.source ?? "auxiliary",
       ...request.cacheDiagnosticsContext,
+      hint: describeChatCacheHint(selection, request),
     });
   // Policy has already handled every marker; the legacy system-only flag must not run again.
   const enableCache = undefined;
@@ -310,8 +321,8 @@ function dispatchStream(
   abortSignal?: AbortSignal,
 ): GatewayStreamResult {
   const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
-    moveRuntimeRemindersToInput:
-      selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
+    moveRuntimeRemindersToInput: true,
+    strictAlternation: requiresStrictAlternation(selection),
   });
   return streamText({
     model,
@@ -342,8 +353,8 @@ function dispatchText(
   abortSignal?: AbortSignal,
 ) {
   const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
-    moveRuntimeRemindersToInput:
-      selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
+    moveRuntimeRemindersToInput: true,
+    strictAlternation: requiresStrictAlternation(selection),
   });
   return generateText({
     maxRetries: 0,
@@ -372,8 +383,8 @@ function dispatchObject(
     applyChatCacheBreakpoints(ensureJsonObjectResponseFormatInstruction(request.messages), selection, request),
     undefined,
     {
-      moveRuntimeRemindersToInput:
-        selection.apiFormat === "openai" || selection.apiFormat === "openai-responses",
+      moveRuntimeRemindersToInput: true,
+      strictAlternation: requiresStrictAlternation(selection),
     },
   );
   return generateText({

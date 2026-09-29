@@ -2,7 +2,9 @@ import type {
   AcpDiscoveryItem,
   GlobalConfig,
   ProviderDef,
+  ProviderModelDef,
 } from "../../../../lib/contracts/config";
+import type { ModelCapability } from "../../../../lib/contracts/media-generation";
 import {
   buildApiDrafts,
   isConfiguredProvider,
@@ -13,12 +15,27 @@ export type AgentModelSelection = {
   providerId: string;
   modelId: string;
   label: string;
+  capability: ModelCapability;
 };
 
 export function selectionKey(
-  sel: Pick<AgentModelSelection, "kind" | "providerId" | "modelId">,
+  sel: Pick<AgentModelSelection, "kind" | "providerId" | "modelId" | "capability">,
 ): string {
-  return `${sel.kind}:${sel.providerId}:${sel.modelId}`;
+  return `${sel.kind}:${sel.providerId}:${sel.modelId}:${sel.capability}`;
+}
+
+function modelCapabilities(model: ProviderModelDef): ModelCapability[] {
+  if (model.capabilities) return model.capabilities;
+  const inferred: ModelCapability[] = [];
+  const operations = model.media?.operations ?? [];
+  if (operations.some((operation) => operation.endsWith("image"))) {
+    inferred.push("image_generation");
+  }
+  if (operations.some((operation) => operation.endsWith("video"))) {
+    inferred.push("video_generation");
+  }
+  if (inferred.length === 0) inferred.push("chat");
+  return inferred;
 }
 
 /** Preserve the selected provider for both API models and ACP engines. */
@@ -65,17 +82,22 @@ export function buildAgentModelOptions(
   const acpEndpoints: AgentModelSelection[] = [];
 
   if (globalConfig) {
-    const drafts = buildApiDrafts(globalConfig, providers).filter(
+    const configuredIds = new Set(buildApiDrafts(globalConfig, providers).filter(
       isConfiguredProvider,
-    );
-    for (const draft of drafts) {
-      for (const modelId of draft.models) {
-        apiModels.push({
-          kind: "api",
-          providerId: draft.id,
-          modelId,
-          label: modelId,
-        });
+    ).map((draft) => draft.id));
+    for (const provider of providers.filter(
+      (item) => item.kind === "api" && item.status !== "inactive" && configuredIds.has(item.id),
+    )) {
+      for (const model of provider.models) {
+        for (const capability of modelCapabilities(model)) {
+          apiModels.push({
+            kind: "api",
+            providerId: provider.id,
+            modelId: model.id,
+            label: model.label || model.id,
+            capability,
+          });
+        }
       }
     }
   }
@@ -92,6 +114,7 @@ export function buildAgentModelOptions(
           providerId: provider.id,
           modelId: model.id,
           label: model.label,
+          capability: "chat",
         });
       }
       continue;
@@ -103,6 +126,7 @@ export function buildAgentModelOptions(
         providerId: provider.id,
         modelId: model.id,
         label: model.label || provider.label,
+        capability: "chat",
       });
     }
   }
@@ -115,14 +139,21 @@ export function findAgentModelSelection(
   acpEndpoints: AgentModelSelection[],
   providerId: string | null,
   modelId: string | null,
+  capability?: ModelCapability | null,
 ): AgentModelSelection | null {
   if (!providerId || !modelId) return null;
   return (
     apiModels.find(
-      (m) => m.providerId === providerId && m.modelId === modelId,
+      (m) =>
+        m.providerId === providerId &&
+        m.modelId === modelId &&
+        (!capability || m.capability === capability),
     ) ??
     acpEndpoints.find(
-      (m) => m.providerId === providerId && m.modelId === modelId,
+      (m) =>
+        m.providerId === providerId &&
+        m.modelId === modelId &&
+        (!capability || m.capability === capability),
     ) ??
     null
   );
@@ -140,7 +171,7 @@ export function pickDefaultModelSelection(
       preferred.providerId,
       preferred.modelId,
     );
-    if (found) return found;
+    if (found?.capability === "chat") return found;
   }
-  return apiModels[0] ?? acpEndpoints[0] ?? null;
+  return apiModels.find((model) => model.capability === "chat") ?? acpEndpoints[0] ?? apiModels[0] ?? null;
 }

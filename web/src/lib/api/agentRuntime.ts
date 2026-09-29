@@ -128,6 +128,7 @@ export interface AgentGoalState {
     | "budget_exhausted"
     | "cancelled";
   acceptanceEvidence?: unknown;
+  acceptedCriteria?: string[];
   reason?: string;
 }
 
@@ -378,6 +379,7 @@ export type GitWorkspaceSelection =
 export interface CreateSessionRequest {
   backendId?: BackendId;
   model?: string;
+  mediaGeneration?: { providerId: string; modelId: string; capability?: "image_generation" | "video_generation" };
   workDir?: string;
   projectId: string;
   nodeId?: string | null;
@@ -1166,7 +1168,7 @@ export const agentRuntimeApi = {
     ),
   streamCommitMessage: (
     sessionId: string,
-    body: { rootId?: string; model: string },
+    body: Parameters<typeof streamCommitMessage>[1],
     onEvent: (event: CommitMessageStreamEvent) => void,
     signal: AbortSignal,
   ) => streamCommitMessage(sessionId, body, onEvent, signal),

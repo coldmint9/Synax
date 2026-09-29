@@ -26,6 +26,16 @@ function markedBlocks(body: Record<string, any>) {
 const base = {purpose:'validate',projectId:'project',cacheControl:true,maxTokens:32};
 beforeEach(() => { fixture.requests.length=0; fixture.bytes=Buffer.from('image-one'); });
 describe('prepared request anchor representation', () => {
+  it('rejects Jev connections before ordinary chat dispatch', async () => {
+    await expect(
+      executePipeline(
+        { ...base, messages: [{ role: 'user', content: 'hello' }] },
+        { ...selection, apiFormat: 'jev' },
+        { kind: 'text' },
+      ),
+    ).rejects.toThrow('only available for Computer Use');
+  });
+
   it.each([false,true])('persists and verifies hydrated media including compiled tool-media (tool=%s)', async toolMedia => {
     const media = image();
     const initial: LlmGatewayMessage[] = toolMedia ? [

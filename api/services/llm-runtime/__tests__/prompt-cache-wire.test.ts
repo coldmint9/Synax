@@ -1,5 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
@@ -11,7 +12,12 @@ import {
 } from "../cache-policy.js";
 import { toModelPrompt } from "../prompt.js";
 import { buildProtocolProviderOptions } from "../protocol-options.js";
-import { applyChatCacheBreakpoints, chatCacheOptions } from "../chat-cache.js";
+import {
+  applyChatCacheBreakpoints,
+  chatCacheOptions,
+  describeChatCacheHint,
+  resolvePromptCacheCapability,
+} from "../chat-cache.js";
 import type { LlmGatewayMessage, ResolvedModelSelection } from "../types.js";
 
 const marker = { type: "ephemeral" };
@@ -547,6 +553,190 @@ describe("prompt cache policy actual SDK wire", () => {
       role: "user",
       content: "<system-reminder>\nlatest\n</system-reminder>",
     });
+  });
+
+  it("keeps the volatile runtime tail out of the Anthropic system prefix", async () => {
+    const capture = transport({
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-5",
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 100, output_tokens: 1 },
+    });
+    const selected = selection("anthropic");
+    const processed = applyPromptCachePolicy(
+      [
+        { role: "system", content: "stable system" },
+        { role: "user", content: "history" },
+        {
+          role: "system",
+          content: "<system-reminder>\nstep 1\n</system-reminder>",
+        },
+      ],
+      { selection: selected },
+    );
+    const { system, messages } = toModelPrompt(
+      processed.messages,
+      undefined,
+      { moveRuntimeRemindersToInput: true },
+    );
+    // The stable block keeps its marker; the volatile step never enters `system`.
+    expect(system).toEqual([
+      {
+        role: "system",
+        content: "stable system",
+        providerOptions: { anthropic: { cacheControl: marker } },
+      },
+    ]);
+    // The marker stays on the stable turn; the volatile reminder follows it.
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      content: "history",
+      providerOptions: { anthropic: { cacheControl: marker } },
+    });
+    expect(messages.at(-1)).toMatchObject({
+      role: "user",
+      content: "<system-reminder>\nstep 1\n</system-reminder>",
+    });
+    const anthropic = createAnthropic({
+      apiKey: "local-test",
+      fetch: capture.fetch,
+    });
+    await generateText({
+      model: anthropic("claude-sonnet-4-5"),
+      system,
+      messages,
+      maxRetries: 0,
+    });
+    expect(capture.requests[0].system).toEqual([
+      { type: "text", text: "stable system", cache_control: marker },
+    ]);
+    const wire = JSON.stringify(capture.requests[0].messages);
+    expect(wire.indexOf("cache_control")).toBeLessThan(wire.indexOf("step 1"));
+    expect(capture.requests[0].messages.at(-1)).toMatchObject({
+      role: "user",
+    });
+  });
+
+  it("serializes the compatible Chat cache key on the real SDK wire", async () => {
+    const capture = transport({
+      id: "chat_test",
+      object: "chat.completion",
+      created: 1,
+      model: "gpt-6-astra",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "ok" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 },
+    });
+    const selected = selection("openai");
+    selected.providerId = "custom-api:gateway";
+    selected.provider = {
+      ...selected.provider,
+      npm: "@ai-sdk/openai-compatible",
+    };
+    // `auto` is the default: no connection-level opt-in must be required.
+    selected.config.options = { promptCaching: "auto" };
+    const request = {
+      purpose: "test",
+      projectId: "project",
+      cacheControl: true,
+      hookContext: { sessionId: "session" },
+    } as any;
+    const gateway = createOpenAICompatible({
+      name: selected.providerId,
+      baseURL: "https://gateway.local/v1",
+      apiKey: "local-test",
+      fetch: capture.fetch,
+    });
+    await generateText({
+      model: gateway.chatModel("gpt-6-astra"),
+      ...toModelPrompt(
+        [
+          { role: "system", content: "stable" },
+          { role: "user", content: "history" },
+        ],
+        undefined,
+        { moveRuntimeRemindersToInput: true },
+      ),
+      providerOptions: chatCacheOptions(selected, request),
+      maxRetries: 0,
+    });
+    expect(capture.requests[0].prompt_cache_key).toMatch(/^synax:chat:v1:/);
+    // Compatible SDKs cannot serialize per-content markers: the key is the hint.
+    expect(capture.requests[0].messages[0].content).toBe("stable");
+  });
+
+  it("sends no compatible cache hint when the policy or the request disables it", () => {
+    const selected = selection("openai");
+    selected.providerId = "custom-api:gateway";
+    selected.provider = {
+      ...selected.provider,
+      npm: "@ai-sdk/openai-compatible",
+    };
+    const request = {
+      purpose: "test",
+      projectId: "project",
+      cacheControl: true,
+      hookContext: { sessionId: "session" },
+    } as any;
+    expect(chatCacheOptions(selected, request)).toEqual({
+      "custom-api:gateway": { prompt_cache_key: expect.stringMatching(/^synax:chat:v1:/) },
+    });
+    selected.config.options = { promptCaching: "off" };
+    expect(chatCacheOptions(selected, request)).toBeUndefined();
+    selected.config.options = { promptCaching: "auto" };
+    expect(chatCacheOptions(selected, { ...request, cacheControl: false })).toBeUndefined();
+  });
+
+  it("resolves the cache capability matrix per adapter, never inventing a field", () => {
+    expect(resolvePromptCacheCapability(selection("openai"))).toEqual({
+      namespace: "openai",
+      field: "promptCacheKey",
+      native: true,
+    });
+    const dotted = selection("openai");
+    dotted.providerId = "gateway.local";
+    dotted.provider = { ...dotted.provider, npm: "@ai-sdk/openai-compatible" };
+    expect(resolvePromptCacheCapability(dotted)).toEqual({
+      namespace: "gateway",
+      field: "prompt_cache_key",
+      native: false,
+    });
+    const anthropic = selection("anthropic");
+    expect(resolvePromptCacheCapability(anthropic)).toBeUndefined();
+    const google = selection("openai");
+    google.provider = { ...google.provider, npm: "@ai-sdk/google" };
+    expect(resolvePromptCacheCapability(google)).toBeUndefined();
+    const responses = selection("openai-responses");
+    expect(resolvePromptCacheCapability(responses)).toBeUndefined();
+
+    const request = {
+      cacheControl: true,
+      hookContext: { sessionId: "session" },
+    } as any;
+    const native = describeChatCacheHint(selection("openai"), request);
+    expect(native).toMatchObject({
+      kind: "native-key",
+      namespace: "openai",
+      field: "promptCacheKey",
+    });
+    expect(native.valueHash).toHaveLength(16);
+    // The key itself must never leave the diagnostics report.
+    expect(JSON.stringify(native)).not.toContain("synax:chat:v1:");
+    expect(describeChatCacheHint(dotted, request)).toMatchObject({
+      kind: "passthrough-key",
+      namespace: "gateway",
+      field: "prompt_cache_key",
+    });
+    expect(describeChatCacheHint(anthropic, request)).toEqual({ kind: "none" });
   });
 
   it("builds a stable native Chat cache key and marks stable boundaries", () => {

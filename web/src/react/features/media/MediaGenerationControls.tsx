@@ -1,29 +1,135 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Film, Image as ImageIcon, LoaderCircle, X } from 'lucide-react';
+import { Check, LoaderCircle, RotateCcw, X } from 'lucide-react';
 import { apiRequest } from '../../../lib/api/origin';
 import type { MediaJob, MediaModel, MediaOperation } from '../../../lib/contracts/media-generation';
 import type { MediaDraft } from './useMediaDraft';
+import type { GenerationMode } from './mediaSubmission';
 
-type Mode = 'chat' | 'image' | 'video';
-export function MediaGenerationControls({ mode, onModeChange, models, selected, onSelected, operation, parameters, onParameters, job, onCancel, media }: { mode: Mode; onModeChange:(mode:Mode)=>void; models:MediaModel[]; selected:MediaModel|undefined; onSelected:(model:MediaModel)=>void; operation:MediaOperation|undefined; parameters:Record<string,string|number|boolean>; onParameters:(p:Record<string,string|number|boolean>)=>void; job:MediaJob|undefined; onCancel:()=>void; media:MediaDraft|undefined }) {
- const images=media?.parts.filter(p=>p.type==='image').length ?? 0;
- return <div className="flex flex-wrap items-center gap-1.5" data-media-generation-controls="true">
-  <button type="button" aria-pressed={mode==='chat'} onClick={()=>onModeChange('chat')} className="agent-dock-composer-chip rounded-full px-2 text-[11px]">对话</button>
-  <button type="button" aria-pressed={mode==='image'} onClick={()=>onModeChange('image')} className="agent-dock-composer-chip inline-flex items-center gap-1 rounded-full px-2 text-[11px]"><ImageIcon size={12}/>图片</button>
-  <button type="button" aria-pressed={mode==='video'} onClick={()=>onModeChange('video')} className="agent-dock-composer-chip inline-flex items-center gap-1 rounded-full px-2 text-[11px]"><Film size={12}/>视频</button>
-  {mode!=='chat' && <select aria-label="媒体模型 / Media model" value={selected ? `${selected.providerId}:${selected.modelId}` : ''} onChange={e=>{const [providerId,...rest]=e.target.value.split(':');const modelId=rest.join(':');const m=models.find(x=>x.providerId===providerId&&x.modelId===modelId);if(m)onSelected(m)}} className="h-7 max-w-60 rounded-full border border-border/40 bg-background px-2 text-[11px]">{models.map(m=><option key={`${m.providerId}:${m.modelId}`} value={`${m.providerId}:${m.modelId}`}>{m.providerLabel} · {m.label}</option>)}</select>}
-  {mode==='image' && <select aria-label="图片质量 / Image quality" value={String(parameters.quality??'auto')} onChange={e=>onParameters({...parameters,quality:e.target.value})} className="h-7 rounded-full border border-border/40 bg-background px-2 text-[11px]"><option value="auto">自动质量</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select>}
-  {mode==='video' && <><select aria-label="视频时长 / Video duration" value={String(parameters.duration??6)} onChange={e=>onParameters({...parameters,duration:Number(e.target.value)})} className="h-7 rounded-full border border-border/40 bg-background px-2 text-[11px]"><option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option><option value="10">10 秒</option><option value="15">15 秒</option></select><select aria-label="视频分辨率 / Video resolution" value={String(parameters.resolution??'720p')} onChange={e=>onParameters({...parameters,resolution:e.target.value})} className="h-7 rounded-full border border-border/40 bg-background px-2 text-[11px]"><option value="480p">480p</option><option value="720p">720p</option><option value="1080p">1080p</option><option value="2K">2K</option></select></>}
-  {mode!=='chat' && images>0 && <span className="text-[10px] text-muted-foreground">{operation==='image-to-image'?'图生图':'图生视频'}</span>}
-  {job && job.status!=='succeeded' && <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><LoaderCircle size={12} className="animate-spin"/>{job.status}<button type="button" onClick={onCancel} aria-label="取消媒体任务"><X size={12}/></button></span>}
- </div>;
+export type MediaGenerationControlsProps = {
+  mode: GenerationMode;
+  selected: MediaModel | undefined;
+  operation: MediaOperation | undefined;
+  parameters: Record<string, string | number | boolean>;
+  onParameters: (parameters: Record<string, string | number | boolean>) => void;
+  job: MediaJob | undefined;
+  error?: string | null;
+  onCancel: () => void;
+  onRetry?: () => void;
+  media: MediaDraft | undefined;
+};
+
+export function MediaGenerationControls({
+  mode, selected, operation, parameters, onParameters, job, error, onCancel, onRetry, media,
+}: MediaGenerationControlsProps) {
+  const fields = Object.entries(selected?.capabilities.parameters ?? {});
+  const roles = selected?.capabilities.referenceRoles ?? ['reference'];
+  const images = media?.parts.filter((part) => part.type === 'image') ?? [];
+  const setParameter = (key: string, value: string | number | boolean) =>
+    onParameters({ ...parameters, [key]: value });
+  const active = job && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(job.status);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-media-generation-controls={mode}>
+      {!selected && (
+        <span role="alert" className="text-[11px] text-danger">
+          所选媒体模型不可用，请在供应商设置中配置。
+        </span>
+      )}
+      {selected && !operation && (
+        <span role="alert" className="text-[11px] text-danger">
+          当前模型不支持所选参考素材对应的生成操作。
+        </span>
+      )}
+      {operation && images.length > 0 && (
+        <span className="text-[11px] text-muted-foreground">
+          {mode === 'image' ? '图生图' : '图生视频'}
+        </span>
+      )}
+      {images.length > 0 && roles.length > 1 && images.map((image, index) => (
+        <label key={image.assetId} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+          {`图片 ${index + 1}`}
+          <select
+            aria-label={`图片 ${index + 1} 参考角色`}
+            value={String(parameters[`referenceRole:${image.assetId}`] ?? roles[0])}
+            onChange={(event) => setParameter(`referenceRole:${image.assetId}`, event.target.value)}
+            className="h-7 rounded border border-border bg-background px-1 text-foreground"
+          >
+            {roles.map((role) => (
+              <option key={role} value={role}>
+                {role === 'first_frame' ? '首帧' : role === 'last_frame' ? '尾帧' : '参考图'}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+      {fields.map(([key, schema]) => (
+        <label key={key} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+          {key}
+          {schema.values?.length ? (
+            <select
+              aria-label={key}
+              value={String(parameters[key] ?? schema.values[0])}
+              onChange={(event) => {
+                const value = schema.values?.find((option) => String(option) === event.target.value);
+                if (value !== undefined) setParameter(key, value);
+              }}
+              className="h-7 max-w-32 rounded border border-border bg-background px-1 text-foreground"
+            >
+              {schema.values.map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}
+            </select>
+          ) : (
+            <input
+              aria-label={key}
+              type={schema.min !== undefined || schema.max !== undefined ? 'number' : 'text'}
+              min={schema.min}
+              max={schema.max}
+              value={String(parameters[key] ?? '')}
+              onChange={(event) => {
+                if (event.target.type === 'number') {
+                  if (event.target.value !== '') setParameter(key, Number(event.target.value));
+                } else setParameter(key, event.target.value);
+              }}
+              className="h-7 w-24 rounded border border-border bg-background px-1 text-foreground"
+            />
+          )}
+        </label>
+      ))}
+      {active && (
+        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" role="status">
+          <LoaderCircle size={12} className="animate-spin" />{job.status}
+          <button type="button" onClick={onCancel} aria-label="取消媒体任务" title="取消媒体任务"><X size={14} /></button>
+        </span>
+      )}
+      {job?.status === 'succeeded' && (
+        <span role="status" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Check size={12} />已完成</span>
+      )}
+      {(error || (job && ['failed', 'cancelled', 'unknown'].includes(job.status))) && (
+        <span role="alert" className="inline-flex items-center gap-1 text-[11px] text-danger">
+          {error ?? job?.error ?? job?.status}
+          {onRetry && <button type="button" onClick={onRetry} aria-label="重试媒体任务" title="重试媒体任务"><RotateCcw size={14} /></button>}
+        </span>
+      )}
+    </div>
+  );
 }
-export function useMediaGenerationModels(mode:Mode) {
- const [models,setModels]=useState<MediaModel[]>([]);const [selectedKey,setSelectedKey]=useState('');
- useEffect(()=>{const controller=new AbortController();void apiRequest<{models:MediaModel[]}>('/api/agent-runtime/media/models',{signal:controller.signal,silent:true}).then(r=>setModels(r.models)).catch(()=>{});return()=>controller.abort()},[]);
- const filtered=useMemo(()=>models.filter(m=>mode==='image'?m.capabilities.operations.some(x=>x.endsWith('image')):mode==='video'?m.capabilities.operations.some(x=>x.endsWith('video')):false),[models,mode]);
- const selected=filtered.find(m=>`${m.providerId}:${m.modelId}`===selectedKey)??filtered[0];
- useEffect(()=>{setSelectedKey('')},[mode]);
- useEffect(()=>{if(selected&&!selectedKey)setSelectedKey(`${selected.providerId}:${selected.modelId}`)},[selected,selectedKey]);
- return {models:filtered,selected,onSelected:(m:MediaModel)=>setSelectedKey(`${m.providerId}:${m.modelId}`)};
+
+export function useMediaGenerationModels(mode: 'chat' | GenerationMode) {
+  const [models, setModels] = useState<MediaModel[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (mode === 'chat') return;
+    const controller = new AbortController();
+    void apiRequest<{ models: MediaModel[] }>('/api/agent-runtime/media/models', {
+      signal: controller.signal, silent: true,
+    }).then((result) => {
+      setModels(result.models);
+      setError(null);
+    }).catch((reason) => {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => controller.abort();
+  }, [mode]);
+  const filtered = useMemo(() => models.filter((model) =>
+    model.capabilities.operations.some((operation) => operation.endsWith(mode))), [models, mode]);
+  return { models: filtered, error };
 }

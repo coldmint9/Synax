@@ -10,7 +10,7 @@ import { interactionService } from './interaction-service.js';
 import { inputQueueService } from './input-queue-service.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { completeGoalCheckpoint } from './goal-completion.js';
-import { getGoalState } from './goal-control.js';
+import { getGoalState, mergeGoalEvidence } from './goal-control.js';
 import { digest } from './work-fingerprint.js';
 import { nowIso } from './runtime-ids.js';
 import {
@@ -293,15 +293,22 @@ class WorkRuntime {
     }
     if (getGoalState(session.sessionMetadata) && !session.parentSessionId && !input.toolCallId)
       throw new AgentValidationError('Approved-plan acceptance requires goal.finish or work.checkpoint with criterion evidence; plain text cannot bypass it.');
+    const goal = getGoalState(session.sessionMetadata);
+    const rootGoal = goal && !session.parentSessionId ? goal : null;
     const tasks = TaskStore.fromEvents(work.sessionId).list().filter(t => t.status !== 'completed');
-    if (tasks.length || this.pendingChildren(work) || interactionService.pending(work.sessionId))
+    const pendingChildren = this.pendingChildren(work);
+    const pendingInteraction = interactionService.pending(work.sessionId);
+    if (!rootGoal && (tasks.length || pendingChildren || pendingInteraction))
       throw new AgentValidationError(`Unfinished work: ${tasks.map(t => t.subject).join(', ') || 'child task or user interaction'}.`);
     const calls = this.calls(work);
     const inventory = evidenceInventory(work, calls, planBoundaryOf(session));
     const ids = inventory.proofIds;
     const artifacts = store.listSessionTree(work.sessionId).flatMap(s => store.listArtifacts(s.id))
       .filter(a => a.sourceRefs.some(r => r.type === 'tool_call' && !!r.id && ids.has(r.id)));
-    for (const item of evidence) {
+    const candidateEvidence = rootGoal
+      ? mergeGoalEvidence(rootGoal.acceptanceEvidence, evidence)
+      : evidence;
+    for (const item of candidateEvidence) {
       const foreign = (item.artifactIds ?? []).filter(id => !artifacts.some(a => a.id === id));
       if (foreign.length)
         throw new AgentValidationError(`Evidence artifacts must belong to this work and its children: ${foreign.join(', ')}. Only artifacts produced by successful calls of this work are citable; cite an id from the evidence inventory instead.`);
@@ -313,7 +320,7 @@ class WorkRuntime {
     // current behind them are rejected, and they name the accepted ids and the
     // one call that repairs them, so one corrective step is enough.
     const receipts = await receiptReport(owners, input.runId);
-    const normalized = normalizeEvidence(evidence, receipts, ids);
+    const normalized = normalizeEvidence(candidateEvidence, receipts, ids);
     if (normalized.unknown.length)
       throw new AgentValidationError(`Evidence must be successful and belong to this work and its children: ${normalized.unknown.join(', ')} is not successful proof of this work. ${evidenceRemedy(receipts)}`);
     const citedIds = new Set(normalized.items.flatMap(item => [
@@ -322,14 +329,33 @@ class WorkRuntime {
     ]));
     for (const stale of normalized.stale) if (citedIds.has(stale.id))
       throw new AgentValidationError(`Stale or unsuccessful verification evidence: ${stale.id} (${stale.criterion} is not attested by it because ${stale.reason}). ${evidenceRemedy(receipts, stale.criterion)}`);
-    if ((owners.some(w => w.hasChanges) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) && !receipts.current.size)
+    const missingCurrentVerification =
+      (owners.some(w => w.hasChanges) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) &&
+      !receipts.current.size;
+    if (missingCurrentVerification && !rootGoal)
       throw new AgentValidationError(`Missing current-version verification. Use verification.run for the changed scope; TODO completion and arbitrary shell exit 0 are not verification. ${evidenceRemedy(receipts)}`);
 
     let result: ToolExecutionResult | undefined;
     getRawSqlite().transaction(() => {
-      if (getGoalState(session.sessionMetadata) && !session.parentSessionId) {
-        result = completeGoalCheckpoint({ ...input, args: { reason: summary, evidence: normalized.items } });
+      if (rootGoal) {
+        result = completeGoalCheckpoint({
+          ...input,
+          args: {
+            reason: summary,
+            evidence: normalized.items,
+            ...(missingCurrentVerification ? { additionalBlockers: ['current-version verification is missing'] } : {}),
+          },
+        });
         if (result.suspend) return;
+        if ((result.result as { status?: string } | null)?.status === 'in_progress') {
+          const gate = result.result as { remainingCriteria?: string[] };
+          work.status = 'active';
+          work.reason = summary;
+          work.evidence = normalized.items;
+          work.remaining = gate.remainingCriteria ?? [];
+          workStore.save(work);
+          return;
+        }
       }
       work.status = 'completed';
       work.reason = null; work.result = summary; work.evidence = normalized.items;
@@ -337,7 +363,9 @@ class WorkRuntime {
       workStore.save(work);
       this.persistTerminal(work, input.runId!);
     })();
-    return result?.suspend ? result : { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
+    return result?.suspend || (result?.result as { status?: string } | null)?.status === 'in_progress'
+      ? result!
+      : { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
   }
 
   /** A declared blocker ends the current round with a durable blocked conclusion.
@@ -390,9 +418,11 @@ class WorkRuntime {
       value.length <= limit
         ? value
         : `${value.slice(0, limit)}\n[…full content is in the original conversation message…]`;
+    const goal = getGoalState(session.sessionMetadata);
     const snapshot = {
       id: work.id, status: work.status,
       objective: preview(objective),
+      ...(goal?.acceptedCriteria?.length ? { acceptedCriteria: goal.acceptedCriteria } : {}),
       objectiveHash: digest(objective),
       ...(work.requirements.length > 1 ? { requirements: work.requirements.map(r => ({ ...r, text: preview(resolveSessionUserRequest(session, r.text)) })) } : {}),
       ...(work.planRevision ? { planRevision: work.planRevision, acceptanceCriteria: work.acceptanceCriteria } : {}),
@@ -414,7 +444,7 @@ class WorkRuntime {
         ? `Consider closing this round: complete with evidence, yield an honest handoff, or change approach for a concrete remaining requirement. This is advisory; tools remain available.${work.reason ? ` ${work.reason}` : ''}`
         : work.noProgressSteps >= NUDGE_AFTER_STALE_STEPS
           ? `Stall notice: ${work.reason ?? `no new information in ${work.noProgressSteps} steps`} Do something different, or report the blocker with work.checkpoint; repeating the same calls will not be counted as progress.`
-          : work.planRevision && session.sessionMetadata?.mode === 'goal' ? 'Submit criterion evidence through goal.finish or work.checkpoint; pending work or approvals prevent acceptance.'
+          : work.planRevision && session.sessionMetadata?.mode === 'goal' ? 'Use goal.finish as an incremental acceptance gate: submit evidence for one or more criteria, then continue with the returned remaining criteria. Pending work or approvals keep the gate open; they are not a failure.'
             : 'When done, give the final answer or use work.checkpoint with evidence. Missing verification will be reported by the runtime; do not pre-emptively expand the task.',
     ].filter(Boolean).join('\n');
   }

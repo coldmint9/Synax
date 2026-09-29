@@ -556,7 +556,7 @@ function toolMediaContent(record: ToolCallRecord) {
           ...part,
           text:
             part.text.length > text.length
-              ? `${text}… [Full text retained in tool result ${record.id}; use context.read.]`
+              ? `${text}… [Tool text truncated; inspect the source or rerun if needed.]`
               : text,
         },
       ];
@@ -602,7 +602,7 @@ function toToolResultOutput(
   if (typeof record.outputRef === "string") {
     return {
       type: "text",
-      value: trimToolText(record.outputRef, record),
+      value: trimToolText(record.outputRef),
     };
   }
 
@@ -611,21 +611,18 @@ function toToolResultOutput(
     if (serialized.length <= MAX_TOOL_OUTPUT_JSON) {
       return { type: "json", value: record.outputRef as never };
     }
-    return { type: "text", value: trimToolText(serialized, record) };
+    return { type: "text", value: trimToolText(serialized) };
   }
 
   return {
     type: "text",
-    value: trimToolText(record.outputSummary ?? "", record),
+    value: trimToolText(record.outputSummary ?? ""),
   };
 }
 
-function trimToolText(value: string, record?: ToolCallRecord): string {
+function trimToolText(value: string): string {
   if (value.length <= MAX_TOOL_OUTPUT_TEXT) return value;
-  const reference = record
-    ? ` Full output retained; use context.read ${JSON.stringify({ kind: "tool", id: record.id })}.`
-    : "";
-  return `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}…${reference}`;
+  return `${value.slice(0, MAX_TOOL_OUTPUT_TEXT)}… [Tool text truncated; inspect the source or rerun if needed.]`;
 }
 
 function toToolCallInput(

@@ -246,9 +246,7 @@ function ProjectCreateForm({
               iconOnly
               aria-label={c.close}
               disabled={submitting}
-            >
-              <X size={17} />
-            </DialogCloseButton>
+            />
           </DialogHeader>
           <DialogBody className="workspace-create-dialog-body">
           <div className="workspace-create-name">

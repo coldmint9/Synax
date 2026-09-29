@@ -30,6 +30,45 @@ const SAFE_REDIRECT_TARGETS = new Set([
 ]);
 const MAX_OUTPUT_BYTES = 64_000;
 const EXEC_TIMEOUT_MS = 30_000;
+/** Advertised bounds for the per-command timeout window. */
+const MIN_EXEC_TIMEOUT_MS = 1_000;
+const MAX_EXEC_TIMEOUT_MS = 600_000;
+
+/**
+ * Resolve the timeout window for one command. The model may raise it per call
+ * through the tool schema, and verification passes its own estimate; both paths
+ * are clamped here so a bypassed schema cannot hand the process an unbounded or
+ * sub-second window.
+ */
+export function resolveExecTimeoutMs(
+  requested: number | undefined,
+  fallback: number = EXEC_TIMEOUT_MS,
+): number {
+  if (typeof requested !== "number" || !Number.isFinite(requested)) {
+    return fallback;
+  }
+  return Math.min(
+    Math.max(Math.trunc(requested), MIN_EXEC_TIMEOUT_MS),
+    MAX_EXEC_TIMEOUT_MS,
+  );
+}
+
+/** Keep the captured bytes of one stream, with an explicit truncation notice. */
+function truncateCapture(
+  text: string,
+  truncatedFlag: boolean,
+  totalBytes: number,
+  label: "STDOUT" | "STDERR",
+): { text: string; truncated: boolean } {
+  const truncated = truncatedFlag || text.length > MAX_OUTPUT_BYTES;
+  if (!truncated) return { text, truncated: false };
+  return {
+    text:
+      text.substring(0, MAX_OUTPUT_BYTES) +
+      `\n\n[${label} TRUNCATED: ${Math.max(totalBytes, text.length)} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`,
+    truncated: true,
+  };
+}
 
 /**
  * Detect file redirections (>, >>) to unsafe targets. Only /dev/null,
@@ -201,9 +240,18 @@ export const bashTool: RegisteredTool = {
       .describe(
         "Run a long-lived server in the background. Returns a process ID; the user can stop it from the session sidebar.",
       ),
+    timeoutMs: z
+      .number()
+      .int()
+      .min(MIN_EXEC_TIMEOUT_MS)
+      .max(MAX_EXEC_TIMEOUT_MS)
+      .optional()
+      .describe(
+        `Wall-clock limit for this command in ms (${MIN_EXEC_TIMEOUT_MS}-${MAX_EXEC_TIMEOUT_MS}), default ${EXEC_TIMEOUT_MS}. Estimate it from what the command does: builds, test suites and typechecks normally need 60s-300s, quick searches and reads need the default. On timeout the output captured before the kill is returned with a [TIMED OUT] marker plus the elapsed time, so raise this and re-run instead of assuming the command failed. Ignored when background is true.`,
+      ),
   }),
   progressiveDetails:
-    "Accepts { command: string, workdir?: string, stdin?: string, background?: boolean }. Use background:true for dev servers and other long-lived services; do not detach with nohup or disown. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
+    "Accepts { command: string, workdir?: string, stdin?: string, background?: boolean, timeoutMs?: number }. Use background:true for dev servers and other long-lived services; do not detach with nohup or disown. Set timeoutMs when the command legitimately needs longer than the 30s default (tests, typechecks, installs); a timed-out command returns its partial output and can be re-run with a larger timeoutMs. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
   getPattern(args) {
     if (
       typeof args === "object" &&
@@ -222,13 +270,14 @@ export const bashTool: RegisteredTool = {
 
 export function executeBash(
   input: ToolExecutionInput,
-  timeoutMs = EXEC_TIMEOUT_MS,
+  timeoutMs?: number,
 ): ToolExecutionResult | Promise<ToolExecutionResult> {
   const args = input.args as {
     command?: string;
     workdir?: string;
     stdin?: string;
     background?: boolean;
+    timeoutMs?: number;
   };
   if (!args?.command) throw new Error("command is required.");
 
@@ -276,6 +325,11 @@ export function executeBash(
     ? resolveWorkspacePath(args.workdir, input.sessionId)
     : root;
 
+  // Precedence: an explicit caller argument (verification passes its own
+  // estimate), then the model's per-call value, then the default window. All of
+  // them are clamped to the bounds the schema advertises.
+  const execTimeoutMs = resolveExecTimeoutMs(timeoutMs ?? args.timeoutMs);
+
   // Execution is fully asynchronous: blocking the event loop here would
   // serialize parallel tool calls, live stream forwarding and side-channel
   // requests (profile panels, stats) for the whole lifetime of the command.
@@ -285,14 +339,14 @@ export function executeBash(
     commandPreview,
     cwd,
     stdin: args.stdin,
-    timeoutMs,
+    timeoutMs: execTimeoutMs,
     background: args.background === true || hasBackgroundBashOperator(command),
   });
 }
 
 interface BashExecutionInput {
   background?: boolean;
-  timeoutMs?: number;
+  timeoutMs: number;
   sessionId: string;
   command: string;
   commandPreview: string;
@@ -383,19 +437,63 @@ async function executeBashCommand(
   }
 
   // 5. Execute
+  const startedAtMs = Date.now();
   const result = await runShellCommand(command, {
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
-    timeoutMs: input.timeoutMs ?? EXEC_TIMEOUT_MS,
+    timeoutMs: input.timeoutMs,
     env: { ...process.env, HOME: await sessionHomeDir(input.sessionId) },
     stdin: input.stdin ?? undefined,
   });
+  const elapsedMs = Date.now() - startedAtMs;
 
-  // 6. Handle spawn/timeout errors
+  // 6. Handle spawn/timeout errors. A timeout is partial evidence, not an empty
+  // failure: what the command printed before the kill is exactly what tells the
+  // model whether raising timeoutMs and re-running is worth it, so it is kept and
+  // marked with the elapsed time instead of being discarded.
   if (result.error || result.timedOut) {
-    const errorMsg = result.timedOut
-      ? `Command timed out after ${(input.timeoutMs ?? EXEC_TIMEOUT_MS) / 1000}s.`
-      : `Spawn error: ${result.error?.message ?? "unknown error"}`;
+    if (result.timedOut) {
+      const stdoutCapture = truncateCapture(
+        result.stdout ?? "",
+        result.stdoutTruncated,
+        result.stdoutBytes,
+        "STDOUT",
+      );
+      const stderrCapture = truncateCapture(
+        result.stderr ?? "",
+        result.stderrTruncated,
+        result.stderrBytes,
+        "STDERR",
+      );
+      const timeoutSeconds = input.timeoutMs / 1000;
+      const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+      const timeoutMarker = `[TIMED OUT after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s): the command was killed, so its output is partial.]`;
+      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Re-run with a larger timeoutMs (max ${MAX_EXEC_TIMEOUT_MS / 1000}s) if the command legitimately needs more time.`;
+      return {
+        result: {
+          command,
+          exitCode: null,
+          stdout: stdoutCapture.text
+            ? `${stdoutCapture.text}\n\n${timeoutMarker}`
+            : timeoutMarker,
+          stderr: stderrCapture.text
+            ? `${stderrCapture.text}\n${timeoutNotice}`
+            : timeoutNotice,
+          stdoutTruncated: stdoutCapture.truncated,
+          stderrTruncated: stderrCapture.truncated,
+        },
+        displaySummary: `bash timed out after ${timeoutSeconds}s: ${commandPreview}`,
+        artifacts: [
+          {
+            kind: "evidence",
+            title: "Bash timed out",
+            summary: timeoutNotice,
+            risk: "medium",
+          },
+        ],
+      };
+    }
+    const errorMsg = `Spawn error: ${result.error?.message ?? "unknown error"}`;
     return {
       result: {
         command,
@@ -418,27 +516,31 @@ async function executeBashCommand(
   }
 
   // 7. Truncate output
-  const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
-  const stdoutTruncated =
-    stdout.length > MAX_OUTPUT_BYTES || result.stdoutTruncated;
-  const stderrTruncated =
-    stderr.length > MAX_OUTPUT_BYTES || result.stderrTruncated;
-
-  const truncatedStdout = stdoutTruncated
-    ? stdout.substring(0, MAX_OUTPUT_BYTES) +
-      `\n\n[STDOUT TRUNCATED: ${Math.max(result.stdoutBytes, stdout.length)} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
-    : stdout;
-  const truncatedStderr = stderrTruncated
-    ? stderr.substring(0, MAX_OUTPUT_BYTES) +
-      `\n\n[STDERR TRUNCATED: ${Math.max(result.stderrBytes, stderr.length)} bytes total, showing first ${MAX_OUTPUT_BYTES}.]`
-    : stderr;
+  const stdoutCapture = truncateCapture(
+    result.stdout ?? "",
+    result.stdoutTruncated,
+    result.stdoutBytes,
+    "STDOUT",
+  );
+  const stderrCapture = truncateCapture(
+    result.stderr ?? "",
+    result.stderrTruncated,
+    result.stderrBytes,
+    "STDERR",
+  );
+  const stdoutTruncated = stdoutCapture.truncated;
+  const stderrTruncated = stderrCapture.truncated;
+  const truncatedStdout = stdoutCapture.text;
+  const truncatedStderr = stderrCapture.text;
 
   const exitCode = result.status ?? null;
   recordBashFileReads(input.sessionId, command, exitCode);
 
   // 8. Command-not-found detection
-  const { notFound, commandName } = detectCommandNotFound(stderr, command);
+  const { notFound, commandName } = detectCommandNotFound(
+    result.stderr ?? "",
+    command,
+  );
   if (notFound) {
     const fallbackHint = `Command '${commandName}' not found. Use dedicated tools instead: rg, file.list, file.read.`;
     const finalStderr = truncatedStderr

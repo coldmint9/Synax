@@ -28,6 +28,21 @@ export function validateProviderDraft(draft: ApiProviderDraft): FieldError[] {
   if (!draft.model.trim()) {
     errors.push({ field: 'model', message: '模型不能为空' })
   }
+  for (const modelId of new Set([...draft.models, draft.model].filter(Boolean))) {
+    const metadata = draft.modelMeta[modelId]
+    const capabilities = metadata?.capabilities ?? []
+    for (const [capability, output] of [
+      ['image_generation', 'image'],
+      ['video_generation', 'video'],
+    ] as const) {
+      if (capabilities.includes(capability) && !metadata?.media?.operations.some((operation) => operation.endsWith(output))) {
+        errors.push({ field: 'model', message: `${modelId} 缺少${output === 'image' ? '生图' : '生视频'}操作` })
+      }
+    }
+    if (capabilities.some((capability) => capability !== 'chat') && !draft.mediaAdapter && !['openai', 'openrouter', 'xai', 'ark', 'volc', 'minimax'].some((id) => draft.id.includes(id))) {
+      errors.push({ field: 'model', message: `${modelId} 需要选择媒体协议适配器` })
+    }
+  }
   return errors
 }
 

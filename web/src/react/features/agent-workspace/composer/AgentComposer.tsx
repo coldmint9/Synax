@@ -45,9 +45,12 @@ import {
   type AgentModelSelection,
 } from "./modelSelection";
 import type { SynaxPermissionTier, SynaxWikiAttachMode } from "./composerTypes";
-import { MediaGenerationControls, useMediaGenerationModels } from "../../media/MediaGenerationControls";
+import { useMediaGenerationModels } from "../../media/MediaGenerationControls";
+import { ImageGenerationInput } from "../../media/ImageGenerationInput";
+import { VideoGenerationInput } from "../../media/VideoGenerationInput";
+import { mediaJobInput, mediaOperationFor } from "../../media/mediaSubmission";
 import { apiRequest } from "../../../../lib/api/origin";
-import type { MediaJob } from "../../../../lib/contracts/media-generation";
+import type { MediaJob, ModelCapability } from "../../../../lib/contracts/media-generation";
 
 export interface ComposerCommands {
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -78,6 +81,8 @@ interface Props {
   content: string;
   onContentChange: (value: string) => void;
   onSubmit: () => void;
+  onCreateMediaSession?: (prompt: string) => Promise<string>;
+  onMediaSubmitted?: (sessionId: string) => void;
   onStop?: () => void;
   isGenerating?: boolean;
   /** Resumable session: the action key becomes a play control that resumes. */
@@ -85,6 +90,7 @@ interface Props {
   onResume?: () => void;
   providerId: string | null;
   modelId: string | null;
+  capability?: ModelCapability;
   onModelSelect: (selection: AgentModelSelection) => void;
   providers: ProviderDef[];
   globalConfig: GlobalConfig | null;
@@ -125,12 +131,15 @@ export function AgentComposer({
   content,
   onContentChange,
   onSubmit,
+  onCreateMediaSession,
+  onMediaSubmitted,
   onStop,
   isGenerating = false,
   isResumable = false,
   onResume,
   providerId,
   modelId,
+  capability = "chat",
   onModelSelect,
   providers,
   globalConfig,
@@ -153,19 +162,111 @@ export function AgentComposer({
   defaultExpanded = false,
 }: Props) {
   const { t, locale } = useLocale();
-  const [mediaMode, setMediaMode] = useState<"chat" | "image" | "video">("chat");
-  const [mediaParameters, setMediaParameters] = useState<Record<string, string | number | boolean>>({});
+  const mediaMode = capability === "image_generation" ? "image" : capability === "video_generation" ? "video" : "chat";
+  const mediaDraftKey = JSON.stringify([projectId, sessionId ?? 'draft', providerId, modelId, capability]);
+  const readMediaParameters = useCallback((): Record<string, string | number | boolean> => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`synax-media-draft:${mediaDraftKey}`) ?? '{}') as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(saved).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))) as Record<string, string | number | boolean>;
+    } catch { return {}; }
+  }, [mediaDraftKey]);
+  const [mediaDraft, setMediaDraft] = useState(() => ({ key: mediaDraftKey, values: readMediaParameters() }));
+  const mediaParameters = mediaDraft.key === mediaDraftKey ? mediaDraft.values : readMediaParameters();
+  const setMediaParameters = useCallback((values: Record<string, string | number | boolean>) => {
+    setMediaDraft({ key: mediaDraftKey, values });
+    try { localStorage.setItem(`synax-media-draft:${mediaDraftKey}`, JSON.stringify(values)); } catch { /* storage unavailable */ }
+  }, [mediaDraftKey]);
   const [mediaJob, setMediaJob] = useState<MediaJob>();
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [submittingMedia, setSubmittingMedia] = useState(false);
+  const mediaSubmitLock = useRef(false);
+  const mediaKey = useRef<string | null>(null);
+  const mediaSignature = useRef<string | null>(null);
   const mediaCatalog = useMediaGenerationModels(mediaMode);
-  const mediaOperation = mediaMode === "image" ? (media?.parts.some((p) => p.type === "image") ? "image-to-image" : "text-to-image") : mediaMode === "video" ? (media?.parts.some((p) => p.type === "image") ? "image-to-video" : "text-to-video") : undefined;
-  useEffect(() => { setMediaParameters({}); setMediaJob(undefined); }, [sessionId, mediaMode, mediaCatalog.selected?.modelId]);
+  const selectedMediaModel = mediaCatalog.models.find((item) => item.providerId === providerId && item.modelId === modelId);
+  const mediaOperation = mediaMode === "chat" ? undefined : mediaOperationFor(selectedMediaModel, mediaMode, Boolean(media?.parts.some((part) => part.type === 'image')));
+  useEffect(() => {
+    setMediaJob(undefined);
+    setMediaError(null);
+    mediaKey.current = null;
+    mediaSignature.current = null;
+    if (!sessionId || mediaMode === 'chat') return;
+    let active = true;
+    void apiRequest<{ jobs: MediaJob[] }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs`, { silent: true })
+      .then(({ jobs }) => {
+        if (active) setMediaJob(jobs.find((job) => job.input.providerId === providerId && job.input.modelId === modelId));
+      })
+      .catch((error) => { if (active) setMediaError(error instanceof Error ? error.message : String(error)); });
+    return () => { active = false; };
+  }, [sessionId, providerId, modelId, mediaMode]);
   const submitMedia = useCallback(async () => {
-    if (!sessionId || !mediaCatalog.selected || !mediaOperation) { onSubmit(); return; }
-    const references = (media?.parts ?? []).filter((p): p is Extract<typeof p, { type: "image" }> => p.type === "image").map((p) => ({ assetId: p.assetId, role: "reference" as const }));
-    const response = await apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs`, { method: "POST", body: JSON.stringify({ providerId: mediaCatalog.selected.providerId, modelId: mediaCatalog.selected.modelId, operation: mediaOperation, prompt: content.trim(), references, parameters: mediaParameters, idempotencyKey: crypto.randomUUID() }) });
-    setMediaJob(response.job);
-  }, [sessionId, mediaCatalog.selected, mediaOperation, media?.parts, mediaParameters, content, onSubmit]);
-  useEffect(() => { if (!mediaJob || !sessionId || ["succeeded", "failed", "cancelled", "unknown"].includes(mediaJob.status)) return; const timer=window.setInterval(()=>{void apiRequest<{job:MediaJob}>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}`,{silent:true}).then(r=>setMediaJob(r.job)).catch(()=>{});},3000); return()=>window.clearInterval(timer); }, [mediaJob, sessionId]);
+    if (mediaSubmitLock.current || mediaMode === 'chat' || !media?.ready) return;
+    mediaSubmitLock.current = true;
+    setSubmittingMedia(true);
+    setMediaError(null);
+    try {
+      const signature = JSON.stringify([providerId, modelId, mediaMode, content, media.parts, mediaParameters]);
+      const key = mediaSignature.current === signature ? mediaKey.current : null;
+      const input = mediaJobInput(selectedMediaModel, mediaMode, content, media.parts, mediaParameters, key ?? crypto.randomUUID());
+      mediaKey.current = input.idempotencyKey;
+      mediaSignature.current = signature;
+      const targetSessionId = sessionId ?? await onCreateMediaSession?.(input.prompt);
+      if (!targetSessionId) throw new Error('无法创建媒体会话。');
+      const { job } = await apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(targetSessionId)}/media-jobs`, {
+        method: 'POST', body: JSON.stringify(input),
+      });
+      mediaKey.current = null;
+      mediaSignature.current = null;
+      setMediaJob(job);
+      if (targetSessionId !== sessionId) {
+        try {
+          const key = JSON.stringify([projectId, targetSessionId, providerId, modelId, capability]);
+          localStorage.setItem(`synax-media-draft:${key}`, JSON.stringify(mediaParameters));
+        } catch { /* storage unavailable */ }
+      }
+      onContentChange('');
+      media.clear();
+      onMediaSubmitted?.(targetSessionId);
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : String(error));
+    } finally {
+      mediaSubmitLock.current = false;
+      setSubmittingMedia(false);
+    }
+  }, [sessionId, projectId, providerId, modelId, capability, onCreateMediaSession, onMediaSubmitted, selectedMediaModel, mediaMode, media, content, mediaParameters, onContentChange]);
+  const retryMedia = useCallback(async () => {
+    if (!mediaJob || !sessionId || mediaSubmitLock.current || !['failed', 'cancelled', 'unknown'].includes(mediaJob.status)) return;
+    mediaSubmitLock.current = true;
+    setSubmittingMedia(true);
+    setMediaError(null);
+    try {
+      const { projectId: _projectId, ...originalInput } = mediaJob.input;
+      const { job } = await apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs`, {
+        method: 'POST', body: JSON.stringify({ ...originalInput, idempotencyKey: crypto.randomUUID() }),
+      });
+      setMediaJob(job);
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : String(error));
+    } finally {
+      mediaSubmitLock.current = false;
+      setSubmittingMedia(false);
+    }
+  }, [mediaJob, sessionId]);
+  useEffect(() => {
+    if (!mediaJob || !sessionId || ['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status)) return;
+    const timer = window.setInterval(() => {
+      void apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}`, { silent: true })
+        .then(({ job }) => setMediaJob(job))
+        .catch((error) => setMediaError(error instanceof Error ? error.message : String(error)));
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [mediaJob, sessionId]);
+  const cancelMedia = useCallback(() => {
+    if (!mediaJob || !sessionId) return;
+    void apiRequest<{ job: MediaJob }>(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}/cancel`, { method: 'POST' })
+      .then(({ job }) => setMediaJob(job))
+      .catch((error) => setMediaError(error instanceof Error ? error.message : String(error)));
+  }, [mediaJob, sessionId]);
   const keyboardHintId = useId();
   const keyboardHints = [
     locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line",
@@ -246,13 +347,17 @@ export function AgentComposer({
       if (
         (!content.trim() && !media?.parts.length) ||
         (media && !media.ready) ||
-        inputCapability.blocked
+        (mediaMode === "chat" && inputCapability.blocked) ||
+        (mediaMode !== "chat" && (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))))
       )
         return;
       mediaMode === "chat" ? onSubmit() : void submitMedia();
     },
     [
       inputCapability.blocked,
+      selectedMediaModel,
+      submittingMedia,
+      mediaJob,
       mediaMode,
       submitMedia,
       media,
@@ -317,15 +422,31 @@ export function AgentComposer({
     onCompositionEnd: handleCompositionEnd,
   };
 
-  const resumeMode = !isGenerating && isResumable && Boolean(onResume);
+  const resumeMode = mediaMode === "chat" && !isGenerating && isResumable && Boolean(onResume);
   const hasInput = Boolean(content.trim() || media?.parts.length);
-  const queueMode = isGenerating && queueWhileGenerating && hasInput;
-  const stopMode = isGenerating && !queueMode;
+  const queueMode = mediaMode === "chat" && isGenerating && queueWhileGenerating && hasInput;
+  const stopMode = mediaMode === "chat" && isGenerating && !queueMode;
   const sendDisabled =
     (disabled && !queueWhileGenerating) ||
     !hasInput ||
     Boolean(media && !media.ready) ||
-    inputCapability.blocked;
+    (mediaMode === "chat" ? inputCapability.blocked :
+      (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))));
+  const mediaInputProps = {
+    selected: selectedMediaModel,
+    parameters: mediaParameters,
+    onParameters: setMediaParameters,
+    job: mediaJob,
+    error: mediaError,
+    onCancel: () => { void cancelMedia(); },
+    onRetry: () => { void (mediaJob ? retryMedia() : submitMedia()); },
+    media,
+  };
+  const mediaInput = mediaMode === 'image'
+    ? <ImageGenerationInput {...mediaInputProps} operation={mediaOperation as 'text-to-image' | 'image-to-image' | undefined} />
+    : mediaMode === 'video'
+      ? <VideoGenerationInput {...mediaInputProps} operation={mediaOperation as 'text-to-video' | 'image-to-video' | undefined} />
+      : null;
   const actionButton = (
     <Button
       size="md"
@@ -437,7 +558,7 @@ export function AgentComposer({
           value={permissionTier}
           onChange={onPermissionTierChange}
         />
-        <MediaGenerationControls mode={mediaMode} onModeChange={setMediaMode} models={mediaCatalog.models} selected={mediaCatalog.selected} onSelected={mediaCatalog.onSelected} operation={mediaOperation as any} parameters={mediaParameters} onParameters={setMediaParameters} job={mediaJob} onCancel={() => { if (mediaJob && sessionId) void apiRequest(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}/cancel`, { method: "POST" }).then(() => setMediaJob(undefined)); }} media={media} />
+        {mediaInput}
         {modeControl}
       </div>
       <div className="agent-dock-composer-settings contents">
@@ -617,7 +738,7 @@ export function AgentComposer({
             value={permissionTier}
             onChange={onPermissionTierChange}
           />
-          <MediaGenerationControls mode={mediaMode} onModeChange={setMediaMode} models={mediaCatalog.models} selected={mediaCatalog.selected} onSelected={mediaCatalog.onSelected} operation={mediaOperation as any} parameters={mediaParameters} onParameters={setMediaParameters} job={mediaJob} onCancel={() => { if (mediaJob && sessionId) void apiRequest(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/media-jobs/${mediaJob.id}/cancel`, { method: "POST" }).then(() => setMediaJob(undefined)); }} media={media} />
+          {mediaInput}
         {modeControl}
           {/* The keyed editor keeps the same parent and DOM node in either layout. */}
           <div key="editor" className="contents">
@@ -669,6 +790,7 @@ export function AgentComposer({
               providers={providers}
               providerId={providerId}
               modelId={modelId}
+              capability={capability}
               onSelect={onModelSelect}
               disabled={disabled && !queueWhileGenerating}
               onOverlayOpenChange={onOverlayOpenChange}

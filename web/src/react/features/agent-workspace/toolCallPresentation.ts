@@ -13,7 +13,7 @@ import type { ToolCallView } from "./buildInterleavedTurns";
 const TOOLS: Record<string, { label: I18nKey; icon: typeof Wrench }> = {
   "file.read": { label: "activityToolRead", icon: FileSearch },
   "file.write": { label: "activityToolWrite", icon: FileEdit },
-  "file.edit": { label: "activityToolEdit", icon: FileEdit },
+  "file.patch": { label: "activityToolEdit", icon: FileEdit },
   "file.list": { label: "activityToolList", icon: FolderOpen },
   "rg": { label: "activityToolSearch", icon: Search },
   "file.search": { label: "activityToolSearch", icon: Search },

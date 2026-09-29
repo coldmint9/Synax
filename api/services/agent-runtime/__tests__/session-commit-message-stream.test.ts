@@ -75,8 +75,55 @@ describe("commit message generation", () => {
       reasoningEffort: "high",
       maxTokens: 4096,
     });
-    expect(request.messages[0].content).toContain("fix(ui): 上次修复");
-    expect(request.messages[0].content).toContain("+fixed");
+    const prompt = request.messages[0].content;
+    expect(prompt).toContain(
+      "Write a commit message in the conventional commit convention. I'll send you an output of 'git diff --staged' command, and you convert it into a commit message.",
+    );
+    expect(prompt).toContain("Lines must not be longer than 74 characters");
+    expect(prompt).toContain(
+      "End commit title with issue number if you can get it from the branch name: main in parenthesis.",
+    );
+    expect(prompt).toContain("Previous commit messages:");
+    expect(prompt).toContain("fix(ui): 上次修复");
+    expect(prompt).toContain("+fixed");
+    expect(prompt).toContain("Use English language to answer.");
+    // The template no longer offers a hint block or leaves placeholders behind.
+    for (const leftover of [
+      "$hint",
+      "{Use this hint",
+      "{locale}",
+      "{branch}",
+      "{previousCommitMessages}",
+      "{diff}",
+    ])
+      expect(prompt).not.toContain(leftover);
+    expect(mocks.finish).toHaveBeenCalledTimes(1);
+  });
+  it("renders the template in the requested locale and keeps a subject plus body", async () => {
+    mocks.stream.mockResolvedValue({
+      fullStream: (async function* () {
+        yield { type: "text-delta", text: "feat(git): 改用模板\n\n" };
+        yield { type: "text-delta", text: "正文说明。#123" };
+        yield { type: "finish", totalUsage: {} };
+      })(),
+    });
+    const events = [];
+    const prepared = await prepareCommitMessageGeneration("s1", {
+      ...input,
+      locale: "zh",
+    });
+    for await (const event of streamSessionCommitMessage(
+      prepared,
+      new AbortController().signal,
+    ))
+      events.push(event);
+    expect(mocks.stream.mock.calls[0][0].messages[0].content).toContain(
+      "Use Chinese (Simplified) language to answer.",
+    );
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      message: "feat(git): 改用模板\n\n正文说明。#123",
+    });
     expect(mocks.finish).toHaveBeenCalledTimes(1);
   });
   it("rejects empty text and finishes usage", async () => {

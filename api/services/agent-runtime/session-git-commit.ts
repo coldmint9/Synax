@@ -19,7 +19,9 @@ import {
 
 const MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_TIMEOUT_MS = 120_000;
-const MAX_COMMIT_MESSAGE_LEN = 200;
+const MAX_COMMIT_SUBJECT_LEN = 200;
+const MAX_COMMIT_MESSAGE_LEN = 2_000;
+const FENCE_RE = /^\s*(?:```|~~~)/;
 
 export interface SessionGitCommitInput {
   rootId?: string;
@@ -105,26 +107,43 @@ function getSession(sessionId: string) {
 }
 
 /**
- * Keep the generated text usable as a `git commit -m` argument: one line,
- * no wrapping quotes, no "Commit message:" preamble.
+ * Keep the generated text usable as a `git commit -m` argument: a conventional
+ * subject plus an optional body, no code fences, wrapping quotes or
+ * "Commit message:" preamble.
  */
 export function normalizeCommitMessage(raw: string): string {
   const lines = raw
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return "";
-  let message = lines[0];
+    .filter((line) => !FENCE_RE.test(line))
+    .map((line) => line.trimEnd());
+  const first = lines.findIndex((line) => line.trim().length > 0);
+  if (first === -1) return "";
+  let last = lines.length - 1;
+  while (last > first && lines[last].trim().length === 0) last -= 1;
   // Strip wrapping quotes first: a model often answers `"Commit message: ..."`,
   // and the preamble pattern below is anchored to the start of the string.
-  message = message.replace(/^["'`“”「」]+|["'`“”「」]+$/g, "").trim();
-  message = message.replace(
+  let subject = lines[first].trim();
+  subject = subject.replace(/^["'`“”「」]+|["'`“”「」]+$/g, "").trim();
+  subject = subject.replace(
     /^(?:commit message|message|提交信息|提交说明)\s*[:：]\s*/i,
     "",
   );
   // Drop a markdown/bullet marker, but keep the message body intact.
-  message = message.replace(/^[-*]\s+/, "");
-  message = message.replace(/^["'`“”「」]+|["'`“”「」]+$/g, "").trim();
+  subject = subject.replace(/^[-*]\s+/, "");
+  subject = subject.replace(/^["'`“”「」]+|["'`“”「」]+$/g, "").trim();
+  subject = subject.slice(0, MAX_COMMIT_SUBJECT_LEN);
+  if (!subject) return "";
+
+  const body: string[] = [];
+  for (const line of lines.slice(first + 1, last + 1)) {
+    // Collapse runs of blank lines so the body stays readable in `git log`.
+    if (!line.trim() && (body.length === 0 || !body[body.length - 1].trim()))
+      continue;
+    body.push(line);
+  }
+  const message = body.length
+    ? `${subject}\n\n${body.join("\n")}`
+    : subject;
   return message.slice(0, MAX_COMMIT_MESSAGE_LEN);
 }
 

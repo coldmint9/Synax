@@ -150,6 +150,13 @@ export function applyCacheDiagnosticsMiddleware(
     requestId?: string;
     source?: string;
     phase?: string;
+    /** Which prefix-cache hint the request carried, if any. */
+    hint?: {
+      kind: string;
+      namespace?: string;
+      field?: string;
+      valueHash?: string;
+    };
   },
 ): LanguageModelV4 {
   const snapshot = (params: LanguageModelV4CallOptions) =>

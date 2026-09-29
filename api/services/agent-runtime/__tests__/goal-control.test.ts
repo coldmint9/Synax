@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGoalInstruction,
   checkGoalCompletion,
+  evaluateGoalAcceptance,
   getGoalState,
   goalStateSchema,
   initializeGoal,
@@ -202,6 +203,50 @@ describe('goal completion evidence', () => {
     expect(checkGoalCompletion(input).acceptanceEvidence![0].criterion).toBe('Tests pass');
     input.evidence[0].criterion = 'tests pass';
     expect(() => checkGoalCompletion(input)).toThrow();
+  });
+});
+
+describe('incremental goal acceptance', () => {
+  it('accepts one criterion and returns the remaining criteria without completing the goal', () => {
+    const input = completionInput();
+    input.evidence = [input.evidence[0]];
+    const evaluated = evaluateGoalAcceptance(input);
+    expect(evaluated.complete).toBe(false);
+    expect(evaluated.acceptedCriteria).toEqual(['Tests pass']);
+    expect(evaluated.remainingCriteria).toEqual(['Report delivered']);
+    expect(evaluated.goal).toMatchObject({
+      status: 'executing',
+      acceptedCriteria: ['Tests pass'],
+      acceptanceEvidence: [input.evidence[0]],
+    });
+  });
+
+  it('merges previously accepted criteria across runs before completing the final criterion', () => {
+    const input = completionInput();
+    input.goal = {
+      ...input.goal,
+      acceptanceEvidence: [input.evidence[0]],
+      acceptedCriteria: ['Tests pass'],
+    };
+    input.evidence = [input.evidence[1]];
+    const evaluated = evaluateGoalAcceptance(input);
+    expect(evaluated.complete).toBe(true);
+    expect(evaluated.remainingCriteria).toEqual([]);
+    expect(evaluated.goal).toMatchObject({
+      status: 'completed',
+      acceptedCriteria: ['Tests pass', 'Report delivered'],
+    });
+    expect(evaluated.goal.acceptanceEvidence).toHaveLength(2);
+  });
+
+  it('keeps the gate open while work is pending instead of treating it as a failed acceptance', () => {
+    const input = completionInput();
+    input.pendingTaskCount = 1;
+    const evaluated = evaluateGoalAcceptance(input);
+    expect(evaluated.complete).toBe(false);
+    expect(evaluated.remainingCriteria).toEqual([]);
+    expect(evaluated.blockers).toEqual(['pending tasks: 1']);
+    expect(evaluated.goal.status).toBe('executing');
   });
 });
 

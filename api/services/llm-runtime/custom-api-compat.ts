@@ -35,8 +35,18 @@ export function resolveOpenAICompatibleProviderName(providerId: string): string 
 }
 
 /**
+ * The compatible SDK keys `providerOptions` by `config.provider.split('.')[0].trim()`
+ * (see `providerOptionsName` in openai-compatible-chat-language-model). A dotted
+ * provider id must therefore be normalized here, otherwise the field is silently
+ * dropped instead of reaching the request body.
+ */
+export function normalizeProviderOptionsNamespace(providerId: string): string {
+  return providerId.split('.')[0]?.trim() || providerId
+}
+
+/**
  * Resolve the `providerOptions` key for a resolved model selection.
- * - openai-compatible: provider id (e.g. `custom-api:deepseek`)
+ * - openai-compatible: normalized provider id (e.g. `custom-api:deepseek`)
  * - native SDK: package-specific key (e.g. `deepseek`)
  */
 export function resolveProviderOptionsNamespace(selection: ResolvedModelSelection): string {
@@ -44,7 +54,7 @@ export function resolveProviderOptionsNamespace(selection: ResolvedModelSelectio
     selection.provider.npm === '@ai-sdk/openai-compatible' ||
     selection.provider.npm === '@ai-sdk/open-responses'
   ) {
-    return selection.providerId
+    return normalizeProviderOptionsNamespace(selection.providerId)
   }
   return NATIVE_PROVIDER_OPTIONS_KEYS[selection.provider.npm ?? ''] ?? selection.providerId
 }

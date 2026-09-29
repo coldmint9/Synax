@@ -134,6 +134,62 @@ describe("agent runtime routes", () => {
     ).toMatchObject({ backend: { id: "codex-acp" } });
   });
 
+  it("creates a media-only session without requiring a chat provider", async () => {
+    const configStore = await import("../../lib/config/config-store.js");
+    const config = configStore.getGlobalConfigForRuntime();
+    const studio = {
+      id: "custom-api:studio",
+      label: "Studio",
+      kind: "api" as const,
+      status: "live" as const,
+      caps: { canFollowUp: true, canCancel: true },
+      models: [{
+        id: "render-image",
+        label: "Render Image",
+        capabilities: ["image_generation" as const],
+        media: { operations: ["text-to-image" as const] },
+      }],
+    };
+    const configSpy = vi.spyOn(configStore, "getGlobalConfigForRuntime").mockReturnValue({
+      ...config,
+      providers: [...config.providers, studio],
+      providerConnections: {
+        ...config.providerConnections,
+        [studio.id]: { providerId: studio.id, mediaAdapter: "openrouter", apiKey: "test-key" },
+      },
+    });
+    try {
+      const { agentRuntimeRoutes } = await import("../agent-runtime.js");
+      const body = {
+        projectId: "p1",
+        profileId: "executor",
+        backendId: "native",
+        prompt: "A city at night",
+        mediaGeneration: { providerId: studio.id, modelId: "render-image" },
+      };
+      const created = await agentRuntimeRoutes.request("http://localhost/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(created.status).toBe(201);
+      expect(mockProviderCheck).not.toHaveBeenCalled();
+      const session = (await created.json()) as { session: { id: string; status: string } };
+      expect(session.session.status).toBe("completed");
+      expect(agentRuntimeStore.listMessages(session.session.id)).toEqual([]);
+
+      const invalid = await agentRuntimeRoutes.request("http://localhost/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, mediaGeneration: { providerId: studio.id, modelId: "unknown" } }),
+      });
+      expect(invalid.status).not.toBe(201);
+      expect(mockProviderCheck).not.toHaveBeenCalled();
+    } finally {
+      configSpy.mockRestore();
+    }
+  });
+
   it("streams loop-runtime SSE events and persists assistant output", async () => {
     mockCreateGatewayStream.mockResolvedValueOnce(
       makeTextStep("hello runtime"),

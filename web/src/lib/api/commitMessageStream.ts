@@ -7,7 +7,7 @@ export type CommitMessageStreamEvent =
 /** A generation is complete only after both a final message and the SSE sentinel. */
 export async function streamCommitMessage(
   sessionId: string,
-  input: { rootId?: string; model: string },
+  input: { rootId?: string; model: string; locale?: "zh" | "en" },
   onEvent: (event: CommitMessageStreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

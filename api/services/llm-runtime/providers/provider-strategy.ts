@@ -1,18 +1,12 @@
-import type { ResolvedModelSelection, RuntimeModel } from '../types.js'
-import { resolvePromptCaching } from '../cache-policy.js'
+import type { RuntimeModel } from '../types.js'
 
 export interface ProviderStrategy {
   needsReasoningMiddleware(model: RuntimeModel): boolean
-  supportsCacheControl(selection: ResolvedModelSelection): boolean
   modelOptions(mode: { kind: string }): Record<string, unknown> | undefined
 }
 
 const defaultStrategy: ProviderStrategy = {
   needsReasoningMiddleware: (model) => Boolean(model.reasoning),
-  supportsCacheControl: (selection) => {
-    resolvePromptCaching(selection.config.options?.promptCaching)
-    return false
-  },
   modelOptions: () => undefined,
 }
 
@@ -28,11 +22,10 @@ const nativeReasoningStrategy: ProviderStrategy = {
 
 const anthropicStrategy: ProviderStrategy = {
   ...nativeReasoningStrategy,
-  supportsCacheControl: (sel) => {
-    const policy = resolvePromptCaching(sel.config.options?.promptCaching)
-    return policy !== 'off' && sel.apiFormat === 'anthropic' && sel.provider.npm === '@ai-sdk/anthropic'
-  },
 }
+
+/** Prompt caching is resolved by the capability matrix in `../chat-cache.js`
+ * and the Anthropic marker policy in `../cache-policy.js`, not per adapter. */
 
 const openaiStrategy: ProviderStrategy = {
   ...nativeReasoningStrategy,

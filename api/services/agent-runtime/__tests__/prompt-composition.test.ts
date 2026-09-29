@@ -19,6 +19,8 @@ describe("layered prompt composition", () => {
     });
     expect(prompt).toContain("supplied tool schemas");
     expect(prompt).toContain("context.read");
+    expect(prompt).toContain("rerun tools for current evidence");
+    expect(prompt).not.toContain("retrieve omitted evidence by reference");
     expect(prompt).not.toContain("Use bash");
     expect(prompt).not.toContain("task.create");
     expect(prompt).not.toContain("verification.run");

@@ -21,6 +21,13 @@ describe('bashTool', () => {
     it('has inputSchema with required command field', () => {
       expect(bashTool.inputSchema).toBeDefined();
     });
+
+    it('advertises a timeoutMs window the caller can raise', () => {
+      const schema = bashTool.inputSchema!;
+      expect(schema.safeParse({ command: 'echo hi', timeoutMs: 999 }).success).toBe(false);
+      expect(schema.safeParse({ command: 'echo hi', timeoutMs: 600_001 }).success).toBe(false);
+      expect(schema.safeParse({ command: 'echo hi', timeoutMs: 120_000 }).success).toBe(true);
+    });
   });
 
   describe('execute - validation', () => {
@@ -295,8 +302,8 @@ describe('bashTool', () => {
   });
 
   describe('execute - timeout handling', () => {
-    // Timeout protection is configured at 30s (EXEC_TIMEOUT_MS).
-    // Full timeout test is skipped because it takes 30s to trigger.
+    // The window defaults to 30s (EXEC_TIMEOUT_MS); tests pass a short window
+    // explicitly instead of waiting for the default.
     it('has timeout configured', async () => {
       // Verify the tool can execute normally; timeout is a safety net
       const result = await bashTool.execute({
@@ -312,6 +319,26 @@ describe('bashTool', () => {
       const r = result.result as Record<string, unknown>;
       expect(r.exitCode).toBe(0);
     });
+
+    it('keeps partial output and reports the elapsed time when the window expires', async () => {
+      const result = await bashTool.execute({
+        sessionId: 's1',
+        runId: null,
+        stepId: null,
+        toolCallId: 'tc1',
+        toolId: 'bash',
+        category: 'shell',
+        mutability: 'read',
+        args: { command: 'echo partial-evidence; sleep 10', timeoutMs: 1000 },
+      });
+      const r = result.result as Record<string, unknown>;
+      expect(r.exitCode).toBeNull();
+      expect(r.stdout).toContain('partial-evidence');
+      expect(r.stdout).toContain('[TIMED OUT after 1s');
+      expect(r.stderr).toContain('Command timed out after 1s');
+      expect(r.stderr).toMatch(/elapsed \d+\.\d+s/);
+      expect(r.stderr).toContain('larger timeoutMs');
+    }, 20_000);
   });
 
   describe('execute - stdin', () => {

@@ -427,6 +427,7 @@ export function SessionComposer({
   const {
     providerId,
     modelId,
+    capability,
     cliModel,
     reasoningEffort,
     setSelection,
@@ -537,6 +538,7 @@ export function SessionComposer({
     : readSynaxDocumentId(session?.sessionMetadata);
 
   const handleSubmit = useCallback(async () => {
+    if (capability !== "chat") return;
     const message = content.trim();
     if (
       (!message && !media.parts.length) ||
@@ -629,6 +631,7 @@ export function SessionComposer({
       if (isCurrent()) setDraftPreview(null);
     }
   }, [
+    capability,
     media,
     readSubmitting,
     setContent,
@@ -877,6 +880,32 @@ export function SessionComposer({
       content={content}
       onContentChange={setContent}
       onSubmit={() => void handleSubmit()}
+      onCreateMediaSession={async (prompt) => {
+        if (backendId !== "native") throw new Error("媒体生成仅支持原生执行后端。");
+        if (session) return session.id;
+        if (createdDraftRef.current) return createdDraftRef.current.id;
+        const created = await submitSessionDraft(projectId, {
+          message: prompt,
+          prompt,
+          backendId,
+          mode: "chat",
+          mediaGeneration: providerId && modelId && capability !== "chat"
+            ? { providerId, modelId, capability }
+            : undefined,
+          permissionTier,
+          gitWorkspace,
+        });
+        createdDraftRef.current = created;
+        markSubmitted(created.id);
+        return created.id;
+      }}
+      onMediaSubmitted={(id) => {
+        if (isDraft) {
+          createdDraftRef.current = null;
+          clearDraftComposer(projectId);
+          navigate(sessionPath(projectId, id));
+        }
+      }}
       onStop={handleStop}
       isGenerating={isGenerating}
       isResumable={isResumable}
@@ -884,6 +913,7 @@ export function SessionComposer({
       defaultExpanded={isCentered}
       providerId={providerId}
       modelId={modelId}
+      capability={capability}
       onModelSelect={(selection) => {
         const selectedBackend =
           selection.kind === "acp" ? selection.providerId : "native";
@@ -898,6 +928,7 @@ export function SessionComposer({
         setSelection({
           providerId: selection.providerId,
           modelId: selection.modelId,
+          capability: selection.capability,
         });
       }}
       providers={providers}
