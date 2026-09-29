@@ -154,11 +154,12 @@ async function pasteValue(
   await user.paste(value);
 }
 
-async function renderPage() {
+// Providers now live in their own pinned settings menu entry.
+async function renderPage(section: "general" | "llmProviders" = "llmProviders") {
   const { default: GlobalSettingsPage } =
     await import("./GlobalSettingsPage.tsx");
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[`/settings?section=${section}`]}>
       <GlobalSettingsPage />
     </MemoryRouter>,
   );
@@ -366,7 +367,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
       .spyOn(configApi, "openGlobalFile")
       .mockRejectedValueOnce(new Error("Editor could not start"))
       .mockResolvedValueOnce(undefined);
-    await renderPage();
+    await renderPage("general");
     expect(screen.queryByText("运行限制")).not.toBeInTheDocument();
     expect(screen.queryByText("高级")).not.toBeInTheDocument();
     const button = screen.getByRole("button", { name: "打开配置文件" });
@@ -556,7 +557,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     const { default: Page } = await import("./GlobalSettingsPage");
     mocks.state.loading = true;
     view.rerender(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/settings?section=llmProviders"]}>
         <Page />
       </MemoryRouter>,
     );
@@ -567,7 +568,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     mocks.state.loading = false;
     mocks.state.globalConfig = createGlobalConfig();
     view.rerender(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/settings?section=llmProviders"]}>
         <Page />
       </MemoryRouter>,
     );

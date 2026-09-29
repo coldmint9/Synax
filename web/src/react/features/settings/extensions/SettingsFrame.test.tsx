@@ -35,4 +35,25 @@ describe('settings navigation', () => {
     screen.getByRole('button', { name: /MCP 服务器|MCP servers/ }).click()
     expect(onSelect).toHaveBeenCalledWith('mcpServers')
   })
+
+  it('pins the LLM provider menu in the frequently used group', async () => {
+    const onSelect = vi.fn()
+    render(
+      <SettingsFrame section="general" onSelect={onSelect}>
+        <div />
+      </SettingsFrame>,
+    )
+    const entry = screen.getByRole('button', { name: /LLM 供应商|LLM Providers/ })
+    entry.click()
+    expect(onSelect).toHaveBeenCalledWith('llmProviders')
+  })
+
+  it('hides the pinned LLM provider menu in project settings', () => {
+    render(
+      <SettingsFrame section="general" onSelect={vi.fn()} projectMode projectId="p1">
+        <div />
+      </SettingsFrame>,
+    )
+    expect(screen.queryByRole('button', { name: /LLM 供应商|LLM Providers/ })).toBeNull()
+  })
 })

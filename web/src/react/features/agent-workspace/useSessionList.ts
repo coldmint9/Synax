@@ -27,6 +27,8 @@ export interface SessionTreeNode {
   depth: number;
   children: SessionTreeNode[];
   expanded: boolean;
+  isLastChild?: boolean;
+  hasNextSibling?: boolean;
   searchSnippet?: string;
   searchQuery?: string;
 }
@@ -37,6 +39,13 @@ export interface SessionGroup {
   sessions: SessionTreeNode[];
   collapsed: boolean;
   count: number;
+}
+
+/** Local calendar-day boundary; the list groups on the user's clock, not UTC. */
+function startOfLocalDay(now: number): number {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
 }
 
 // ---- Hook ----
@@ -73,7 +82,8 @@ export function useSessionList(
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const search = useSessionSearch(routeProjectId, searchQuery);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(
     new Set(),
   );
   const nodeCache = useMemo(
@@ -96,69 +106,144 @@ export function useSessionList(
     return { sessions: sessionsCount, workflow };
   }, [projectSessions]);
 
+  // The memo below buckets sessions on a local calendar-day boundary; keying it
+  // on the day string re-splits the list when the app is left open past midnight.
+  const dayKey = new Date().toDateString();
   const grouped = useMemo(() => {
-    let list = listRootSessions(projectSessions).filter((s) =>
+    const roots = listRootSessions(projectSessions).filter((s) =>
       listView === "workflow"
         ? isWorkflowSession(s)
         : isAgentWorkspaceSession(s),
     );
-    if (search.enabled) list = search.items.map((item) => item.session);
-    // This view deliberately contains roots only; do not rebuild a recursive tree.
-    const tree = list
+    if (search.enabled) {
+      const list = search.items.map((item) => item.session);
+      const tree = list
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .map((session) => ({
+          session,
+          depth: 0,
+          children: [],
+          expanded: false,
+          searchSnippet: search.items.find(
+            (item) => item.session.id === session.id,
+          )?.snippet,
+          searchQuery: search.query,
+        }));
+      return [{
+        key: listView,
+        label: listView === "sessions" ? (locale === "zh" ? "会话" : "Sessions") : "Workflows",
+        sessions: tree,
+        collapsed: false,
+        count: tree.length,
+      }];
+    }
+
+    const sessionById = new Map(projectSessions.map((session) => [session.id, session]));
+    const buildTree = (
+      session: AgentSession,
+      depth: number,
+      isLastChild = false,
+      hasNextSibling = false,
+    ): SessionTreeNode => {
+      const childSessions = (session.childSessionIds ?? [])
+        .map((id) => sessionById.get(id))
+        .filter((child): child is AgentSession => Boolean(child))
+        .filter((child) => child.projectId === routeProjectId)
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const children = childSessions.map((child, index) =>
+        buildTree(
+          child,
+          depth + 1,
+          index === childSessions.length - 1,
+          index < childSessions.length - 1,
+        ),
+      );
+      return {
+        session,
+        depth,
+        children,
+        expanded: !collapsedSessions.has(session.id),
+        isLastChild,
+        hasNextSibling,
+      };
+    };
+
+    const tree = roots
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-      .map((session) => {
-        if (search.enabled)
-          return {
-            session,
-            depth: 0,
-            children: [],
-            expanded: false,
-            searchSnippet: search.items.find(
-              (item) => item.session.id === session.id,
-            )?.snippet,
-            searchQuery: search.query,
-          };
-        let node = nodeCache.get(session);
-        if (!node) {
-          node = { session, depth: 0, children: [], expanded: false };
-          nodeCache.set(session, node);
-        }
-        return node;
-      });
+      .map((session, index, all) =>
+        buildTree(session, 0, index === all.length - 1, index < all.length - 1),
+      );
+    const flattenVisible = (nodes: SessionTreeNode[]): SessionTreeNode[] =>
+      nodes.flatMap((node) =>
+        node.expanded ? [node, ...flattenVisible(node.children)] : [node],
+      );
+    const visibleTree = flattenVisible(tree);
     const pinned = tree.filter(
       (node) => node.session.sessionMetadata?.pinned === true,
     );
     const hasPinned = pinned.length > 0;
-    const regular = hasPinned
+    const regularRoots = hasPinned
       ? tree.filter((node) => node.session.sessionMetadata?.pinned !== true)
       : tree;
+    const regular = hasPinned ? flattenVisible(regularRoots) : visibleTree;
+    const pinnedVisible = flattenVisible(pinned);
+    // Sessions are already sorted newest-first, so the two buckets stay ordered.
+    // Search hits bypass bucketing: a result set is a hit list, not a timeline.
+    const bucketByDay = listView === "sessions" && !search.enabled;
+    const dayStart = startOfLocalDay(Date.now());
+    const isToday = (node: SessionTreeNode) =>
+      Date.parse(node.session.updatedAt) >= dayStart;
+    const today = bucketByDay ? regular.filter(isToday) : [];
+    const earlier = bucketByDay
+      ? regular.filter((node) => !isToday(node))
+      : [];
+    const regularGroups: SessionGroup[] = bucketByDay
+      ? [
+          {
+            key: "today",
+            label: locale === "zh" ? "今天" : "Today",
+            sessions: today,
+            collapsed: false,
+            count: today.length,
+          },
+          {
+            key: "earlier",
+            label: locale === "zh" ? "之前" : "Earlier",
+            sessions: earlier,
+            collapsed: false,
+            count: earlier.length,
+          },
+        ].filter((group) => group.count > 0)
+      : [
+          {
+            key: listView,
+            label: hasPinned
+              ? locale === "zh"
+                ? "会话"
+                : "sessions"
+              : listView === "sessions"
+                ? locale === "zh"
+                  ? "会话"
+                  : "Sessions"
+                : "Workflows",
+            sessions: regular,
+            collapsed: false,
+            count: regular.length,
+          },
+        ];
     return [
       ...(hasPinned
         ? [
             {
               key: `pinned:${listView}`,
               label: locale === "zh" ? "置顶" : "Pinned",
-              sessions: pinned,
+              sessions: pinnedVisible,
               collapsed: collapsedGroups.has(`pinned:${listView}`),
-              count: pinned.length,
+              count: pinnedVisible.length,
             },
           ]
         : []),
-      {
-        key: listView,
-        label: hasPinned
-          ? locale === "zh"
-            ? "会话"
-            : "sessions"
-          : listView === "sessions"
-            ? locale === "zh"
-              ? "会话"
-              : "Sessions"
-            : "Workflows",
-        sessions: regular,
-        collapsed: false,
-        count: regular.length,
-      },
+      ...regularGroups,
     ];
   }, [
     projectSessions,
@@ -166,9 +251,11 @@ export function useSessionList(
     search.items,
     search.query,
     collapsedGroups,
+    collapsedSessions,
     locale,
     listView,
     nodeCache,
+    dayKey,
   ]);
 
   const refresh = useCallback(
@@ -242,8 +329,14 @@ export function useSessionList(
     [],
   );
 
-  // Root-only list; shared row props still accept the expansion callback.
-  const toggleExpand = useCallback((_id: string) => {}, []);
+  const toggleExpand = useCallback((id: string) => {
+    setCollapsedSessions((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const select = useCallback(
     (id: string) => {

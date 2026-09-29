@@ -120,7 +120,7 @@ export function buildAboutHtml(): string {
       <div><span class="label">作者</span>coldmint9</div>
       <div><span class="label">GitHub</span><a href="${REPO_URL}">${REPO_URL}</a></div>
     </section>
-    <footer class="footer">MIT License<br />Copyright &copy; 2026 Synax contributors</footer>
+    <footer class="footer">Apache License 2.0<br />Copyright &copy; 2026 Synax contributors</footer>
   </main>
 </body>
 </html>`;

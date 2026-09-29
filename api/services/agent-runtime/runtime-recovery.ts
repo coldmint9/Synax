@@ -223,7 +223,7 @@ export async function recoverRuntime(
           : null,
       });
       agentRuntimeStore.updateSession(session.id, {
-        status: shutdownUnconfirmed ? "completed" : "interrupted",
+        status: shutdownUnconfirmed ? "completed" : "paused",
         activeRunId: null,
         pendingResumeToken: null,
         blockedReason: reason,

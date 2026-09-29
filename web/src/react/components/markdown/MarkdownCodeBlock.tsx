@@ -1,6 +1,7 @@
-import type { ReactElement } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { MermaidBlock } from "../../features/wiki/MermaidBlock";
 import { ShikiCodeBlock } from "../../features/wiki/ShikiCodeBlock";
+import { MarkdownCodeFrame } from "./MarkdownCodeFrame";
 
 const TREE_LANGUAGES = new Set([
   "tree",
@@ -13,6 +14,20 @@ export interface MarkdownCodeBlockOptions {
   renderTree?: (code: string) => ReactElement;
   renderPlain?: (code: string) => ReactElement;
   isTree?: (code: string) => boolean;
+  isBlock?: boolean;
+}
+
+export function renderMarkdownPre(
+  children: ReactNode,
+  options: MarkdownCodeBlockOptions = {},
+) {
+  const child = Children.toArray(children)[0];
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    return <pre>{children}</pre>;
+  }
+  const language = /language-([^\s]+)/.exec(child.props.className ?? "")?.[1];
+  const code = String(child.props.children ?? "").replace(/\n$/, "");
+  return renderMarkdownCodeBlock(code, language, { ...options, isBlock: true });
 }
 
 /** Shared code-fence renderer used by Wiki and conversation Markdown. */
@@ -30,7 +45,11 @@ export function renderMarkdownCodeBlock(
     normalized !== "text" &&
     normalized !== "plaintext"
   ) {
-    return <ShikiCodeBlock code={code} language={normalized} />;
+    return (
+      <MarkdownCodeFrame language={normalized}>
+        <ShikiCodeBlock code={code} language={normalized} />
+      </MarkdownCodeFrame>
+    );
   }
 
   if (
@@ -38,25 +57,29 @@ export function renderMarkdownCodeBlock(
     options.isTree?.(code)
   ) {
     return (
-      options.renderTree?.(code) ?? (
-        <pre>
-          <code>{code}</code>
-        </pre>
-      )
+      <MarkdownCodeFrame language={normalized ?? "tree"}>
+        {options.renderTree?.(code) ?? (
+          <pre>
+            <code>{code}</code>
+          </pre>
+        )}
+      </MarkdownCodeFrame>
     );
   }
 
   if (
     normalized === "text" ||
     normalized === "plaintext" ||
-    code.includes("\n")
+    code.includes("\n") || options.isBlock
   ) {
     return (
-      options.renderPlain?.(code) ?? (
-        <pre>
-          <code>{code}</code>
-        </pre>
-      )
+      <MarkdownCodeFrame language={normalized}>
+        {options.renderPlain?.(code) ?? (
+          <pre>
+            <code>{code}</code>
+          </pre>
+        )}
+      </MarkdownCodeFrame>
     );
   }
 

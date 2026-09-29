@@ -37,6 +37,7 @@ const STATUS_BADGE: Record<string, string> = {
   completed: "bg-success/15 text-success",
   failed: "bg-danger/15 text-danger",
   interrupted: "bg-warning/15 text-warning",
+  paused: "bg-warning/15 text-warning",
   cancelled: "bg-foreground/10 text-foreground/70",
 };
 

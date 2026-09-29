@@ -28,7 +28,7 @@ describe('history impact confirmation',()=>{
  it('shows committed-file preservation and allows conversation-only trimming through a conflict',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   expect(await screen.findByText(/committed.ts.*已被 Git 提交/)).toBeInTheDocument();
+   expect(await screen.findByText('另有 1 项变更不在回滚范围，将保留。')).toBeInTheDocument();
    expect(screen.getByRole('button',{name:'回滚到此处'})).toBeDisabled();
    fireEvent.click(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'}));
    await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled());
@@ -41,10 +41,12 @@ describe('history impact confirmation',()=>{
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','edit',expect.objectContaining({includeFiles:false})));
    expect(screen.queryByText('编辑并重新发送')).not.toBeInTheDocument();
  });
- it('states the expiry rule and distinguishes expired file history from missing chat history',async()=>{
+ it('flags expired file history as out of scope without spelling out the rule',async()=>{
    vi.mocked(conversationHistoryApi.preview).mockResolvedValue({checkpointId:'cp',revision:0,removedMessages:2,files:[],conflicts:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'expired.ts',kind:'expired',reason:'Expired'}],canApply:true});
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   expect(await screen.findByText(/expired.ts.*超过 24 小时未访问/)).toBeInTheDocument();expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
+   const hint=await screen.findByText('另有 1 项变更不在回滚范围，将保留。');
+   expect(hint).toHaveAttribute('title','expired.ts · 超过 24 小时未访问，撤销记录已清理');
+   expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
  });
  it.each([['reuse_worktree', '在原工作空间中'], ['new_worktree', '在新的工作树上']] as const)('executes %s directly from the two-option pop', async (mode, label) => {
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);

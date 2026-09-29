@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { visualizationDocument, VISUALIZATION_CSP } from "./document";
+import { VisualizationLoading } from "./VisualizationLoading";
 import "./visualizations.css";
 
 export interface InlineVisualizationReference {
@@ -163,7 +164,12 @@ function VisualizationInstance({
           <span>{error}</span>
         </div>
       ) : (
-        <div ref={container} />
+        <div
+          className="inline-visualization__surface"
+        >
+          <div ref={container} />
+          {!ready && <VisualizationLoading compact />}
+        </div>
       )}
     </div>
   );

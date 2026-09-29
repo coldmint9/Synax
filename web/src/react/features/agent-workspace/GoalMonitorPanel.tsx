@@ -44,7 +44,7 @@ export function statusFor(
     return "waiting";
   if (
     goal?.status === "executing" &&
-    ["interrupted", "cancelled", "completed"].includes(session.status)
+    ["interrupted", "cancelled", "completed", "paused"].includes(session.status)
   )
     return "paused";
   if (goal?.status === "executing" || session.status === "running")

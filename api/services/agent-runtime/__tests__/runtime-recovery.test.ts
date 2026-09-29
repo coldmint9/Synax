@@ -218,7 +218,7 @@ describe("restart recovery decisions", () => {
       message: "Exact pending input",
     });
   });
-  it("interrupts a stopped run without retaining a manual recovery block", async () => {
+  it("pauses a stopped run without retaining a manual recovery block", async () => {
     const session = agentSessionRuntime.create({
       ...plannerSessionInput,
       workDir: os.tmpdir(),
@@ -231,7 +231,7 @@ describe("restart recovery decisions", () => {
     agentRuntimeStore.updateRun(run.id, { status: "running" });
     expect(await recoverRuntime("new-host")).toEqual({ reviewed: 1, resumable: [] });
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
-      status: "interrupted",
+      status: "paused",
       activeRunId: null,
       pendingResumeToken: null,
     });

@@ -67,6 +67,7 @@ function useResizablePanel(
     readPanelWidth(storageKey, defaultWidth, min, max),
   );
   const [collapsed, setCollapsed] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const dragRef = useRef<{
     startX: number;
     startWidth: number;
@@ -82,6 +83,7 @@ function useResizablePanel(
       event.preventDefault();
       event.currentTarget.setPointerCapture?.(event.pointerId);
       cleanupRef.current?.();
+      setResizing(true);
       const panel = event.currentTarget.parentElement!;
       const scale =
         panel.getBoundingClientRect().width / panel.offsetWidth || 1;
@@ -115,6 +117,7 @@ function useResizablePanel(
           /* storage may be unavailable */
         }
         dragRef.current = null;
+        setResizing(false);
         cleanupRef.current = null;
         window.removeEventListener("pointercancel", handleUp);
         window.removeEventListener("pointermove", handleMove);
@@ -128,7 +131,7 @@ function useResizablePanel(
     [collapsed, max, min, side, width, storageKey],
   );
 
-  return { width, collapsed, setCollapsed, startResize };
+  return { width, collapsed, resizing, setCollapsed, startResize };
 }
 
 const SessionDetailSidebar = memo(function SessionDetailSidebar({
@@ -254,6 +257,7 @@ export default memo(function SessionsPage() {
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? "overflow-visible" : "overflow-hidden"}`}
           hidden={workspaceFullscreen}
           data-collapsed={leftPanel.collapsed ? "true" : undefined}
+          data-resizing={leftPanel.resizing ? "true" : undefined}
           style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
         >
           {/* While the panel is open the control lives next to the SynaxCode
@@ -266,8 +270,9 @@ export default memo(function SessionsPage() {
             />
           ) : null}
           <div
-            hidden={leftPanel.collapsed}
             className="h-full"
+            inert={leftPanel.collapsed}
+            aria-hidden={leftPanel.collapsed}
             style={{ width: leftPanel.width }}
           >
             <SessionListPanel

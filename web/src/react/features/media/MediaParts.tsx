@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Paperclip, X } from "lucide-react";
+import { Clipboard, Download, Paperclip, X } from "lucide-react";
 import {
   runtimeMedia,
   type RuntimeAsset,
@@ -16,6 +16,7 @@ function MediaAsset({
   const [url, setUrl] = useState<string>();
   const [error, setError] = useState("");
   const [opened, setOpened] = useState(false);
+  const [textContent, setTextContent] = useState<string>();
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (opened && dialogRef.current && !dialogRef.current.open)
@@ -31,6 +32,7 @@ function MediaAsset({
         setAsset(asset);
         const blob = await runtimeMedia.blob(id, controller.signal);
         if (controller.signal.aborted) return;
+        if (asset.mediaType === "text/plain") setTextContent(await blob.text());
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
       })
@@ -55,6 +57,10 @@ function MediaAsset({
       </span>
     );
   const image = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(asset.mediaType);
+  const text = asset.mediaType === "text/plain";
+  const copyText = async () => {
+    if (textContent !== undefined) await navigator.clipboard.writeText(textContent);
+  };
   return (
     <div className="relative max-w-full rounded-xl border border-border/50 bg-surface/60 p-2 text-xs">
       {onRemove && (
@@ -102,9 +108,20 @@ function MediaAsset({
       {!image && (
         <div className="mt-1 flex items-center gap-2">
           <Paperclip size={12} />
-          <span className="max-w-48 truncate" title={asset.filename}>
-            {asset.filename}
-          </span>
+          {text && url ? (
+            <button
+              type="button"
+              className="max-w-48 truncate text-left text-primary hover:underline"
+              title="预览文本摘要 / Preview text summary"
+              onClick={() => setOpened(true)}
+            >
+              {asset.filename}
+            </button>
+          ) : (
+            <span className="max-w-48 truncate" title={asset.filename}>
+              {asset.filename}
+            </span>
+          )}
           <span className="text-muted-foreground">
             {asset.size < 1024
               ? `${asset.size} B`
@@ -156,11 +173,31 @@ function MediaAsset({
           >
             <X />
           </button>
-          <img
-            src={url}
-            alt={asset.filename}
-            className="max-h-full max-w-full object-contain"
-          />
+          {text ? (
+            <div className="flex max-h-[80vh] w-[min(90vw,900px)] flex-col gap-3 rounded-xl bg-background p-4 text-foreground">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="truncate text-sm font-medium">{asset.filename}</h2>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-surface"
+                  onClick={() => void copyText()}
+                  disabled={textContent === undefined}
+                >
+                  <Clipboard size={13} />
+                  复制
+                </button>
+              </div>
+              <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 p-3 text-left text-xs leading-5">
+                {textContent ?? "加载文本… / Loading text…"}
+              </pre>
+            </div>
+          ) : (
+            <img
+              src={url}
+              alt={asset.filename}
+              className="max-h-full max-w-full object-contain"
+            />
+          )}
         </dialog>
       )}
     </div>

@@ -685,7 +685,7 @@ export function SessionComposer({
       isGenerating ||
       submitting ||
       !session ||
-      !["completed", "failed", "cancelled", "interrupted"].includes(
+      !["completed", "failed", "cancelled", "interrupted", "paused"].includes(
         session.status,
       ),
     disabled:
@@ -844,14 +844,6 @@ export function SessionComposer({
               onChange={handleModeChange}
             />
           ) : null}
-          {isDraft && (
-            <GitWorkspacePicker
-              projectId={projectId}
-              value={gitWorkspace ?? { kind: "default" }}
-              disabled={submitting || Boolean(createdDraftRef.current)}
-              onChange={setGitWorkspace}
-            />
-          )}
           {(isDraft || backendId !== "native") && (
             <SessionBackendPicker
               value={backendId}
@@ -1047,29 +1039,43 @@ export function SessionComposer({
         contentStyle={{ overflow: "visible" }}
         {...GOAL_FLAME_OPTIONS}
       >
-        <div
-          className={`agent-session-composer-shell agent-dock-shell w-full flex flex-col items-center${isCentered ? " agent-session-composer-shell--draft" : ""}`}
-          data-has-media={hasMediaInput ? "true" : "false"}
-          data-multiline="true"
-        >
+        {/* Keep the workspace trigger above the input's clipped content. */}
+        <div className="agent-session-composer-rail">
+          {isDraft && (
+            <div className="workspace-hill-anchor">
+              <GitWorkspacePicker
+                variant="hill"
+                projectId={projectId}
+                value={gitWorkspace ?? { kind: "default" }}
+                disabled={submitting || Boolean(createdDraftRef.current)}
+                onChange={setGitWorkspace}
+              />
+            </div>
+          )}
           <div
-            className="agent-dock-shell-content agent-composer-ask-switch"
-            data-ask-active={
-              hasPendingClarificationInteractions ? "true" : "false"
-            }
+            className={`agent-session-composer-shell agent-dock-shell w-full flex flex-col items-center${isCentered ? " agent-session-composer-shell--draft" : ""}`}
+            data-has-media={hasMediaInput ? "true" : "false"}
+            data-multiline="true"
           >
             <div
-              className="agent-composer-input-slot"
-              aria-hidden={hasPendingClarificationInteractions}
-              inert={hasPendingClarificationInteractions ? true : undefined}
+              className="agent-dock-shell-content agent-composer-ask-switch"
+              data-ask-active={
+                hasPendingClarificationInteractions ? "true" : "false"
+              }
             >
-              {composer}
-            </div>
-            {session && hasPendingClarificationInteractions && (
-              <div className="agent-composer-ask-slot">
-                <AgentInteractionPanel session={session} dock />
+              <div
+                className="agent-composer-input-slot"
+                aria-hidden={hasPendingClarificationInteractions}
+                inert={hasPendingClarificationInteractions ? true : undefined}
+              >
+                {composer}
               </div>
-            )}
+              {session && hasPendingClarificationInteractions && (
+                <div className="agent-composer-ask-slot">
+                  <AgentInteractionPanel session={session} dock />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </FlameWrap>

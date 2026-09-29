@@ -56,6 +56,16 @@ const ACTIVE_STATUSES = new Set<AgentSession["status"]>([
   "waiting_input",
 ]);
 export const useSessionHistory = () => useContext(HistoryContext);
+const PRESERVED_KIND_ZH: Record<
+  NonNullable<HistoryPreview["preservedFiles"]>[number]["kind"],
+  string
+> = {
+  committed: "已被 Git 提交",
+  git_unverified: "Git 状态无法确认，保留文件",
+  expired: "超过 24 小时未访问，撤销记录已清理",
+  untracked: "无法可靠归属，不自动撤销",
+  workspace: "工作目录已变更",
+};
 interface Pending {
   action: HistoryAction;
   checkpoint: MessageCheckpoint;
@@ -428,6 +438,9 @@ export function SessionHistoryProvider({
     ],
   );
   const title = zh ? "回滚到此处" : "Roll back to here";
+  const outOfScope = (preview?.preservedFiles ?? []).map(
+    (file) => `${file.path} · ${zh ? PRESERVED_KIND_ZH[file.kind] : file.reason}`,
+  );
   return (
     <HistoryContext.Provider value={value}>
       {summary?.recoveryRequired && (
@@ -487,11 +500,6 @@ export function SessionHistoryProvider({
               <DialogTitle>{title}</DialogTitle>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-3 text-sm">
-              <p>
-                {zh
-                  ? "后续消息将被裁剪。文件撤销仅针对本会话明确记录、尚未提交且未过期的变更；其他文件不会改动。"
-                  : "Later conversation records will be trimmed. File undo only affects this session’s recorded, uncommitted, unexpired changes; unrelated files are preserved."}
-              </p>
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" checked={includeFiles} disabled={executing}
                   onChange={(event) => changeFilePolicy(event.target.checked)} className="mt-1 accent-[var(--accent)]" />
@@ -513,7 +521,7 @@ export function SessionHistoryProvider({
                       ? `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
                       : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
                   </p>
-                  {preview.files.length > 0 && (
+                  {includeFiles && preview.files.length > 0 && (
                     <ul className="message-history-files">
                       {preview.files.slice(0, 80).map((file) => (
                         <li key={`${file.root}/${file.path}`} title={file.root}>
@@ -528,46 +536,21 @@ export function SessionHistoryProvider({
                       )}
                     </ul>
                   )}
-                  {Boolean(preview.preservedFiles?.length) && (
-                    <div
-                      className="rounded-xl border border-warning/20 bg-warning/5 p-3"
-                      role="status"
-                    >
-                      <p className="mb-2 font-medium">
-                        {zh
-                          ? "以下文件变更将保留，不影响会话裁剪"
-                          : "These file changes will be preserved; conversation trimming is still available"}
-                      </p>
-                      <ul className="max-h-36 overflow-auto text-xs">
-                        {preview.preservedFiles!.map((file, index) => (
-                          <li
-                            key={index}
-                            className="break-words py-1"
-                            title={file.root}
-                          >
-                            {file.path} ·{" "}
-                            {zh
-                              ? {
-                                  committed: "已被 Git 提交",
-                                  git_unverified: "Git 状态无法确认，保留文件",
-                                  expired: "超过 24 小时未访问，撤销记录已清理",
-                                  untracked: "无法可靠归属，不自动撤销",
-                                  workspace: "工作目录已变更",
-                                }[file.kind]
-                              : file.reason}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {Boolean(preview.warnings?.length) && (
+                  {includeFiles && (
+                    outOfScope.length > 0 || preview.warnings?.length
+                  ) && (
                     <p
-                      className="text-xs leading-relaxed text-warning"
+                      className="text-xs text-muted-foreground"
                       role="status"
+                      title={[...outOfScope, ...(preview.warnings ?? [])].join("\n")}
                     >
-                      {zh
-                        ? "部分旧历史、Shell/MCP 或外部变更没有可用的文件撤销记录，将保留这些文件；只处理上方明确列出的可撤销变更。"
-                        : preview.warnings!.join(" ")}
+                      {outOfScope.length > 0
+                        ? zh
+                          ? `另有 ${outOfScope.length} 项变更不在回滚范围，将保留。`
+                          : `${outOfScope.length} out-of-scope changes will be preserved.`
+                        : zh
+                          ? "部分变更不在回滚范围，将保留。"
+                          : "Some changes are out of scope and will be preserved."}
                     </p>
                   )}
                   {preview.conflicts.length > 0 && (
@@ -590,11 +573,6 @@ export function SessionHistoryProvider({
                       </ul>
                     </div>
                   )}
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {zh
-                      ? "24 小时未主动访问会话后，文件撤销记录自动清理，聊天历史保留。Git 已提交的变更、外部数据库与网络操作不会被撤销。"
-                      : "File undo expires after 24 hours without an active visit; conversation history remains. Git commits, external databases and network effects are preserved."}
-                  </p>
                 </>
               )}
               {error && (

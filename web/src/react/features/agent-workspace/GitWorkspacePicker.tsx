@@ -4,6 +4,7 @@ import {
   ComboboxInput,
   ComboboxOption,
   ComboboxOptions,
+  type PopoverPanelProps,
 } from "@headlessui/react";
 import { Popover, PopoverButton, PopoverPanel } from "@/react/components/ui/Popover";
 import { Tooltip } from "@/react/components/ui/Tooltip";
@@ -12,12 +13,17 @@ import type { GitWorkspaceSelection } from "../../../lib/api/agentRuntime";
 import { projectApi, type GitWorkspaceSummary } from "../../../lib/api/project";
 import { useLocale } from "../../../hooks/useLocale";
 import "./agentControls.css";
+import "./workspaceHill.css";
 
 interface Props {
   projectId: string;
   value: GitWorkspaceSelection;
   disabled: boolean;
   onChange: (selection: GitWorkspaceSelection) => void;
+  /** "hill" docks the trigger on the composer's top edge; "chip" keeps the toolbar chip. */
+  variant?: "chip" | "hill";
+  /** Overrides the panel anchor. The mound opens downwards so it clears the welcome title. */
+  panelAnchor?: PopoverPanelProps<"div">["anchor"];
 }
 
 type WorkspaceOption = {
@@ -61,11 +67,14 @@ function GitWorkspacePickerContent({
   value,
   disabled,
   onChange,
+  variant = "chip",
+  panelAnchor,
   open,
   close,
 }: Props & { open: boolean; close: () => void }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
+  const isHill = variant === "hill";
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<GitWorkspaceSummary | null>(null);
@@ -169,18 +178,31 @@ function GitWorkspacePickerContent({
         <PopoverButton
           disabled={disabled || loading}
           aria-label={zh ? "Git 工作区" : "Git workspace"}
-          className="agent-dock-composer-chip agent-mode-trigger"
+          className={
+            isHill
+              ? "workspace-hill"
+              : "agent-dock-composer-chip agent-mode-trigger"
+          }
         >
           {loading ? (
-            <LoaderCircle size={11} className="animate-spin" aria-hidden />
+            <LoaderCircle
+              size={isHill ? 13 : 11}
+              className="animate-spin"
+              aria-hidden
+            />
           ) : (
-            <GitBranch size={11} aria-hidden />
+            <GitBranch size={isHill ? 13 : 11} aria-hidden />
           )}
           <span>{label}</span>
         </PopoverButton>
       </Tooltip>
       <PopoverPanel
-        anchor={{ to: "top end", gap: 8, padding: 8 }}
+        anchor={
+          panelAnchor ??
+          (isHill
+            ? { to: "bottom start", gap: 10, padding: 8 }
+            : { to: "top end", gap: 8, padding: 8 })
+        }
         focus
         role="dialog"
         aria-label={zh ? "Git 工作区" : "Git workspace"}

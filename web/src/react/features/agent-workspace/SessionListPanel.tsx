@@ -102,7 +102,9 @@ export function SessionListPanel({
             selectedId={list.selectedId}
             isLoadingMore={list.isLoadingMore}
             hasMore={list.hasMore}
-            hideGroupHeaders={!list.hasPinned}
+            hideGroupHeaders={
+              listView === "sessions" ? false : !list.hasPinned
+            }
             onTogglePin={list.togglePin}
             emptyLabel={
               list.searchQuery.trim()

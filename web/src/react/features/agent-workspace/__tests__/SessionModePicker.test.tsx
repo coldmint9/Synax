@@ -45,7 +45,7 @@ const props = {
 
 describe("compact session mode control", () => {
   it.each([false, true])(
-    "keeps the placeholder clean and shows keyboard hints on hover (expanded=%s)",
+    "keeps the placeholder clean and never shows a hover hint (expanded=%s)",
     async (expanded) => {
       render(
         <AgentComposer
@@ -69,11 +69,13 @@ describe("compact session mode control", () => {
       );
       expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
       await userEvent.hover(screen.getByRole("textbox"));
-      expect(await screen.findByRole("tooltip")).toHaveTextContent("Shift+Enter for a new line · / for commands");
+      await waitFor(() =>
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+      );
     },
   );
 
-  it("puts keyboard hints in the input tooltip, not a separate layout row", () => {
+  it("renders no keyboard hint surface or description for the editor", () => {
     render(
       <AgentComposer
         {...props}
@@ -95,14 +97,10 @@ describe("compact session mode control", () => {
       "placeholder",
       "An idea, a question, a place to begin…",
     );
-    const hints = document.getElementById(
-      input.getAttribute("aria-describedby")!,
-    );
-    expect(hints).toHaveTextContent("Shift+Enter");
-    expect(hints).toHaveTextContent("commands");
-    expect(hints).toHaveClass("sr-only");
+    expect(input).not.toHaveAttribute("aria-describedby");
     expect(input).not.toHaveAttribute("title");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(document.querySelector(".sr-only")).toBeNull();
     expect(
       document.querySelector(".session-composer-keyboard-hints"),
     ).toBeNull();

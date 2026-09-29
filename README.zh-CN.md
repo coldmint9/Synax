@@ -142,4 +142,4 @@ npm run dev:web   # 仅 Web，5174 端口，~/.synax/web-dev
 
 ## 许可
 
-[MIT](./LICENSE)
+[Apache License 2.0](./LICENSE)

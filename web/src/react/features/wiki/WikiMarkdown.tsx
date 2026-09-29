@@ -2,18 +2,10 @@ import { memo } from 'react'
 import type { Components } from 'react-markdown'
 import { remarkGithubAlerts } from '../../../lib/remark-github-alerts'
 import { MarkdownRenderer, sharedMarkdownComponents } from '../../components/markdown/MarkdownRenderer'
-import { renderMarkdownCodeBlock } from '../../components/markdown/MarkdownCodeBlock'
+import { renderMarkdownPre } from '../../components/markdown/MarkdownCodeBlock'
 import { WikiTreeBlock } from './WikiTreeBlock'
 import { WikiPlainCodeBlock } from './WikiPlainCodeBlock'
 import { isAsciiTree } from './wikiTreeDetect'
-
-function renderCodeBlock(code: string, language?: string) {
-  return renderMarkdownCodeBlock(code, language, {
-    isTree: isAsciiTree,
-    renderTree: code => <WikiTreeBlock code={code} />,
-    renderPlain: code => <WikiPlainCodeBlock code={code} />,
-  })
-}
 
 const ALERT_LABELS: Record<string, string> = {
   note: 'Note',
@@ -47,27 +39,17 @@ const markdownComponents: Components = {
     )
   },
   pre({ children }) {
-    return <>{children}</>
+    return renderMarkdownPre(children, {
+      isTree: isAsciiTree,
+      renderTree: code => <WikiTreeBlock code={code} />,
+      renderPlain: code => <WikiPlainCodeBlock code={code} />,
+    })
   },
   table({ children, ...props }) {
     return (
       <div className="wiki-table-wrap">
         <table {...props}>{children}</table>
       </div>
-    )
-  },
-  code({ className, children, ...props }) {
-    const match = /language-([^\s]+)/.exec(className ?? '')
-    const language = match?.[1]
-    const code = String(children).replace(/\n$/, '')
-
-    const block = renderCodeBlock(code, language)
-    if (block) return block
-
-    return (
-      <code className={className} {...props}>
-        {children}
-      </code>
     )
   },
 }

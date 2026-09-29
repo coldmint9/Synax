@@ -2,7 +2,7 @@ import { ScrollArea, Surface, Text, Badge, Separator } from "@/react/components/
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../components/IconSurface";
 
-const VERSION = "1.5.0";
+const VERSION = "1.6.0";
 const REPO_URL = "https://github.com/coldmint9/Synax";
 const AUTHOR_URL = "https://github.com/coldmint9";
 
@@ -121,7 +121,7 @@ export default function AboutPage() {
                 Copyright (c) 2026 Synax contributors
               </Text>
               <Text variant="body-sm" color="muted">
-                MIT License
+                Apache License 2.0
               </Text>
             </section>
           </div>

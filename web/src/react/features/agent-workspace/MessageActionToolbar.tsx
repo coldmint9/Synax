@@ -6,12 +6,18 @@ import { Button } from "@/react/components/ui/Button";
 import { Check, Copy, GitFork, Pencil, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { copyTextToClipboard } from "../../../lib/clipboard";
+import { formatCompletionTimestamp } from "../../../lib/formatCompletionTimestamp";
 import { useLocale } from "../../../hooks/useLocale";
 import "./messageActions.css";
 
 interface Props {
   role: "user" | "assistant";
   text: string;
+  /**
+   * Completion stamp of the turn this toolbar belongs to. Hovering the row
+   * reveals it next to the rollback action; a running turn passes nothing.
+   */
+  timestamp?: string | null;
   disabledReason?: string | null;
   forkDisabledReason?: string | null;
   rollbackDisabled?: boolean;
@@ -24,6 +30,7 @@ interface Props {
 export function MessageActionToolbar({
   role,
   text,
+  timestamp,
   disabledReason,
   forkDisabledReason = disabledReason,
   rollbackDisabled,
@@ -35,6 +42,7 @@ export function MessageActionToolbar({
 }: Props) {
   const { locale } = useLocale(),
     zh = locale === "zh";
+  const stamp = formatCompletionTimestamp(timestamp);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -145,6 +153,11 @@ export function MessageActionToolbar({
                 : unavailable),
           )}
         </>
+      )}
+      {stamp && (
+        <time className="message-action-timestamp" dateTime={timestamp ?? undefined}>
+          {stamp}
+        </time>
       )}
       <span
         className="message-action-feedback sr-only"

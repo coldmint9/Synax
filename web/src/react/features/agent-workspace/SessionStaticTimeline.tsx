@@ -234,6 +234,7 @@ function TimelineRows({
         index: 0,
         status: "running",
         duration: null,
+        completedAt: null,
         blocks: materializeLiveBlocks(live),
       },
     });
@@ -403,6 +404,9 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
             index: snapshot.stepIndex,
             status: "completed",
             duration: null,
+            // A live snapshot has no server completion time yet; the persisted
+            // step replaces this row with its own stamp.
+            completedAt: null,
             blocks: snapshot.blocks,
           },
         },

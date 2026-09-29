@@ -10,11 +10,13 @@ export function patchAgentSession(
   const merged = { ...session, ...patch };
   const legacyStatus = (merged as { status: string }).status;
   const next: AgentSession =
-    legacyStatus === "blocked" || legacyStatus === "paused"
+    legacyStatus === "blocked"
       ? { ...merged, status: "completed" }
       : merged;
   if (next.profileId !== "synax" && next.profileId !== "goal") return next;
   if (next.status === "stopping") return { ...next, status: "running" };
+  // "paused" stays paused: a resting state that still offers one-click resume.
+  if (next.status === "paused") return next;
   // A failed run keeps its own state so the session list can flag it with a red
   // dot; cancelled/interrupted still fold into the resting state.
   if (["cancelled", "interrupted"].includes(next.status)) {
@@ -93,7 +95,10 @@ export function canEnqueueSessionInput(
 /** Statuses where the send key becomes a resume (play) control. A failed Run is
  *  not resumable server-side (it has no pending Run), so it never gets one. */
 export function isSessionResumable(session: AgentSession | undefined): boolean {
-  return Boolean(session && session.status === "interrupted");
+  return Boolean(
+    session &&
+      (session.status === "interrupted" || session.status === "paused"),
+  );
 }
 
 export function sessionHasPendingPermissions(

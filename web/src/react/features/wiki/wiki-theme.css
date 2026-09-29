@@ -76,13 +76,13 @@
 .wiki-markdown .shiki,
 .wiki-markdown .shiki span {
   color: var(--shiki-light) !important;
-  background-color: var(--shiki-light-bg) !important;
+  background-color: transparent !important;
 }
 
 html.dark .wiki-markdown .shiki,
 html.dark .wiki-markdown .shiki span {
   color: var(--shiki-dark) !important;
-  background-color: var(--shiki-dark-bg) !important;
+  background-color: transparent !important;
 }
 
 .wiki-markdown .wiki-shiki-block .shiki span {
@@ -451,9 +451,9 @@ html.dark .wiki-markdown .shiki span {
 
 /* ── Mermaid / diagram container ── */
 .wiki-markdown :where(.wiki-mermaid, .wiki-mermaid-block, pre:has(code.language-mermaid)) {
-  background: var(--wiki-surface);
-  border: 1px solid var(--wiki-border);
-  border-radius: var(--wiki-radius);
+  background: color-mix(in srgb, var(--ui-accent) 3.5%, transparent);
+  border: 0;
+  border-radius: var(--theme-radius-lg);
   padding: 24px;
   margin: 20px 0;
   text-align: center;

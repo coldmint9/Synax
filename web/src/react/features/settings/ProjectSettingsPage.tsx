@@ -92,7 +92,8 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
     section === "general" ||
     section === "archive" ||
     section === "mcpServers" ||
-    section === "computerUse"
+    section === "computerUse" ||
+    section === "llmProviders"
       ? null
       : section;
 

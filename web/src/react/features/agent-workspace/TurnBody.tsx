@@ -211,6 +211,7 @@ export function TurnBody({
         <MessageActionToolbar
           role="assistant"
           text={text}
+          timestamp={isStreaming ? null : turn.completedAt}
           disabledReason={history?.reason || checkpoint?.reason || undefined}
           forkDisabledReason={history?.forkReason || checkpoint?.reason || null}
           rollbackDisabled={

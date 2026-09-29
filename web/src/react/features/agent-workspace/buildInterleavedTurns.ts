@@ -51,6 +51,8 @@ export interface InterleavedTurn {
   index: number;
   status: string;
   duration: string | null;
+  /** Null while the step is still running, so the UI can omit the stamp. */
+  completedAt: string | null;
   blocks: TurnContentBlock[];
 }
 
@@ -304,6 +306,7 @@ export function buildInterleavedTurns(
       index: step.index,
       status: step.status,
       duration: computeDuration(step),
+      completedAt: step.completedAt,
       blocks,
     };
   });

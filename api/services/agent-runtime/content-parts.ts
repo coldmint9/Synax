@@ -12,7 +12,11 @@ const partProviderOptionsSchema = z
   .record(z.string(), z.record(z.string(), z.json()))
   .optional();
 export const runtimeContentPartSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string().max(100_000) }),
+  z.object({
+    type: z.literal("text"),
+    text: z.string().max(100_000),
+    attachmentName: z.string().max(255).optional(),
+  }),
   z.object({
     type: z.literal("image"),
     assetId: z.string().regex(/^asset_[a-f0-9]{32}$/),

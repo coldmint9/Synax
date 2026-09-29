@@ -140,22 +140,31 @@ describe("sessionComposerState", () => {
     expect(patchAgentSession(makeSession(), { status }).status).toBe(expected);
   });
 
-  it("offers the resume control only for interrupted sessions", () => {
+  it("offers the resume control for interrupted and paused sessions", () => {
     expect(isSessionResumable(makeSession({ status: "interrupted" }))).toBe(true);
+    expect(isSessionResumable(makeSession({ status: "paused" }))).toBe(true);
     expect(isSessionResumable(makeSession({ status: "failed" }))).toBe(false);
     expect(isSessionResumable(makeSession({ status: "completed" }))).toBe(false);
   });
 
-  it.each(["blocked", "paused"] as const)(
-    "normalizes legacy %s patches for every profile",
-    (status) => {
-      const legacyPatch = { status } as unknown as Partial<AgentSession>;
-      expect(
-        patchAgentSession(makeSession({ profileId: "explorer" }), legacyPatch)
-          .status,
-      ).toBe("completed");
-    },
-  );
+  it("normalizes the retired legacy blocked patch for every profile", () => {
+    const legacyPatch = { status: "blocked" } as unknown as Partial<AgentSession>;
+    expect(
+      patchAgentSession(makeSession({ profileId: "explorer" }), legacyPatch)
+        .status,
+    ).toBe("completed");
+  });
+
+  it("keeps a paused patch paused so the resume control survives", () => {
+    expect(patchAgentSession(makeSession(), { status: "paused" }).status).toBe(
+      "paused",
+    );
+    expect(
+      patchAgentSession(makeSession({ profileId: "explorer" }), {
+        status: "paused",
+      } as Partial<AgentSession>).status,
+    ).toBe("paused");
+  });
 
   it("detects pending permissions only for the selected session", () => {
     const permissions = [makePermission()];

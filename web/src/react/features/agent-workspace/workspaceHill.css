@@ -1,0 +1,60 @@
+/** Plain workspace trigger above the input, inset from its left edge. */
+.agent-session-composer-rail {
+  position: relative;
+  width: 100%;
+}
+
+.workspace-hill-anchor {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 24px;
+  max-width: calc(100% - 48px);
+}
+
+.workspace-hill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow: none;
+}
+
+.workspace-hill > svg {
+  flex-shrink: 0;
+}
+
+.workspace-hill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-hill:focus-visible {
+  outline: none;
+}
+
+.workspace-hill:not(:disabled):hover > span,
+.workspace-hill:focus-visible > span {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.workspace-hill:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}

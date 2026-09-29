@@ -9,7 +9,8 @@ export function ProjectCapabilitiesSection({ projectId }: { projectId: string; s
     section === 'general' ||
     section === 'archive' ||
     section === 'mcpServers' ||
-    section === 'computerUse'
+    section === 'computerUse' ||
+    section === 'llmProviders'
       ? 'skill'
       : section
   return <SettingsFrame section={selected} onSelect={setSection} projectId={projectId} projectMode>

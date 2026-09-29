@@ -27,14 +27,9 @@ export default function GlobalSettingsPage() {
   const projectId = useShellStore(state => state.currentProjectId);
   const [params, setParams] = useSearchParams();
   const selected = params.get('section') ?? 'general';
-  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse'].includes(selected) ? selected as SettingsSection : 'general';
+  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse', 'llmProviders'].includes(selected) ? selected as SettingsSection : 'general';
   const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
-  const goToProviders = () => {
-    select('general');
-    window.setTimeout(() => {
-      document.getElementById('settings-llm-providers')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 0);
-  };
+  const goToProviders = () => select('llmProviders');
 
   useEffect(() => {
     const handler = () => {
@@ -59,6 +54,15 @@ export default function GlobalSettingsPage() {
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
           {section === "archive" ? (
             <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
+          ) : section === "llmProviders" ? (
+            <div className="space-y-8">
+              <LlmProviderSection
+                config={globalConfig}
+                providers={providers}
+                onUpdate={updateGlobalConfig}
+                onReload={reload}
+              />
+            </div>
           ) : section === "mcpServers" ? (
             <McpServersSection
               servers={globalConfig.mcpServers}
@@ -90,14 +94,6 @@ export default function GlobalSettingsPage() {
               configuredPath={globalConfig.terminalShellPath}
               onUpdate={updateGlobalConfig}
             />
-            <div id="settings-llm-providers">
-              <LlmProviderSection
-                config={globalConfig}
-                providers={providers}
-                onUpdate={updateGlobalConfig}
-                onReload={reload}
-              />
-            </div>
             <InputOptimizationSettings
               config={globalConfig}
               onUpdate={updateGlobalConfig}

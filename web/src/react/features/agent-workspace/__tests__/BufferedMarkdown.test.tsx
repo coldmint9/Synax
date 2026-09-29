@@ -76,6 +76,9 @@ describe("BufferedMarkdown", () => {
     expect(
       container.querySelector(".markdown-stream-pending"),
     ).toBeInTheDocument();
+    expect(container.querySelector(".markdown-code-block__header")).toHaveTextContent("ts");
+    expect(container.querySelector(".markdown-stream-pending code")).toHaveTextContent("const x = 1");
+    expect(container.querySelector(".markdown-stream-pending code")).not.toHaveTextContent("```");
     expect(
       container.querySelector(".wiki-shiki-block"),
     ).not.toBeInTheDocument();

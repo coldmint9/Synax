@@ -1,6 +1,8 @@
 import { hideVisualizationSource } from "./visualizationTranscript";
 import { memo } from "react";
 import { BufferedMarkdown } from "./BufferedMarkdown";
+import { hasVisualization } from "../../../../../api/services/agent-runtime/visualization-protocol";
+import { VisualizationLoading } from "../visualizations/VisualizationLoading";
 
 interface Props {
   text: string;
@@ -15,17 +17,21 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
   markdown = false,
   startDelayMs = 0,
 }: Props) {
+  const containsVisualization = isStreaming && hasVisualization(text);
   text = hideVisualizationSource(text, isStreaming);
   if (!text && !isStreaming) return null;
 
   if (markdown) {
     return (
-      <BufferedMarkdown
-        content={text}
-        isStreaming={isStreaming}
-        startDelayMs={startDelayMs}
-        className="feed-prose"
-      />
+      <>
+        <BufferedMarkdown
+          content={text}
+          isStreaming={isStreaming}
+          startDelayMs={startDelayMs}
+          className="feed-prose"
+        />
+        {containsVisualization && <VisualizationLoading />}
+      </>
     );
   }
 

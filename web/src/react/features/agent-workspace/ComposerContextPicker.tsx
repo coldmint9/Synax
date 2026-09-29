@@ -16,8 +16,6 @@ import { OverlayStateObserver } from "@/react/components/ui/OverlayStateObserver
 import {
   Check,
   Paperclip,
-  MessageCircle,
-  Target,
   ArrowLeft,
   Minimize2,
   Loader2,
@@ -99,8 +97,8 @@ function ContextPickerContent({
   const unified = Boolean(onAttachFiles || hasModes);
   const selectedMode = mode === "plan" || mode === "plan_node" ? "chat" : mode;
   const modeOptions = [
-    { id: "chat", label: zh ? "对话" : "Chat", Icon: MessageCircle },
-    { id: "goal", label: zh ? "目标" : "Goal", Icon: Target },
+    { id: "chat", label: "Chat" },
+    { id: "goal", label: "Goal" },
   ] as const;
   const [kind, setKind] = useState<TurnReference["kind"] | null>(null);
   const typeButtons = useRef<
@@ -461,24 +459,21 @@ function ContextPickerContent({
                 <div className="session-context-picker-heading">
                   {zh ? "工作模式" : "Work mode"}
                 </div>
-                {modeOptions.map(({ id, label, Icon }) => (
+                <div className="session-composer-mode-toggle">
+                {modeOptions.map(({ id, label }) => (
                   <Radio
                     as="button"
                     type="button"
                     key={id}
                     value={id}
                     aria-label={label}
-                    className="session-context-picker-option session-composer-mode-option"
+                    className="session-composer-mode-option"
                     data-mode={id}
                   >
-                    <Icon size={15} aria-hidden="true" />
                     <span>{label}</span>
-                    {(mode === id ||
-                      (id === "chat" && mode === "plan_node")) && (
-                      <Check size={14} className="ms-auto" aria-hidden="true" />
-                    )}
                   </Radio>
                 ))}
+                </div>
               </RadioGroup>
             )}
             <button

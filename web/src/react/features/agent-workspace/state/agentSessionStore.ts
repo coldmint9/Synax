@@ -328,7 +328,8 @@ function isTerminalSessionStatus(
     status === "completed" ||
     status === "failed" ||
     status === "cancelled" ||
-    status === "interrupted"
+    status === "interrupted" ||
+    status === "paused"
   );
 }
 
@@ -2353,7 +2354,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         const session = get().sessions.find((s) => s.id === sessionId);
         const mode =
           session &&
-          ["interrupted", "cancelled", "failed", "completed"].includes(
+          ["interrupted", "cancelled", "failed", "completed", "paused"].includes(
             session.status,
           )
             ? "continue"
@@ -2640,7 +2641,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         patch.status === "completed" ||
         patch.status === "failed" ||
         patch.status === "cancelled" ||
-        patch.status === "interrupted";
+        patch.status === "interrupted" ||
+        patch.status === "paused";
       if (
         terminal &&
         get().selectedSessionId === sessionId &&

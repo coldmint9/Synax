@@ -130,7 +130,7 @@ function fallbackTitleFromUserInput(userInput: string): string | null {
   return truncateInitialTitle(trimmed);
 }
 
-/** Short requests already make useful titles; never spend an LLM call on them. */
+/** Short requests can serve as provisional titles outside the session composer. */
 export function shortSessionTitle(userInput: string): string | null {
   const text = userInput.trim();
   return text &&
@@ -199,20 +199,13 @@ async function applyGeneratedSessionTitle(
   trigger: "run_started" | "stream_done",
   runId?: string,
 ): Promise<void> {
-  const directTitle = shortSessionTitle(userInput);
-  const llmTitle =
-    directTitle ??
-    (await resolveSessionTitleText(
-      session.id,
-      session.projectId,
-      session.profileId,
-      userInput,
-    ));
-  if (
-    !directTitle &&
-    llmTitle &&
-    !isValidGeneratedSessionTitle(llmTitle.trim())
-  ) {
+  const llmTitle = await resolveSessionTitleText(
+    session.id,
+    session.projectId,
+    session.profileId,
+    userInput,
+  );
+  if (llmTitle && !isValidGeneratedSessionTitle(llmTitle.trim())) {
     logger.warn(
       {
         sessionId: session.id,
@@ -224,9 +217,7 @@ async function applyGeneratedSessionTitle(
     );
   }
 
-  const resolved = directTitle
-    ? { title: directTitle, usedFallback: false }
-    : resolveFinalSessionTitle(llmTitle, userInput);
+  const resolved = resolveFinalSessionTitle(llmTitle, userInput);
   if (!resolved) {
     logger.warn(
       { sessionId: session.id, runId: runId ?? null, trigger },
@@ -267,13 +258,13 @@ export function resolveInitialSessionTitle(input: {
   prompt: string;
 }): string | null {
   const meta = input.sessionMetadata;
+  if (isSessionComposerSource(meta?.source)) {
+    return DEFAULT_NEW_SESSION_TITLE;
+  }
   const direct = shortSessionTitle(
     resolveSessionTitleInput(input) ?? input.prompt,
   );
   if (direct) return direct;
-  if (isSessionComposerSource(meta?.source)) {
-    return DEFAULT_NEW_SESSION_TITLE;
-  }
 
   const userInput = resolveSessionTitleInput(input);
   if (userInput) return truncateInitialTitle(userInput);
@@ -378,8 +369,6 @@ export async function resolveSessionTitleText(
   profileId: string,
   userInput: string,
 ): Promise<string | null> {
-  const direct = shortSessionTitle(userInput);
-  if (direct && profileId === "synax") return direct;
   const ctx: TitleGeneratorContext = {
     sessionId,
     projectId,
@@ -479,6 +468,16 @@ async function resolveTitleTextWithLlm(
  * duplicate the model call.
  */
 export function registerSessionTitleHooks(): void {
+  sessionHooks.register({
+    id: "session-title-after-run-start",
+    filter: { eventTypes: ["run:started"] },
+    handler: (event) => {
+      if (event.type !== "run:started") return;
+      const session = agentRuntimeStore.tryGetSession(event.sessionId);
+      if (!session?.parentSessionId) return;
+      scheduleSessionTitleAfterRunStart(event.sessionId, event.runId);
+    },
+  });
   sessionHooks.register({
     id: "session-title-after-run",
     filter: { eventTypes: ["run:completed"] },

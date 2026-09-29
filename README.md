@@ -142,4 +142,4 @@ Automation currently means manually triggered one-click presets, not scheduled r
 
 ## License
 
-[MIT](./LICENSE)
+[Apache License 2.0](./LICENSE)

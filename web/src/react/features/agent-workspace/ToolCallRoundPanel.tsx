@@ -9,7 +9,6 @@ import { ElapsedTimer, PixelLoader } from "./LoadingState";
 import {
   hasDisplayableReasoning,
   latestActivityPreview,
-  latestThinkingIndex,
 } from "./activityText";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
 
@@ -31,7 +30,14 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   );
   // Only the newest thought mounts its row here; the earlier ones are read-only
   // history and would each add a collapsed row that can never change again.
-  const latestThought = latestThinkingIndex(toolBlocks);
+  // Keep this row out of the source-order loop: new tool calls must append
+  // without moving the thinking DOM node through the list.
+  const latestThought = [...toolBlocks]
+    .reverse()
+    .find((block) => block.type === "thinking");
+  const activityBlocks = toolBlocks.filter(
+    (block) => block.type !== "thinking",
+  );
   const previews = toolBlocks
     .flatMap((block, index) => {
       // Each record previews its latest line: a row reports where the round is
@@ -88,24 +94,24 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
         footer={isStreaming ? <ElapsedTimer /> : undefined}
       >
         <div className="bui-tool-list">
-          {toolBlocks.map((block, index) =>
-            block.type === "thinking" ? (
-              index === latestThought ? (
-                <ThinkingBlock
-                  key={`thinking-${index}`}
-                  content={block.content}
-                  isStreaming={isStreaming && index === toolBlocks.length - 1}
-                />
-              ) : null
-            ) : (
-              toolBlocksToBatches([block]).map((batch) => (
-                <ToolCallBatchSummaryLine
-                  key={`${batch.toolId}-${batch.calls[0]?.id}`}
-                  batch={batch}
-                />
-              ))
-            ),
+          {activityBlocks.flatMap((block) =>
+            toolBlocksToBatches([block]).map((batch) => (
+              <ToolCallBatchSummaryLine
+                key={`${batch.toolId}-${batch.calls[0]?.id}`}
+                batch={batch}
+              />
+            )),
           )}
+          {latestThought?.type === "thinking" ? (
+            <ThinkingBlock
+              key="thinking-latest"
+              content={latestThought.content}
+              isStreaming={
+                isStreaming &&
+                toolBlocks[toolBlocks.length - 1] === latestThought
+              }
+            />
+          ) : null}
         </div>
       </ThinkingTrace>
     </div>

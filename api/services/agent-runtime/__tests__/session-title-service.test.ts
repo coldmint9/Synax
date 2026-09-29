@@ -28,17 +28,20 @@ const LONG_INPUT =
 const mockGenerateGatewayTextResult = vi.mocked(generateGatewayTextResult);
 
 describe("resolveInitialSessionTitle", () => {
-  it("uses short user input immediately for agent page draft sessions", () => {
-    expect(
-      resolveInitialSessionTitle({
-        sessionMetadata: {
-          source: "session-page",
-          goalContent: "帮我看看认证模块",
-        },
-        prompt: "帮我看看认证模块",
-      }),
-    ).toBe("帮我看看认证模块");
-  });
+  it.each(["session-page", "agent-dock", "goal-dock"])(
+    "defers short %s titles to asynchronous generation",
+    (source) => {
+      expect(
+        resolveInitialSessionTitle({
+          sessionMetadata: {
+            source,
+            goalContent: "帮我看看认证模块",
+          },
+          prompt: "帮我看看认证模块",
+        }),
+      ).toBe("new session");
+    },
+  );
 
   it.each(["agent-dock", "goal-dock"])(
     "counts short titles by Unicode code points and defers long %s requests",
@@ -127,10 +130,10 @@ describe("session title after first run", () => {
         },
       });
       expect(second.id).not.toBe(first.id);
-      expect(agentRuntimeStore.getSession(first.id).title).toBe(
+      expect(agentRuntimeStore.getSession(first.id).prompt).toBe(
         "First request",
       );
-      expect(agentRuntimeStore.getSession(second.id).title).toBe(
+      expect(agentRuntimeStore.getSession(second.id).prompt).toBe(
         "Second request",
       );
     } finally {
@@ -138,7 +141,7 @@ describe("session title after first run", () => {
     }
   });
 
-  it("uses short inputs across parallel sessions without any model requests", async () => {
+  it("generates short-input titles asynchronously across parallel active sessions", async () => {
     const sessions = ["修复登录", "Fix billing", "调试网络"].map((prompt) =>
       agentSessionRuntime.create({
         projectId: "project-alpha",
@@ -147,12 +150,18 @@ describe("session title after first run", () => {
         sessionMetadata: { source: "session-page", goalContent: prompt },
       }),
     );
-    for (const session of sessions) ensureSessionTitleGenerated(session.id);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(
-      sessions.map((session) => agentRuntimeStore.getSession(session.id).title),
-    ).toEqual(["修复登录", "Fix billing", "调试网络"]);
+    for (const session of sessions) {
+      const runId = `run_${session.id}`;
+      agentRuntimeStore.updateSession(session.id, { activeRunId: runId });
+      scheduleSessionTitleAfterRunStart(session.id, runId);
+    }
     expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(
+        sessions.map((session) => agentRuntimeStore.getSession(session.id).title),
+      ).toEqual(["问候用户", "问候用户", "问候用户"]);
+    });
+    expect(mockGenerateGatewayTextResult).toHaveBeenCalledTimes(3);
   });
 
   it("binds out-of-order model results to their original session and preserves manual renames", async () => {

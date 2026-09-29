@@ -37,6 +37,7 @@ export type AgentSessionStatus =
   | "running"
   | "waiting_permission"
   | "waiting_input"
+  | "paused"
   | "completed"
   | "failed"
   | "cancelled"

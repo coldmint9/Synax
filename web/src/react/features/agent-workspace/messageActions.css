@@ -42,12 +42,21 @@
   line-height: 1.4;
   color: hsl(var(--muted-foreground));
 }
+.message-action-timestamp {
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+  color: hsl(var(--muted-foreground) / 0.75);
+}
 .message-inline-editor {
   width: min(100%, 42rem);
   padding: 12px;
   border: 1px solid
     color-mix(in srgb, var(--color-primary, var(--accent)) 30%, transparent);
-  border-radius: 16px;
+  border-radius: 20px;
   background: var(--surface, var(--background));
   box-shadow: 0 0 0 3px
     color-mix(in srgb, var(--color-primary, var(--accent)) 6%, transparent);
@@ -57,7 +66,7 @@
   width: 100%;
   min-height: 84px;
   max-height: 45vh;
-  resize: vertical;
+  resize: none;
   border: 0;
   outline: 0;
   background: transparent;

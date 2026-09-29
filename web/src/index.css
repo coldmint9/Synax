@@ -2503,14 +2503,33 @@
   @apply my-3 border-border/40;
 }
 .feed-prose table {
-  @apply w-full border-collapse my-2.5 text-[0.92em];
+  @apply w-full border-separate border-spacing-0 border-0 my-2.5 text-[0.92em];
+  border-radius: var(--theme-radius-lg);
 }
 .feed-prose th,
 .feed-prose td {
-  @apply border border-border/60 px-2 py-1 text-left;
+  @apply border-0 px-3 py-2 text-left;
 }
 .feed-prose th {
   @apply bg-primary/[0.06] font-semibold;
+}
+.feed-prose td {
+  @apply bg-primary/[0.025];
+}
+.feed-prose tbody tr + tr td {
+  @apply border-t border-border/25;
+}
+.feed-prose thead tr:first-child > :first-child {
+  border-top-left-radius: var(--theme-radius-lg);
+}
+.feed-prose thead tr:first-child > :last-child {
+  border-top-right-radius: var(--theme-radius-lg);
+}
+.feed-prose tbody tr:last-child > :first-child {
+  border-bottom-left-radius: var(--theme-radius-lg);
+}
+.feed-prose tbody tr:last-child > :last-child {
+  border-bottom-right-radius: var(--theme-radius-lg);
 }
 .feed-prose img {
   @apply max-w-full rounded;
@@ -2590,7 +2609,7 @@
   cursor: pointer;
 }
 .markdown-stream-pending {
-  @apply rounded-lg border border-primary/20 bg-primary/[0.05] p-2.5 my-2.5 overflow-x-auto;
+  @apply border-0 p-3 overflow-x-auto;
   white-space: pre-wrap;
 }
 .markdown-stream-pending code {
@@ -2605,20 +2624,33 @@
 }
 
 /* Mermaid and Shiki are shared by Wiki and transcript Markdown. */
-.agent-conversation-copy .wiki-mermaid {
+.wiki-mermaid {
   max-width: 100%;
   margin: 0.75rem 0;
   padding: 0.75rem;
   overflow-x: auto;
-  border: 1px solid hsl(var(--primary) / 0.18);
-  border-radius: 0.65rem;
-  background: hsl(var(--primary) / 0.035);
+  border: 0;
+  border-radius: var(--theme-radius-lg);
+  background: color-mix(in srgb, var(--ui-accent) 3.5%, transparent);
 }
-.agent-conversation-copy .wiki-mermaid svg {
+.wiki-mermaid svg {
   display: block;
   max-width: 100%;
   height: auto;
   margin: 0 auto;
+}
+/* Round box-shaped nodes only; preserve semantic shapes and connectors. */
+.wiki-mermaid :where(
+  .node[data-shape="rectangle"],
+  .node[data-shape="rounded"],
+  .actor,
+  .subgraph,
+  .class-node,
+  .entity,
+  .block
+) > rect {
+  rx: var(--theme-radius-lg);
+  ry: var(--theme-radius-lg);
 }
 /* Shiki emits a dual-theme pre. Keep the same surface in transcript and Wiki. */
 .agent-conversation-copy .wiki-shiki-block,
@@ -2634,14 +2666,63 @@
 .agent-conversation-copy .wiki-shiki-block .shiki,
 .agent-conversation-copy .wiki-shiki-block .shiki span {
   color: var(--shiki-light) !important;
-  background-color: var(--shiki-light-bg) !important;
+  background-color: transparent !important;
 }
 html.dark .agent-conversation-copy .wiki-shiki-block .shiki,
 html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   color: var(--shiki-dark) !important;
-  background-color: var(--shiki-dark-bg) !important;
+  background-color: transparent !important;
 }
 .agent-conversation-copy .wiki-shiki-block .shiki span {
+  background-color: transparent !important;
+}
+
+/* Shared code surface for highlighted, plain and still-streaming fences. */
+.markdown-code-block {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0.75rem 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--theme-radius-lg);
+  background: var(--ui-panel-soft);
+}
+.markdown-code-block__header {
+  padding: 0.5rem 0.875rem;
+  background: color-mix(in srgb, var(--ui-accent) 5%, transparent);
+  color: var(--ui-subtle);
+  font-family: var(--font-interface);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-conversation-copy .markdown-code-block .wiki-shiki-block,
+.agent-conversation-copy .markdown-code-block pre,
+.markdown-code-block .wiki-shiki-block,
+.markdown-code-block .wiki-tree-block,
+.markdown-code-block pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.agent-conversation-copy .markdown-code-block pre,
+.markdown-code-block pre {
+  max-width: 100%;
+  padding: 0.75rem 0.875rem;
+  overflow-x: auto;
+}
+.markdown-code-block pre code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* Keep Shiki token colors, but let the shared surface own the background. */
+.markdown-code-block .wiki-shiki-block .shiki,
+.markdown-code-block .wiki-shiki-block .shiki span {
   background-color: transparent !important;
 }
 
@@ -4402,6 +4483,56 @@ input[type="radio"] {
   border-radius: 12px;
   background: transparent;
   transition: background-color 140ms ease, border-color 140ms ease;
+}
+.session-list-item--child::before,
+.session-list-item--child::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+.session-list-item--child::before {
+  left: -12px;
+  top: -6px;
+  bottom: -6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--ui-line) 80%, transparent);
+}
+.session-list-item--child::after {
+  left: -12px;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: color-mix(in srgb, var(--ui-line) 80%, transparent);
+}
+.session-list-item--child[data-tree-last="true"]::before {
+  bottom: 50%;
+}
+.session-list-item--child::before,
+.session-list-item--child::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+.session-list-item--child::before {
+  top: -6px;
+  bottom: -6px;
+  left: -12px;
+  border-left: 1px solid color-mix(in srgb, var(--ui-text) 22%, transparent);
+}
+.session-list-item--child::after {
+  top: 50%;
+  left: -12px;
+  width: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--ui-text) 22%, transparent);
+}
+.session-list-item--child:last-child::before {
+  bottom: 50%;
+}
+.session-list-item--child > * {
+  position: relative;
+  z-index: 1;
 }
 /* Hover is a flat ink wash; only selection owns the elevated card surface. */
 .session-list-item:not(.session-list-item--active):hover,

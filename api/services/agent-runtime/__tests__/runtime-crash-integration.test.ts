@@ -29,7 +29,7 @@ describe('real host crash recovery', () => {
       const { agentRuntimeStore } = await import('../session-store.js');
       expect(await recoverRuntime(lease.hostId)).toEqual({ reviewed: 1, resumable: [] });
       expect(agentRuntimeStore.getSession(info.sessionId)).toMatchObject({
-        status: 'interrupted',
+        status: 'paused',
         blockedReason: expect.stringMatching(/interrupted/i),
         activeRunId: null,
         pendingResumeToken: null,

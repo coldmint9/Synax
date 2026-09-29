@@ -72,6 +72,40 @@ describe("ToolCallRoundPanel placeholder reasoning", () => {
     expect(container).not.toHaveTextContent("...");
   });
 
+  it("keeps the latest thought at the bottom while tools are appended", () => {
+    const first = toolCall("call-1");
+    const second = toolCall("call-2");
+    const { container, rerender } = render(
+      <ToolCallRoundPanel
+        isStreaming
+        toolBlocks={[
+          { type: "thinking", content: "Thinking" },
+          { type: "tool_call", call: first },
+        ]}
+      />,
+    );
+
+    const list = container.querySelector(".bui-tool-list");
+    const thought = list?.querySelector(
+      '.bui-thinking[data-variant="reasoning"]',
+    );
+    expect(list?.lastElementChild).toBe(thought);
+
+    rerender(
+      <ToolCallRoundPanel
+        isStreaming
+        toolBlocks={[
+          { type: "thinking", content: "Thinking" },
+          { type: "tool_call", call: first },
+          { type: "tool_call", call: second },
+        ]}
+      />,
+    );
+
+    expect(list?.lastElementChild).toBe(thought);
+    expect(list?.querySelectorAll(".bui-tool")).toHaveLength(2);
+  });
+
   it("mounts only the newest reasoning row of the round", () => {
     const { container } = render(
       <ToolCallRoundPanel

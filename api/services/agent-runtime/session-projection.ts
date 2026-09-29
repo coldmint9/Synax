@@ -7,6 +7,7 @@ const CANONICAL_SESSION_STATUSES = new Set<AgentSession['status']>([
   'running',
   'waiting_permission',
   'waiting_input',
+  'paused',
   'completed',
   'failed',
   'cancelled',
@@ -15,7 +16,10 @@ const CANONICAL_SESSION_STATUSES = new Set<AgentSession['status']>([
 
 /** Normalize legacy persisted/wire values at every AgentSession boundary. */
 export function normalizeAgentSessionStatus(status: unknown): AgentSession['status'] {
-  if (status === 'blocked' || status === 'paused') return 'completed';
+  // `blocked` is a retired legacy value. `paused` is a first-class status again
+  // (stopped by the user, or recovered after a forced process exit), so it must
+  // never be folded away: the pause is what makes the session resumable.
+  if (status === 'blocked') return 'completed';
   return CANONICAL_SESSION_STATUSES.has(status as AgentSession['status'])
     ? status as AgentSession['status']
     : 'completed';
@@ -40,6 +44,9 @@ export function projectSessionState(session: AgentSession): AgentSession {
     if (normalized.status === 'waiting_permission' || normalized.status === 'waiting_input') {
       return normalized;
     }
+    // A paused session must stay visibly paused: the trailing `completed`
+    // fallback below would otherwise hide the one-click resume affordance.
+    if (normalized.status === 'paused') return normalized;
     if (normalized.status === 'queued') return normalized;
     if (normalized.status === 'running' || normalized.status === 'stopping' || control?.state === 'stopping') {
       return { ...normalized, status: 'running' };

@@ -37,6 +37,7 @@ export const sessionStatusSchema = z.enum([
   "running",
   "waiting_permission",
   "waiting_input",
+  "paused",
   "completed",
   "failed",
   "cancelled",

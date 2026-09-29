@@ -12,6 +12,7 @@ const STATUS_DOT: Record<AgentSessionStatus, string> = {
   completed: "bg-success",
   failed: "bg-danger",
   interrupted: "bg-warning/60",
+  paused: "bg-warning/60",
   queued: "bg-muted-foreground/50",
   cancelled: "bg-muted-foreground/30",
 };

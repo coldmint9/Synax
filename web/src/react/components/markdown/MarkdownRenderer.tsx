@@ -5,19 +5,13 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { MarkdownImage } from "./MarkdownImage";
-import { renderMarkdownCodeBlock } from "./MarkdownCodeBlock";
+import { renderMarkdownPre } from "./MarkdownCodeBlock";
 
 export const sharedMarkdownComponents: Components = {
   pre({ children }) {
-    return <>{children}</>;
+    return renderMarkdownPre(children);
   },
-  code({ className, children, ...props }) {
-    const match = /language-([^\s]+)/.exec(className ?? "");
-    const language = match?.[1];
-    const code = String(children).replace(/\n$/, "");
-    const block = renderMarkdownCodeBlock(code, language);
-    if (block) return block;
-
+  code({ className, children, node: _node, ...props }) {
     return (
       <code className={className} {...props}>
         {children}

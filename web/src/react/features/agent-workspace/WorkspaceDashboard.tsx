@@ -133,6 +133,7 @@ const STATUS_KEY: Record<string, I18nKey> = {
   failed: "workspaceStatusFailed",
   cancelled: "workspaceStatusCancelled",
   interrupted: "workspaceStatusInterrupted",
+  paused: "workspaceStatusPaused",
 };
 
 function statusText(
@@ -149,6 +150,7 @@ const STATUS_CHIP: Record<string, string> = {
   waiting_permission: "bg-warning/15 text-warning",
   waiting_input: "bg-warning/15 text-warning",
   interrupted: "bg-warning/15 text-warning",
+  paused: "bg-warning/15 text-warning",
   completed: "bg-success/15 text-success",
   failed: "bg-danger/15 text-danger",
   cancelled: "bg-foreground/10 text-foreground/70",

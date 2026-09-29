@@ -13,6 +13,7 @@ const COMPLETED_SESSION_STATUSES = new Set<string>([
   "failed",
   "cancelled",
   "interrupted",
+  "paused",
 ]);
 
 const NEW_COMPLETION_WINDOW_MS = 120_000;

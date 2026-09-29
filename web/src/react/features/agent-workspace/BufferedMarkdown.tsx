@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SessionMarkdown } from "./SessionMarkdown";
+import { MarkdownCodeFrame } from "../../components/markdown/MarkdownCodeFrame";
 
 const LINE_TICK_MS = 32;
 
@@ -117,14 +118,19 @@ export function BufferedMarkdown({
     : isStreaming
       ? splitIncompleteLine(visible)
       : { stable: visible, pending: "" };
+  const pendingFence = fencePending
+    ? /^\s*(?:`{3,}|~{3,})([^\n]*)\n?/.exec(pending)
+    : null;
 
   return (
     <>
       {stable && <SessionMarkdown content={stable} className={className} />}
       {pending && fencePending && (
+        <MarkdownCodeFrame language={pendingFence?.[1].trim().split(/\s+/)[0]?.toLowerCase()}>
         <pre className="markdown-stream-pending agent-conversation-copy">
-          <code>{pending}</code>
+          <code>{pending.slice(pendingFence?.[0].length ?? 0)}</code>
         </pre>
+        </MarkdownCodeFrame>
       )}
       {pending && !fencePending && (
         <span className="markdown-stream-tail agent-conversation-copy">

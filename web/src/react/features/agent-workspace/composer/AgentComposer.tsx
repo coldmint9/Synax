@@ -1,7 +1,14 @@
 import { Button } from "@/react/components/ui/Button";
-import { Tooltip } from "@/react/components/ui/Tooltip";
 import { WelcomeTypewriter } from "../WelcomeTypewriter";
 import { useInputOptimization } from "./useInputOptimization";
+import {
+  composerHistoryScope,
+  EMPTY_HISTORY_CURSOR,
+  readComposerHistory,
+  recallComposerInput,
+  recordComposerInput,
+  type ComposerHistoryCursor,
+} from "./composerInputHistory";
 import { useInputCapability } from "../../media/useInputCapability";
 import {
   MediaAttachButton,
@@ -9,7 +16,6 @@ import {
 } from "../../media/MediaDraftControls";
 import type { MediaDraft } from "../../media/useMediaDraft";
 import {
-  useId,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -267,14 +273,6 @@ export function AgentComposer({
       .then(({ job }) => setMediaJob(job))
       .catch((error) => setMediaError(error instanceof Error ? error.message : String(error)));
   }, [mediaJob, sessionId]);
-  const keyboardHintId = useId();
-  const keyboardHints = [
-    locale === "zh" ? "Shift+Enter 换行" : "Shift+Enter for a new line",
-    commands ? (locale === "zh" ? "/ 打开命令" : "/ for commands") : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
   const inputPlaceholder = placeholder ?? t("agentPlaceholder");
 
   const inputCapability = useInputCapability(
@@ -300,6 +298,78 @@ export function AgentComposer({
   const composerScope = JSON.stringify([projectId, sessionId ?? null]);
   const compositionScopeRef = useRef<string | null>(null);
   const suppressEnterRef = useRef(false);
+  const historyCursorRef = useRef<ComposerHistoryCursor>(EMPTY_HISTORY_CURSOR);
+  const historyCaretRef = useRef<number | null>(null);
+
+  /** Any real edit ends history browsing; the next ArrowUp starts from newest. */
+  const resetHistoryBrowsing = useCallback(() => {
+    historyCursorRef.current = EMPTY_HISTORY_CURSOR;
+  }, []);
+
+  useEffect(() => {
+    resetHistoryBrowsing();
+  }, [composerScope, resetHistoryBrowsing]);
+
+  // A recalled entry lands with the caret at its end, like a terminal does.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    const caret = historyCaretRef.current;
+    if (!el || caret === null) return;
+    historyCaretRef.current = null;
+    const position = Math.min(caret, el.value.length);
+    el.setSelectionRange(position, position);
+  }, [content, textareaRef]);
+
+  const submitFromComposer = useCallback(() => {
+    recordComposerInput(
+      composerHistoryScope(projectId, sessionId ?? null),
+      content,
+    );
+    resetHistoryBrowsing();
+    onSubmit();
+  }, [content, onSubmit, projectId, resetHistoryBrowsing, sessionId]);
+
+  const recallComposerHistory = useCallback(
+    (direction: -1 | 1, current: string): string | null => {
+      const recalled = recallComposerInput(
+        readComposerHistory(composerHistoryScope(projectId, sessionId ?? null)),
+        historyCursorRef.current,
+        direction,
+        current,
+      );
+      if (!recalled) return null;
+      historyCursorRef.current = recalled.cursor;
+      return recalled.content;
+    },
+    [projectId, sessionId],
+  );
+
+  const handleHistoryKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+        return false;
+      const el = event.currentTarget;
+      if (el.selectionStart !== el.selectionEnd) return false;
+      const caret = el.selectionStart;
+      // Only the first line recalls with ArrowUp and the last line with
+      // ArrowDown; anywhere else the caret keeps moving inside the draft.
+      if (event.key === "ArrowUp") {
+        if (el.value.slice(0, caret).includes("\n")) return false;
+      } else if (el.value.slice(caret).includes("\n")) return false;
+      const recalled = recallComposerHistory(
+        event.key === "ArrowUp" ? -1 : 1,
+        el.value,
+      );
+      if (recalled === null) return false;
+      event.preventDefault();
+      historyCaretRef.current = recalled.length;
+      onContentChange(recalled);
+      commands?.onInput(recalled, recalled.length);
+      return true;
+    },
+    [commands, onContentChange, recallComposerHistory],
+  );
   const isMultiline = content.includes("\n");
   const isSessionComposer = Boolean(modeControl);
   const expandedLayout = isSessionComposer || defaultExpanded || isMultiline;
@@ -341,6 +411,7 @@ export function AgentComposer({
       )
         return;
       if (commands?.onKeyDown(e)) return;
+      if (handleHistoryKeyDown(e)) return;
       if (e.key !== "Enter" || e.shiftKey) return;
       e.preventDefault();
       if (disabled && !queueWhileGenerating) return;
@@ -351,7 +422,8 @@ export function AgentComposer({
         (mediaMode !== "chat" && (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))))
       )
         return;
-      mediaMode === "chat" ? onSubmit() : void submitMedia();
+      if (mediaMode === "chat") submitFromComposer();
+      else void submitMedia();
     },
     [
       inputCapability.blocked,
@@ -364,9 +436,10 @@ export function AgentComposer({
       content,
       commands,
       disabled,
+      handleHistoryKeyDown,
       isGenerating,
-      onSubmit,
       queueWhileGenerating,
+      submitFromComposer,
     ],
   );
 
@@ -466,7 +539,7 @@ export function AgentComposer({
       data-queue-ready={queueMode && !sendDisabled ? "true" : undefined}
       className={`agent-dock-composer-chip agent-dock-composer-action ${stopMode ? "agent-dock-composer-stop" : "agent-dock-composer-send"} ms-auto inline-flex size-8 shrink-0 items-center justify-center !rounded-full transition-colors disabled:cursor-not-allowed`}
       disabled={stopMode ? !onStop : resumeMode ? disabled : sendDisabled}
-      onClick={stopMode ? onStop : resumeMode ? onResume : mediaMode === "chat" ? onSubmit : () => { void submitMedia(); }}
+      onClick={stopMode ? onStop : resumeMode ? onResume : mediaMode === "chat" ? submitFromComposer : () => { void submitMedia(); }}
     >
       {stopMode ? (
         <Square size={12} fill="currentColor" />
@@ -605,22 +678,31 @@ export function AgentComposer({
         }
       }}
       onPaste={(e) => {
+        const pastedText = e.clipboardData.getData("text/plain");
+        const hasFiles = e.clipboardData.files.length > 0;
         if (
           media &&
-          e.clipboardData.files.length &&
+          pastedText.length > 4000 &&
+          !hasFiles &&
+          (!disabled || queueWhileGenerating)
+        ) {
+          e.preventDefault();
+          media.addText(pastedText);
+          return;
+        }
+        if (
+          media &&
+          hasFiles &&
           (!disabled || queueWhileGenerating)
         ) {
           media.add(Array.from(e.clipboardData.files));
-          if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+          if (!pastedText) e.preventDefault();
         }
       }}
       data-session-controls={modeControl ? "true" : undefined}
       data-multiline={expandedLayout ? "true" : undefined}
       data-expanded={defaultExpanded ? "true" : undefined}
     >
-      <span id={keyboardHintId} className="sr-only">
-        {keyboardHints}
-      </span>
       {media && <MediaDraftPreview media={media} />}
       {inputCapability.error && inputCapability.text && (
         <p
@@ -641,62 +723,56 @@ export function AgentComposer({
                 : "contents"
             }
           >
-            <Tooltip
-              content={keyboardHints}
-              openOnFocus={false}
-              placement="top-start"
-            >
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => {
-                  if (
-                    compositionScopeRef.current &&
-                    compositionScopeRef.current !== composerScope
-                  ) {
-                    e.target.value = content;
-                    return;
-                  }
-                  onContentChange(e.target.value);
-                  commands?.onInput(e.target.value, e.target.selectionStart);
-                }}
-                onSelect={(e) =>
-                  commands?.onInput(
-                    e.currentTarget.value,
-                    e.currentTarget.selectionStart,
-                  )
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => {
+                if (
+                  compositionScopeRef.current &&
+                  compositionScopeRef.current !== composerScope
+                ) {
+                  e.target.value = content;
+                  return;
                 }
-                aria-autocomplete={commands ? "list" : undefined}
-                aria-controls={commands?.open ? commands.listId : undefined}
-                aria-activedescendant={
-                  commands?.open ? commands.activeId : undefined
-                }
-                onKeyDown={handleKeyDown}
-                {...compositionProps}
-                placeholder={
-                  welcomePlaceholderDelay !== undefined
-                    ? undefined
-                    : inputPlaceholder
-                }
-                aria-label={t("agentPlaceholder")}
-                aria-describedby={keyboardHintId}
-                disabled={disabled && !queueWhileGenerating}
-                rows={
-                  isSessionComposer
-                    ? 2
-                    : defaultExpanded && !isMultiline
-                      ? 4
-                      : 1
-                }
-                className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[14px] font-normal leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
-                  isSessionComposer
-                    ? "min-h-12 max-h-48"
-                    : defaultExpanded && !isMultiline
-                      ? "min-h-[5.5rem] max-h-48"
-                      : "min-h-[1.5rem] max-h-32"
-                }`}
-              />
-            </Tooltip>
+                resetHistoryBrowsing();
+                onContentChange(e.target.value);
+                commands?.onInput(e.target.value, e.target.selectionStart);
+              }}
+              onSelect={(e) =>
+                commands?.onInput(
+                  e.currentTarget.value,
+                  e.currentTarget.selectionStart,
+                )
+              }
+              aria-autocomplete={commands ? "list" : undefined}
+              aria-controls={commands?.open ? commands.listId : undefined}
+              aria-activedescendant={
+                commands?.open ? commands.activeId : undefined
+              }
+              onKeyDown={handleKeyDown}
+              {...compositionProps}
+              placeholder={
+                welcomePlaceholderDelay !== undefined
+                  ? undefined
+                  : inputPlaceholder
+              }
+              aria-label={t("agentPlaceholder")}
+              disabled={disabled && !queueWhileGenerating}
+              rows={
+                isSessionComposer
+                  ? 2
+                  : defaultExpanded && !isMultiline
+                    ? 4
+                    : 1
+              }
+              className={`agent-dock-composer-input w-full resize-none border-0 bg-transparent px-0.5 py-0 text-[14px] font-normal leading-relaxed text-foreground/85 outline-none placeholder:text-muted-foreground/45 ${
+                isSessionComposer
+                  ? "min-h-12 max-h-48"
+                  : defaultExpanded && !isMultiline
+                    ? "min-h-[5.5rem] max-h-48"
+                    : "min-h-[1.5rem] max-h-32"
+              }`}
+            />
             {welcomePlaceholderDelay !== undefined && (
               <div
                 className="welcome-editor-hint"
@@ -742,46 +818,40 @@ export function AgentComposer({
         {modeControl}
           {/* The keyed editor keeps the same parent and DOM node in either layout. */}
           <div key="editor" className="contents">
-            <Tooltip
-              content={keyboardHints}
-              openOnFocus={false}
-              placement="top-start"
-            >
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => {
-                  if (
-                    compositionScopeRef.current &&
-                    compositionScopeRef.current !== composerScope
-                  ) {
-                    e.target.value = content;
-                    return;
-                  }
-                  onContentChange(e.target.value);
-                  commands?.onInput(e.target.value, e.target.selectionStart);
-                }}
-                onSelect={(e) =>
-                  commands?.onInput(
-                    e.currentTarget.value,
-                    e.currentTarget.selectionStart,
-                  )
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => {
+                if (
+                  compositionScopeRef.current &&
+                  compositionScopeRef.current !== composerScope
+                ) {
+                  e.target.value = content;
+                  return;
                 }
-                aria-autocomplete={commands ? "list" : undefined}
-                aria-controls={commands?.open ? commands.listId : undefined}
-                aria-activedescendant={
-                  commands?.open ? commands.activeId : undefined
-                }
-                onKeyDown={handleKeyDown}
-                {...compositionProps}
-                placeholder={inputPlaceholder}
-                aria-label={t("agentPlaceholder")}
-                aria-describedby={keyboardHintId}
-                disabled={disabled && !queueWhileGenerating}
-                rows={1}
-                className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[14px] font-normal leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
-              />
-            </Tooltip>
+                resetHistoryBrowsing();
+                onContentChange(e.target.value);
+                commands?.onInput(e.target.value, e.target.selectionStart);
+              }}
+              onSelect={(e) =>
+                commands?.onInput(
+                  e.currentTarget.value,
+                  e.currentTarget.selectionStart,
+                )
+              }
+              aria-autocomplete={commands ? "list" : undefined}
+              aria-controls={commands?.open ? commands.listId : undefined}
+              aria-activedescendant={
+                commands?.open ? commands.activeId : undefined
+              }
+              onKeyDown={handleKeyDown}
+              {...compositionProps}
+              placeholder={inputPlaceholder}
+              aria-label={t("agentPlaceholder")}
+              disabled={disabled && !queueWhileGenerating}
+              rows={1}
+              className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[14px] font-normal leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
+            />
           </div>
           {modelControl ?? (
             <ComposerModelPicker

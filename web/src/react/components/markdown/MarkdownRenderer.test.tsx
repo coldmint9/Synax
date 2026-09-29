@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { WikiMarkdown } from "../../features/wiki/WikiMarkdown";
 
 describe("MarkdownRenderer", () => {
   it("renders inline and block formulas with KaTeX", () => {
@@ -48,6 +49,7 @@ describe("MarkdownRenderer", () => {
     const { container } = render(
       <MarkdownRenderer content={"```ts\nconst answer: number = 42\n```"} />,
     );
+    expect(container.querySelector(".markdown-code-block__header")).toHaveTextContent("ts");
     await waitFor(
       () =>
         expect(
@@ -55,5 +57,31 @@ describe("MarkdownRenderer", () => {
         ).toBeInTheDocument(),
       { timeout: 5000 },
     );
+  });
+
+  it.each([
+    ["```\nhello\n```", "纯文本"],
+    ["```text\nhello\n```", "纯文本"],
+    ["```unknown-format\nhello\n```", "unknown-format"],
+  ])("labels code fences including single-line plain text: %s", (content, label) => {
+    const { container } = render(<MarkdownRenderer content={content} />);
+    expect(container.querySelector(".markdown-code-block__header")).toHaveTextContent(label);
+    expect(container.querySelector(".markdown-code-block pre code")).toHaveTextContent("hello");
+  });
+
+  it("keeps inline code inline without a format header", () => {
+    const { container } = render(<MarkdownRenderer content={"Use `hello` here."} />);
+    expect(container.querySelector("p code")).toHaveTextContent("hello");
+    expect(container.querySelector(".markdown-code-block")).not.toBeInTheDocument();
+  });
+
+  it("shares format headers with Wiki while preserving directory trees", () => {
+    const { container } = render(
+      <WikiMarkdown content={"```\nhello\n```\n\n```tree\nsrc/\n└── index.ts\n```"} />,
+    );
+    expect(
+      Array.from(container.querySelectorAll(".markdown-code-block__header"), node => node.textContent),
+    ).toEqual(["纯文本", "tree"]);
+    expect(container.querySelector('[aria-label="Directory tree"]')).toHaveTextContent("index.ts");
   });
 });

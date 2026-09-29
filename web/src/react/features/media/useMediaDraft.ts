@@ -13,6 +13,7 @@ export interface DraftMedia {
   retained?: boolean;
   id: string;
   file: File;
+  text?: string;
   asset?: RuntimeAsset;
   error?: string;
   uploading: boolean;
@@ -22,10 +23,21 @@ export interface DraftMedia {
 export async function prepareQueuedMedia(
   parts: RuntimeContentPart[] = [],
 ): Promise<DraftMedia[]> {
-  return Promise.all(
+  const restored: Array<DraftMedia | null> = await Promise.all(
     parts
-      .filter((part) => part.type !== "text")
       .map(async (part) => {
+        if (part.type === "text") {
+          if (!part.attachmentName) return null;
+          return {
+            id: crypto.randomUUID(),
+            file: new File([part.text], part.attachmentName, {
+              type: "text/plain",
+            }),
+            text: part.text,
+            uploading: false,
+            controller: new AbortController(),
+          } satisfies DraftMedia;
+        }
         const { asset } = await runtimeMedia.metadata(part.assetId);
         return {
           id: crypto.randomUUID(),
@@ -37,6 +49,7 @@ export async function prepareQueuedMedia(
         };
       }),
   );
+  return restored.filter((item) => item !== null);
 }
 
 /**
@@ -50,8 +63,19 @@ export async function restoreDraftMedia(
 ): Promise<DraftMedia[]> {
   const settled = await Promise.allSettled(
     parts
-      .filter((part) => part.type !== "text")
       .map(async (part) => {
+        if (part.type === "text") {
+          if (!part.attachmentName) return null;
+          return {
+            id: crypto.randomUUID(),
+            file: new File([part.text], part.attachmentName, {
+              type: "text/plain",
+            }),
+            text: part.text,
+            uploading: false,
+            controller: new AbortController(),
+          } satisfies DraftMedia;
+        }
         const { asset } = await runtimeMedia.metadata(part.assetId);
         return {
           id: crypto.randomUUID(),
@@ -63,7 +87,7 @@ export async function restoreDraftMedia(
       }),
   );
   return settled.flatMap((entry) =>
-    entry.status === "fulfilled" ? [entry.value] : [],
+    entry.status === "fulfilled" && entry.value !== null ? [entry.value] : [],
   );
 }
 export function useMediaDraft(
@@ -146,6 +170,28 @@ export function useMediaDraft(
     },
     [upload, readItems, setItems, setError],
   );
+  const addText = useCallback(
+    (text: string, filename = `粘贴文本 · ${new Date().toISOString().replace(/[:.]/g, "-")}.txt`) => {
+      if (!text) return;
+      const item: DraftMedia = {
+        id: crypto.randomUUID(),
+        file: new File([text], filename, { type: "text/plain" }),
+        text,
+        uploading: false,
+        controller: new AbortController(),
+      };
+      const all = [...readItems(), item];
+      if (all.length > 10 || all.reduce((sum, entry) => sum + entry.file.size, 0) > 100 * 1024 * 1024) {
+        setError(
+          "最多 10 个文件，合计 100 MiB / Attachment limit exceeded",
+        );
+        return;
+      }
+      setError(null);
+      setItems(all);
+    },
+    [readItems, setError, setItems],
+  );
   const remove = useCallback(
     (id: string) => {
       const item = readItems().find((x) => x.id === id);
@@ -185,21 +231,30 @@ export function useMediaDraft(
     },
     [readItems, setItems, setError],
   );
-  const parts: RuntimeContentPart[] = items.flatMap((item) =>
-    item.asset
-      ? [
+  const parts: RuntimeContentPart[] = items.flatMap(
+    (item): RuntimeContentPart[] => {
+      if (item.text !== undefined)
+        return [
           {
-            type: item.asset.mediaType.startsWith("image/")
-              ? "image"
-              : item.asset.mediaType.startsWith("audio/")
-                ? "audio"
-                : item.asset.mediaType.startsWith("video/")
-                  ? "video"
-                  : "file",
-            assetId: item.asset.id,
+            type: "text",
+            text: item.text,
+            attachmentName: item.file.name,
           },
-        ]
-      : [],
+        ];
+      if (!item.asset) return [];
+      return [
+        {
+          type: item.asset.mediaType.startsWith("image/")
+            ? "image"
+            : item.asset.mediaType.startsWith("audio/")
+              ? "audio"
+              : item.asset.mediaType.startsWith("video/")
+                ? "video"
+                : "file",
+          assetId: item.asset.id,
+        },
+      ];
+    },
   );
   const partKey = JSON.stringify(parts);
   const changeRef = useRef(onPartsChange);
@@ -213,8 +268,14 @@ export function useMediaDraft(
     error,
     ready:
       !error &&
-      items.every((i) => Boolean(i.asset) && !i.uploading && !i.error),
+      items.every(
+        (i) =>
+          (i.text !== undefined || Boolean(i.asset)) &&
+          !i.uploading &&
+          !i.error,
+      ),
     add,
+    addText,
     remove,
     retry,
     clear,

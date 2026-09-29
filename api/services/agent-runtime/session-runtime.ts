@@ -1,5 +1,5 @@
 import { getRawSqlite } from "../../db/index.js";
-import { initializeFreshVersionNative, versionedSession } from "./checkpoints/version-runtime/bridge.js";
+import { initializeFreshVersionNative } from "./checkpoints/version-runtime/bridge.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { normalizeSessionPromptMetadata } from "./session-metadata.js";
@@ -53,8 +53,6 @@ export class AgentSessionRuntime {
     const parent = input.parentSessionId
       ? this.store.getSession(input.parentSessionId)
       : undefined;
-    if (parent && versionedSession(parent.id))
-      throw new AgentValidationError("Subagents are not yet supported by versioned history. Use a separate session instead.");
     const seenAncestors = new Set<string>();
     for (
       let ancestor = parent;
@@ -66,7 +64,7 @@ export class AgentSessionRuntime {
       seenAncestors.add(ancestor.id);
       if (
         ancestor.sessionMetadata?.runtimeControl ||
-        ["interrupted", "cancelled"].includes(ancestor.status)
+        ["interrupted", "cancelled", "paused"].includes(ancestor.status)
       )
         throw new AgentValidationError(
           "Cannot create a subagent while its ancestor is stopped or stopping.",
@@ -348,7 +346,7 @@ export class AgentSessionRuntime {
       }
     }
     this.store.updateSession(sessionId, {
-      status: "interrupted",
+      status: "paused",
       updatedAt: now,
       completedAt: null,
       resultSummary: reason,

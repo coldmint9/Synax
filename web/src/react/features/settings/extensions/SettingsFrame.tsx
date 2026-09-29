@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Archive, Compass, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Archive, Compass, KeyRound, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useExtensionCopy } from './extension-copy'
 import type { ExtensionKind } from '../../../../lib/api/extensions'
 import './extensions.css'
-export type SettingsSection = 'general' | 'archive' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse'
+export type SettingsSection = 'general' | 'archive' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse' | 'llmProviders'
 export function SettingsFrame({
   section,
   onSelect,
@@ -22,6 +22,7 @@ export function SettingsFrame({
     <div className="extension-settings-layout">
       <nav className="extension-settings-nav" aria-label={copy.general}>
         <p className="extension-nav-title">{copy.settings}</p>
+        {!projectMode && <p className="extension-nav-group">{copy.common}</p>}
         <button
           type="button"
           className={section === 'general' ? 'is-selected' : ''}
@@ -31,6 +32,17 @@ export function SettingsFrame({
           <Settings2 size={16} />
           {projectMode ? copy.project : copy.general}
         </button>
+        {!projectMode && (
+          <button
+            type="button"
+            className={section === 'llmProviders' ? 'is-selected' : ''}
+            aria-current={section === 'llmProviders' ? 'page' : undefined}
+            onClick={() => onSelect('llmProviders')}
+          >
+            <KeyRound size={16} />
+            {copy.llmProviders}
+          </button>
+        )}
         {!projectMode && (
           <button
             type="button"

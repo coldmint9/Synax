@@ -44,6 +44,15 @@ const STATES: Record<
     ],
   },
   cancelled: { zh: "已取消", en: "Cancelled", tone: "neutral" },
+  paused: {
+    zh: "已暂停",
+    en: "Paused",
+    tone: "warning",
+    hint: [
+      "会话已暂停，点击播放键继续",
+      "Session paused. Press play to continue",
+    ],
+  },
 };
 
 export function runtimeProfileSummary(

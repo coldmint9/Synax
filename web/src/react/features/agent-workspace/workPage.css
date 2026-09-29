@@ -65,6 +65,30 @@
 .work-page .session-list-panel {
   padding: var(--work-panel-inset);
 }
+.work-page .session-panel-host--left {
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.work-page .session-panel-host--left > .h-full {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.work-page .session-panel-host--left[data-collapsed="true"] > .h-full {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+.work-page .session-panel-host--left[data-resizing="true"] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-page .session-panel-host--left,
+  .work-page .session-panel-host--left > .h-full {
+    transition: none;
+  }
+}
 .work-page .session-list-card--sessions {
   flex: 1 1 auto;
   background: var(--ui-panel-soft);

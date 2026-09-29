@@ -138,6 +138,15 @@ export function assertHistoryIdle(sessionId: string): void {
       );
   }
 }
+/** A versioned root shares its boundary with every session in its tree: children
+ *  are legacy sessions joined to the root's transcript, so a boundary move must
+ *  not race a descendant that is still running. Legacy boundaries restore their
+ *  tree through the checkpoint snapshot; versioned boundaries archive the
+ *  children outside the restored revision instead (see child-sessions.ts). */
+export function assertHistoryTreeIdle(sessionId: string): void {
+  for (const member of agentRuntimeStore.listSessionTree(sessionId))
+    assertHistoryIdle(member.id);
+}
 export function acquireHistoryLocks(
   sessionId: string,
   operationId: string,

@@ -7,11 +7,13 @@ import type { StreamTurnRequest } from "../../contracts.js";
 import type { HistoryRequest, HistoryResult } from "../operations.js";
 import {
   assertHistoryIdle,
+  assertHistoryTreeIdle,
   assertHistoryUnlocked,
   historyError,
 } from "../guards.js";
 import { atomicVersionWrite } from "../version-store/transaction.js";
 import { versionRepository } from "./bridge.js";
+import { archiveChildrenBeyondBoundary } from "./child-sessions.js";
 import { VersionHistoryResults } from "./history-results.js";
 import { assertBatchInput } from "./batch-input.js";
 
@@ -49,6 +51,7 @@ export function applyVersionHistory(
     if (previous) return { result: previous, applied: false };
     assertHistoryUnlocked(sessionId, []);
     assertHistoryIdle(sessionId);
+    assertHistoryTreeIdle(sessionId);
     const checkpoint = repo.checkpoint(sessionId, request.checkpointId);
     const edit = request.action === "edit";
     if ((checkpoint.kind === "input") !== edit)
@@ -63,6 +66,8 @@ export function applyVersionHistory(
     repo.rollback(sessionId, { ...request, requestHash: hash });
     if (edit && checkpoint.payload.boundary.omitRunId)
       repo.remove(sessionId, "runs", checkpoint.payload.boundary.omitRunId);
+    // Children spawned in the discarded branch only exist past this boundary.
+    archiveChildrenBeyondBoundary(sessionId, checkpoint.createdAt);
     const restored = store.getSession(sessionId),
       metadata = { ...restored.sessionMetadata };
     for (const key of [

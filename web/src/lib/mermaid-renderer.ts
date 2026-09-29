@@ -11,6 +11,12 @@ export function renderDiagram(code: string): RenderResult {
     const svg = renderMermaidSVG(trimmed, {
       bg: 'var(--background)',
       fg: 'var(--foreground)',
+      line: 'var(--ui-subtle)',
+      accent: 'var(--ui-accent)',
+      muted: 'var(--ui-subtle)',
+      surface: 'var(--ui-panel-soft)',
+      border: 'transparent',
+      font: 'var(--font-interface)',
       transparent: true,
     })
     return { svg }

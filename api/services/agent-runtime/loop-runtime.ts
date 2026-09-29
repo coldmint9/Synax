@@ -223,6 +223,7 @@ export class AgentLoopRuntime {
 
     const RESUMABLE: AgentSession["status"][] = [
       "interrupted",
+      "paused",
       "completed",
       "failed",
       "cancelled",

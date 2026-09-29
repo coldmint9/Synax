@@ -26,6 +26,7 @@ const DOT: Record<string, string> = {
   waiting_permission: "bg-warning",
   waiting_input: "bg-warning",
   interrupted: "bg-warning/60",
+  paused: "bg-warning/60",
   queued: "bg-muted-foreground/60",
   cancelled: "bg-muted-foreground/40",
 };
@@ -154,6 +155,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
     <div
       className={`session-list-item${isSelected ? " session-list-item--active" : ""}${depth > 0 ? " session-list-item--child" : ""}${displayMode === "title" ? " session-list-item--title-only" : ""}`}
       style={{ marginLeft: `${Math.min(depth, 4) * 12}px` }}
+      data-tree-last={depth > 0 && node.isLastChild ? "true" : undefined}
       data-unread={unread || undefined}
       onContextMenu={menu.onContextMenu}
       onKeyDown={menu.onKeyDown}

@@ -672,6 +672,7 @@ export function buildConversationTimeline(
           index: 0,
           status: "completed",
           duration: null,
+          completedAt: message.createdAt,
           blocks,
         },
       },
