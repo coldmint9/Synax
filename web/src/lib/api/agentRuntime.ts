@@ -148,6 +148,9 @@ export interface SessionDesignMetadata {
 }
 
 export interface AgentSessionMetadata extends Record<string, unknown> {
+  subagentName?: string;
+  roleName?: string;
+  roleDescription?: string;
   design?: SessionDesignMetadata | null;
   /** Legacy "plan" sessions are accepted for read-only compatibility. */
   mode?: AgentSessionMode | "plan" | "plan_node";
@@ -576,6 +579,9 @@ export interface SessionEnvironmentFile {
 export interface SessionEnvironmentSubagent {
   id: string;
   parentSessionId: string | null;
+  subagentName?: string;
+  roleName?: string;
+  roleDescription?: string;
   profileId: string;
   status: AgentSessionStatus;
   title: string | null;

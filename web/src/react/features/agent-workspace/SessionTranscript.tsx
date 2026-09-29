@@ -174,7 +174,10 @@ export function SessionTranscript({
   );
   // A running session row is not enough to show thinking: during a switch its
   // detail snapshot may still be loading.
-  const detailReady = !loading && !refreshing;
+  // A refresh keeps the cached transcript mounted. Treat it as ready for the
+  // live bridge so an in-flight turn does not disappear while the latest
+  // persisted snapshot is being fetched.
+  const detailReady = !loading;
   const showThinking =
     (Boolean(pending) || detailReady) &&
     session?.status !== "waiting_input" &&
@@ -203,8 +206,7 @@ export function SessionTranscript({
   }, [sessionId, pending, projected.confirmed, hasAssistantText, runFinished]);
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
-  const showLiveBlock =
-    Boolean(streamingStepId) && (detailReady || Boolean(pending));
+  const showLiveBlock = Boolean(streamingStepId) && (detailReady || Boolean(pending));
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,

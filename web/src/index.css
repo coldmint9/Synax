@@ -4484,56 +4484,6 @@ input[type="radio"] {
   background: transparent;
   transition: background-color 140ms ease, border-color 140ms ease;
 }
-.session-list-item--child::before,
-.session-list-item--child::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  z-index: 0;
-}
-.session-list-item--child::before {
-  left: -12px;
-  top: -6px;
-  bottom: -6px;
-  width: 1px;
-  background: color-mix(in srgb, var(--ui-line) 80%, transparent);
-}
-.session-list-item--child::after {
-  left: -12px;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: color-mix(in srgb, var(--ui-line) 80%, transparent);
-}
-.session-list-item--child[data-tree-last="true"]::before {
-  bottom: 50%;
-}
-.session-list-item--child::before,
-.session-list-item--child::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  z-index: 0;
-}
-.session-list-item--child::before {
-  top: -6px;
-  bottom: -6px;
-  left: -12px;
-  border-left: 1px solid color-mix(in srgb, var(--ui-text) 22%, transparent);
-}
-.session-list-item--child::after {
-  top: 50%;
-  left: -12px;
-  width: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--ui-text) 22%, transparent);
-}
-.session-list-item--child:last-child::before {
-  bottom: 50%;
-}
-.session-list-item--child > * {
-  position: relative;
-  z-index: 1;
-}
 /* Hover is a flat ink wash; only selection owns the elevated card surface. */
 .session-list-item:not(.session-list-item--active):hover,
 .session-list-item:not(.session-list-item--active):has(> .session-list-select:focus-visible) {
@@ -5623,7 +5573,7 @@ input[type="radio"] {
 }
 
 .ws-row--subagent {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .ws-row--subagent .ws-row-icon {
@@ -5643,6 +5593,14 @@ input[type="radio"] {
   flex: 1 1 auto;
   flex-direction: column;
   gap: 1px;
+}
+
+.ws-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .ws-row-main--file {

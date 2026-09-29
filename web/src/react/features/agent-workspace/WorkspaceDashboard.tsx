@@ -63,6 +63,7 @@ import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 import { getProjectThemeColor } from "./projectThemeColor";
+import { getSubagentNameFromId } from "./SubagentIdentity";
 
 const EMPTY_TODOS: import("../../../lib/api/agentRuntime").TodoItem[] = [];
 
@@ -1112,21 +1113,27 @@ function SubagentRow({
       >
         <Bot size={11} className="ws-row-icon" />
         <span className="ws-row-main">
-          <span className="ws-row-file">{subagentHeadline(sub)}</span>
-          <span className="ws-row-sub">{subagentPreview(sub)}</span>
+          <span className="ws-row-file">
+            {getSubagentNameFromId(sub.id, sub.subagentName)}
+          </span>
+          <span className="ws-row-sub">
+            {(sub.roleName || "研究员") + " · " + subagentHeadline(sub)}
+          </span>
         </span>
+      </button>
+      <div className="ws-row-actions">
         <span
           className={`ws-chip ${STATUS_CHIP[sub.status] ?? "bg-foreground/10 text-foreground/70"}`}
         >
           {statusText(sub.status, t)}
         </span>
-      </button>
-      <SubagentControls
-        sessionId={sub.id}
-        parentSessionId={sub.parentSessionId}
-        status={sub.status}
-        title={subagentHeadline(sub)}
-      />
+        <SubagentControls
+          sessionId={sub.id}
+          parentSessionId={sub.parentSessionId}
+          status={sub.status}
+          title={subagentHeadline(sub)}
+        />
+      </div>
     </div>
   );
 }

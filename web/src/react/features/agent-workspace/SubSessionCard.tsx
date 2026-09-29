@@ -5,6 +5,7 @@ import { ActivityStatus } from "../../components/beautiful-ui/ActivityStatus";
 import type { AgentSession } from "../../../lib/api/agentRuntime";
 import { activityPreview } from "./activityText";
 import { SubagentControls } from "./SubagentControls";
+import { SubagentIdentity, SubagentProfileCard } from "./SubagentIdentity";
 
 interface Props {
   session: AgentSession;
@@ -18,7 +19,7 @@ export function SubSessionCard({ session, onExpand }: Props) {
   const title = activityPreview(session.title?.trim() || session.prompt);
 
   return (
-    <div className="bui-task" data-task-status={session.status}>
+    <div className="bui-task subagent-task-card" data-task-status={session.status}>
       <div className="bui-task-header">
         <button
           type="button"
@@ -27,8 +28,8 @@ export function SubSessionCard({ session, onExpand }: Props) {
           aria-expanded={expanded}
           aria-controls={expanded ? resultId : undefined}
         >
+          <SubagentIdentity session={session} />
           <span className="bui-task-copy">
-            <span className="bui-task-profile">{session.profileId}</span>
             <span className="bui-task-title" title={title}>
               {title}
             </span>
@@ -62,7 +63,8 @@ export function SubSessionCard({ session, onExpand }: Props) {
         />
       </div>
       {expanded && (
-        <div id={resultId} className="bui-task-body">
+        <div id={resultId} className="bui-task-body subagent-task-result">
+          <SubagentProfileCard session={session} />
           {session.resultSummary ? (
             <p className="whitespace-pre-wrap">{session.resultSummary}</p>
           ) : session.status === "running" ? (

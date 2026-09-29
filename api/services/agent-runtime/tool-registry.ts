@@ -358,9 +358,63 @@ export class ToolRegistry {
                 thinkingMode: args.thinkingMode,
               },
         );
+        const subagentNames = [
+          "林墨",
+          "许澄",
+          "乔安",
+          "沈砚",
+          "顾言",
+          "周宁",
+          "苏遥",
+          "程野",
+        ];
+        const nameIndex = Array.from(child.id).reduce(
+          (sum, char) => sum + char.charCodeAt(0),
+          0,
+        ) % subagentNames.length;
+        const role = args.specialist
+          ? {
+              roleName: args.specialist.role,
+              roleDescription: args.specialist.instructions,
+            }
+          : {
+              roleName:
+                {
+                  explorer: "探索员",
+                  reviewer: "审查员",
+                  "wiki-explorer": "知识探索员",
+                  "wiki-verifier": "知识校验员",
+                  "wiki-package-explorer": "包结构探索员",
+                }[profileId] ?? "研究员",
+              roleDescription:
+                {
+                  explorer: "读取代码、搜索线索并梳理系统结构。",
+                  reviewer: "检查实现、发现风险并给出可执行的审查意见。",
+                  "wiki-explorer": "探索代码库结构，提炼模块职责和关键路径。",
+                  "wiki-verifier": "核对文档内容与代码证据，标记不一致之处。",
+                  "wiki-package-explorer": "深入分析包结构、入口和依赖关系。",
+                }[profileId] ?? "根据委派任务进行分析和整理。",
+            };
+        const namedChild = this.store.updateSessionMetadata(child.id, {
+          subagentName: subagentNames[nameIndex],
+          ...role,
+        });
+        const delegationContext = [
+          "## Subagent delegation context",
+          `You are ${subagentNames[nameIndex]}.`,
+          `Your role is ${role.roleName}.`,
+          `Your role capabilities: ${role.roleDescription}`,
+          "Use this role to guide your decisions, tool choices, and final summary.",
+          "",
+          "## Delegated task",
+          childPrompt,
+        ].join("\n");
+        const contextualChild = this.store.updateSession(child.id, {
+          prompt: delegationContext,
+        });
         if (args.contentParts) {
           const parts: RuntimeContentPart[] = [
-            { type: "text", text: childPrompt },
+            { type: "text", text: delegationContext },
             ...args.contentParts,
           ];
           bindAssets(child.id, parts);
@@ -371,7 +425,7 @@ export class ToolRegistry {
         return {
           result: {
             taskId: child.id,
-            session: child,
+            session: contextualChild,
             summary: `Child session ${child.id} (${profileId}) created.`,
           },
           displaySummary: `Started ${profileId} subtask ${child.id}.`,

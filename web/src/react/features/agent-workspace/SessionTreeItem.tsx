@@ -17,6 +17,7 @@ import {
   resolveSessionUserInput,
   useSessionDisplayTitle,
 } from "./useSessionDisplayTitle";
+import { getSubagentName } from "./SubagentIdentity";
 
 const DOT: Record<string, string> = {
   running: "bg-run",
@@ -85,7 +86,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
     (state) => state.preferences.sessionListDisplayMode,
   );
   const { session, depth, children } = node;
-  const title = useSessionDisplayTitle(session);
+  const title = depth > 0 ? getSubagentName(session) : useSessionDisplayTitle(session);
   const pinned = session.sessionMetadata?.pinned === true;
   const hasKids = children.length > 0;
   const isRunning =
@@ -199,7 +200,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             </span>
           ) : undefined}
         />
-        {node.searchSnippet !== undefined ? (
+        {depth > 0 ? null : node.searchSnippet !== undefined ? (
           <span
             className="session-list-preview session-list-preview--search"
             title={node.searchSnippet}

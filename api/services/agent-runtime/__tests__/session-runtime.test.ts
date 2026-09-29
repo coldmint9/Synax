@@ -199,7 +199,7 @@ describe("agentSessionRuntime", () => {
     const session = agentSessionRuntime.create(executorInput);
     const stopped = agentSessionRuntime.cancel(session.id);
 
-    expect(stopped.status).toBe("interrupted");
+    expect(stopped.status).toBe("paused");
     expect(stopped.activeRunId).toBeNull();
     expect(stopped.pendingResumeToken).toBeNull();
     expect(stopped.completedAt).toBeNull();

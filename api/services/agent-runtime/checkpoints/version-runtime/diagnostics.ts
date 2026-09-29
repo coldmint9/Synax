@@ -27,7 +27,9 @@ function table(kind: string): string {
   return value;
 }
 /** One scalar sequence and one locator, no immutable snapshot of the row. Caller
- * owns the transaction containing the original raw-table write. */
+ * owns the transaction containing the original raw-table write. Runs anchor the
+ * model history of their steps, so their position is their first appearance in
+ * the epoch, not their latest status update. Child records keep their own bounds. */
 export function trackDiagnostic(
   sessionId: string,
   kind: string,
@@ -42,7 +44,10 @@ export function trackDiagnostic(
     .get(sessionId) as { epoch: number; sequence: number };
   db.prepare(
     `INSERT INTO conversation_v3_runtime_records(session_id,kind,record_id,epoch,sequence) VALUES(?,?,?,?,?)
-    ON CONFLICT(session_id,kind,record_id) DO UPDATE SET epoch=excluded.epoch,sequence=excluded.sequence`,
+    ON CONFLICT(session_id,kind,record_id) DO UPDATE SET
+      sequence=CASE WHEN excluded.kind='runs' AND epoch=excluded.epoch
+        THEN sequence ELSE excluded.sequence END,
+      epoch=excluded.epoch`,
   ).run(sessionId, kind, id, state.epoch, state.sequence);
 }
 function visible(

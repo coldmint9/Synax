@@ -29,6 +29,30 @@ const LEDGER_LIMIT = 200;
 export const successfulEvidence = isSuccessfulProofCall;
 
 class WorkRuntime {
+  /** Reopen checkpoints cancelled by older pause implementations before the next run starts. */
+  resumePaused(sessionId: string): void {
+    const session = store.getSession(sessionId);
+    const stop = session.sessionMetadata?.manualStop;
+    if (!stop) return;
+    const work = workStore.current(sessionId);
+    if (work?.status === 'cancelled' && work.reason === 'Stopped by user.') {
+      work.status = 'active';
+      work.reason = null;
+      work.result = null;
+      work.noProgressSteps = 0;
+      work.decisionFailures = 0;
+      workStore.save(work);
+    }
+    const goal = getGoalState(session.sessionMetadata);
+    if (goal?.status === 'cancelled' && goal.reason === 'Stopped by user.') {
+      const plan = session.sessionMetadata?.plan as { status?: string } | undefined;
+      store.updateSessionMetadata(sessionId, {
+        goal: { ...goal, status: plan?.status === 'approved' ? 'executing' : 'planning', reason: undefined },
+      });
+    }
+    store.updateSessionMetadata(sessionId, { manualStop: null });
+  }
+
   attach(sessionId: string, run: AgentRun): WorkRecord {
     let work = workStore.current(sessionId);
     const session = store.getSession(sessionId);
@@ -52,7 +76,7 @@ class WorkRuntime {
       (TERMINAL.has(work.status) &&
         user &&
         hasContent &&
-        (work.status === 'cancelled' || !continuing));
+        (work.status === 'cancelled' || !usesGoalWorkflow(session) || !continuing));
     if (startsNewWork) {
       const wasCancelled = work?.status === 'cancelled';
       if (work && TERMINAL.has(work.status)) {

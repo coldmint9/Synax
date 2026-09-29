@@ -5,7 +5,10 @@ import { useAgentSessionStore } from "../state/agentSessionStore";
 import { usePendingSubmissionStore } from "../state/pendingSubmissionStore";
 import { SessionTranscript } from "../SessionTranscript";
 
-const { scrollToBottom } = vi.hoisted(() => ({ scrollToBottom: vi.fn() }));
+const { scrollToBottom, conversationProps } = vi.hoisted(() => ({
+  scrollToBottom: vi.fn(),
+  conversationProps: { current: null as any },
+}));
 
 vi.mock("../useTranscriptScroll", () => ({
   useTranscriptScroll: vi.fn(() => ({ scrollToBottom })),
@@ -18,14 +21,17 @@ vi.mock("../SessionNavigationPanel", () => ({
   SessionNavigationPanel: () => null,
 }));
 vi.mock("../AgentConversationView", () => ({
-  AgentConversationView: ({ messages, liveTurn }: any) => (
-    <>
-      {messages.map((message: any) => (
-        <p key={message.id}>{message.content}</p>
-      ))}
-      {liveTurn}
-    </>
-  ),
+  AgentConversationView: (props: any) => {
+    conversationProps.current = props;
+    return (
+      <>
+        {props.messages.map((message: any) => (
+          <p key={message.id}>{message.content}</p>
+        ))}
+        {props.liveTurn}
+      </>
+    );
+  },
 }));
 
 const run: AgentRun = {
@@ -61,6 +67,7 @@ function beginPending(requestId: string) {
 
 beforeEach(() => {
   scrollToBottom.mockClear();
+  conversationProps.current = null;
   usePendingSubmissionStore.setState({ items: {} });
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
@@ -110,4 +117,18 @@ it("does not scroll on mount into a session whose run already finished", () => {
   });
   render(<SessionTranscript />);
   expect(scrollToBottom).not.toHaveBeenCalled();
+});
+
+it("keeps the live transcript mounted during a background detail refresh", () => {
+  useAgentSessionStore.setState({
+    detailRefreshing: true,
+    streamingStepId: "step-live",
+  });
+
+  render(<SessionTranscript />);
+
+  expect(conversationProps.current).toMatchObject({
+    excludeStepId: "step-live",
+    unifiedLive: true,
+  });
 });

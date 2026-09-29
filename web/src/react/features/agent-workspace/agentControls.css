@@ -12,6 +12,89 @@
   font-weight: 400;
   white-space: nowrap;
 }
+
+.subagent-task-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ui-line) 85%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ui-panel-soft) 92%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-canvas) 12%, transparent);
+}
+.subagent-task-card[data-task-status="running"] {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--ui-line));
+}
+.subagent-task-card .bui-task-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.75rem;
+}
+.subagent-task-card .bui-task-trigger {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  text-align: left;
+}
+.subagent-task-card .bui-task-copy { min-width: 0; }
+.subagent-task-card .bui-task-title {
+  display: block;
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subagent-task-card .bui-task-open { flex-shrink: 0; }
+.subagent-task-result {
+  margin: 0 0.75rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--ui-canvas) 42%, transparent);
+  color: var(--ui-subtle);
+}
+.subagent-identity { display: flex; min-width: 0; align-items: center; gap: 0.5rem; }
+.subagent-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 11px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, white), color-mix(in srgb, var(--primary) 78%, var(--accent)));
+  color: white;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.subagent-identity-copy { display: flex; min-width: 0; flex-direction: column; line-height: 1.15; }
+.subagent-identity-name { color: var(--ui-text); font-size: 0.78rem; font-weight: 650; }
+.subagent-identity-role { overflow: hidden; color: var(--ui-subtle); font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-status-dot { width: 0.42rem; height: 0.42rem; margin-left: 0.1rem; border-radius: 999px; background: var(--ui-subtle); }
+.subagent-status-dot[data-status="running"], .subagent-status-dot[data-status="queued"], .subagent-status-dot[data-status="waiting_permission"], .subagent-status-dot[data-status="waiting_input"] { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.subagent-status-dot[data-status="completed"] { background: #41c98b; }
+.subagent-status-dot[data-status="failed"], .subagent-status-dot[data-status="cancelled"] { background: var(--destructive); }
+.subagent-identity--compact .subagent-avatar { width: 1.85rem; height: 1.85rem; border-radius: 10px; }
+.subagent-detail-header { display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid color-mix(in srgb, var(--ui-line) 78%, transparent); background: color-mix(in srgb, var(--ui-panel-soft) 92%, transparent); padding: 0.7rem 1rem; }
+.subagent-detail-id { overflow: hidden; color: var(--ui-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-detail-header > .subagent-controls, .subagent-detail-header > div:last-child { margin-left: auto; }
+.subagent-profile-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0 0.75rem 0.75rem;
+  padding: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-panel) 82%, var(--accent) 6%);
+}
+.subagent-profile-card .subagent-identity { flex: 0 0 auto; }
+.subagent-profile-copy { min-width: 0; }
+.subagent-profile-role { color: var(--ui-text); font-size: 0.72rem; font-weight: 650; }
+.subagent-profile-description { margin: 0.2rem 0 0; color: var(--ui-subtle); font-size: 0.68rem; line-height: 1.45; }
 .agent-mode-trigger:disabled {
   opacity: 0.5;
   cursor: not-allowed;

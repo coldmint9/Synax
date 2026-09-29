@@ -41,6 +41,9 @@ export interface SessionEnvironmentFile {
 export interface SessionEnvironmentSubagent {
   id: string;
   parentSessionId: string | null;
+  subagentName?: string;
+  roleName?: string;
+  roleDescription?: string;
   profileId: string;
   status: AgentSessionStatus;
   title: string | null;
@@ -637,6 +640,18 @@ async function computeSessionEnvironment(
       subagents.push({
         id: child.id,
         parentSessionId: child.parentSessionId,
+        subagentName:
+          typeof child.sessionMetadata?.subagentName === "string"
+            ? child.sessionMetadata.subagentName
+            : undefined,
+        roleName:
+          typeof child.sessionMetadata?.roleName === "string"
+            ? child.sessionMetadata.roleName
+            : undefined,
+        roleDescription:
+          typeof child.sessionMetadata?.roleDescription === "string"
+            ? child.sessionMetadata.roleDescription
+            : undefined,
         profileId: child.profileId,
         status: child.status,
         title: child.title,

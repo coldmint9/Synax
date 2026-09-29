@@ -40,7 +40,7 @@ function setup(prompt = "Fix one file and verify it") {
   const run = nextRun(session.id, prompt);
   return { session, run };
 }
-function nextRun(sessionId: string, prompt: string) {
+function nextRun(sessionId: string, prompt: string, source = "turn_request") {
   const id = `run-${++seq}`;
   const msg = store.appendMessage({
     id: `msg-${seq}`,
@@ -49,7 +49,7 @@ function nextRun(sessionId: string, prompt: string) {
     stepId: null,
     role: "user",
     content: prompt,
-    metadata: { source: "turn_request" },
+    metadata: { source },
     createdAt: nowIso(),
   });
   const run = store.appendRun({
@@ -268,18 +268,89 @@ describe("durable cooperative work runtime", () => {
     expect(store.getSession(session.id).sessionMetadata?.manualStop).toBeNull();
   });
 
-  it("retains a completed result on continue without reopening work", async () => {
+  it("pauses an active goal without completing its work, then continues the same work", () => {
+    const { session } = setup("Finish the remaining steps");
+    store.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Finish the remaining steps", status: "executing" },
+      plan: { status: "approved", revision: 1, acceptanceCriteria: ["Done"] },
+    });
+    const workId = workStore.current(session.id)!.id;
+
+    expect(agentSessionRuntime.cancel(session.id).status).toBe("paused");
+    expect(workStore.current(session.id)).toMatchObject({ id: workId, status: "active" });
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: "executing" });
+
+    workRuntime.resumePaused(session.id);
+    const resumed = nextRun(session.id, "Continue the unfinished work", "system_injection");
+    expect(resumed.metadata.workId).toBe(workId);
+    expect(workStore.current(session.id)).toMatchObject({ id: workId, status: "active" });
+    expect(store.getSession(session.id).sessionMetadata?.manualStop).toBeNull();
+  });
+
+  it("reopens the work and goal cancelled by an older pause on one-click continue", () => {
+    const { session } = setup("Finish the remaining steps");
+    store.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Finish the remaining steps", status: "executing" },
+      plan: { status: "approved", revision: 1, acceptanceCriteria: ["Done"] },
+    });
+    agentSessionRuntime.cancel(session.id);
+    const old = workStore.current(session.id)!;
+    workStore.save({ ...old, status: "cancelled", reason: "Stopped by user." });
+    store.updateSessionMetadata(session.id, {
+      goal: { objective: "Finish the remaining steps", status: "cancelled", reason: "Stopped by user." },
+    });
+
+    workRuntime.resumePaused(session.id);
+    const resumed = nextRun(session.id, "Continue the unfinished work", "system_injection");
+    expect(resumed.metadata.workId).toBe(old.id);
+    expect(workStore.current(session.id)).toMatchObject({ status: "active", reason: null, result: null });
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: "executing" });
+  });
+
+  it("opens a fresh work on continue after the previous work completed", async () => {
     const { session, run } = setup("Explain an already known fact");
     await workRuntime.complete(
       input(session.id, run.id, {}),
       "The answer is available.",
     );
     const original = workStore.current(session.id)!;
-    nextRun(session.id, "继续");
+    expect(original).toMatchObject({
+      status: "completed",
+      result: "The answer is available.",
+    });
+
+    const next = nextRun(session.id, "继续");
+
+    // A completed work is a historical record, not a gate for the next round: reusing it made the
+    // loop finish at step 0 with the previous result and silently swallow the user's turn.
+    expect(next.metadata.workId).not.toBe(original.id);
+    expect(workStore.current(session.id)).toMatchObject({
+      status: "active",
+      objective: "Explain an already known fact",
+      result: null,
+    });
+    expect(store.getSession(session.id).status).toBe("running");
+  });
+
+  it("keeps reusing a completed work for a bare continuation inside a goal workflow", () => {
+    const { session } = setup("Complete the goal");
+    store.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Complete the goal", status: "executing" },
+    });
+    const original = workStore.current(session.id)!;
+    workStore.save({ ...original, status: "completed", result: "Previously accepted work." });
+
+    const next = nextRun(session.id, "继续");
+
+    // Goal workflows report a finished goal through the goal layer, so the terminal work stays.
+    expect(next.metadata.workId).toBe(original.id);
     expect(workStore.current(session.id)).toMatchObject({
       id: original.id,
       status: "completed",
-      result: "The answer is available.",
+      result: "Previously accepted work.",
     });
   });
 

@@ -1,5 +1,6 @@
 import type { SessionTreeNode } from "./sessionGrouping";
 import { useSessionDisplayTitle } from "./useSessionDisplayTitle";
+import { getSubagentName } from "./SubagentIdentity";
 
 interface Props {
   node: SessionTreeNode;
@@ -15,7 +16,7 @@ export function GroupedSessionTreeItem({
   onSelect,
 }: Props) {
   const { session } = node;
-  const title = useSessionDisplayTitle(session);
+  const title = depth > 0 ? getSubagentName(session) : useSessionDisplayTitle(session);
   const active = session.id === selectedId;
 
   return (

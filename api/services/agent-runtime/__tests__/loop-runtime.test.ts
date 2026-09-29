@@ -1382,7 +1382,7 @@ describe("agentLoopRuntime", () => {
     );
 
     const toolIds = allToolCalls.map((call) => call.toolId).sort();
-    expect(toolIds).toEqual(["rg", "file.list", "file.read"]);
+    expect(toolIds).toEqual(["file.list", "file.read", "rg"]);
 
     // Verify results are in model order (the order in allCalls)
     const [run] = agentLoopRuntime.listRuns(session.id);
@@ -2431,7 +2431,7 @@ describe("cooperative closing incident replay", () => {
     } finally { fs.rmSync(workspace, {recursive:true,force:true}); }
   });
 
-  it("does not reopen completed work on a continue request", async () => {
+  it("opens a new round instead of replaying a completed work on a continue request", async () => {
     queueMockStep(makeTextStep("The investigation is complete."));
     const session = agentSessionRuntime.create(executorInput);
     await collectChunks(
@@ -2439,17 +2439,46 @@ describe("cooperative closing incident replay", () => {
         message: "Explain the existing result.",
       }),
     );
+    // A terminal work is what the previous round leaves behind once its work is accepted.
+    const completed = workStore.current(session.id)!;
+    workStore.save({
+      ...completed,
+      status: "completed",
+      result: "The investigation is complete.",
+    });
     const count = agentRuntimeStore.listSessionSteps(session.id).length;
+
+    queueMockStep(makeTextStep("Continuing with the next round."));
     await collectChunks(
       agentLoopRuntime.streamRun(session.id, { message: "继续" }),
     );
-    expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
-    expect(agentRuntimeStore.listSessionSteps(session.id)).toHaveLength(count);
-    expect(
-      agentRuntimeStore
-        .listMessages(session.id)
-        .filter((m) => m.metadata.purpose === "work_result"),
-    ).toHaveLength(1);
+
+    // Reusing the terminal work finished the loop at step 0 with the previous result and silently
+    // swallowed the user's turn; a new user input must open a live round instead.
+    expect(workStore.current(session.id)?.id).not.toBe(completed.id);
+    expect(agentRuntimeStore.listSessionSteps(session.id).length).toBeGreaterThan(
+      count,
+    );
+  });
+
+  it("plays a paused session into another execution step instead of completing at step zero", async () => {
+    queueMockStep(makeTextStep("Investigating the request."));
+    const session = agentSessionRuntime.create({ ...executorInput, workDir: process.cwd() });
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Finish the request" }));
+    const work = workStore.current(session.id)!;
+    const stepCount = agentRuntimeStore.listSessionSteps(session.id).length;
+    agentSessionRuntime.cancel(session.id);
+
+    // Existing databases may still hold a Work cancelled by the old pause behavior.
+    workStore.save({ ...work, status: "cancelled", reason: "Stopped by user." });
+    const accepted = acceptRuntimeRun(session.id, {}, "paused-play", "continue");
+    expect(agentRuntimeStore.getSession(session.id).status).toBe("queued");
+    queueMockStep(makeTextStep("Continuing the remaining work."));
+    await collectChunks(agentLoopRuntime.streamContinue(session.id, { acceptedRunId: accepted.run.id }));
+
+    expect(workStore.current(session.id)?.id).toBe(work.id);
+    expect(agentRuntimeStore.listSessionSteps(session.id).length).toBeGreaterThan(stepCount);
+    expect(agentRuntimeStore.getSession(session.id).sessionMetadata?.manualStop).toBeNull();
   });
 });
 

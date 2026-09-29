@@ -10,7 +10,6 @@ import {
 import { resolveWorkspaceRoot } from "./tools/workspace.js";
 import type { ProjectWorkspaceRoot } from "../project-workspace.js";
 import type { WorkspaceLocation } from "../workspace-location.js";
-import { workStore } from "./work-store.js";
 import { interactionService } from "./interaction-service.js";
 import { initializeGoal } from "./goal-control.js";
 import type { AgentSession, CreateSessionRequest } from "./contracts.js";
@@ -298,25 +297,11 @@ export class AgentSessionRuntime {
   }
 
   private cancelOne(sessionId: string): void {
+    // Stop the execution, but preserve the Work and goal checkpoints for playback.
     this.store.updateSessionMetadata(sessionId, {
       manualStop: { at: nowIso(), reason: "Stopped by user." },
     });
-    const work = workStore.current(sessionId);
-    if (work && work.status !== "completed") {
-      work.status = "cancelled";
-      work.reason = "Stopped by user.";
-      workStore.save(work);
-    }
     interactionService.cancel(sessionId);
-    const existingGoal = this.store.getSession(sessionId).sessionMetadata?.goal;
-    if (existingGoal && typeof existingGoal === "object")
-      this.store.updateSessionMetadata(sessionId, {
-        goal: {
-          ...existingGoal,
-          status: "cancelled",
-          reason: "Stopped by user.",
-        },
-      });
     const current = this.store.getSession(sessionId);
     const now = nowIso();
     const reason = "User stopped run.";

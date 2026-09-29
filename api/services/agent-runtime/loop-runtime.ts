@@ -246,6 +246,8 @@ export class AgentLoopRuntime {
     // Recover any incomplete subagent.delegate calls before continuing
     await this.recoverIncompleteSubtasks(sessionId, abortSignal);
 
+    if (session.status === "paused") workRuntime.resumePaused(sessionId);
+
     if (hasNewMessage) {
       yield* this.streamRun(sessionId, input, abortSignal, false);
     } else {
@@ -2646,6 +2648,9 @@ export class AgentLoopRuntime {
       "[agent-runtime] generating step",
     );
     const requestPreparationStartedAt = performance.now();
+    // Cua may connect or restart after the run's initial MCP warm-up.
+    // Refresh before reading schemas; ready MCP clients are reused.
+    await warmupMcpForSession(input.sessionId);
     const availableTools = this.tools
       .listForSession(input.sessionId)
       .filter(

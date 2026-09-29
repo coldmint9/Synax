@@ -30,3 +30,30 @@ it('Jev mode exposes observations but not actions until configured fallback actu
     expect(mcpSessionToolProvider.getTools(session.id).map(tool => tool.id)).toContain('mcp.builtin-cua-driver.danger');
   } finally { mcpClientManager.closeAll(); setRuntimeCuaConnection(null); }
 }, 20_000);
+
+it('recovers observation tools on the next warm-up after a late connection or restart', async () => {
+  const { resetAgentRuntimeFixtures } = await import('../agent-runtime/__tests__/agent-runtime-fixtures.js');
+  const { agentSessionRuntime } = await import('../agent-runtime/session-runtime.js');
+  const { updateProjectSettings } = await import('../../lib/config/project-settings-store.js');
+  const { mcpSessionToolProvider, warmupMcpForSession } = await import('../mcp/mcp-session-tool-provider.js');
+  const { mcpClientManager } = await import('../mcp/mcp-client-manager.js');
+  const { setRuntimeCuaConnection } = await import('../mcp/runtime-cua-config.js');
+  resetAgentRuntimeFixtures();
+  const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
+  updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
+  const ids = () => mcpSessionToolProvider.getTools(session.id).map(tool => tool.id);
+  try {
+    await warmupMcpForSession(session.id);
+    expect(ids()).not.toContain('mcp.builtin-cua-driver.list_windows');
+    for (const generation of ['late', 'restart']) {
+      setRuntimeCuaConnection({ generation, command: process.execPath, args: [fixture], environment: [] });
+      mcpClientManager.closeCua();
+      await warmupMcpForSession(session.id);
+      expect(ids()).toContain('mcp.builtin-cua-driver.list_windows');
+      expect(ids()).not.toContain('mcp.builtin-cua-driver.danger');
+      setRuntimeCuaConnection(null);
+      mcpClientManager.closeCua();
+      expect(ids()).not.toContain('mcp.builtin-cua-driver.list_windows');
+    }
+  } finally { mcpClientManager.closeAll(); setRuntimeCuaConnection(null); }
+}, 20_000);

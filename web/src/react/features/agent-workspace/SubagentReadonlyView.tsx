@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { Bot } from "lucide-react";
 import {
   agentRuntimeApi,
   type AgentRun,
@@ -12,6 +11,7 @@ import { AgentConversationView } from "./AgentConversationView";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { SubagentControls } from "./SubagentControls";
 import { useLocale } from "../../../hooks/useLocale";
+import { SubagentIdentity, SubagentProfileCard } from "./SubagentIdentity";
 
 const REFRESH_MS = 4000;
 
@@ -88,13 +88,10 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
 
   return (
     <div className="session-workspace-scroll min-h-0 flex-1 overflow-auto">
-      <div className="flex items-center gap-1.5 border-b border-border/30 bg-secondary/20 px-2.5 py-1.5">
-        <Bot size={12} className="text-primary" />
-        <span className="text-[10px] font-medium text-foreground">
-          Subagent
-        </span>
-        <span className="truncate font-mono text-[9px] text-muted-foreground">
-          {detail.session.id}
+      <div className="subagent-detail-header">
+        <SubagentIdentity session={detail.session} />
+        <span className="subagent-detail-id" title={detail.session.id}>
+          {detail.session.id.slice(0, 8)}
         </span>
         <span className="ml-auto rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
           只读
@@ -108,6 +105,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
           onDestroyed={() => setDestroyed(true)}
         />
       </div>
+      <SubagentProfileCard session={detail.session} />
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView
           session={detail.session}
