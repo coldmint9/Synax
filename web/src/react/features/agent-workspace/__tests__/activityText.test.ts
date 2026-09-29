@@ -3,6 +3,7 @@ import {
   ACTIVITY_BODY_LIMIT,
   activityPreview,
   formatCharCount,
+  latestThinkingIndex,
   tailForDisplay,
   thinkingBannerPhrase,
   thinkingBannerPhrases,
@@ -104,5 +105,23 @@ describe("thinkingBannerPhrases", () => {
       thinkingBannerPhrases("**First** then ordinary reasoning"),
     ).toBeNull();
     expect(thinkingBannerPhrases("**First**\nordinary reasoning")).toBeNull();
+  });
+});
+
+describe("latestThinkingIndex", () => {
+  it("reports the newest reasoning record of a container", () => {
+    expect(
+      latestThinkingIndex([
+        { type: "thinking", content: "first" },
+        { type: "tool_call", content: "" },
+        { type: "thinking", content: "second" },
+        { type: "tool_call", content: "" },
+      ]),
+    ).toBe(2);
+  });
+
+  it("reports -1 when the container holds no reasoning", () => {
+    expect(latestThinkingIndex([])).toBe(-1);
+    expect(latestThinkingIndex([{ type: "text", content: "answer" }])).toBe(-1);
   });
 });

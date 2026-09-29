@@ -203,6 +203,35 @@ export const PRESET_BY_PROVIDER_ID = new Map(
   API_PROVIDER_PRESETS.map((p) => [p.providerId, p]),
 );
 
+/**
+ * Human-readable provider name for model pickers.
+ *
+ * Provider ids are internal — custom connections look like
+ * `custom-api:1790651255292` — so selection UI must resolve the configured
+ * label instead of falling back to printing the id.
+ */
+export function providerDisplayLabel(
+  providers: Pick<ProviderDef, "id" | "label">[] | undefined,
+  providerId: string | null | undefined,
+): string | null {
+  if (!providerId) return null;
+  const label = providers
+    ?.find((provider) => provider.id === providerId)
+    ?.label?.trim();
+  if (label) return label;
+  return PRESET_BY_PROVIDER_ID.get(providerId)?.label ?? null;
+}
+
+/** Model option label (`Provider · Model`), degrading to the model name alone. */
+export function modelOptionLabel(
+  providers: Pick<ProviderDef, "id" | "label">[] | undefined,
+  providerId: string | null | undefined,
+  modelLabel: string,
+): string {
+  const provider = providerDisplayLabel(providers, providerId);
+  return provider ? `${provider} · ${modelLabel}` : modelLabel;
+}
+
 export const PROVIDER_LOGO_ASSETS: Record<
   string,
   { src: string; invertOnDark?: boolean }

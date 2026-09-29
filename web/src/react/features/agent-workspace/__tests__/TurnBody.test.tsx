@@ -90,4 +90,25 @@ describe("TurnBody", () => {
 
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
+
+  it("mounts only the newest thought row of the work log", () => {
+    const turn: InterleavedTurn = {
+      ...emptyTurn,
+      status: "running",
+      blocks: [
+        { type: "thinking", content: "First thought" },
+        { type: "thinking", content: "Second thought" },
+      ],
+    };
+    const { container } = render(
+      <TurnBody turn={turn} entryId="entry-1" isWorking />,
+    );
+
+    const rows = container.querySelectorAll(
+      '.bui-thinking[data-variant="reasoning"]',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Second thought");
+    expect(container).not.toHaveTextContent("First thought");
+  });
 });

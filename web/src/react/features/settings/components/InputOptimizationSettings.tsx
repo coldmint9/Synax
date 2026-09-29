@@ -6,6 +6,7 @@ import type {
 } from "../../../../lib/contracts/config";
 import { useLocale } from "../../../../hooks/useLocale";
 import { buildAgentModelOptions } from "../../agent-workspace/composer/modelSelection";
+import { modelOptionLabel } from "../lib/providerPresets";
 import { SettingsCard } from "./SettingsCard";
 import { SettingsSelect } from "./SettingsSelect";
 import { FormRow } from "./FormRow";
@@ -34,7 +35,11 @@ export function InputOptimizationSettings({
     },
     ...apiModels.map((model) => ({
       key: `${model.providerId}/${model.modelId}`,
-      label: `${config.providers.find((provider) => provider.id === model.providerId)?.label ?? model.providerId} · ${model.modelId}`,
+      label: modelOptionLabel(
+        config.providers,
+        model.providerId,
+        model.modelId,
+      ),
     })),
   ];
   if (

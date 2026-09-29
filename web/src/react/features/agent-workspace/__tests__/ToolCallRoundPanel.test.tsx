@@ -1,6 +1,7 @@
 import { act, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToolCallRoundPanel } from "../ToolCallRoundPanel";
+import type { ToolCallView } from "../buildInterleavedTurns";
 
 describe("ToolCallRoundPanel placeholder reasoning", () => {
   it("keeps the latest activity visible without an idle preview carousel", () => {
@@ -70,4 +71,39 @@ describe("ToolCallRoundPanel placeholder reasoning", () => {
     expect(container).toHaveTextContent("file.read · app.ts");
     expect(container).not.toHaveTextContent("...");
   });
+
+  it("mounts only the newest reasoning row of the round", () => {
+    const { container } = render(
+      <ToolCallRoundPanel
+        isStreaming
+        toolBlocks={[
+          { type: "thinking", content: "First thought" },
+          { type: "tool_call", call: toolCall("call-1") },
+          { type: "thinking", content: "Second thought" },
+          { type: "tool_call", call: toolCall("call-2") },
+          { type: "thinking", content: "Latest thought" },
+        ]}
+      />,
+    );
+    const rows = container.querySelectorAll(
+      '.bui-thinking[data-variant="reasoning"]',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Latest thought");
+    expect(container).not.toHaveTextContent("First thought");
+    expect(container).not.toHaveTextContent("Second thought");
+  });
 });
+
+function toolCall(id: string): ToolCallView {
+  return {
+    id,
+    toolId: "bash",
+    inputSummary: "pwd",
+    outputSummary: "/workspace",
+    status: "completed",
+    category: "exec",
+    duration: "5ms",
+    mutability: "read",
+  };
+}

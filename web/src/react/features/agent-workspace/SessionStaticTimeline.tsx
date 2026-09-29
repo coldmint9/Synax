@@ -47,6 +47,10 @@ type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef"> & {
   sessionId?: string;
   streaming?: boolean;
   eager?: boolean;
+  /** Revision of the immutable history page; changes force a fresh DOM subtree. */
+  cacheVersion?: string;
+  /** Temporary live snapshots keep their DOM key across the persisted handoff. */
+  liveEntryIds?: ReadonlySet<string>;
 };
 
 type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
@@ -72,8 +76,9 @@ const TimelineRow = memo(
     isWorking,
     isStreaming,
     eager,
+    cacheVersion,
   }: RowProps) {
-    const key = `${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`;
+    const key = `${sessionId ?? "standalone"}:${cacheVersion ?? "initial"}:${entry.kind}-${entry.id}`;
     return (
       <TimelineLazyEntry
         entryId={entry.id}
@@ -98,7 +103,8 @@ const TimelineRow = memo(
       previous.scrollRootRef !== next.scrollRootRef ||
       previous.isWorking !== next.isWorking ||
       previous.isStreaming !== next.isStreaming ||
-      previous.eager !== next.eager
+      previous.eager !== next.eager ||
+      previous.cacheVersion !== next.cacheVersion
     )
       return false;
     if (previous.entry === next.entry) return true;
@@ -123,6 +129,8 @@ function renderTimelineRows({
   onExpandChild,
   scrollRootRef,
   eager,
+  cacheVersion,
+  liveEntryIds,
 }: RowsProps) {
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
@@ -141,14 +149,22 @@ function renderTimelineRows({
       break;
     }
   }
-  return entries.map((entry, index) => (
+  return entries.map((entry, index) => {
+    const isLiveEntry =
+      liveEntryIds &&
+      [...liveEntryIds].some(
+        (stepId) => entry.id === stepId || entry.id.startsWith(`${stepId}:`),
+      );
+    const entryCacheVersion = isLiveEntry ? "live" : cacheVersion;
+    return (
     <TimelineRow
-      key={`${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`}
+      key={`${sessionId ?? "standalone"}:${entryCacheVersion ?? "initial"}:${entry.kind}-${entry.id}`}
       entry={entry}
       sessionId={sessionId}
       onExpandChild={onExpandChild}
       scrollRootRef={scrollRootRef}
       eager={eager}
+      cacheVersion={entryCacheVersion}
       isWorking={Boolean(streaming && index === latestActivityIndex)}
       isStreaming={Boolean(
         streaming &&
@@ -157,7 +173,8 @@ function renderTimelineRows({
         index === entries.length - 1,
       )}
     />
-  ));
+    );
+  });
 }
 
 /** Only the tail is rebuilt for tokens; all rows share one stable React parent. */
@@ -169,6 +186,8 @@ function TimelineRows({
   streaming,
   onExpandChild,
   scrollRootRef,
+  cacheVersion,
+  liveEntryIds,
 }: RowsProps & {
   history: ConversationTimelineEntry[];
   liveId: string | null;
@@ -184,8 +203,19 @@ function TimelineRows({
         streaming: streaming && !liveId,
         onExpandChild,
         scrollRootRef,
+        cacheVersion,
+        liveEntryIds,
       }),
-    [history, sessionId, streaming, liveId, onExpandChild, scrollRootRef],
+    [
+      history,
+      sessionId,
+      streaming,
+      liveId,
+      onExpandChild,
+      scrollRootRef,
+      cacheVersion,
+      liveEntryIds,
+    ],
   );
   const combined = useMemo(() => {
     if (!liveId) return groupActivityEntries(entries);
@@ -281,6 +311,10 @@ function TimelineRows({
           streaming,
           onExpandChild,
           scrollRootRef,
+          // The combined list contains the live tail. Keep its key stable so
+          // token deltas never remount the active subtree.
+          cacheVersion: liveId ? "live" : cacheVersion,
+          liveEntryIds,
         }),
       ]}
     </>
@@ -318,6 +352,17 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     unifiedLive && !browsingHistory ? s.streamingStepId : null,
   );
   const showLive = Boolean(liveId && excludeStepId === liveId);
+  const liveEntryIds = useMemo(
+    () => new Set((snapshots ?? []).map((snapshot) => snapshot.stepId)),
+    [snapshots],
+  );
+  // Versioned history is immutable between revisions. Include both epoch and
+  // revision so a checkpoint rewrite cannot reuse old mounted DOM or height
+  // measurements for the same entry ids. Live rows keep the stable initial
+  // version and are eager-mounted separately.
+  const cacheVersion = historyWindow
+    ? `${historyWindow.epoch ?? 0}:${historyWindow.revision ?? 0}`
+    : "initial";
   const timeline = useMemo(() => {
     // A completed step can arrive before its assistant message. The store
     // retires each snapshot only after its persisted content is confirmed.
@@ -429,6 +474,8 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         sessionId={session?.id}
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
+        cacheVersion={cacheVersion}
+        liveEntryIds={liveEntryIds}
       />
     </div>
   );

@@ -122,4 +122,35 @@ describe("SessionLiveTurn", () => {
       1,
     );
   });
+
+  it("mounts only the newest thought row of a live step", () => {
+    render(
+      <SessionLiveTurn
+        {...props}
+        streamingCompletedSteps={[
+          {
+            ...snapshot,
+            blocks: [
+              { type: "thinking", content: "First thought" },
+              {
+                type: "tool_call",
+                call: {
+                  id: "call-1",
+                  toolId: "rg",
+                  inputSummary: "bui-tool",
+                  outputSummary: "Found matches",
+                  status: "completed",
+                  duration: "55ms",
+                },
+              },
+              { type: "thinking", content: "Second thought" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("First thought")).toBeNull();
+    expect(screen.getByText("Second thought")).toBeTruthy();
+  });
 });

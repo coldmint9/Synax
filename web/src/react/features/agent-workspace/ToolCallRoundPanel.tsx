@@ -6,7 +6,11 @@ import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolBlocksToBatches } from "./toolCallUtils";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ElapsedTimer, PixelLoader } from "./LoadingState";
-import { hasDisplayableReasoning, latestActivityPreview } from "./activityText";
+import {
+  hasDisplayableReasoning,
+  latestActivityPreview,
+  latestThinkingIndex,
+} from "./activityText";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
 
 interface Props {
@@ -25,6 +29,9 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
     (block) =>
       block.type !== "thinking" || hasDisplayableReasoning(block.content),
   );
+  // Only the newest thought mounts its row here; the earlier ones are read-only
+  // history and would each add a collapsed row that can never change again.
+  const latestThought = latestThinkingIndex(toolBlocks);
   const previews = toolBlocks
     .flatMap((block, index) => {
       // Each record previews its latest line: a row reports where the round is
@@ -83,11 +90,13 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
         <div className="bui-tool-list">
           {toolBlocks.map((block, index) =>
             block.type === "thinking" ? (
-              <ThinkingBlock
-                key={`thinking-${index}`}
-                content={block.content}
-                isStreaming={isStreaming && index === toolBlocks.length - 1}
-              />
+              index === latestThought ? (
+                <ThinkingBlock
+                  key={`thinking-${index}`}
+                  content={block.content}
+                  isStreaming={isStreaming && index === toolBlocks.length - 1}
+                />
+              ) : null
             ) : (
               toolBlocksToBatches([block]).map((batch) => (
                 <ToolCallBatchSummaryLine

@@ -65,6 +65,25 @@ export function latestActivityPreview(content: string, max = 90): string {
 }
 
 /**
+ * Index of the newest reasoning block in a render container, `-1` when it holds
+ * none.
+ *
+ * Past thoughts are read-only: each one would mount its own collapsed activity
+ * row, so a long tool round otherwise keeps dozens of DOM subtrees that can
+ * never change again. Only the newest thought stays mounted — it is also the
+ * only row that can still grow.
+ */
+export function latestThinkingIndex(
+  items: readonly { type: string }[],
+): number {
+  let latest = -1;
+  for (let index = 0; index < items.length; index += 1) {
+    if (items[index].type === "thinking") latest = index;
+  }
+  return latest;
+}
+
+/**
  * Longest `**phrase**` payload still treated as a reasoning headline.
  *
  * Real reasoning text is written in paragraphs; a model that only emits a

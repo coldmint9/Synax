@@ -24,6 +24,7 @@ import {
   type AgentModelSelection,
 } from "./modelSelection";
 import { useAcpDiscovery } from "./useAcpDiscovery";
+import { providerDisplayLabel } from "../../settings/lib/providerPresets";
 
 interface Props {
   backendId?: string;
@@ -109,10 +110,7 @@ function ModelPickerContent({
     [apiModels, acpEndpoints, providerId, modelId, capability],
   );
 
-  const selectedProviderLabel = providerId
-    ? (providers.find((provider) => provider.id === providerId)?.label ??
-      providerId)
-    : null;
+  const selectedProviderLabel = providerDisplayLabel(providers, providerId);
   const selectedModelLabel = selected?.label ?? modelId;
   const selectedCapabilityLabel = selected?.capability === "image_generation"
     ? "生图"
@@ -126,15 +124,13 @@ function ModelPickerContent({
 
   const query = searchQuery.trim().toLowerCase();
   const groups = useMemo(() => {
-    const labels = new Map(
-      providers.map((provider) => [provider.id, provider.label]),
-    );
     const grouped = new Map<
       string,
       { label: string; options: AgentModelSelection[] }
     >();
     for (const option of allOptions) {
-      const label = labels.get(option.providerId) || option.providerId;
+      const label =
+        providerDisplayLabel(providers, option.providerId) ?? option.providerId;
       if (!matchesQuery(option, query, label)) continue;
       let group = grouped.get(option.providerId);
       if (!group) {

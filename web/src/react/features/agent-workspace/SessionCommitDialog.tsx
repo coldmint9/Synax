@@ -39,6 +39,7 @@ import {
   pickCommitMessageModel,
   useCommitModelPreference,
 } from "./commitMessageModelPreference";
+import { modelOptionLabel } from "../settings/lib/providerPresets";
 
 const EMPTY_RUNS: import("../../../lib/api/agentRuntime").AgentRun[] = [];
 const EMPTY_STEPS: import("../../../lib/api/agentRuntime").AgentRunStep[] = [];
@@ -403,7 +404,11 @@ export function SessionCommitDialog({
                             option.providerId,
                             option.modelId,
                           )!,
-                          label: `${option.providerId} / ${option.label}`,
+                          label: modelOptionLabel(
+                            providers,
+                            option.providerId,
+                            option.label,
+                          ),
                         }))}
                       />
                     </div>

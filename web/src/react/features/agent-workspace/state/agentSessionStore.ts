@@ -226,6 +226,22 @@ export function isSessionUnread(
 }
 
 const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 4;
+/**
+ * Completed pages are safe to show immediately, but they still need a bounded
+ * freshness window so a session revisited later cannot remain stale forever.
+ */
+export const SESSION_INACTIVE_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function isFreshInactivePageCache(
+  cache: SessionDetailCacheEntry | undefined,
+  now = Date.now(),
+): boolean {
+  return Boolean(
+    cache?.cachedAt &&
+      now - cache.cachedAt >= 0 &&
+      now - cache.cachedAt < SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
+  );
+}
 
 export interface SessionDetailCacheEntry {
   runs: AgentRun[];
@@ -1431,8 +1447,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const session = get().sessions.find((s) => s.id === sessionId);
       const liveSession = isActiveSessionStatus(session?.status);
       const forceFresh = options?.forceFresh === true;
+      const existingCache = get().sessionDetailCache[sessionId];
+      const cacheFresh = isFreshInactivePageCache(existingCache);
       if (panelOpen && prev === sessionId) {
-        if (!forceFresh && !liveSession) return;
+        if (!forceFresh && !liveSession && cacheFresh) return;
         if (
           forceFresh &&
           (activeDetailRefresh?.sessionId === sessionId ||
@@ -1457,12 +1475,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Reuse complete inactive snapshots even for a forced refresh. The
       // refresh runs in the background, so switching stays instant without
       // showing a half-built transcript. Active sessions remain live-only.
-      const cached = liveSession
-        ? undefined
-        : get().sessionDetailCache[sessionId];
+      const cached = liveSession ? undefined : existingCache;
       const needsRefresh =
         forceFresh ||
-        !cached?.cachedAt ||
+        !cacheFresh ||
         isActiveSessionStatus(session?.status);
       set((state) => ({
         panelOpen: true,
@@ -1517,8 +1533,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
 
       // Completed/failed/cancelled pages are immutable from the transcript
-      // perspective. Reuse their cached payload until an explicit refresh or
-      // a runtime mutation invalidates it; only active pages keep polling.
+      // perspective for a short TTL. Reuse their cached payload immediately,
+      // then refresh stale pages in the background; runtime mutations still
+      // invalidate them immediately. Active pages keep polling/live updates.
       if (needsRefresh) {
         void get().refreshDetail({
           joinPending: true,

@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearScheduledSessionRefresh,
+  SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
   setSessionDetailsVisible,
   useAgentSessionStore as store,
 } from "../state/agentSessionStore";
@@ -564,7 +565,7 @@ describe("invocation usage live refresh", () => {
 });
 
 describe("inactive session page cache", () => {
-  const cachedEntry = (lastVisitedAt: number) => ({
+  const cachedEntry = (lastVisitedAt: number, cachedAt = Date.now()) => ({
     runs: [],
     steps: [],
     events: [],
@@ -574,7 +575,7 @@ describe("inactive session page cache", () => {
     sessionStats: null,
     sessionTodos: [],
     sessionInvocationUsage: null,
-    cachedAt: 1,
+    cachedAt,
     lastVisitedAt,
   });
 
@@ -593,6 +594,27 @@ describe("inactive session page cache", () => {
 
     expect(api.listMessages).not.toHaveBeenCalled();
     expect(store.getState().detailLoading).toBe(false);
+  });
+
+  it("renders a stale completed page from cache and refreshes it in the background", async () => {
+    const completed = { ...session, status: "completed" } as AgentSession;
+    store.setState({
+      panelOpen: false,
+      selectedSessionId: null,
+      sessions: [completed],
+      sessionDetailCache: {
+        [completed.id]: cachedEntry(
+          Date.now(),
+          Date.now() - SESSION_INACTIVE_PAGE_CACHE_TTL_MS - 1,
+        ),
+      },
+    });
+
+    store.getState().openPanel(completed.id);
+
+    expect(store.getState().detailLoading).toBe(false);
+    expect(store.getState().detailRefreshing).toBe(true);
+    await vi.waitFor(() => expect(api.listMessages).toHaveBeenCalled());
   });
 
   it("retains the selected page plus the four most recently visited inactive pages", async () => {

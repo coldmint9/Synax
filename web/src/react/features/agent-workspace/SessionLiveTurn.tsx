@@ -12,6 +12,7 @@ import {
   materializeLiveBlocks,
   type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
+import { latestThinkingIndex } from "./activityText";
 
 const WORK_LOG_COLLAPSE_DELAY_MS = 420;
 
@@ -25,12 +26,16 @@ function renderLiveSegments(
     segment.type === "tool_round" ? segment.toolBlocks : [],
   );
   const answers = segments.filter((segment) => segment.type !== "tool_round");
+  // The answer region mounts only its newest reasoning block: earlier thoughts
+  // are read-only history, so their rows would only cost DOM subtrees.
+  const latestThought = latestThinkingIndex(answers);
   const answerStarted = answers.some(
     (segment) => segment.type === "text" && segment.markdown,
   );
   const render = (segment: (typeof segments)[number], i: number) => {
     const live = isStreaming && segment === segments[segments.length - 1];
-    if (segment.type === "thinking")
+    if (segment.type === "thinking") {
+      if (i !== latestThought) return null;
       return (
         <ThinkingBlock
           key={i}
@@ -39,6 +44,7 @@ function renderLiveSegments(
           rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
         />
       );
+    }
     if (segment.type === "tool_round")
       return <ToolCallRoundPanel key={i} toolBlocks={segment.toolBlocks} />;
     if (segment.type === "text")

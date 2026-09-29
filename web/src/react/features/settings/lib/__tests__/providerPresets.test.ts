@@ -18,6 +18,8 @@ import {
   parseReasoningEfforts,
   mergeModelOptions,
   modelsWithContextLimit,
+  modelOptionLabel,
+  providerDisplayLabel,
   providerReasoningEfforts,
   selectDefaultModel,
   toggleModelContextLimit,
@@ -26,6 +28,30 @@ import {
   type ApiProviderDraft,
 } from "../providerPresets";
 import { validateProviderDraft } from "../validation";
+
+describe("provider display labels", () => {
+  it("resolves the configured provider name instead of the internal id", () => {
+    const providers: Pick<ProviderDef, "id" | "label">[] = [
+      { id: "custom-api:1790651255292", label: "DeepSeek" },
+    ];
+
+    expect(providerDisplayLabel(providers, "custom-api:1790651255292")).toBe(
+      "DeepSeek",
+    );
+    expect(
+      modelOptionLabel(providers, "custom-api:1790651255292", "deepseek-flash"),
+    ).toBe("DeepSeek · deepseek-flash");
+  });
+
+  it("falls back to the preset name, then to the model name alone", () => {
+    expect(providerDisplayLabel([], "custom-api:openrouter")).toBe("OpenRouter");
+    expect(providerDisplayLabel([], "custom-api:1790651255292")).toBeNull();
+    expect(
+      modelOptionLabel([], "custom-api:1790651255292", "deepseek-flash"),
+    ).toBe("deepseek-flash");
+    expect(providerDisplayLabel([], null)).toBeNull();
+  });
+});
 
 function makeProvider(): ProviderDef {
   return {
