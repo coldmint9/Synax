@@ -171,7 +171,7 @@ function ModelPickerContent({
         }}
         focus
         anchor={{ to: "top end", gap: 8, padding: 8 }}
-        className="z-50 w-[20rem] overflow-hidden p-0"
+        className="z-[1300] pointer-events-auto w-[20rem] overflow-hidden p-0"
       >
         <Combobox
           value={selected ?? null}

@@ -5,14 +5,18 @@
   --font-interface: "Synax Avenir Next", "Avenir Next", "Inter Variable",
     "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
-  --theme-canvas: #f7f8fa;
-  --theme-surface: #ffffff;
-  --theme-surface-secondary: #edf0f4;
+  /* Light neutrals carry a very faint warm cast biased toward red rather than
+     yellow, so the canvas and the panels above it read as paper rather than
+     cream. Lightness steps stay identical to the previous cool ramp, so every
+     elevation contrast holds. */
+  --theme-canvas: #f9f6f5;
+  --theme-surface: #fcf9f8;
+  --theme-surface-secondary: #f3eeeb;
   --theme-text: #242932;
   --theme-text-muted: #626a76;
   --theme-text-subtle: #8f96a1;
-  --theme-border: #dce2ea;
-  --theme-border-strong: #c7d0db;
+  --theme-border: #e8dfda;
+  --theme-border-strong: #d8cdc7;
   --theme-accent: #a1bba8;
   --theme-accent-foreground: #2f3d34;
   --theme-accent-soft: #edf4ef;
@@ -20,21 +24,21 @@
   --theme-warning: #e25507;
   --theme-danger: #e02e2a;
   --theme-info: #0169cc;
-  --theme-input: #ffffff;
+  --theme-input: #fcf9f8;
   --theme-input-foreground: #242932;
   --theme-selection: #d9e9dc;
   --theme-focus: #3f6956;
   --theme-tooltip: #272c34;
-  --theme-tooltip-foreground: #f7f8fa;
+  --theme-tooltip-foreground: #f9f6f5;
 
-  --theme-canvas-hsl: 220.00 23.08% 97.45%;
-  --theme-surface-hsl: 0.00 0.00% 100.00%;
-  --theme-surface-secondary-hsl: 214.29 24.14% 94.31%;
+  --theme-canvas-hsl: 15.00 25.00% 96.86%;
+  --theme-surface-hsl: 15.00 40.00% 98.04%;
+  --theme-surface-secondary-hsl: 22.50 25.00% 93.73%;
   --theme-text-hsl: 218.57 16.28% 16.86%;
   --theme-text-muted-hsl: 216.00 9.26% 42.35%;
   --theme-text-subtle-hsl: 216.00 8.00% 59.80%;
-  --theme-border-hsl: 214.29 25.00% 89.02%;
-  --theme-border-strong-hsl: 213.00 21.74% 81.96%;
+  --theme-border-hsl: 21.43 23.33% 88.24%;
+  --theme-border-strong-hsl: 21.18 17.89% 81.37%;
   --theme-accent-hsl: 136.00 16.00% 68.00%;
   --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
   --theme-accent-soft-hsl: 138.00 24.00% 94.00%;
@@ -42,12 +46,12 @@
   --theme-warning-hsl: 21.00 94.00% 46.00%;
   --theme-danger-hsl: 1.00 75.00% 52.00%;
   --theme-info-hsl: 209.00 100.00% 50.00%;
-  --theme-input-hsl: 0.00 0.00% 100.00%;
+  --theme-input-hsl: 15.00 40.00% 98.04%;
   --theme-input-foreground-hsl: 218.57 16.28% 16.86%;
   --theme-selection-hsl: 136.00 28.00% 88.00%;
   --theme-focus-hsl: 154.00 26.00% 33.00%;
   --theme-tooltip-hsl: 216.00 14.89% 18.24%;
-  --theme-tooltip-foreground-hsl: 220.00 23.08% 97.45%;
+  --theme-tooltip-foreground-hsl: 15.00 25.00% 96.86%;
 
   --theme-radius-sm: 6px;
   --theme-radius-md: 8px;
@@ -69,13 +73,13 @@
 
   /* Static fallbacks keep the legacy token contract inspectable before the
      compatibility bridge below resolves aliases through --theme-*. */
-  --ui-canvas: #f7f8fa;
-  --ui-panel: rgb(255 255 255 / 1);
-  --ui-panel-soft: rgb(237 240 244 / 1);
+  --ui-canvas: #f9f6f5;
+  --ui-panel: rgb(252 249 248 / 1);
+  --ui-panel-soft: rgb(243 238 235 / 1);
   --ui-text: #242932;
   --ui-subtle: #626a76;
-  --ui-line: #dce2ea;
-  --ui-line-strong: #c7dbd0;
+  --ui-line: #e8dfda;
+  --ui-line-strong: #d8cdc7;
 }
 
 .dark {

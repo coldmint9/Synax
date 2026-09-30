@@ -10,27 +10,32 @@ export const grepSearchTool: RegisteredTool = {
   id: "grep.search",
   label: "Search Text",
   description:
-    "Fast workspace text search backed by bundled ripgrep, with grep as a compatibility fallback. Supports regex, glob filters, context lines, word boundary, and multiline matching.",
+    "Fast workspace text search backed by bundled ripgrep, with grep as a compatibility fallback. Fixed-string by default (regex=true for regex patterns); supports glob filters, context lines, word boundary, and multiline matching.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
   internalGate: "none",
   progressiveDetails:
-    "Accepts { query: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Returns matching lines with file path, line number, preview text, and optional context lines.",
+    'Accepts { query: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Returns matching lines with file path, line number, preview text, and optional context lines. Examples: { "query": "needle", "filePattern": "*.ts", "contextLines": 1 }; { "query": "resolve(Workspace)?Path", "regex": true }. Pitfalls: query is a fixed string unless regex=true, so ( ) | [ ] . * ? + are literal and a regex-style query reports no hits; put file filters in filePattern/excludePattern and the search base in path instead of encoding them in the query.',
   inputSchema: z.object({
-    query: z.string().min(1).describe("Text or regex pattern to search for."),
+    query: z
+      .string()
+      .min(1)
+      .describe(
+        "Text or regex pattern to search for. Fixed-string unless regex=true.",
+      ),
     path: z
       .string()
       .min(1)
       .optional()
-      .describe("Workspace-relative path to search under."),
+      .describe("Workspace-relative path to search under (default: workspace root)."),
     limit: z
       .number()
       .int()
       .positive()
       .max(200)
       .optional()
-      .describe("Max matches (default 50)."),
+      .describe("Max matches (default 50, capped at 200)."),
     caseSensitive: z
       .boolean()
       .optional()
@@ -38,7 +43,9 @@ export const grepSearchTool: RegisteredTool = {
     regex: z
       .boolean()
       .optional()
-      .describe("Treat query as regex (default false = fixed-string)."),
+      .describe(
+        "Treat query as regex (default false = fixed-string); set it for ( ) | [ ] . * ? + patterns.",
+      ),
     filePattern: z
       .string()
       .optional()
@@ -102,7 +109,8 @@ export const grepSearchTool: RegisteredTool = {
     if (args.filePattern) rgArgs.push("--glob", args.filePattern);
     if (args.excludePattern) rgArgs.push("--glob", `!${args.excludePattern}`);
 
-    rgArgs.push(args.query);
+    // End of options: a query that begins with "-" is a pattern, not a flag.
+    rgArgs.push("--", args.query);
     rgArgs.push(stat.isDirectory() ? "." : path.basename(requested));
 
     // ripgrep runs asynchronously so parallel tool calls and side-channel
@@ -165,9 +173,11 @@ async function runGrepSearch(
     const stderrInfo = result.stderr?.trim()
       ? ` stderr: ${result.stderr.trim()}`
       : "";
+    const hint = /unrecognized flag/i.test(result.stderr ?? "")
+      ? ' The pattern was parsed as a command-line flag; rewrite a query that begins with "-" (for example "--color" as "(?:--color)") and retry.'
+      : " Verify that the Synax installation contains a compatible bundled ripgrep.";
     throw new Error(
-      `rg failed with exit code ${result.status ?? "unknown"}.${stderrInfo} ` +
-        "Verify that the Synax installation contains a compatible bundled ripgrep.",
+      `rg failed with exit code ${result.status ?? "unknown"}.${stderrInfo}${hint}`,
     );
   }
 

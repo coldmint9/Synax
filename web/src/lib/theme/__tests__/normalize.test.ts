@@ -19,7 +19,7 @@ describe("theme normalization", () => {
     expect(theme.colors.light.accentForeground).toBe("#2f3d34");
     expect(theme.colors.light.accentSoft).toBe("#eceff3");
     expect(theme.colors.dark.canvas).toBe(DEFAULT_THEME.colors.dark.canvas);
-    expect(DEFAULT_THEME.colors.light.borderStrong).toBe("#c7d0db");
+    expect(DEFAULT_THEME.colors.light.borderStrong).toBe("#d8cdc7");
     expect(DEFAULT_THEME.colors.dark.surfaceSecondary).toBe("#272c34");
     expect(theme.shape).toEqual(DEFAULT_THEME.shape);
     expect(theme.effects).toEqual(DEFAULT_THEME.effects);

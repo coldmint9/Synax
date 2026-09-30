@@ -322,9 +322,9 @@ describe('app color themes', () => {
     expect(bridge.get('--theme-radius-compat')).toBe('10px');
   });
 
-  it('pairs cool light surfaces with the reference dark canvas and sidebar', () => {
-    expect(hex(lightTheme!, 'theme-canvas')).toBe('#f7f8fa');
-    expect(hex(lightTheme!, 'theme-surface')).toBe('#ffffff');
+  it('pairs warm light surfaces with the reference dark canvas and sidebar', () => {
+    expect(hex(lightTheme!, 'theme-canvas')).toBe('#f9f6f5');
+    expect(hex(lightTheme!, 'theme-surface')).toBe('#fcf9f8');
     expect(hex(darkTheme!, 'theme-canvas')).toBe('#10141c');
     expect(hex(darkTheme!, 'theme-surface')).toBe('#171b23');
   });

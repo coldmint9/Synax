@@ -5,15 +5,17 @@ import type {
   ThemeShapeTokens,
 } from "./contract";
 
+// Light neutrals keep the previous lightness steps but carry a very faint warm
+// cast, so the app canvas and the panels floating above it read as paper.
 const lightColors: ThemeColorTokens = {
-  canvas: "#f7f8fa",
-  surface: "#ffffff",
-  surfaceSecondary: "rgb(237 240 244 / 1)",
+  canvas: "#f9f6f5",
+  surface: "#fcf9f8",
+  surfaceSecondary: "rgb(243 238 235 / 1)",
   text: "#242932",
   textMuted: "#626a76",
   textSubtle: "#8f96a1",
-  border: "#dce2ea",
-  borderStrong: "#c7d0db",
+  border: "#e8dfda",
+  borderStrong: "#d8cdc7",
   accent: "#a1bba8",
   accentForeground: "#2f3d34",
   accentSoft: "#edf4ef",
@@ -21,12 +23,12 @@ const lightColors: ThemeColorTokens = {
   warning: "#e25507",
   danger: "#e02e2a",
   info: "#0169cc",
-  input: "#ffffff",
+  input: "#fcf9f8",
   inputForeground: "#242932",
   selection: "#d9e9dc",
   focus: "#3f6956",
   tooltip: "#272c34",
-  tooltipForeground: "#f7f8fa",
+  tooltipForeground: "#f9f6f5",
 };
 
 const darkColors: ThemeColorTokens = {

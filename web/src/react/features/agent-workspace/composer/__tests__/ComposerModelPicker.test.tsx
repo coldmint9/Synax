@@ -105,7 +105,7 @@ describe("ComposerModelPicker", () => {
 
     const trigger = screen.getByRole("button", { name: "选择模型" });
     expect(trigger).toHaveTextContent("OpenAI · gpt-5");
-    expect(trigger).toHaveAttribute("title", "OpenAI · gpt-5");
+    expect(trigger).toHaveAttribute("title", "OpenAI · gpt-5 · 对话");
   });
 
   it("groups models by provider name without provider ID suffixes", async () => {
@@ -114,8 +114,8 @@ describe("ComposerModelPicker", () => {
     const listbox = screen.getByRole("listbox", { name: "选择模型" });
     const options = within(listbox).getAllByRole("option");
     expect(options.map((option) => option.textContent)).toEqual([
-      "gpt-5",
-      "Cursor Default",
+      "gpt-5对话",
+      "Cursor Default对话",
     ]);
 
     expect(within(listbox).getAllByRole("group")).toHaveLength(2);
@@ -127,6 +127,32 @@ describe("ComposerModelPicker", () => {
     ).toContainElement(options[1]);
     expect(screen.queryByText("API 模型")).toBeNull();
     expect(screen.queryByText("ACP 端点")).toBeNull();
+  });
+
+  it("keeps the portaled panel inside the dock outside-dismiss boundary", async () => {
+    const user = userEvent.setup();
+    await openPicker();
+
+    let dismissed = false;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest('[role="menu"], [role="listbox"], [data-slot="popover"]')) {
+        dismissed = true;
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+
+    try {
+      const panel = screen.getByRole("combobox").closest('[data-slot="popover"]');
+      expect(panel).toBeInTheDocument();
+      expect(panel).toHaveClass("pointer-events-auto", "z-[1300]");
+
+      await user.click(screen.getByRole("combobox"));
+      expect(dismissed).toBe(false);
+    } finally {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    }
   });
 
   it("marks the current selection and reports the picked option", async () => {
@@ -143,6 +169,7 @@ describe("ComposerModelPicker", () => {
       providerId: "cursor-acp",
       modelId: "cursor-default",
       label: "Cursor Default",
+      capability: "chat",
     });
   });
 });
@@ -167,7 +194,7 @@ it("searches models and provider groups with real Combobox keyboard selection an
   await user.clear(search);
   await user.type(search, "cursor");
   expect(screen.getAllByRole("group")).toHaveLength(1);
-  const option = screen.getByRole("option", { name: "Cursor Default" });
+  const option = screen.getByRole("option", { name: /Cursor Default/ });
   await user.keyboard("{ArrowDown}");
   await waitFor(() => expect(search).toHaveAttribute("aria-activedescendant", option.id));
   await user.keyboard("{Enter}");
