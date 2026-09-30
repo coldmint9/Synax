@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ChangeSet } from "@codemirror/state";
 import { alignMergeDocuments } from "./mergeAlignment";
-import { normalizeEditorText, preserveRawChanges } from "./mergeEditorText";
+import {
+  normalizeEditorText,
+  rawOffsetToEditor,
+  restoreLineEndings,
+} from "./mergeEditorText";
 
 describe("three-way display alignment", () => {
   it("aligns common lines after unequal replacement blocks without editing source text", () => {
@@ -39,14 +42,16 @@ describe("three-way display alignment", () => {
   });
 });
 describe("editor EOL preservation", () => {
-  it("preserves untouched mixed EOLs while inserting the document's existing style", () => {
-    const raw = "a\r\nb\nc\r\n";
-    const changes = ChangeSet.of({ from: 2, to: 3, insert: "X\nY" }, normalizeEditorText(raw).length);
-    expect(preserveRawChanges(raw, changes)).toBe("a\r\nX\r\nY\nc\r\n");
+  it("keeps the document's own CRLF style when the editor inserts LF text", () => {
+    expect(restoreLineEndings("a\r\nb\nc\r\n", "a\nX\nY\nc\n")).toBe(
+      "a\r\nX\r\nY\r\nc\r\n",
+    );
   });
-  it("maps multiple changes against the original CRLF offsets", () => {
-    const raw = "one\r\ntwo\r\nthree\r\n";
-    const changes = ChangeSet.of([{ from: 0, to: 3, insert: "1" }, { from: 8, to: 13, insert: "3" }], normalizeEditorText(raw).length);
-    expect(preserveRawChanges(raw, changes)).toBe("1\r\ntwo\r\n3\r\n");
+  it("leaves an LF document untouched", () => {
+    expect(restoreLineEndings("one\ntwo\n", "1\ntwo\n3\n")).toBe("1\ntwo\n3\n");
+  });
+  it("maps raw offsets onto the normalized editor text", () => {
+    expect(normalizeEditorText("a\r\nb\r\n")).toBe("a\nb\n");
+    expect(rawOffsetToEditor("a\r\nb\r\n", 4)).toBe(3);
   });
 });

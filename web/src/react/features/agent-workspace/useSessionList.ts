@@ -173,20 +173,23 @@ export function useSessionList(
       .map((session, index, all) =>
         buildTree(session, 0, index === all.length - 1, index < all.length - 1),
       );
-    const flattenVisible = (nodes: SessionTreeNode[]): SessionTreeNode[] =>
-      nodes.flatMap((node) =>
-        node.expanded ? [node, ...flattenVisible(node.children)] : [node],
-      );
-    const visibleTree = flattenVisible(tree);
-    const pinned = tree.filter(
+    // Child sessions remain available in the store and workspace dashboard,
+    // but the main session list is intentionally root-session only. This keeps
+    // delegated work from competing with the user's conversations.
+    const displayTree = tree.map((node) => ({
+      ...node,
+      children: [],
+      expanded: false,
+    }));
+    const pinned = displayTree.filter(
       (node) => node.session.sessionMetadata?.pinned === true,
     );
     const hasPinned = pinned.length > 0;
     const regularRoots = hasPinned
-      ? tree.filter((node) => node.session.sessionMetadata?.pinned !== true)
-      : tree;
-    const regular = hasPinned ? flattenVisible(regularRoots) : visibleTree;
-    const pinnedVisible = flattenVisible(pinned);
+      ? displayTree.filter((node) => node.session.sessionMetadata?.pinned !== true)
+      : displayTree;
+    const regular = regularRoots;
+    const pinnedVisible = pinned;
     // Sessions are already sorted newest-first, so the two buckets stay ordered.
     // Search hits bypass bucketing: a result set is a hit list, not a timeline.
     const bucketByDay = listView === "sessions" && !search.enabled;
@@ -341,9 +344,13 @@ export function useSessionList(
   const select = useCallback(
     (id: string) => {
       if (!routeProjectId) return;
-      useAgentSessionStore.getState().markSessionRead(id);
+      const store = useAgentSessionStore.getState();
+      store.markSessionRead(id);
       if (selectedIdFromUrl === id) {
-        useAgentSessionStore.getState().openPanel(id, { forceFresh: true });
+        // The row already owns the open conversation. A repeat click must not
+        // rebuild the transcript, so only reopen a closed panel or retry a
+        // detail request that previously failed.
+        if (!store.panelOpen || store.detailError) store.openPanel(id);
         return;
       }
       navigate(

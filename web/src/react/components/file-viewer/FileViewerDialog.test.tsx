@@ -1,5 +1,3 @@
-import { EditorView } from "@codemirror/view";
-import { act } from "@testing-library/react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,10 +6,9 @@ import { createMergeModel, decideRows, serializeMergeResolutionState } from "./m
 import type { MergeFile } from "../../../../../api/services/git-mr/contracts";
 vi.mock("../../../lib/shiki-highlighter", () => ({ highlightWikiCode: async () => "" }));
 
-function editorText(element: HTMLElement) { return EditorView.findFromDOM(element)!.state.doc.toString(); }
+const editorText = (element: HTMLElement) => (element as HTMLTextAreaElement).value;
 function editEditor(element: HTMLElement, value: string) {
-  const view = EditorView.findFromDOM(element)!;
-  act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } }));
+  fireEvent.change(element, { target: { value } });
 }
 
 const file: MergeFile = {

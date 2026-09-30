@@ -64,12 +64,15 @@ html.dark .idea-merge-dialog .merge-code-paint .shiki, html.dark .idea-merge-dia
 .merge-code-surface textarea { right: 26px; width: calc(100% - 71px); }
 .merge-code-gutter > .merge-code-gutter-inner { padding-top: 0; }
 .merge-code-paint > div { padding: 0; }
-.merge-codemirror { position: absolute; inset: 0 26px 0 0; min-height: 0; }
+.merge-code-surface .merge-code-gutter { overflow: hidden; }
+.merge-code-gutter-inner { position: relative; will-change: transform; }
+.merge-code-lineno { height: 20px; line-height: 20px; padding: 0 7px; text-align: right; color: var(--ui-subtle); font: 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.merge-code-paint { position: absolute; top: 0; left: 0; min-width: 100%; width: max-content; will-change: transform; }
+.merge-code-line { height: 20px; line-height: 20px; white-space: pre; }
 .idea-merge-dialog { --merge-code-keyword: #8a279b; --merge-code-comment: #586069; --merge-code-string: #116329; --merge-code-number: #0550ae; --merge-code-function: #8250df; }
 html.dark .idea-merge-dialog { --merge-code-keyword: #ff9aa2; --merge-code-comment: #9ba3ad; --merge-code-string: #a8d5a2; --merge-code-number: #a4caff; --merge-code-function: #d7b7ff; }
 .merge-alignment-gap { background: repeating-linear-gradient(135deg, transparent, transparent 5px, color-mix(in srgb, var(--ui-subtle) 7%, transparent) 5px, color-mix(in srgb, var(--ui-subtle) 7%, transparent) 6px); }
 .merge-changed-line { background: color-mix(in srgb, var(--warning) 10%, transparent); }
-.merge-codemirror .cm-content { min-height: 100%; }
 .merge-block-map { display: flex; gap: 5px; overflow-x: auto; padding: 5px 10px; border-top: 1px solid var(--ui-line); }
 .merge-block-map button { white-space: nowrap; display: flex; gap: 4px; align-items: center; color: var(--warning); }
 .merge-block-map button.is-resolved { color: var(--success); }

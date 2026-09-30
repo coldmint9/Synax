@@ -7,6 +7,8 @@ import { agentRuntimeStore as store } from "../session-store.js";
 import { toolRegistry as agentToolRegistry } from "../tool-registry.js";
 import { workRuntime } from "../work-runtime.js";
 import { workStore } from "../work-store.js";
+import { evidenceService } from "../evidence-service.js";
+import { evidenceInventory } from "../evidence-inventory.js";
 import { inputQueueService } from "../input-queue-service.js";
 import { interactionService } from "../interaction-service.js";
 import { goalContinuationInput } from "../goal-continuation.js";
@@ -102,6 +104,69 @@ function input(
 }
 
 describe("incremental goal acceptance gates", () => {
+  it("rejects media and foreign artifact IDs with actionable inventory, then accepts corrected incremental evidence", async () => {
+    const { session, run } = setup("Complete the goal");
+    const executionId = "artifact-execution";
+    store.updateSessionMetadata(session.id, {
+      mode: "goal",
+      goal: { objective: "Complete the goal", status: "executing" },
+      plan: {
+        status: "approved", revision: 1, executionId,
+        acceptanceCriteria: ["First criterion", "Second criterion"],
+      },
+    });
+    store.updateRun(run.id, {
+      metadata: { ...store.getRun(run.id).metadata, goalExecutionId: executionId },
+    });
+    const proof = store.appendToolCall({
+      id: "artifact-proof", sessionId: session.id, runId: run.id,
+      stepId: step(session.id, run.id), modelToolCallId: null,
+      toolId: "file.read", category: "read", mutability: "read",
+      argsHash: "artifact-proof", inputRef: { path: "report.txt" }, inputSummary: "Read report",
+      outputRef: { content: "Report checked" }, outputSummary: "Report checked",
+      status: "completed", permissionDecisionId: null,
+      startedAt: nowIso(), endedAt: nowIso(), error: null,
+    });
+    const artifact = evidenceService.append({
+      sessionId: session.id, kind: "evidence", title: "Report", summary: "Report checked",
+      sourceRefs: [{ type: "tool_call", id: proof.id }],
+    });
+    const foreign = evidenceService.append({
+      sessionId: session.id, kind: "evidence", title: "Foreign report", summary: "Not owned",
+      sourceRefs: [{ type: "tool_call", id: "foreign-proof" }],
+    });
+    const failed = store.appendToolCall({
+      ...proof, id: "failed-proof", status: "failed", error: "Read failed",
+    });
+    const failedArtifact = evidenceService.append({
+      sessionId: session.id, kind: "evidence", title: "Failed read", summary: "Not successful",
+      sourceRefs: [{ type: "tool_call", id: failed.id }],
+    });
+    const inventory = evidenceInventory(workStore.current(session.id)!, undefined, { executionId });
+    expect([...inventory.artifactIds]).toEqual([artifact.id]);
+    const instruction = workRuntime.prompt(session.id);
+    expect(instruction).toContain('"evidenceArtifacts"');
+    expect(instruction).toContain(artifact.id);
+    expect(instruction).not.toContain(foreign.id);
+    expect(instruction).not.toContain(failedArtifact.id);
+    for (const invalid of ["asset_fdbe89b0d0a64e14a18a7832ae31ada8", foreign.id, failedArtifact.id]) {
+      await expect(workRuntime.complete(input(session.id, run.id, {}), "Done", [
+        { criterion: "First criterion", summary: "Report checked", artifactIds: [invalid] },
+      ])).rejects.toThrow(`Available artifactIds: ["${artifact.id}"]`);
+      expect(workStore.current(session.id)?.status).not.toBe("completed");
+      expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: "executing" });
+    }
+    const first = await workRuntime.complete(input(session.id, run.id, {}), "First checked", [
+      { criterion: "First criterion", summary: "Report checked", artifactIds: [artifact.id] },
+    ]);
+    expect(first.result).toMatchObject({ status: "in_progress", remainingCriteria: ["Second criterion"] });
+    const second = await workRuntime.complete(input(session.id, run.id, {}), "Both checked", [
+      { criterion: "Second criterion", summary: "Report checked", toolCallIds: [proof.id] },
+    ]);
+    expect(second.result).toMatchObject({ status: "completed" });
+    expect(workStore.current(session.id)?.status).toBe("completed");
+  });
+
   it("records an early goal.finish as in-progress and exposes remaining criteria", async () => {
     const { session, run } = setup("Complete the goal");
     store.updateSessionMetadata(session.id, {

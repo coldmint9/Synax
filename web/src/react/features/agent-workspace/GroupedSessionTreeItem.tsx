@@ -37,15 +37,6 @@ export function GroupedSessionTreeItem({
           </span>
         )}
       </li>
-      {node.children.map((child) => (
-        <GroupedSessionTreeItem
-          key={child.session.id}
-          node={child}
-          depth={depth + 1}
-          selectedId={selectedId}
-          onSelect={onSelect}
-        />
-      ))}
     </>
   );
 }

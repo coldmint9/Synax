@@ -1,10 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, X } from "lucide-react";
-import type { EditorView } from "@codemirror/view";
 import type { MergeFile } from "../../../../../api/services/git-mr/contracts";
 import { type MergeModel, type MergeDecision, type MergeRow } from "./mergeModel";
 import { alignMergeDocuments } from "./mergeAlignment";
-import { MergeCodePane, MERGE_LINE_HEIGHT } from "./MergeCodePane";
+import {
+  MergeCodePane,
+  MERGE_LINE_HEIGHT,
+  type MergePaneHandle,
+} from "./MergeCodePane";
 import { normalizeEditorText, rawOffsetToEditor } from "./mergeEditorText";
 
 export function ThreeWayMergeEditor({ file, model, blocked, onEdit, onDecide }: {
@@ -18,7 +21,7 @@ export function ThreeWayMergeEditor({ file, model, blocked, onEdit, onDecide }: 
   }, [model.rows]);
   const alignment = useMemo(() => alignMergeDocuments(file.target, model.text, file.source), [file.target, model.text, file.source]);
   const [active, setActive] = useState(0);
-  const editors = useRef<(EditorView | null)[]>([]);
+  const editors = useRef<(MergePaneHandle | null)[]>([]);
   const gutters = useRef<(HTMLDivElement | null)[]>([]);
   const scrollLock = useRef(false);
   const texts = [file.target, model.text, file.source];
@@ -36,7 +39,7 @@ export function ThreeWayMergeEditor({ file, model, blocked, onEdit, onDecide }: 
   const paintGutter = (side: number, top: number) => {
     if (gutters.current[side]) gutters.current[side]!.style.transform = `translateY(${-top}px)`;
   };
-  const synchronize = (source: EditorView) => {
+  const synchronize = (source: MergePaneHandle) => {
     const side = editors.current.indexOf(source);
     if (side < 0) return;
     paintGutter(side, source.scrollDOM.scrollTop);
@@ -56,7 +59,10 @@ export function ThreeWayMergeEditor({ file, model, blocked, onEdit, onDecide }: 
     setActive(index);
     const result = editors.current[1];
     if (result) {
-      result.dispatch({ selection: { anchor: rawOffsetToEditor(model.text, block.rows[0].start), head: rawOffsetToEditor(model.text, block.rows[block.rows.length - 1].end) } });
+      result.setSelection(
+        rawOffsetToEditor(model.text, block.rows[0].start),
+        rawOffsetToEditor(model.text, block.rows[block.rows.length - 1].end),
+      );
       result.focus();
     }
     editors.current.forEach((editor, side) => {
@@ -79,7 +85,7 @@ export function ThreeWayMergeEditor({ file, model, blocked, onEdit, onDecide }: 
         return <section className={`merge-code-pane merge-code-pane-${side}`} key={side} aria-label={side === 0 ? "本地版本" : side === 1 ? "合并结果" : "来源版本"}>
           <header><strong>{side === 0 ? "本地版本" : side === 1 ? "合并结果" : "来源版本"}</strong><span title={side === 0 ? file.targetLabel : side === 2 ? file.sourceLabel : undefined}>{side === 0 ? file.targetLabel || "Target" : side === 2 ? file.sourceLabel || "Source" : "可编辑"}</span></header>
           <div className="merge-code-surface">
-            <MergeCodePane text={text} path={file.path} label={side === 1 ? `编辑合并结果 ${file.path}` : side === 0 ? "本地版本代码" : "来源版本代码"} readOnly={side !== 1 || blocked} gaps={alignment.gaps[side]} changedLines={changedLines} onReady={editor => { editors.current[side] = editor; }} onScroll={synchronize} onChange={onEdit} />
+            <MergeCodePane text={text} label={side === 1 ? `编辑合并结果 ${file.path}` : side === 0 ? "本地版本代码" : "来源版本代码"} readOnly={side !== 1 || blocked} gaps={alignment.gaps[side]} changedLines={changedLines} onReady={editor => { editors.current[side] = editor; }} onScroll={synchronize} onChange={onEdit} />
             <div className="merge-block-gutter"><div className="merge-block-gutter-inner" ref={element => { gutters.current[side] = element; }}>{blocks.map((block, index) => <div key={block.id} className={`merge-inline-block ${block.rows.every(row => row.reviewed) ? "is-resolved" : ""}`} style={{ top: visualRanges[index].start * MERGE_LINE_HEIGHT }}>
               <button title={side === 0 ? `采用左侧冲突 ${index + 1}` : side === 2 ? `采用右侧冲突 ${index + 1}` : `确认冲突 ${index + 1} 当前结果`} disabled={blocked || (side !== 1 && block.rows.some(row => !row.mapped))} onClick={() => onDecide(block.rows.map(row => row.id), side === 0 ? "target" : side === 2 ? "source" : "confirm")}>{side === 0 ? <ArrowRight size={13} /> : side === 2 ? <ArrowLeft size={13} /> : <Check size={13} />}</button>
             </div>)}</div></div>

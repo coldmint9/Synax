@@ -238,3 +238,66 @@ describe("pinned session sections", () => {
     }
   });
 });
+
+describe("session row repeat clicks", () => {
+  const selectedRowWrapper = ({ children }: { children: ReactNode }) => (
+    <MemoryRouter initialEntries={["/projects/p1/sessions?session=new"]}>
+      <ContextMenuProvider>{children}</ContextMenuProvider>
+    </MemoryRouter>
+  );
+
+  beforeEach(() => {
+    useAgentSessionStore.setState({
+      projectId: "p1",
+      sessions: [makeSession({ id: "new", title: "普通测试" })],
+      sessionListTotal: 1,
+      refreshSessions: vi.fn(async () => {}),
+      panelOpen: true,
+      selectedSessionId: "new",
+      detailError: null,
+      detailLoading: false,
+      detailRefreshing: false,
+    });
+  });
+
+  it("does not rebuild the transcript when the open row is clicked again", () => {
+    const listMessages = vi
+      .spyOn(agentRuntimeApi, "listMessages")
+      .mockImplementation(() => new Promise(() => {}));
+    try {
+      const { result } = renderHook(
+        () => useSessionList("zh", "sessions", "p1"),
+        { wrapper: selectedRowWrapper },
+      );
+      expect(result.current.selectedId).toBe("new");
+
+      act(() => {
+        result.current.select("new");
+        result.current.select("new");
+      });
+
+      expect(listMessages).not.toHaveBeenCalled();
+      expect(useAgentSessionStore.getState().detailLoading).toBe(false);
+      expect(useAgentSessionStore.getState().detailRefreshing).toBe(false);
+    } finally {
+      listMessages.mockRestore();
+    }
+  });
+
+  it("reopens the panel for the row that already matches the URL", () => {
+    useAgentSessionStore.setState({ panelOpen: false, selectedSessionId: null });
+    const openPanel = vi.spyOn(useAgentSessionStore.getState(), "openPanel");
+    try {
+      const { result } = renderHook(
+        () => useSessionList("zh", "sessions", "p1"),
+        { wrapper: selectedRowWrapper },
+      );
+
+      act(() => result.current.select("new"));
+
+      expect(openPanel).toHaveBeenCalledWith("new");
+    } finally {
+      openPanel.mockRestore();
+    }
+  });
+});

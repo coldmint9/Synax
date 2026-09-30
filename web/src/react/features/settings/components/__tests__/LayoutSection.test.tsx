@@ -19,6 +19,7 @@ describe("LayoutSection", () => {
         locale: "en",
         wikiEnabled: false,
         sessionFoldWorkRuns: true,
+        userMessageFontWeight: 450,
       },
     }));
   });
@@ -51,5 +52,15 @@ describe("LayoutSection", () => {
     expect(useShellStore.getState().preferences.sessionFoldWorkRuns).toBe(
       false,
     );
+  });
+
+  it("updates the user message font weight with the range control", () => {
+    render(<LayoutSection />);
+
+    const slider = screen.getByRole("slider", { name: "用户消息字重" });
+    expect(slider).toHaveValue("450");
+    fireEvent.change(slider, { target: { value: "537" } });
+    expect(useShellStore.getState().preferences.userMessageFontWeight).toBe(537);
+    expect(screen.getByText("537")).toBeInTheDocument();
   });
 });

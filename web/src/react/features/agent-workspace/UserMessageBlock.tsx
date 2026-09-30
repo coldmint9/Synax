@@ -3,6 +3,7 @@ import type { RuntimeContentPart } from "../../../lib/api/runtimeMedia";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/react/components/ui/Button";
 import { useLocale } from "../../../hooks/useLocale";
+import { useShellStore } from "../../state/shellStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 interface Props {
@@ -17,6 +18,9 @@ export const UserMessageBlock = memo(function UserMessageBlock({
 }: Props) {
   const { locale } = useLocale(),
     zh = locale === "zh";
+  const userMessageFontWeight = useShellStore(
+    (state) => state.preferences.userMessageFontWeight,
+  );
   const history = useSessionHistory(),
     checkpoint = history?.checkpoint(messageId);
   const [editing, setEditing] = useState(false),
@@ -113,7 +117,10 @@ export const UserMessageBlock = memo(function UserMessageBlock({
         </div>
       ) : (
         <div className="message-action-group max-w-[min(85%,42rem)]">
-          <div className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm font-semibold leading-relaxed text-foreground whitespace-pre-wrap shadow-sm">
+          <div
+            className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed text-foreground whitespace-pre-wrap shadow-sm"
+            style={{ fontWeight: userMessageFontWeight }}
+          >
             {content}
             <MediaParts parts={contentParts} />
           </div>

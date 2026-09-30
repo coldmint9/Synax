@@ -14,13 +14,19 @@ vi.mock("../SessionHistoryContext", () => ({
 beforeEach(() => {
   request.mockReset();
   useShellStore.setState((s) => ({
-    preferences: { ...s.preferences, locale: "en" },
+    preferences: {
+      ...s.preferences,
+      locale: "en",
+      userMessageFontWeight: 450,
+    },
   }));
 });
 describe("inline message editing", () => {
-  it("emphasizes the sent message without changing the edit field", () => {
+  it("uses the configured weight without changing the edit field", () => {
     const { container } = render(<UserMessageBlock messageId="user1" content="Original" />);
-    expect(container.querySelector(".session-user-message")).toHaveClass("font-semibold");
+    expect(container.querySelector(".session-user-message")).toHaveStyle({
+      fontWeight: "450",
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
     expect(screen.getByRole("textbox")).not.toHaveClass("font-semibold");

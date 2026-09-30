@@ -255,7 +255,7 @@ export function SessionTranscript({
           ref={scrollRef}
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
-          className="session-chat-scroll h-full overflow-y-auto"
+          className="session-chat-scroll scrollbar-none h-full overflow-y-auto"
           aria-busy={loading || refreshing || olderHistory.loading}
         >
           <div className="session-transcript-body">

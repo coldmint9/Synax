@@ -47,6 +47,7 @@ export interface ShellPreferences {
   locale: "zh" | "en";
   editor: string;
   agentFontSize: number;
+  userMessageFontWeight: number;
   wikiEnabled: boolean;
   /** Fold runs of activity-only agent turns into one work-log row. */
   sessionFoldWorkRuns: boolean;
@@ -81,6 +82,7 @@ interface ShellState {
   setNotifications: (notifications: boolean) => void;
   setEditor: (editor: ShellPreferences["editor"]) => void;
   setAgentFontSize: (fontSize: number) => void;
+  setUserMessageFontWeight: (fontWeight: number) => void;
   setWikiEnabled: (enabled: boolean) => void;
   setSessionFoldWorkRuns: (value: boolean) => void;
   setSessionListDisplayMode: (
@@ -99,6 +101,9 @@ const storageKey = "rumbling-shell-preferences";
 const DEFAULT_UI_FONT_SIZE = 14;
 const MIN_UI_FONT_SIZE = 12;
 const MAX_UI_FONT_SIZE = 20;
+const DEFAULT_USER_MESSAGE_FONT_WEIGHT = 450;
+const MIN_USER_MESSAGE_FONT_WEIGHT = 100;
+const MAX_USER_MESSAGE_FONT_WEIGHT = 900;
 let projectFetchVersion = 0;
 let projectMutationVersion = 0;
 const PROJECT_RETRY_DELAY_MS = 10_000;
@@ -147,6 +152,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
     locale: "zh",
     editor: "system",
     agentFontSize: 14,
+    userMessageFontWeight: DEFAULT_USER_MESSAGE_FONT_WEIGHT,
     wikiEnabled: false,
     sessionFoldWorkRuns: true,
     sessionListDisplayMode: "preview",
@@ -202,6 +208,16 @@ export const useShellStore = create<ShellState>((set, get) => ({
     }));
     persistShellPreferences();
     applyUiFontSize(normalized);
+  },
+  setUserMessageFontWeight: (fontWeight) => {
+    const normalized = Math.min(
+      MAX_USER_MESSAGE_FONT_WEIGHT,
+      Math.max(MIN_USER_MESSAGE_FONT_WEIGHT, Math.round(fontWeight)),
+    );
+    set((state) => ({
+      preferences: { ...state.preferences, userMessageFontWeight: normalized },
+    }));
+    persistShellPreferences();
   },
   setSessionFoldWorkRuns: (value) => {
     set((state) => ({
@@ -370,6 +386,13 @@ export function hydrateShellPreferences() {
       parsed.agentFontSize <= MAX_UI_FONT_SIZE
     ) {
       patch.agentFontSize = Math.round(parsed.agentFontSize);
+    }
+    if (
+      typeof parsed.userMessageFontWeight === "number" &&
+      parsed.userMessageFontWeight >= MIN_USER_MESSAGE_FONT_WEIGHT &&
+      parsed.userMessageFontWeight <= MAX_USER_MESSAGE_FONT_WEIGHT
+    ) {
+      patch.userMessageFontWeight = Math.round(parsed.userMessageFontWeight);
     }
     if (typeof parsed.sessionFoldWorkRuns === "boolean")
       patch.sessionFoldWorkRuns = parsed.sessionFoldWorkRuns;

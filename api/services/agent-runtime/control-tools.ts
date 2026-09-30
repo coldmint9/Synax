@@ -193,8 +193,8 @@ const evidenceSchema = z
     z.object({
       criterion: z.string().min(1).max(4000),
       summary: z.string().min(1).max(4000),
-      toolCallIds: z.array(z.string()).max(40).optional(),
-      artifactIds: z.array(z.string()).max(40).optional(),
+      toolCallIds: z.array(z.string()).max(40).optional().describe('Successful tool call IDs from the current work evidence inventory that support this criterion.'),
+      artifactIds: z.array(z.string()).max(40).optional().describe('Runtime evidence artifact IDs from evidenceArtifacts in the current work inventory. Media asset IDs (asset_...) are not valid here.'),
     }),
   )
   .max(30);

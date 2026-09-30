@@ -2,7 +2,9 @@ import type { ToolExecutionInput, ToolExecutionResult } from './contracts.js';
 import type { AgentPlan } from './control-contracts.js';
 import { evaluateGoalAcceptance, getGoalState, mergeGoalEvidence } from './goal-control.js';
 import { agentRuntimeStore as store } from './session-store.js';
-import { isGoalProof, type PlanExecutionBoundary } from './control-runtime.js';
+import { type PlanExecutionBoundary } from './control-runtime.js';
+import { evidenceInventory } from './evidence-inventory.js';
+import { workStore } from './work-store.js';
 import { interactionService } from './interaction-service.js';
 import { TaskStore } from './tools/task-tools.js';
 import { AgentValidationError } from './runtime-errors.js';
@@ -76,9 +78,9 @@ export function completeGoalCheckpoint(input: ToolExecutionInput): ToolExecution
     };
   }
   const sessions = store.listSessionTree(session.id);
-  const proof = sessions
-    .flatMap((s) => store.listToolCalls(s.id))
-    .filter((c) => isGoalProof(c, plan));
+  const work = workStore.current(session.id);
+  if (!work) throw new AgentValidationError('No active work checkpoint.');
+  const inventory = evidenceInventory(work, undefined, plan);
   const evidence = mergeGoalEvidence(previousEvidence, args.evidence);
   const evaluated = evaluateGoalAcceptance({
     goal,
@@ -101,15 +103,8 @@ export function completeGoalCheckpoint(input: ToolExecutionInput): ToolExecution
     ).length,
     pendingInteractionCount: interactionService.pending(session.id) ? 1 : 0,
     additionalBlockers: args.additionalBlockers,
-    validToolCallIds: proof.map((c) => c.id),
-    validArtifactIds: sessions
-      .flatMap((s) => store.listArtifacts(s.id))
-      .filter((a) =>
-        a.sourceRefs.some(
-          (r) => r.type === "tool_call" && proof.some((c) => c.id === r.id),
-        ),
-      )
-      .map((a) => a.id),
+    validToolCallIds: [...inventory.proofIds],
+    validArtifactIds: [...inventory.artifactIds],
   });
   store.updateSessionMetadata(session.id, {
     goal: { ...evaluated.goal, reason: evaluated.complete ? undefined : args.reason },

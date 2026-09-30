@@ -16,11 +16,17 @@ export function LayoutSection() {
   const notifications = useShellStore((s) => s.preferences.notifications);
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
   const agentFontSize = useShellStore((s) => s.preferences.agentFontSize);
+  const userMessageFontWeight = useShellStore(
+    (s) => s.preferences.userMessageFontWeight,
+  );
   const setLocale = useShellStore((s) => s.setLocale);
   const setDefaultHome = useShellStore((s) => s.setDefaultHome);
   const setNotifications = useShellStore((s) => s.setNotifications);
   const setFoldWorkRuns = useShellStore((s) => s.setSessionFoldWorkRuns);
   const setAgentFontSize = useShellStore((s) => s.setAgentFontSize);
+  const setUserMessageFontWeight = useShellStore(
+    (s) => s.setUserMessageFontWeight,
+  );
 
   return (
     <SettingsCard title={t("settingsLayoutTitle")} icon={SlidersHorizontal}>
@@ -104,6 +110,29 @@ export function LayoutSection() {
               label: `${size}px${size === 14 ? "（默认）" : ""}`,
             }))}
           />
+        </FormRow>
+
+        <FormRow
+          label="用户消息字重"
+          description="调整 island 对话页用户消息框的字体粗细，默认 450"
+        >
+          <div className="flex w-44 items-center gap-2">
+            <input
+              type="range"
+              min={100}
+              max={900}
+              step={1}
+              value={userMessageFontWeight}
+              onChange={(event) =>
+                setUserMessageFontWeight(Number(event.target.value))
+              }
+              aria-label="用户消息字重"
+              className="min-w-0 flex-1"
+            />
+            <output className="w-8 text-right text-xs tabular-nums text-muted-foreground">
+              {userMessageFontWeight}
+            </output>
+          </div>
         </FormRow>
 
         <FormRow

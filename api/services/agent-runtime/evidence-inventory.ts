@@ -1,4 +1,4 @@
-import type { ToolCallRecord } from './contracts.js';
+import type { EvidenceArtifact, ToolCallRecord } from './contracts.js';
 import { agentRuntimeStore as store } from './session-store.js';
 import { workStore, type VerificationRecord, type WorkRecord } from './work-store.js';
 import { workspaceFingerprint } from './work-fingerprint.js';
@@ -101,6 +101,8 @@ export function treeWorks(sessionId: string): WorkRecord[] {
 export interface EvidenceInventory {
   proof: ToolCallRecord[];
   proofIds: Set<string>;
+  artifacts: EvidenceArtifact[];
+  artifactIds: Set<string>;
   owners: WorkRecord[];
   /** Receipts whose change version no longer matches their work (cheap, no I/O). */
   supersededReceiptIds: Set<string>;
@@ -111,9 +113,14 @@ export function evidenceInventory(work: WorkRecord, calls = workOwnedCalls(work)
   const owners = workOwners(work, calls);
   const bounded = plan?.executionId ? calls.filter(call => belongsToPlanExecution(call, plan)) : calls;
   const proof = bounded.filter(isSuccessfulProofCall);
+  const proofIds = new Set(proof.map(call => call.id));
+  const artifacts = store.listSessionTree(work.sessionId).flatMap(s => store.listArtifacts(s.id))
+    .filter(a => a.sourceRefs.some(r => r.type === 'tool_call' && !!r.id && proofIds.has(r.id)));
   return {
     proof,
-    proofIds: new Set(proof.map(call => call.id)),
+    proofIds,
+    artifacts,
+    artifactIds: new Set(artifacts.map(a => a.id)),
     owners,
     supersededReceiptIds: new Set(supersededReceipts(owners).keys()),
   };
