@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   GitMerge,
+  GitCommitHorizontal,
+  FolderGit2,
+  SlidersHorizontal,
   Plus,
   RefreshCw,
   Play,
@@ -19,12 +22,14 @@ import {
   type MergeRequestInput,
 } from "../../../lib/api/gitMr";
 import { MergeRequestForm } from "./MergeRequestForm";
+import { Tab, TabGroup, TabList } from "../../components/ui/Tabs";
 import { IslandSelection } from "../../layouts/IslandSelection";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
+import "./gitHistory.css";
 type View = "requests" | "branches" | "presets";
 export default function GitWorkbenchPage() {
   const { projectId, mrId } = useParams();
@@ -41,7 +46,7 @@ export default function GitWorkbenchPage() {
 }
 function GitWorkbench({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
-  const [view, setView] = useState<View>("requests");
+  const [view, setView] = useState<View>("branches");
   const [requests, setRequests] = useState<MergeRequest[]>([]);
   const [presets, setPresets] = useState<MergePreset[]>([]);
   const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>([]);
@@ -169,7 +174,9 @@ function GitWorkbench({ projectId }: { projectId: string }) {
         roots.find((root) => root.id === rootId)?.role === "primary"),
   );
   return (
-    <main className="git-workbench">
+    <main
+      className={`git-workbench git-workbench-modern ${view === "branches" ? "git-history-page" : ""}`}
+    >
       <GitToolbarContent>
         <nav aria-label="Git 视图" className="git-island-views">
           <IslandSelection activeKey={view}>
@@ -231,23 +238,71 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <span className="git-island-action-label">新建 MR</span>
         </button>
       </GitToolbarContent>
-      <div className="mr-toolbar mr-root-tabs" role="tablist" aria-label="仓库">
-        <span className="mr-root-tabs-label">仓库</span>
-        {!roots.length && <span className="mr-root-tab is-active">项目默认仓库</span>}
-        {roots.map((root) => (
-          <button
-            key={root.id}
-            type="button"
-            role="tab"
-            aria-selected={root.id === rootId}
-            className={`mr-root-tab ${root.id === rootId ? "is-active" : ""}`}
-            disabled={root.status !== "available"}
-            onClick={() => setRootId(root.id)}
+      <header className="git-page-heading flex shrink-0 items-center justify-between gap-5">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <span
+            className="grid size-11 shrink-0 place-items-center rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-panel)] text-[var(--ui-subtle)]"
+            aria-hidden="true"
           >
-            {root.name}
-          </button>
-        ))}
-      </div>
+            {view === "branches" ? (
+              <GitCommitHorizontal size={22} strokeWidth={1.5} />
+            ) : view === "requests" ? (
+              <GitMerge size={21} strokeWidth={1.5} />
+            ) : (
+              <SlidersHorizontal size={21} strokeWidth={1.5} />
+            )}
+          </span>
+          <div className="min-w-0">
+            <h1>
+              {view === "branches"
+                ? "历史树"
+                : view === "requests"
+                  ? "合并请求"
+                  : "合并预设"}
+            </h1>
+            <span
+              className="mt-1.5 block truncate font-mono text-[11px] text-[var(--ui-subtle)]"
+              title={workspace?.repositoryRoot}
+            >
+              {workspace?.repositoryRoot ?? "Git 工作台"}
+            </span>
+          </div>
+        </div>
+        <TabGroup
+          selectedIndex={Math.max(
+            0,
+            roots.findIndex((root) => root.id === rootId),
+          )}
+          onChange={(index) => setRootId(roots[index].id)}
+          className="min-w-0 max-w-[50%]"
+        >
+          <TabList
+            className="mr-root-tabs !gap-1 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-panel)] p-1"
+            aria-label="仓库"
+          >
+            <FolderGit2
+              size={15}
+              className="mx-2 shrink-0 text-[var(--ui-subtle)]"
+              aria-hidden="true"
+            />
+            {!roots.length && (
+              <span className="px-2 py-1.5 text-xs text-[var(--ui-subtle)]">
+                项目默认仓库
+              </span>
+            )}
+            {roots.map((root) => (
+              <Tab
+                key={root.id}
+                className="git-control !min-w-0 !rounded-lg !px-3 !py-2 !text-xs"
+                disabled={root.status !== "available"}
+                title={root.name}
+              >
+                <span className="truncate">{root.name}</span>
+              </Tab>
+            ))}
+          </TabList>
+        </TabGroup>
+      </header>
       {error && (
         <p className="mr-error" role="alert">
           {error}
@@ -344,17 +399,27 @@ function GitWorkbench({ projectId }: { projectId: string }) {
             </>
           )}
           {view === "branches" && (
-            <section className="mr-card mr-history-card">
-              <div className="mr-history-header">
-                <h2>历史树</h2>
-                {workspace && <span className="mr-history-repo">{workspace.repositoryRoot}</span>}
-              </div>
+            <section className="mr-history-card flex min-h-0 flex-1 flex-col">
               {branchLoading ? (
-                <p role="status">正在加载提交历史…</p>
+                <div
+                  role="status"
+                  className="git-history-loading flex flex-1 items-center justify-center gap-3 rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-panel)] text-sm text-[var(--ui-subtle)]"
+                >
+                  <RefreshCw
+                    size={17}
+                    className="animate-spin motion-reduce:animate-none"
+                  />
+                  正在加载提交历史…
+                </div>
               ) : !workspace ? (
                 <p className="mr-empty">无法读取仓库历史。</p>
               ) : (
-                <GitHistoryTree key={`${projectId}/${rootId}/${refreshVersion}`} workspace={workspace} projectId={projectId} rootId={rootId ?? undefined} />
+                <GitHistoryTree
+                  key={`${projectId}/${rootId}/${refreshVersion}`}
+                  workspace={workspace}
+                  projectId={projectId}
+                  rootId={rootId ?? undefined}
+                />
               )}
             </section>
           )}

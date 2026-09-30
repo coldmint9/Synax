@@ -440,13 +440,13 @@
    never have to hard-code a hue.
    ─────────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Neutral ramp. The light members carry the same faint red-biased warm cast
-     as the semantic light surfaces; the mid/dark members stay chroma-free. */
-  --cx-gray-0: #fcf9f8;
-  --cx-gray-50: #f9f6f5;
-  --cx-gray-75: #f4efec;
-  --cx-gray-100: #eee9e6;
-  --cx-gray-150: #e4dbd7;
+  /* Neutral ramp. The light members are the pure-white theme steps; every
+     member of the ramp stays chroma-free. */
+  --cx-gray-0: #ffffff;
+  --cx-gray-50: #fafafa;
+  --cx-gray-75: #f5f5f5;
+  --cx-gray-100: #efefef;
+  --cx-gray-150: #e5e5e5;
   --cx-gray-200: #cdcdcd;
   --cx-gray-250: #b9b9b9;
   --cx-gray-300: #afafaf;
@@ -463,11 +463,11 @@
   --cx-gray-1000: #0d0d0d;
 
   /* Same ramp as HSL triplets for hsl(var(--x) / alpha) composition */
-  --cx-gray-0-hsl: 15 40% 98.04%;
-  --cx-gray-50-hsl: 15 25% 96.86%;
-  --cx-gray-75-hsl: 22.5 26.67% 94.12%;
-  --cx-gray-100-hsl: 22.5 19.05% 91.76%;
-  --cx-gray-150-hsl: 18.46 19.4% 86.86%;
+  --cx-gray-0-hsl: 0 0% 100%;
+  --cx-gray-50-hsl: 0 0% 98.04%;
+  --cx-gray-75-hsl: 0 0% 96.08%;
+  --cx-gray-100-hsl: 0 0% 93.73%;
+  --cx-gray-150-hsl: 0 0% 89.8%;
   --cx-gray-200-hsl: 0 0% 80.4%;
   --cx-gray-250-hsl: 0 0% 72.5%;
   --cx-gray-300-hsl: 0 0% 68.6%;
