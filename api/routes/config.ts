@@ -169,8 +169,20 @@ const webSearchConfigSchema = z
   })
   .strict();
 
+const macWindowAppearanceSchema = z
+  .object({
+    enabled: z.boolean(),
+    vibrancy: z.enum(["under-window", "hud-window", "none"]),
+    opacity: z.number().finite().min(0.35).max(1),
+    bottomSeparator: z.boolean(),
+    scanlines: z.boolean(),
+    scanlineOpacity: z.number().finite().min(0).max(0.08),
+  })
+  .strict();
+
 const globalConfigPatchSchema = z
   .object({
+    macWindowAppearance: macWindowAppearanceSchema.optional(),
     terminalShellPath: z.string().trim().max(4096).optional(),
     wikiModel: z.string().trim().max(512).optional(),
     inputOptimizationModel: z.string().trim().max(512).optional(),

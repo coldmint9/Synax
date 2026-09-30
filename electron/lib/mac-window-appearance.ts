@@ -12,9 +12,9 @@ export interface MacWindowAppearance {
 }
 
 export const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
-  enabled: true,
+  enabled: false,
   vibrancy: "under-window",
-  opacity: 0.92,
+  opacity: 0.82,
   bottomSeparator: true,
   scanlines: false,
   scanlineOpacity: 0.025,
@@ -30,7 +30,7 @@ export function normalizeMacWindowAppearance(
       vibrancy === "hud-window" || vibrancy === "none"
         ? vibrancy
         : DEFAULT_MAC_WINDOW_APPEARANCE.vibrancy,
-    opacity: clamp(value?.opacity ?? DEFAULT_MAC_WINDOW_APPEARANCE.opacity, 0.75, 1),
+    opacity: clamp(value?.opacity ?? DEFAULT_MAC_WINDOW_APPEARANCE.opacity, 0.35, 1),
     bottomSeparator:
       value?.bottomSeparator ?? DEFAULT_MAC_WINDOW_APPEARANCE.bottomSeparator,
     scanlines: value?.scanlines ?? DEFAULT_MAC_WINDOW_APPEARANCE.scanlines,
@@ -57,7 +57,9 @@ export function applyMacWindowAppearance(
         ? "hud"
         : effectiveVibrancy,
   );
-  win.setOpacity(appearance.enabled ? appearance.opacity : 1);
+  // Keep text and controls opaque. The renderer controls background alpha so
+  // the native vibrancy remains adjustable without fading the whole window.
+  win.setOpacity(1);
   return appearance;
 }
 

@@ -45,6 +45,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete (window as Window & { electronAPI?: unknown }).electronAPI;
   expect(fetchGuard).not.toHaveBeenCalled();
   resetThemeStore();
   useNotificationStore.setState({ notifications: [], unreadCount: 0 });
@@ -54,6 +55,83 @@ afterEach(() => {
 });
 
 describe("AppearanceSection", () => {
+  it("defaults the macOS window material to off and updates the glass controls", async () => {
+    const user = userEvent.setup();
+    const setMacWindowAppearance = vi.fn().mockResolvedValue(undefined);
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { platform: "darwin", setMacWindowAppearance },
+    });
+    render(
+      <AppearanceSection
+        config={{
+          macWindowAppearance: {
+            enabled: false,
+            vibrancy: "under-window",
+            opacity: 0.82,
+            bottomSeparator: true,
+            scanlines: false,
+            scanlineOpacity: 0.025,
+          },
+        } as any}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const enabled = screen.getByRole("checkbox", {
+      name: "Enable transparent window",
+    });
+    expect(enabled).not.toBeChecked();
+    await user.click(enabled);
+    expect(setMacWindowAppearance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enabled: true }),
+    );
+    expect(onUpdate).toHaveBeenLastCalledWith({
+      macWindowAppearance: expect.objectContaining({ enabled: true }),
+    });
+
+    const density = screen.getByRole("slider", { name: /Glass density/ });
+    fireEvent.change(density, { target: { value: "0.35" } });
+    expect(setMacWindowAppearance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ opacity: 0.35 }),
+    );
+  });
+
+  it("rolls back the macOS material control when persistence fails", async () => {
+    const user = userEvent.setup();
+    const setMacWindowAppearance = vi
+      .fn()
+      .mockRejectedValue(new Error("configuration rejected"));
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { platform: "darwin", setMacWindowAppearance },
+    });
+    render(
+      <AppearanceSection
+        config={{
+          macWindowAppearance: {
+            enabled: false,
+            vibrancy: "under-window",
+            opacity: 0.82,
+            bottomSeparator: true,
+            scanlines: false,
+            scanlineOpacity: 0.025,
+          },
+        } as any}
+      />,
+    );
+
+    const enabled = screen.getByRole("checkbox", {
+      name: "Enable transparent window",
+    });
+    await user.click(enabled);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "configuration rejected",
+    );
+    expect(enabled).not.toBeChecked();
+  });
+
   it("uses accessible exclusive mode choices and keeps system status current", () => {
     render(<AppearanceSection />);
     expect(screen.getByRole("radio", { name: "System" })).toBeChecked();

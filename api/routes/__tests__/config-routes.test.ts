@@ -31,4 +31,25 @@ describe('config routes', () => {
 
     expect(missing.status).toBe(404)
   })
+
+  it('accepts and persists macOS window material settings', async () => {
+    const { configRoutes } = await import('../config.js')
+    const appearance = {
+      enabled: true,
+      vibrancy: 'hud-window',
+      opacity: 0.35,
+      bottomSeparator: false,
+      scanlines: true,
+      scanlineOpacity: 0.08,
+    }
+    const res = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ macWindowAppearance: appearance }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.config.macWindowAppearance).toEqual(appearance)
+  })
 })

@@ -125,10 +125,7 @@ function createWindow(): BrowserWindow {
       : {}),
     show: false,
     transparent: process.platform === "darwin",
-    ...(process.platform === "darwin"
-      ? { vibrancy: "under-window" as const }
-      : {}),
-    opacity: process.platform === "darwin" ? macWindowAppearance.opacity : 1,
+    opacity: 1,
     backgroundColor:
       process.platform === "darwin"
         ? "#00000000"

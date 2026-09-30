@@ -1,10 +1,20 @@
 import type {
   GlobalConfig,
+  MacWindowAppearance,
   ProviderDef,
   WebSearchConfig,
 } from "./config-types.js";
 
 const ACP_BASE_URL = "http://127.0.0.1:3210";
+
+export const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
+  enabled: false,
+  vibrancy: "under-window",
+  opacity: 0.82,
+  bottomSeparator: true,
+  scanlines: false,
+  scanlineOpacity: 0.025,
+};
 
 function createBuiltinApiProvider(
   id: "openai" | "anthropic",
@@ -104,6 +114,7 @@ export function createDefaultGlobalConfig(updatedBy = "system"): GlobalConfig {
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
     computerUse: { enabled: true, strategy: "auto", perception: "disabled" },
+    macWindowAppearance: { ...DEFAULT_MAC_WINDOW_APPEARANCE },
     webSearch: createDefaultWebSearchConfig(),
     sessionArchiveRetentionDays: 7,
     providerConnections: {
@@ -182,6 +193,7 @@ export function createDefaultUserGlobalConfig(
     enabledAcpProviderIds: ["opencode-acp"],
     mcpServers: [],
     computerUse: { enabled: true, strategy: "auto", perception: "disabled" },
+    macWindowAppearance: { ...DEFAULT_MAC_WINDOW_APPEARANCE },
     webSearch: createDefaultWebSearchConfig(),
     sessionArchiveRetentionDays: 7,
     providerConnections: {},

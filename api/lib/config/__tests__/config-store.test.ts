@@ -31,6 +31,69 @@ afterEach(async () => {
 });
 
 describe("config-store migration and overrides", () => {
+  it("defaults macOS window material to disabled and persists updates", async () => {
+    const { getGlobalConfig, updateGlobalConfig } = await import("../config-store.js");
+    expect(getGlobalConfig().macWindowAppearance?.enabled).toBe(false);
+
+    const appearance = {
+      enabled: true,
+      vibrancy: "hud-window" as const,
+      opacity: 0.35,
+      bottomSeparator: false,
+      scanlines: true,
+      scanlineOpacity: 0.08,
+    };
+    updateGlobalConfig({ macWindowAppearance: appearance }, "tester");
+    expect(getGlobalConfig().macWindowAppearance).toEqual(appearance);
+  });
+
+  it("turns off legacy window material once and preserves later user changes", async () => {
+    const { createDefaultGlobalConfig, createDefaultUserGlobalConfig } =
+      await import("../config-defaults.js");
+    const configDir = path.join(tempDir, "config");
+    fs.mkdirSync(configDir, { recursive: true });
+    const legacyAppearance = {
+      enabled: true,
+      vibrancy: "hud-window" as const,
+      opacity: 0.55,
+      bottomSeparator: false,
+      scanlines: true,
+      scanlineOpacity: 0.04,
+    };
+    fs.writeFileSync(
+      path.join(configDir, "template-config.json"),
+      JSON.stringify({
+        ...createDefaultGlobalConfig(),
+        macWindowAppearance: legacyAppearance,
+      }),
+    );
+    fs.writeFileSync(
+      path.join(configDir, "global-config.json"),
+      JSON.stringify({
+        ...createDefaultUserGlobalConfig(),
+        macWindowAppearance: legacyAppearance,
+      }),
+    );
+    fs.writeFileSync(
+      path.join(configDir, ".json-source"),
+      JSON.stringify({ source: "json" }),
+    );
+
+    const firstLoad = await import("../config-store.js");
+    expect(firstLoad.getGlobalConfig().macWindowAppearance).toEqual({
+      ...legacyAppearance,
+      enabled: false,
+    });
+    firstLoad.updateGlobalConfig(
+      { macWindowAppearance: { ...legacyAppearance, enabled: true } },
+      "tester",
+    );
+
+    vi.resetModules();
+    const secondLoad = await import("../config-store.js");
+    expect(secondLoad.getGlobalConfig().macWindowAppearance?.enabled).toBe(true);
+  });
+
   it("defaults archive cleanup to seven days and preserves custom or disabled values", async () => {
     const { getGlobalConfig, updateGlobalConfig } = await import("../config-store.js");
     expect(getGlobalConfig().sessionArchiveRetentionDays).toBe(7);

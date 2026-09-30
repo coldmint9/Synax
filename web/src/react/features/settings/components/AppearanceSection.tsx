@@ -67,9 +67,9 @@ function importErrorMessage(error: Error, zh: boolean): string {
 }
 
 const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
-  enabled: true,
+  enabled: false,
   vibrancy: "under-window",
-  opacity: 0.92,
+  opacity: 0.82,
   bottomSeparator: true,
   scanlines: false,
   scanlineOpacity: 0.025,
@@ -473,7 +473,7 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
               {zh ? "窗口材质" : "Window material"}
             </span>
             <span className="appearance-hint">
-              {zh ? "即时生效，默认关闭扫描线以降低合成开销" : "Applied instantly; scanlines are off by default for lower compositing cost"}
+              {zh ? "即时生效，默认关闭；浓度越低，原生毛玻璃越明显" : "Applied instantly and disabled by default; lower density reveals more native frost"}
             </span>
           </div>
           <label className="appearance-window-row">
@@ -489,8 +489,8 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
             </select>
           </label>
           <label className="appearance-window-row">
-            <span>{zh ? `窗口透明度 ${Math.round(macAppearance.opacity * 100)}%` : `Window opacity ${Math.round(macAppearance.opacity * 100)}%`}</span>
-            <input type="range" min="0.75" max="1" step="0.01" value={macAppearance.opacity} onChange={(event) => void updateMacAppearance({ opacity: Number(event.target.value) })} />
+            <span>{zh ? `毛玻璃浓度 ${Math.round(macAppearance.opacity * 100)}%` : `Glass density ${Math.round(macAppearance.opacity * 100)}%`}</span>
+            <input type="range" min="0.35" max="1" step="0.01" value={macAppearance.opacity} onChange={(event) => void updateMacAppearance({ opacity: Number(event.target.value) })} />
           </label>
           <label className="appearance-window-row">
             <span>{zh ? "底部分隔线" : "Bottom separator"}</span>

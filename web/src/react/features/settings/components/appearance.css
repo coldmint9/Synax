@@ -47,7 +47,7 @@
 }
 
 html.electron-macos[data-mac-window-enabled="true"] .app-viewport {
-  background: rgba(10, 12, 12, var(--mac-window-opacity, 0.92)) !important;
+  background: hsl(var(--background-hsl) / var(--mac-window-opacity, 0.82)) !important;
 }
 html.electron-macos[data-mac-window-separator="true"] .app-viewport::after {
   content: "";

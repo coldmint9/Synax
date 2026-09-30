@@ -21,9 +21,9 @@ import type { MacWindowAppearance } from "../lib/contracts/config";
 import "./features/settings/components/appearance.css";
 
 const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
-  enabled: true,
+  enabled: false,
   vibrancy: "under-window",
-  opacity: 0.92,
+  opacity: 0.82,
   bottomSeparator: true,
   scanlines: false,
   scanlineOpacity: 0.025,

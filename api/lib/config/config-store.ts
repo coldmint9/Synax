@@ -6,6 +6,7 @@ import { DATA_ROOT } from "../env.js";
 import { logger } from "../logger.js";
 import {
   BUILTIN_PROVIDERS,
+  DEFAULT_MAC_WINDOW_APPEARANCE,
   createDefaultGlobalConfig,
   createDefaultUserGlobalConfig,
 } from "./config-defaults.js";
@@ -277,6 +278,9 @@ function ensureConfigStoreReady(): void {
   ensureDirectory(projectConfigDir());
 
   const markerExists = fs.existsSync(migrationMarkerPath());
+  const migrationMarker = readJsonFile<{
+    macWindowAppearanceDefaultOff?: boolean;
+  }>(migrationMarkerPath());
   const templateExists = fs.existsSync(templateConfigPath());
   const globalExists = fs.existsSync(globalConfigPath());
 
@@ -302,7 +306,6 @@ function ensureConfigStoreReady(): void {
         }
       }
     }
-    writeMigrationMarker();
   } else {
     if (!templateExists) {
       writeJsonAtomic(
@@ -327,6 +330,11 @@ function ensureConfigStoreReady(): void {
     const normalized = normalizeLegacyProviders(stored);
     if (normalized !== stored) writeJsonAtomic(filePath, normalized);
   }
+
+  if (migrationMarker?.macWindowAppearanceDefaultOff !== true) {
+    migrateMacWindowAppearanceDefaultOff();
+  }
+  writeMigrationMarker();
   configStoreReady = true;
 }
 
@@ -484,6 +492,8 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       terminalShellPath: config.terminalShellPath ?? "",
       wikiModel: config.wikiModel ?? "",
       inputOptimizationModel: config.inputOptimizationModel ?? "",
+      macWindowAppearance:
+        config.macWindowAppearance ?? globalBase.macWindowAppearance,
       version: config.version,
       providers: userProviders,
       providerConnections: normalizeConnections(userConnections, true),
@@ -614,6 +624,10 @@ function mergeGlobalConfigLayers(
     terminalShellPath: global.terminalShellPath ?? "",
     wikiModel: global.wikiModel ?? "",
     inputOptimizationModel: global.inputOptimizationModel ?? "",
+    macWindowAppearance:
+      global.macWindowAppearance ??
+      template.macWindowAppearance ??
+      { ...DEFAULT_MAC_WINDOW_APPEARANCE },
     defaultImageModel: global.defaultImageModel,
     defaultVideoModel: global.defaultVideoModel,
     providers,
@@ -715,6 +729,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.features) ||
     Boolean(patch.webSearch) ||
     Boolean(patch.mcpServers) ||
+    Boolean(patch.macWindowAppearance) ||
     Boolean(patch.computerUse) ||
     Boolean(userPatchProviders?.length) ||
     Object.keys(userPatchConnections).length > 0;
@@ -1291,9 +1306,30 @@ function writeJsonAtomic(
 function writeMigrationMarker(): void {
   const marker = {
     source: "json",
+    macWindowAppearanceDefaultOff: true,
     updatedAt: new Date().toISOString(),
   };
   writeJsonAtomic(migrationMarkerPath(), marker, { preserveBackup: false });
+}
+
+function migrateMacWindowAppearanceDefaultOff(): void {
+  for (const filePath of [templateConfigPath(), globalConfigPath()]) {
+    const stored = readJsonFile<GlobalConfig>(filePath);
+    if (!stored?.macWindowAppearance) continue;
+    if (!stored.macWindowAppearance.enabled) continue;
+    writeJsonAtomic(
+      filePath,
+      {
+        ...stored,
+        macWindowAppearance: {
+          ...DEFAULT_MAC_WINDOW_APPEARANCE,
+          ...stored.macWindowAppearance,
+          enabled: false,
+        },
+      },
+      { preserveBackup: false },
+    );
+  }
 }
 
 function globalConfigPath(): string {

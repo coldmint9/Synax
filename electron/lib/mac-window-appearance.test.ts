@@ -21,19 +21,34 @@ describe("macOS window appearance API mapping", () => {
   it("maps the saved HUD setting to Electron's hud material", () => {
     const { methods, win } = mockWindow();
     const appearance = applyMacWindowAppearance(win, {
+      enabled: true,
       vibrancy: "hud-window",
       opacity: 0.85,
     });
     expect(methods.setVibrancy).toHaveBeenCalledWith("hud");
-    expect(methods.setOpacity).toHaveBeenCalledWith(0.85);
+    expect(methods.setOpacity).toHaveBeenCalledWith(1);
     expect(appearance.vibrancy).toBe("hud-window");
   });
 
   it("keeps the default under-window material", () => {
     const { methods, win } = mockWindow();
     applyMacWindowAppearance(win, undefined);
+    expect(methods.setVibrancy).toHaveBeenCalledWith(null);
+    expect(methods.setOpacity).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps content opaque while changing the background concentration", () => {
+    const { methods, win } = mockWindow();
+    applyMacWindowAppearance(win, { enabled: true, opacity: 0.35 });
     expect(methods.setVibrancy).toHaveBeenCalledWith("under-window");
-    expect(methods.setOpacity).toHaveBeenCalledWith(0.92);
+    expect(methods.setOpacity).toHaveBeenCalledWith(1);
+  });
+
+  it("clamps unsupported concentration values", () => {
+    const { methods, win } = mockWindow();
+    const appearance = applyMacWindowAppearance(win, { opacity: -1 });
+    expect(appearance.opacity).toBe(0.35);
+    expect(methods.setOpacity).toHaveBeenCalledWith(1);
   });
 
   it("clears vibrancy when no material is selected", () => {
