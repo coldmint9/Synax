@@ -25,7 +25,7 @@ import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
-type View = "requests" | "branches" | "presets" | "history";
+type View = "requests" | "branches" | "presets";
 export default function GitWorkbenchPage() {
   const { projectId, mrId } = useParams();
   if (!projectId) return null;
@@ -178,7 +178,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                 ["requests", "合并请求"],
                 ["branches", "历史树"],
                 ["presets", "预设"],
-                ["history", "运行记录"],
               ] as [View, string][]
             ).map(([id, label]) => (
               <button
@@ -203,7 +202,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <option value="requests">合并请求</option>
           <option value="branches">历史树</option>
           <option value="presets">预设</option>
-          <option value="history">运行记录</option>
         </select>
         <span className="wh-divider" aria-hidden="true" />
         <button
@@ -348,11 +346,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           {view === "branches" && (
             <section className="mr-card mr-history-card">
               <div className="mr-history-header">
-                <div>
-                  <div className="mr-history-kicker">COMMIT ACTIVITY · {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short" }).format(new Date())}</div>
-                  <h2>历史树</h2>
-                  <p className="mr-muted">沿着提交活动回看项目如何前进、分叉与合流。</p>
-                </div>
+                <h2>历史树</h2>
                 {workspace && <span className="mr-history-repo">{workspace.repositoryRoot}</span>}
               </div>
               {branchLoading ? (
@@ -360,7 +354,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               ) : !workspace ? (
                 <p className="mr-empty">无法读取仓库历史。</p>
               ) : (
-                <GitHistoryTree workspace={workspace} />
+                <GitHistoryTree key={`${projectId}/${rootId}/${refreshVersion}`} workspace={workspace} projectId={projectId} rootId={rootId ?? undefined} />
               )}
             </section>
           )}
@@ -424,38 +418,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                     </div>
                   </article>
                 ))
-              )}
-            </section>
-          )}
-          {view === "history" && (
-            <section className="mr-card">
-              <h2>运行记录</h2>
-              {!filteredRequests.length ? (
-                <p className="mr-empty">暂无运行记录。</p>
-              ) : (
-                <ol className="mr-events">
-                  {filteredRequests
-                    .flatMap((mr) =>
-                      mr.events.map((event, index) => ({
-                        ...event,
-                        mr,
-                        index,
-                      })),
-                    )
-                    .sort((a, b) => b.at.localeCompare(a.at))
-                    .map((event) => (
-                      <li key={`${event.mr.id}-${event.index}`}>
-                        <time>{new Date(event.at).toLocaleString()}</time>
-                        <button
-                          className="mr-text-button"
-                          onClick={() => openRequest(event.mr.id)}
-                        >
-                          {event.mr.title}
-                        </button>
-                        <span>{event.message}</span>
-                      </li>
-                    ))}
-                </ol>
               )}
             </section>
           )}

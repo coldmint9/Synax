@@ -13,6 +13,13 @@ const commit = (id: string, parents: string[] = []): GitCommitSummary => ({
 });
 
 describe("Git history topology", () => {
+  it("keeps pending parent lanes unchanged when another page is appended", () => {
+    const first = [commit("merge", ["left", "right"]), commit("left", ["base"])];
+    const partial = buildTopology(first);
+    const complete = buildTopology([...first, commit("right", ["base"]), commit("base")]);
+    expect(complete.slice(0, first.length)).toEqual(partial);
+    expect(partial[1].connections).toContainEqual({ from: 1, to: 1, merge: false });
+  });
   it("keeps a merge to two parents without growing stale lanes", () => {
     const commits = [
       commit("merge", ["left", "right"]),

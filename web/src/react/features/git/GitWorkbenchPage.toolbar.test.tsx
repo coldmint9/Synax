@@ -14,7 +14,11 @@ vi.mock("../../../lib/api/gitMr", () => ({
   gitMrApi: { list: vi.fn(), presets: vi.fn() },
 }));
 vi.mock("../../../lib/api/project", () => ({
-  projectApi: { getWorkspace: vi.fn(), listGitWorkspaces: vi.fn() },
+  projectApi: { getWorkspace: vi.fn(), listGitWorkspaces: vi.fn(),
+    gitHistory: vi.fn().mockResolvedValue({ commits: [], refs: [], snapshot: "s", nextOffset: null }),
+    gitState: vi.fn().mockResolvedValue({ head: "", branch: "main", operation: null, conflicts: [], output: "" }),
+    gitAssociations: vi.fn().mockResolvedValue({ epics: [], branches: [], refs: [], sessions: [] }),
+  },
 }));
 vi.mock("./MergeRequestForm", () => ({
   MergeRequestForm: () => <div role="dialog">新建合并请求</div>,
@@ -70,9 +74,10 @@ describe("Git secondary island", () => {
     fireEvent.click(screen.getByRole("button", { name: "历史树" }));
     expect(page).toHaveTextContent("历史树");
     fireEvent.change(island.querySelector(".git-island-view-select")!, {
-      target: { value: "history" },
+      target: { value: "presets" },
     });
-    expect(page).toHaveTextContent("运行记录");
+    expect(page).not.toHaveTextContent("运行记录");
+    expect(screen.queryByRole("option", { name: "运行记录" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "刷新 Git 工作台" }));
     await waitFor(() => expect(gitMrApi.list).toHaveBeenCalledTimes(2));

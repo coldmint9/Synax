@@ -109,6 +109,7 @@ export interface GitWorkspaceSummary {
   commits: GitCommitSummary[];
   worktrees: GitWorktreeSummary[];
 }
+export type { GitHistoryPage, GitHistoryRef, GitCommitDetail } from "../../../../api/services/git-history-contracts";
 
 async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const resp = await apiFetch(url, init);
@@ -170,6 +171,34 @@ export const projectApi = {
     return projectRequest(
       `${API_BASE}/${encodeURIComponent(id)}/git/workspaces${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
     );
+  },
+  gitHistory(id: string, input: { rootId?: string; offset?: number; limit?: number; snapshot?: string } = {}): Promise<import("../../../../api/services/git-history-contracts").GitHistoryPage> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(input)) if (value !== undefined) query.set(key, String(value));
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/history?${query}`);
+  },
+  gitCommit(id: string, sha: string, rootId?: string): Promise<import("../../../../api/services/git-history-contracts").GitCommitDetail> {
+    const query = rootId ? `?rootId=${encodeURIComponent(rootId)}` : "";
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/commits/${encodeURIComponent(sha)}${query}`);
+  },
+  gitAction(id: string, input: import("../../../../api/services/git-history-contracts").GitActionInput & { rootId?: string }): Promise<import("../../../../api/services/git-history-contracts").GitActionResult> {
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/actions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  },
+  gitAssociations(id: string, rootId?: string): Promise<import("../../../../api/services/git-epic-contracts").GitAssociations> {
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/associations${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`);
+  },
+  gitState(id: string, rootId?: string): Promise<import("../../../../api/services/git-history-contracts").GitActionResult> {
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/state${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`);
+  },
+  gitConflict(id: string, path: string, rootId?: string): Promise<import("../../../../api/services/git-mr/contracts").MergeFile> {
+    const query = new URLSearchParams({ path, ...(rootId ? { rootId } : {}) });
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/conflict?${query}`);
+  },
+  saveGitConflict(id: string, path: string, input: import("../../../../api/services/git-mr/contracts").MergeFileSave, rootId?: string): Promise<import("../../../../api/services/git-mr/contracts").MergeFile> {
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/conflict`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...input, path, rootId }) });
+  },
+  saveGitEpic(id: string, input: Omit<import("../../../../api/services/git-epic-contracts").GitEpic, "id" | "projectId" | "rootId" | "version"> & { rootId?: string; id?: string; expectedVersion?: number }): Promise<import("../../../../api/services/git-epic-contracts").GitEpic> {
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/epics`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
   },
 
   createGitWorktree(

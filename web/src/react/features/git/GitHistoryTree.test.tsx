@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { GitWorkspaceSummary } from '../../../lib/api/project';
 import GitHistoryTree from './GitHistoryTree';
+import { ContextMenuProvider } from '../../components/context-menu/ContextMenuProvider';
+import { MemoryRouter } from 'react-router-dom';
 
 const workspace: GitWorkspaceSummary = {
   repositoryRoot: '/fixture/repo', defaultPath: '/fixture/repo', branches: [], worktrees: [],
@@ -13,26 +15,27 @@ const workspace: GitWorkspaceSummary = {
 };
 
 describe('Git history table', () => {
-  it('renders a semantic table with five labelled columns and opens commit details by keyboard', async () => {
+  it('renders a compact table including commit ID and opens commit details by keyboard', async () => {
     const user = userEvent.setup();
-    const { container } = render(<GitHistoryTree workspace={workspace} />);
+    const { container } = render(<MemoryRouter><ContextMenuProvider><GitHistoryTree workspace={workspace} /></ContextMenuProvider></MemoryRouter>);
     const table = screen.getByRole('table', { name: 'Git 提交历史' });
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(5);
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(6);
+    expect(within(table).getByRole('columnheader', { name: 'Commit ID' })).toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: '状态' })).toBeInTheDocument();
     const select = within(table).getByRole('button', { name: 'Improve inputs' });
     select.focus(); await user.keyboard('{Enter}');
     expect(screen.getByRole('complementary')).toHaveTextContent('Improve inputs');
     expect(within(table).getAllByRole('row')).toHaveLength(3);
-    expect(container.querySelector('.history-tree-rail')).toHaveAttribute('height', '136');
+    expect(container.querySelector('.history-tree-rail')).toHaveAttribute('height', '64');
   });
 
   it('preserves merge filtering and search without a component-library table', async () => {
     const user = userEvent.setup();
-    const { container } = render(<GitHistoryTree workspace={workspace} />);
+    const { container } = render(<MemoryRouter><ContextMenuProvider><GitHistoryTree workspace={workspace} /></ContextMenuProvider></MemoryRouter>);
     await user.click(screen.getByRole('button', { name: '合并提交' }));
     expect(screen.getByRole('button', { name: '合并提交' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: 'Improve inputs' })).not.toBeInTheDocument();
-    expect(container.querySelector('.history-tree-rail')).toHaveAttribute('height', '68');
+    expect(container.querySelector('.history-tree-rail')).toHaveAttribute('height', '32');
     await user.click(screen.getByRole('button', { name: '全部' }));
     await user.type(screen.getByRole('textbox', { name: '搜索提交、分支或作者' }), 'Casey');
     expect(screen.getByRole('button', { name: 'Improve inputs' })).toBeInTheDocument();

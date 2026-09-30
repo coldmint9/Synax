@@ -6,6 +6,77 @@
   background: rgb(var(--theme-shadow-rgb) / 0.45);
   padding: 2vh 2vw;
 }
+.shared-file-dialog.idea-merge-dialog { width: calc(100vw - 48px); max-width: none; height: calc(100dvh - 64px); max-height: none; border-radius: 8px; overflow: hidden; padding: 0; gap: 0; }
+.idea-merge-dialog .shared-file-header { padding: 10px 14px; }
+.idea-merge-dialog .shared-file-header h2 { font-size: 13px; }
+.idea-merge-dialog .shared-file-toolbar { padding: 6px 12px; gap: 8px; }
+.idea-merge-dialog button { min-height: 26px; padding: 3px 7px; border-radius: 4px; font-size: 12px; }
+.merge-toolbar-hint { margin-left: auto; color: var(--ui-subtle); font-size: 11px; }
+.idea-base-view { max-height: 24vh; overflow: auto; padding: 10px; border-bottom: 1px solid var(--ui-line); }
+.merge-editor-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.merge-three-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }
+.idea-merge-dialog .shared-file-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.idea-merge-dialog .shared-file-footer { flex-shrink: 0; }
+.merge-block-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 5px 10px; background: var(--ui-surface); border-bottom: 1px solid var(--ui-line); font-size: 11px; }
+.merge-block-toolbar button { display: inline-flex; align-items: center; gap: 4px; }
+.merge-block-toolbar label { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.merge-three-panes { display: grid; grid-template-columns: 1fr 1fr 1fr; flex: 1; min-height: 0; overflow: hidden; }
+.merge-code-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--ui-line); background: var(--ui-panel); }
+.merge-code-pane:last-child { border-right: none; }
+.merge-code-pane > header { flex-shrink: 0; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--ui-line); background: var(--ui-surface); font-size: 11px; }
+.merge-code-pane > header span { color: var(--ui-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.merge-code-pane.is-result > header { background: var(--ui-accent-soft); }
+.merge-code-viewport { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.merge-code-gutter { position: relative; width: 55px; flex-shrink: 0; overflow: hidden; color: var(--ui-subtle); background: var(--ui-surface); border-right: 1px solid var(--ui-line); user-select: none; }
+.merge-code-gutter > div { padding-top: 8px; }
+.merge-code-gutter button { display: block; width: 100%; height: 20px; min-height: 20px; padding: 0 8px 0 0; border: 0; border-radius: 0; text-align: right; font: 11px/20px monospace; background: transparent; color: inherit; }
+.merge-code-gutter button.is-conflict { box-shadow: inset 3px 0 var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.merge-code-gutter button.is-active { background: var(--ui-accent-soft); color: var(--ui-text); }
+.merge-code-text { flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
+.merge-code-paint { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.merge-code-paint > div { padding: 8px; min-width: max-content; }
+.merge-code-paint pre, .merge-code-paint code { margin: 0; padding: 0; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; background: transparent !important; white-space: pre; }
+.merge-code-text textarea { display: block; position: absolute; inset: 0; resize: none; width: 100%; height: 100%; margin: 0; padding: 8px; border: 0; outline: none; border-radius: 0; background: transparent; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; color: transparent; caret-color: var(--ui-text); overflow: auto; white-space: pre; }
+.merge-code-text textarea::selection { background: color-mix(in srgb, var(--ui-text) 20%, transparent); }
+.merge-code-surface { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.merge-code-surface .merge-code-gutter { position: absolute; left: 0; top: 0; bottom: 0; }
+.merge-code-gutter-inner > div { height: 20px; padding: 0 7px; }
+.merge-code-gutter-inner > div.is-conflict { box-shadow: inset 3px 0 var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.merge-code-surface .merge-code-gutter { width: 45px; box-sizing: border-box; }
+.merge-code-surface .merge-code-overlay { position: absolute; inset: 0 0 0 45px; overflow: hidden; pointer-events: none; }
+.merge-code-surface .merge-code-paint { padding: 0 8px; }
+.idea-merge-dialog .merge-code-paint pre, .idea-merge-dialog .merge-code-paint code { margin: 0 !important; padding: 0 !important; border: 0; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; background: transparent !important; }
+.idea-merge-dialog .merge-code-paint .shiki, .idea-merge-dialog .merge-code-paint .shiki span { color: var(--shiki-light, var(--ui-text)) !important; }
+html.dark .idea-merge-dialog .merge-code-paint .shiki, html.dark .idea-merge-dialog .merge-code-paint .shiki span { color: var(--shiki-dark, var(--ui-text)) !important; }
+.merge-code-surface textarea { position: absolute; top: 0; right: 0; bottom: 0; left: 45px; width: calc(100% - 45px); height: 100%; resize: none; border: 0; outline: 0; padding: 0 8px; margin: 0; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; white-space: pre; background: transparent; color: transparent; caret-color: var(--ui-text); overflow: auto; }
+.merge-code-surface textarea::selection { background: color-mix(in srgb, var(--ui-text) 22%, transparent); }
+.merge-conflict-strip { display: flex; gap: 8px; flex-shrink: 0; padding: 5px 10px; overflow-x: auto; border-top: 1px solid var(--ui-line); }
+.merge-conflict-strip > div { display: flex; align-items: center; gap: 2px; }
+.merge-conflict-strip > div.is-active { outline: 1px solid var(--ui-line); border-radius: 4px; }
+.merge-conflict-strip button { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.merge-pending-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+.merge-block-gutter { position: absolute; right: 0; top: 0; bottom: 0; width: 26px; overflow: hidden; z-index: 2; background: var(--ui-surface); border-left: 1px solid var(--ui-line); }
+.merge-block-gutter-inner { position: relative; height: 100%; }
+.merge-inline-block { position: absolute; width: 26px; }
+.idea-merge-dialog .merge-inline-block button { width: 25px; min-height: 20px; height: 20px; padding: 2px 5px; border: 0; border-radius: 0; color: var(--warning); background: var(--ui-accent-soft); }
+.idea-merge-dialog .merge-inline-block.is-resolved button { color: var(--success); }
+.merge-code-surface .merge-code-overlay { right: 26px; }
+.merge-code-surface textarea { right: 26px; width: calc(100% - 71px); }
+.merge-code-gutter > .merge-code-gutter-inner { padding-top: 0; }
+.merge-code-paint > div { padding: 0; }
+.merge-codemirror { position: absolute; inset: 0 26px 0 0; min-height: 0; }
+.idea-merge-dialog { --merge-code-keyword: #8a279b; --merge-code-comment: #586069; --merge-code-string: #116329; --merge-code-number: #0550ae; --merge-code-function: #8250df; }
+html.dark .idea-merge-dialog { --merge-code-keyword: #ff9aa2; --merge-code-comment: #9ba3ad; --merge-code-string: #a8d5a2; --merge-code-number: #a4caff; --merge-code-function: #d7b7ff; }
+.merge-alignment-gap { background: repeating-linear-gradient(135deg, transparent, transparent 5px, color-mix(in srgb, var(--ui-subtle) 7%, transparent) 5px, color-mix(in srgb, var(--ui-subtle) 7%, transparent) 6px); }
+.merge-changed-line { background: color-mix(in srgb, var(--warning) 10%, transparent); }
+.merge-codemirror .cm-content { min-height: 100%; }
+.merge-block-map { display: flex; gap: 5px; overflow-x: auto; padding: 5px 10px; border-top: 1px solid var(--ui-line); }
+.merge-block-map button { white-space: nowrap; display: flex; gap: 4px; align-items: center; color: var(--warning); }
+.merge-block-map button.is-resolved { color: var(--success); }
+.idea-merge-dialog .shared-file-footer { padding: 8px 12px; }
+.merge-code-paint .shiki { color: var(--shiki-light); }
+[data-theme="dark"] .merge-code-paint .shiki, [data-theme="dark"] .merge-code-paint .shiki span { color: var(--shiki-dark) !important; }
+@media (max-width: 800px) { .shared-file-dialog.idea-merge-dialog { width: calc(100vw - 16px); height: calc(100dvh - 24px); } .merge-three-panes { min-width: 850px; } .merge-editor-workspace { overflow-x: auto; } .merge-toolbar-hint { display: none; } }
 .shared-file-dialog {
   display: flex;
   flex-direction: column;
