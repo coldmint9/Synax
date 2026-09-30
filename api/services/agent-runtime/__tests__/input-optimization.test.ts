@@ -32,7 +32,7 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("uses the selected API model without tools and sends a conservative editing contract", async () => {
+it("uses the selected API model without tools and sends the intent-expansion contract", async () => {
   expect(await optimizeInput(input)).toEqual({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
     status: "optimized",
@@ -42,40 +42,39 @@ it("uses the selected API model without tools and sends a conservative editing c
     projectId: "p1",
     model: "openai/current",
     purpose: "input-optimization",
-    maxTokens: 2_048,
+    maxTokens: 4_096,
     maxRetries: 0,
   });
   expect(request.tools).toBeUndefined();
   expect(request.messages[0].content).toContain(
-    "Make the smallest useful wording changes",
+    "intent expander",
   );
   expect(request.messages[0].content).toContain(
-    "If the draft is already clear, return it unchanged",
+    "goal-oriented, task-oriented brief",
   );
   expect(request.messages[0].content).toContain(
-    "Do not force the draft into one paragraph",
+    "marked as an inference or as a suggestion to confirm",
   );
   expect(request.messages[0].content).toContain(
-    "Never ask the user a question",
+    "never claim that any work has been changed, fixed, or completed",
   );
   expect(request.messages[1]).toEqual({ role: "user", content: input.text });
   expect(signal).toBeInstanceOf(AbortSignal);
 });
 
-it("does not force a generic expansion for a concise request", async () => {
+it("expands a very short, context-poor draft into an explicit goal and work", async () => {
   const draft = "做成可视化动态交互的页面";
-  mocks.generate.mockResolvedValue({
-    text: "做成可视化的动态交互页面。",
-    finishReason: "stop",
-  });
+  const expanded =
+    "目标：做一个可视化、动态、可交互的页面。\n\n任务：\n1. 明确要展示的数据与来源\n2. 实现图表的动态交互";
+  mocks.generate.mockResolvedValue({ text: expanded, finishReason: "stop" });
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: "做成可视化的动态交互页面。",
+    text: expanded,
     status: "optimized",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(
-    "The draft is concise",
+    "very short, so most of its context is implicit",
   );
 });
 
@@ -129,7 +128,7 @@ it("repairs a provider response that drops protected content, then accepts a val
   });
   expect(mocks.generate).toHaveBeenCalledTimes(2);
   expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
-    "previous rewrite violated the editing contract",
+    "The previous expansion violated the contract",
   );
 });
 
@@ -147,16 +146,35 @@ it("falls back to the original draft when the provider keeps violating the contr
   expect(mocks.generate).toHaveBeenCalledTimes(2);
 });
 
-it("does not add confirmation templates to a short draft", async () => {
+it("accepts an expansion that marks missing information for confirmation", async () => {
   const draft = "做成可视化动态交互的页面";
-  mocks.generate.mockResolvedValue({
-    text: "请将【待确认：要展示的内容/数据】做成一个可视化、动态、可交互的页面。\n\n需确认：\n- 可视化的具体对象与数据来源",
-    finishReason: "stop",
-  });
+  const expanded =
+    "目标：做一个可视化、动态、可交互的页面。\n\n待确认：\n- 要展示的内容与数据来源";
+  mocks.generate.mockResolvedValue({ text: expanded, finishReason: "stop" });
   expect(await optimizeInput({ ...input, text: `  ${draft}  ` })).toEqual({
-    text: `  ${draft}  `,
-    status: "preserved",
+    text: expanded,
+    status: "optimized",
   });
+});
+
+it("repairs an expansion that claims the work is already done", async () => {
+  const draft = "修复 `src/login.ts` 的报错。";
+  const repaired = "请修复 `src/login.ts` 的报错，并确认报错信息与复现路径。";
+  mocks.generate
+    .mockResolvedValueOnce({
+      text: "我已经修复了 `src/login.ts` 的报错。",
+      finishReason: "stop",
+    })
+    .mockResolvedValueOnce({ text: repaired, finishReason: "stop" });
+
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: repaired,
+    status: "optimized",
+  });
+  expect(mocks.generate).toHaveBeenCalledTimes(2);
+  expect(mocks.generate.mock.calls[1][0].messages[0].content).toContain(
+    "The previous expansion violated the contract",
+  );
 });
 
 it("preserves confirmation content that was already in the draft", async () => {
@@ -243,7 +261,7 @@ it("shares the attempt limit between truncation recovery and semantic repair", a
     text: "请修复 `src/login.ts`。", status: "optimized",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(3);
-  expect(mocks.generate.mock.calls[2][0].messages[0].content).toContain("previous rewrite violated");
+  expect(mocks.generate.mock.calls[2][0].messages[0].content).toContain("previous expansion violated");
 });
 
 it("can recover a truncated semantic repair within the shared attempt limit", async () => {
@@ -293,8 +311,10 @@ it("increases bounded budgets for a long non-Latin draft", async () => {
   await expect(optimizeInput({ ...input, text: "中".repeat(32_000) })).rejects.toMatchObject({ code: "INPUT_OPTIMIZATION_TRUNCATED" });
   const budgets = mocks.generate.mock.calls.map(([request]) => request.maxTokens);
   expect(budgets).toHaveLength(3);
-  expect(budgets[1]).toBeGreaterThan(budgets[0]);
-  expect(budgets[2]).toBeGreaterThan(budgets[1]);
+  // Expansion budgeting starts above the old conservative ceiling of 16_384.
+  expect(budgets[0]).toBeGreaterThan(16_384);
+  expect(budgets[1]).toBeGreaterThanOrEqual(budgets[0]);
+  expect(budgets[2]).toBeGreaterThanOrEqual(budgets[1]);
   expect(budgets[2]).toBeLessThanOrEqual(65_536);
 });
 
