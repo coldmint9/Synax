@@ -50,7 +50,13 @@ export function applyMacWindowAppearance(
   if (process.platform !== "darwin") return appearance;
 
   const effectiveVibrancy = appearance.enabled ? appearance.vibrancy : "none";
-  win.setVibrancy(effectiveVibrancy === "none" ? null : effectiveVibrancy);
+  win.setVibrancy(
+    effectiveVibrancy === "none"
+      ? null
+      : effectiveVibrancy === "hud-window"
+        ? "hud"
+        : effectiveVibrancy,
+  );
   win.setOpacity(appearance.enabled ? appearance.opacity : 1);
   return appearance;
 }

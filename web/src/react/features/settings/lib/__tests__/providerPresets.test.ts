@@ -104,6 +104,35 @@ function makeConfig(
 }
 
 describe("providerPresets model metadata", () => {
+  it("preserves typed model metadata when inserting and merging drafts", () => {
+    const draft: ApiProviderDraft = {
+      ...createCustomDraft([]),
+      model: "media-model",
+      models: ["media-model", "chat-model"],
+      modelMeta: {
+        "media-model": {
+          inputModalities: ["text", "image"],
+          outputModalities: ["image", "video"],
+          capabilities: ["image_generation", "video_generation"],
+          media: {
+            operations: ["text-to-image", "text-to-video"],
+            parameters: { quality: { values: ["low", "high"] } },
+          },
+        },
+      },
+    };
+    const [inserted] = upsertDraft([], draft);
+    expect(inserted.modelMeta["media-model"]).toEqual(draft.modelMeta["media-model"]);
+    const [merged] = upsertDraft([inserted], {
+      ...draft,
+      modelMeta: { "chat-model": { contextLimit: 400_000, inputModalities: ["text"] } },
+    });
+    expect(merged.modelMeta).toEqual({
+      ...draft.modelMeta,
+      "chat-model": { contextLimit: 400_000, inputModalities: ["text"] },
+    });
+  });
+
   it("normalizes unordered old effort lists and writes a canonical set", () => {
     const source = ["max", "low", "high", "low", "invalid", "none", "medium", "xhigh"];
     expect(parseReasoningEfforts(source)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);

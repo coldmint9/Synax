@@ -699,14 +699,7 @@ export function upsertDraft(
   draft: ApiProviderDraft,
 ): ApiProviderDraft[] {
   const existing = drafts.find((d) => d.id === draft.id);
-  const mergedMeta: Record<
-    string,
-    {
-      contextLimit?: number;
-      inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
-      outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
-    }
-  > = {
+  const mergedMeta: ApiProviderDraft["modelMeta"] = {
     ...(existing?.modelMeta ?? {}),
     ...(draft.modelMeta ?? {}),
   };

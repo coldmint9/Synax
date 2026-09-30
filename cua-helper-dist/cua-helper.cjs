@@ -7393,6 +7393,7 @@ var main_exports = {};
 __export(main_exports, {
   loadSdk: () => loadSdk,
   parseGeneration: () => parseGeneration,
+  readHelperPermissionStatus: () => readHelperPermissionStatus,
   requestHelperPermissions: () => requestHelperPermissions
 });
 module.exports = __toCommonJS(main_exports);
@@ -16948,6 +16949,15 @@ function parseGeneration(argv) {
   }
   return null;
 }
+function readHelperPermissionStatus(sdk, platform) {
+  if (platform !== "darwin" || !sdk.currentMacOsPermissionStatus)
+    return { accessibility: null, screenRecording: null };
+  try {
+    return sdk.currentMacOsPermissionStatus();
+  } catch {
+    return { accessibility: null, screenRecording: null };
+  }
+}
 function describePermissions(status) {
   const missing = [
     !status.accessibility ? "Accessibility" : null,
@@ -16968,6 +16978,12 @@ async function main() {
   const argv = import_node_process3.default.argv.slice(2);
   if (argv.includes(CUA_VERSION_FLAG)) {
     import_node_process3.default.stdout.write(`synax-cua ${CUA_SDK_VERSION}
+`);
+    return;
+  }
+  if (argv.includes("--permissions")) {
+    const sdk2 = await loadSdk();
+    import_node_process3.default.stdout.write(`${JSON.stringify(readHelperPermissionStatus(sdk2, import_node_process3.default.platform))}
 `);
     return;
   }
@@ -17034,5 +17050,6 @@ if (invokedDirectly) {
 0 && (module.exports = {
   loadSdk,
   parseGeneration,
+  readHelperPermissionStatus,
   requestHelperPermissions
 });

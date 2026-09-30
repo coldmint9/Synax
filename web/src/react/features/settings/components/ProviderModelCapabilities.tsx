@@ -6,6 +6,7 @@ import {
   configuredModelList,
   toggleModelContextLimit,
   type ApiProviderDraft,
+  type DeclaredModelModality,
 } from "../lib/providerPresets";
 import { useState } from "react";
 import type { MediaAdapter, MediaOperation, ModelCapability } from "../../../../lib/contracts/media-generation";
@@ -15,9 +16,7 @@ const MODALITIES = [
   { id: "image", zh: "图片", en: "Image" },
   { id: "audio", zh: "音频", en: "Audio" },
   { id: "video", zh: "视频", en: "Video" },
-  { id: "file", zh: "文件", en: "File" },
-] as const;
-type Modality = (typeof MODALITIES)[number]["id"];
+] as const satisfies ReadonlyArray<{ id: DeclaredModelModality; zh: string; en: string }>;
 const GENERATION_CAPABILITIES: Array<{ id: ModelCapability; zh: string; en: string }> = [
   { id: "chat", zh: "对话", en: "Chat" },
   { id: "image_generation", zh: "生图", en: "Image generation" },
@@ -122,7 +121,7 @@ export function ProviderModelCapabilities({ draft, onChange, zh }: Props) {
 
   function toggle(
     direction: "inputModalities" | "outputModalities",
-    modality: Modality,
+    modality: DeclaredModelModality,
     checked: boolean,
   ) {
     onChange((current) => {

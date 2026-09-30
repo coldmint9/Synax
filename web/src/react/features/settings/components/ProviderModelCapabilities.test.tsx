@@ -6,6 +6,30 @@ import { createCustomDraft, draftToProviderDef, type ApiProviderDraft } from '..
 import { validateProviderDraft } from '../lib/validation';
 
 describe('provider media model settings', () => {
+  it('only offers declared input and output modalities', () => {
+    const initial: ApiProviderDraft = {
+      ...createCustomDraft([]),
+      model: 'chat',
+      models: ['chat'],
+    };
+    let draft = initial;
+    function Settings() {
+      const [value, setValue] = useState(initial);
+      draft = value;
+      return <ProviderModelCapabilities draft={value} onChange={(update) => setValue(update)} zh />;
+    }
+    render(<Settings />);
+    expect(screen.queryAllByRole('checkbox', { name: '文件' })).toHaveLength(0);
+    for (const label of ['文本', '图片', '音频', '视频']) {
+      const checkboxes = screen.getAllByRole('checkbox', { name: label });
+      expect(checkboxes).toHaveLength(2);
+      fireEvent.click(checkboxes[0]);
+      fireEvent.click(checkboxes[1]);
+    }
+    expect(draft.modelMeta.chat.inputModalities).toEqual(['text', 'image', 'audio', 'video']);
+    expect(draft.modelMeta.chat.outputModalities).toEqual(['text', 'image', 'audio', 'video']);
+  });
+
   it('keeps generation operations and parameters scoped to the edited model', () => {
     const initial: ApiProviderDraft = {
       ...createCustomDraft([]),
