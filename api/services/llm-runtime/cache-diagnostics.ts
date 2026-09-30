@@ -96,7 +96,9 @@ export async function fingerprintGatewayRequest(
   request: Pick<LlmGatewayRequest, "messages" | "tools" | "activeTools">,
 ): Promise<CacheRequestFingerprint> {
   const definitions = [];
-  for (const [name, tool] of Object.entries(request.tools ?? {})) {
+  for (const [name, tool] of Object.entries(request.tools ?? {}).sort(
+    ([left], [right]) => left.localeCompare(right),
+  )) {
     if (request.activeTools && !request.activeTools.includes(name)) continue;
     definitions.push({
       name,

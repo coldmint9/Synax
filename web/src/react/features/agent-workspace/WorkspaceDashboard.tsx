@@ -36,6 +36,7 @@ import {
 } from "./WorkspaceDashboardLayout";
 import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
 import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
+import { ChangedFilesViewport } from "./ChangedFilesViewport";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -217,7 +218,7 @@ function subagentPreview(sub: SessionEnvironmentSubagent): string {
   return body || sub.prompt.trim();
 }
 
-/** Git changes remain visible; only individual directories can collapse. */
+/** Git changes stay pinned inside the project card; only directories collapse. */
 function GitChangesSection({ icon, title, actions, children }: {
   icon: React.ReactNode;
   title: string;
@@ -279,6 +280,8 @@ function RepositoryProjectCard({
     <WorkspaceCard
       className={`ws-project-card ${hasProjectRecords ? "ws-project-card--with-content" : "ws-project-card--status-only"}`}
       storageKey={`${sessionId}:${repository.rootId}:project`}
+      defaultOpen={hasProjectRecords}
+      dormant={!hasProjectRecords}
       icon={
         <span
           className="ws-project-folder-icon"
@@ -337,35 +340,37 @@ function RepositoryProjectCard({
               {t("workspaceStagedCount", { count: stagedFiles })}
             </div>
           )}
-          {changedFilesView === "tree" ? (
-            <ChangedFileTree
-              directory={changedFileTree}
-              onOpen={openDiff}
-              onRevert={onRevert}
-              revertingPaths={revertingPaths}
-              sessionId={sessionId}
-              rootId={repository.rootId}
-              rootName={repository.name}
-              workspacePath={repository.workspacePath}
-            />
-          ) : (
-            changedFiles.map((file) => (
-              <ChangedFileRow
-                key={`${file.status}:${file.path}`}
-                file={file}
-                onOpen={() => openDiff(file.path)}
+          <ChangedFilesViewport ariaLabel={t("workspaceCardGitChanges")}>
+            {changedFilesView === "tree" ? (
+              <ChangedFileTree
+                directory={changedFileTree}
+                onOpen={openDiff}
                 onRevert={onRevert}
-                reverting={
-                  revertingPaths?.has(`${repository.rootId}:${file.path}`) ??
-                  false
-                }
+                revertingPaths={revertingPaths}
                 sessionId={sessionId}
                 rootId={repository.rootId}
                 rootName={repository.name}
                 workspacePath={repository.workspacePath}
               />
-            ))
-          )}
+            ) : (
+              changedFiles.map((file) => (
+                <ChangedFileRow
+                  key={`${file.status}:${file.path}`}
+                  file={file}
+                  onOpen={() => openDiff(file.path)}
+                  onRevert={onRevert}
+                  reverting={
+                    revertingPaths?.has(`${repository.rootId}:${file.path}`) ??
+                    false
+                  }
+                  sessionId={sessionId}
+                  rootId={repository.rootId}
+                  rootName={repository.name}
+                  workspacePath={repository.workspacePath}
+                />
+              ))
+            )}
+          </ChangedFilesViewport>
         </GitChangesSection>
       )}
     </WorkspaceCard>
@@ -557,14 +562,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
         key={environment.projectId}
         scope={environment.projectId}
       >
-        {todos.length > 0 && (
-          <DashboardPanel
-            id="progress"
-            label={locale === "zh" ? "任务进度" : "Progress"}
-          >
-            <SessionTodoPanel key={sessionId} items={todos} />
-          </DashboardPanel>
-        )}
+        <DashboardPanel
+          id="runtime"
+          label={locale === "zh" ? "运行详情" : "Runtime details"}
+        >
+          <SessionProfilePanel sessionId={sessionId} />
+        </DashboardPanel>
         {repositories.map((root) => (
           <DashboardPanel
             key={root.rootId}
@@ -620,6 +623,14 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             </WorkspaceCard>
           </DashboardPanel>
         )}
+        {todos.length > 0 && (
+          <DashboardPanel
+            id="progress"
+            label={locale === "zh" ? "任务进度" : "Progress"}
+          >
+            <SessionTodoPanel key={sessionId} items={todos} />
+          </DashboardPanel>
+        )}
         <DashboardPanel
           id="processes"
           label={locale === "zh" ? "后台服务" : "Background processes"}
@@ -628,12 +639,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             sessionId={sessionId}
             environment={environment}
           />
-        </DashboardPanel>
-        <DashboardPanel
-          id="runtime"
-          label={locale === "zh" ? "运行详情" : "Runtime details"}
-        >
-          <SessionProfilePanel sessionId={sessionId} />
         </DashboardPanel>
       </WorkspaceDashboardLayout>
     );
@@ -647,14 +652,12 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       key={environment?.projectId ?? "default"}
       scope={environment?.projectId ?? "default"}
     >
-      {todos.length > 0 && (
-        <DashboardPanel
-          id="progress"
-          label={locale === "zh" ? "任务进度" : "Progress"}
-        >
-          <SessionTodoPanel items={todos} />
-        </DashboardPanel>
-      )}
+      <DashboardPanel
+        id="runtime"
+        label={locale === "zh" ? "运行详情" : "Runtime details"}
+      >
+        <SessionProfilePanel sessionId={sessionId} />
+      </DashboardPanel>
       {!sessionId ? (
         <div className="ws-placeholder">{t("workspaceSelectSession")}</div>
       ) : environment && repositoryEnvironment ? (
@@ -859,6 +862,14 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       ) : null}
       {sessionId && (
         <>
+          {todos.length > 0 && (
+            <DashboardPanel
+              id="progress"
+              label={locale === "zh" ? "任务进度" : "Progress"}
+            >
+              <SessionTodoPanel items={todos} />
+            </DashboardPanel>
+          )}
           <DashboardPanel
             id="processes"
             label={locale === "zh" ? "后台服务" : "Background processes"}
@@ -868,12 +879,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               sessionId={sessionId}
               environment={environment}
             />
-          </DashboardPanel>
-          <DashboardPanel
-            id="runtime"
-            label={locale === "zh" ? "运行详情" : "Runtime details"}
-          >
-            <SessionProfilePanel sessionId={sessionId} />
           </DashboardPanel>
         </>
       )}

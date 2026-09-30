@@ -11,7 +11,7 @@ import {
   Sun,
   Upload,
 } from "lucide-react";
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../../lib/appearance";
 import { DEFAULT_THEME } from "../../../../lib/theme/defaults";
 import { BUILTIN_THEMES } from "../../../../lib/theme/presets";
@@ -31,6 +31,7 @@ import { useLocale } from "../../../../hooks/useLocale";
 import { useNotificationStore } from "../../../state/notificationStore";
 import { AccentColorPicker } from "./AccentColorPicker";
 import { SettingsCard } from "./SettingsCard";
+import type { GlobalConfig, MacWindowAppearance } from "../../../../lib/contracts/config";
 import "./appearance.css";
 
 type AppearanceFeedback = {
@@ -65,7 +66,31 @@ function importErrorMessage(error: Error, zh: boolean): string {
   }
 }
 
-export function AppearanceSection() {
+const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
+  enabled: true,
+  vibrancy: "under-window",
+  opacity: 0.92,
+  bottomSeparator: true,
+  scanlines: false,
+  scanlineOpacity: 0.025,
+};
+
+type AppearanceSectionProps = {
+  config?: GlobalConfig;
+  onUpdate?: (patch: { macWindowAppearance: MacWindowAppearance }) => Promise<void>;
+};
+
+function desktopWindowApi() {
+  return (window as Window & {
+    electronAPI?: {
+      platform?: string;
+      getMacWindowAppearance?: () => Promise<{ appearance: MacWindowAppearance }>;
+      setMacWindowAppearance?: (value: MacWindowAppearance) => Promise<MacWindowAppearance>;
+    };
+  }).electronAPI;
+}
+
+export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) {
   const { locale } = useLocale();
   const zh = locale === "zh";
   const mode = useThemeStore((s) => s.mode);
@@ -90,6 +115,49 @@ export function AppearanceSection() {
     { id: "dark", label: zh ? "深色" : "Dark", Icon: Moon },
     { id: "system", label: zh ? "跟随系统" : "System", Icon: Monitor },
   ] as const;
+  const isMac = desktopWindowApi()?.platform === "darwin";
+  const [macAppearance, setMacAppearance] = useState<MacWindowAppearance>(
+    config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE,
+  );
+
+  useEffect(() => {
+    if (!isMac) return;
+    const next = config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE;
+    setMacAppearance(next);
+    void desktopWindowApi()?.setMacWindowAppearance?.(next);
+  }, [config?.macWindowAppearance, isMac]);
+
+  useEffect(() => {
+    if (!isMac) return;
+    const root = document.documentElement;
+    const viewport = document.querySelector<HTMLElement>(".app-viewport");
+    root.dataset.macWindowEnabled = String(macAppearance.enabled);
+    root.dataset.macWindowSeparator = String(macAppearance.bottomSeparator);
+    root.dataset.macWindowScanlines = String(macAppearance.scanlines);
+    root.style.setProperty("--mac-window-opacity", String(macAppearance.opacity));
+    root.style.setProperty("--mac-scanline-opacity", String(macAppearance.scanlineOpacity));
+    viewport?.style.setProperty("--mac-window-opacity", String(macAppearance.opacity));
+    return () => {
+      delete root.dataset.macWindowEnabled;
+      delete root.dataset.macWindowSeparator;
+      delete root.dataset.macWindowScanlines;
+      root.style.removeProperty("--mac-window-opacity");
+      root.style.removeProperty("--mac-scanline-opacity");
+      viewport?.style.removeProperty("--mac-window-opacity");
+    };
+  }, [isMac, macAppearance]);
+
+  const updateMacAppearance = async (patch: Partial<MacWindowAppearance>) => {
+    const next = { ...macAppearance, ...patch };
+    setMacAppearance(next);
+    try {
+      await desktopWindowApi()?.setMacWindowAppearance?.(next);
+      await onUpdate?.({ macWindowAppearance: next });
+    } catch (error) {
+      setMacAppearance(config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE);
+      announce("error", error instanceof Error ? error.message : zh ? "窗口效果更新失败" : "Could not update window appearance");
+    }
+  };
 
   const announce = (type: AppearanceFeedback["type"], message: string) => {
     setFeedback({ type, message });
@@ -398,6 +466,48 @@ export function AppearanceSection() {
           </div>
         </div>
       </div>
+      {isMac ? (
+        <section className="appearance-window-material" aria-labelledby="appearance-window-material-title">
+          <div className="appearance-heading">
+            <span id="appearance-window-material-title" className="appearance-label">
+              {zh ? "窗口材质" : "Window material"}
+            </span>
+            <span className="appearance-hint">
+              {zh ? "即时生效，默认关闭扫描线以降低合成开销" : "Applied instantly; scanlines are off by default for lower compositing cost"}
+            </span>
+          </div>
+          <label className="appearance-window-row">
+            <span>{zh ? "启用透明窗口" : "Enable transparent window"}</span>
+            <input type="checkbox" checked={macAppearance.enabled} onChange={(event) => void updateMacAppearance({ enabled: event.target.checked })} />
+          </label>
+          <label className="appearance-window-row">
+            <span>{zh ? "原生材质" : "Native material"}</span>
+            <select value={macAppearance.vibrancy} onChange={(event) => void updateMacAppearance({ vibrancy: event.target.value as MacWindowAppearance["vibrancy"] })}>
+              <option value="under-window">Under window</option>
+              <option value="hud-window">HUD window</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label className="appearance-window-row">
+            <span>{zh ? `窗口透明度 ${Math.round(macAppearance.opacity * 100)}%` : `Window opacity ${Math.round(macAppearance.opacity * 100)}%`}</span>
+            <input type="range" min="0.75" max="1" step="0.01" value={macAppearance.opacity} onChange={(event) => void updateMacAppearance({ opacity: Number(event.target.value) })} />
+          </label>
+          <label className="appearance-window-row">
+            <span>{zh ? "底部分隔线" : "Bottom separator"}</span>
+            <input type="checkbox" checked={macAppearance.bottomSeparator} onChange={(event) => void updateMacAppearance({ bottomSeparator: event.target.checked })} />
+          </label>
+          <label className="appearance-window-row">
+            <span>{zh ? "横向纹理" : "Scanlines"}</span>
+            <input type="checkbox" checked={macAppearance.scanlines} onChange={(event) => void updateMacAppearance({ scanlines: event.target.checked })} />
+          </label>
+          {macAppearance.scanlines ? (
+            <label className="appearance-window-row">
+              <span>{zh ? `纹理强度 ${Math.round(macAppearance.scanlineOpacity * 1000) / 10}%` : `Scanline strength ${Math.round(macAppearance.scanlineOpacity * 1000) / 10}%`}</span>
+              <input type="range" min="0" max="0.08" step="0.005" value={macAppearance.scanlineOpacity} onChange={(event) => void updateMacAppearance({ scanlineOpacity: Number(event.target.value) })} />
+            </label>
+          ) : null}
+        </section>
+      ) : null}
     </SettingsCard>
   );
 }

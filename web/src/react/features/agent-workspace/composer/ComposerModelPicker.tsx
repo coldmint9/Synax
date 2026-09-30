@@ -117,10 +117,12 @@ function ModelPickerContent({
     : selected?.capability === "video_generation"
       ? "生视频"
       : "对话";
-  const triggerLabel =
+  // The composer chip only shows the model name; provider and capability stay in the tooltip.
+  const triggerLabel = selectedModelLabel ?? t("agentModelSelect");
+  const triggerTitle =
     selectedProviderLabel && selectedModelLabel
       ? `${selectedProviderLabel} · ${selectedModelLabel} · ${selectedCapabilityLabel}`
-      : (selectedModelLabel ?? t("agentModelSelect"));
+      : triggerLabel;
 
   const query = searchQuery.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -156,7 +158,7 @@ function ModelPickerContent({
       <PopoverButton
         aria-label={t("agentModelSelect")}
         disabled={triggerDisabled}
-        title={triggerLabel}
+        title={triggerTitle}
         className={`button button--sm button--tertiary agent-dock-composer-chip agent-model-picker-trigger inline-flex h-7 max-w-[18rem] shrink-0 items-center rounded-full px-2.5 text-[11px] font-normal text-muted-foreground${triggerDisabled ? " pointer-events-none opacity-50" : ""}`}
       >
         <span className="truncate">{triggerLabel}</span>

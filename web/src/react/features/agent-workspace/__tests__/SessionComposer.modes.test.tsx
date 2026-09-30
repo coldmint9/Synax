@@ -355,45 +355,35 @@ describe("SessionComposer input queue", () => {
 });
 
 describe("SessionComposer mode controls", () => {
-  it("lists only discovered ACP backends and reacts when discovery completes", async () => {
-    const discovered = vi.mocked(useAcpDiscovery)();
+  it("no longer offers an execution backend selector for new sessions", async () => {
     vi.mocked(useAcpDiscovery).mockReturnValue([]);
-    const view = renderComposer();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Execution backend" }),
-    );
+    renderComposer();
+    expect(
+      screen.queryByRole("button", { name: "Execution backend" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("option", { name: "codex-acp" }),
     ).not.toBeInTheDocument();
-    vi.mocked(useAcpDiscovery).mockReturnValue(discovered);
-    view.rerender(
-      <MemoryRouter>
-        <SessionComposer projectId="p1" />
-      </MemoryRouter>,
-    );
     expect(
-      await screen.findByRole("option", { name: "codex-acp" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("option", { name: "native" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("blocks a remembered undiscovered ACP draft while allowing backend selection", async () => {
+  it("ignores a remembered ACP provider now that drafts run on the native runtime", async () => {
     vi.mocked(useAcpDiscovery).mockReturnValue([]);
     useAgentDockStore.setState({
       composerProviderId: "codex-acp",
       composerModelId: "default",
     });
     renderComposer();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "has not discovered this ACP",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Execution backend" }),
-    );
-    expect(screen.getByRole("option", { name: "native" })).toBeEnabled();
     expect(
-      screen.queryByRole("option", { name: "codex-acp" }),
+      screen.queryByRole("button", { name: "Execution backend" }),
     ).not.toBeInTheDocument();
+    // The remembered ACP provider no longer picks a backend; it now surfaces as
+    // an incompatible model for the native draft.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Choose a model for this backend",
+    );
   });
 
   it.each(["goal"] as const)(
@@ -466,15 +456,17 @@ describe("SessionComposer mode controls", () => {
     expect(sessionPromptApi.build).not.toHaveBeenCalled();
   });
 
-  it("disables ACP mode selection and sends ACP drafts as chat without discarding the native draft choice", async () => {
+  it("keeps the draft mode selectable when the remembered provider is an ACP engine", async () => {
     useAgentSessionStore.setState({ draftMode: "plan" });
     useAgentDockStore.setState({
       composerProviderId: "codex-acp",
       composerModelId: "default",
     });
     renderComposer();
-    await expectModeUnavailable();
     expect(useAgentSessionStore.getState().draftMode).toBe("plan");
+    expect(
+      screen.queryByRole("button", { name: "Execution backend" }),
+    ).not.toBeInTheDocument();
   });
 
   it("disables a live session’s mode selector, even when activeRunId is temporarily absent", async () => {

@@ -18,6 +18,58 @@
   font-size: 0.75rem;
   line-height: 1.6;
 }
+
+.appearance-window-material {
+  display: grid;
+  gap: 10px;
+  padding: 20px 22px;
+  border-top: 1px solid var(--separator);
+}
+.appearance-window-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 220px);
+  align-items: center;
+  gap: 16px;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+}
+.appearance-window-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--cx-accent-bottom);
+}
+.appearance-window-row select {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--foreground);
+  background: var(--surface);
+}
+
+html.electron-macos[data-mac-window-enabled="true"] .app-viewport {
+  background: rgba(10, 12, 12, var(--mac-window-opacity, 0.92)) !important;
+}
+html.electron-macos[data-mac-window-separator="true"] .app-viewport::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.12);
+}
+html.electron-macos[data-mac-window-scanlines="true"] .app-viewport::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, var(--mac-scanline-opacity, 0.025)) 0,
+    rgba(255, 255, 255, var(--mac-scanline-opacity, 0.025)) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
 .appearance-mode-group {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

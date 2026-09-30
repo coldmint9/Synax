@@ -751,7 +751,11 @@ describe("AgentInteractionPanel", () => {
     // A resolved ask stays folded into its mini title until the reader opens it.
     const resolved = screen.getByLabelText("Clarify scope v1 \u2014 Answered");
     expect(resolved).toHaveAttribute("aria-expanded", "false");
+    expect(resolved).toHaveTextContent("Answered");
+    expect(resolved.querySelector(".agent-history-version")).toBeNull();
+    expect(resolved.querySelector(".agent-history-status-dot")).toBeNull();
     fireEvent.click(resolved);
+    expect(resolved).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("Earlier answer")).toBeVisible();
     expect(
       screen.getByLabelText("Approve plan v3 — Saved for later execution"),

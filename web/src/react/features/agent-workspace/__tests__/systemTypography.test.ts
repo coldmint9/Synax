@@ -15,10 +15,13 @@ function rule(css: string, selector: string) {
   return values;
 }
 
-it("uses one Avenir Next interface stack and a 13px body size without altering the rem scale", () => {
-  expect(rule(tokens, ":root")["--font-interface"]).toContain('"Avenir Next"');
+it("uses the bundled interface stack and readable body sizing without altering the rem scale", () => {
+  expect(rule(tokens, ":root")["--font-interface"]).toContain('"Inter Variable"');
+  expect(rule(tokens, ":root")["--font-interface"]).toContain('"Noto Sans SC Variable"');
   expect(rule(base, "body")["font-family"]).toBe("var(--font-interface)");
-  expect(rule(base, "body")["font-size"]).toBe("13px");
+  expect(rule(base, "body")["font-size"]).toBe("14px");
+  expect(rule(base, "body")["font-weight"]).toBe("450");
+  expect(rule(base, "body")["letter-spacing"]).toBe("-0.012em");
   expect(rule(base, "html")["font-size"]).toBeUndefined();
   expect(base).toContain('--font-mono: "JetBrains Mono"');
 });

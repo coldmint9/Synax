@@ -791,9 +791,7 @@ function InteractionHistory({
         <span className="agent-history-item-title">
           {interaction.request.title}
         </span>
-        <span className="agent-history-version">v{interaction.revision}</span>
         <span className="agent-history-status" data-tone={tone}>
-          <span className="agent-history-status-dot" aria-hidden />
           {status}
         </span>
         <ChevronRight

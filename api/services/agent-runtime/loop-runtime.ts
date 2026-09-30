@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
   persistInlineVisualization,
@@ -2877,6 +2878,10 @@ export class AgentLoopRuntime {
         })
       ).blocks,
     });
+    const cacheGeneration = createHash("sha256")
+      .update(stableContextFingerprint)
+      .digest("hex")
+      .slice(0, 16);
     const { projection } = await maybeLlmCompactContext({
       sessionId: input.sessionId,
       projectId: session.projectId,
@@ -3064,6 +3069,7 @@ export class AgentLoopRuntime {
         version: 1,
         boundary: "native",
         ...diagnosticsContext,
+        cacheGeneration,
         model: input.input.model ?? null,
         request: fingerprint,
         comparison: readCacheFingerprint(previous?.request)

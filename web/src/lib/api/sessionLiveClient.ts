@@ -1,4 +1,5 @@
 import { sessionLiveStream, type SessionLiveEvent } from './sessionLive'
+import { noteLiveEvent } from '../streamThroughput'
 
 type LiveHandler = (event: SessionLiveEvent) => void
 interface LiveConnection { handlers: Set<LiveHandler>; close: () => void; generation: number; live: boolean }
@@ -15,6 +16,9 @@ function connect(sessionId: string, connection: LiveConnection): void {
   connection.live = true
   connection.close = sessionLiveStream(sessionId, event => {
     if (connection.generation !== generation) return
+    // Single accounting point for streamed output: every consumer below sees
+    // this exact event once, so the throughput counter cannot drift.
+    noteLiveEvent(sessionId, event)
     for (const handler of connection.handlers) handler(event)
   }, () => {
     if (connection.generation !== generation || connections.get(sessionId) !== connection) return

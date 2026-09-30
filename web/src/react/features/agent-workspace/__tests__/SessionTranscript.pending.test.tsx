@@ -54,7 +54,7 @@ beforeEach(() => {
   });
 });
 
-it("renders a sent message and the thinking grid before the request completes, without waiting for history", async () => {
+it("renders a sent message and the ASCII thinking indicator before the request completes, without waiting for history", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
     () =>
@@ -70,22 +70,22 @@ it("renders a sent message and the thinking grid before the request completes, w
       .sendSessionMessage("s1", { message: "Immediate message" });
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
-  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
   await act(async () => {
     finish({ run, reused: false });
     await sending;
   });
   expect(screen.getByText("Immediate message")).toBeVisible();
-  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 
   const session = { id: "s1", status: "waiting_input", activeRunId: run.id } as AgentSession;
   act(() => useAgentSessionStore.setState({ sessions: [session] }));
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 
   act(() => useAgentSessionStore.setState({ sessions: [{ ...session, status: "running" }] }));
-  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
 });
 
 it("does not show thinking while a session detail snapshot is refreshing", () => {
@@ -102,7 +102,7 @@ it("does not show thinking while a session detail snapshot is refreshing", () =>
     messages: [],
   });
   render(<SessionTranscript />);
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
 it("shows the thinking placeholder for an already-running session without local pending state", () => {
@@ -125,30 +125,30 @@ it("shows the thinking placeholder for an already-running session without local 
     messages: [],
   });
   const { container } = render(<SessionTranscript />);
-  expect(screen.getByText("正在思考")).toBeVisible();
-  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 
   act(() => useAgentSessionStore.setState({ messages: [previousReply] }));
-  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
   act(() => useAgentSessionStore.setState({ streamingStepId: "step-1" }));
-  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
 
   act(() => useAgentSessionStore.setState({ runs: [{ ...run, status: "waiting_input" }] }));
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
   act(() => useAgentSessionStore.setState({ runs: [{ ...run, status: "running" }] }));
-  expect(screen.getByText("正在思考")).toBeVisible();
+  expect(screen.getByTestId("thinking-indicator")).toBeVisible();
 
   act(() => useAgentSessionStore.setState({
     runs: [],
     messages: [{ ...previousReply, id: "new-reply", runId: run.id, content: "New answer" }],
   }));
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 
   act(() => useAgentSessionStore.setState({
     runs: [{ ...run, status: "completed" }],
     messages: [previousReply],
   }));
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
 it("shows one real message when it arrives before the run-start linkage and HTTP response", async () => {
@@ -231,7 +231,7 @@ it("keeps the dot matrix through tool-only work and removes it at the first assi
     }),
   );
 
-  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 
   act(() =>
     useAgentSessionStore.setState({
@@ -368,5 +368,5 @@ it("hides the generic thinking placeholder after real thinking appears", () => {
 
   render(<SessionTranscript />);
 
-  expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });

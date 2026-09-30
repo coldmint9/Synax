@@ -89,7 +89,7 @@ export default function GlobalSettingsPage() {
           </div>
 
           <div className="space-y-8">
-            <AppearanceSection />
+            <AppearanceSection config={globalConfig} onUpdate={updateGlobalConfig} />
             <LayoutSection />
             <UpdateSettings />
             <TerminalSettings

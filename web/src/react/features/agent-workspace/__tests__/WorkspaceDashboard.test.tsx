@@ -489,6 +489,59 @@ describe("WorkspaceDashboard", () => {
     expect(screen.queryByText("BlockAsk.vue")).toBeNull();
   });
 
+  it("collapses the project card and drops the change list while clean", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+      branch: "main",
+      dirty: false,
+      changedFiles: [],
+      inputSources: [],
+      outputFiles: [],
+    };
+    const { container } = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+    const card = container.querySelector(".ws-project-card")!;
+    const toggle = screen.getByRole("button", { name: "Synax" });
+
+    expect(card).toHaveAttribute("data-open", "false");
+    expect(card).toHaveAttribute("data-dormant", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toBeDisabled();
+    expect(toggle.querySelector(".ws-card-chevron")).toBeNull();
+    expect(container.querySelector(".ws-changes-viewport")).toBeNull();
+  });
+
+  it("mounts the change list in the capped viewport when dirty", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+    };
+    const { container } = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+
+    expect(container.querySelector(".ws-changes-viewport")).not.toBeNull();
+    expect(container.querySelector(".ws-changes-rows")).not.toBeNull();
+    expect(container.querySelector(".ws-changes-fade")).toHaveAttribute(
+      "data-visible",
+      "false",
+    );
+  });
+
   it("reflects the agent change status on each row", () => {
     const { container } = renderDashboard();
 

@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Bot, FileDiff, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  Check,
+  FileDiff,
+  GitBranch,
+  GitMerge,
+  RefreshCw,
+  ShieldCheck,
+  Clock3,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   gitMrApi,
@@ -9,6 +20,8 @@ import {
   type MergeProposal,
   type MergeAction,
 } from "../../../lib/api/gitMr";
+import { Button } from "../../components/ui/Button";
+import "./mergeRequest.css";
 import { FileViewerDialog } from "../../components/file-viewer/FileViewerDialog";
 import { AppError } from "../../../lib/appError";
 import { canFinalize, isRunning, isTerminal, statusLabels } from "./mergeUi";
@@ -93,34 +106,38 @@ export function MergeRequestDetail({
   const locked =
     !!busy || (!!mr && (isTerminal(mr.status) || isRunning(mr.status)));
   const conflictCount = files.filter((item) => item.conflicted).length;
-  const basePath = `/projects/${encodeURIComponent(projectId)}/git`;
+  const basePath = `/projects/${encodeURIComponent(projectId)}/git?view=requests`;
   if (loading && !mr)
     return (
-      <div className="mr-empty" role="status">
+      <div
+        className="git-workbench git-workbench-modern mr-detail-modern mr-empty"
+        role="status"
+      >
         正在加载合并请求…
       </div>
     );
   return (
-    <main className="git-workbench mr-detail">
+    <main className="git-workbench git-workbench-modern mr-detail mr-detail-modern">
       <header className="mr-page-header">
         <div className="mr-actions">
-          <button onClick={() => navigate(basePath)}>
+          <Button className="git-control" onClick={() => navigate(basePath)}>
             <ArrowLeft size={16} />
             合并请求
-          </button>
+          </Button>
           {mr && (
             <span className={`mr-status mr-status-${mr.status}`}>
               {statusLabels[mr.status]}
             </span>
           )}
         </div>
-        <button
+        <Button
+          className="git-control"
           disabled={!!busy}
           onClick={() => void perform("refresh", async () => {})}
         >
           <RefreshCw size={15} />
           刷新
-        </button>
+        </Button>
       </header>
       {error && (
         <p role="alert" className="mr-error">
@@ -132,16 +149,38 @@ export function MergeRequestDetail({
       ) : (
         <>
           <div className="mr-title-row">
-            <div>
+            <div className="min-w-0">
               <h1>{mr.title}</h1>
-              <p className="mr-muted">
-                <code>{mr.steps.map((step) => step.branch).join(" → ")}</code>{" "}
-                合入 <strong>{mr.target}</strong> · {mr.strategy} · v
-                {mr.version}
-              </p>
+              <div className="mr-detail-branches flex flex-wrap items-center gap-2">
+                {mr.steps.map((step, index) => (
+                  <span
+                    key={`${step.branch}-${index}`}
+                    className="mr-detail-branch"
+                  >
+                    <GitBranch size={12} aria-hidden="true" />
+                    {step.branch}
+                  </span>
+                ))}
+                <ArrowRight size={14} aria-label="合入" />
+                <strong className="mr-detail-branch is-target">
+                  <GitMerge size={12} aria-hidden="true" />
+                  {mr.target}
+                </strong>
+                <span className="mr-detail-strategy">
+                  {
+                    {
+                      merge_commit: "Merge commit",
+                      squash: "Squash",
+                      ff_only: "Fast-forward only",
+                    }[mr.strategy]
+                  }{" "}
+                  · v{mr.version}
+                </span>
+              </div>
               <p className="mr-muted mr-repo-path">{mr.repository}</p>
             </div>
-            <button
+            <Button
+              className="git-control"
               disabled={!!busy || isRunning(mr.status)}
               onClick={() =>
                 void perform("agent", async () => {
@@ -154,7 +193,7 @@ export function MergeRequestDetail({
             >
               <Bot size={16} />
               {mr.agentSessionId ? "打开 Git Agent" : "请 Git Agent 协助"}
-            </button>
+            </Button>
           </div>
           {mr.error &&
             !(
@@ -171,9 +210,12 @@ export function MergeRequestDetail({
               本次执行保留了现场。恢复前会核对目标分支、候选工作树和执行记录；无法安全恢复时会保留现场并说明原因。
             </p>
           )}
-          <section className="mr-card">
+          <section className="mr-card mr-progress-card">
             <div className="mr-row">
-              <h2>合并进度</h2>
+              <h2 className="flex items-center gap-2">
+                <GitMerge size={15} aria-hidden="true" />
+                合并进度
+              </h2>
               <span className="mr-muted">
                 目标快照{" "}
                 <code title={mr.targetOid}>{mr.targetOid.slice(0, 12)}</code>
@@ -184,8 +226,15 @@ export function MergeRequestDetail({
                 <li
                   key={`${step.branch}-${index}`}
                   data-current={index === mr.currentStep}
+                  data-status={step.status}
                 >
-                  <span className="mr-step-number">{index + 1}</span>
+                  <span className="mr-step-number">
+                    {step.status === "completed" || step.status === "noop" ? (
+                      <Check size={13} aria-hidden="true" />
+                    ) : (
+                      index + 1
+                    )}
+                  </span>
                   <div>
                     <strong>{step.branch}</strong>
                     <code title={step.oid}>{step.oid.slice(0, 12)}</code>
@@ -206,56 +255,65 @@ export function MergeRequestDetail({
             </ol>
             <div className="mr-actions mr-wrap">
               {mr.status === "draft" && (
-                <button
-                  className="mr-primary"
+                <Button
+                  className="git-control"
+                  variant="primary"
                   disabled={!!busy}
                   onClick={() => act("prepare")}
                 >
                   准备合并
-                </button>
+                </Button>
               )}
               {(["failed", "interrupted"] as string[]).includes(mr.status) && (
-                <button
-                  className="mr-primary"
+                <Button
+                  className="git-control"
+                  variant="primary"
                   disabled={!!busy}
                   onClick={() => act("resume")}
                 >
                   核验并恢复
-                </button>
+                </Button>
               )}
               {mr.status === "conflicted" && (
-                <button
-                  className="mr-primary"
+                <Button
+                  className="git-control"
+                  variant="primary"
                   disabled={!!busy || conflictCount > 0}
                   onClick={() => act("continue")}
                 >
                   {conflictCount
                     ? `还有 ${conflictCount} 个冲突待解决`
                     : "继续合并"}
-                </button>
+                </Button>
               )}
               {mr.checks.length > 0 &&
                 (["ready", "check_failed"] as string[]).includes(mr.status) && (
-                  <button disabled={!!busy} onClick={() => act("checks")}>
+                  <Button
+                    className="git-control"
+                    disabled={!!busy}
+                    onClick={() => act("checks")}
+                  >
                     {mr.checkResults.length ? "重新运行检查" : "运行检查"}
-                  </button>
+                  </Button>
                 )}
               {mr.status === "ready" && (
-                <button
-                  className="mr-primary"
+                <Button
+                  className="git-control"
+                  variant="primary"
                   disabled={!!busy || !canFinalize(mr)}
                   onClick={() => setConfirmFinalize(true)}
                 >
                   更新本地目标
-                </button>
+                </Button>
               )}
               {!isTerminal(mr.status) && (
-                <button
+                <Button
+                  className="git-control"
                   disabled={!!busy || isRunning(mr.status)}
                   onClick={() => act("cancel")}
                 >
                   取消 MR
-                </button>
+                </Button>
               )}
               {busy && (
                 <span role="status" className="mr-muted">
@@ -294,16 +352,20 @@ export function MergeRequestDetail({
                   {mr.allowCheckedOutTarget && " 已授权更新检出的目标工作树。"}
                 </p>
                 <div className="mr-actions">
-                  <button onClick={() => setConfirmFinalize(false)}>
+                  <Button
+                    className="git-control"
+                    onClick={() => setConfirmFinalize(false)}
+                  >
                     返回检查
-                  </button>
-                  <button
-                    className="mr-primary"
+                  </Button>
+                  <Button
+                    className="git-control"
+                    variant="primary"
                     disabled={!!busy}
                     onClick={() => act("finalize")}
                   >
                     确认更新本地 {mr.target}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -311,7 +373,8 @@ export function MergeRequestDetail({
           <div className="mr-detail-columns">
             <section className="mr-card">
               <div className="mr-row">
-                <h2>
+                <h2 className="flex items-center gap-2">
+                  <FileDiff size={15} aria-hidden="true" />
                   文件变更 <span className="mr-muted">{files.length}</span>
                 </h2>
                 {conflictCount > 0 && (
@@ -334,7 +397,8 @@ export function MergeRequestDetail({
                 <ul className="mr-file-list">
                   {files.map((item) => (
                     <li key={item.id}>
-                      <button
+                      <Button
+                        className="git-control"
                         disabled={!!busy}
                         onClick={() =>
                           void perform("file", async () =>
@@ -353,14 +417,17 @@ export function MergeRequestDetail({
                         >
                           {item.conflicted ? "冲突" : item.status}
                         </span>
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
               )}
             </section>
             <section className="mr-card">
-              <h2>验证结果</h2>
+              <h2 className="flex items-center gap-2">
+                <ShieldCheck size={15} aria-hidden="true" />
+                验证结果
+              </h2>
               {!mr.checks.length ? (
                 <p className="mr-muted">
                   未配置验证检查。请审阅候选变更，确认后可直接更新本地目标。
@@ -404,7 +471,10 @@ export function MergeRequestDetail({
           </div>
           {proposals.length > 0 && (
             <section className="mr-card">
-              <h2>Git Agent 提案</h2>
+              <h2 className="flex items-center gap-2">
+                <Bot size={15} aria-hidden="true" />
+                Git Agent 提案
+              </h2>
               <p className="mr-muted">
                 采纳将修改候选文件；服务端会校验提案的文件版本。采纳后仍需审阅、解决冲突和重新检查。
               </p>
@@ -416,7 +486,8 @@ export function MergeRequestDetail({
                     · {proposal.rationale}
                   </summary>
                   <pre>{proposal.content}</pre>
-                  <button
+                  <Button
+                    className="git-control"
                     disabled={locked}
                     onClick={() =>
                       void perform("proposal", async () =>
@@ -432,13 +503,19 @@ export function MergeRequestDetail({
                     }
                   >
                     采纳此提案并审阅
-                  </button>
+                  </Button>
                 </details>
               ))}
             </section>
           )}
           <section className="mr-card">
-            <h2>运行记录</h2>
+            <h2 className="flex items-center gap-2">
+              <Clock3 size={15} aria-hidden="true" />
+              运行记录
+            </h2>
+            {!mr.events.length && (
+              <p className="mr-muted">准备合并后，执行过程会记录在这里。</p>
+            )}
             <ol className="mr-events">
               {mr.events.map((event, index) => (
                 <li key={`${event.at}-${index}`}>

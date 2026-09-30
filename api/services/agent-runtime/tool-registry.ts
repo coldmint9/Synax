@@ -331,6 +331,28 @@ export class ToolRegistry {
               "Parent workspace operation is still running. Delegate writer tasks separately.",
             );
         }
+        const subagentNames = [
+          "林墨",
+          "许澄",
+          "乔安",
+          "沈砚",
+          "顾言",
+          "周宁",
+          "苏遥",
+          "程野",
+          "陆川",
+          "唐宁",
+          "谢言",
+          "江屿",
+          "宋知",
+          "顾清",
+          "沈舟",
+          "温言",
+        ];
+        const subagentName = this.store.allocateSubagentName(
+          parent.id,
+          subagentNames,
+        );
         const child = agentSessionRuntime.create(
           args.specialist
             ? buildSpecialistChildInput(
@@ -358,20 +380,6 @@ export class ToolRegistry {
                 thinkingMode: args.thinkingMode,
               },
         );
-        const subagentNames = [
-          "林墨",
-          "许澄",
-          "乔安",
-          "沈砚",
-          "顾言",
-          "周宁",
-          "苏遥",
-          "程野",
-        ];
-        const nameIndex = Array.from(child.id).reduce(
-          (sum, char) => sum + char.charCodeAt(0),
-          0,
-        ) % subagentNames.length;
         const role = args.specialist
           ? {
               roleName: args.specialist.role,
@@ -396,12 +404,12 @@ export class ToolRegistry {
                 }[profileId] ?? "根据委派任务进行分析和整理。",
             };
         const namedChild = this.store.updateSessionMetadata(child.id, {
-          subagentName: subagentNames[nameIndex],
+          subagentName,
           ...role,
         });
         const delegationContext = [
           "## Subagent delegation context",
-          `You are ${subagentNames[nameIndex]}.`,
+          `You are ${subagentName}.`,
           `Your role is ${role.roleName}.`,
           `Your role capabilities: ${role.roleDescription}`,
           "Use this role to guide your decisions, tool choices, and final summary.",

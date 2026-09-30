@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 vi.mock("../../../lib/api/gitMr", () => ({
   gitMrApi: { branchOptions: vi.fn() },
 }));
@@ -158,6 +159,7 @@ it("shows the merge direction, disables impossible sources with ancestry and ret
     target: { value: "feature/a" },
   });
   expect(screen.getByRole("button", { name: "创建并准备合并" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "添加源分支" }));
   await screen.findAllByText("包含 beta 提交");
   expect(screen.getByRole("button", { name: "添加 feature/b" })).toBeDisabled();
   expect(screen.getAllByText("包含 beta 提交").length).toBeGreaterThan(0);
@@ -200,9 +202,7 @@ it("rejects stale eligibility responses and fails closed on a query error", asyn
 it("reuses inspected metadata for ordinary selections but rechecks the ordered queue in fast-forward mode", async () => {
   await setup();
   expect(gitMrApi.branchOptions).toHaveBeenCalledTimes(1);
-  fireEvent.change(screen.getByLabelText("合并策略"), {
-    target: { value: "ff_only" },
-  });
+  fireEvent.click(screen.getByRole("radio", { name: "Fast-forward only" }));
   await waitFor(() =>
     expect(gitMrApi.branchOptions).toHaveBeenLastCalledWith(
       "project",
@@ -221,4 +221,142 @@ it("reuses inspected metadata for ordinary selections but rechecks the ordered q
       expect.any(AbortSignal),
     ),
   );
+});
+
+describe("MR island interactions", () => {
+  it("uses labelled strategy radios and prevents submission before choosing a source", async () => {
+    const user = userEvent.setup();
+    const submit = vi.fn();
+    render(
+      <MergeRequestForm
+        projectId="project"
+        roots={[]}
+        rootId=""
+        workspace={workspace}
+        onRootChange={vi.fn()}
+        onClose={vi.fn()}
+        onSubmit={submit}
+      />,
+    );
+    expect(
+      screen.getByRole("dialog", { name: "新建本地合并请求" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Merge commit" })).toBeChecked();
+    await user.click(
+      screen.getByRole("radio", { name: "Squash", exact: true }),
+    );
+    expect(
+      screen.getByRole("radio", { name: "Squash", exact: true }),
+    ).toBeChecked();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "目标分支" }),
+      "master",
+    );
+    await waitFor(() => expect(gitMrApi.branchOptions).toHaveBeenCalled());
+    expect(
+      screen.getByRole("button", { name: "创建并准备合并" }),
+    ).toBeDisabled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps focus usable after adding a source and Escape closes only the picker", async () => {
+    const user = userEvent.setup();
+    const close = vi.fn();
+    render(
+      <MergeRequestForm
+        projectId="project"
+        roots={[]}
+        rootId=""
+        workspace={workspace}
+        onRootChange={vi.fn()}
+        onClose={close}
+        onSubmit={vi.fn()}
+      />,
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "目标分支" }),
+      "master",
+    );
+    await user.click(screen.getByRole("button", { name: "添加源分支" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "添加 feature/a" }),
+      ).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "添加 feature/a" }));
+    expect(screen.getByRole("searchbox", { name: "搜索源分支" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("searchbox", { name: "搜索源分支" }),
+    ).not.toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "添加源分支" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the dialog locked while a merge request is being created", async () => {
+    const user = userEvent.setup();
+    const close = vi.fn();
+    const submit = vi.fn(() => new Promise<void>(() => {}));
+    render(
+      <MergeRequestForm
+        projectId="project"
+        roots={[]}
+        rootId=""
+        workspace={workspace}
+        onRootChange={vi.fn()}
+        onClose={close}
+        onSubmit={submit}
+      />,
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "目标分支" }),
+      "master",
+    );
+    await user.click(screen.getByRole("button", { name: "添加源分支" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "添加 feature/a" }),
+      ).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "添加 feature/a" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "创建并准备合并" }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "正在创建…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "关闭新建合并请求" }),
+    ).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("keeps advanced options out of the default keyboard path until expanded", async () => {
+    const user = userEvent.setup();
+    render(
+      <MergeRequestForm
+        projectId="project"
+        roots={[]}
+        rootId=""
+        workspace={workspace}
+        onRootChange={vi.fn()}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByLabelText(/标题/).closest("details"),
+    ).not.toHaveAttribute("open");
+    await user.click(screen.getByText("更多设置", { exact: true }));
+    expect(screen.getByRole("textbox", { name: /标题/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "添加检查" }));
+    expect(screen.getByRole("textbox", { name: "程序 1" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "移除检查 1" }));
+    expect(
+      screen.queryByRole("textbox", { name: "程序 1" }),
+    ).not.toBeInTheDocument();
+  });
 });

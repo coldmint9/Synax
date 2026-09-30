@@ -16,3 +16,14 @@ export function formatContextLimit(tokens: number): string {
   if (tokens % 1000 === 0) return `${tokens / 1000}K`
   return String(tokens)
 }
+
+/**
+ * Throughput estimate value, e.g. 24.63 → "24.6". The unit ("tokens/s") is
+ * rendered separately so the number keeps its tabular alignment.
+ */
+export function formatTokenRate(tokensPerSecond: number): string {
+  if (!Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return '—'
+  if (tokensPerSecond >= 1000) return `${(tokensPerSecond / 1000).toFixed(1)}K`
+  if (tokensPerSecond >= 100) return tokensPerSecond.toFixed(0)
+  return tokensPerSecond.toFixed(1)
+}

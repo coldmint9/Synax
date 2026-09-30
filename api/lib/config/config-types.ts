@@ -144,6 +144,7 @@ export interface GlobalComputerUseSettings {
 }
 
 export interface GlobalConfig {
+  macWindowAppearance?: MacWindowAppearance;
   defaultImageModel?: MediaModelSelection | null;
   defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
@@ -205,6 +206,7 @@ export interface AnalyzerLlmConfig {
 }
 
 export interface UpdateGlobalConfigRequest {
+  macWindowAppearance?: MacWindowAppearance;
   defaultImageModel?: MediaModelSelection | null;
   defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
@@ -222,6 +224,16 @@ export interface UpdateGlobalConfigRequest {
   sessionArchiveRetentionDays?: number | null;
   limits?: GlobalConfig["limits"];
   features?: GlobalConfig["features"];
+}
+
+export type MacWindowVibrancy = "under-window" | "hud-window" | "none";
+export interface MacWindowAppearance {
+  enabled: boolean;
+  vibrancy: MacWindowVibrancy;
+  opacity: number;
+  bottomSeparator: boolean;
+  scanlines: boolean;
+  scanlineOpacity: number;
 }
 
 export interface UpdateProjectConfigRequest {

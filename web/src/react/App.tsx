@@ -16,6 +16,18 @@ import { WorkspaceFileMutationHost } from "./features/agent-workspace/WorkspaceF
 import { ContextMenuProvider } from "./components/context-menu/ContextMenuProvider";
 import { DesktopUpdateProvider } from "./features/updates/DesktopUpdateProvider";
 import { DesktopUpdatePanel } from "./features/updates/DesktopUpdateStatus";
+import { configApi } from "../lib/api/config";
+import type { MacWindowAppearance } from "../lib/contracts/config";
+import "./features/settings/components/appearance.css";
+
+const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
+  enabled: true,
+  vibrancy: "under-window",
+  opacity: 0.92,
+  bottomSeparator: true,
+  scanlines: false,
+  scanlineOpacity: 0.025,
+};
 
 export default function App() {
   useTabKeyBehavior();
@@ -26,6 +38,16 @@ export default function App() {
       (window as any).electronAPI?.reportUIReady?.();
       if ((window as any).electronAPI?.platform === "darwin") {
         document.documentElement.classList.add("electron-macos");
+        void configApi.getGlobal().then(({ config }) => {
+          const appearance = config.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE;
+          const root = document.documentElement;
+          root.dataset.macWindowEnabled = String(appearance.enabled);
+          root.dataset.macWindowSeparator = String(appearance.bottomSeparator);
+          root.dataset.macWindowScanlines = String(appearance.scanlines);
+          root.style.setProperty("--mac-window-opacity", String(appearance.opacity));
+          root.style.setProperty("--mac-scanline-opacity", String(appearance.scanlineOpacity));
+          void (window as any).electronAPI?.setMacWindowAppearance?.(appearance);
+        }).catch(() => undefined);
       } else if ((window as any).electronAPI?.platform === "win32") {
         document.documentElement.classList.add("electron-windows");
       }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   GitMerge,
+  ChevronRight,
   GitCommitHorizontal,
   FolderGit2,
   SlidersHorizontal,
@@ -9,7 +10,7 @@ import {
   Play,
   Trash2,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   projectApi,
   type GitWorkspaceSummary,
@@ -27,9 +28,11 @@ import { IslandSelection } from "../../layouts/IslandSelection";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
+import { Button } from "../../components/ui/Button";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
 import "./gitHistory.css";
+import "./mergeRequest.css";
 type View = "requests" | "branches" | "presets";
 export default function GitWorkbenchPage() {
   const { projectId, mrId } = useParams();
@@ -46,7 +49,21 @@ export default function GitWorkbenchPage() {
 }
 function GitWorkbench({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
-  const [view, setView] = useState<View>("branches");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedView = searchParams.get("view");
+  const view: View =
+    requestedView === "requests" || requestedView === "presets"
+      ? requestedView
+      : "branches";
+  const setView = (next: View) =>
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        params.set("view", next);
+        return params;
+      },
+      { replace: true },
+    );
   const [requests, setRequests] = useState<MergeRequest[]>([]);
   const [presets, setPresets] = useState<MergePreset[]>([]);
   const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>([]);
@@ -175,7 +192,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   );
   return (
     <main
-      className={`git-workbench git-workbench-modern ${view === "branches" ? "git-history-page" : ""}`}
+      className={`git-workbench git-workbench-modern mr-modern-index ${view === "branches" ? "git-history-page" : ""}`}
     >
       <GitToolbarContent>
         <nav aria-label="Git 视图" className="git-island-views">
@@ -320,19 +337,24 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       ) : (
         <>
           {view === "requests" && (
-            <>
+            <div className="mr-index-content">
               {!filteredRequests.length ? (
-                <div className="mr-empty">
-                  <GitMerge size={32} />
+                <div className="mr-empty mr-index-empty">
+                  <span className="mr-index-empty-icon">
+                    <GitMerge size={28} strokeWidth={1.5} />
+                  </span>
                   <h2>还没有本地合并请求</h2>
                   <p>选择源分支与目标分支，在更新目标前审阅合并结果。</p>
-                  <button
-                    className="mr-primary"
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    className="git-control !rounded-xl"
                     disabled={!workspace}
                     onClick={() => setCreateOpen(true)}
                   >
+                    <Plus size={14} aria-hidden="true" />
                     创建第一个 MR
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 [
@@ -369,7 +391,16 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                             key={mr.id}
                             onClick={() => openRequest(mr.id)}
                           >
-                            <GitMerge size={20} />
+                            <span
+                              className="mr-request-icon"
+                              data-status={mr.status}
+                            >
+                              <GitMerge
+                                size={17}
+                                strokeWidth={1.6}
+                                aria-hidden="true"
+                              />
+                            </span>
                             <div className="mr-request-text">
                               <strong>{mr.title}</strong>
                               <span>
@@ -378,7 +409,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                                   .join(" → ")}{" "}
                                 → {mr.target}
                               </span>
-                              <small>{mr.repository}</small>
                             </div>
                             <div className="mr-request-meta">
                               <span
@@ -386,17 +416,22 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                               >
                                 {statusLabels[mr.status]}
                               </span>
-                              <time>
+                              <time dateTime={mr.updatedAt}>
                                 {new Date(mr.updatedAt).toLocaleString()}
                               </time>
                             </div>
+                            <ChevronRight
+                              size={15}
+                              className="mr-request-chevron"
+                              aria-hidden="true"
+                            />
                           </button>
                         ))}
                       </div>
                     </section>
                   ))
               )}
-            </>
+            </div>
           )}
           {view === "branches" && (
             <section className="mr-history-card flex min-h-0 flex-1 flex-col">

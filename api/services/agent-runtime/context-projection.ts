@@ -86,8 +86,12 @@ export function projectWorkContext(input: ContextProjectionInput): {
   const historicalStepCount = history
     .listRuns()
     .reduce((count, run) => count + history.listRunSteps(run.id).length, 0);
-  // ponytail: keep four reminders for cache continuity; use a summarized state checkpoint for more fidelity.
-  const includeHistoricalRuntimeReminders = historicalStepCount <= 4;
+  // Historical runtime reminders are part of the marker-free history boundary.
+  // Dropping them after four steps changes that boundary abruptly and makes the
+  // next request look evicted even though the conversation itself is unchanged.
+  // Keep the persisted snapshots until the context compaction boundary replaces
+  // them with a deterministic checkpoint.
+  const includeHistoricalRuntimeReminders = true;
   const systemMessageContents = new Set<string>();
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;

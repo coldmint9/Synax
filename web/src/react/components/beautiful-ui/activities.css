@@ -16,6 +16,62 @@
   color: var(--bui-ink);
 }
 
+.ascii-thinking-indicator {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 8px 4px;
+  color: color-mix(in srgb, var(--accent) 68%, var(--foreground));
+}
+
+.ascii-thinking-art {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-shadow:
+    0 0 5px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 0 14px color-mix(in srgb, var(--accent) 32%, transparent);
+  animation: ascii-thinking-pulse 1.25s ease-in-out infinite;
+}
+
+.ascii-thinking-message {
+  color: color-mix(in srgb, var(--foreground) 76%, var(--accent));
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-shadow: 0 0 9px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.ascii-thinking-indicator[data-phase="network"] .ascii-thinking-art {
+  color: color-mix(in srgb, var(--warning) 72%, var(--foreground));
+  text-shadow:
+    0 0 5px color-mix(in srgb, var(--warning) 52%, transparent),
+    0 0 14px color-mix(in srgb, var(--warning) 28%, transparent);
+}
+
+@keyframes ascii-thinking-pulse {
+  0%,
+  100% {
+    opacity: 0.66;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ascii-thinking-art {
+    animation: none;
+  }
+}
+
 .bui-tool-group {
   width: 66.6667%;
   align-self: flex-start;

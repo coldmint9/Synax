@@ -1,0 +1,580 @@
+/* MR surfaces share the history island palette, radius and focus contract. */
+.mr-compose-panel,
+.mr-branch-picker-panel {
+  color: var(--ui-text);
+  background: var(--ui-panel);
+}
+.mr-compose-panel {
+  border-color: var(--ui-line);
+}
+.mr-compose-panel p {
+  margin-bottom: 0;
+}
+.mr-compose-panel h3 {
+  margin: 0;
+  font: inherit;
+}
+.mr-compose-mark {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+}
+.mr-compose-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) 44px minmax(0, 1fr);
+  align-items: stretch;
+}
+.mr-compose-source {
+  background: var(--ui-panel-soft);
+}
+.mr-compose-target {
+  background: var(--ui-panel);
+}
+.mr-compose-source-empty {
+  color: var(--ui-subtle);
+}
+.mr-compose-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.mr-compose-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: 10px;
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  outline: none;
+}
+.mr-compose-input:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 2px;
+}
+.mr-compose-input::placeholder {
+  color: var(--ui-subtle);
+}
+.mr-compose-queue {
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mr-compose-queue > li {
+  background: var(--ui-panel);
+}
+.mr-compose-queue > li[data-invalid="true"] {
+  outline: 1px solid var(--theme-warning);
+  outline-offset: -1px;
+}
+.mr-compose-order,
+.mr-compose-count {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+}
+.mr-compose-count {
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+.mr-compose-ancestor {
+  color: var(--ui-subtle);
+}
+.mr-branch-picker-trigger {
+  border-color: var(--ui-line);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+}
+.mr-branch-picker-trigger:hover:not(:disabled) {
+  border-color: var(--ui-line-strong);
+}
+.mr-branch-picker-panel {
+  border-color: var(--ui-line);
+}
+.mr-branch-choice:disabled {
+  color: var(--ui-subtle);
+  opacity: 0.65;
+}
+.mr-branch-choice:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: -2px;
+}
+.mr-strategy-option {
+  border-color: var(--ui-line);
+  background: var(--ui-panel);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.mr-strategy-option:hover {
+  background: var(--ui-panel-soft);
+}
+.mr-strategy-option[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--ui-accent) 65%, var(--ui-line));
+  background: var(--ui-accent-soft);
+}
+.mr-strategy-option:has(input:focus-visible) {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 2px;
+}
+.mr-strategy-dot {
+  border-color: var(--ui-line-strong);
+}
+.mr-strategy-option[data-selected="true"] .mr-strategy-dot {
+  border: 3px solid var(--ui-accent);
+  background: var(--ui-panel);
+}
+.mr-compose-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.mr-compose-advanced > summary:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.mr-compose-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mr-compose-check input {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--ui-accent);
+}
+.mr-compose-check-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) 85px 32px;
+  align-items: end;
+  gap: 10px;
+}
+.mr-compose-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--theme-warning) 8%, var(--ui-panel));
+  color: var(--ui-text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mr-compose-footer {
+  background: var(--ui-panel);
+}
+.mr-compose-panel .ui-description {
+  color: var(--ui-subtle);
+}
+.mr-compose-panel .ui-button {
+  box-shadow: none;
+}
+@media (max-width: 639px) {
+  .mr-compose-flow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .mr-compose-target {
+    grid-row: 1;
+  }
+  .mr-compose-direction {
+    display: none;
+  }
+  .mr-compose-safety {
+    width: 100%;
+  }
+  .mr-compose-check-row {
+    grid-template-columns: minmax(0, 1fr) 70px 32px;
+  }
+  .mr-compose-check-row > label:first-child {
+    grid-column: 1 / -1;
+  }
+  .mr-compose-panel .mr-compose-queue .ui-button {
+    width: 30px;
+    height: 32px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mr-strategy-option {
+    transition: none;
+  }
+}
+
+/* Lists and detail pages keep one surface per task, rather than nested frames. */
+.mr-index-content {
+  width: 100%;
+  max-width: 1720px;
+  margin-inline: auto;
+}
+.git-workbench.mr-modern-index .mr-index-empty {
+  min-height: min(58vh, 520px);
+  border: 1px solid var(--ui-line);
+  border-radius: 20px;
+  background: var(--ui-panel);
+  gap: 14px;
+}
+.mr-index-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 2px;
+  border: 1px solid var(--ui-line);
+  border-radius: 20px;
+  color: var(--ui-subtle);
+  background: var(--ui-canvas);
+}
+.git-workbench.mr-modern-index .mr-index-empty h2 {
+  color: var(--ui-text);
+  font-size: 16px;
+}
+.git-workbench.mr-modern-index .mr-index-empty p {
+  margin: 0 0 8px;
+  color: var(--ui-subtle);
+  font-size: 12px;
+}
+.git-workbench.mr-modern-index .mr-request-group {
+  margin-bottom: 28px;
+}
+.git-workbench.mr-modern-index .mr-request-group > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px 2px;
+  color: var(--ui-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+.git-workbench.mr-modern-index .mr-request-group > h2 > span {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  padding-inline: 5px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--ui-panel-soft);
+  font-size: 10px;
+}
+.git-workbench.mr-modern-index .mr-request-list {
+  border: 1px solid var(--ui-line);
+  border-radius: 18px;
+  background: var(--ui-panel);
+}
+.git-workbench.mr-modern-index .mr-request-card {
+  gap: 16px;
+  padding: 20px;
+  border-color: color-mix(in srgb, var(--ui-line) 60%, transparent);
+  background: transparent;
+}
+.git-workbench.mr-modern-index .mr-request-card:hover {
+  background: color-mix(in srgb, var(--ui-text) 2%, var(--ui-panel));
+}
+.git-workbench.mr-modern-index .mr-request-card:focus-visible {
+  outline-offset: -3px;
+}
+.mr-request-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 11px;
+  color: var(--ui-subtle);
+  background: var(--ui-panel-soft);
+}
+.mr-request-icon[data-status="merged"],
+.mr-request-icon[data-status="ready"] {
+  color: var(--theme-success);
+  background: color-mix(in srgb, var(--theme-success) 8%, var(--ui-panel));
+}
+.mr-request-icon[data-status="conflicted"] {
+  color: var(--theme-warning);
+  background: color-mix(in srgb, var(--theme-warning) 8%, var(--ui-panel));
+}
+.git-workbench.mr-modern-index .mr-request-text {
+  gap: 6px;
+}
+.git-workbench.mr-modern-index .mr-request-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.git-workbench.mr-modern-index .mr-request-text > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ui-subtle);
+}
+.mr-request-chevron {
+  flex-shrink: 0;
+  color: var(--ui-subtle);
+  opacity: 0.6;
+}
+.git-workbench.mr-modern-index .mr-request-meta {
+  gap: 7px;
+}
+.git-workbench.mr-modern-index .mr-request-meta time {
+  color: var(--ui-subtle);
+  font-size: 10px;
+}
+.git-workbench.mr-detail-modern {
+  padding-inline: max(clamp(16px, 3vw, 56px), calc((100vw - 1460px) / 2));
+}
+.git-workbench.mr-detail-modern .mr-page-header {
+  margin-bottom: 28px;
+}
+.git-workbench.mr-detail-modern .mr-title-row {
+  align-items: center;
+  margin: 0 0 24px;
+  gap: 20px;
+}
+.git-workbench.mr-detail-modern h1 {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 23px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.git-workbench.mr-detail-modern .mr-title-row .mr-repo-path {
+  margin: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ui-subtle);
+}
+.mr-detail-branches {
+  margin-top: 12px;
+  color: var(--ui-subtle);
+}
+.mr-detail-branch {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--ui-line);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  font-size: 11px;
+  font-weight: 400;
+}
+.mr-detail-branch svg {
+  flex-shrink: 0;
+}
+.mr-detail-branch.is-target {
+  background: var(--ui-accent-soft);
+  border-color: transparent;
+  font-weight: 500;
+}
+.mr-detail-strategy {
+  margin-left: 6px;
+  font-size: 11px;
+}
+.git-workbench.mr-detail-modern .mr-card {
+  margin-bottom: 18px;
+  padding: 22px;
+  border: 1px solid var(--ui-line);
+  border-radius: 20px;
+  background: var(--ui-panel);
+  box-shadow: 0 3px 16px rgb(var(--theme-shadow-rgb) / 0.025);
+}
+.git-workbench.mr-detail-modern h2 {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.git-workbench.mr-detail-modern .ui-button {
+  border-radius: 10px;
+  box-shadow: none;
+}
+.git-workbench.mr-detail-modern .mr-muted {
+  color: var(--ui-subtle);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.git-workbench.mr-detail-modern .mr-steps {
+  display: grid;
+  gap: 0;
+  margin: 18px 0 22px;
+  padding: 0;
+}
+.git-workbench.mr-detail-modern .mr-steps li {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--ui-line);
+  border-radius: 0;
+  background: transparent;
+}
+.git-workbench.mr-detail-modern .mr-steps li:last-child {
+  border-bottom: 0;
+}
+.git-workbench.mr-detail-modern .mr-step-number {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  border: 1px solid var(--ui-line);
+  color: var(--ui-subtle);
+  background: var(--ui-panel-soft);
+  font-size: 11px;
+}
+.git-workbench.mr-detail-modern
+  .mr-steps
+  li[data-status="completed"]
+  .mr-step-number {
+  color: var(--theme-success);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--theme-success) 10%, var(--ui-panel));
+}
+.git-workbench.mr-detail-modern
+  .mr-steps
+  li[data-current="true"]
+  .mr-step-number {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+  border-color: transparent;
+}
+.git-workbench.mr-detail-modern .mr-steps li strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.git-workbench.mr-detail-modern .mr-steps li code,
+.git-workbench.mr-detail-modern .mr-steps li > span:last-child {
+  color: var(--ui-subtle);
+  font-size: 10px;
+}
+.git-workbench.mr-detail-modern .mr-detail-columns {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 18px;
+}
+.git-workbench.mr-detail-modern .mr-file-list {
+  margin-top: 14px;
+}
+.git-workbench.mr-detail-modern .mr-file-list .ui-button {
+  width: 100%;
+  height: auto;
+  min-height: 44px;
+  justify-content: flex-start;
+  padding: 11px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-weight: 400;
+}
+.git-workbench.mr-detail-modern .mr-file-list .ui-button:hover {
+  background: var(--ui-panel-soft);
+}
+.git-workbench.mr-detail-modern .mr-file-list .ui-button span:first-of-type {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.git-workbench.mr-detail-modern .mr-file-list .ui-button > svg {
+  flex-shrink: 0;
+  color: var(--ui-subtle);
+}
+.git-workbench.mr-detail-modern .mr-file-list li {
+  border-color: var(--ui-line);
+}
+.git-workbench.mr-detail-modern .mr-check-result,
+.git-workbench.mr-detail-modern .mr-proposal {
+  border-color: var(--ui-line);
+  font-size: 12px;
+}
+.git-workbench.mr-detail-modern .mr-events li {
+  align-items: flex-start;
+  border-color: var(--ui-line);
+  padding: 11px 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.git-workbench.mr-detail-modern .mr-events li time {
+  color: var(--ui-subtle);
+  font-size: 10px;
+}
+.git-workbench.mr-detail-modern .mr-confirm {
+  margin-top: 18px;
+  border-radius: 14px;
+  border-color: var(--ui-line);
+  padding: 16px;
+  background: var(--ui-panel-soft);
+}
+.git-workbench.mr-detail-modern .mr-confirm p {
+  margin-top: 0;
+  font-size: 12px;
+}
+.git-workbench.mr-detail-modern .mr-confirm .mr-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.git-workbench.mr-detail-modern :is(.mr-error, .mr-notice) {
+  border-radius: 12px;
+}
+@media (max-width: 850px) {
+  .git-workbench.mr-detail-modern .mr-detail-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+@media (max-width: 639px) {
+  .git-workbench.mr-modern-index .mr-request-card {
+    gap: 10px;
+    padding: 16px 12px;
+  }
+  .mr-request-chevron {
+    display: none;
+  }
+  .git-workbench.mr-detail-modern .mr-title-row {
+    align-items: flex-start;
+  }
+  .git-workbench.mr-detail-modern h1 {
+    font-size: 20px;
+  }
+  .git-workbench.mr-detail-modern .mr-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+  .git-workbench.mr-detail-modern .mr-page-header {
+    margin-bottom: 22px;
+  }
+}
+
+.git-workbench.mr-modern-index .mr-status,
+.git-workbench.mr-detail-modern .mr-status {
+  color: var(--ui-text);
+  font-size: 10px;
+  font-weight: 500;
+}
+.mr-compose-panel {
+  animation: mr-compose-enter 160ms ease-out;
+}
+@keyframes mr-compose-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mr-compose-panel {
+    animation: none;
+  }
+}

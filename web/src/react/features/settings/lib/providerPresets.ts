@@ -7,6 +7,16 @@ import type {
 } from "../../../../lib/contracts/config";
 import type { MediaAdapter, MediaCapabilities, ModelCapability } from "../../../../lib/contracts/media-generation";
 
+export type DeclaredModelModality = "text" | "image" | "audio" | "video";
+
+export type ModelMeta = {
+  contextLimit?: number;
+  inputModalities?: DeclaredModelModality[];
+  outputModalities?: DeclaredModelModality[];
+  capabilities?: ModelCapability[];
+  media?: MediaCapabilities;
+};
+
 export const BUILTIN_API_PROVIDER_IDS = ["openai", "anthropic"] as const;
 export const CUSTOM_API_PREFIX = "custom-api:";
 
@@ -112,16 +122,7 @@ export type ApiProviderDraft = {
    */
   modelOptions: string[];
   /** Per-model input context window metadata keyed by model id. */
-  modelMeta: Record<
-    string,
-    {
-      contextLimit?: number;
-      inputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
-      outputModalities?: Array<"text" | "image" | "audio" | "video" | "file">;
-      capabilities?: ModelCapability[];
-      media?: MediaCapabilities;
-    }
-  >;
+  modelMeta: Record<string, ModelMeta>;
   /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
   reasoningEfforts: ReasoningEffort[];
   custom: boolean;
@@ -132,6 +133,72 @@ export type ApiProviderDraft = {
   modelMessage: string | null;
   validationMessage: string | null;
 };
+
+function normalizedModelId(modelId: string): string {
+  return modelId
+    .trim()
+    .toLowerCase()
+    .split("/")
+    .pop()!
+    .replace(/@[a-z0-9._-]+$/i, "")
+    .replace(/[-:]\d{4}-\d{2}-\d{2}(?:[-:]\d+)?$/, "");
+}
+
+/**
+ * Defaults for common model families. These are deliberately provider-neutral:
+ * `openai/gpt-4o` and `gpt-4o` receive the same defaults when routed through
+ * different providers.
+ */
+export function defaultModelMeta(modelId: string): ModelMeta {
+  const id = normalizedModelId(modelId);
+  const imageGeneration =
+    /^(?:gpt-image-|chatgpt-image-|dall-e|imagen|flux|ideogram|stable-diffusion|sdxl|sd3|playground)/i.test(
+      id,
+    );
+  const videoGeneration =
+    /^(?:sora|veo|kling|seedance|wan(?:2|\-)|hailuo|luma|runway|pika)/i.test(
+      id,
+    );
+  const vision =
+    /(?:gpt-4o|gpt-4\.1|gpt-5|claude-(?:3|4)|gemini|qwen.*vl|deepseek-vl|deepseek-flash|pixtral|llama-3\.2.*vision|llama-4|kimi-k2\.5|omni|vision)/i.test(
+      id,
+    );
+
+  if (imageGeneration) {
+    return {
+      inputModalities: ["text", "image"],
+      outputModalities: ["image"],
+      capabilities: ["image_generation"],
+      media: { operations: ["text-to-image", "image-to-image"] },
+    };
+  }
+
+  if (videoGeneration) {
+    return {
+      inputModalities: ["text", "image"],
+      outputModalities: ["video"],
+      capabilities: ["video_generation"],
+      media: { operations: ["text-to-video", "image-to-video"] },
+    };
+  }
+
+  return {
+    inputModalities: vision ? ["text", "image"] : ["text"],
+    outputModalities: ["text"],
+    capabilities: ["chat"],
+  };
+}
+
+/** Explicit model settings win over the provider-neutral defaults. */
+export function resolveModelMeta(
+  draft: ApiProviderDraft,
+  modelId: string,
+): ModelMeta {
+  return {
+    ...defaultModelMeta(modelId),
+    ...(draft.modelMeta?.[modelId] ?? {}),
+  };
+}
 
 export const API_PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -509,8 +576,12 @@ export function buildApiDrafts(
             m.id,
             {
               contextLimit: m.contextLimit,
-              inputModalities: m.inputModalities,
-              outputModalities: m.outputModalities,
+              inputModalities: m.inputModalities?.filter(
+                (modality) => modality !== "file",
+              ),
+              outputModalities: m.outputModalities?.filter(
+                (modality) => modality !== "file",
+              ),
               capabilities: m.capabilities,
               media: m.media,
             },
@@ -589,26 +660,19 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
     status: draft.status,
     kind: "api",
     caps: { canFollowUp: true, canCancel: true },
-    models: normalizeModelList(draft.models, draft.model).map((id) => ({
-      id,
-      label: id,
-      isDefault: id === draft.model,
-      ...(draft.modelMeta?.[id]?.inputModalities
-        ? { inputModalities: draft.modelMeta[id].inputModalities }
-        : {}),
-      ...(draft.modelMeta?.[id]?.outputModalities
-        ? { outputModalities: draft.modelMeta[id].outputModalities }
-        : {}),
-      ...(draft.modelMeta?.[id]?.contextLimit
-        ? { contextLimit: draft.modelMeta[id].contextLimit }
-        : {}),
-      ...(draft.modelMeta?.[id]?.capabilities
-        ? { capabilities: draft.modelMeta[id].capabilities }
-        : {}),
-      ...(draft.modelMeta?.[id]?.media
-        ? { media: draft.modelMeta[id].media }
-        : {}),
-    })),
+    models: normalizeModelList(draft.models, draft.model).map((id) => {
+      const meta = resolveModelMeta(draft, id);
+      return {
+        id,
+        label: id,
+        isDefault: id === draft.model,
+        ...(meta.inputModalities ? { inputModalities: meta.inputModalities } : {}),
+        ...(meta.outputModalities ? { outputModalities: meta.outputModalities } : {}),
+        ...(meta.contextLimit ? { contextLimit: meta.contextLimit } : {}),
+        ...(meta.capabilities ? { capabilities: meta.capabilities } : {}),
+        ...(meta.media ? { media: meta.media } : {}),
+      };
+    }),
   };
 }
 

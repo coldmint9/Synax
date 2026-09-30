@@ -2,8 +2,10 @@
 :root {
   /* Shared interface entry. The first family is reserved for the licensed,
      bundled face; until its files are supplied, platform/bundled fallbacks apply. */
-  --font-interface: "Synax Avenir Next", "Avenir Next", "Inter Variable",
-    "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  /* Keep Latin and CJK glyphs on the bundled variable faces so text metrics do
+     not jump between macOS, Linux, and the Electron shell. */
+  --font-interface: "Inter Variable", "Noto Sans SC Variable",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 
   /* Pure white light theme: the canvas and the panels above it share #ffffff,
      so elevation is carried by hairline borders and surface shadows. The
@@ -16,8 +18,8 @@
   --theme-text-subtle: #8f96a1;
   --theme-border: #e5e5e5;
   --theme-border-strong: #cfcfcf;
-  --theme-accent: #a1bba8;
-  --theme-accent-foreground: #2f3d34;
+  --theme-accent: #66806c;
+  --theme-accent-foreground: #000000;
   --theme-accent-soft: #edf4ef;
   --theme-success: #00a240;
   --theme-warning: #e25507;
@@ -38,8 +40,8 @@
   --theme-text-subtle-hsl: 216.00 8.00% 59.80%;
   --theme-border-hsl: 0.00 0.00% 89.80%;
   --theme-border-strong-hsl: 0.00 0.00% 81.18%;
-  --theme-accent-hsl: 136.00 16.00% 68.00%;
-  --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
+  --theme-accent-hsl: 133.85 11.30% 45.10%;
+  --theme-accent-foreground-hsl: 0.00 0.00% 0.00%;
   --theme-accent-soft-hsl: 138.00 24.00% 94.00%;
   --theme-success-hsl: 144.00 100.00% 32.00%;
   --theme-warning-hsl: 21.00 94.00% 46.00%;
@@ -90,8 +92,8 @@
   --theme-text-subtle: #85847f;
   --theme-border: #2d323b;
   --theme-border-strong: #4c535e;
-  --theme-accent: #a1bba8;
-  --theme-accent-foreground: #2f3d34;
+  --theme-accent: #66806c;
+  --theme-accent-foreground: #000000;
   --theme-accent-soft: #2d3c34;
   --theme-success: hsl(104.04 43.43% 50.78%);
   --theme-warning: hsl(27 100% 64%);
@@ -100,7 +102,7 @@
   --theme-input: #171b23;
   --theme-input-foreground: #bfbdb6;
   --theme-selection: #324638;
-  --theme-focus: #a1bba8;
+  --theme-focus: #66806c;
   --theme-tooltip: #f7f8fa;
   --theme-tooltip-foreground: #10141c;
 
@@ -112,8 +114,8 @@
   --theme-text-subtle-hsl: 51.43 3.43% 51.96%;
   --theme-border-hsl: 218.57 13.46% 20.39%;
   --theme-border-strong-hsl: 216.67 10.59% 33.33%;
-  --theme-accent-hsl: 136.00 16.00% 68.00%;
-  --theme-accent-foreground-hsl: 141.00 13.00% 21.00%;
+  --theme-accent-hsl: 133.85 11.30% 45.10%;
+  --theme-accent-foreground-hsl: 0.00 0.00% 0.00%;
   --theme-accent-soft-hsl: 144.00 15.69% 20.00%;
   --theme-success-hsl: 104.04 43.43% 50.78%;
   --theme-warning-hsl: 27.00 100.00% 64.00%;
@@ -122,7 +124,7 @@
   --theme-input-hsl: 220.00 20.69% 11.37%;
   --theme-input-foreground-hsl: 46.67 6.57% 73.14%;
   --theme-selection-hsl: 144.00 16.00% 24.00%;
-  --theme-focus-hsl: 136.00 16.00% 68.00%;
+  --theme-focus-hsl: 133.85 11.30% 45.10%;
   --theme-tooltip-hsl: 0.00 0.00% 97.45%;
   --theme-tooltip-foreground-hsl: 220.00 27.27% 8.63%;
 

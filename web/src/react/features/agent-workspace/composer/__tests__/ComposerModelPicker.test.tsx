@@ -92,7 +92,7 @@ describe("ComposerModelPicker", () => {
     }));
   });
 
-  it("shows the provider name and model name in the trigger", () => {
+  it("shows only the model name in the trigger while the tooltip keeps the full context", () => {
     render(
       <ComposerModelPicker
         globalConfig={globalConfig}
@@ -104,7 +104,9 @@ describe("ComposerModelPicker", () => {
     );
 
     const trigger = screen.getByRole("button", { name: "选择模型" });
-    expect(trigger).toHaveTextContent("OpenAI · gpt-5");
+    expect(trigger).toHaveTextContent("gpt-5");
+    expect(trigger).not.toHaveTextContent("OpenAI");
+    expect(trigger).not.toHaveTextContent("对话");
     expect(trigger).toHaveAttribute("title", "OpenAI · gpt-5 · 对话");
   });
 

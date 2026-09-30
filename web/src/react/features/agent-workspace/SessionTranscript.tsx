@@ -174,10 +174,9 @@ export function SessionTranscript({
   );
   // A running session row is not enough to show thinking: during a switch its
   // detail snapshot may still be loading.
-  // A refresh keeps the cached transcript mounted. Treat it as ready for the
-  // live bridge so an in-flight turn does not disappear while the latest
-  // persisted snapshot is being fetched.
-  const detailReady = !loading;
+  // A refresh keeps the cached transcript mounted, but the placeholder should
+  // wait until the refreshed snapshot is ready to avoid a false new turn.
+  const detailReady = !loading && !refreshing;
   const showThinking =
     (Boolean(pending) || detailReady) &&
     session?.status !== "waiting_input" &&

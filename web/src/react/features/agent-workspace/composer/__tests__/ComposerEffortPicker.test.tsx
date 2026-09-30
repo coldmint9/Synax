@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ComposerEffortPicker, type ComposerReasoningEffort } from "../ComposerEffortPicker";
@@ -12,15 +12,19 @@ describe("Headless effort choices", () => {
     const change = vi.fn();
     const view = render(<ComposerEffortPicker effort="medium" allowed={["high", "low", "medium", "high"]} onChange={change} />);
     await user.click(screen.getByRole("button", { name: "effortLabel" }));
-    const radios = screen.getAllByRole("radio");
-    expect(radios).toHaveLength(3);
-    expect(radios[1]).toBeChecked();
-    expect(radios.map(radio => radio.getAttribute('aria-label'))).toEqual(["低", "中", "高"]);
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveAttribute("max", "2");
+    expect(slider).toHaveValue("1");
+    expect(slider).toHaveAttribute("aria-valuetext", "medium (中)");
     view.rerender(<ComposerEffortPicker effort="medium" allowed={["medium", "high", "low"]} onChange={change} />);
-    expect(screen.getAllByRole("radio")[1]).toBeChecked();
+    expect(slider).toHaveValue("1");
     expect(change).not.toHaveBeenCalled();
+    fireEvent.change(slider, { target: { value: "0" } });
+    expect(change).toHaveBeenLastCalledWith("low");
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(change).toHaveBeenLastCalledWith("high");
   });
-  it("uses arrow-key radio selection, stays open for adjustments, resets and restores focus on Escape", async () => {
+  it("focuses the native slider, stays open for adjustments and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const overlay = vi.fn();
     function Example() {
@@ -30,23 +34,20 @@ describe("Headless effort choices", () => {
     const { container } = render(<Example />);
     const trigger = screen.getByRole("button", { name: "effortLabel" });
     await user.click(trigger);
-    const group = screen.getByRole("radiogroup", { name: "effortLabel" });
-    expect(container).not.toContainElement(group);
-    expect(screen.getByText("Native model")).toBeVisible();
-    const radios = screen.getAllByRole("radio");
-    expect(radios).toHaveLength(3);
-    await user.click(radios[0]);
-    await user.keyboard("{ArrowRight}");
-    expect(radios[1]).toBeChecked();
-    expect(radios[1]).toHaveFocus();
+    const slider = screen.getByRole("slider", { name: "effortLabel" });
+    expect(container).not.toContainElement(slider);
+    expect(screen.queryByText("Native model")).not.toBeInTheDocument();
+    expect(slider).toHaveAttribute("type", "range");
+    expect(slider).toHaveAttribute("step", "1");
+    expect(slider).toHaveFocus();
+    fireEvent.change(slider, { target: { value: "1" } });
     expect(trigger).toHaveTextContent("high");
-    expect(group).toBeVisible();
-    await user.keyboard("{ArrowRight}");
+    expect(slider).toBeVisible();
+    fireEvent.change(slider, { target: { value: "2" } });
     expect(trigger).toHaveTextContent("max");
-    await user.click(screen.getByRole("button", { name: "effortResetAria" }));
-    expect(trigger).toHaveTextContent("high");
+    expect(screen.queryByRole("button", { name: "effortResetAria" })).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(group).not.toBeInTheDocument());
+    await waitFor(() => expect(slider).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
     expect(overlay.mock.calls).toEqual([[false], [true], [false]]);
   });
@@ -58,7 +59,7 @@ describe("Headless effort choices", () => {
     await user.click(screen.getByRole("button", { name: "effortLabel" }));
     expect(change).toHaveBeenCalledExactlyOnceWith("low");
     view.rerender(<ComposerEffortPicker effort="max" allowed={["low", "medium"]} onChange={change} onOverlayOpenChange={overlay} disabled />);
-    await waitFor(() => expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("slider")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "effortLabel" })).toBeDisabled();
     expect(overlay).toHaveBeenLastCalledWith(false);
   });

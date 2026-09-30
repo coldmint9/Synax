@@ -414,6 +414,42 @@
   color: var(--work-muted);
   font-size: 10px;
 }
+:is(.work-page, .work-details-dialog) .ws-changes-viewport {
+  position: relative;
+}
+:is(.work-page, .work-details-dialog) .ws-changes-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+:is(.work-page, .work-details-dialog) .ws-changes-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+/* Bottom inner edge of the scrollport: hints at the rows still below. */
+:is(.work-page, .work-details-dialog) .ws-changes-fade {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 22px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--work-surface) 84%);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 80%);
+  mask-image: linear-gradient(to bottom, transparent, #000 80%);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+:is(.work-page, .work-details-dialog) .ws-changes-fade[data-visible="true"] {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.work-page, .work-details-dialog) .ws-changes-fade {
+    transition: none;
+  }
+}
 :is(.work-page, .work-details-dialog) .ws-row {
   min-height: 26px;
   padding-block: 4px;

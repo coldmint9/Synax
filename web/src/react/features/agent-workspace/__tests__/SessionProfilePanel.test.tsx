@@ -19,6 +19,12 @@ vi.mock("../useProviderNames", async (original) => ({
   ...(await original<typeof import("../useProviderNames")>()),
   useProviderNames: () => [{ id: "provider", label: "Provider" }],
 }));
+// The live rate is measured from the stream; pin it so the panel asserts the
+// rendering contract only.
+vi.mock("../useSessionTokenRate", () => ({
+  TOKEN_RATE_SAMPLE_MS: 5000,
+  useSessionTokenRate: () => 24.62,
+}));
 const session = (id = "profile"): AgentSession =>
   ({
     id,
@@ -88,18 +94,42 @@ describe("SessionProfilePanel mini/detail", () => {
   });
   afterEach(cleanup);
 
-  it("shows real model, latest context and calls in mini, not cumulative usage or elapsed time", () => {
+  it("shows real model, latest context and rate in mini, not cumulative usage or elapsed time", () => {
     setup({ sessionInvocationUsage: { totalCalls: 12, items: [] } });
     expect(toggle()).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("Claude Sonnet")).toBeInTheDocument();
     expect(screen.getByText("运行中")).toBeInTheDocument();
     expect(screen.getByText("21.4K")).toBeInTheDocument();
     expect(screen.getByText("/ 200K")).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
+    // The context label is gone; the metric row reads as a bare value.
+    expect(screen.queryByText("上下文")).toBeNull();
+    expect(screen.getByText("24.6")).toBeInTheDocument();
+    expect(screen.getByText("tokens/s")).toBeInTheDocument();
+    // Invocation counts moved into the expanded detail.
+    expect(screen.queryByText("12")).toBeNull();
+    expect(screen.queryByText("次调用")).toBeNull();
     expect(screen.queryByText("120.0K")).toBeNull();
     expect(screen.queryByText("1:05")).toBeNull();
     expect(screen.queryByText("上下文用量")).toBeNull();
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "10.7");
+  });
+
+  it("keeps the provider name and tool-call count in the expanded detail", () => {
+    setup({
+      sessions: [{ ...session(), model: "provider/glm-5.3" } as AgentSession],
+      sessionInvocationUsage: { totalCalls: 12, items: [] },
+    });
+    expect(screen.queryByText("Provider/")).toBeNull();
+    expect(screen.getByText("glm-5.3")).toBeInTheDocument();
+
+    fireEvent.click(toggle());
+
+    expect(screen.getByText("供应商").parentElement).toHaveTextContent(
+      "供应商Provider",
+    );
+    expect(screen.getByText("工具调用").parentElement).toHaveTextContent(
+      "工具调用12",
+    );
   });
 
   it("renders message, tool, MCP and Skill composition segments", () => {
@@ -248,7 +278,8 @@ describe("SessionProfilePanel mini/detail", () => {
       }),
     });
     expect(screen.getByText("21.4K")).toBeInTheDocument();
-    expect(screen.getByText("上次上下文")).toBeInTheDocument();
+    // The visible label is gone; staleness survives in the summary description.
+    expect(screen.getByText(/上次上下文/)).toBeInTheDocument();
     expect(screen.queryByText(/上下文接近上限/)).toBeNull();
     expect(screen.getByRole("meter")).toHaveAttribute(
       "aria-valuetext",
@@ -262,7 +293,7 @@ describe("SessionProfilePanel mini/detail", () => {
       sessionInvocationUsage: { totalCalls: 0, items: [] },
     });
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "0");
-    expect(screen.getAllByText("0")).toHaveLength(2);
+    expect(screen.getAllByText("0")).toHaveLength(1);
   });
 
   it("keeps loading and missing data honest", () => {
@@ -298,8 +329,11 @@ describe("SessionProfilePanel mini/detail", () => {
         } as AgentRun,
       ],
     });
-    expect(screen.getByText("Provider/executed-model")).toBeInTheDocument();
+    expect(screen.getByText("executed-model")).toBeInTheDocument();
+    expect(screen.queryByText("Provider/executed-model")).toBeNull();
     expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    fireEvent.click(toggle());
+    expect(screen.getByText("供应商").parentElement).toHaveTextContent("Provider");
   });
 
   it("supports English labels and the same disclosure semantics", () => {
@@ -308,7 +342,8 @@ describe("SessionProfilePanel mini/detail", () => {
     }));
     setup();
     expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Context")).toBeInTheDocument();
+    expect(screen.queryByText("Context")).toBeNull();
+    expect(screen.getByText("tokens/s")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Runtime details" }));
     expect(screen.queryByText("Context usage")).toBeNull();
     expect(

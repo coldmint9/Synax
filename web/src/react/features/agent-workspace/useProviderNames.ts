@@ -44,6 +44,29 @@ export function useProviderNames(): ProviderDef[] {
 }
 
 /**
+ * Split `providerId/model` into the provider's display name and the bare model
+ * id, e.g. `custom-api:1789630765113/glm-5.3` →
+ * `{ provider: "智谱", model: "glm-5.3" }`. Unknown providers fall back to the
+ * raw provider id; unprefixed references have no provider.
+ */
+export function splitProviderModel(
+  model: string | null | undefined,
+  providers: ProviderDef[],
+): { provider: string | null; model: string | null } {
+  const reference = model?.trim();
+  if (!reference) return { provider: null, model: null };
+  const separator = reference.indexOf("/");
+  if (separator <= 0 || separator === reference.length - 1)
+    return { provider: null, model: reference };
+  const providerId = reference.slice(0, separator);
+  return {
+    provider:
+      providers.find((item) => item.id === providerId)?.label ?? providerId,
+    model: reference.slice(separator + 1),
+  };
+}
+
+/**
  * Render `providerId/model` with the provider's display name, e.g.
  * `custom-api:1789630765113/glm-5.3` → `智谱/glm-5.3`.
  * Falls back to the raw reference when the provider is unknown.
@@ -52,11 +75,14 @@ export function formatModelDisplayName(
   model: string | null | undefined,
   providers: ProviderDef[],
 ): string | null {
-  if (!model?.trim()) return null;
-  const separator = model.indexOf("/");
-  if (separator <= 0 || separator === model.length - 1) return model;
-  const providerId = model.slice(0, separator);
-  const provider = providers.find((item) => item.id === providerId);
-  if (!provider?.label) return model;
-  return `${provider.label}/${model.slice(separator + 1)}`;
+  const reference = model?.trim();
+  if (!reference) return null;
+  const separator = reference.indexOf("/");
+  if (separator <= 0 || separator === reference.length - 1) return reference;
+  const provider = providers.find(
+    (item) => item.id === reference.slice(0, separator),
+  );
+  // Unknown providers keep the raw reference instead of a partial label.
+  if (!provider?.label) return reference;
+  return `${provider.label}/${reference.slice(separator + 1)}`;
 }

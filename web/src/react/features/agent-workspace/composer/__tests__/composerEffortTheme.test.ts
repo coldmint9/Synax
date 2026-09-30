@@ -18,27 +18,36 @@ describe("effort picker theme", () => {
     expect(declarations(".composer-effort-rail").background).toBe(
       "var(--default)",
     );
-    expect(declarations(".composer-effort-fill").background).toBe("var(--accent)");
+    expect(declarations(".composer-effort-control")["--effort-ink"]).toBe("var(--accent)");
     expect(declarations(".composer-effort-thumb")["box-shadow"]).toBe(
       "var(--surface-shadow)",
     );
     expect(declarations(".dark .composer-effort-picker")).toEqual({});
   });
 
-  it("uses theme tokens for hover, keyboard focus, and selected markers", () => {
-    expect(declarations(".composer-effort-station:hover").background).toBe(
-      "var(--default-hover)",
-    );
-    expect(
-      declarations(".composer-effort-station:focus-visible").background,
-    ).toBe("var(--default-hover)");
-    expect(
-      declarations(".composer-effort-station:focus-visible")["box-shadow"],
-    ).toBe("0 0 0 2px var(--focus)");
-    expect(
-      declarations(
-        '.composer-effort-station[aria-checked="true"] .composer-effort-dot',
-      ).background,
-    ).toBe("var(--accent)");
+  it("retains a visible native slider focus and the approved rounded geometry", () => {
+    expect(declarations(".composer-effort-range:focus-visible").outline).toBe("2px solid var(--focus)");
+    expect(declarations('.composer-effort-picker[data-slot="popover"]').width).toBe("15rem");
+    expect(declarations('.composer-effort-picker[data-slot="popover"]')["border-radius"]).toBe("16px");
+    expect(declarations(".composer-effort-content").padding).toBe("12px");
+    expect(declarations(".composer-effort-rail")["border-radius"]).toBe("28px");
+    expect(declarations(".composer-effort-rail").height).toBe("56px");
+    expect(declarations(".composer-effort-range").height).toBe("56px");
+    expect(declarations(".composer-effort-thumb").width).toBe("32px");
+    expect(declarations(".composer-effort-thumb")["border-radius"]).toBe("50%");
+    expect(declarations(".composer-effort-title-text")["font-size"]).toBe("20px");
+    expect(declarations(".composer-effort-title-track").height).toBe("68px");
+    expect(declarations(".composer-effort-ascii").color).toBe("var(--effort-ink)");
+  });
+
+  it("disables max pulsing for reduced motion without hiding the ASCII title", () => {
+    let reduced = false;
+    stylesheet.walkAtRules("media", rule => {
+      if (!rule.params.includes("prefers-reduced-motion: reduce")) return;
+      rule.walkRules(".composer-effort-max-art", art => {
+        art.walkDecls("animation", declaration => { reduced = declaration.value === "none"; });
+      });
+    });
+    expect(reduced).toBe(true);
   });
 });

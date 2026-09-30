@@ -18,10 +18,7 @@ import {
   sessionComposerDocumentId,
 } from "./state/sessionComposerDraftStore";
 import { useWikiStore } from "../../state/wikiStore";
-import {
-  useSessionComposerSelection,
-  useSessionComposerSelections,
-} from "./useSessionComposerSelection";
+import { useSessionComposerSelection } from "./useSessionComposerSelection";
 import {
   prepareQueuedMedia,
   restoreDraftMedia,
@@ -42,10 +39,12 @@ import type {
 } from "../../../lib/api/agentRuntime";
 import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
-import { agentRuntimeApi, type BackendId } from "../../../lib/api/agentRuntime";
-import { SessionBackendPicker } from "./SessionBackendPicker";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
+import {
+  readLastPermissionTier,
+  rememberPermissionTier,
+} from "./state/permissionTierPreference";
 import {
   useCallback,
   useEffect,
@@ -64,11 +63,7 @@ import { useShellStore } from "../../state/shellStore";
 import { useAgentDockStore } from "./state/agentDockStore";
 import { useLocale } from "../../../hooks/useLocale";
 import { AgentComposer } from "./composer/AgentComposer";
-import {
-  discoveredAcpProviders,
-  formatModelReference,
-} from "./composer/modelSelection";
-import { useAcpDiscovery } from "./composer/useAcpDiscovery";
+import { formatModelReference } from "./composer/modelSelection";
 import { sessionPath } from "./sessionRoutes";
 import {
   isSessionComposerLocked,
@@ -348,78 +343,12 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
-  const wslProject = useShellStore(
-    (state) =>
-      state.projects.find((project) => project.id === projectId)?.source
-        ?.kind === "wsl",
-  );
-  const acpDiscovery = useAcpDiscovery({ enabled: isDraft });
-  const availableAcp = discoveredAcpProviders(providers, acpDiscovery);
-  const [draftBackendId, setDraftBackendId] = useState<BackendId>(() => {
-    const lastSubmitted =
-      useSessionComposerSelections.getState().lastSubmittedByProject[projectId];
-    if (lastSubmitted) return lastSubmitted.backendId;
-    const previous = useAgentDockStore.getState().composerProviderId;
-    return previous?.endsWith("-acp") ? (previous as BackendId) : "native";
-  });
-  const backendId = session ? readSessionBackendId(session) : draftBackendId;
-  const unavailableDraftAcp =
-    isDraft &&
-    backendId.endsWith("-acp") &&
-    !availableAcp.some((provider) => provider.id === backendId);
-  const [backendCatalog, setBackendCatalog] = useState<
-    Array<{
-      id: BackendId;
-      label: string;
-      kind: string;
-      experimental?: boolean;
-    }>
-  >([]);
+  // New sessions always execute on the Synax-native runtime. acp/cli backends
+  // stay reachable through subagent delegation only, so the composer exposes no
+  // execution-backend selection at all.
+  const backendId = session ? readSessionBackendId(session) : "native";
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
   const cliBackend = backendId === "codex" || backendId === "claude-code";
-  const backendOptions = wslProject
-    ? [
-        {
-          id: "native" as BackendId,
-          label: "native · WSL2",
-        },
-      ]
-    : [
-        { id: "native" as BackendId, label: "native" },
-        ...backendCatalog
-          .filter((backend) => backend.kind === "cli")
-          .map((backend) => ({
-            id: backend.id,
-            label: `${backend.label}${backend.experimental ? " · Preview" : ""}`,
-          })),
-        ...availableAcp.map((provider) => ({
-          id: provider.id as BackendId,
-          label: provider.label ?? provider.id,
-        })),
-      ];
-  useEffect(() => {
-    if (isDraft && wslProject && draftBackendId !== "native")
-      setDraftBackendId("native");
-  }, [isDraft, wslProject, draftBackendId]);
-  useEffect(() => {
-    let active = true;
-    void agentRuntimeApi
-      .listBackends()
-      .then((result) => {
-        if (active) setBackendCatalog(result.items);
-      })
-      .catch(() => {
-        if (active)
-          setError(
-            zh
-              ? "无法读取执行后端目录，请检查 Runtime 连接。"
-              : "Cannot load backends. Check the Runtime connection.",
-          );
-      });
-    return () => {
-      active = false;
-    };
-  }, [zh, setError]);
   useEffect(() => {
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
@@ -449,7 +378,7 @@ export function SessionComposer({
     [setSelection],
   );
   const [draftPermissionTier, setDraftPermissionTier] =
-    sessionComposerPermissionTier.useDraft(viewKey, () => "boundary");
+    sessionComposerPermissionTier.useDraft(viewKey, readLastPermissionTier);
   const permissionTier = session
     ? readSynaxPermissionTier(session.sessionMetadata)
     : draftPermissionTier;
@@ -521,6 +450,8 @@ export function SessionComposer({
       if (sessionId)
         await updateSessionPermissions(sessionId, { permissionTier: tier });
       if (!sessionId) setDraftPermissionTier(tier);
+      // A new session inherits whatever the user picked last, here included.
+      rememberPermissionTier(tier);
     },
     [sessionId, setDraftPermissionTier, updateSessionPermissions],
   );
@@ -548,7 +479,6 @@ export function SessionComposer({
       submitLock.current === viewScope.current ||
       changingMode ||
       incompatibleModel ||
-      unavailableDraftAcp ||
       (isGenerating && !queueWhileGenerating)
     )
       return;
@@ -645,7 +575,6 @@ export function SessionComposer({
     editingQueue,
     changingMode,
     incompatibleModel,
-    unavailableDraftAcp,
     isGenerating,
     queueWhileGenerating,
     backendId,
@@ -844,27 +773,6 @@ export function SessionComposer({
               onChange={handleModeChange}
             />
           ) : null}
-          {(isDraft || backendId !== "native") && (
-            <SessionBackendPicker
-              value={backendId}
-              options={backendOptions}
-              disabled={
-                !isDraft || submitting || Boolean(createdDraftRef.current)
-              }
-              onChange={(id) => {
-                setDraftBackendId(id);
-                setError(null);
-                if (id !== "native") {
-                  setReferences((items) =>
-                    items.filter(
-                      (item) => item.kind === "file" || item.kind === "wiki",
-                    ),
-                  );
-                  setSkillIds([]);
-                }
-              }}
-            />
-          )}
         </div>
       }
       projectId={projectId}
@@ -941,7 +849,6 @@ export function SessionComposer({
         submitting ||
         editingQueue ||
         changingMode ||
-        unavailableDraftAcp ||
         (isGenerating && !queueWhileGenerating)
       }
       wikiAttachDisabled={!isDraft}
@@ -963,13 +870,6 @@ export function SessionComposer({
       {error && (
         <p role="alert" className="mb-2 px-2 text-xs text-danger">
           {error}
-        </p>
-      )}
-      {unavailableDraftAcp && (
-        <p role="alert" className="mb-2 px-2 text-xs text-danger">
-          {zh
-            ? "网关尚未发现此 ACP。请选择可用的执行后端。"
-            : "The gateway has not discovered this ACP. Choose an available execution backend."}
         </p>
       )}
       {incompatibleModel && (

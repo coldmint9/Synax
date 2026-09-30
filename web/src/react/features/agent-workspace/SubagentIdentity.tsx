@@ -75,13 +75,19 @@ export function SubagentIdentity({
   );
 }
 
-export function SubagentProfileCard({ session }: { session: AgentSession }) {
+export function SubagentProfileCard({
+  session,
+  showIdentity = true,
+}: {
+  session: AgentSession;
+  showIdentity?: boolean;
+}) {
   const role = getSubagentRole(session);
   return (
     <div className="subagent-profile-card">
-      <SubagentIdentity session={session} showStatus={false} />
+      {showIdentity ? <SubagentIdentity session={session} showStatus={false} /> : null}
       <div className="subagent-profile-copy">
-        <div className="subagent-profile-role">{role.name}</div>
+        {!showIdentity ? null : <div className="subagent-profile-role">{role.name}</div>}
         <p className="subagent-profile-description">{role.description}</p>
       </div>
     </div>

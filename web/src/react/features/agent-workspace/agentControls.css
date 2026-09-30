@@ -65,10 +65,9 @@
   width: 2rem;
   height: 2rem;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 11px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, white), color-mix(in srgb, var(--primary) 78%, var(--accent)));
-  color: white;
-  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 8px;
+  background: var(--ui-panel-soft);
+  color: var(--ui-text);
 }
 .subagent-identity-copy { display: flex; min-width: 0; flex-direction: column; line-height: 1.15; }
 .subagent-identity-name { color: var(--ui-text); font-size: 0.78rem; font-weight: 650; }
@@ -78,7 +77,7 @@
 .subagent-status-dot[data-status="completed"] { background: #41c98b; }
 .subagent-status-dot[data-status="failed"], .subagent-status-dot[data-status="cancelled"] { background: var(--destructive); }
 .subagent-identity--compact .subagent-avatar { width: 1.85rem; height: 1.85rem; border-radius: 10px; }
-.subagent-detail-header { display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid color-mix(in srgb, var(--ui-line) 78%, transparent); background: color-mix(in srgb, var(--ui-panel-soft) 92%, transparent); padding: 0.7rem 1rem; }
+.subagent-detail-header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.75rem; border-bottom: 1px solid color-mix(in srgb, var(--ui-line) 78%, transparent); background: color-mix(in srgb, var(--ui-panel-soft) 92%, transparent); padding: 0.7rem 1rem; }
 .subagent-detail-id { overflow: hidden; color: var(--ui-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-detail-header > .subagent-controls, .subagent-detail-header > div:last-child { margin-left: auto; }
 .subagent-profile-card {
@@ -91,10 +90,13 @@
   border-radius: 12px;
   background: color-mix(in srgb, var(--ui-panel) 82%, var(--accent) 6%);
 }
-.subagent-profile-card .subagent-identity { flex: 0 0 auto; }
-.subagent-profile-copy { min-width: 0; }
+.subagent-profile-card .subagent-identity { flex: 0 1 auto; }
+.subagent-profile-copy { min-width: 0; flex: 1 1 14rem; }
 .subagent-profile-role { color: var(--ui-text); font-size: 0.72rem; font-weight: 650; }
-.subagent-profile-description { margin: 0.2rem 0 0; color: var(--ui-subtle); font-size: 0.68rem; line-height: 1.45; }
+.subagent-profile-description { margin: 0.2rem 0 0; color: var(--ui-subtle); font-size: 0.68rem; line-height: 1.45; overflow-wrap: anywhere; }
+.subagent-detail-header .subagent-identity { max-width: 100%; }
+.subagent-identity-name { overflow-wrap: anywhere; }
+.subagent-status-dot { flex-shrink: 0; }
 .agent-mode-trigger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -881,14 +883,15 @@ textarea.agent-request-input {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
-/* The primary action owns its opaque surface, even inside session controls. */
+/* The primary action owns its opaque theme-accent surface, even inside session
+   controls where every other chip is ghosted. */
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
   > .agent-dock-composer-action {
   border: 0;
-  background: #101113;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -897,21 +900,14 @@ textarea.agent-request-input {
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
   > .agent-dock-composer-action:not(:disabled):hover {
-  background: #25272c;
+  background: hsl(var(--primary) / 0.86);
 }
 .agent-session-controls
   .agent-dock-composer[data-session-controls]
   .agent-dock-composer-actions
   > .agent-dock-composer-action:disabled {
-  background: #e2e5e9;
-  color: #6f7783;
-}
-.dark .agent-session-controls
-  .agent-dock-composer[data-session-controls]
-  .agent-dock-composer-actions
-  > .agent-dock-composer-action:disabled {
-  background: #393e47;
-  color: #abb1bb;
+  background: hsl(var(--primary) / 0.22);
+  color: hsl(var(--muted-foreground) / 0.65);
 }
 @container (max-width: 32rem) {
   .agent-dock-composer[data-session-controls] .agent-dock-composer-leading {
@@ -1309,14 +1305,17 @@ textarea.agent-request-input {
   margin-top: 0.375rem;
 }
 .agent-interaction-record {
+  width: 50%;
+  max-width: 100%;
   border: 1px solid hsl(var(--border-hsl) / 0.55);
   border-radius: 0.625rem;
   background: hsl(var(--card) / 0.4);
   overflow: hidden;
 }
-/* A resolved request folds into one mini title line — question mark, title,
-   revision, outcome. The full answer stays one click away instead of holding
-   a full card's worth of transcript space. */
+.agent-interaction-record:has(.agent-interaction-summary[aria-expanded="true"]) {
+  width: 100%;
+}
+/* Keep resolved requests compact while giving expanded answers full width. */
 .agent-interaction-record .agent-interaction-summary {
   display: flex;
   align-items: center;
@@ -1360,9 +1359,12 @@ textarea.agent-request-input {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.agent-interaction-record .agent-history-version,
 .agent-interaction-record .agent-history-status {
   flex: 0 0 auto;
+  max-width: 50%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .agent-interaction-record .agent-history-detail {
   margin: 0;

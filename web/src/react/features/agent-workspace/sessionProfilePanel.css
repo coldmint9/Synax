@@ -111,8 +111,8 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
-.runtime-profile-context-label,
 .runtime-profile-context-value {
+  min-width: 0;
   white-space: nowrap;
 }
 .runtime-profile-value {
@@ -122,14 +122,17 @@
 .runtime-profile-limit {
   opacity: 0.75;
 }
-.runtime-profile-calls {
+.runtime-profile-rate {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 4px;
+  /* Keep the readout pinned to the right edge of the metric row, on both the
+     first line and any wrapped line. */
   margin-left: auto;
   white-space: nowrap;
 }
-.runtime-profile-calls > svg,
+.runtime-profile-rate > svg,
 .runtime-profile-hint > svg {
   flex: 0 0 auto;
 }
@@ -277,9 +280,6 @@
   }
   .runtime-profile-line {
     gap: 5px;
-  }
-  .runtime-profile-calls {
-    margin-left: 0;
   }
   .runtime-profile-metrics {
     column-gap: 5px;

@@ -4,20 +4,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitMrApi } from "../../../lib/api/gitMr";
 import { projectApi } from "../../../lib/api/project";
 import { ToolbarPill } from "../../layouts/ToolbarPill";
-import {
-  GitToolbarProvider,
-  GitToolbarTarget,
-} from "./GitToolbarPortal";
+import { GitToolbarProvider, GitToolbarTarget } from "./GitToolbarPortal";
 import GitWorkbenchPage from "./GitWorkbenchPage";
 
 vi.mock("../../../lib/api/gitMr", () => ({
   gitMrApi: { list: vi.fn(), presets: vi.fn() },
 }));
 vi.mock("../../../lib/api/project", () => ({
-  projectApi: { getWorkspace: vi.fn(), listGitWorkspaces: vi.fn(),
-    gitHistory: vi.fn().mockResolvedValue({ commits: [], refs: [], snapshot: "s", nextOffset: null }),
-    gitState: vi.fn().mockResolvedValue({ head: "", branch: "main", operation: null, conflicts: [], output: "" }),
-    gitAssociations: vi.fn().mockResolvedValue({ epics: [], branches: [], refs: [], sessions: [] }),
+  projectApi: {
+    getWorkspace: vi.fn(),
+    listGitWorkspaces: vi.fn(),
+    gitHistory: vi
+      .fn()
+      .mockResolvedValue({
+        commits: [],
+        refs: [],
+        snapshot: "s",
+        nextOffset: null,
+      }),
+    gitState: vi
+      .fn()
+      .mockResolvedValue({
+        head: "",
+        branch: "main",
+        operation: null,
+        conflicts: [],
+        output: "",
+      }),
+    gitAssociations: vi
+      .fn()
+      .mockResolvedValue({ epics: [], branches: [], refs: [], sessions: [] }),
   },
 }));
 vi.mock("./MergeRequestForm", () => ({
@@ -26,14 +42,19 @@ vi.mock("./MergeRequestForm", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal("ResizeObserver", class {
-    observe() {}
-    disconnect() {}
-  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.mocked(gitMrApi.list).mockResolvedValue([]);
   vi.mocked(gitMrApi.presets).mockResolvedValue([]);
   vi.mocked(projectApi.getWorkspace).mockResolvedValue({
-    roots: [{ id: "root", role: "primary", status: "available", name: "Synax" }],
+    roots: [
+      { id: "root", role: "primary", status: "available", name: "Synax" },
+    ],
   } as Awaited<ReturnType<typeof projectApi.getWorkspace>>);
   vi.mocked(projectApi.listGitWorkspaces).mockResolvedValue({
     repositoryRoot: "/repo",
@@ -44,15 +65,18 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function mount() {
+function mount(path = "/projects/p/git") {
   return render(
-    <MemoryRouter initialEntries={["/projects/p/git"]}>
+    <MemoryRouter initialEntries={[path]}>
       <GitToolbarProvider>
         <ToolbarPill visible>
           <GitToolbarTarget />
         </ToolbarPill>
         <Routes>
-          <Route path="/projects/:projectId/git" element={<GitWorkbenchPage />} />
+          <Route
+            path="/projects/:projectId/git"
+            element={<GitWorkbenchPage />}
+          />
         </Routes>
       </GitToolbarProvider>
     </MemoryRouter>,
@@ -77,11 +101,27 @@ describe("Git secondary island", () => {
       target: { value: "presets" },
     });
     expect(page).not.toHaveTextContent("运行记录");
-    expect(screen.queryByRole("option", { name: "运行记录" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "运行记录" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "刷新 Git 工作台" }));
     await waitFor(() => expect(gitMrApi.list).toHaveBeenCalledTimes(2));
     fireEvent.click(create);
     expect(screen.getByRole("dialog")).toHaveTextContent("新建合并请求");
   });
+});
+
+it("opens the requested MR list when returning from a detail page", async () => {
+  mount("/projects/p/git?view=requests");
+  expect(
+    await screen.findByRole("heading", { name: "还没有本地合并请求" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "合并请求", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  fireEvent.click(screen.getByRole("button", { name: "历史树", exact: true }));
+  expect(
+    screen.getByRole("button", { name: "历史树", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });

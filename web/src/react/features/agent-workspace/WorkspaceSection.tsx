@@ -17,6 +17,7 @@ export function WorkspaceSection({
   className,
   hideTitle = false,
   collapsible = true,
+  dormant = false,
 }: {
   icon: ReactNode;
   title: string;
@@ -32,14 +33,17 @@ export function WorkspaceSection({
   hideTitle?: boolean;
   /** Render a static heading and ignore saved collapse state. */
   collapsible?: boolean;
+  /** Nothing to disclose yet: the section stays collapsed with no expander. */
+  dormant?: boolean;
 }) {
   const [disclosed, toggle] = useWorkspaceDisclosure(storageKey, defaultOpen);
-  const open = !collapsible || disclosed;
+  const open = !dormant && (!collapsible || disclosed);
   const id = useId();
   return (
     <section
       className={`ws-card${className ? ` ${className}` : ""}`}
       data-open={open ? "true" : "false"}
+      data-dormant={dormant ? "true" : "false"}
     >
       <div className="ws-card-head">
         {collapsible ? <Button
@@ -49,6 +53,7 @@ export function WorkspaceSection({
           aria-expanded={open}
           aria-controls={id}
           aria-label={hideTitle ? title : undefined}
+          disabled={dormant}
           onClick={toggle}
         >
           <span className="ws-card-icon">{icon}</span>
@@ -56,7 +61,9 @@ export function WorkspaceSection({
           {count !== undefined && (
             <span className="ws-card-count">{count}</span>
           )}
-          <ChevronDown size={11} className="ws-card-chevron" aria-hidden />
+          {!dormant && (
+            <ChevronDown size={11} className="ws-card-chevron" aria-hidden />
+          )}
         </Button> : (
           <h3 className="ws-card-heading">
             <span className="ws-card-icon" aria-hidden="true">{icon}</span>

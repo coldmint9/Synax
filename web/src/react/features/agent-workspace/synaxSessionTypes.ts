@@ -59,6 +59,12 @@ export type SynaxWikiAttachMode = "auto" | "manual";
 
 export const DEFAULT_SYNAX_PERMISSION_TIER: SynaxPermissionTier = "boundary";
 
+export function isSynaxPermissionTier(
+  value: unknown,
+): value is SynaxPermissionTier {
+  return value === "boundary" || value === "auto" || value === "unrestricted";
+}
+
 export const SYNAX_PERMISSION_TIER_LABELS: Record<
   SynaxPermissionTier,
   { titleKey: string; descKey: string }
@@ -87,9 +93,7 @@ export function readSynaxPermissionTier(
   metadata: Record<string, unknown> | null | undefined,
 ): SynaxPermissionTier {
   const tier = metadata?.permissionTier;
-  if (tier === "boundary" || tier === "auto" || tier === "unrestricted") {
-    return tier;
-  }
+  if (isSynaxPermissionTier(tier)) return tier;
   return DEFAULT_SYNAX_PERMISSION_TIER;
 }
 

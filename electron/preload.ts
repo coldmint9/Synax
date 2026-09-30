@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } =
 if (process.isMainFrame)
   contextBridge.exposeInMainWorld("electronAPI", {
     platform: process.platform,
+    getMacWindowAppearance: () => ipcRenderer.invoke("window:mac-appearance:get"),
+    setMacWindowAppearance: (value: unknown) =>
+      ipcRenderer.invoke("window:mac-appearance:set", value),
     showContextMenu: (request: unknown) => ipcRenderer.invoke("context-menu:show", request),
     onContextMenuAction: (callback: (requestId: string, actionId: string) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, requestId: string, actionId: string) => callback(requestId, actionId);

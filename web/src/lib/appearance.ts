@@ -1,7 +1,7 @@
 export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
-export const DEFAULT_ACCENT = "#a1bba8";
+export const DEFAULT_ACCENT = "#66806c";
 export const ACCENT_PRESETS = [
   { color: DEFAULT_ACCENT, zh: "鼠尾草", en: "Sage" },
   { color: "#94b8b5", zh: "青瓷", en: "Celadon" },
@@ -99,7 +99,7 @@ export function accentPalette(color: string, theme: ResolvedTheme) {
     dark ? "#0f141d" : "#f9f9f9",
     dark ? "#ffffff" : "#181818",
   );
-  let top = accent === DEFAULT_ACCENT ? "#b9cdbf" : mix(accent, "#ffffff", 0.2);
+  let top = mix(accent, "#ffffff", 0.2);
   // Keep foreground text readable across the entire selected-control gradient.
   if (contrastRatio(top, ink) < 4.5) top = accent;
   return {

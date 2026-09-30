@@ -487,19 +487,19 @@
   --cx-text: #1a1c1f;
   --cx-text-hsl: 216 9% 11%;
 
-  /* App accent — light Morandi green, used by every selection control */
-  --cx-accent-soft: #edf4ef;
-  --cx-accent-soft-hsl: 138 24% 94%;
-  --cx-accent-top: #b9cdbf;
-  --cx-accent-bottom: #a1bba8;
-  --cx-accent-strong: #3f6956;
-  --cx-accent-ink: #2f3d34;
-  --cx-accent-muted: #52605a;
-  --cx-accent-top-hsl: 138 17% 76%;
-  --cx-accent-bottom-hsl: 136 16% 68%;
-  --cx-accent-strong-hsl: 154 26% 33%;
-  --cx-accent-ink-hsl: 141 13% 21%;
-  --cx-accent-muted-hsl: 154 8% 35%;
+  /* App accent — deep Morandi green, used by every selection control */
+  --cx-accent-soft: #ebeeec;
+  --cx-accent-soft-hsl: 140 8.11% 92.75%;
+  --cx-accent-top: #859989;
+  --cx-accent-bottom: #66806c;
+  --cx-accent-strong: #607865;
+  --cx-accent-ink: #000000;
+  --cx-accent-muted: #607865;
+  --cx-accent-top-hsl: 132 8.93% 56.08%;
+  --cx-accent-bottom-hsl: 133.85 11.3% 45.1%;
+  --cx-accent-strong-hsl: 132.5 11.11% 42.35%;
+  --cx-accent-ink-hsl: 0 0% 0%;
+  --cx-accent-muted-hsl: 132.5 11.11% 42.35%;
 
   --radio-accent-top: var(--cx-accent-top);
   --radio-accent-bottom: var(--cx-accent-bottom);
@@ -778,7 +778,15 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-interface);
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 450;
+    letter-spacing: -0.012em;
+    line-height: 1.5;
+    font-optical-sizing: auto;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
@@ -2425,10 +2433,15 @@
   @apply text-primary underline decoration-primary/30 hover:decoration-primary;
 }
 
-/* Quiet transcript typography: regular body weight, structural emphasis,
-   and one restrained accent for links, quotes and marked blocks. */
+/* Quiet transcript typography: a readable, slightly denser Codex-like rhythm
+   with a stable font metric for mixed Chinese/Latin content. */
 .feed-prose {
-  @apply text-foreground/92 leading-[1.8];
+  @apply text-foreground/95;
+  font-size: 1em;
+  font-weight: 450;
+  line-height: 1.68;
+  letter-spacing: -0.012em;
+  text-wrap: pretty;
 }
 .feed-prose > :first-child {
   @apply mt-0;
@@ -2437,21 +2450,28 @@
   @apply mb-0;
 }
 .feed-prose p {
-  @apply my-2;
+  @apply my-2.5;
 }
 .feed-prose h1 {
-  @apply text-sm font-bold mb-1.5 mt-3.5;
+  @apply text-base font-semibold mb-2 mt-4;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
 }
 .feed-prose h2 {
-  @apply text-xs font-bold mb-1.5 mt-3;
+  @apply text-[15px] font-semibold mb-2 mt-3.5;
+  letter-spacing: -0.018em;
+  line-height: 1.4;
 }
 .feed-prose h3 {
-  @apply text-[11px] font-bold mb-1 mt-2.5;
+  @apply text-sm font-semibold mb-1.5 mt-3;
+  letter-spacing: -0.012em;
+  line-height: 1.45;
 }
 .feed-prose h4,
 .feed-prose h5,
 .feed-prose h6 {
-  @apply text-[11px] font-semibold mb-1 mt-2.5;
+  @apply text-sm font-semibold mb-1.5 mt-3;
+  line-height: 1.45;
 }
 .feed-prose h1,
 .feed-prose h2 {
@@ -2471,7 +2491,7 @@
   @apply ml-4 my-2 list-decimal;
 }
 .feed-prose li {
-  @apply mb-1;
+  @apply mb-1.5;
 }
 .feed-prose li > p {
   @apply my-0;
@@ -3496,27 +3516,24 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   background: hsl(0 0% 100% / 0.08);
 }
 
-/* One opaque action face: no extra glass surface, rim, blur or inset ring. */
+/* One opaque action face tinted by the theme accent: no extra glass surface,
+   rim, blur or inset ring. */
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action,
 .dark .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action {
   border: 0;
-  background: #101113;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:not(:disabled):hover,
 .dark .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:not(:disabled):hover {
-  background: #25272c;
+  background: hsl(var(--primary) / 0.86);
 }
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:disabled {
-  background: #e2e5e9;
-  color: #6f7783;
-}
-.dark .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:disabled {
-  background: #393e47;
-  color: #abb1bb;
+  background: hsl(var(--primary) / 0.22);
+  color: hsl(var(--muted-foreground) / 0.65);
 }
 
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:focus-visible {
@@ -3819,21 +3836,26 @@ input[type="radio"] {
 }
 
 /* Agent conversation typography. It follows the global interface font
-   setting (default 14px); the global #app scale keeps all UI text in sync. */
+   setting (default 15px); the global #app scale keeps all UI text in sync. */
 :root {
-  --agent-chat-font-size: 14px;
+  --agent-chat-font-size: 15px;
 }
 .agent-conversation-copy {
-  font-size: var(--agent-chat-font-size, 14px) !important;
-}
-.session-answer-region > .agent-conversation-copy {
-  font-weight: 400;
-  line-height: 1.75;
-  overflow-wrap: anywhere;
+  font-family: var(--font-interface);
+  font-size: var(--agent-chat-font-size, 15px) !important;
+  font-weight: 450;
+  letter-spacing: -0.012em;
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  font-kerning: normal;
+}
+.session-answer-region > .agent-conversation-copy {
+  font-weight: 450;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 /* Keep the tool rail compact and the answer area visually distinct. */
 .session-completed-step:has(
@@ -3849,16 +3871,32 @@ input[type="radio"] {
 }
 
 .agent-conversation-copy.feed-prose h1 {
-  font-size: calc(var(--agent-chat-font-size, 14px) * 1.35) !important;
+  font-size: calc(var(--agent-chat-font-size, 15px) * 1.35) !important;
 }
 .agent-conversation-copy.feed-prose h2 {
-  font-size: calc(var(--agent-chat-font-size, 14px) * 1.2) !important;
+  font-size: calc(var(--agent-chat-font-size, 15px) * 1.2) !important;
 }
 .agent-conversation-copy.feed-prose h3,
 .agent-conversation-copy.feed-prose h4,
 .agent-conversation-copy.feed-prose h5,
 .agent-conversation-copy.feed-prose h6 {
-  font-size: var(--agent-chat-font-size, 14px) !important;
+  font-size: var(--agent-chat-font-size, 15px) !important;
+}
+
+/* Keep supporting transcript chrome quieter than the answer body while using
+   the same font metrics, so labels align with the message text. */
+.session-tool-region,
+.session-completed-step,
+.session-live-turn,
+.session-user-message {
+  font-family: var(--font-interface);
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+}
+.session-user-message {
+  font-weight: 450;
+  letter-spacing: -0.012em;
+  line-height: 1.58;
 }
 
 /* The transcript canvas follows the same neutral surface as the rest of the
@@ -4063,8 +4101,15 @@ input[type="radio"] {
   vertical-align: -0.15em;
 }
 
-.transcript-file-link-icon {
+/* The transcript file link pairs a file-type mark with the file name, so the
+   mark tracks the reader's transcript font size (--agent-chat-font-size)
+   instead of a fixed 12px, and centers on the text's optical middle rather
+   than sitting on a pixel offset that only suits one font size. */
+.transcript-file-link .transcript-file-link-icon {
+  width: 1em;
+  height: 1em;
   margin-right: 0.28em;
+  vertical-align: -0.2em;
 }
 
 .session-file-island-status {

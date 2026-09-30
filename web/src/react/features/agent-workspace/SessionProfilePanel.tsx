@@ -1,5 +1,5 @@
 import { memo, useId } from "react";
-import { ChevronDown, CircleAlert, Wrench } from "lucide-react";
+import { ChevronDown, CircleAlert, Gauge } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import type {
   AgentRun,
@@ -9,6 +9,7 @@ import type {
 import {
   formatContextLimit,
   formatTokenCount,
+  formatTokenRate,
 } from "../../../lib/formatTokens";
 import { useLocale } from "../../../hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -17,9 +18,10 @@ import { SessionCacheCard } from "./SessionCacheCard";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
 import { sessionCompaction } from "./sessionCompaction";
 import { readSessionBackendId } from "./synaxSessionTypes";
-import { formatModelDisplayName, useProviderNames } from "./useProviderNames";
+import { splitProviderModel, useProviderNames } from "./useProviderNames";
 import { useWorkspaceDisclosure } from "./useWorkspaceDisclosure";
 import { runtimeProfileSummary } from "./runtimeProfileSummary";
+import { useSessionTokenRate } from "./useSessionTokenRate";
 import "./sessionProfilePanel.css";
 
 const EMPTY_STEPS: AgentRunStep[] = [];
@@ -170,21 +172,32 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
   const composition = readContextComposition(stats, steps);
   const compositionLabel = zh ? "上下文类型占比" : "Context composition";
   const title = zh ? "运行详情" : "Runtime details";
-  const model =
-    formatModelDisplayName(runtime.model, providers) ??
-    (zh ? "模型待定" : "Model not set");
+  const model = splitProviderModel(runtime.model, providers);
+  const modelName = model.model ?? (zh ? "模型待定" : "Model not set");
+  const providerName = model.provider;
   const pending = loading && !stats && !usage;
   const count = usage?.totalCalls ?? stats?.toolCallCount;
   const calls =
     typeof count === "number" && Number.isFinite(count) && count >= 0
       ? count
       : null;
+  // Measured in the renderer from the stream; an idle session keeps no timer.
+  const rate = useSessionTokenRate(sessionId, summary.tone === "running");
+  const rateLabel = rate === null ? "—" : formatTokenRate(rate);
+  const rateTitle =
+    rate === null
+      ? zh
+        ? "会话未在生成输出，不做统计"
+        : "Not sampling while the session is idle"
+      : zh
+        ? "最近 5 秒的实时估算：流式输出 tokens ÷ 用时（含思考内容）"
+        : "Live estimate over the last 5s: streamed output tokens ÷ elapsed (includes reasoning)";
   const tokenLabel = summary.available ? formatTokenCount(summary.total) : "—";
   const percentLabel =
     summary.percent === null ? null : `${Number(summary.percent.toFixed(1))}%`;
   const backend = session ? readSessionBackendId(session) : null;
   const description = [
-    model,
+    providerName ? `${providerName}/${modelName}` : modelName,
     summary.label,
     summary.stale
       ? zh
@@ -195,6 +208,11 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
         : "Context",
     tokenLabel,
     summary.limit !== null ? `/ ${formatContextLimit(summary.limit)}` : "",
+    rate === null
+      ? ""
+      : zh
+        ? `约 ${rateLabel} tokens/秒`
+        : `~${rateLabel} tokens/s`,
     calls !== null ? `${calls} ${zh ? "次调用" : "calls"}` : "",
     summary.hint,
   ]
@@ -226,7 +244,7 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                 className="runtime-profile-model"
                 title={runtime.model ?? undefined}
               >
-                {model}
+                {modelName}
               </span>
               <span className="runtime-profile-status" data-tone={summary.tone}>
                 <span className="runtime-profile-dot" aria-hidden="true" />
@@ -239,15 +257,6 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
               />
             </span>
             <span className="runtime-profile-metrics">
-              <span className="runtime-profile-context-label">
-                {summary.stale
-                  ? zh
-                    ? "上次上下文"
-                    : "Last context"
-                  : zh
-                    ? "上下文"
-                    : "Context"}
-              </span>
               <span
                 className="runtime-profile-context-value"
                 title={
@@ -269,18 +278,10 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                   </span>
                 )}
               </span>
-              <span className="runtime-profile-calls">
-                <Wrench size={11} aria-hidden="true" />
-                <span className="runtime-profile-value">{calls ?? "—"}</span>
-                <span>
-                  {usage
-                    ? zh
-                      ? "次调用"
-                      : "calls"
-                    : zh
-                      ? "次工具调用"
-                      : "tool calls"}
-                </span>
+              <span className="runtime-profile-rate" title={rateTitle}>
+                <Gauge size={11} aria-hidden="true" />
+                <span className="runtime-profile-value">{rateLabel}</span>
+                <span>tokens/s</span>
               </span>
             </span>
             {summary.hint && (
@@ -327,6 +328,10 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                         <dt>{zh ? "运行轮次" : "Execution rounds"}</dt>
                         <dd>{stats.roundCount ?? steps.length}</dd>
                       </dl>
+                      <dl className="runtime-profile-properties">
+                        <dt>{zh ? "工具调用" : "Tool calls"}</dt>
+                        <dd>{calls ?? "—"}</dd>
+                      </dl>
                       <SessionCacheCard cache={stats.cache} />
                       {stats.activeSubAgentCount > 0 && (
                         <dl className="runtime-profile-properties">
@@ -347,8 +352,14 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                     {zh ? "暂无运行数据" : "No runtime data yet"}
                   </p>
                 )}
-                {(backend || runtime.reasoningEffort) && (
+                {(providerName || backend || runtime.reasoningEffort) && (
                   <dl className="runtime-profile-properties runtime-profile-footer">
+                    {providerName && (
+                      <>
+                        <dt>{zh ? "供应商" : "Provider"}</dt>
+                        <dd>{providerName}</dd>
+                      </>
+                    )}
                     {backend && (
                       <>
                         <dt>{zh ? "执行环境" : "Execution backend"}</dt>

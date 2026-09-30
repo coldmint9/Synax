@@ -34,12 +34,19 @@ import { UiUpdates } from "./lib/ui-updates.js";
 import { DesktopUpdates } from "./lib/desktop-updates.js";
 import { configureUpdateNetwork } from "./lib/update-network.js";
 import { UpdateSettingsStore } from "./lib/update-settings-store.js";
+import {
+  applyMacWindowAppearance,
+  DEFAULT_MAC_WINDOW_APPEARANCE,
+  normalizeMacWindowAppearance,
+  type MacWindowAppearance,
+} from "./lib/mac-window-appearance.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
+let macWindowAppearance: MacWindowAppearance = DEFAULT_MAC_WINDOW_APPEARANCE;
 let windowOpening: Promise<void> | null = null;
 async function ensureMainWindow(): Promise<BrowserWindow | null> {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -117,11 +124,17 @@ function createWindow(): BrowserWindow {
       ? { trafficLightPosition: { x: 14, y: 18 } }
       : {}),
     show: false,
-    // A solid backing surface avoids native material and transparent-window
-    // composition during streaming, resize, and renderer navigation.
-    transparent: false,
-    opacity: 1,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f141d" : "#f9f9f9",
+    transparent: process.platform === "darwin",
+    ...(process.platform === "darwin"
+      ? { vibrancy: "under-window" as const }
+      : {}),
+    opacity: process.platform === "darwin" ? macWindowAppearance.opacity : 1,
+    backgroundColor:
+      process.platform === "darwin"
+        ? "#00000000"
+        : nativeTheme.shouldUseDarkColors
+          ? "#0f141d"
+          : "#f9f9f9",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -131,6 +144,10 @@ function createWindow(): BrowserWindow {
       webviewTag: false,
     },
   });
+
+  if (process.platform === "darwin") {
+    macWindowAppearance = applyMacWindowAppearance(win, macWindowAppearance);
+  }
 
   // The same srcdoc renderer is used on desktop; subframes never navigate away.
   win.webContents.on("will-frame-navigate", (event) => {
@@ -286,6 +303,18 @@ function registerIPC(): void {
     dialog.showSaveDialog(options),
   );
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("window:mac-appearance:get", (event) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");
+    return { platform: process.platform, appearance: macWindowAppearance };
+  });
+  ipcMain.handle("window:mac-appearance:set", (event, value: unknown) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");
+    macWindowAppearance = normalizeMacWindowAppearance(value as Partial<MacWindowAppearance>);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      macWindowAppearance = applyMacWindowAppearance(mainWindow, macWindowAppearance);
+    }
+    return macWindowAppearance;
+  });
   ipcMain.handle("updates:get-network", (event) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update settings sender");

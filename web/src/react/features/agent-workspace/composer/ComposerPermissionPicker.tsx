@@ -6,7 +6,7 @@ import {
   ListboxOption,
 } from "@headlessui/react";
 import "../agentControls.css";
-import { Check, ChevronDown, LoaderCircle, Shield } from "lucide-react";
+import { Check, LoaderCircle, Shield } from "lucide-react";
 import { useLocale } from "../../../../hooks/useLocale";
 import { SYNAX_PERMISSION_TIER_LABELS } from "../synaxSessionTypes";
 import type { SynaxPermissionTier } from "./composerTypes";
@@ -109,7 +109,6 @@ export function ComposerPermissionPicker({
               >[0],
             )}
           </span>
-          <ChevronDown size={10} aria-hidden />
         </ListboxButton>
         <ListboxOptions
           ref={optionsRef}

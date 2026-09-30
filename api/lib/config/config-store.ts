@@ -773,6 +773,8 @@ function applyGlobalConfigPatch(
     enabledAcpProviderIds:
       patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
     mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
+    macWindowAppearance:
+      patch.macWindowAppearance ?? current.macWindowAppearance,
     computerUse: patch.computerUse
       ? prepareComputerUseForStorage(
           mergeComputerUsePatch(current.computerUse, patch.computerUse),

@@ -105,7 +105,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
           onDestroyed={() => setDestroyed(true)}
         />
       </div>
-      <SubagentProfileCard session={detail.session} />
+      <SubagentProfileCard session={detail.session} showIdentity={false} />
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView
           session={detail.session}

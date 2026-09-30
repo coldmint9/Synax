@@ -16,10 +16,13 @@ import { useAgentSessionStore } from "./agentSessionStore";
 import {
   SYNAX_PROFILE_ID,
   createSynaxSessionMetadata,
-  DEFAULT_SYNAX_PERMISSION_TIER,
   type SynaxPermissionTier,
   type SynaxWikiAttachMode,
 } from "../synaxSessionTypes";
+import {
+  readLastPermissionTier,
+  rememberPermissionTier,
+} from "./permissionTierPreference";
 import {
   applyDockStreamChunk,
   initialDockSessionState,
@@ -106,7 +109,7 @@ const initialState = {
   composerAnchorJson: null as SessionPromptAnchor | null,
   composerSkillIds: [] as string[],
   composerReasoningEffort: "high" as ReasoningEffort,
-  composerPermissionTier: DEFAULT_SYNAX_PERMISSION_TIER,
+  composerPermissionTier: readLastPermissionTier(),
   session: initialDockSessionState,
   composerContentParts: [] as RuntimeContentPart[],
 };
@@ -165,6 +168,8 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
       }
     }
     if (isCurrentSession()) set({ composerPermissionTier: tier });
+    // The next new session inherits the tier the user just picked.
+    rememberPermissionTier(tier);
   },
 
   openComposer: (prefill) => {
