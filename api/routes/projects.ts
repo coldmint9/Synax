@@ -35,10 +35,16 @@ import { contextService } from "../services/context/context-service.js";
 import { getRawSqlite } from "../db/index.js";
 import { revokeAllProjectToolGrants } from "../services/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../services/agent-runtime/session-store.js";
+import { gitEpicStore, indexBranchSessions } from "../services/git-epics.js";
 import {
   createGitWorktree,
   GitWorkspaceError,
   listGitWorkspaces,
+  gitHistoryPage,
+  gitCommitDetail,
+  gitHistoryAction,
+  gitHistoryState,
+  gitHistoryConflict,
   pruneGitWorktrees,
   removeGitWorktree,
 } from "../services/git-workspaces.js";
@@ -793,6 +799,109 @@ projectRoutes.get("/:id/git/workspaces", async (c) => {
 });
 
 /** POST /:id/git/worktrees — create a linked worktree, optionally with a new branch. */
+projectRoutes.get("/:id/git/history", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"));
+    return c.json(await gitHistoryPage(root.repository, {
+      offset: Number(c.req.query("offset") ?? 0),
+      limit: Number(c.req.query("limit") ?? 100),
+      snapshot: c.req.query("snapshot"),
+    }));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.get("/:id/git/associations", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"));
+    const [workspace, history, epics] = await Promise.all([
+      listGitWorkspaces(root.repository, root.scope), gitHistoryPage(root.repository, { limit: 1 }), gitEpicStore.list(project.id, root.scope),
+    ]);
+    const sessions = agentRuntimeStore.listSessions({ projectId: project.id, limit: Number.MAX_SAFE_INTEGER }).map(session => {
+      const backend = session.sessionMetadata?.backend as { workDir?: string; workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+      const workPaths = [backend?.workDir, ...(backend?.workspaceRoots ?? []).map(item => item.path)].filter((value): value is string => Boolean(value)).map(value => {
+        try { return canonicalWorkspaceDirectory(value); } catch { return normalize(value); }
+      });
+      return { id: session.id, title: session.title || session.prompt.slice(0, 100), status: session.status, workPaths };
+    });
+    return c.json({ epics, refs: history.refs, sessions: sessions.map(({ id, title, status }) => ({ id, title, status })), branches: indexBranchSessions(history.refs.map(ref => ref.fullName), workspace.worktrees, sessions, epics) });
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.get("/:id/git/state", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try { return c.json(await gitHistoryState(projectGitRoot(project, c.req.query("rootId")).repository)); }
+  catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+projectRoutes.get("/:id/git/conflict", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try { return c.json(await gitHistoryConflict(projectGitRoot(project, c.req.query("rootId")).repository, c.req.query("path") ?? "")); }
+  catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+projectRoutes.put("/:id/git/conflict", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const schema = z.object({ rootId: z.string().optional(), path: z.string().min(1).max(4096), expectedRevision: z.string().min(1), content: z.string().max(2 * 1024 * 1024).optional(), choice: z.enum(["target", "source", "delete"]).optional(), resolve: z.boolean(), resolutionState: z.unknown().optional() });
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success || JSON.stringify(parsed.data.resolutionState ?? null).length > 100 * 1024) return c.json({ error: "Invalid conflict save" }, 400);
+  try { return c.json(await gitHistoryConflict(projectGitRoot(project, parsed.data.rootId, true).repository, parsed.data.path, parsed.data)); }
+  catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.post("/:id/git/epics", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const schema = z.object({ rootId: z.string().optional(), id: z.string().uuid().optional(), expectedVersion: z.number().int().positive().optional(), name: z.string().trim().min(1).max(160), description: z.string().max(10000), refs: z.array(z.string().regex(/^refs\/(heads|remotes|tags)\/.+/)).max(100), sessionIds: z.array(z.string().max(160)).max(500), archived: z.boolean() });
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid Epic", details: parsed.error.flatten() }, 400);
+  try {
+    const root = projectGitRoot(project, parsed.data.rootId, true);
+    const sessions = new Set(agentRuntimeStore.listSessions({ projectId: project.id, limit: Number.MAX_SAFE_INTEGER }).map(session => session.id));
+    if (parsed.data.sessionIds.some(id => !sessions.has(id))) throw new GitWorkspaceError("Select unarchived sessions in this project.");
+    return c.json(await gitEpicStore.save(project.id, root.scope, parsed.data));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.get("/:id/git/commits/:sha", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"));
+    return c.json(await gitCommitDetail(root.repository, c.req.param("sha")));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.post("/:id/git/actions", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const schema = z.object({
+    rootId: z.string().optional(),
+    action: z.enum(["merge", "rebase", "cherry-pick", "reset", "fetch", "track", "continue", "abort"]),
+    expectedHead: z.string().regex(/^[a-f0-9]{40,64}$/i),
+    target: z.string().max(1024).optional(),
+    branch: z.string().max(255).optional(),
+    resetMode: z.enum(["soft", "mixed", "hard"]).optional(),
+    confirmed: z.boolean().optional(),
+  });
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Invalid Git action", details: parsed.error.flatten() }, 400);
+  try {
+    const root = projectGitRoot(project, parsed.data.rootId, true);
+    return c.json(await gitHistoryAction(root.repository, parsed.data));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
 projectRoutes.post("/:id/git/worktrees", async (c) => {
   const project = projects.get(c.req.param("id"));
   if (!project) return c.json({ error: "Project not found" }, 404);

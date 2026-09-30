@@ -11,11 +11,18 @@
     "prebuild": "tsx ../scripts/generate-visualization-icons.ts"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
     "@dagrejs/dagre": "^3.0.0",
     "@floating-ui/react": "^0.26.28",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/noto-sans-sc": "^5.3.0",
     "@headlessui/react": "^2.2.10",
+    "@lezer/highlight": "^1.2.5",
     "@tabler/icons-react": "^3.48.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@xterm/addon-fit": "^0.11.0",

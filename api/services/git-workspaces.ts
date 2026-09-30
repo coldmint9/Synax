@@ -9,6 +9,11 @@ import {
   type WorkspaceLocation,
 } from "./workspace-location.js";
 import { decodeWslOutput, wslCommandSpec, wslHomeDirectory } from "./wsl.js";
+import type { GitHistoryRef, GitHistoryPage, GitCommitDetail } from "./git-history-contracts.js";
+import type { GitActionInput, GitActionResult } from "./git-history-contracts.js";
+import type { MergeRequest, MergeFileSave } from "./git-mr/contracts.js";
+import { readFile as readMergeFile, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
+import { GitMrStore } from "./git-mr/store.js";
 
 const execFileAsync = promisify(execFile);
 const operationQueues = new Map<string, Promise<void>>();
@@ -59,6 +64,67 @@ export interface GitWorkspaceSummary {
   worktrees: GitWorktreeSummary[];
 }
 
+/** A ref fingerprint rejects stale pages rather than silently skipping commits. */
+export async function gitHistoryPage(
+  repository: RepositoryInput,
+  input: { offset?: number; limit?: number; snapshot?: string } = {},
+): Promise<GitHistoryPage> {
+  const context = await assertRepository(repository);
+  const run = (args: string[]) => git(context.location, context.root, args);
+  const offset = input.offset ?? 0;
+  const limit = input.limit ?? 100;
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200)
+    throw new GitWorkspaceError("Invalid history page.");
+  const readRefs = async () => (await run(["for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/remotes", "refs/tags"])).stdout;
+  const raw = await readRefs();
+  let head = "";
+  try { head = (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); } catch { /* unborn repository */ }
+  const snapshot = createHash("sha256").update(raw).update(head).digest("hex");
+  if (input.snapshot && input.snapshot !== snapshot)
+    throw new GitWorkspaceError("Git history changed. Refresh the history to continue.", 409);
+  const refs: GitHistoryRef[] = raw.trim().split("\n").filter(Boolean).map((line) => {
+    const [fullName, object, peeled] = line.split("\0");
+    const kind = fullName.startsWith("refs/heads/") ? "local" : fullName.startsWith("refs/remotes/") ? "remote" : "tag";
+    return { fullName, name: fullName.replace(/^refs\/(heads|remotes|tags)\//, ""), head: peeled || object, kind };
+  });
+  if (!refs.length && !head) return { commits: [], refs, snapshot, nextOffset: null };
+  const output = await run(["log", "--all", ...(head ? ["HEAD"] : []), "--topo-order", `--skip=${offset}`, `--max-count=${limit + 1}`, "--format=%H%x00%P%x00%s%x00%an%x00%aI%x00", "--"]);
+  const fields = output.stdout.split("\0");
+  const commits: GitCommitSummary[] = [];
+  for (let i = 0; i + 4 < fields.length; i += 5) {
+    const id = fields[i].trim();
+    if (!id) continue;
+    commits.push({ id, parents: fields[i + 1].split(" ").filter(Boolean), subject: fields[i + 2], author: fields[i + 3], authoredAt: fields[i + 4], refs: refs.filter((ref) => ref.head === id).map((ref) => ref.fullName), rebase: false });
+  }
+  // Detect concurrent fetch/commit before returning a mixed snapshot.
+  let currentHead = "";
+  try { currentHead = (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); } catch { /* unborn */ }
+  if (raw !== await readRefs() || currentHead !== head)
+    throw new GitWorkspaceError("Git history changed. Refresh the history to continue.", 409);
+  return { commits: commits.slice(0, limit), refs, snapshot, nextOffset: commits.length > limit ? offset + limit : null };
+}
+
+export async function gitCommitDetail(repository: RepositoryInput, id: string): Promise<GitCommitDetail> {
+  if (!/^[a-f0-9]{40,64}$/i.test(id)) throw new GitWorkspaceError("A full commit SHA is required.");
+  const context = await assertRepository(repository);
+  const run = (args: string[]) => git(context.location, context.root, args);
+  const metadata = await run(["show", "-s", "--format=%H%x00%P%x00%s%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", id, "--"]);
+  const [sha, parents, subject, author, authorEmail, authoredAt, committer, committerEmail, committedAt, ...message] = metadata.stdout.split("\0");
+  const names = await run(["diff-tree", "--root", "--no-commit-id", "-r", "--name-status", "-z", "-M", ...(parents ? [parents.split(" ")[0], id] : [id]), "--"]);
+  const tokens = names.stdout.split("\0");
+  const files: GitCommitDetail["files"] = [];
+  for (let i = 0; tokens[i];) {
+    const status = tokens[i++];
+    const first = tokens[i++];
+    if (status.startsWith("R") || status.startsWith("C")) files.push({ status, previousPath: first, path: tokens[i++] });
+    else files.push({ status, path: first });
+  }
+  const diff = parents
+    ? await run(["diff", "--no-ext-diff", "--no-textconv", "-M", parents.split(" ")[0], id, "--"])
+    : await run(["show", "--format=", "--no-ext-diff", "--no-textconv", "-M", id, "--"]);
+  return { id: sha, parents: parents.split(" ").filter(Boolean), subject, author, authorEmail, authoredAt, committer, committerEmail, committedAt, message: message.join("\0").replace(/\n$/, ""), refs: [], rebase: false, files, diff: diff.stdout };
+}
+
 export class GitWorkspaceError extends Error {
   constructor(
     message: string,
@@ -67,6 +133,104 @@ export class GitWorkspaceError extends Error {
     super(message);
     this.name = "GitWorkspaceError";
   }
+}
+
+async function historyOperation(context: RepositoryContext): Promise<GitActionResult["operation"]> {
+  for (const [marker, operation] of [["rebase-merge", "rebase"], ["rebase-apply", "rebase"], ["MERGE_HEAD", "merge"], ["CHERRY_PICK_HEAD", "cherry-pick"]] as const) {
+    const markerPath = (await git(context.location, context.root, ["rev-parse", "--git-path", marker])).stdout.trim();
+    const absolute = pathApi(context.location).resolve(context.root, markerPath);
+    if (await pathExists(context.location, context.root, absolute)) return operation;
+  }
+  return null;
+}
+
+export async function gitHistoryState(repository: RepositoryInput): Promise<GitActionResult> {
+  const context = await assertRepository(repository);
+  const run = (args: string[]) => git(context.location, context.root, args);
+  let head = "";
+  try { head = (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); } catch { /* unborn */ }
+  return { head, branch: (await run(["branch", "--show-current"])).stdout.trim(), operation: await historyOperation(context), conflicts: (await run(["diff", "--name-only", "--diff-filter=U", "-z"])).stdout.split("\0").filter(Boolean), output: "" };
+}
+
+/** Reuse the merge file service's stage parsing, path checks and revision guard. */
+export async function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave) {
+  const context = await assertRepository(repository);
+  return withRepositoryLock(context, async () => {
+    const state = await gitHistoryState(repository);
+    if (!state.operation || !state.conflicts.includes(filename)) throw new GitWorkspaceError("Active conflict not found.", 404);
+    const run = (args: string[]) => git(context.location, context.root, args);
+    const source = (await run(["rev-parse", state.operation === "merge" ? "MERGE_HEAD" : state.operation === "rebase" ? "REBASE_HEAD" : "CHERRY_PICK_HEAD"])).stdout.trim().split("\n")[0];
+    const id = createHash("sha256").update(JSON.stringify(context)).update(state.head).update(source).update(filename).digest("hex");
+    const mr: MergeRequest = { id, projectId: "git-workbench", title: "Working tree conflict", target: state.branch || "HEAD", targetOid: state.head, strategy: "merge_commit", steps: [{ branch: "incoming", oid: source, status: "conflicted" }], status: "conflicted", version: 1, currentStep: 0, worktree: context.root, location: context.location, repository: context.root, commonDir: context.root, autoFinalize: false, allowCheckedOutTarget: true, checks: [], checkResults: [], events: [], createdAt: "", updatedAt: "" };
+    const store = new GitMrStore();
+    try {
+      if (save) {
+        const previous = await writeMergeFile(mr, fileId(filename), save);
+        if (save.resolve) return { ...previous, conflicted: false, result: save.content ?? (save.choice === "target" ? previous.target : save.choice === "source" ? previous.source : "") };
+      }
+      const result = await readMergeFile(mr, fileId(filename));
+      result.targetLabel = state.operation === "rebase" ? "当前基底 · stage 2" : `${state.branch || "HEAD"} · 本地`;
+      result.sourceLabel = state.operation === "rebase" ? "重放提交 · stage 3" : `${source.slice(0, 8)} · 来源`;
+      if (save?.resolutionState) await store.write("history-drafts", { id, projectId: "git-workbench", revision: result.revision, resolutionState: save.resolutionState });
+      else if (!save) {
+        const draft = await store.read<{ revision: string; resolutionState: unknown }>("history-drafts", id).catch(() => null);
+        if (draft?.revision === result.revision) result.resolutionState = draft.resolutionState;
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof Error && "status" in error) throw new GitWorkspaceError(error.message, Number(error.status));
+      throw error;
+    }
+  });
+}
+
+export async function gitHistoryAction(repository: RepositoryInput, input: GitActionInput): Promise<GitActionResult> {
+  const context = await assertRepository(repository);
+  return withRepositoryLock(context, async () => {
+    const run = (args: string[]) => git(context.location, context.root, ["-c", "core.editor=true", "-c", "sequence.editor=true", ...args]);
+    const head = (await run(["rev-parse", "HEAD"])).stdout.trim();
+    if (head !== input.expectedHead) throw new GitWorkspaceError("HEAD changed. Refresh before performing this operation.", 409);
+    const operation = await historyOperation(context);
+    let args: string[];
+    if (input.action === "continue" || input.action === "abort") {
+      if (!operation) throw new GitWorkspaceError("No Git operation is in progress.", 409);
+      if (input.action === "abort" && !input.confirmed) throw new GitWorkspaceError("Confirm aborting this operation.");
+      args = [operation, `--${input.action}`];
+    } else if (input.action === "fetch") {
+      args = ["fetch", "--all", "--prune"];
+    } else {
+      await assertCheckoutSafe(context);
+      if (!input.confirmed) throw new GitWorkspaceError("Confirm the target and working tree before changing Git state.");
+      if (!input.target || (!/^[a-f0-9]{40,64}$/i.test(input.target) && !/^refs\/(heads|remotes|tags)\//.test(input.target)))
+        throw new GitWorkspaceError("Select a full commit SHA or fully qualified ref.");
+      const target = (await run(["rev-parse", "--verify", "--end-of-options", `${input.target}^{commit}`])).stdout.trim();
+      if (input.action === "reset") {
+        if (!["soft", "mixed", "hard"].includes(input.resetMode ?? "")) throw new GitWorkspaceError("Select a reset mode.");
+        args = ["reset", `--${input.resetMode}`, target];
+      } else if (input.action === "track") {
+        if (!input.target.startsWith("refs/remotes/") || !input.branch) throw new GitWorkspaceError("Select a remote branch and a local branch name.");
+        await assertBranchName(context, input.branch);
+        if (await branchExists(context, input.branch)) throw new GitWorkspaceError("Local branch already exists.", 409);
+        args = ["switch", "-c", input.branch, "--track", input.target];
+      } else if (input.action === "merge") args = ["merge", "--no-edit", target];
+      else if (input.action === "rebase") args = ["rebase", target];
+      else if (input.action === "cherry-pick") args = ["cherry-pick", target];
+      else throw new GitWorkspaceError("Unknown Git action.");
+    }
+    let output = "";
+    try { const result = await run(args); output = result.stdout + result.stderr; }
+    catch (error) {
+      if (!await historyOperation(context)) throw error;
+      output = error instanceof Error ? error.message : String(error);
+    }
+    return {
+      head: (await run(["rev-parse", "HEAD"])).stdout.trim(),
+      branch: (await run(["branch", "--show-current"])).stdout.trim(),
+      operation: await historyOperation(context),
+      conflicts: (await run(["diff", "--name-only", "--diff-filter=U", "-z"])).stdout.split("\0").filter(Boolean),
+      output,
+    };
+  });
 }
 
 interface RawWorktree {
