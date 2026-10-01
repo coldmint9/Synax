@@ -34,6 +34,10 @@ import {
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { DirectoryPickerDialog } from "../../components/directory-picker/DirectoryPickerDialog";
 import { useShellStore, type ProjectSummary } from "../../state/shellStore";
+import {
+  isElectron,
+  openDirectoryPicker,
+} from "../../../lib/open-directory-picker";
 
 type Member = { location: WorkspaceLocation; name: string; projectId?: string };
 const memberKey = (member: Pick<Member, "location">) =>
@@ -92,6 +96,21 @@ function ProjectCreateForm({
   const active = useRef(true);
   const browseRef = useRef<HTMLButtonElement>(null);
   const pickerWasOpen = useRef(false);
+
+  const browseForDirectory = async () => {
+    if (locationKind === "host" && isElectron) {
+      try {
+        const picked = await openDirectoryPicker();
+        if (picked && active.current)
+          addMembers([{ location: { kind: "host", path: picked.path }, name: picked.name }]);
+      } catch (cause) {
+        if (active.current)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      }
+      return;
+    }
+    setPickerOpen(true);
+  };
 
   useLayoutEffect(() => {
     active.current = true;
@@ -372,7 +391,7 @@ function ProjectCreateForm({
                       disabled={submitting}
                       paths={members.map(memberPath)}
                       browseRef={browseRef}
-                      onBrowse={() => setPickerOpen(true)}
+                      onBrowse={() => void browseForDirectory()}
                       onChoose={(item) => {
                         const location = projectLocation(item);
                         if (location)

@@ -260,11 +260,12 @@ describe("ProjectCreateDialog", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/local");
   });
 
-  it("browses multiple directories on Electron and submits all roots in one request despite repeated clicks", async () => {
+  it("browses multiple WSL directories in-app and submits all roots in one request despite repeated clicks", async () => {
     const pending = deferred<{ project: ProjectSummary }>();
     vi.mocked(projectApi.createWorkspace).mockReturnValueOnce(pending.promise);
     const user = userEvent.setup();
     const { onClose } = await renderDialog();
+    await user.click(screen.getByRole("tab", { name: "WSL2" }));
     const dialog = screen.getByRole("dialog", { name: "创建工作区" });
     expect(dialog).toHaveAttribute(
       "aria-describedby",
@@ -470,6 +471,21 @@ describe("ProjectCreateDialog", () => {
     await addPath("/repos/api");
     expect(screen.getByRole("button", { name: "创建工作区" })).toBeEnabled();
     expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
+  });
+
+  it("uses the native picker for host folders in the Electron desktop", async () => {
+    vi.mocked(nativePicker).mockResolvedValueOnce({
+      path: "C:/repos/native",
+      name: "native",
+    });
+    const user = userEvent.setup();
+    await renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "选择文件夹" }));
+
+    await waitFor(() => expect(nativePicker).toHaveBeenCalledOnce());
+    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/native");
+    expect(screen.queryByRole("dialog", { name: "选择目录" })).not.toBeInTheDocument();
   });
 
   it("closes only the top dialog on Escape, traps and restores focus, and clears cancelled openings", async () => {

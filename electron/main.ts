@@ -290,12 +290,16 @@ function registerIPC(): void {
     await copyFileToSystemClipboard(target);
     return true;
   });
-  ipcMain.handle("dialog:open", (_e, options) =>
-    dialog.showOpenDialog(options),
-  );
-  ipcMain.handle("dialog:save", (_e, options) =>
-    dialog.showSaveDialog(options),
-  );
+  ipcMain.handle("dialog:open", (event, options: Electron.OpenDialogOptions) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted dialog request");
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    return dialog.showOpenDialog(parent ?? options);
+  });
+  ipcMain.handle("dialog:save", (event, options: Electron.SaveDialogOptions) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted dialog request");
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    return dialog.showSaveDialog(parent ?? options);
+  });
   ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("window:mac-appearance:get", (event) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");
