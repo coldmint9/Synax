@@ -32,6 +32,7 @@ import { useNotificationStore } from "../../../state/notificationStore";
 import { AccentColorPicker } from "./AccentColorPicker";
 import { SettingsCard } from "./SettingsCard";
 import type { GlobalConfig, MacWindowAppearance } from "../../../../lib/contracts/config";
+import { applyMacWindowAppearance, desktopWindowApi, DEFAULT_MAC_WINDOW_APPEARANCE } from "../../../../lib/mac-window-appearance";
 import "./appearance.css";
 
 type AppearanceFeedback = {
@@ -66,29 +67,10 @@ function importErrorMessage(error: Error, zh: boolean): string {
   }
 }
 
-const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
-  enabled: false,
-  vibrancy: "under-window",
-  opacity: 0.82,
-  bottomSeparator: true,
-  scanlines: false,
-  scanlineOpacity: 0.025,
-};
-
 type AppearanceSectionProps = {
   config?: GlobalConfig;
   onUpdate?: (patch: { macWindowAppearance: MacWindowAppearance }) => Promise<void>;
 };
-
-function desktopWindowApi() {
-  return (window as Window & {
-    electronAPI?: {
-      platform?: string;
-      getMacWindowAppearance?: () => Promise<{ appearance: MacWindowAppearance }>;
-      setMacWindowAppearance?: (value: MacWindowAppearance) => Promise<MacWindowAppearance>;
-    };
-  }).electronAPI;
-}
 
 export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) {
   const { locale } = useLocale();
@@ -120,43 +102,52 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
     config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE,
   );
 
+  const latestAppearance = useRef(macAppearance);
+  const savedAppearance = useRef(macAppearance);
+  const pending = useRef(0);
+  const revision = useRef(0);
+  const saveQueue = useRef(Promise.resolve());
+
   useEffect(() => {
-    if (!isMac) return;
+    if (!isMac || pending.current > 0) return;
     const next = config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE;
+    latestAppearance.current = savedAppearance.current = next;
     setMacAppearance(next);
-    void desktopWindowApi()?.setMacWindowAppearance?.(next);
+    void applyMacWindowAppearance(next).catch((error: unknown) => {
+      announce("error", error instanceof Error ? error.message : "Could not update window appearance");
+    });
   }, [config?.macWindowAppearance, isMac]);
 
-  useEffect(() => {
-    if (!isMac) return;
-    const root = document.documentElement;
-    const viewport = document.querySelector<HTMLElement>(".app-viewport");
-    root.dataset.macWindowEnabled = String(macAppearance.enabled);
-    root.dataset.macWindowSeparator = String(macAppearance.bottomSeparator);
-    root.dataset.macWindowScanlines = String(macAppearance.scanlines);
-    root.style.setProperty("--mac-window-opacity", String(macAppearance.opacity));
-    root.style.setProperty("--mac-scanline-opacity", String(macAppearance.scanlineOpacity));
-    viewport?.style.setProperty("--mac-window-opacity", String(macAppearance.opacity));
-    return () => {
-      delete root.dataset.macWindowEnabled;
-      delete root.dataset.macWindowSeparator;
-      delete root.dataset.macWindowScanlines;
-      root.style.removeProperty("--mac-window-opacity");
-      root.style.removeProperty("--mac-scanline-opacity");
-      viewport?.style.removeProperty("--mac-window-opacity");
-    };
-  }, [isMac, macAppearance]);
-
-  const updateMacAppearance = async (patch: Partial<MacWindowAppearance>) => {
-    const next = { ...macAppearance, ...patch };
+  const updateMacAppearance = (patch: Partial<MacWindowAppearance>) => {
+    const next = { ...latestAppearance.current, ...patch };
+    latestAppearance.current = next;
+    const currentRevision = ++revision.current;
+    pending.current++;
     setMacAppearance(next);
-    try {
-      await desktopWindowApi()?.setMacWindowAppearance?.(next);
-      await onUpdate?.({ macWindowAppearance: next });
-    } catch (error) {
-      setMacAppearance(config?.macWindowAppearance ?? DEFAULT_MAC_WINDOW_APPEARANCE);
-      announce("error", error instanceof Error ? error.message : zh ? "窗口效果更新失败" : "Could not update window appearance");
-    }
+    // Preview immediately; serialize persistence so a slower slider response
+    // cannot overwrite a newer edit. Handle the preview rejection immediately.
+    const preview = applyMacWindowAppearance(next).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    saveQueue.current = saveQueue.current.then(async () => {
+      try {
+        const result = await preview;
+        if (!result.ok) throw result.error;
+        await onUpdate?.({ macWindowAppearance: next });
+        savedAppearance.current = next;
+      } catch (error) {
+        if (currentRevision !== revision.current) return;
+        const previous = savedAppearance.current;
+        latestAppearance.current = previous;
+        setMacAppearance(previous);
+        // Restore both the native and DOM state, not just the checkbox.
+        await applyMacWindowAppearance(previous).catch(() => undefined);
+        announce("error", error instanceof Error ? error.message : zh ? "窗口效果更新失败" : "Could not update window appearance");
+      } finally {
+        pending.current--;
+      }
+    });
   };
 
   const announce = (type: AppearanceFeedback["type"], message: string) => {

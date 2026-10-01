@@ -38,6 +38,7 @@ import {
   applyMacWindowAppearance,
   DEFAULT_MAC_WINDOW_APPEARANCE,
   normalizeMacWindowAppearance,
+  windowBackgroundColor,
   type MacWindowAppearance,
 } from "./lib/mac-window-appearance.js";
 
@@ -47,6 +48,7 @@ const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let macWindowAppearance: MacWindowAppearance = DEFAULT_MAC_WINDOW_APPEARANCE;
+let windowDarkTheme = nativeTheme.shouldUseDarkColors;
 let windowOpening: Promise<void> | null = null;
 async function ensureMainWindow(): Promise<BrowserWindow | null> {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -126,12 +128,7 @@ function createWindow(): BrowserWindow {
     show: false,
     transparent: process.platform === "darwin",
     opacity: 1,
-    backgroundColor:
-      process.platform === "darwin"
-        ? "#00000000"
-        : nativeTheme.shouldUseDarkColors
-          ? "#0f141d"
-          : "#f9f9f9",
+    backgroundColor: windowBackgroundColor(macWindowAppearance, windowDarkTheme),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -143,7 +140,7 @@ function createWindow(): BrowserWindow {
   });
 
   if (process.platform === "darwin") {
-    macWindowAppearance = applyMacWindowAppearance(win, macWindowAppearance);
+    macWindowAppearance = applyMacWindowAppearance(win, macWindowAppearance, windowDarkTheme);
   }
 
   // The same srcdoc renderer is used on desktop; subframes never navigate away.
@@ -308,7 +305,7 @@ function registerIPC(): void {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");
     macWindowAppearance = normalizeMacWindowAppearance(value as Partial<MacWindowAppearance>);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      macWindowAppearance = applyMacWindowAppearance(mainWindow, macWindowAppearance);
+      macWindowAppearance = applyMacWindowAppearance(mainWindow, macWindowAppearance, windowDarkTheme);
     }
     return macWindowAppearance;
   });
@@ -442,7 +439,8 @@ function registerIPC(): void {
     )
       return;
     // Keep the native backing color in sync with the renderer's explicit theme.
-    const backgroundColor = state.dark === true ? "#0f141d" : "#f9f9f9";
+    windowDarkTheme = state.dark === true;
+    const backgroundColor = windowBackgroundColor(macWindowAppearance, windowDarkTheme);
     if (mainWindow?.getBackgroundColor().toLowerCase() !== backgroundColor)
       mainWindow?.setBackgroundColor(backgroundColor);
     updateMenuState({

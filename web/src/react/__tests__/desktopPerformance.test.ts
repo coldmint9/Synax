@@ -58,6 +58,7 @@ describe("desktop backdrop material parity", () => {
       ":is(body",
       ".workbench-shell",
       ".workbench-island",
+      ".work-page",
     ]);
     expect(transparent?.declarations.get("background")).toBe(
       "transparent !important",

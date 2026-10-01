@@ -1,6 +1,6 @@
 import type { BrowserWindow } from "electron";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyMacWindowAppearance } from "./mac-window-appearance.js";
+import { applyMacWindowAppearance, windowBackgroundColor } from "./mac-window-appearance.js";
 
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 
@@ -13,11 +13,24 @@ afterEach(() => {
 });
 
 function mockWindow() {
-  const methods = { setVibrancy: vi.fn(), setOpacity: vi.fn() };
+  const methods = { setVibrancy: vi.fn(), setOpacity: vi.fn(), setBackgroundColor: vi.fn() };
   return { methods, win: methods as unknown as BrowserWindow };
 }
 
 describe("macOS window appearance API mapping", () => {
+  it.each([false, true])("theme sync leaves an enabled window clear (dark=%s)", (dark) => {
+    expect(windowBackgroundColor({ enabled: true }, dark)).toBe("#00000000");
+    expect(windowBackgroundColor({ enabled: false }, dark)).toBe(dark ? "#0f141d" : "#f9f9f9");
+  });
+
+  it("restores the active dark backing when effects are disabled", () => {
+    const { methods, win } = mockWindow();
+    applyMacWindowAppearance(win, { enabled: true }, true);
+    expect(methods.setBackgroundColor).toHaveBeenLastCalledWith("#00000000");
+    applyMacWindowAppearance(win, { enabled: false }, true);
+    expect(methods.setBackgroundColor).toHaveBeenLastCalledWith("#0f141d");
+  });
+
   it("maps the saved HUD setting to Electron's hud material", () => {
     const { methods, win } = mockWindow();
     const appearance = applyMacWindowAppearance(win, {
@@ -27,10 +40,11 @@ describe("macOS window appearance API mapping", () => {
     });
     expect(methods.setVibrancy).toHaveBeenCalledWith("hud");
     expect(methods.setOpacity).toHaveBeenCalledWith(1);
+    expect(methods.setBackgroundColor).toHaveBeenCalledWith("#00000000");
     expect(appearance.vibrancy).toBe("hud-window");
   });
 
-  it("keeps the default under-window material", () => {
+  it("disables the native material by default", () => {
     const { methods, win } = mockWindow();
     applyMacWindowAppearance(win, undefined);
     expect(methods.setVibrancy).toHaveBeenCalledWith(null);
@@ -70,6 +84,8 @@ describe("macOS window appearance API mapping", () => {
     const appearance = applyMacWindowAppearance(win, { vibrancy: "hud-window" });
     expect(methods.setVibrancy).not.toHaveBeenCalled();
     expect(methods.setOpacity).not.toHaveBeenCalled();
+    expect(methods.setBackgroundColor).not.toHaveBeenCalled();
+    expect(windowBackgroundColor({ enabled: true }, false)).toBe("#f9f9f9");
     expect(appearance.vibrancy).toBe("hud-window");
   });
 });

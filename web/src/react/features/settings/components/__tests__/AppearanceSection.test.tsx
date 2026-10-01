@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppearanceSection } from "../AppearanceSection";
@@ -46,6 +46,9 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as Window & { electronAPI?: unknown }).electronAPI;
+  for (const key of ["macWindowEnabled", "macWindowSeparator", "macWindowScanlines"]) delete document.documentElement.dataset[key];
+  document.documentElement.style.removeProperty("--mac-window-opacity");
+  document.documentElement.style.removeProperty("--mac-scanline-opacity");
   expect(fetchGuard).not.toHaveBeenCalled();
   resetThemeStore();
   useNotificationStore.setState({ notifications: [], unreadCount: 0 });
@@ -55,6 +58,51 @@ afterEach(() => {
 });
 
 describe("AppearanceSection", () => {
+  it("restores native and DOM appearance when saving fails", async () => {
+    const native = vi.fn().mockResolvedValue(undefined);
+    const onUpdate = vi.fn().mockRejectedValue(new Error("save failed"));
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { platform: "darwin", setMacWindowAppearance: native } });
+    render(<AppearanceSection onUpdate={onUpdate} />);
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Enable transparent window" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+    expect(native).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    expect(document.documentElement.dataset.macWindowEnabled).toBe("false");
+    expect(document.documentElement.dataset.macWindowScanlines).toBe("false");
+  });
+
+  it("serializes rapid edits without resetting a newer preview to an older response", async () => {
+    let resolveFirst!: () => void;
+    const first = new Promise<void>((resolve) => { resolveFirst = resolve; });
+    const onUpdate = vi.fn().mockImplementationOnce(() => first).mockResolvedValue(undefined);
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { platform: "darwin", setMacWindowAppearance: vi.fn().mockResolvedValue(undefined) } });
+    const { rerender } = render(<AppearanceSection onUpdate={onUpdate} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Enable transparent window" }));
+    const density = screen.getByRole("slider", { name: /Glass density/ });
+    fireEvent.change(density, { target: { value: "0.55" } });
+    fireEvent.change(density, { target: { value: "0.35" } });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const old = onUpdate.mock.calls[0][0].macWindowAppearance;
+    rerender(<AppearanceSection config={{ macWindowAppearance: old } as any} onUpdate={onUpdate} />);
+    expect(document.documentElement.style.getPropertyValue("--mac-window-opacity")).toBe("0.35");
+    await act(async () => resolveFirst());
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(3));
+    expect(onUpdate).toHaveBeenLastCalledWith({ macWindowAppearance: expect.objectContaining({ enabled: true, opacity: 0.35 }) });
+  });
+
+  it("preserves the active material after leaving the settings page", async () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { platform: "darwin", setMacWindowAppearance: vi.fn().mockResolvedValue(undefined) },
+    });
+    const { unmount } = render(<AppearanceSection onUpdate={vi.fn().mockResolvedValue(undefined)} />);
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Enable transparent window" }));
+    expect(document.documentElement.dataset.macWindowEnabled).toBe("true");
+    unmount();
+    expect(document.documentElement.dataset.macWindowEnabled).toBe("true");
+    expect(document.documentElement.style.getPropertyValue("--mac-window-opacity")).toBe("0.82");
+  });
+
   it("defaults the macOS window material to off and updates the glass controls", async () => {
     const user = userEvent.setup();
     const setMacWindowAppearance = vi.fn().mockResolvedValue(undefined);

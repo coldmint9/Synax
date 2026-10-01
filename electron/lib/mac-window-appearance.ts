@@ -42,9 +42,19 @@ export function normalizeMacWindowAppearance(
   };
 }
 
+/** Also used by theme/menu updates: never repaint an enabled glass window solid. */
+export function windowBackgroundColor(
+  appearance: Partial<MacWindowAppearance> | null | undefined,
+  dark: boolean,
+): string {
+  if (process.platform === "darwin" && appearance?.enabled === true) return "#00000000";
+  return dark ? "#0f141d" : "#f9f9f9";
+}
+
 export function applyMacWindowAppearance(
   win: BrowserWindow,
   value: Partial<MacWindowAppearance> | null | undefined,
+  dark = false,
 ): MacWindowAppearance {
   const appearance = normalizeMacWindowAppearance(value);
   if (process.platform !== "darwin") return appearance;
@@ -60,6 +70,7 @@ export function applyMacWindowAppearance(
   // Keep text and controls opaque. The renderer controls background alpha so
   // the native vibrancy remains adjustable without fading the whole window.
   win.setOpacity(1);
+  win.setBackgroundColor(windowBackgroundColor(appearance, dark));
   return appearance;
 }
 

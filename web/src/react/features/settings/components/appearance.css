@@ -50,7 +50,7 @@ html.electron-macos[data-mac-window-enabled="true"] {
   background: transparent !important;
 }
 html.electron-macos[data-mac-window-enabled="true"]
-  :is(body, .app-viewport, .workbench-shell, .workbench-island, .settings-scroll-viewport) {
+  :is(body, .app-viewport, .workbench-shell, .workbench-island, .settings-scroll-viewport, .work-page) {
   background: transparent !important;
   background-image: none !important;
 }
