@@ -4,6 +4,7 @@ import css from "../desktopPerformance.css?raw";
 import commandDeckCss from "../design/command-deck.css?raw";
 import glassCss from "../components/ui/glass/glass.css?raw";
 import agentControlsCss from "../features/agent-workspace/agentControls.css?raw";
+import appearanceCss from "../features/settings/components/appearance.css?raw";
 import indexCss from "../../index.css?raw";
 
 const normalize = (selector: string) => selector.replace(/\s+/g, " ").trim();
@@ -32,6 +33,7 @@ function indexRules(source: string): RuleInfo[] {
 const desktop = indexRules(css);
 const web = indexRules(agentControlsCss);
 const global = indexRules(indexCss);
+const appearance = indexRules(appearanceCss);
 
 /** First rule whose selector contains every fragment, mirroring how the
  *  browser resolves the most specific rule in each stylesheet. */
@@ -50,6 +52,28 @@ function webValue(fragments: string[], property: string) {
 }
 
 describe("desktop backdrop material parity", () => {
+  it("reveals the native macOS surface when window material is enabled", () => {
+    const transparent = findRule(appearance, [
+      'html.electron-macos[data-mac-window-enabled="true"]',
+      ":is(body",
+      ".workbench-shell",
+      ".workbench-island",
+    ]);
+    expect(transparent?.declarations.get("background")).toBe(
+      "transparent !important",
+    );
+    expect(transparent?.declarations.get("background-image")).toBe(
+      "none !important",
+    );
+
+    const viewport = findRule(appearance, [
+      'html.electron-macos[data-mac-window-enabled="true"] .app-viewport',
+    ]);
+    expect(viewport?.declarations.get("background")).toBe(
+      "hsl(var(--background-hsl) / var(--mac-window-opacity, 0.82)) !important",
+    );
+  });
+
   it("keeps the global performance opt-out for every unnamed surface", () => {
     const optOut = desktop[0];
     expect(optOut.selector).toContain("html.electron *");

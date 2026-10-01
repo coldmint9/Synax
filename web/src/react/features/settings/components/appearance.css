@@ -46,6 +46,14 @@
   background: var(--surface);
 }
 
+html.electron-macos[data-mac-window-enabled="true"] {
+  background: transparent !important;
+}
+html.electron-macos[data-mac-window-enabled="true"]
+  :is(body, .app-viewport, .workbench-shell, .workbench-island, .settings-scroll-viewport) {
+  background: transparent !important;
+  background-image: none !important;
+}
 html.electron-macos[data-mac-window-enabled="true"] .app-viewport {
   background: hsl(var(--background-hsl) / var(--mac-window-opacity, 0.82)) !important;
 }
