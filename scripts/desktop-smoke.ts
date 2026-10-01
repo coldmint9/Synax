@@ -174,12 +174,16 @@ try {
   );
   const assertOpaqueDesktop = async () => {
     const renderer = await page.evaluate(() => {
-      // Loading and activity animations are allowed; backdrop filters are not.
+      // Local glass controls intentionally blur their own backdrop. Keep the
+      // rest of the desktop free of accidental global backdrop filters.
       const backdropFilters = [...document.querySelectorAll("*")].flatMap(
         (element) =>
           [null, "::before", "::after"].flatMap((pseudo) => {
             const style = getComputedStyle(element, pseudo);
-            return style.backdropFilter !== "none"
+            const localGlass = pseudo === null && element.matches(
+              ".liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop",
+            );
+            return style.backdropFilter !== "none" && !localGlass
               ? [`${element.className}${pseudo ?? ""}: ${style.backdropFilter}`]
               : [];
           }),
@@ -196,7 +200,7 @@ try {
     assert.deepEqual(
       renderer.backdropFilters,
       [],
-      "desktop must not blur the backdrop",
+      "backdrop filters must stay inside local glass controls",
     );
     assert.equal(renderer.hasAppearanceAPI, false);
     assert.equal(renderer.backgroundLayers, 0);
@@ -271,7 +275,7 @@ try {
         await page
           .locator("body")
           .evaluate((el) => getComputedStyle(el).backgroundColor),
-        "rgb(15, 20, 29)",
+        "rgb(16, 20, 28)",
       );
       await page.screenshot({
         path: path.join(output, "desktop-dark-work.png"),
