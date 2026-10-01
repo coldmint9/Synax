@@ -47,9 +47,9 @@ type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef"> & {
   sessionId?: string;
   streaming?: boolean;
   eager?: boolean;
-  /** Revision of the immutable history page; changes force a fresh DOM subtree. */
+  /** Version of cached height measurements, independent of React row identity. */
   cacheVersion?: string;
-  /** Temporary live snapshots keep their DOM key across the persisted handoff. */
+  /** Temporary live snapshots share the live height-cache namespace. */
   liveEntryIds?: ReadonlySet<string>;
 };
 
@@ -158,7 +158,7 @@ function renderTimelineRows({
     const entryCacheVersion = isLiveEntry ? "live" : cacheVersion;
     return (
     <TimelineRow
-      key={`${sessionId ?? "standalone"}:${entryCacheVersion ?? "initial"}:${entry.kind}-${entry.id}`}
+      key={`${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`}
       entry={entry}
       sessionId={sessionId}
       onExpandChild={onExpandChild}
@@ -312,8 +312,8 @@ function TimelineRows({
           streaming,
           onExpandChild,
           scrollRootRef,
-          // The combined list contains the live tail. Keep its key stable so
-          // token deltas never remount the active subtree.
+          // Live height measurements use their own namespace. React identity
+          // stays stable when these rows move into persisted history.
           cacheVersion: liveId ? "live" : cacheVersion,
           liveEntryIds,
         }),
@@ -357,10 +357,10 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     () => new Set((snapshots ?? []).map((snapshot) => snapshot.stepId)),
     [snapshots],
   );
-  // Versioned history is immutable between revisions. Include both epoch and
-  // revision so a checkpoint rewrite cannot reuse old mounted DOM or height
-  // measurements for the same entry ids. Live rows keep the stable initial
-  // version and are eager-mounted separately.
+  // Runtime writes increment revision too, so it must only invalidate height
+  // measurements, never row identity. Remounting visible lazy rows hides their
+  // contents until the next IntersectionObserver delivery (a transcript flash).
+  // Epoch changes below still reset mounted state after a history rewrite.
   const cacheVersion = historyWindow
     ? `${historyWindow.epoch ?? 0}:${historyWindow.revision ?? 0}`
     : "initial";
@@ -471,6 +471,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   return (
     <div className="flex flex-col gap-5">
       <TimelineRows
+        key={`${session?.id ?? "standalone"}:${historyWindow?.epoch ?? 0}`}
         history={history}
         entries={tail}
         liveId={showLive ? liveId : null}

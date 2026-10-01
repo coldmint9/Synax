@@ -25,6 +25,8 @@ const electron = vi.hoisted(() => ({
   shell: { openExternal: vi.fn() },
 }));
 const spawn = vi.hoisted(() => vi.fn());
+const stageCuaDriver = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../scripts/stage-cua-driver.js", () => ({ stageCuaDriver }));
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({
   spawn,
@@ -428,6 +430,10 @@ describe("desktop platform contract", () => {
     await expect(
       prePackage({}, process.platform, process.arch),
     ).resolves.toBeUndefined();
+    expect(stageCuaDriver).toHaveBeenCalledExactlyOnceWith(
+      process.platform,
+      process.arch,
+    );
     const other = process.platform === "win32" ? "darwin" : "win32";
     await expect(prePackage({}, other, process.arch)).rejects.toThrow(
       "Native dependencies",

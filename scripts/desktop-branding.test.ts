@@ -34,7 +34,7 @@ describe("Synax desktop branding", () => {
       FileDescription: desktopProduct.description,
       OriginalFilename: "Synax.exe",
     });
-    expect(desktopProduct.description).toBe("Local-first AI coding workspace");
+    expect(desktopProduct.description).toBe("Synax AI coding workspace");
   });
   it("includes a real Windows ICO with small and large icons", async () => {
     const bytes = await fs.readFile(desktopIcon("win32"));
