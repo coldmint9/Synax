@@ -11,6 +11,15 @@ const PROBE_TIMEOUT_MS = 5_000
 
 export type ApiReachability = 'unknown' | 'reachable' | 'degraded' | 'unreachable'
 
+type ApiRecoveryListener = () => void
+const apiRecoveryListeners = new Set<ApiRecoveryListener>()
+
+/** Register work that should resume after the local API becomes reachable again. */
+export function onApiRecovery(listener: ApiRecoveryListener): () => void {
+  apiRecoveryListeners.add(listener)
+  return () => apiRecoveryListeners.delete(listener)
+}
+
 interface ApiConnectivityState {
   browserOnline: boolean
   apiReachable: ApiReachability
@@ -56,7 +65,9 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
     }))
     if (wasUnreachable) {
       useNotificationStore.getState().dismiss(API_CONNECTIVITY_NOTIFICATION_ID)
-      void import('./api/runtimeEventBus').then(m => m.resumeRuntimeEventBus())
+      queueMicrotask(() => {
+        for (const listener of apiRecoveryListeners) listener()
+      })
     }
   },
 

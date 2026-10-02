@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  Disclosure,
-  DisclosureButton,
-  DisclosurePanel,
-} from "@headlessui/react";
-import { Check, ChevronDown, Eye, EyeOff, Loader2, Search } from "lucide-react";
+import { Check, Eye, EyeOff, Loader2, Search } from "lucide-react";
 import {
   Dialog,
   DialogContainer,
@@ -41,7 +36,6 @@ import { validateProviderDraft } from "../lib/validation";
 import { useLocale } from "../../../../hooks/useLocale";
 import { SettingsSelect } from "./SettingsSelect";
 import { SaveIndicator } from "./SaveIndicator";
-import { useProviderAutoSave } from "../useProviderAutoSave";
 import { ProviderModelCapabilities } from "./ProviderModelCapabilities";
 import type { ApiFormat } from "../../../../lib/contracts/config";
 
@@ -51,21 +45,20 @@ interface LlmProviderModalProps {
   onClose: () => void;
   onSave: (draft: ApiProviderDraft) => Promise<void>;
   onValidate: (draft: ApiProviderDraft) => Promise<void>;
-  onDiscoverModels: (draft: ApiProviderDraft) => Promise<string[]>;
+  onDiscoverModels: (draft: ApiProviderDraft) => Promise<{
+    models: string[];
+    metadata?: Record<string, import("../lib/providerPresets").ModelMeta>;
+  }>;
 }
 
 function Advanced({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Disclosure as="div" className="border-t border-border pt-4">
-      <DisclosureButton className="group flex w-full items-center gap-2 rounded text-left text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-        <ChevronDown
-          size={14}
-          className="-rotate-90 transition-transform group-data-open:rotate-0"
-        />
+    <section className="border-t border-border pt-4" aria-labelledby={`${title}-section`}>
+      <h3 id={`${title}-section`} className="text-sm font-medium text-foreground">
         {title}
-      </DisclosureButton>
-      <DisclosurePanel className="space-y-4 pt-4">{children}</DisclosurePanel>
-    </Disclosure>
+      </h3>
+      <div className="space-y-4 pt-4">{children}</div>
+    </section>
   );
 }
 
@@ -85,7 +78,6 @@ export function LlmProviderModal({
     ...initialDraft,
     reasoningEfforts: parseReasoningEfforts(initialDraft.reasoningEfforts),
   }));
-  const autoSave = useProviderAutoSave(draft, onSave, !creating);
   const [step, setStep] = useState<1 | 2>(1);
   const [showApiKey, setShowApiKey] = useState(false);
   const [presetId, setPresetId] = useState(
@@ -117,9 +109,9 @@ export function LlmProviderModal({
   const filtered = candidates.filter((model) =>
     model.toLowerCase().includes(modelQuery.trim().toLowerCase()),
   );
-  const saving = submitting || autoSave.saving;
+  const saving = submitting;
   const busy = saving || discovering || validating;
-  const saveError = submitError || autoSave.error;
+  const saveError = submitError;
 
   useEffect(() => {
     if (step === 2) searchRef.current?.focus();
@@ -162,9 +154,11 @@ export function LlmProviderModal({
     setDiscoveryFailed(false);
     setDiscoveryMessage("");
     try {
-      const models = mergeModelOptions(await onDiscoverModels(draft));
+      const discovered = await onDiscoverModels(draft);
+      const models = mergeModelOptions(discovered.models);
       setDraft((current) => ({
         ...current,
+        modelMeta: { ...current.modelMeta, ...(discovered.metadata ?? {}) },
         modelOptions: mergeModelOptions(
           models,
           current.modelOptions,
@@ -218,7 +212,7 @@ export function LlmProviderModal({
 
   async function close() {
     if (busy || busyRef.current) return;
-    if (creating || !autoSave.valid || (await autoSave.flush())) onClose();
+    onClose();
   }
 
   async function save() {
@@ -230,7 +224,10 @@ export function LlmProviderModal({
       if (creating) {
         await onSave(draft);
         onClose();
-      } else if (await autoSave.flush()) onClose();
+      } else {
+        await onSave(draft);
+        onClose();
+      }
     } catch (error) {
       setSubmitError(
         error instanceof Error
@@ -681,8 +678,8 @@ export function LlmProviderModal({
           <DialogFooter className="flex-wrap">
             {!creating && (
               <SaveIndicator
-                saving={autoSave.saving}
-                saved={autoSave.saved}
+                saving={false}
+                saved={false}
                 error={null}
               />
             )}
@@ -745,11 +742,7 @@ export function LlmProviderModal({
                   onClick={() => void save()}
                 >
                   {saving && <Loader2 size={14} className="animate-spin" />}
-                  {saveError
-                    ? zh
-                      ? "重试保存"
-                      : "Retry save"
-                    : creating
+                  {creating
                       ? zh
                         ? "添加供应商"
                         : "Add provider"

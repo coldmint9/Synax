@@ -296,7 +296,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(screen.getByText("claude-3-5-sonnet-latest")).toBeInTheDocument();
   });
 
-  it("automatically saves a custom model and keeps the dialog open for further edits", async () => {
+  it("only saves custom provider edits after clicking save", async () => {
     const user = userEvent.setup();
     await renderPage();
 
@@ -320,6 +320,8 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
 
     const apiKeyInput = screen.getByPlaceholderText("输入 API Key");
     await pasteValue(user, apiKeyInput, "sk-local");
+    expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "保存", exact: true }));
     await waitFor(() => expect(mocks.validateAiApi).toHaveBeenCalled());
     await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalled());
 
@@ -345,14 +347,10 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.clear(modelInput);
     await pasteValue(user, modelInput, "another-model");
-    await waitFor(() =>
-      expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2),
-    );
-    expect(
-      mocks.updateGlobalConfig.mock.calls[1][0].providerConnections[
-        customProvider.id
-      ].extra.model,
-    ).toBe("another-model");
+    expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "保存", exact: true }));
+    await waitFor(() => expect(mocks.updateGlobalConfig).toHaveBeenCalledTimes(2));
+    expect(mocks.updateGlobalConfig.mock.calls[1][0].providerConnections[customProvider.id].extra.model).toBe("another-model");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭", exact: true }));
     await waitFor(() =>
@@ -636,7 +634,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     });
   });
 
-  it("flushes edits on explicit close and preserves the dialog on save failure for retry", async () => {
+  it("does not save edits until explicit save and preserves the dialog on save failure for retry", async () => {
     const user = userEvent.setup();
     await renderPage();
     // Edit the configured provider (with its stored key), rather than a removed preset.
@@ -651,15 +649,12 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
       }),
     ).toBeInTheDocument();
     const input = screen.getByPlaceholderText("输入模型 ID");
-    // Control only this debounce race: Close, not an elapsed timer, must
-    // trigger the first save. Native click events still exercise the real handler.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mocks.updateGlobalConfig.mockRejectedValueOnce(new Error("写入失败"));
     fireEvent.change(input, { target: { value: "changed-model" } });
     expect(mocks.updateGlobalConfig).not.toHaveBeenCalled();
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "关闭", exact: true }),
+        screen.getByRole("button", { name: "保存", exact: true }),
       );
     });
     expect(
@@ -667,7 +662,7 @@ describe("GlobalSettingsPage LLM provider redesign", () => {
     ).toBeInTheDocument();
     expect(input).toHaveValue("changed-model");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重试保存" }));
+      fireEvent.click(screen.getByRole("button", { name: "保存", exact: true }));
     });
     expect(
       within(screen.getByRole("dialog")).getByRole("status"),

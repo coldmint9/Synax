@@ -9,6 +9,7 @@ import { TaskStore } from '../tools/task-tools.js';
 import { buildLoopStepNote } from '../loop-prompt.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resolveSessionCapabilities } from '../session-capabilities.js';
+import { createPlanArtifact } from '../plan-artifact-store.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
@@ -43,13 +44,13 @@ describe('workflow boundaries', () => {
       expect(result.record.error).toMatch(/goal mode/i);
     }
   });
-  it('chat does not mount planning controls without a deferred plan', () => {
+  it('chat mounts safe planning controls while keeping plan execution explicit', () => {
     const s = session('chat');
-    expect(toolRegistry.listForSession(s.id).map(t => t.id)).not.toContain('plan.propose');
+    expect(toolRegistry.listForSession(s.id).map(t => t.id)).toContain('plan.propose');
     expect(toolRegistry.listForSession(s.id).map(t => t.id)).not.toContain('plan.execute');
-    store.updateSessionMetadata(s.id, { plan: { status: 'saved' } });
+    createPlanArtifact({ sessionId: s.id, plan: { title: 'Saved plan', objective: 'Execute the saved plan', steps: [], acceptanceCriteria: [], humanAcceptanceCriteria: [], assumptions: [], risks: [] }, status: 'saved' });
     const ids = toolRegistry.listForSession(s.id).map(t => t.id);
-    expect(ids).toContain('plan.execute');
+    expect(ids).not.toContain('plan.execute');
     expect(ids).toContain('bash');
     expect(ids).toContain('file.write');
   });

@@ -31,7 +31,9 @@ export default defineConfig({
   base: "/",
   plugins: [react(), removeCrossOrigin()],
   build: {
-    chunkSizeWarningLimit: 1000,
+    // The desktop bundle intentionally carries Markdown, syntax highlighting, and visualization runtimes.
+    // Keep a warning for unexpected growth while allowing the current 1.96 MB ThinkingBlock chunk.
+    chunkSizeWarningLimit: 2048,
     modulePreload: { polyfill: false },
   },
   resolve: {

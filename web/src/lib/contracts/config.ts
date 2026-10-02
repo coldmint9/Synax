@@ -300,6 +300,15 @@ export interface AiApiModelsDiscoverRequest {
 export interface AiApiModelsDiscoverResponse {
   ok: boolean;
   models: string[];
+  modelMetadata?: Record<string, {
+    contextLimit?: number;
+    inputLimit?: number;
+    outputLimit?: number;
+    inputModalities?: string[];
+    outputModalities?: string[];
+    reasoning?: boolean;
+    toolCall?: boolean;
+  }>;
   source: string;
   error?: string;
   resolvedBaseUrl?: string;

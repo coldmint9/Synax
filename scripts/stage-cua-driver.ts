@@ -30,15 +30,43 @@ async function downloadArchive(name: string, expected: string): Promise<string> 
   await fs.mkdir(root, { recursive: true });
   const filename = path.join(root, name);
   try { if (await checksum(filename) === expected) return filename; } catch { /* cache miss */ }
+  const url = `${RELEASE}${name}`;
   const temp = `${filename}.${process.pid}.tmp`;
   try {
-    const response = await fetch(`${RELEASE}${name}`, { signal: AbortSignal.timeout(180_000) });
-    if (!response.ok || !response.body) throw new Error(`Cua binary download failed: HTTP ${response.status}`);
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+    } catch (error) {
+      const detail = error instanceof Error
+        ? error.cause instanceof Error
+          ? `${error.message} (${error.cause.message})`
+          : error.message
+        : String(error);
+      throw new Error(`Cua binary download failed from ${url}: ${detail}`, { cause: error });
+    }
+    if (!response.ok || !response.body) throw new Error(`Cua binary download failed from ${url}: HTTP ${response.status}`);
     await pipeline(Readable.fromWeb(response.body as never), createWriteStream(temp));
     if (await checksum(temp) !== expected) throw new Error('Cua Driver release SHA-256 mismatch');
     await fs.rename(temp, filename);
     return filename;
   } finally { await fs.rm(temp, { force: true }); }
+}
+
+const DRIVER_VERSION = new RegExp(`\\bcua-driver\\s+${VERSION.replaceAll('.', '\\.')}\\b`);
+
+async function hasExpectedDriverVersion(binary: string): Promise<boolean> {
+  try {
+    const { stdout } = await promisify(execFile)(binary, ['--version'], { timeout: 3_000 });
+    return DRIVER_VERSION.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+async function assertExpectedDriverVersion(binary: string): Promise<void> {
+  const { stdout } = await promisify(execFile)(binary, ['--version'], { timeout: 3_000 });
+  if (!DRIVER_VERSION.test(stdout))
+    throw new Error(`Cua Driver executable must match the SDK version ${VERSION}`);
 }
 async function extractTarBinary(archive: string, output: string): Promise<void> {
   const child = spawn('tar', ['-xOzf', archive, 'cua-driver'], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -84,13 +112,11 @@ export async function stageCuaDriver(platform: string, arch: string): Promise<vo
   if (source) {
     if (!path.isAbsolute(source)) throw new Error('SYNAX_CUA_DRIVER_PATH must be an absolute path');
     await fs.copyFile(source, binary);
-  } else {
+  } else if (!(await hasExpectedDriverVersion(binary))) {
     const archive = await downloadArchive(config.name, config.sha256);
     if (config.name.endsWith('.zip')) await extractZipBinary(archive, binary);
     else await extractTarBinary(archive, binary);
   }
   if (platform !== 'win32') await fs.chmod(binary, 0o755);
-  const { stdout } = await promisify(execFile)(binary, ['--version'], { timeout: 3_000 });
-  if (!new RegExp(`\\bcua-driver\\s+${VERSION.replaceAll('.', '\\.')}\\b`).test(stdout))
-    throw new Error(`Cua Driver executable must match the SDK version ${VERSION}`);
+  await assertExpectedDriverVersion(binary);
 }

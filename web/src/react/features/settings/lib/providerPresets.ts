@@ -11,6 +11,8 @@ export type DeclaredModelModality = "text" | "image" | "audio" | "video";
 
 export type ModelMeta = {
   contextLimit?: number;
+  inputLimit?: number;
+  outputLimit?: number;
   inputModalities?: DeclaredModelModality[];
   outputModalities?: DeclaredModelModality[];
   capabilities?: ModelCapability[];

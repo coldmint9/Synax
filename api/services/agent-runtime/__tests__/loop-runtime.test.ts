@@ -1918,7 +1918,7 @@ describe("agentLoopRuntime", () => {
         expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
           status: "completed",
           sessionMetadata: {
-            mode: "plan",
+            mode: "chat",
             plan: { status: "saved", revision: 1 },
           },
         });
@@ -2054,7 +2054,7 @@ describe("agentLoopRuntime", () => {
     expect(interactionService.pending(session.id)).toBeNull();
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
       status: "completed",
-      sessionMetadata: { mode: "plan", plan: { status: "saved", revision: 1 } },
+      sessionMetadata: { mode: "chat", plan: { status: "saved", revision: 1 } },
     });
     expect(
       agentLoopRuntime.listRuns(session.id).find((item) => item.id === run.id),
@@ -2194,7 +2194,7 @@ describe("agentLoopRuntime", () => {
       projectId: "project-alpha",
       profileId: "synax",
       prompt: "Plan package inspection",
-      sessionMetadata: { mode: "plan" },
+      sessionMetadata: { mode: "plan", plan: { status: "draft" } },
     });
     await collectChunks(agentLoopRuntime.streamRun(session.id, {}));
     expect(interactionService.pending(session.id)?.kind).toBe("plan_approval");
@@ -2282,7 +2282,7 @@ describe("agentLoopRuntime", () => {
     );
     expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
       status: "waiting_input",
-      sessionMetadata: { mode: "plan", plan: { status: "draft" } },
+      sessionMetadata: { mode: "chat", plan: { status: "draft" } },
     });
     expect(interactionService.pending(session.id)?.kind).toBe("plan_approval");
     expect(

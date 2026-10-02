@@ -47,6 +47,30 @@ function sourceLabel(url: string): string {
   }
 }
 
+function segmentKey(
+  segment: (ReturnType<typeof buildTurnRenderSegments>)[number],
+  index: number,
+): string {
+  if (segment.type === "visualization") return `visualization:${segment.reference.id}`;
+  if (segment.type === "media") return `media:${segment.messageId ?? index}`;
+  if (segment.type === "sources")
+    return `sources:${segment.sources.map((source) => source.id).join(",") || index}`;
+  if (segment.type === "tool_round") {
+    const ids = segment.toolBlocks.flatMap((block) =>
+      block.type === "tool_call"
+        ? [block.call.id]
+        : block.type === "tool_call_group"
+          ? block.calls.map((call) => call.id)
+          : [],
+    );
+    return `tool-round:${ids.join(",") || index}`;
+  }
+  if (segment.type === "thinking") return `thinking:${index}`;
+  if (segment.type === "text") return `text:${index}`;
+  if (segment.type === "sub_session") return `sub-session:${segment.session.id}`;
+  return `context-compacted:${index}`;
+}
+
 function renderTurnBlocks(
   blocks: TurnContentBlock[],
   onExpandChild?: (sessionId: string) => void,
@@ -73,30 +97,31 @@ function renderTurnBlocks(
       segment.type === "visualization",
   );
   const render = (segment: (typeof segments)[number], i: number) => {
+    const key = segmentKey(segment, i);
     if (segment.type === "visualization")
       return (
         <TranscriptVisualization
-          key={segment.reference.id}
+          key={key}
           reference={segment.reference}
         />
       );
     if (segment.type === "media")
-      return <MediaParts key={i} parts={segment.parts} />;
+      return <MediaParts key={key} parts={segment.parts} />;
     if (segment.type === "thinking")
       return (
         <ThinkingBlock
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
-          key={i}
+          key={key}
           content={segment.content}
           rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
         />
       );
     if (segment.type === "tool_round")
-      return <ToolCallRoundPanel key={i} toolBlocks={segment.toolBlocks} />;
+      return <ToolCallRoundPanel key={key} toolBlocks={segment.toolBlocks} />;
     if (segment.type === "text")
       return (
         <StreamingTextBlock
-          key={i}
+          key={key}
           text={segment.content}
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
           startDelayMs={
@@ -109,7 +134,7 @@ function renderTurnBlocks(
       );
     if (segment.type === "sources")
       return (
-        <div key={i} className="mt-2 flex flex-wrap gap-1.5">
+        <div key={key} className="mt-2 flex flex-wrap gap-1.5">
           {segment.sources.map((source, index) => (
             <a
               key={source.id}
@@ -127,7 +152,7 @@ function renderTurnBlocks(
     if (segment.type === "sub_session")
       return (
         <SubSessionCard
-          key={i}
+          key={key}
           session={segment.session}
           onExpand={onExpandChild}
         />
@@ -135,7 +160,7 @@ function renderTurnBlocks(
     if (segment.type === "context_compacted")
       return (
         <div
-          key={i}
+          key={key}
           className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning"
         >
           <Zap size={12} />

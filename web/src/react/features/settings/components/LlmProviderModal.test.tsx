@@ -20,7 +20,9 @@ function setup(overrides: Partial<ApiProviderDraft> = {}, isNew = true) {
   };
   const onSave = vi.fn().mockResolvedValue(undefined);
   const onClose = vi.fn();
-  const onDiscoverModels = vi.fn().mockResolvedValue(["model-a", "model-b"]);
+  const onDiscoverModels = vi.fn().mockResolvedValue({
+    models: ["model-a", "model-b"],
+  });
   const onValidate = vi.fn().mockResolvedValue(undefined);
   const view = render(
     <LlmProviderModal
@@ -131,7 +133,7 @@ describe("provider setup", () => {
       "Network unavailable",
     );
     expect(onClose).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "重试保存" }));
+    await user.click(screen.getByRole("button", { name: "保存", exact: true }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(onSave).toHaveBeenCalledTimes(2);
     expect(onSave.mock.calls[1][0].model).toBe("manual-model");

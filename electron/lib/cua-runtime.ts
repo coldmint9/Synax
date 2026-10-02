@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { app } from 'electron';
+import { app, systemPreferences } from 'electron';
 import {
   CUA_GENERATION_FLAG,
   CUA_HELPER_BUNDLE_ID,
@@ -205,29 +205,12 @@ export class CuaRuntimeManager {
     if (process.platform !== 'darwin')
       return { accessibility: null, screenRecording: null, error: null };
     try {
-      const launch = resolveHelperLaunch({
-        platform: process.platform,
-        isPackaged: app.isPackaged,
-        appPath: app.getAppPath(),
-        resourcesPath: process.resourcesPath,
-        env: process.env,
-      });
-      const result = await execFileAsync(
-        launch.command,
-        [...launch.baseArgs, '--permissions'],
-        {
-          timeout: 5_000,
-          maxBuffer: 64 * 1024,
-          env: {
-            ...process.env,
-            ...Object.fromEntries(launch.environment.map(({ name, value }) => [name, value])),
-          },
-        },
-      );
-      const parsed = JSON.parse(result.stdout.trim()) as Partial<CuaPermissionStatus>;
       return {
-        accessibility: typeof parsed.accessibility === 'boolean' ? parsed.accessibility : null,
-        screenRecording: typeof parsed.screenRecording === 'boolean' ? parsed.screenRecording : null,
+        // Read TCC from the Electron host process. The helper runs as a child
+        // process and is not a reliable identity for macOS 26 permission probes.
+        accessibility: systemPreferences.isTrustedAccessibilityClient(false),
+        screenRecording:
+          systemPreferences.getMediaAccessStatus('screen') === 'granted',
         error: null,
       };
     } catch (error) {

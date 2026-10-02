@@ -13,6 +13,7 @@ import { useApiConnectivityStore } from "../../lib/apiConnectivity";
 import { mergeTheme } from "../../lib/theme/normalize";
 import { resolveThemeTokens } from "../../lib/theme/runtime";
 import { AppError } from "../../lib/appError";
+import { listProjects } from "../../lib/api/project-list";
 
 export interface ProjectSummary {
   id: string;
@@ -270,8 +271,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
     const version = ++projectFetchVersion;
     const mutationVersion = projectMutationVersion;
     try {
-      const { projectApi } = await import("../../lib/api/project");
-      const { items } = await projectApi.listProjects(undefined, {
+      const { items } = await listProjects(undefined, {
         throwOnError: true,
       });
       if (version !== projectFetchVersion) return;

@@ -16,6 +16,8 @@ import {
   isBuiltinApiProviderId,
   isConfiguredProvider,
   upsertDraft,
+  type DeclaredModelModality,
+  type ModelMeta,
 } from '../lib/providerPresets'
 import { validateProviderDraft } from '../lib/validation'
 import { configApi } from '../../../../lib/api/config'
@@ -235,14 +237,31 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     if (!result.ok) throw new Error(result.error || t('llmProviderConnectFailed'))
   }
 
-  const handleModalDiscover = async (draft: ApiProviderDraft): Promise<string[]> => {
+  const handleModalDiscover = async (draft: ApiProviderDraft) => {
     const result = await configApi.discoverAiModels({
       providerId: draft.apiKey.trim() ? undefined : draft.id,
       format: draft.format, baseUrl: draft.baseUrl,
       apiKey: draft.apiKey || undefined,
     })
     if (!result.ok) throw new Error(result.error || t('llmProviderDiscoverFailed'))
-    return result.models
+    const modalities = (value: string[] | undefined): DeclaredModelModality[] | undefined => {
+      const allowed = new Set<DeclaredModelModality>(['text', 'image', 'audio', 'video'])
+      const filtered = (value ?? []).filter((item): item is DeclaredModelModality => allowed.has(item as DeclaredModelModality))
+      return filtered.length ? filtered : undefined
+    }
+    const metadata: Record<string, ModelMeta> = Object.fromEntries(
+      Object.entries(result.modelMetadata ?? {}).map(([id, value]) => [id, {
+        contextLimit: value.contextLimit,
+        inputLimit: value.inputLimit,
+        outputLimit: value.outputLimit,
+        inputModalities: modalities(value.inputModalities),
+        outputModalities: modalities(value.outputModalities),
+      }]),
+    )
+    return {
+      models: result.models,
+      metadata,
+    }
   }
 
   const handleAddCustom = () => {

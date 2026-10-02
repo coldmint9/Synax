@@ -6,6 +6,10 @@ import path from 'node:path';
 let appPath = process.cwd();
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => appPath },
+  systemPreferences: {
+    isTrustedAccessibilityClient: vi.fn(() => true),
+    getMediaAccessStatus: vi.fn(() => 'granted'),
+  },
 }));
 
 const originalEnv = { ...process.env };
@@ -57,6 +61,23 @@ describe('Synax CUA helper supervisor', () => {
     const emitted = vi.fn();
     return { runtime: new CuaRuntimeManager(emitted), emitted };
   }
+
+  it('reads macOS permissions from the Electron host process', async () => {
+    const electron = await import('electron');
+    const accessibility = electron.systemPreferences.isTrustedAccessibilityClient as ReturnType<typeof vi.fn>;
+    const screen = electron.systemPreferences.getMediaAccessStatus as ReturnType<typeof vi.fn>;
+    accessibility.mockReturnValue(false);
+    screen.mockReturnValue('denied');
+
+    const { runtime } = await supervisor();
+    await expect(runtime.permissions()).resolves.toEqual({
+      accessibility: false,
+      screenRecording: false,
+      error: null,
+    });
+    expect(accessibility).toHaveBeenCalledWith(false);
+    expect(screen).toHaveBeenCalledWith('screen');
+  });
 
   it('resolves the helper as a separate process with its own bundle identity', async () => {
     const { runtime, emitted } = await supervisor();

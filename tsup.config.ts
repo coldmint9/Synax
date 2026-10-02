@@ -16,6 +16,8 @@ export default defineConfig({
   dts: false,
   platform: "node",
   target: "node22",
+  // runtimeAsset() has an explicit CJS fallback based on the bundle entry path.
+  define: { "import.meta.url": "undefined" },
   splitting: false,
   // These runtimes resolve package-relative resources and optional modules; ship them intact.
   noExternal: [

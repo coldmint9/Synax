@@ -1,5 +1,5 @@
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
-import { useApiConnectivityStore } from "../apiConnectivity";
+import { onApiRecovery, useApiConnectivityStore } from "../apiConnectivity";
 
 type EventHandler = (e: MessageEvent) => void;
 type ConnectHandler = () => void;
@@ -11,8 +11,12 @@ interface Subscription {
 
 let es: AuthenticatedEventSource | null = null;
 let subscribers = new Set<Subscription>();
+let stopRecoveryListener: (() => void) | null = null;
 
 function connect() {
+  if (!stopRecoveryListener) {
+    stopRecoveryListener = onApiRecovery(() => resumeRuntimeEventBus());
+  }
   if (useApiConnectivityStore.getState().shouldSkipRequest()) return;
   if (es && es.readyState !== AuthenticatedEventSource.CLOSED) return;
   es = new AuthenticatedEventSource("/api/agent-runtime/events/stream");
@@ -53,6 +57,8 @@ export function subscribe(sub: Subscription): () => void {
     if (subscribers.size === 0) {
       es?.close();
       es = null;
+      stopRecoveryListener?.();
+      stopRecoveryListener = null;
     }
   };
 }

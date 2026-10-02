@@ -34,6 +34,7 @@ import { discoverAcpProviders } from "../services/acp/discovery.js";
 import { listProviders as listAcpProviders } from "../services/acp/index.js";
 import { mergeMediaModelsIntoProviders } from "../services/media/catalog.js";
 import { beginWebSearchOAuth } from "../services/web-search/oauth.js";
+import { getRuntimeCatalog } from "../services/llm-runtime/catalog.js";
 
 export const configRoutes = new Hono();
 
@@ -1017,7 +1018,7 @@ async function discoverAiApiModels(
       controller.signal,
     );
     if (result.ok)
-      return { ...result, source: modelDiscoverySource(input.format) };
+      return withCatalogMetadata(result, input.providerId, modelDiscoverySource(input.format));
 
     if (result.status === 404 && !baseUrl.endsWith("/v1")) {
       const altUrl = `${baseUrl}/v1`;
@@ -1028,11 +1029,12 @@ async function discoverAiApiModels(
         controller.signal,
       );
       if (retry.ok)
-        return {
-          ...retry,
-          source: modelDiscoverySource(input.format),
-          resolvedBaseUrl: altUrl,
-        };
+        return withCatalogMetadata(
+          retry,
+          input.providerId,
+          modelDiscoverySource(input.format),
+          altUrl,
+        );
     }
 
     return { ...result, source: modelDiscoverySource(input.format) };
@@ -1047,6 +1049,38 @@ async function discoverAiApiModels(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function withCatalogMetadata(
+  result: { ok: boolean; models: string[]; error?: string },
+  providerId: string | undefined,
+  source: string,
+  resolvedBaseUrl?: string,
+): Promise<AiApiModelsDiscoverResponse> {
+  const catalog = await getRuntimeCatalog();
+  const preferred = providerId
+    ? catalog.providers.find((provider) => provider.id === providerId)
+    : undefined;
+  const modelMetadata: NonNullable<AiApiModelsDiscoverResponse["modelMetadata"]> = {};
+  for (const modelId of result.models) {
+    const model = preferred?.models.find((item) => item.id === modelId)
+      ?? catalog.providers.flatMap((provider) => provider.models).find((item) => item.id === modelId);
+    if (!model) continue;
+    modelMetadata[modelId] = {
+      contextLimit: model.contextLimit,
+      outputLimit: model.maxTokens,
+      inputModalities: model.inputModalities,
+      outputModalities: model.outputModalities,
+      reasoning: model.reasoning,
+      toolCall: model.toolCall,
+    };
+  }
+  return {
+    ...result,
+    source,
+    ...(resolvedBaseUrl ? { resolvedBaseUrl } : {}),
+    ...(Object.keys(modelMetadata).length ? { modelMetadata } : {}),
+  };
 }
 
 function buildModelDiscoveryHeaders(
