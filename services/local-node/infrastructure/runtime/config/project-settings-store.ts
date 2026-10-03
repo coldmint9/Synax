@@ -13,6 +13,11 @@ import type {
 } from './project-settings-types.js'
 import { createDefaultProjectSettings } from './project-settings-types.js'
 
+const codeModePatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  mcpTools: z.array(z.string().min(5).max(256).regex(/^mcp\.[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/)).max(64).optional(),
+}).strict()
+
 const computerUsePatchSchema = z.object({
   enabled: z.boolean().optional(),
   strategy: z.enum(['auto', 'direct', 'jev']).optional(),
@@ -135,6 +140,7 @@ export function updateProjectSettings(
     basics: patch.basics ? { ...existing.basics, ...patch.basics } : existing.basics,
     provider: patch.provider ? mergeProvider(existing.provider, patch.provider) : existing.provider,
     mcpServers: patch.mcpServers ?? existing.mcpServers ?? [],
+    codeMode: { enabled: existing.codeMode?.enabled ?? false, mcpTools: existing.codeMode?.mcpTools ?? [], ...(patch.codeMode !== undefined ? codeModePatchSchema.parse(patch.codeMode) : {}) },
     computerUse: patch.computerUse ? { ...existing.computerUse, ...computerUsePatchSchema.parse(patch.computerUse) } : existing.computerUse,
     collaboration: patch.collaboration
       ? { ...existing.collaboration, ...patch.collaboration, reviewPolicy: patch.collaboration.reviewPolicy ?? existing.collaboration.reviewPolicy }
@@ -211,6 +217,7 @@ function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): 
   return {
     ...settings,
     mcpServers: settings.mcpServers ?? [],
+    codeMode: { enabled: settings.codeMode?.enabled === true, mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,
@@ -223,6 +230,7 @@ function prepareSettingsForStorage(settings: ProjectSettings): ProjectSettings {
   return {
     ...settings,
     mcpServers: settings.mcpServers ?? [],
+    codeMode: { enabled: settings.codeMode?.enabled === true, mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,

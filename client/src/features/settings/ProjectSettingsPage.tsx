@@ -1,3 +1,4 @@
+import { CodeModeSettings } from "./components/CodeModeSettings";
 import { ScrollArea, Spinner, Text } from "@/shared/ui/ui/Display";
 import { Button } from "@/shared/ui/ui/Button";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -125,6 +126,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
           </div>
 
           <div className="space-y-8">
+            <CodeModeSettings value={settings.codeMode} locale={useShellLocale} onSave={async data => { await patchSection("codeMode", data); }} />
             <ComputerUseSettings value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
             <ProjectToolGrantsSection projectId={projectId} />
             <ProjectReferencesSection projectId={projectId} />

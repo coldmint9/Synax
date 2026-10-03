@@ -1,3 +1,5 @@
+import { updateProjectSettings } from "../../../infrastructure/runtime/config/project-settings-store.js";
+import { codeParentId } from "../code-mode/history.js";
 import { clearVersionSessionFixture } from "./version-session-fixture.js";
 import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
@@ -409,6 +411,37 @@ describe("agentLoopRuntime", () => {
       force: true,
     });
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
+  });
+
+  it("composes read-only code without leaking nested results or deduplicating executions", async () => {
+    ensureSynaxAgentRegistered();
+    const projectId = "code-mode-native-loop";
+    updateProjectSettings(projectId, { codeMode: { enabled: true, mcpTools: [] } }, "test");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-code-loop-"));
+    fs.writeFileSync(path.join(dir, "input.txt"), "private-intermediate-payload");
+    const session = agentSessionRuntime.create({ projectId, profileId: "synax", prompt: "Summarize", workDir: dir, permissionTier: "boundary" });
+    const code = 'const data = await tools.call("file.read", {path:"input.txt"}); return {summary:"read complete"};';
+    const captureStart = capturedRequests.length;
+    queueMockStep(makeToolStep({ toolName: "code_run", toolCallId: "code-1", args: { code } }));
+    queueMockStep(makeToolStep({ toolName: "code_run", toolCallId: "code-2", args: { code } }));
+    queueMockStep(makeTextStep("Read complete."));
+    try {
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Summarize the input." }));
+      const calls = agentRuntimeStore.listToolCalls(session.id);
+      const outers = calls.filter(call => call.toolId === "code.run");
+      expect(outers).toHaveLength(2);
+      expect(outers.every(call => call.status === "completed")).toBe(true);
+      expect(calls.filter(call => codeParentId(call))).toHaveLength(2);
+      const requests = capturedRequests.slice(captureStart);
+      expect(requests).toHaveLength(3);
+      expect(JSON.stringify(requests.map(request => request.messages))).not.toContain("private-intermediate-payload");
+      expect(JSON.stringify(requests.at(-1)?.messages)).toContain("read complete");
+      expect(JSON.stringify(requests.at(-1)?.messages)).not.toContain("nestedCalls");
+      expect(agentRuntimeStore.listRuns(session.id).at(-1)?.status).toBe("completed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      updateProjectSettings(projectId, { codeMode: { enabled: false } }, "test");
+    }
   });
 
   it("persists the accepted request identity before yielding the user message", async () => {

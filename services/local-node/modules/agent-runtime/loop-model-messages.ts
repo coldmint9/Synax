@@ -1,3 +1,4 @@
+import { isCodeNestedCall } from "./code-mode/history.js";
 import { resolveContextInputOwners } from "./context-input-boundaries.js";
 import {
   readRuntimeReminder,
@@ -64,7 +65,7 @@ export function createLoopHistoryReader(
       stepsByRun.set(runId, steps);
       return steps;
     },
-    listToolCalls: () => (toolCalls ??= store.listToolCalls(sessionId)),
+    listToolCalls: () => (toolCalls ??= store.listToolCalls(sessionId).filter((call) => !isCodeNestedCall(call))),
     listRunToolCalls: (runId) => {
       const cached = callsByRun?.get(runId);
       if (cached) return cached;
@@ -72,7 +73,7 @@ export function createLoopHistoryReader(
       // rescanning it per run.
       if (!callsByRun) {
         callsByRun = new Map();
-        for (const call of (toolCalls ??= store.listToolCalls(sessionId))) {
+        for (const call of (toolCalls ??= store.listToolCalls(sessionId).filter((call) => !isCodeNestedCall(call)))) {
           if (!call.runId) continue;
           const grouped = callsByRun.get(call.runId);
           if (grouped) grouped.push(call);
@@ -625,6 +626,21 @@ function toToolResultOutput(
       type: "error-text",
       value: record.error ?? "Tool execution did not complete.",
     };
+  }
+
+  if (record.toolId === "code.run" && record.outputRef && typeof record.outputRef === "object") {
+    // The raw journal/UI retains the complete trace. Model context needs the
+    // aggregate first, not dozens of nested call receipts or diagnostic logs.
+    const raw = record.outputRef as Record<string, unknown>;
+    const projected = {
+      status: raw.status, value: raw.value, error: raw.error,
+      truncated: raw.truncated, nextAction: raw.nextAction,
+      ...(typeof raw.stdout === "string" && raw.stdout ? { stdout: raw.stdout.slice(0, 1000), stdoutTruncated: raw.stdout.length > 1000 } : {}),
+    };
+    const serialized = JSON.stringify(projected);
+    return serialized.length <= MAX_TOOL_OUTPUT_JSON
+      ? { type: "json", value: projected as never }
+      : { type: "text", value: trimToolText(serialized) };
   }
 
   if (typeof record.outputRef === "string") {
