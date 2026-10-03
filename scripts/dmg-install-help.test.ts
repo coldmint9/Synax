@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import forgeConfig from "../forge.config.js";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("..", import.meta.url));
 const instructionPath = path.join(root, "scripts/dmg/安装说明.txt");
 const commandPath = path.join(root, "scripts/dmg/安装后运行.command");
 

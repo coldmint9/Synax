@@ -20,7 +20,7 @@ const changed = execFileSync("git", ["diff", "--name-only", baseTag, "HEAD"], {
   .split("\n")
   .filter(Boolean);
 const permitted =
-  /^(web\/|docs\/|README(?:\.zh-CN)?\.md$|package-lock\.json$|\.github\/workflows\/build-ui-release\.yml$|scripts\/(?:build-ui-release|ui-release-artifacts)\.ts$)/;
+  /^(client\/|docs\/|README(?:\.zh-CN)?\.md$|package-lock\.json$|\.github\/workflows\/build-ui-release\.yml$|scripts\/(?:build-ui-release|ui-release-artifacts)\.ts$)/;
 const unsafe = changed.filter((file) => !permitted.test(file));
 if (unsafe.length)
   throw new Error(
@@ -34,7 +34,7 @@ if (previous && compareVersions(previous.manifest.version, version) >= 0) {
   );
 }
 const artifacts = await createUiReleaseArtifacts(
-  path.resolve("web/dist"),
+  path.resolve("client/dist"),
   version,
   appVersion,
   previous?.manifest,

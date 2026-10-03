@@ -50,8 +50,8 @@ npm run dev:all
 
 ```bash
 npm run build
-npm run web:build
-npm run start:web
+npm run client:build
+npm run start:client
 ```
 
 生产模式使用构建后的前端，等待本地运行服务 ready 后再监听 `5173`，实时订阅通过共享 WebSocket 传输。`dev:all` 仍用于开发。不要同时启动两个使用相同 `DATA_ROOT` 的运行服务；若已有兼容的运行服务，可通过 `SYNAX_API_ORIGIN=http://127.0.0.1:<端口>` 显式连接。
@@ -59,7 +59,7 @@ npm run start:web
 如需 HTTP/2，为 `localhost` 配置浏览器信任的 TLS 证书，然后启动：
 
 ```bash
-WEB_TLS_CERT=/绝对路径/localhost-cert.pem WEB_TLS_KEY=/绝对路径/localhost-key.pem npm run start:web
+WEB_TLS_CERT=/绝对路径/localhost-cert.pem WEB_TLS_KEY=/绝对路径/localhost-key.pem npm run start:client
 ```
 
 TLS 入口让普通请求和静态资源使用 HTTP/2，WebSocket 使用兼容的 HTTP/1.1 upgrade；无证书时仍支持 HTTP/1.1 + 共享 WebSocket。程序不会安装根证书、绕过证书验证或降低鉴权要求。更换 `WEB_PORT` 时，自行连接的后端也必须配置相同的允许来源端口。
@@ -103,13 +103,13 @@ Electron 桌面版通过应用托管的 Cua Driver 提供电脑操作能力。�
 
 默认的「自动」策略直接使用 Cua，**不需要 Jev API，也不会请求 Jev 网络服务**。Jev 辅助模式是可选项：在启动桌面应用的环境中设置 `TYPESAFE_API_KEY`，再在项目的「电脑操作」设置中启用 Jev。控制器从有限的语义动作候选中选择，并在动作后重新观察窗口。`cua-perception` 视觉区域解析默认关闭，其可选扩展**不随 Synax 安装包分发**。
 
-Jev 也可以改走已配置的供应商，而不直接使用 TypeSafe：在「设置 → 供应商」中添加 OpenRouter 连接（OpenAI 兼容协议，Base URL 填 `https://openrouter.ai/api/v1`，填入你的 OpenRouter API Key），再在「电脑操作」设置里把 Jev 供应商指向该连接。OpenRouter 在 `https://openrouter.ai/api` 提供 TypeSafe 的 System One API，因此 Synax 会先把连接 Base URL 归一化，再由 SDK 拼接 `/v1/systemone`，并使用该连接的 API Key 而非 `TYPESAFE_API_KEY`。模型字段需填写 System One 模型 ID，例如 `jev-1.13`、`typesafe/jev-1.13` 或 `~typesafe/jev-latest`，不是 chat 模型 ID。OpenRouter 提到的 `client.models.list()` 不可用限制对 Synax 无影响，因为 Synax 从不列出模型。供应商留空时保持原有的 TypeSafe 行为。
+Jev 也可以改走已配置的供应商，而不直接使用 TypeSafe：在「设置 → 供应商」中添加 OpenRouter 连接（OpenAI 兼容协议，Base URL 填 `https://openrouter.ai/v1`，填入你的 OpenRouter API Key），再在「电脑操作」设置里把 Jev 供应商指向该连接。OpenRouter 在 `https://openrouter.ai/api` 提供 TypeSafe 的 System One API，因此 Synax 会先把连接 Base URL 归一化，再由 SDK 拼接 `/v1/systemone`，并使用该连接的 API Key 而非 `TYPESAFE_API_KEY`。模型字段需填写 System One 模型 ID，例如 `jev-1.13`、`typesafe/jev-1.13` 或 `~typesafe/jev-latest`，不是 chat 模型 ID。OpenRouter 提到的 `client.models.list()` 不可用限制对 Synax 无影响，因为 Synax 从不列出模型。供应商留空时保持原有的 TypeSafe 行为。
 
 也可以分别启动这两个服务，例如在两个终端里各跑一个：
 
 ```bash
-npm run dev:api   # 仅 API，3211 端口，~/.synax/web-dev
-npm run dev:web   # 仅 Web，5174 端口，~/.synax/web-dev
+npm run dev:local   # 仅 API，3211 端口，~/.synax/web-dev
+npm run dev:client   # 仅 Web，5174 端口，~/.synax/web-dev
 ```
 
 ### 4. 首次配置
@@ -126,7 +126,7 @@ npm run dev:web   # 仅 Web，5174 端口，~/.synax/web-dev
 | `WEB_PORT` | `5173`         | `5174`       | Web 开发服务端口     |
 | `WEB_HOST` | `0.0.0.0`      | 继承         | Web 开发服务监听地址 |
 
-独立运行默认值适用于 `start:api` 和 `start:web`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:api`、`dev:web` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
+独立运行默认值适用于 `start:local` 和 `start:client`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:local`、`dev:client` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
 
 ## 本地 Git 合并请求
 

@@ -4,7 +4,7 @@ import {
   MAX_FILE_BYTES,
   modalityForMime,
   type RuntimeContentPart,
-} from "../api/services/agent-runtime/content-parts.js";
+} from "../services/local-node/modules/agent-runtime/content-parts.js";
 import {
   createInterface,
   type Interface as ReadlineInterface,
@@ -15,7 +15,7 @@ import path from "node:path";
 import {
   createSynaxClient,
   SynaxRuntimeError,
-} from "../api/services/agent-runtime/runtime-client.js";
+} from "../services/local-node/modules/agent-runtime/runtime-client.js";
 import {
   exitCodeForError,
   exitCodeForRun,
@@ -24,17 +24,17 @@ import {
   type RuntimeInteraction,
   type RuntimeInteractionReply,
   type RuntimeTerminalResult,
-} from "../api/services/agent-runtime/runtime-protocol.js";
-import type { BackendCapabilities } from "../api/services/agent-runtime/backends/backend-contracts.js";
+} from "../services/local-node/modules/agent-runtime/runtime-protocol.js";
+import type { BackendCapabilities } from "../services/local-node/modules/agent-runtime/backends/backend-contracts.js";
 import type {
   CreateSessionRequest,
   PermissionReply,
   StreamTurnRequest,
-} from "../api/services/agent-runtime/contracts.js";
+} from "../services/local-node/modules/agent-runtime/contracts.js";
 import { HELP, parseArgs, type CliOptions, type OutputMode } from "./args.js";
 import { ensureRuntime } from "./runtime-host.js";
 
-export const CLI_VERSION = "1.6.6";
+export const CLI_VERSION = "1.6.7";
 export const EXIT = {
   completed: 0,
   failed: 1,

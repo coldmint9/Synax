@@ -1,0 +1,323 @@
+import { revokeAllProjectToolGrants } from "../../modules/agent-runtime/project-tool-grants.js";
+import { Hono } from "hono";
+import * as z from "zod/v4";
+import {
+  getProjectSettings,
+  updateProjectSettings,
+  patchProjectSettingsSection,
+  deleteProjectSettings,
+  archiveProject,
+  restoreProject,
+  transferProject,
+} from "../../infrastructure/runtime/config/project-settings-store.js";
+import { getEffectiveConfigForDisplay } from "../../infrastructure/runtime/config/config-store.js";
+import { syncProjectBasics } from "./projects.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
+import { readWorkspaceProject } from "../../modules/project-workspace.js";
+import {
+  workspaceLocationHostPath,
+  type WorkspaceLocation,
+} from "../../modules/workspace-location.js";
+import {
+  discoverLocalIntegrations,
+  importDiscoveredSkill,
+} from "../../infrastructure/integrations/local-discovery.js";
+import { discoverLocalMcpServers } from "../../infrastructure/mcp/mcp-discovery.js";
+
+export const projectSettingsRoutes = new Hono();
+
+function projectDiscoveryPath(
+  projectId: string,
+): { root: string; location: WorkspaceLocation } | null {
+  const project = readWorkspaceProject(projectId);
+  const source = project?.source;
+  const location: WorkspaceLocation | undefined =
+    source?.kind === "wsl" && source.distribution && source.path
+      ? { kind: "wsl", distribution: source.distribution, path: source.path }
+      : source?.localPath
+        ? { kind: "host", path: source.localPath }
+        : undefined;
+  return location
+    ? { root: workspaceLocationHostPath(location), location }
+    : null;
+}
+
+function discoveryDirectories(
+  location: WorkspaceLocation,
+  directories: string[],
+): string[] {
+  return directories.map((directory) =>
+    location.kind === "wsl"
+      ? workspaceLocationHostPath({ ...location, path: directory })
+      : directory,
+  );
+}
+
+const sectionSchema = z.enum([
+  "basics",
+  "provider",
+  "computerUse",
+  "mcp",
+  "collaboration",
+  "notifications",
+  "compliance",
+]);
+
+const highRiskAuthSchema = z.object({
+  confirmPhrase: z.string().min(1),
+  securityCode: z.string().min(1),
+  justification: z.string().min(8),
+});
+
+projectSettingsRoutes.get("/:projectId/settings", (c) => {
+  const projectId = c.req.param("projectId");
+  try {
+    const settings = getProjectSettings(projectId);
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ projectId, err: msg }, "[project-settings] get failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.get("/:projectId/settings/effective", (c) => {
+  const projectId = c.req.param("projectId");
+  try {
+    const settings = getProjectSettings(projectId);
+    const effective = getEffectiveConfigForDisplay(projectId);
+    return c.json({ settings, effective });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { projectId, err: msg },
+      "[project-settings] get effective failed",
+    );
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.get("/:projectId/settings/mcp/discovery", (c) => {
+  const projectId = c.req.param("projectId");
+  try {
+    const workspace = projectDiscoveryPath(projectId);
+    return c.json(discoverLocalMcpServers(workspace?.root));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { projectId, err: msg },
+      "[project-settings] MCP discovery failed",
+    );
+    return c.json({ error: msg }, 500);
+  }
+});
+
+const discoveryInput = z.object({
+  directories: z.array(z.string().min(1).max(4096)).max(8).default([]),
+});
+
+projectSettingsRoutes.post(
+  "/:projectId/settings/integrations/discovery",
+  async (c) => {
+    const parsed = discoveryInput.safeParse(
+      await c.req.json().catch(() => ({})),
+    );
+    if (!parsed.success)
+      return c.json({ error: "Invalid discovery directories" }, 400);
+    const workspace = projectDiscoveryPath(c.req.param("projectId"));
+    if (!workspace)
+      return c.json({ error: "A local project directory is required" }, 404);
+    const { paths: _paths, ...result } = discoverLocalIntegrations(
+      workspace.root,
+      {
+        extraDirectories: discoveryDirectories(
+          workspace.location,
+          parsed.data.directories,
+        ),
+      },
+    );
+    return c.json(result);
+  },
+);
+
+projectSettingsRoutes.post(
+  "/:projectId/settings/integrations/skills/import",
+  async (c) => {
+    const parsed = discoveryInput
+      .extend({ id: z.string().regex(/^[a-f0-9]{24}$/) })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "Invalid skill import" }, 400);
+    const workspace = projectDiscoveryPath(c.req.param("projectId"));
+    if (!workspace)
+      return c.json({ error: "A local project directory is required" }, 404);
+    try {
+      return c.json(
+        importDiscoveredSkill(workspace.root, parsed.data.id, {
+          extraDirectories: discoveryDirectories(
+            workspace.location,
+            parsed.data.directories,
+          ),
+        }),
+        201,
+      );
+    } catch (error) {
+      return c.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        409,
+      );
+    }
+  },
+);
+
+projectSettingsRoutes.put("/:projectId/settings", async (c) => {
+  const projectId = c.req.param("projectId");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  try {
+    const settings = updateProjectSettings(
+      projectId,
+      body as any,
+      "current-user",
+    );
+    syncProjectBasics(projectId, settings.basics);
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ projectId, err: msg }, "[project-settings] update failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.patch("/:projectId/settings/:section", async (c) => {
+  const projectId = c.req.param("projectId");
+  const section = c.req.param("section");
+  const parsed = sectionSchema.safeParse(section);
+  if (!parsed.success) {
+    return c.json({ error: `Invalid section: ${section}` }, 400);
+  }
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  try {
+    const settings = patchProjectSettingsSection(
+      projectId,
+      parsed.data,
+      body,
+      "current-user",
+    );
+    if (parsed.data === "basics") {
+      syncProjectBasics(projectId, settings.basics);
+    }
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { projectId, section, err: msg },
+      "[project-settings] patch section failed",
+    );
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.delete("/:projectId/settings", (c) => {
+  const projectId = c.req.param("projectId");
+  const deleted = deleteProjectSettings(projectId);
+  revokeAllProjectToolGrants(projectId);
+  return c.json({ ok: true, deleted });
+});
+
+projectSettingsRoutes.post("/:projectId/settings/archive", async (c) => {
+  const projectId = c.req.param("projectId");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const authParsed = z.object({ auth: highRiskAuthSchema }).safeParse(body);
+  if (!authParsed.success) {
+    return c.json(
+      { error: "Invalid auth envelope", details: authParsed.error.flatten() },
+      400,
+    );
+  }
+  try {
+    const settings = archiveProject(
+      projectId,
+      authParsed.data.auth,
+      "current-user",
+    );
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.post("/:projectId/settings/restore", async (c) => {
+  const projectId = c.req.param("projectId");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const authParsed = z.object({ auth: highRiskAuthSchema }).safeParse(body);
+  if (!authParsed.success) {
+    return c.json(
+      { error: "Invalid auth envelope", details: authParsed.error.flatten() },
+      400,
+    );
+  }
+  try {
+    const settings = restoreProject(
+      projectId,
+      authParsed.data.auth,
+      "current-user",
+    );
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+projectSettingsRoutes.post("/:projectId/settings/transfer", async (c) => {
+  const projectId = c.req.param("projectId");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const transferSchema = z.object({
+    newOwnerMemberId: z.string().min(1),
+    auth: highRiskAuthSchema,
+  });
+  const parsed = transferSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      400,
+    );
+  }
+  try {
+    const settings = transferProject(
+      projectId,
+      parsed.data.newOwnerMemberId,
+      parsed.data.auth,
+      "current-user",
+    );
+    return c.json({ settings });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
+  }
+});

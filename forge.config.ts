@@ -13,7 +13,7 @@ import {
 
 const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
-const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg/", import.meta.url));
+const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg", import.meta.url));
 
 const config: ForgeConfig = {
   hooks: {
@@ -47,8 +47,8 @@ const config: ForgeConfig = {
       "./server-dist",
       "./dist/cua-driver",
       "./cua-helper-dist",
-      "./web/dist",
-      "./api/db/migrations",
+      "./client/dist",
+      "./services/local-node/infrastructure/database/migrations",
       "./electron/resources/synax-icon.png",
       "./electron/resources/synax-icon.ico",
     ],

@@ -1,0 +1,274 @@
+import { versionRuntimeMode } from "./checkpoints/version-runtime/bridge.js";
+import {
+  assertHistoryUnlocked,
+  historyRevision,
+} from "./checkpoints/guards.js";
+import { applySessionPermissionUpdate } from "./session-permissions.js";
+import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
+import { bindAssets } from "./media-assets.js";
+import { prepareTurnReferences } from "./turn-references.js";
+import { profileService } from "./profile-service.js";
+import { createHash } from "node:crypto";
+import { getRawSqlite } from "../../infrastructure/database/index.js";
+import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
+import type { AgentRun, StreamTurnRequest } from "./contracts.js";
+import {
+  resolveBackendModel,
+  resolveSessionBackend,
+  validateBackendTurnInput,
+} from "./backends/backend-binding.js";
+import {
+  bindSessionWorkDir,
+  tryResolveSessionWorkspaceLocation,
+} from "./tools/workspace.js";
+import { interactionService } from "./interaction-service.js";
+import { agentRuntimeStore } from "./session-store.js";
+import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
+import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+
+export interface AcceptedRuntimeInput {
+  version: 1;
+  historyRevision?: number;
+  requestId: string;
+  inputHash: string;
+  mode: AgentSessionStreamMode;
+  input: StreamTurnRequest;
+  backendId: string;
+  workDir: string;
+  previousSessionStatus: string;
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, stable(item)]),
+    );
+  return value;
+}
+
+export function acceptRuntimeRun(
+  sessionId: string,
+  input: StreamTurnRequest,
+  requestId: string,
+  mode: AgentSessionStreamMode = "turn",
+): { run: AgentRun; reused: boolean } {
+  if (versionRuntimeMode(sessionId) === "transcript")
+    throw new AgentRuntimeError(
+      "Version transcript rollout is not yet ready for execution.",
+      "VERSION_RUNTIME_NOT_READY",
+      409,
+    );
+  input = normalizeInput(input);
+  if (input.contentParts && !hasInput(input))
+    throw new AgentValidationError("Input is empty.");
+  if (!requestId.trim() || requestId.length > 128)
+    throw new AgentValidationError(
+      "A request ID of 1–128 characters is required.",
+    );
+  if (mode === "resume")
+    throw new AgentValidationError(
+      "Resume the pending interaction instead of submitting a new Run.",
+    );
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(stable({ input, mode })))
+    .digest("hex");
+  const db = getRawSqlite();
+  return db.transaction(() => {
+    assertHistoryUnlocked(sessionId);
+    let session = agentRuntimeStore.getSession(sessionId);
+    const previous = db
+      .prepare(
+        `SELECT id FROM agent_runtime_runs WHERE session_id = ?
+      AND json_extract(metadata_json, '$.runtime.requestId') = ?`,
+      )
+      .get(sessionId, requestId) as { id: string } | undefined;
+    if (previous) {
+      const run = agentRuntimeStore.getRun(previous.id);
+      const runtime = run.metadata.runtime as AcceptedRuntimeInput;
+      if (runtime.inputHash !== inputHash)
+        throw new AgentRuntimeError(
+          "This request ID was already used for different input.",
+          "REQUEST_CONFLICT",
+          409,
+        );
+      return { run, reused: true };
+    }
+    if (
+      (
+        session.sessionMetadata?.contextCompaction as
+          | { status?: string }
+          | undefined
+      )?.status === "running"
+    )
+      throw new AgentRuntimeError(
+        "Wait for context compaction to finish.",
+        "COMPACTION_BUSY",
+        409,
+      );
+    if (profileService.getForSession(session).executionHost === "embedded") {
+      throw new AgentRuntimeError(
+        "This session belongs to an embedded job host. Use that job’s controls.",
+        "EMBEDDED_HOST_REQUIRED",
+        409,
+      );
+    }
+    // An unconfirmed process belongs to its original execution. Keep that
+    // session fenced, but never lock every other session in the project.
+    if (session.sessionMetadata?.runtimeControl) {
+      throw new AgentRuntimeError(
+        "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
+        "RECOVERY_REQUIRED",
+        409,
+      );
+    }
+    let parentId = session.parentSessionId;
+    while (parentId) {
+      const parent = agentRuntimeStore.getSession(parentId);
+      if (parent.sessionMetadata?.runtimeControl)
+        throw new AgentRuntimeError(
+          "An ancestor execution is stopping or requires recovery.",
+          "ANCESTOR_STOPPING",
+          409,
+        );
+      parentId = parent.parentSessionId;
+    }
+    const active = db
+      .prepare(
+        `SELECT id FROM agent_runtime_runs WHERE session_id = ? AND status IN ('queued', 'running') LIMIT 1`,
+      )
+      .get(sessionId) as { id: string } | undefined;
+    if (active)
+      throw new AgentRuntimeError(
+        "This session already has an active or queued execution.",
+        "SESSION_BUSY",
+        409,
+      );
+    const pending = interactionService.pending(sessionId);
+    const defersPlan = pending?.kind === "plan_approval" && hasInput(input);
+    if ((pending && !defersPlan) || session.status === "waiting_permission") {
+      throw new AgentRuntimeError(
+        "Resolve the pending interaction before submitting another execution.",
+        "INTERACTION_PENDING",
+        409,
+      );
+    }
+    if (
+      mode === "continue" &&
+      session.status === "completed" &&
+      !hasInput(input)
+    ) {
+      throw new AgentValidationError(
+        "Completed sessions require a new message to continue.",
+      );
+    }
+    const binding = resolveSessionBackend(sessionId);
+    if (
+      tryResolveSessionWorkspaceLocation(sessionId, session.projectId)?.kind ===
+        "wsl" &&
+      binding.id !== "native"
+    ) {
+      throw new AgentRuntimeError(
+        "WSL2 projects currently support only the Synax native backend.",
+        "WSL_BACKEND_UNSUPPORTED",
+        409,
+      );
+    }
+    validateBackendTurnInput(binding.id, input);
+    bindAssets(sessionId, inputParts(input));
+    const model = resolveBackendModel(sessionId, input);
+    let workDir: string;
+    try {
+      workDir = bindSessionWorkDir(sessionId);
+    } catch (error) {
+      throw new AgentValidationError(
+        error instanceof Error ? error.message : "Invalid execution workspace.",
+      );
+    }
+    if (
+      input.permissionTier !== undefined ||
+      input.permissionOverrides !== undefined
+    ) {
+      session = applySessionPermissionUpdate(sessionId, input);
+    }
+    const runtime: AcceptedRuntimeInput = {
+      version: 1,
+      historyRevision: historyRevision(sessionId),
+      requestId,
+      inputHash,
+      mode,
+      input: {
+        ...input,
+        referenceContext: prepareTurnReferences(sessionId, input.references),
+        ...(model ? { model } : {}),
+      },
+      backendId: binding.id,
+      workDir,
+      previousSessionStatus: session.status,
+    };
+    const run = agentRuntimeStore.appendRun({
+      id: makeRuntimeId("run"),
+      sessionId,
+      status: "queued",
+      startedAt: nowIso(),
+      completedAt: null,
+      triggerMessageId: null,
+      currentStep: 0,
+      stopReason: null,
+      model,
+      metadata: { runtime },
+    });
+    // A fresh user message must still pass through Native's existing plan-save handoff.
+    if (!defersPlan)
+      agentRuntimeStore.updateSession(sessionId, {
+        status: "queued",
+        activeRunId: run.id,
+        updatedAt: nowIso(),
+      });
+    return { run, reused: false };
+  })();
+}
+
+/** Persist this identity on the input itself before any message event can be observed. */
+export function acceptedInputRequestId(
+  sessionId: string,
+  runId?: string,
+): string | undefined {
+  if (!runId) return undefined;
+  const run = agentRuntimeStore.getRun(runId);
+  if (run.sessionId !== sessionId)
+    throw new AgentValidationError(
+      "The accepted Run belongs to another session.",
+    );
+  return (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId;
+}
+
+export function activateAcceptedRun(
+  sessionId: string,
+  runId: string,
+  triggerMessageId: string,
+  model: string | null,
+): AgentRun {
+  return getRawSqlite().transaction(() => {
+    const run = agentRuntimeStore.getRun(runId);
+    if (run.sessionId !== sessionId)
+      throw new AgentValidationError(
+        "The accepted Run belongs to another session.",
+      );
+    if (run.status !== "queued")
+      throw new AgentRuntimeError(
+        "Only a queued Run can be activated.",
+        "RUN_ALREADY_STARTED",
+        409,
+      );
+    return agentRuntimeStore.updateRun(runId, {
+      status: "running",
+      triggerMessageId,
+      model,
+      startedAt: nowIso(),
+    });
+  })();
+}

@@ -129,23 +129,23 @@ for (const name of readdirSync(join(src, "@ubjs")).filter(name => name.startsWit
 
 // Drop stale packaged skills when upgrading from the retired prototype platform.
 rmSync(join(serverDist, "skills/builtin"), { recursive: true, force: true });
-cpSync(join(root, "api/skills/builtin"), join(serverDist, "skills/builtin"), {
+cpSync(join(root, "services/local-node/skills/builtin"), join(serverDist, "skills/builtin"), {
   recursive: true,
 });
 for (const name of ["eval-set.json", "eval-set-synax.json", "fixtures"]) {
   cpSync(
-    join(root, "api/prototypes/tree-embedding-bench", name),
+    join(root, "services/local-node/prototypes/tree-embedding-bench", name),
     join(serverDist, "prototypes/tree-embedding-bench", name),
     { recursive: true },
   );
 }
 rmSync(join(serverDist, "migrations"), { recursive: true, force: true });
-cpSync(join(root, "api/db/migrations"), join(serverDist, "migrations"), {
+cpSync(join(root, "services/local-node/infrastructure/database/migrations"), join(serverDist, "migrations"), {
   recursive: true,
 });
 mkdirSync(join(serverDist, "workers"), { recursive: true });
 cpSync(
-  join(root, "api/workers/owned-process-runner.cjs"),
+  join(root, "services/worker/jobs/owned-process-runner.cjs"),
   join(serverDist, "workers/owned-process-runner.cjs"),
 );
 console.log("native modules ready.");

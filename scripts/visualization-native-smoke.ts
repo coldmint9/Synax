@@ -16,17 +16,17 @@ const temp = await fs.mkdtemp(
 const output = path.resolve("out/visualization-native-smoke");
 await fs.mkdir(output, { recursive: true });
 const fixture = await fs.readFile(
-  "web/src/react/features/visualizations/__tests__/fixtures/approved-demo.html",
+  "client/src/features/visualizations/__tests__/fixtures/approved-demo.html",
   "utf8",
 );
 const hostCss = await fs.readFile(
-  "web/src/react/features/visualizations/visualizations.css",
+  "client/src/features/visualizations/visualizations.css",
   "utf8",
 );
 const bundle = await build({
   stdin: {
-    contents: `import React from 'react';import {createRoot} from 'react-dom/client';import {InlineVisualization} from './src/react/features/visualizations/InlineVisualization';const root=createRoot(document.getElementById('root'));window.renderPreview=(html=${JSON.stringify(fixture)},id='preview')=>root.render(<InlineVisualization visualization={{id,html}}/>);window.removePreview=()=>root.render(null);window.renderPreview();`,
-    resolveDir: path.resolve("web"),
+    contents: `import React from 'react';import {createRoot} from 'react-dom/client';import {InlineVisualization} from './src/features/visualizations/InlineVisualization';const root=createRoot(document.getElementById('root'));window.renderPreview=(html=${JSON.stringify(fixture)},id='preview')=>root.render(<InlineVisualization visualization={{id,html}}/>);window.removePreview=()=>root.render(null);window.renderPreview();`,
+    resolveDir: path.resolve("client"),
     loader: "tsx",
   },
   write: false,

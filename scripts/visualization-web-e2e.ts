@@ -25,8 +25,8 @@ await fs.mkdir(workspace);
 const source = await fs.readFile(
   path.resolve(
     reported
-      ? "web/src/react/features/visualizations/__tests__/fixtures/reported-navbar.html"
-      : "web/src/react/features/visualizations/__tests__/fixtures/approved-demo.html",
+      ? "client/src/features/visualizations/__tests__/fixtures/reported-navbar.html"
+      : "client/src/features/visualizations/__tests__/fixtures/approved-demo.html",
   ),
   "utf8",
 );
@@ -50,12 +50,12 @@ await fs.writeFile(
   }),
 );
 const { agentSessionRuntime } =
-  await import("../api/services/agent-runtime/session-runtime.js");
+  await import("../services/local-node/modules/agent-runtime/session-runtime.js");
 const { agentRuntimeStore } =
-  await import("../api/services/agent-runtime/session-store.js");
+  await import("../services/local-node/modules/agent-runtime/session-store.js");
 const { persistInlineVisualization } =
-  await import("../api/services/agent-runtime/visualization-integration.js");
-const { closeDb } = await import("../api/db/index.js");
+  await import("../services/local-node/modules/agent-runtime/visualization-integration.js");
+const { closeDb } = await import("../services/local-node/infrastructure/database/index.js");
 const session = agentSessionRuntime.create({
   projectId: "visualization-app",
   profileId: "executor",
@@ -122,7 +122,7 @@ const api = spawn(process.execPath, ["server-dist/server.cjs"], {
 });
 api.stdout.on("data", (data) => logs.push(data.toString()));
 api.stderr.on("data", (data) => logs.push(data.toString()));
-const dist = path.resolve("web/dist");
+const dist = path.resolve("client/dist");
 const server = http.createServer(async (req, res) => {
   if (req.url?.startsWith("/escape")) {
     escapedRequests++;

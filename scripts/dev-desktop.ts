@@ -1,6 +1,6 @@
 import {
   ROOT_DIR,
-  WEB_DIR,
+  CLIENT_DIR,
   ensureWorkspaceInstall,
   logStart,
   readPort,
@@ -26,7 +26,7 @@ logStart("dev:desktop", `Web http://${webHost}:${webPort}`);
 
 const web = spawnProcess(
   ["npx", "vite", "--force", "--host", webHost, "--port", String(webPort)],
-  WEB_DIR,
+  CLIENT_DIR,
 );
 
 // Watch electron source and recompile on change

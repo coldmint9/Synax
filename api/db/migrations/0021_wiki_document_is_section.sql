@@ -1,1 +1,0 @@
--- is_section column is added idempotently via ensureColumn() in db/index.ts

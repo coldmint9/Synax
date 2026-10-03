@@ -1,0 +1,302 @@
+import { act, render } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { SessionStaticTimeline } from "../SessionStaticTimeline";
+import { useAgentSessionStore as store } from "../state/agentSessionStore";
+import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
+import type {
+  AgentRuntimeMessage,
+  AgentSession,
+} from "../../../adapters/transport/agentRuntime";
+
+const renders = vi.hoisted(() => vi.fn());
+vi.mock("../TimelineEntryView", () => ({
+  TimelineEntryView: ({
+    entry,
+    isWorking,
+  }: {
+    entry: { id: string };
+    isWorking?: boolean;
+  }) => {
+    renders(entry.id);
+    return <div data-working={isWorking || undefined}>{entry.id}</div>;
+  },
+}));
+vi.mock("../TimelineLazyEntry", () => ({
+  TimelineLazyEntry: ({ children }: { children: React.ReactNode }) => children,
+  estimateEntryHeight: () => 100,
+}));
+afterEach(() => {
+  act(() => store.setState(store.getInitialState()));
+  vi.clearAllMocks();
+});
+
+it("keeps only the latest activity working between steps until the session stops", () => {
+  const tool = (id: string) => ({
+    type: "tool_call" as const,
+    call: {
+      id,
+      toolId: "bash",
+      inputSummary: "pwd",
+      outputSummary: "/workspace",
+      status: "completed" as const,
+      duration: "10ms",
+    },
+  });
+  store.setState({
+    ...store.getInitialState(),
+    streamingCompletedSteps: [
+      {
+        stepId: "finished-step",
+        stepIndex: 1,
+        blocks: [
+          tool("first"),
+          { type: "text", content: "Continuing" },
+          tool("latest"),
+        ],
+      },
+    ],
+  });
+  const props = {
+    unifiedLive: true,
+    runs: [],
+    steps: [],
+    messages: [],
+    toolCalls: [],
+    isRunning: true,
+  };
+  const { container, rerender } = render(<SessionStaticTimeline {...props} />);
+  expect(container.querySelectorAll('[data-working="true"]')).toHaveLength(1);
+  expect(container.querySelector('[data-working="true"]')).toHaveTextContent(
+    "finished-step:activity:2",
+  );
+
+  // A new step can exist before it has emitted any content.
+  act(() => store.setState({ streamingStepId: "next-step" }));
+  rerender(<SessionStaticTimeline {...props} excludeStepId="next-step" />);
+  expect(container.querySelectorAll('[data-working="true"]')).toHaveLength(1);
+  expect(container.querySelector('[data-working="true"]')).toHaveTextContent(
+    "finished-step:activity:2",
+  );
+
+  act(() =>
+    store.setState({
+      streamingLive: {
+        ...EMPTY_STREAMING_BUFFERS,
+        blocks: [
+          { type: "text", content: "New instruction" },
+          tool("next-tool"),
+        ],
+      },
+    }),
+  );
+  expect(container.querySelectorAll('[data-working="true"]')).toHaveLength(1);
+  expect(container.querySelector('[data-working="true"]')).toHaveTextContent(
+    "next-step:activity:1",
+  );
+
+  rerender(
+    <SessionStaticTimeline
+      {...props}
+      excludeStepId="next-step"
+      isRunning={false}
+    />,
+  );
+  expect(container.querySelector('[data-working="true"]')).toBeNull();
+});
+
+it("does not rerender historical message bodies for streaming token deltas", () => {
+  store.setState({ ...store.getInitialState(), streamingStepId: "live" });
+  render(
+    <SessionStaticTimeline
+      unifiedLive
+      runs={[]}
+      steps={[]}
+      messages={[
+        {
+          id: "history",
+          sessionId: "s",
+          role: "user",
+          content: "History",
+          createdAt: "2026-01-01T00:00:00Z",
+        } as AgentRuntimeMessage,
+      ]}
+      toolCalls={[]}
+      excludeStepId="live"
+    />,
+  );
+  const historicalCalls = renders.mock.calls.filter(([id]) =>
+    id.includes("history"),
+  ).length;
+  expect(historicalCalls).toBeGreaterThan(0);
+  act(() =>
+    store.setState({
+      streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "new tokens" },
+    }),
+  );
+  expect(
+    renders.mock.calls.filter(([id]) => id.includes("history")),
+  ).toHaveLength(historicalCalls);
+});
+
+it("keeps completed replies in the live tail from rerendering on every token", () => {
+  store.setState({
+    ...store.getInitialState(),
+    streamingStepId: "live",
+    streamingCompletedSteps: [
+      {
+        stepId: "previous",
+        stepIndex: 1,
+        blocks: [{ type: "text", content: "Already displayed" }],
+      },
+    ],
+  });
+  render(
+    <SessionStaticTimeline
+      unifiedLive
+      runs={[]}
+      steps={[]}
+      messages={[]}
+      toolCalls={[]}
+      excludeStepId="live"
+      isRunning
+    />,
+  );
+  const before = renders.mock.calls.filter(
+    ([id]) => id === "previous:content:0",
+  ).length;
+  expect(before).toBeGreaterThan(0);
+  act(() =>
+    store.setState({
+      streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "More tokens" },
+    }),
+  );
+  expect(
+    renders.mock.calls.filter(([id]) => id === "previous:content:0"),
+  ).toHaveLength(before);
+});
+
+it("preserves reply DOM nodes when live content settles and another step starts", () => {
+  store.setState({
+    ...store.getInitialState(),
+    streamingStepId: "first",
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "Answer" },
+  });
+  const props = {
+    unifiedLive: true,
+    runs: [],
+    steps: [],
+    messages: [],
+    toolCalls: [],
+    isRunning: true,
+  };
+  const { container, rerender } = render(
+    <SessionStaticTimeline {...props} excludeStepId="first" />,
+  );
+  const findReply = () =>
+    Array.from(container.querySelectorAll("div")).find(
+      (el) => el.textContent === "first:content:0" && el.children.length === 0,
+    );
+  const original = findReply();
+  expect(original).toBeDefined();
+  act(() =>
+    store.setState({
+      streamingStepId: null,
+      streamingLive: EMPTY_STREAMING_BUFFERS,
+      streamingCompletedSteps: [
+        {
+          stepId: "first",
+          stepIndex: 1,
+          blocks: [{ type: "text", content: "Answer" }],
+        },
+      ],
+    }),
+  );
+  rerender(<SessionStaticTimeline {...props} />);
+  expect(findReply()).toBe(original);
+  act(() => store.setState({ streamingStepId: "second" }));
+  rerender(<SessionStaticTimeline {...props} excludeStepId="second" />);
+  expect(findReply()).toBe(original);
+});
+
+it.each(["live", "snapshot"])(
+  "leaves pending questions in the composer and restores history after %s activity",
+  (stage) => {
+    store.setState({
+      ...store.getInitialState(),
+      interactionState: {
+        sessionId: "s",
+        loading: false,
+        error: null,
+        items: [
+          {
+            id: "question",
+            sessionId: "s",
+            stepId: "ask-step",
+            runId: "r",
+            toolCallId: "ask-call",
+            kind: "clarification",
+            revision: 1,
+            status: "pending",
+            createdAt: "2026-01-01T00:00:00Z",
+            resolvedAt: null,
+            response: null,
+            request: { title: "Scope?", questions: [] },
+          },
+        ],
+      },
+      ...(stage === "live"
+        ? {
+            streamingStepId: "ask-step",
+            streamingLive: {
+              ...EMPTY_STREAMING_BUFFERS,
+              pendingText: "Need your input",
+            },
+          }
+        : {
+            streamingCompletedSteps: [
+              {
+                stepId: "ask-step",
+                stepIndex: 1,
+                blocks: [{ type: "text", content: "Need your input" }],
+              },
+            ],
+          }),
+    });
+    const { container } = render(
+      <SessionStaticTimeline
+        unifiedLive
+        session={{ id: "s" } as AgentSession}
+        runs={[]}
+        steps={[]}
+        messages={[]}
+        toolCalls={[]}
+        excludeStepId={stage === "live" ? "ask-step" : undefined}
+      />,
+    );
+    const text = container.textContent!;
+    expect(text).toContain("ask-step");
+    expect(text).not.toContain("interaction-question");
+
+    const current = store.getState().interactionState!;
+    for (const status of ["answered", "cancelled"] as const) {
+      act(() => store.setState({
+        interactionState: {
+          ...current,
+          items: current.items.map((item) => ({ ...item, status })),
+        },
+      }));
+      expect(container.textContent).toContain("interaction-question");
+      expect(container.textContent!.indexOf("ask-step")).toBeLessThan(
+        container.textContent!.indexOf("interaction-question"),
+      );
+    }
+    // Plan approvals still render inline while pending.
+    act(() => store.setState({
+      interactionState: {
+        ...current,
+        items: current.items.map((item) => ({ ...item, kind: "plan_approval" })),
+      },
+    }));
+    expect(container.textContent).toContain("interaction-question");
+  },
+);

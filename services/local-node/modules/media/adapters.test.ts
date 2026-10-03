@@ -1,0 +1,6 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { submitMediaJob } from './adapters.js';
+import type { GlobalConfig } from '../../infrastructure/runtime/config/config-types.js';
+const config={providers:[{id:'custom-api:openrouter',label:'OpenRouter',kind:'api',status:'live',caps:{canFollowUp:true,canCancel:true},models:[]}],providerConnections:{'custom-api:openrouter':{providerId:'custom-api:openrouter',apiKey:'secret'}},defaultApiProviderId:'custom-api:openrouter'} as unknown as GlobalConfig;
+afterEach(()=>vi.unstubAllGlobals());
+describe('media adapter wire contracts',()=>{it('uses OpenRouter dedicated image endpoint and preserves model ids',async()=>{const fetcher=vi.fn(async(url:string,init:any)=>{expect(url).toBe('https://openrouter.ai/api/v1/images');const body=JSON.parse(init.body);expect(body.model).toBe('openai/gpt-image-2.5-flare');return Response.json({data:[{b64_json:Buffer.from('png').toString('base64')}]});});vi.stubGlobal('fetch',fetcher);const r=await submitMediaJob(config,{projectId:'p',providerId:'custom-api:openrouter',modelId:'openai/gpt-image-2.5-flare',operation:'text-to-image',prompt:'test',idempotencyKey:'i'});expect(r.status).toBe('succeeded');expect(r.immediate?.[0].bytes.toString()).toBe('png');});});

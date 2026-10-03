@@ -1,0 +1,813 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as testingRender,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenuProvider";
+
+const render: typeof testingRender = (ui, options) => testingRender(ui, {
+  wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
+  ...options,
+});
+import { agentRuntimeApi, type SessionEnvironment } from "../../../adapters/transport/agentRuntime";
+import { configApi } from "../../../adapters/transport/config";
+import { useShellStore } from "../../../shared/state/shellStore";
+import { WorkspaceDashboard } from "../WorkspaceDashboard";
+import { useAgentSessionStore } from "../state/agentSessionStore";
+import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
+
+vi.mock("../SessionBackgroundProcesses", () => ({
+  SessionBackgroundProcesses: () => null,
+}));
+
+const environment: SessionEnvironment = {
+  sessionId: "session-1",
+  projectId: "proj-1",
+  workspacePath: "/Users/mint/IdeaProjects/jbolt-ai-vue/.worktrees/feature",
+  branch: "feature/dynamic-workflow-refactor",
+  headCommitSha: "5e5727b0abcdef0123456789",
+  dirty: true,
+  additions: 585,
+  deletions: 138,
+  changedFiles: [
+    {
+      path: "src/views/chat-cli/index.vue",
+      status: "modified",
+      additions: 40,
+      deletions: 12,
+      staged: false,
+      untracked: false,
+    },
+    {
+      path: "src/views/cli_chat/components/blocks/BlockAsk.vue",
+      status: "added",
+      additions: 62,
+      deletions: 0,
+      staged: true,
+      untracked: false,
+    },
+    {
+      path: "notes.md",
+      status: "untracked",
+      additions: 4,
+      deletions: 0,
+      staged: false,
+      untracked: true,
+    },
+  ],
+  agentChangedFiles: [],
+  inputSources: [
+    {
+      kind: "file",
+      label: "src/views/cli_chat/index.vue",
+      path: "src/views/cli_chat/index.vue",
+    },
+    {
+      kind: "file",
+      label: "src/views/cli_chat/utils/toolDisplay.js",
+      path: "src/views/cli_chat/utils/toolDisplay.js",
+    },
+  ],
+  subagents: [
+    {
+      id: "sub-1",
+      parentSessionId: "session-1",
+      profileId: "explorer",
+      status: "completed",
+      title: null,
+      prompt:
+        "## Investigation Task\n用只读方式深度调研 src/views/cli_chat 目录",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+      completedAt: "2026-09-10T00:10:00.000Z",
+      resultSummary: null,
+    },
+    {
+      id: "sub-2",
+      parentSessionId: "session-1",
+      profileId: "worker",
+      status: "running",
+      title: "Writer",
+      prompt: "重写 BlockTool.vue",
+      updatedAt: "2026-09-10T00:20:00.000Z",
+      completedAt: null,
+      resultSummary: null,
+    },
+  ],
+  refreshedAt: "2026-09-10T00:30:00.000Z",
+};
+
+function renderDashboard(overrides: Partial<SessionEnvironment> = {}) {
+  return render(
+    <WorkspaceDashboard
+      sessionId="session-1"
+      environment={{ ...environment, ...overrides }}
+      loading={false}
+      reload={() => {}}
+    />,
+  );
+}
+
+describe("WorkspaceDashboard", () => {
+  beforeEach(() => {
+    useSessionWorkspaceStore.setState({ sessions: {} });
+    useAgentSessionStore.setState({
+      selectedSessionId: "session-1",
+      sessionTodos: [],
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "system" },
+    }));
+  });
+
+  it("divides the snapshot into one card per component group", () => {
+    const { container } = renderDashboard();
+
+    expect(screen.getByText("feature/dynamic-workflow-refactor")).toBeTruthy();
+
+    expect(screen.getByRole("button", { name: /^Subagents/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Git 变更" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toBeTruthy();
+    expect(screen.getByText("运行中 1")).toBeTruthy();
+    expect(screen.getByText("已暂存 1")).toBeTruthy();
+    expect(container.querySelectorAll("[data-file-type-icon]")).toHaveLength(5);
+    expect(
+      container.querySelector('[data-file-type-icon="index.vue"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-file-type-icon="notes.md"]'),
+    ).not.toBeNull();
+  });
+
+  it("combines inputs and outputs into one panel with counts and exclusive views", () => {
+    const { container } = renderDashboard({ outputFiles: ["docs/result.md"] });
+    expect(
+      container.querySelectorAll('[data-dashboard-panel="files"]'),
+    ).toHaveLength(1);
+    expect(
+      container.querySelector('[data-dashboard-panel="inputs"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-dashboard-panel="outputs"]'),
+    ).toBeNull();
+    const inputs = screen.getByRole("tab", { name: "输入源 2" });
+    const outputs = screen.getByRole("tab", { name: "产出文件 1" });
+    expect(inputs).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+    fireEvent.click(outputs);
+    expect(outputs).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("result.md")).toBeInTheDocument();
+    expect(screen.queryByText("toolDisplay.js")).toBeNull();
+    fireEvent.click(inputs);
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+  });
+
+  it("defaults to outputs when no inputs exist and shows empty views explicitly", () => {
+    renderDashboard({ inputSources: [], outputFiles: ["result.md"] });
+    expect(screen.getByRole("tab", { name: "产出文件 1" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("result.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "输入源 0" }));
+    expect(screen.getByText("暂无输入源")).toBeInTheDocument();
+    expect(screen.queryByText("result.md")).toBeNull();
+  });
+
+  it("shares one disclosure and supports keyboard switching while collapsed", () => {
+    renderDashboard();
+    const toggle = screen.getByRole("button", { name: "输入 / 输出" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("toolDisplay.js")).toBeNull();
+    const inputs = screen.getByRole("tab", { name: /^输入源/ });
+    const outputs = screen.getByRole("tab", { name: /^产出文件/ });
+    fireEvent.keyDown(inputs, { key: "ArrowRight" });
+    expect(outputs).toHaveFocus();
+    expect(outputs).toHaveAttribute("aria-selected", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("还没有产出物")).toBeInTheDocument();
+    fireEvent.keyDown(outputs, { key: "Home" });
+    expect(inputs).toHaveFocus();
+    expect(screen.getByText("toolDisplay.js")).toBeInTheDocument();
+    fireEvent.keyDown(inputs, { key: "End" });
+    expect(outputs).toHaveFocus();
+    fireEvent.keyDown(outputs, { key: "ArrowLeft" });
+    expect(inputs).toHaveFocus();
+  });
+
+  it("resets the selected file view when switching sessions", () => {
+    const view = renderDashboard({ outputFiles: ["result.md"] });
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
+    view.rerender(
+      <WorkspaceDashboard
+        sessionId="session-2"
+        environment={{
+          ...environment,
+          sessionId: "session-2",
+          outputFiles: ["result.md"],
+        }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("falls back to the prompt headline for untitled subagents", () => {
+    renderDashboard();
+
+    expect(screen.getByText("Investigation Task")).toBeTruthy();
+    expect(
+      screen.getByText("用只读方式深度调研 src/views/cli_chat 目录"),
+    ).toBeTruthy();
+    expect(screen.getByText("Writer")).toBeTruthy();
+  });
+
+  it("opens non-file input sources in the content viewer", () => {
+    renderDashboard({
+      inputSources: [
+        {
+          kind: "search",
+          label: "Search documentation",
+          toolCallId: "search-1",
+        },
+      ],
+    });
+    if (!screen.queryByText("Search documentation"))
+      fireEvent.click(screen.getByRole("tab", { name: /^输入源/ }));
+    fireEvent.click(screen.getByText("Search documentation"));
+    expect(
+      useSessionWorkspaceStore.getState().sessions["session-1"],
+    ).toMatchObject({
+      activeTabId: "input@:search-1",
+      tabs: [
+        {
+          kind: "input",
+          inputSource: { kind: "search", toolCallId: "search-1" },
+        },
+      ],
+    });
+  });
+
+  it("shows the saved file opener in the file menu and launches the selected app", async () => {
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, editor: "cursor", locale: "zh" },
+    }));
+    const openFile = vi.spyOn(configApi, "openFile").mockResolvedValue();
+    renderDashboard();
+    fireEvent.contextMenu(screen.getByText("toolDisplay.js"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "用Cursor打开" }));
+    await waitFor(() => expect(openFile).toHaveBeenCalledExactlyOnceWith(
+      `${environment.workspacePath}/src/views/cli_chat/utils/toolDisplay.js`,
+    ));
+  });
+
+  it("opens diff, file, and subagent tabs from the card rows", () => {
+    renderDashboard();
+
+    fireEvent.click(screen.getByText("BlockAsk.vue"));
+    expect(
+      useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
+    ).toMatchObject([
+      {
+        id: "diff:src/views/cli_chat/components/blocks/BlockAsk.vue",
+        kind: "diff",
+      },
+    ]);
+
+    if (!screen.queryByText("toolDisplay.js"))
+      fireEvent.click(screen.getByRole("tab", { name: /^输入源/ }));
+    fireEvent.click(screen.getByText("toolDisplay.js"));
+    expect(
+      useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
+    ).toMatchObject([
+      {
+        id: "diff:src/views/cli_chat/components/blocks/BlockAsk.vue",
+        kind: "diff",
+      },
+      { id: "file:src/views/cli_chat/utils/toolDisplay.js", kind: "file" },
+    ]);
+
+    fireEvent.click(screen.getByText("Investigation Task"));
+    expect(
+      useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
+    ).toMatchObject([
+      {
+        id: "diff:src/views/cli_chat/components/blocks/BlockAsk.vue",
+        kind: "diff",
+      },
+      { id: "file:src/views/cli_chat/utils/toolDisplay.js", kind: "file" },
+      { id: "subagent:sub-1", kind: "subagent" },
+    ]);
+  });
+
+  it("switches git changes between tree and flat views while input files stay flat", () => {
+    const { container } = renderDashboard();
+
+    const gitCard = screen
+      .getByRole("heading", { name: "Git 变更" })
+      .closest(".ws-card");
+    const inputCard = screen
+      .getByRole("tab", { name: /^输入源/ })
+      .closest(".ws-card");
+
+    fireEvent.click(screen.getByRole("button", { name: "目录视图" }));
+    expect(
+      gitCard?.querySelector('[data-directory-path="src/views"]'),
+    ).not.toBeNull();
+    expect(inputCard?.querySelector(".ws-tree-folder")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "blocks" }));
+    expect(screen.queryByText("BlockAsk.vue")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "平铺视图" }));
+    expect(screen.getByText("BlockAsk.vue")).toBeTruthy();
+    expect(gitCard?.querySelector(".ws-tree-folder")).toBeNull();
+    expect(
+      screen
+        .getByRole("heading", { name: "Git 变更" })
+        .hasAttribute("aria-expanded"),
+    ).toBe(false);
+
+    expect(container.querySelector(".ws-row-dir")).toBeNull();
+    expect(screen.queryByText("src/views/chat-cli")).toBeNull();
+  });
+
+  it("keeps Git changes permanently expanded with a plain heading and no total or chevron", () => {
+    renderDashboard();
+    const heading = screen.getByRole("heading", { name: "Git 变更" });
+    const card = heading.closest(".ws-card")!;
+    expect(screen.queryByRole("button", { name: /^Git 变更/ })).toBeNull();
+    expect(heading).not.toHaveAttribute("aria-expanded");
+    expect(card.querySelector(".ws-card-count, .ws-card-chevron")).toBeNull();
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    fireEvent.click(heading);
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(card).toHaveAttribute("data-open", "true");
+  });
+
+  it("ignores an old collapsed Git section preference inside a repository", () => {
+    const key = "synax:workspace:disclosure:session-1:primary:changes";
+    localStorage.setItem(key, "false");
+    try {
+      renderDashboard({ repositories: [{ ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" }] });
+      const heading = screen.getByRole("heading", { name: "Git 变更" });
+      const section = heading.closest(".ws-project-section")!;
+      expect(section).toHaveAttribute("data-open", "true");
+      expect(section.querySelector(".ws-card-count, .ws-project-section-chevron")).toBeNull();
+      fireEvent.click(heading);
+      expect(within(section as HTMLElement).getByText("notes.md")).toBeInTheDocument();
+      expect(within(section as HTMLElement).getByRole("button", { name: "平铺视图" })).toBeInTheDocument();
+    } finally { localStorage.removeItem(key); }
+  });
+
+  it.each([true, false])(
+    "omits the repository state badge when dirty is %s",
+    (dirty) => {
+      const { container } = renderDashboard({ dirty });
+      expect(
+        container.querySelector(".ws-repo-head .ws-repo-state"),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: /切换 Git 分支/ }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("hides empty input, output and subagent sections while keeping Git controls", () => {
+    renderDashboard({
+      changedFiles: [],
+      dirty: false,
+      inputSources: [],
+      outputFiles: [],
+      subagents: [],
+    });
+
+    expect(screen.queryByRole("button", { name: /^Subagents/ })).toBeNull();
+    expect(screen.queryByText("无变更")).not.toBeInTheDocument();
+    expect(screen.queryByText("暂无读取文件")).toBeNull();
+    expect(screen.queryByText("还没有产出物")).toBeNull();
+    expect(screen.queryByText("产出文件")).toBeNull();
+    expect(screen.getByRole("button", { name: "提交并推送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "刷新工作区" })).toBeEnabled();
+  });
+
+  it("marks repositories with project records as content-sized cards", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+    };
+    render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("button", { name: /^Synax/ })
+        .closest(".ws-project-card"),
+    ).toHaveClass("ws-project-card--with-content");
+  });
+
+  it("keeps project Git controls in the header when clean or collapsed", () => {
+    const reload = vi.fn();
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+      branch: "main",
+      dirty: false,
+      changedFiles: [],
+      inputSources: [],
+      outputFiles: [],
+    };
+    const view = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+        reload={reload}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Synax" });
+    const header = toggle.closest(".ws-card-head")!;
+    expect(toggle.closest(".ws-project-card")).toHaveClass(
+      "ws-project-card--status-only",
+    );
+    expect(within(header).getByText("main")).toBeInTheDocument();
+    expect(
+      within(header).getByRole("button", { name: "提交并推送" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("产出文件")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(within(header).getByRole("button", { name: "刷新工作区" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{
+          ...environment,
+          repositories: [
+            {
+              ...repository,
+              dirty: true,
+              changedFiles: environment.changedFiles,
+            },
+          ],
+        }}
+        reload={reload}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: "提交并推送" })).toHaveLength(
+      1,
+    );
+    expect(
+      within(header).getByRole("button", { name: "提交并推送" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("BlockAsk.vue")).toBeNull();
+  });
+
+  it("collapses the project card and drops the change list while clean", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+      branch: "main",
+      dirty: false,
+      changedFiles: [],
+      inputSources: [],
+      outputFiles: [],
+    };
+    const { container } = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+    const card = container.querySelector(".ws-project-card")!;
+    const toggle = screen.getByRole("button", { name: "Synax" });
+
+    expect(card).toHaveAttribute("data-open", "false");
+    expect(card).toHaveAttribute("data-dormant", "true");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toBeDisabled();
+    expect(toggle.querySelector(".ws-card-chevron")).toBeNull();
+    expect(container.querySelector(".ws-changes-viewport")).toBeNull();
+  });
+
+  it("mounts the change list in the capped viewport when dirty", () => {
+    const repository = {
+      ...environment,
+      rootId: "primary",
+      name: "Synax",
+      role: "primary" as const,
+      status: "ready" as const,
+    };
+    const { container } = render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={{ ...environment, repositories: [repository] }}
+      />,
+    );
+
+    expect(container.querySelector(".ws-changes-viewport")).not.toBeNull();
+    expect(container.querySelector(".ws-changes-rows")).not.toBeNull();
+    expect(container.querySelector(".ws-changes-fade")).toHaveAttribute(
+      "data-visible",
+      "false",
+    );
+  });
+
+  it("reflects the agent change status on each row", () => {
+    const { container } = renderDashboard();
+
+    const badges = [...container.querySelectorAll(".ws-badge")].map(
+      (node) => node.textContent,
+    );
+    expect(badges).toEqual(["M", "A", "U"]);
+  });
+
+  it("reloads the snapshot from the repository card", () => {
+    const reload = vi.fn();
+    render(
+      <WorkspaceDashboard
+        sessionId="session-1"
+        environment={environment}
+        loading={false}
+        reload={reload}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("刷新工作区"));
+    expect(reload).toHaveBeenCalledTimes(1);
+    fireEvent.contextMenu(screen.getByLabelText("刷新工作区").closest(".ws-card--repo")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "刷新工作区" }));
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives each repository its own collapsible project and keeps file tabs isolated", () => {
+    renderDashboard({
+      repositories: [
+        {
+          ...environment,
+          rootId: "primary",
+          name: "API",
+          role: "primary",
+          status: "ready",
+        },
+        {
+          ...environment,
+          rootId: "secondary",
+          name: "Web",
+          role: "reference",
+          status: "ready",
+          branch: "web-branch",
+          workspacePath: "/repos/web",
+        },
+        {
+          ...environment,
+          rootId: "missing",
+          name: "Gone",
+          role: "reference",
+          status: "missing",
+          changedFiles: [],
+          inputSources: [],
+        },
+      ],
+    });
+    const apiHeader = screen.getByRole("button", { name: /^API/ });
+    const webHeader = screen.getByRole("button", { name: /^Web/ });
+    const goneHeader = screen.getByRole("button", { name: /^Gone/ });
+    const apiCard = apiHeader.closest(".ws-project-card")!;
+    const webCard = webHeader.closest(".ws-project-card")!;
+    const goneCard = goneHeader.closest(".ws-project-card")!;
+    const pane = apiCard.closest(".workspace-dashboard--custom")!;
+    expect(webCard.closest(".workspace-dashboard--custom")).toBe(pane);
+    expect(goneCard.closest(".workspace-dashboard--custom")).toBe(pane);
+    expect(
+      pane.querySelectorAll('[data-dashboard-panel^="repository:"]'),
+    ).toHaveLength(3);
+    expect(pane.closest(".ws-card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^项目\s*3$/ })).toBeNull();
+
+    expect(apiHeader).toHaveAttribute("aria-expanded", "true");
+    expect(webHeader).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(webHeader);
+    expect(webHeader).toHaveAttribute("aria-expanded", "false");
+    expect(within(webCard).queryByText("BlockAsk.vue")).toBeNull();
+    expect(within(apiCard).getByText("BlockAsk.vue")).toBeInTheDocument();
+    fireEvent.click(webHeader);
+
+    fireEvent.click(within(apiCard).getByText("BlockAsk.vue"));
+    fireEvent.click(screen.getAllByText("toolDisplay.js")[0]);
+    fireEvent.click(within(webCard).getByText("BlockAsk.vue"));
+    fireEvent.click(screen.getAllByText("toolDisplay.js")[1]);
+    const tabs = useSessionWorkspaceStore.getState().sessions["session-1"].tabs;
+    expect(tabs).toHaveLength(4);
+    expect(new Set(tabs.map((tab) => tab.id)).size).toBe(4);
+    expect(tabs.map((tab) => tab.rootId)).toEqual([
+      "primary",
+      "primary",
+      "secondary",
+      "secondary",
+    ]);
+    expect(tabs[0].title).toBe("BlockAsk.vue");
+    expect(tabs[2].title).toBe("BlockAsk.vue");
+    expect(
+      new Set(
+        [...pane.querySelectorAll<HTMLElement>(".ws-project-folder-icon")]
+          .map((element) => element.dataset.projectColor)
+          .filter(Boolean),
+      ).size,
+    ).toBeGreaterThan(1);
+    expect(
+      apiCard.querySelector(".ws-project-folder-icon")?.getAttribute("data-project-color"),
+    ).not.toBe("default");
+    expect(within(goneCard).getByText("目录缺失")).toBeInTheDocument();
+    expect(
+      within(goneCard).getByRole("button", { name: "提交并推送" }),
+    ).toBeDisabled();
+  });
+
+  it("restores the clicked Git file in its own repository in tree view", async () => {
+    const restore = vi.spyOn(agentRuntimeApi, "restoreSessionFile")
+      .mockResolvedValue({ rootId: "web", path: "notes.md", deleted: false });
+    const confirm = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    renderDashboard({ repositories: [
+      { ...environment, rootId: "api", name: "API", role: "primary", status: "ready", workspacePath: "/repos/api" },
+      { ...environment, rootId: "web", name: "Web", role: "reference", status: "ready", workspacePath: "/repos/web" },
+    ] });
+    fireEvent.click(screen.getAllByRole("button", { name: "目录视图" })[1]);
+    const webCard = screen.getByRole("button", { name: /^Web/ }).closest(".ws-project-card")!;
+    fireEvent.contextMenu(within(webCard).getByText("notes.md"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "回滚该文件的变更" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("session-1", { path: "notes.md", rootId: "web" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    restore.mockRestore();
+  });
+
+  it("remembers project folds after the workspace is reopened", () => {
+    const snapshot: SessionEnvironment = {
+      ...environment,
+      repositories: [
+        {
+          ...environment,
+          rootId: "primary",
+          name: "API",
+          role: "primary",
+          status: "ready",
+        },
+        {
+          ...environment,
+          rootId: "web",
+          name: "Web",
+          role: "reference",
+          status: "ready",
+        },
+      ],
+    };
+    const view = render(
+      <WorkspaceDashboard sessionId="session-1" environment={snapshot} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Web/ }));
+    view.unmount();
+    render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />);
+    expect(screen.getByRole("button", { name: /^Web/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("opens a committed output in its owning repository without treating hand edits as outputs", () => {
+    renderDashboard({
+      outputFiles: ["docs/deliverable.md"],
+      agentChangedFiles: [],
+    });
+    expect(
+      screen.queryByRole("button", { name: /notes.md.*工作目录/ }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /deliverable\.md.*docs/ }),
+    );
+    expect(
+      useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
+    ).toMatchObject([{ kind: "file", path: "docs/deliverable.md" }]);
+  });
+
+  it("keeps same-name outputs scoped to their owning repository", () => {
+    renderDashboard({
+      repositories: [
+        {
+          ...environment,
+          rootId: "api",
+          name: "API",
+          role: "primary",
+          status: "ready",
+          outputFiles: ["result.md"],
+        },
+        {
+          ...environment,
+          rootId: "web",
+          name: "Web",
+          role: "reference",
+          status: "ready",
+          outputFiles: ["result.md"],
+        },
+      ],
+    });
+    const filesCard = screen
+      .getByRole("tab", { name: /^产出文件/ })
+      .closest(".ws-card")!;
+    fireEvent.click(screen.getByRole("tab", { name: /^产出文件/ }));
+    expect(screen.getByRole("tab", { name: /^输入源/ })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    const outputs = within(filesCard).getAllByRole("button", {
+      name: /result\.md/,
+    });
+    fireEvent.click(outputs[0]);
+    fireEvent.click(outputs[1]);
+    expect(
+      useSessionWorkspaceStore
+        .getState()
+        .sessions["session-1"].tabs.map((tab) => tab.rootId),
+    ).toEqual(["api", "web"]);
+  });
+
+  it("shows todos for the selected session and never leaks them into another session", () => {
+    useAgentSessionStore.setState({
+      selectedSessionId: "session-1",
+      sessionTodos: [
+        { id: "todo-1", label: "Review outputs", status: "in_progress" },
+      ],
+    });
+    const view = renderDashboard();
+    expect(screen.getByText("Review outputs")).toBeTruthy();
+    expect(screen.getByText("0 / 1")).toBeVisible();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "in_progress",
+    );
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    act(() =>
+      useAgentSessionStore.setState({
+        sessionTodos: [
+          { id: "todo-1", label: "Review outputs", status: "done" },
+        ],
+      }),
+    );
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
+      "data-status",
+      "done",
+    );
+    view.rerender(
+      <WorkspaceDashboard
+        sessionId="session-2"
+        environment={{ ...environment, sessionId: "session-2" }}
+      />,
+    );
+    expect(screen.queryByText("Review outputs")).toBeNull();
+    expect(screen.queryByText("1 / 1")).toBeNull();
+    act(() =>
+      useAgentSessionStore.setState({
+        selectedSessionId: "session-2",
+        sessionTodos: [
+          { id: "todo-2", label: "Check second session", status: "pending" },
+        ],
+      }),
+    );
+    expect(
+      screen.getByText("Check second session").closest("li"),
+    ).toHaveAttribute("data-status", "pending");
+    expect(screen.getByText("0 / 1")).toBeVisible();
+    expect(screen.queryByText("Review outputs")).toBeNull();
+  });
+});

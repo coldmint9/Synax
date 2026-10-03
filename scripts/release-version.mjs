@@ -5,9 +5,9 @@ const root = resolve(import.meta.dirname, "..");
 const files = {
   env: resolve(root, ".env.version"),
   package: resolve(root, "package.json"),
-  webPackage: resolve(root, "web/package.json"),
+  clientPackage: resolve(root, "client/package.json"),
   lock: resolve(root, "package-lock.json"),
-  webLock: resolve(root, "web/package-lock.json"),
+  clientLock: resolve(root, "client/package-lock.json"),
 };
 
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
@@ -26,29 +26,29 @@ function bump(version, kind) {
 
 function sync(version) {
   const packageJson = readJson(files.package);
-  const webPackage = readJson(files.webPackage);
+  const clientPackage = readJson(files.clientPackage);
   const lock = readJson(files.lock);
-  const webLock = readJson(files.webLock);
+  const clientLock = readJson(files.clientLock);
 
   packageJson.version = version;
-  webPackage.version = version;
+  clientPackage.version = version;
   lock.version = version;
   lock.packages[""].version = version;
-  lock.packages.web.version = version;
-  webLock.version = version;
-  webLock.packages[""].version = version;
+  lock.packages.client.version = version;
+  clientLock.version = version;
+  clientLock.packages[""].version = version;
 
   writeFileSync(files.env, `SYNAX_VERSION=${version}\n`);
   writeJson(files.package, packageJson);
-  writeJson(files.webPackage, webPackage);
+  writeJson(files.clientPackage, clientPackage);
   writeJson(files.lock, lock);
-  writeJson(files.webLock, webLock);
+  writeJson(files.clientLock, clientLock);
 
   for (const file of [
     "cli/main.ts",
-    "web/src/react/pages/AboutPage.tsx",
-    "api/services/mcp/mcp-client-manager.ts",
-    "api/services/agent-runtime/backends/codex-connection.ts",
+    "client/src/app/pages/AboutPage.tsx",
+    "services/local-node/infrastructure/mcp/mcp-client-manager.ts",
+    "services/local-node/modules/agent-runtime/backends/codex-connection.ts",
   ]) {
     const path = resolve(root, file);
     const source = readFileSync(path, "utf8");
@@ -59,7 +59,7 @@ function sync(version) {
     writeFileSync(path, updated);
   }
 
-  const claudePath = resolve(root, "api/services/agent-runtime/backends/claude-connection.ts");
+  const claudePath = resolve(root, "services/local-node/modules/agent-runtime/backends/claude-connection.ts");
   writeFileSync(
     claudePath,
     readFileSync(claudePath, "utf8").replace(/synax\/\d+\.\d+\.\d+/, `synax/${version}`),

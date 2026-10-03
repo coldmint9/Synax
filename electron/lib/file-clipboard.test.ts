@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fileClipboardCommands } from './file-clipboard.js';
-import { systemTerminalCommand } from '../../api/services/file-openers/index.js';
+import { systemTerminalCommand } from '../../services/local-node/infrastructure/file-openers/index.js';
 
 describe('host file actions', () => {
   const file = '/repo/space & quote".txt';

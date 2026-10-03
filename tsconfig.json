@@ -7,13 +7,13 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "api",
+    "rootDir": ".",
     "declaration": true,
     "resolveJsonModule": true,
     "paths": {
-      "@/*": ["./api/*"]
+      "@/*": ["./services/local-node/*"]
     }
   },
-  "include": ["api/**/*.ts"],
-  "exclude": ["node_modules", "dist", "web", "analyzer"]
+  "include": ["services/**/*.ts", "packages/**/*.ts"],
+  "exclude": ["node_modules", "dist", "client", "analyzer"]
 }

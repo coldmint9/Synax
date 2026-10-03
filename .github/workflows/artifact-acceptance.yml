@@ -34,11 +34,11 @@ jobs:
           JS
       - name: API typecheck and artifact/security suites
         run: npx tsc --noEmit
-      - run: npx vitest run api/services/agent-runtime/artifacts api/services/agent-runtime/__tests__/prototype-manifest.test.ts api/services/agent-runtime/__tests__/prototype-integration.test.ts api/services/agent-runtime/__tests__/prototype-persistence.test.ts --maxWorkers=2
+      - run: npx vitest run services/local-node/modules/agent-runtime/artifacts services/local-node/modules/agent-runtime/__tests__/prototype-manifest.test.ts services/local-node/modules/agent-runtime/__tests__/prototype-integration.test.ts services/local-node/modules/agent-runtime/__tests__/prototype-persistence.test.ts --maxWorkers=2
       - name: Browser SDK, cards, state and feedback
-        run: npm run test --prefix web -- src/react/features/artifacts
+        run: npm run test --prefix client -- src/features/artifacts
       - name: Web typecheck
-        run: npx tsc -p web/tsconfig.json --noEmit
+        run: npx tsc -p client/tsconfig.json --noEmit
       - name: Build the native package on the matching host
         run: npm run build:desktop
       - name: Real Web conversation acceptance

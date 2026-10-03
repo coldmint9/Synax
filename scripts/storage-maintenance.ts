@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import NativeDatabase from "libsql";
-import { DATA_ROOT } from "../api/lib/env.js";
-import { applyMaintenance, assertRuntimeOffline, planMaintenance, reportStorage } from "../api/services/storage/storage-maintenance.js";
+import { DATA_ROOT } from "../services/local-node/infrastructure/runtime/env.js";
+import { applyMaintenance, assertRuntimeOffline, planMaintenance, reportStorage } from "../services/local-node/infrastructure/storage/storage-maintenance.js";
 
 const args = new Set(process.argv.slice(2));
 const dbPath = process.env.SYNAX_DB_PATH ?? path.join(DATA_ROOT, "context.db");

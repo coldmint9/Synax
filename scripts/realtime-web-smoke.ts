@@ -10,8 +10,8 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { createServer } from "vite";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { installRuntimeAccess } from "../api/middleware/runtime-access.js";
-import { ObservationTransport } from "../api/services/realtime/observation-transport.js";
+import { installRuntimeAccess } from "../services/local-node/transport/http/middleware/runtime-access.js";
+import { ObservationTransport } from "../services/local-node/modules/realtime/observation-transport.js";
 
 const output = path.resolve(process.env.SYNAX_PERF_OUTPUT ?? ".tmp/performance-rollout/realtime-web-smoke.json");
 const root = await mkdtemp(path.join(os.tmpdir(), "synax-realtime-smoke-"));
@@ -39,7 +39,7 @@ try {
     socket.on("close", () => connections--);
   });
   const html = `<!doctype html><title>Realtime acceptance</title><script type="module">
-    import { AuthenticatedEventSource } from '/src/lib/api/authenticatedEventSource.ts';
+    import { AuthenticatedEventSource } from '/src/adapters/transport/authenticatedEventSource.ts';
     const r=await fetch('/api/auth/session',{method:'POST'});if(!r.ok)throw new Error('Auth failed');
     window.received={};window.sources=[];
     for(const [id,url]of [

@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "id": "rumbling-core",
+      "name": "Rumbling Core",
+      "status": "at_risk",
+      "environment": "staging",
+      "healthScore": 72,
+      "activeAgents": 4,
+      "activeHumans": 2,
+      "openRisks": 2,
+      "updatedAt": "just now",
+      "createdBy": "alice",
+      "createdAt": "2026-04-29T08:43:47.486Z"
+    },
+    {
+      "id": "growth-ops",
+      "name": "Growth Ops",
+      "status": "healthy",
+      "environment": "production",
+      "healthScore": 89,
+      "activeAgents": 3,
+      "activeHumans": 1,
+      "openRisks": 0,
+      "updatedAt": "12m ago",
+      "createdBy": "alice",
+      "createdAt": "2026-04-29T08:43:47.487Z"
+    },
+    {
+      "id": "mobile-revamp",
+      "name": "Mobile Revamp",
+      "status": "blocked",
+      "environment": "development",
+      "healthScore": 54,
+      "activeAgents": 2,
+      "activeHumans": 2,
+      "openRisks": 3,
+      "updatedAt": "8m ago",
+      "createdBy": "alice",
+      "createdAt": "2026-04-29T08:43:47.487Z"
+    }
+  ]
+}

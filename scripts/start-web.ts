@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createWebGateway } from "../api/services/web/web-gateway.js";
+import { createWebGateway } from "../services/local-node/modules/web/web-gateway.js";
 import { ROOT_DIR, ensureBuiltServer, readPort, spawnProcess, waitForExit } from "./_shared.js";
 
 const webPort = readPort("WEB_PORT", 5173);

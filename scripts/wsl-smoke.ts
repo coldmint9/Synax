@@ -4,8 +4,8 @@ import {
   canonicalizeWslPath,
   listWslDistributions,
   runWsl,
-} from "../api/services/wsl.js";
-import { workspaceLocationHostPath } from "../api/services/workspace-location.js";
+} from "../services/local-node/infrastructure/wsl/wsl.js";
+import { workspaceLocationHostPath } from "../services/local-node/modules/workspace-location.js";
 
 async function main(): Promise<void> {
   if (process.env.SYNAX_WSL_SMOKE !== "1") {

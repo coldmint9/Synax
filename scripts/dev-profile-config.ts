@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export type DevProfileTarget = "web" | "desktop";
+export type DevProfileTarget = "client" | "desktop";
 
 export interface DevProfileOptions {
   homeDir?: string;
@@ -20,17 +20,17 @@ export function resolveDevProfileEnvironment(
 ): Record<string, string> {
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
-  const defaultApiPort = target === "web" ? "3211" : undefined;
-  const defaultWebPort = target === "web" ? "5174" : "5173";
+  const defaultLocalPort = target === "client" ? "3211" : undefined;
+  const defaultClientPort = target === "client" ? "5174" : "5173";
 
   const resolved: Record<string, string> = {
     SYNAX_PROFILE: profile,
     DATA_ROOT: env.DATA_ROOT ?? path.join(homeDir, ".synax", profile),
-    WEB_PORT: env.WEB_PORT ?? defaultWebPort,
+    WEB_PORT: env.WEB_PORT ?? defaultClientPort,
   };
 
-  if (target === "web" || env.PORT) {
-    resolved.PORT = env.PORT ?? defaultApiPort ?? "3210";
+  if (target === "client" || env.PORT) {
+    resolved.PORT = env.PORT ?? defaultLocalPort ?? "3210";
   }
 
   return resolved;

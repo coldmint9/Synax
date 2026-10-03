@@ -1,5 +1,5 @@
 // Isolated Electron/CSS regression: no runtime server or user data is touched.
-// Run after `npm run web:build`:
+// Run after `npm run client:build`:
 //   npx electron scripts/composer-surface-smoke.cjs
 const { app, BrowserWindow } = require("electron");
 const assert = require("node:assert/strict");
@@ -22,7 +22,7 @@ let exitCode = 0;
 (async () => {
   await app.whenReady();
   await fs.mkdir(output, { recursive: true });
-  const assets = path.join(root, "web/dist/assets");
+  const assets = path.join(root, "client/dist/assets");
   const css = (await fs.readdir(assets)).filter((file) =>
     file.endsWith(".css"),
   );
@@ -30,9 +30,9 @@ let exitCode = 0;
   // Baseline mode restores the checked-in pre-fix rules over the same build.
   const baselineCss = baseline
     ? [
-        "web/src/index.css",
-        "web/src/react/features/agent-workspace/agentControls.css",
-        "web/src/react/features/agent-workspace/workPage.css",
+        "client/src/index.css",
+        "client/src/react/features/agent-workspace/agentControls.css",
+        "client/src/react/features/agent-workspace/workPage.css",
       ]
         .map((file) =>
           execFileSync("git", ["show", `HEAD:${file}`], {

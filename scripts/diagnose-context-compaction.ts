@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import type {
   AgentRunStep,
   ToolCallRecord,
-} from "../api/services/agent-runtime/contracts.js";
+} from "../services/local-node/modules/agent-runtime/contracts.js";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {
@@ -40,18 +40,18 @@ const [
   { snapshotRuntimeReminder },
   { closeDb },
 ] = await Promise.all([
-  import("../api/services/agent-runtime/session-runtime.js"),
-  import("../api/services/agent-runtime/session-store.js"),
-  import("../api/services/agent-runtime/work-store.js"),
-  import("../api/services/agent-runtime/work-runtime.js"),
-  import("../api/services/agent-runtime/loop-model-messages.js"),
-  import("../api/services/agent-runtime/loop-ai-tools.js"),
-  import("../api/services/agent-runtime/context-projection.js"),
-  import("../api/services/agent-runtime/context-tokenizer.js"),
-  import("../api/services/agent-runtime/context-compaction-policy.js"),
-  import("../api/services/agent-runtime/tool-context-receipt.js"),
-  import("../api/services/agent-runtime/runtime-request-snapshot.js"),
-  import("../api/db/index.js"),
+  import("../services/local-node/modules/agent-runtime/session-runtime.js"),
+  import("../services/local-node/modules/agent-runtime/session-store.js"),
+  import("../services/local-node/modules/agent-runtime/work-store.js"),
+  import("../services/local-node/modules/agent-runtime/work-runtime.js"),
+  import("../services/local-node/modules/agent-runtime/loop-model-messages.js"),
+  import("../services/local-node/modules/agent-runtime/loop-ai-tools.js"),
+  import("../services/local-node/modules/agent-runtime/context-projection.js"),
+  import("../services/local-node/modules/agent-runtime/context-tokenizer.js"),
+  import("../services/local-node/modules/agent-runtime/context-compaction-policy.js"),
+  import("../services/local-node/modules/agent-runtime/tool-context-receipt.js"),
+  import("../services/local-node/modules/agent-runtime/runtime-request-snapshot.js"),
+  import("../services/local-node/infrastructure/database/index.js"),
 ]);
 const toolSet = buildLoopToolSet([]);
 const SYSTEM =

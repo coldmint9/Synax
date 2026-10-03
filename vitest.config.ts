@@ -3,7 +3,8 @@ import { configDefaults, defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: [
-      "api/**/*.{test,spec}.{ts,tsx}",
+      "services/**/*.{test,spec}.{ts,tsx}",
+      "packages/**/*.{test,spec}.{ts,tsx}",
       "cli/**/*.{test,spec}.{ts,tsx}",
       "cua-helper/**/*.{test,spec}.ts",
       "electron/**/*.test.ts",
@@ -21,7 +22,7 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "**/.claude/worktrees/**",
-      "web/src/react/features/**/*.test.tsx",
+      "client/src/react/features/**/*.test.tsx",
     ],
   },
 });

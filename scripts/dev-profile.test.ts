@@ -6,7 +6,7 @@ import { resolveDevProfileEnvironment } from "./dev-profile-config.js";
 describe("resolveDevProfileEnvironment", () => {
   it("isolates the web development profile from the production desktop profile", () => {
     expect(
-      resolveDevProfileEnvironment("web-dev", "web", {
+      resolveDevProfileEnvironment("web-dev", "client", {
         homeDir: "/Users/tester",
         env: {},
       }),
@@ -33,7 +33,7 @@ describe("resolveDevProfileEnvironment", () => {
 
   it("preserves explicit data and port overrides", () => {
     expect(
-      resolveDevProfileEnvironment("custom", "web", {
+      resolveDevProfileEnvironment("custom", "client", {
         homeDir: "/Users/tester",
         env: {
           DATA_ROOT: "/tmp/synax-custom",
@@ -51,7 +51,7 @@ describe("resolveDevProfileEnvironment", () => {
 
   it("uses the current home directory when no home directory is provided", () => {
     expect(
-      resolveDevProfileEnvironment("web-dev", "web", { env: {} }).DATA_ROOT,
+      resolveDevProfileEnvironment("web-dev", "client", { env: {} }).DATA_ROOT,
     ).toBe(path.join(os.homedir(), ".synax", "web-dev"));
   });
 });

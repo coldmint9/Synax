@@ -50,8 +50,8 @@ npm run dev:all
 
 ```bash
 npm run build
-npm run web:build
-npm run start:web
+npm run client:build
+npm run start:client
 ```
 
 This serves the built frontend on port `5173` after the local runtime reports ready, with realtime observations on a shared WebSocket. Keep `dev:all` for development. Do not start two runtime owners for the same `DATA_ROOT`; set `SYNAX_API_ORIGIN=http://127.0.0.1:<port>` to explicitly attach to an existing compatible runtime instead.
@@ -59,7 +59,7 @@ This serves the built frontend on port `5173` after the local runtime reports re
 For HTTP/2, provide a TLS certificate for `localhost` that your browser trusts:
 
 ```bash
-WEB_TLS_CERT=/absolute/path/localhost-cert.pem WEB_TLS_KEY=/absolute/path/localhost-key.pem npm run start:web
+WEB_TLS_CERT=/absolute/path/localhost-cert.pem WEB_TLS_KEY=/absolute/path/localhost-key.pem npm run start:client
 ```
 
 The TLS entry uses HTTP/2 for ordinary requests/assets and compatible HTTP/1.1 upgrades for WebSocket. Without certificates, HTTP/1.1 plus shared WebSocket is supported. The app never installs a root certificate, bypasses certificate validation, or relaxes authorization. When changing `WEB_PORT`, an independently started backend must allow the same origin port.
@@ -103,13 +103,13 @@ Computer Use is available in the Electron desktop app through an app-hosted Cua 
 
 The default **Auto** strategy uses Direct Cua without a Jev account or network request. Jev-assisted operation is optional: set `TYPESAFE_API_KEY` in the environment that launches the desktop app, then enable Jev in the project Computer Use settings. The controller chooses from bounded semantic actions and verifies a fresh window state after each action. `cua-perception` visual-region parsing is optional and disabled by default; the visual extension is **not** bundled in the Synax installer.
 
-Jev can also run through a configured provider instead of TypeSafe. Add an OpenRouter connection under **Settings -> Providers** (OpenAI-compatible format, Base URL `https://openrouter.ai/api/v1`, your OpenRouter API key), then select that provider for Jev in the Computer Use settings. OpenRouter serves the TypeSafe System One API at `https://openrouter.ai/api`, so Synax normalizes the connection base URL before the SDK appends `/v1/systemone`, and the connection API key is used instead of `TYPESAFE_API_KEY`. The Jev model field takes a System One model id such as `jev-1.13`, `typesafe/jev-1.13`, or `~typesafe/jev-latest`, not a chat model id. The `client.models.list()` limitation noted by OpenRouter does not affect Synax, which never lists models. Leaving the Jev provider unset keeps the original TypeSafe behavior.
+Jev can also run through a configured provider instead of TypeSafe. Add an OpenRouter connection under **Settings -> Providers** (OpenAI-compatible format, Base URL `https://openrouter.ai/v1`, your OpenRouter API key), then select that provider for Jev in the Computer Use settings. OpenRouter serves the TypeSafe System One API at `https://openrouter.ai/api`, so Synax normalizes the connection base URL before the SDK appends `/v1/systemone`, and the connection API key is used instead of `TYPESAFE_API_KEY`. The Jev model field takes a System One model id such as `jev-1.13`, `typesafe/jev-1.13`, or `~typesafe/jev-latest`, not a chat model id. The `client.models.list()` limitation noted by OpenRouter does not affect Synax, which never lists models. Leaving the Jev provider unset keeps the original TypeSafe behavior.
 
 You can also start the two servers separately, for example when running the API in one terminal and the frontend in another:
 
 ```bash
-npm run dev:api   # API only, port 3211, ~/.synax/web-dev
-npm run dev:web   # Web only, port 5174, ~/.synax/web-dev
+npm run dev:local   # API only, port 3211, ~/.synax/web-dev
+npm run dev:client   # Web only, port 5174, ~/.synax/web-dev
 ```
 
 ### 4. Configure and start working
@@ -126,7 +126,7 @@ npm run dev:web   # Web only, port 5174, ~/.synax/web-dev
 | `WEB_PORT` | `5173`             | `5174`              | Web development server port     |
 | `WEB_HOST` | `0.0.0.0`          | inherited           | Web development server bind address |
 
-The standalone defaults apply to `start:api` and `start:web`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:api`, `dev:web`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
+The standalone defaults apply to `start:local` and `start:client`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:local`, `dev:client`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
 
 ## Local Git merge requests
 

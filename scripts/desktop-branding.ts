@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ForgeMakeResult } from "@electron-forge/shared-types";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("..", import.meta.url));
 export const desktopProduct = JSON.parse(
   readFileSync(path.join(root, "package.json"), "utf8"),
 ) as {

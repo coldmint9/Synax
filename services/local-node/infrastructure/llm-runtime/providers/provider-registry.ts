@@ -1,0 +1,208 @@
+import { resolvePromptCaching } from "../cache-policy.js";
+import { logger } from "../../runtime/logger.js";
+import type { ApiFormat } from "../../runtime/config/config-types.js";
+import type { ResolvedProviderConfig, RuntimeProvider } from "../types.js";
+import { buildOpenAICompatibleClientSettings } from "../custom-api-compat.js";
+import { isImageGenerationModel } from "../openai-models.js";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ProviderFactory = (options?: any) => unknown;
+
+const REGISTRY: Record<string, () => Promise<ProviderFactory>> = {
+  "@ai-sdk/anthropic": async () =>
+    (await import("@ai-sdk/anthropic")).createAnthropic,
+  "@ai-sdk/cerebras": async () =>
+    (await import("@ai-sdk/cerebras")).createCerebras,
+  "@ai-sdk/cohere": async () => (await import("@ai-sdk/cohere")).createCohere,
+  "@ai-sdk/deepinfra": async () =>
+    (await import("@ai-sdk/deepinfra")).createDeepInfra,
+  "@ai-sdk/deepseek": async () =>
+    (await import("@ai-sdk/deepseek")).createDeepSeek,
+  "@ai-sdk/google": async () =>
+    (await import("@ai-sdk/google")).createGoogleGenerativeAI,
+  "@ai-sdk/groq": async () => (await import("@ai-sdk/groq")).createGroq,
+  "@ai-sdk/mistral": async () =>
+    (await import("@ai-sdk/mistral")).createMistral,
+  "@ai-sdk/open-responses": async () =>
+    (await import("@ai-sdk/open-responses")).createOpenResponses,
+  "@ai-sdk/openai": async () => (await import("@ai-sdk/openai")).createOpenAI,
+  "@ai-sdk/openai-compatible": async () =>
+    (await import("@ai-sdk/openai-compatible")).createOpenAICompatible,
+  "@ai-sdk/perplexity": async () =>
+    (await import("@ai-sdk/perplexity")).createPerplexity,
+  "@ai-sdk/togetherai": async () =>
+    (await import("@ai-sdk/togetherai")).createTogetherAI,
+  "@ai-sdk/xai": async () => (await import("@ai-sdk/xai")).createXai,
+  "@openrouter/ai-sdk-provider": async () =>
+    (await import("@openrouter/ai-sdk-provider")).createOpenRouter,
+};
+
+const factoryCache = new Map<string, ProviderFactory>();
+
+export function isProviderSupported(
+  provider: Pick<RuntimeProvider, "npm">,
+): boolean {
+  return Boolean(provider.npm && REGISTRY[provider.npm]);
+}
+
+export async function instantiateProvider(
+  provider: Pick<RuntimeProvider, "id" | "label" | "npm" | "api">,
+  config: ResolvedProviderConfig,
+): Promise<unknown> {
+  if (!provider.npm || !REGISTRY[provider.npm]) {
+    throw new Error(
+      `Provider '${provider.id}' is unsupported in Synax runtime`,
+    );
+  }
+
+  const create = await getFactory(provider.npm);
+  const headers = normalizeStringMap(config.options?.headers);
+  const { promptCaching: _promptCaching, ...options } = normalizeObject(
+    config.options,
+  );
+  const baseURL = config.baseUrl ?? provider.api;
+
+  if (provider.npm === "@ai-sdk/open-responses") {
+    return create({
+      name: config.providerId,
+      url: responsesEndpoint(baseURL),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    });
+  }
+
+  if (provider.npm === "@ai-sdk/openai-compatible") {
+    // The compatibility provider only exposes Chat Completions. For an
+    // explicitly configured Responses connection, use the native OpenAI
+    // provider against the configured base URL instead of silently falling
+    // back to chat semantics.
+    if (config.apiFormat === "openai-responses") {
+      const createResponses = await getFactory("@ai-sdk/openai");
+      return createResponses({
+        ...(baseURL ? { baseURL } : {}),
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...options,
+      });
+    }
+    return create(buildOpenAICompatibleClientSettings(provider, config));
+  }
+
+  if (provider.npm === "@openrouter/ai-sdk-provider") {
+    return create({
+      baseURL,
+      apiKey: config.apiKey,
+      headers,
+      ...options,
+    });
+  }
+
+  return create({
+    ...(baseURL ? { baseURL } : {}),
+    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...options,
+  });
+}
+
+/**
+ * Select the language model for a provider client.
+ *
+ * `apiFormat` pins the wire protocol of the connection:
+ * - `openai` → Chat Completions (`.chat()` on the native OpenAI client, callable otherwise)
+ * - `openai-responses` → Responses API (`.responses()`)
+ * - `anthropic` → Messages API (`.messages()`)
+ *
+ * Without an explicit format the historical selector order applies.
+ */
+export function selectLanguageModel(
+  client: unknown,
+  modelId: string,
+  modelOptions?: Record<string, unknown>,
+  apiFormat?: ApiFormat,
+): unknown {
+  if (!client) throw new Error("Provider client was not created");
+  if (isImageGenerationModel(modelId)) {
+    throw new Error(
+      `'${modelId}' is an image model. Select a conversation model and use media.generate with this image model.`,
+    );
+  }
+  const c = client as Record<string, unknown>;
+
+  if (apiFormat === "openai-responses") {
+    if (typeof c.responses === "function")
+      return (c.responses as Function)(modelId, modelOptions);
+    if (typeof client === "function")
+      return (client as Function)(modelId, modelOptions);
+    throw new Error(
+      `Provider client cannot resolve Responses model '${modelId}': this connection has no Responses selector`,
+    );
+  }
+  if (apiFormat === "openai" && typeof c.chat === "function") {
+    return (c.chat as Function)(modelId, modelOptions);
+  }
+  if (apiFormat === "anthropic" && typeof c.messages === "function") {
+    return (c.messages as Function)(modelId, modelOptions);
+  }
+
+  if (typeof client === "function")
+    return (client as Function)(modelId, modelOptions);
+  if (typeof c.responses === "function")
+    return (c.responses as Function)(modelId, modelOptions);
+  if (typeof c.messages === "function")
+    return (c.messages as Function)(modelId, modelOptions);
+  if (typeof c.chat === "function")
+    return (c.chat as Function)(modelId, modelOptions);
+  if (typeof c.languageModel === "function")
+    return (c.languageModel as Function)(modelId, modelOptions);
+  logger.warn(
+    { modelId },
+    "[llm-runtime] provider client has no language model selector",
+  );
+  throw new Error(`Provider client cannot resolve model '${modelId}'`);
+}
+
+async function getFactory(npm: string): Promise<ProviderFactory> {
+  const cached = factoryCache.get(npm);
+  if (cached) return cached;
+  const loader = REGISTRY[npm];
+  if (!loader) throw new Error(`No registry entry for '${npm}'`);
+  const factory = await loader();
+  factoryCache.set(npm, factory);
+  return factory;
+}
+
+function normalizeObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
+function normalizeStringMap(value: unknown): Record<string, string> {
+  const input = normalizeObject(value);
+  return Object.fromEntries(
+    Object.entries(input).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" && entry[1].trim().length > 0,
+    ),
+  );
+}
+
+function responsesEndpoint(baseUrl: string | undefined): string {
+  const normalized = (baseUrl ?? "https://api.openai.com/v1").replace(
+    /\/+$/,
+    "",
+  );
+  return normalized.endsWith("/responses")
+    ? normalized
+    : `${normalized}/responses`;
+}
+
+/**
+ * Adapter npm names the runtime can instantiate. The media capability table is
+ * keyed by these names, and its coverage test walks this list so a new adapter
+ * cannot ship without an explicit media declaration.
+ */
+export function registeredAdapterPackages(): string[] {
+  return Object.keys(REGISTRY).sort();
+}

@@ -15,12 +15,12 @@ import { stdin as input, stdout as output } from 'node:process';
 
 process.env.SYNAX_SCAN_IN_PROCESS ??= '1';
 
-import type { SerializationStrategy } from '../api/prototypes/tree-embedding-bench/contracts.js';
+import type { SerializationStrategy } from '../services/local-node/prototypes/tree-embedding-bench/contracts.js';
 import {
   formatCorpusStats,
   loadRepositoryCorpus,
   resolveRepoRoot,
-} from '../api/prototypes/tree-embedding-bench/corpus-loader.js';
+} from '../services/local-node/prototypes/tree-embedding-bench/corpus-loader.js';
 import {
   DEFAULT_EVAL_SET_PATH,
   loadEvalSetFile,
@@ -29,17 +29,17 @@ import {
   SYNAX_EVAL_SET_PATH,
   type EvalRunRow,
   type ResolvedEvalTask,
-} from '../api/prototypes/tree-embedding-bench/eval-set.js';
-import { loadFixtureIndex } from '../api/prototypes/tree-embedding-bench/fixtures.js';
-import { mean } from '../api/prototypes/tree-embedding-bench/metrics.js';
+} from '../services/local-node/prototypes/tree-embedding-bench/eval-set.js';
+import { loadFixtureIndex } from '../services/local-node/prototypes/tree-embedding-bench/fixtures.js';
+import { mean } from '../services/local-node/prototypes/tree-embedding-bench/metrics.js';
 import {
   CodeChunkRetrievalIndex,
   formatSearchHits,
-} from '../api/prototypes/tree-embedding-bench/retrieval-index.js';
+} from '../services/local-node/prototypes/tree-embedding-bench/retrieval-index.js';
 import {
   defaultChunkStrategy,
   listSerializationStrategies,
-} from '../api/prototypes/tree-embedding-bench/serializers.js';
+} from '../services/local-node/prototypes/tree-embedding-bench/serializers.js';
 
 interface CliOptions {
   eval: boolean;
@@ -215,8 +215,8 @@ async function main(): Promise<void> {
   let corpus: Awaited<ReturnType<typeof loadRepositoryCorpus>>;
   if (opts.fixture) {
     const fixture = await loadFixtureIndex();
-    const { buildChunkContexts } = await import('../api/prototypes/tree-embedding-bench/corpus-loader.js');
-    const { parseOneFile } = await import('../api/services/analyzer/parse-lib.js');
+    const { buildChunkContexts } = await import('../services/local-node/prototypes/tree-embedding-bench/corpus-loader.js');
+    const { parseOneFile } = await import('../services/local-node/modules/analyzer/parse-lib.js');
     const fileText = new Map<string, string>();
     for (const f of fixture.codeIndex.files) {
       const abs = path.join(fixture.workDir, f.path);

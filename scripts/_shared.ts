@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT_DIR = dirname(
   fileURLToPath(new URL("../package.json", import.meta.url)),
 );
-export const WEB_DIR = join(ROOT_DIR, "web");
+export const CLIENT_DIR = join(ROOT_DIR, "client");
 
 export function readPort(name: string, fallback: number) {
   const raw = process.env[name];
@@ -21,26 +21,26 @@ export function logStart(label: string, url: string) {
 }
 
 /** API dev entrypoint; set SYNAX_API_WATCH=1 to restart on file changes. */
-export function resolveApiDevCommand(): string[] {
+export function resolveLocalServiceCommand(): string[] {
   const watch =
     process.env.SYNAX_API_WATCH === "1" ||
     process.env.SYNAX_API_WATCH === "true";
   return watch
-    ? ["npx", "tsx", "--watch", "api/server.ts"]
-    : ["npx", "tsx", "api/server.ts"];
+    ? ["npx", "tsx", "--watch", "services/local-node/entrypoints/http-server.ts"]
+    : ["npx", "tsx", "services/local-node/entrypoints/http-server.ts"];
 }
 
 export async function ensureWorkspaceInstall() {
   const hasRootDeps = existsSync(join(ROOT_DIR, "node_modules"));
-  const hasWebDeps = existsSync(join(WEB_DIR, "node_modules"));
+  const hasClientDeps = existsSync(join(CLIENT_DIR, "node_modules"));
   const hasTreeSitter = existsSync(
     join(ROOT_DIR, "node_modules", "tree-sitter"),
   );
   const hasReactRefresh = existsSync(
-    join(WEB_DIR, "node_modules", "react-refresh"),
+    join(CLIENT_DIR, "node_modules", "react-refresh"),
   );
 
-  if (hasRootDeps && hasWebDeps && hasTreeSitter && hasReactRefresh) {
+  if (hasRootDeps && hasClientDeps && hasTreeSitter && hasReactRefresh) {
     return;
   }
 

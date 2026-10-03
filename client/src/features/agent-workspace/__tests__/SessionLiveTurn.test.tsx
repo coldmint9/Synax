@@ -1,0 +1,156 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { AgentRunStep } from "../../../adapters/transport/agentRuntime";
+import type { TurnContentBlock } from "../buildInterleavedTurns";
+import { SessionLiveTurn } from "../SessionLiveTurn";
+import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
+
+vi.mock("../ThinkingBlock", () => ({
+  ThinkingBlock: ({ content }: { content: string }) => <div>{content}</div>,
+}));
+vi.mock("../ToolCallRoundPanel", () => ({
+  ToolCallRoundPanel: ({
+    toolBlocks,
+    isStreaming,
+  }: {
+    toolBlocks: TurnContentBlock[];
+    isStreaming?: boolean;
+  }) => (
+    <div data-live-tools={isStreaming || undefined}>
+      {toolBlocks
+        .map((block) =>
+          block.type === "tool_call" ? block.call.inputSummary : "",
+        )
+        .join("")}
+    </div>
+  ),
+}));
+
+const blocks: TurnContentBlock[] = [
+  { type: "thinking", content: "Locating BUI styles elsewhere" },
+  {
+    type: "tool_call",
+    call: {
+      id: "call-1",
+      toolId: "rg",
+      inputSummary: "bui-tool|bui-activity|StreamingTextBlock",
+      outputSummary: "Found matches",
+      status: "completed",
+      duration: "55ms",
+    },
+  },
+];
+const snapshot = { stepId: "step-1", stepIndex: 1, blocks };
+const persisted: AgentRunStep = {
+  id: "step-1",
+  runId: "run-1",
+  sessionId: "session-1",
+  index: 1,
+  status: "completed",
+  model: "test",
+  startedAt: "2026-01-01T00:00:00Z",
+  completedAt: "2026-01-01T00:00:01Z",
+  finishReason: "tool-calls",
+  metadata: {},
+};
+const props = {
+  steps: [] as AgentRunStep[],
+  streamingStepId: "step-2",
+  streamingLive: EMPTY_STREAMING_BUFFERS,
+  streamingCompletedSteps: [snapshot],
+};
+
+describe("SessionLiveTurn", () => {
+  it("keeps a snapshot until the store confirms its persisted content", () => {
+    const { rerender, container } = render(<SessionLiveTurn {...props} />);
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+    ).toHaveLength(1);
+
+    rerender(<SessionLiveTurn {...props} steps={[persisted]} />);
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(1);
+    rerender(<SessionLiveTurn {...props} steps={[persisted]} streamingCompletedSteps={[]} />);
+    expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
+    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(screen.getByRole("status")).toHaveAccessibleName();
+  });
+
+  it("keeps an unsynced step even when its contents match a persisted step", () => {
+    render(
+      <SessionLiveTurn
+        {...props}
+        steps={[persisted]}
+        streamingCompletedSteps={[
+          snapshot,
+          { ...snapshot, stepId: "other-step", stepIndex: 2 },
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(2);
+    expect(
+      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+    ).toHaveLength(2);
+  });
+
+  it("renders nothing when history owns every step and there is no active stream", () => {
+    const { container } = render(
+      <SessionLiveTurn {...props} steps={[persisted]} streamingStepId={null} streamingCompletedSteps={[]} />,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("keeps the current running step in the live layer", () => {
+    const { container } = render(
+      <SessionLiveTurn
+        {...props}
+        steps={[{ ...persisted, status: "running" }]}
+        streamingStepId="step-1"
+        streamingCompletedSteps={[]}
+        streamingLive={{ ...EMPTY_STREAMING_BUFFERS, blocks }}
+      />,
+    );
+    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+    ).toHaveLength(1);
+    expect(container.querySelectorAll('[data-live-tools="true"]')).toHaveLength(
+      1,
+    );
+  });
+
+  it("mounts only the newest thought row of a live step", () => {
+    render(
+      <SessionLiveTurn
+        {...props}
+        streamingCompletedSteps={[
+          {
+            ...snapshot,
+            blocks: [
+              { type: "thinking", content: "First thought" },
+              {
+                type: "tool_call",
+                call: {
+                  id: "call-1",
+                  toolId: "rg",
+                  inputSummary: "bui-tool",
+                  outputSummary: "Found matches",
+                  status: "completed",
+                  duration: "55ms",
+                },
+              },
+              { type: "thinking", content: "Second thought" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("First thought")).toBeNull();
+    expect(screen.getByText("Second thought")).toBeTruthy();
+  });
+});

@@ -1,6 +1,6 @@
 import http from "node:http";
-import { browserTools } from "../api/services/agent-runtime/tools/browser/browser-tools.js";
-import { closeAllBrowserSessions } from "../api/services/agent-runtime/tools/browser/browser-manager.js";
+import { browserTools } from "../services/local-node/modules/agent-runtime/tools/browser/browser-tools.js";
+import { closeAllBrowserSessions } from "../services/local-node/modules/agent-runtime/tools/browser/browser-manager.js";
 
 const server = http.createServer((req, res) => {
   if (req.url === "/api/ping") {

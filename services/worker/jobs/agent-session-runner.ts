@@ -1,0 +1,230 @@
+import { withinExecutionContext } from "../../local-node/infrastructure/runtime/execution-context.js";
+import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
+import { closeAllBrowserSessions } from "../../local-node/modules/agent-runtime/tools/browser/browser-manager.js";
+import { logger } from "../../local-node/infrastructure/runtime/logger.js";
+import {
+  isAgentSessionParentMessage,
+  sendAgentSessionToParent,
+  type AgentSessionChildInit,
+  type AgentSessionStreamMode,
+} from "../../local-node/infrastructure/runtime/ipc/agent-session-protocol.js";
+import type { StreamTurnRequest } from "../../local-node/modules/agent-runtime/contracts.js";
+import { agentLoopRuntime } from "../../local-node/modules/agent-runtime/loop-runtime.js";
+import { agentRuntimeStore } from "../../local-node/modules/agent-runtime/session-store.js";
+import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-runtime/agent-child-bootstrap.js";
+import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
+import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
+
+const activeStreams = new Map<string, AbortController>();
+const runningTasks = new Set<Promise<void>>();
+
+function pickGenerator(
+  mode: AgentSessionStreamMode,
+  sessionId: string,
+  input: StreamTurnRequest,
+  abortSignal: AbortSignal,
+) {
+  switch (mode) {
+    case "turn":
+      return agentLoopRuntime.streamRun(sessionId, input, abortSignal, false);
+    case "continue":
+      return agentLoopRuntime.streamContinue(sessionId, input, abortSignal);
+    case "resume":
+      return agentLoopRuntime.streamRun(sessionId, input, abortSignal, true);
+  }
+}
+
+async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
+  try {
+    const result = await compactSessionContextWithLlm(sessionId);
+    sendAgentSessionToParent({
+      type: "context:compact:done",
+      sessionId,
+      requestId,
+      result,
+    });
+  } catch (error) {
+    sendAgentSessionToParent({
+      type: "context:compact:error",
+      sessionId,
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function runStream(
+  sessionId: string,
+  streamId: string,
+  mode: AgentSessionStreamMode,
+  input: StreamTurnRequest,
+): Promise<void> {
+  const abortController = new AbortController();
+  activeStreams.set(streamId, abortController);
+  try {
+    for await (const chunk of withinExecutionContext(
+      input.executionContext,
+      pickGenerator(mode, sessionId, input, abortController.signal),
+    )) {
+      sendAgentSessionToParent({
+        type: "stream:chunk",
+        sessionId,
+        streamId,
+        chunk,
+      });
+    }
+    sendAgentSessionToParent({ type: "stream:done", sessionId, streamId });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    sendAgentSessionToParent({
+      type: "stream:error",
+      sessionId,
+      streamId,
+      error,
+    });
+    logger.error(
+      { err, sessionId, streamId, mode },
+      "[agent-session-runner] stream failed",
+    );
+  } finally {
+    activeStreams.delete(streamId);
+  }
+}
+
+function main(): void {
+  const raw = process.env.AGENT_SESSION_INIT;
+  if (!raw) {
+    logger.error("[agent-session-runner] AGENT_SESSION_INIT missing");
+    process.exit(1);
+    return;
+  }
+
+  let init: AgentSessionChildInit;
+  try {
+    init = JSON.parse(raw) as AgentSessionChildInit;
+  } catch (err) {
+    logger.error({ err }, "[agent-session-runner] invalid AGENT_SESSION_INIT");
+    process.exit(1);
+    return;
+  }
+
+  let initialized = false;
+  const initialize = () => {
+    if (initialized || !process.connected) return;
+    initialized = true;
+    setSessionWorkspaceRoot(init.sessionId, init.workDir);
+    bootstrapAgentChildForSession(init.sessionId);
+    sendAgentSessionToParent({
+      type: "session:ready",
+      sessionId: init.sessionId,
+    });
+    logger.info(
+      { sessionId: init.sessionId, pid: process.pid },
+      "[agent-session-runner] ready",
+    );
+  };
+
+  let stopping = false;
+  const shutdown = async (reason: string) => {
+    if (stopping) return;
+    stopping = true;
+    for (const controller of activeStreams.values())
+      if (!controller.signal.aborted) controller.abort(new Error(reason));
+    await terminateOwnedCommands();
+    await closeAllBrowserSessions(reason);
+    await Promise.allSettled([...runningTasks]);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => {
+    void shutdown("Worker terminated by parent.");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("Worker interrupted.");
+  });
+  process.on("disconnect", () => {
+    void shutdown("Parent disconnected.");
+  });
+
+  process.on("message", (message: unknown) => {
+    if (stopping || !isAgentSessionParentMessage(message)) return;
+
+    if (message.type === "session:initialize") {
+      initialize();
+      return;
+    }
+    if (!initialized) return;
+    if (message.type === "context:compact") {
+      const task = runContextCompaction(init.sessionId, message.requestId);
+      runningTasks.add(task);
+      void task.finally(() => runningTasks.delete(task));
+      return;
+    }
+    if (message.type === "stream:start") {
+      const task = runStream(
+        init.sessionId,
+        message.streamId,
+        message.mode,
+        message.input,
+      );
+      runningTasks.add(task);
+      void task.finally(() => runningTasks.delete(task));
+      return;
+    }
+
+    if (message.type === "stream:cancel") {
+      const controller = activeStreams.get(message.streamId);
+      if (controller && !controller.signal.aborted) {
+        controller.abort(
+          new Error(message.reason ?? "Stream cancelled by parent."),
+        );
+      }
+      return;
+    }
+
+    if (message.type === "session:interrupt") {
+      void shutdown(message.reason);
+    }
+    if (message.type === "session:interrupt-subtree") {
+      void (async () => {
+        let error: string | undefined;
+        try {
+          const hosted = agentRuntimeStore.listSessionTree(init.sessionId);
+          if (
+            !hosted.some(
+              (session) =>
+                session.id === message.sessionId &&
+                session.id !== init.sessionId,
+            )
+          )
+            throw new Error(
+              "The requested subagent does not belong to this worker.",
+            );
+          await agentLoopRuntime.interruptAndWaitForSessions(
+            [message.sessionId],
+            message.reason,
+          );
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
+        sendAgentSessionToParent({
+          type: "session:subtree-stopped",
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+          error,
+        });
+      })();
+    }
+  });
+
+  // Retain compatibility with an already-running pre-upgrade parent.
+  if (process.env.SYNAX_RECORDED_START !== "1") initialize();
+  else
+    sendAgentSessionToParent({
+      type: "session:booted",
+      sessionId: init.sessionId,
+    });
+  if (!process.connected)
+    void shutdown("Parent disconnected before initialization.");
+}
+
+setImmediate(main);

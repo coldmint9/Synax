@@ -69,7 +69,7 @@ jobs:
         run: npm run build
 
       - name: Build Web
-        run: npm run web:build
+        run: npm run client:build
 
       - name: Build Electron
         env:

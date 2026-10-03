@@ -1,0 +1,28 @@
+import path from 'node:path';
+import { runtimeAsset } from '../../infrastructure/runtime/runtime-paths.js';
+import os from 'node:os';
+import { DATA_ROOT } from '../../infrastructure/runtime/env.js';
+
+
+export function resolveBuiltinSkillsRoot(): string {
+  return runtimeAsset(import.meta.url, '../../skills/builtin', 'skills/builtin');
+}
+
+export function resolveGlobalSkillsRoot(): string {
+  return path.join(DATA_ROOT, 'skills');
+}
+
+export function resolveProjectSkillsRoot(projectId: string, workDir?: string | null): string | null {
+  if (workDir) {
+    return path.join(workDir, '.synax', 'skills');
+  }
+  if (!projectId) return null;
+  return null;
+}
+
+export function expandHome(inputPath: string): string {
+  if (inputPath.startsWith('~/')) {
+    return path.join(os.homedir(), inputPath.slice(2));
+  }
+  return inputPath;
+}

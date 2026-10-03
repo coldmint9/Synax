@@ -28,7 +28,7 @@ jobs:
           version=$(node -p "require('./package.json').version")
           gh release view "v${version}" --json isDraft --jq 'if .isDraft then error("Desktop release is still a draft") else true end'
       - run: npm run test:ui-updates
-      - run: npm run web:build
+      - run: npm run client:build
       - name: Build compatible UI assets and optional delta
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}

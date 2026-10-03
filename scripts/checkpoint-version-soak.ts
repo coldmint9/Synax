@@ -1,4 +1,4 @@
-import { VERSION_SCHEMA_MIGRATIONS } from "../api/services/agent-runtime/checkpoints/version-store/schema.js";
+import { VERSION_SCHEMA_MIGRATIONS } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/schema.js";
 /** Isolated bounded-resource soak. Does not load application DATA_ROOT. */
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -6,14 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import Database from "libsql";
-import { VersionObjects } from "../api/services/agent-runtime/checkpoints/version-store/objects.js";
-import { VersionHeads, type HeadState } from "../api/services/agent-runtime/checkpoints/version-store/heads.js";
-import { VersionTree } from "../api/services/agent-runtime/checkpoints/version-store/tree.js";
-import { VersionPins } from "../api/services/agent-runtime/checkpoints/version-store/pins.js";
-import { VersionCollector } from "../api/services/agent-runtime/checkpoints/version-store/gc.js";
-import { VersionResources } from "../api/services/agent-runtime/checkpoints/version-store/resources.js";
-import { createVersion, readVersion } from "../api/services/agent-runtime/checkpoints/version-store/versions.js";
-import { atomicVersionWrite } from "../api/services/agent-runtime/checkpoints/version-store/transaction.js";
+import { VersionObjects } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/objects.js";
+import { VersionHeads, type HeadState } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/heads.js";
+import { VersionTree } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/tree.js";
+import { VersionPins } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/pins.js";
+import { VersionCollector } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/gc.js";
+import { VersionResources } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/resources.js";
+import { createVersion, readVersion } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/versions.js";
+import { atomicVersionWrite } from "../services/local-node/modules/agent-runtime/checkpoints/version-store/transaction.js";
 
 function options() {
   let operations = 10000, output: string | undefined;
@@ -34,7 +34,7 @@ function run(operations: number) {
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA wal_autocheckpoint=1000;");
     for (const file of VERSION_SCHEMA_MIGRATIONS)
-      db.exec(readFileSync(new URL(`../api/db/migrations/${file}`, import.meta.url), "utf8"));
+      db.exec(readFileSync(new URL(`../services/local-node/infrastructure/database/migrations/${file}`, import.meta.url), "utf8"));
     const objects = new VersionObjects(db, { maxBytes: 64 * 1024 * 1024, maxObjects: 100000 });
     const tree = new VersionTree(objects), heads = new VersionHeads(db, objects), pins = new VersionPins(db);
     const collector = new VersionCollector(objects), resources = new VersionResources(db);

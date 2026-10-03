@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { writeFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-const require = createRequire(new URL("../web/package.json", import.meta.url));
+const require = createRequire(new URL("../client/package.json", import.meta.url));
 const { createElement } = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
 const {
@@ -91,7 +91,7 @@ const visualizationIcons = Object.fromEntries(
 writeFileSync(
   fileURLToPath(
     new URL(
-      "../web/src/react/features/visualizations/icons.json",
+      "../client/src/features/visualizations/icons.json",
       import.meta.url,
     ),
   ),
@@ -100,7 +100,7 @@ writeFileSync(
 
 writeFileSync(
   new URL(
-    "../web/src/react/features/visualizations/icons.LICENSE",
+    "../client/src/features/visualizations/icons.LICENSE",
     import.meta.url,
   ),
   readFileSync(

@@ -1,0 +1,160 @@
+import { ScrollArea, Spinner, Text } from "@/shared/ui/ui/Display";
+import { Button } from "@/shared/ui/ui/Button";
+import { useParams, useSearchParams } from "react-router-dom";
+import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
+import { ExtensionCenter } from "./extensions/ExtensionCenter";
+import { RefreshCw } from "lucide-react";
+import { useProjectSettings } from "./useProjectSettings";
+import { useConfig } from "./useConfig";
+import { useLocale } from "../../shared/hooks/useLocale";
+import type { I18nKey } from "../../shared/lib/i18n";
+import { SettingsCard } from "./components/SettingsCard";
+import { GitWorktreesSection } from "./components/GitWorktreesSection";
+import { ProjectReferencesSection } from "./components/ProjectReferencesSection";
+import { ProjectToolGrantsSection } from "./components/ProjectToolGrantsSection";
+import { ComputerUseSettings } from "./components/ComputerUseSettings";
+
+function ComingSoon({ titleKey }: { titleKey: I18nKey }) {
+  const { t } = useLocale();
+  return <SettingsCard title={t(titleKey)}><p className="settings-note">{t("settingsComingSoon")}</p></SettingsCard>;
+}
+
+function ProviderTab(_props: {
+  settings: any;
+  globalConfig: any;
+  providers: any;
+  onSave: (data: any) => void;
+}) {
+  return <ComingSoon titleKey="settingsTabProvider" />;
+}
+function BasicsTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <ComingSoon titleKey="settingsTabBasics" />;
+}
+function CollaborationTab(_props: {
+  settings: any;
+  onSave: (data: any) => void;
+}) {
+  return <ComingSoon titleKey="settingsTabCollaboration" />;
+}
+function NotificationsTab(_props: {
+  settings: any;
+  onSave: (data: any) => void;
+}) {
+  return <ComingSoon titleKey="settingsTabNotifications" />;
+}
+function ComplianceTab(_props: { settings: any; onSave: (data: any) => void }) {
+  return <ComingSoon titleKey="settingsTabCompliance" />;
+}
+
+export default function ProjectSettingsPage() {
+  const { projectId = "" } = useParams();
+  return <ProjectSettingsContent key={projectId} projectId={projectId} />;
+}
+
+function ProjectSettingsContent({ projectId }: { projectId: string }) {
+  const { settings, loading, error, reload, patchSection } =
+    useProjectSettings(projectId);
+  const { globalConfig, providers } = useConfig(projectId);
+  const { t, locale: useShellLocale } = useLocale();
+  const [params, setParams] = useSearchParams();
+  const selected = params.get('section') ?? 'skill';
+  const section: SettingsSection = ['general', 'tool', 'skill', 'mcp', 'market'].includes(selected) ? selected as SettingsSection : 'skill';
+  const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
+
+  if (!projectId)
+    return (
+      <div className="p-6 text-sm text-destructive">
+        {t("settingsMissingProjectId")}
+      </div>
+    );
+
+  if (error) {
+    return (
+      <div className="space-y-3 p-6">
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+        <Button size="sm" variant="outline" onClick={reload}>
+          {t("settingsRefresh")}
+        </Button>
+      </div>
+    );
+  }
+
+  if (loading || !settings) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Spinner size="sm" />
+      </div>
+    );
+  }
+  const extensionSection =
+    section === "general" ||
+    section === "archive" ||
+    section === "mcpServers" ||
+    section === "computerUse" ||
+    section === "llmProviders"
+      ? null
+      : section;
+
+  return (
+    <ScrollArea className="settings-scroll-viewport">
+      <div className="settings-scroll-content">
+        <SettingsFrame section={section} onSelect={select} projectId={projectId} projectMode>
+          {extensionSection ? <ExtensionCenter key={`${projectId}:${extensionSection}`} projectId={projectId} section={extensionSection} onNavigate={select} /> : <>
+          <div className="flex items-start justify-between gap-3 mb-8">
+            <div>
+              <Text variant="h5">{t("settingsProjectTitle")}</Text>
+              <Text
+                variant="body-xs"
+                color="muted"
+                className="mt-1 font-mono"
+              >
+                {projectId}
+              </Text>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              iconOnly
+              onClick={reload}
+              aria-label={t("settingsRefresh")}
+            >
+              <RefreshCw size={12} />
+            </Button>
+          </div>
+
+          <div className="space-y-8">
+            <ComputerUseSettings value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
+            <ProjectToolGrantsSection projectId={projectId} />
+            <ProjectReferencesSection projectId={projectId} />
+            <ProviderTab
+              settings={settings}
+              globalConfig={globalConfig}
+              providers={providers}
+              onSave={(data) => patchSection("provider", data)}
+            />
+            <GitWorktreesSection projectId={projectId} />
+            <BasicsTab
+              settings={settings}
+              onSave={(data) => patchSection("basics", data)}
+            />
+            <CollaborationTab
+              settings={settings}
+              onSave={(data) => patchSection("collaboration", data)}
+            />
+            <NotificationsTab
+              settings={settings}
+              onSave={(data) => patchSection("notifications", data)}
+            />
+            <ComplianceTab
+              settings={settings}
+              onSave={(data) => patchSection("compliance", data)}
+            />
+          </div>
+          </>}
+        </SettingsFrame>
+      </div>
+    </ScrollArea>
+  );
+}

@@ -2,13 +2,13 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: {
-    server: "api/server.ts",
+    server: "services/local-node/entrypoints/http-server.ts",
+    "services/cloud-node/server": "services/cloud-node/server.ts",
     cli: "cli/index.ts",
-    "workers/analyzer-worker": "api/services/analyzer/analyzer-worker.ts",
+    "workers/analyzer-worker": "services/worker/jobs/analyzer-worker.ts",
     "workers/scan-pipeline-worker.thread":
-      "api/services/analyzer/scan-pipeline-worker.thread.ts",
-    "workers/wiki-job-runner": "api/workers/wiki-job-runner.ts",
-    "workers/agent-session-runner": "api/workers/agent-session-runner.ts",
+      "services/worker/jobs/scan-pipeline-worker.thread.ts",
+    "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
   },
   format: ["cjs"],
   outDir: "server-dist",

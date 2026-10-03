@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC = ROOT / "web/public"
+PUBLIC = ROOT / "client/public"
 RESOURCES = ROOT / "electron/resources"
 SOURCE = PUBLIC / "synax-icon.svg"
 PUBLIC_PNG = PUBLIC / "synax-icon.png"

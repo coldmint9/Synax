@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 describe('frontend runtime contract boundary', () => {
   it('keeps server persistence and live bus implementations out of the browser type graph', () => {
     const root = path.resolve(import.meta.dirname, '..');
-    const program = ts.createProgram([path.join(root, 'web/src/lib/api/agentRuntime.ts')], {
+    const entry = path.join(root, 'client/src/adapters/transport/agentRuntime.ts');
+    const program = ts.createProgram([entry], {
       noEmit: true,
       skipLibCheck: true,
       module: ts.ModuleKind.ESNext,
@@ -15,8 +16,9 @@ describe('frontend runtime contract boundary', () => {
       target: ts.ScriptTarget.ES2020,
       jsx: ts.JsxEmit.ReactJSX,
     });
+    expect(program.getSourceFile(entry)).toBeDefined();
     const serverFiles = program.getSourceFiles().map(file => path.relative(root, file.fileName).replaceAll('\\', '/')).filter(file =>
-      /^api\/db\//.test(file) || /^api\/services\/agent-runtime\/(session-store|runtime-transaction|session-live-bus|runtime-bus-bridge)\./.test(file),
+      /^services\/local-node\/infrastructure\/database\//.test(file) || /^services\/local-node\/modules\/agent-runtime\/(session-store|runtime-transaction|session-live-bus|runtime-bus-bridge)\./.test(file),
     );
     expect(serverFiles).toEqual([]);
   });

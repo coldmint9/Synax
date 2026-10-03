@@ -1,0 +1,313 @@
+import { visualizationReplyParts } from "./visualizationTranscript";
+import type { InlineVisualizationReference } from "./visualizationTranscript";
+import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
+import { hasDisplayableReasoning } from "./activityText";
+import type {
+  AgentRunStep,
+  AgentRuntimeMessage,
+  AgentSession,
+  ToolCallRecord,
+} from "../../adapters/transport/agentRuntime";
+
+export interface ToolCallView {
+  outputRef?: unknown;
+  contentParts?: RuntimeContentPart[];
+  id: string;
+  toolId: string;
+  inputSummary: string;
+  outputSummary: string;
+  status: string;
+  category: string;
+  duration: string | null;
+  mutability: string;
+}
+
+export type TurnContentBlock =
+  | {
+      type: "visualization";
+      reference: InlineVisualizationReference;
+      messageId?: string;
+    }
+  | { type: "media"; parts: RuntimeContentPart[]; messageId?: string }
+  | { type: "text"; content: string; messageId?: string }
+  | { type: "thinking"; content: string }
+  | {
+      type: "sources";
+      messageId?: string;
+      sources: Array<{ id: string; url: string; title?: string }>;
+    }
+  | { type: "tool_call"; call: ToolCallView }
+  | { type: "tool_call_group"; calls: ToolCallView[] }
+  | { type: "sub_session"; session: AgentSession }
+  | {
+      type: "context_compacted";
+      originalTokens: number;
+      compressedTokens: number;
+      messageCount: number;
+    };
+
+export interface InterleavedTurn {
+  stepId: string;
+  index: number;
+  status: string;
+  duration: string | null;
+  /** Null while the step is still running, so the UI can omit the stamp. */
+  completedAt: string | null;
+  blocks: TurnContentBlock[];
+}
+
+function computeDuration(step: AgentRunStep): string | null {
+  if (!step.completedAt) return null;
+  const ms =
+    new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function computeToolDuration(startedAt: string, endedAt: string): string {
+  const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function groupParallelToolCalls(
+  blocks: TurnContentBlock[],
+): TurnContentBlock[] {
+  const result: TurnContentBlock[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.type === "tool_call") {
+      const group: ToolCallView[] = [block.call];
+      let j = i + 1;
+      while (j < blocks.length && blocks[j].type === "tool_call") {
+        group.push(
+          (blocks[j] as { type: "tool_call"; call: ToolCallView }).call,
+        );
+        j++;
+      }
+      if (group.length > 1) {
+        result.push({ type: "tool_call_group", calls: group });
+      } else {
+        result.push(block);
+      }
+      i = j;
+    } else {
+      result.push(block);
+      i++;
+    }
+  }
+  return result;
+}
+
+function mergeConsecutiveBlocks(
+  blocks: TurnContentBlock[],
+): TurnContentBlock[] {
+  const result: TurnContentBlock[] = [];
+  for (const block of blocks) {
+    const prev = result[result.length - 1];
+    if (
+      block.type === "text" &&
+      prev?.type === "text" &&
+      block.messageId === prev.messageId
+    ) {
+      result[result.length - 1] = {
+        ...prev,
+        type: "text",
+        content: prev.content + "\n" + block.content,
+      };
+    } else if (block.type === "thinking" && prev?.type === "thinking") {
+      result[result.length - 1] = {
+        type: "thinking",
+        content: prev.content + "\n" + block.content,
+      };
+    } else {
+      result.push(block);
+    }
+  }
+  return result;
+}
+
+export function buildInterleavedTurns(
+  steps: AgentRunStep[],
+  toolCallRecords: ToolCallRecord[],
+  messages: AgentRuntimeMessage[],
+  childSessions?: AgentSession[],
+): InterleavedTurn[] {
+  const sorted = [...steps].sort((a, b) => a.index - b.index);
+  const lastStepByRun = new Map(sorted.map((step) => [step.runId, step.id]));
+
+  const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
+  const seenMessages = new Set<string>();
+  for (const message of messages) {
+    if (seenMessages.has(message.id)) continue;
+    seenMessages.add(message.id);
+    if (
+      ["artifact_publisher", "artifact_request", "artifact_job"].includes(
+        String(message.metadata?.source),
+      )
+    )
+      continue;
+    if (message.role !== "assistant") continue;
+    // Work/goal completion messages are persisted without a step. They belong
+    // to the final step of their Run so the transcript survives live cleanup.
+    const stepId =
+      message.stepId ??
+      (message.runId ? lastStepByRun.get(message.runId) : null);
+    if (!stepId) continue;
+    const bucket = messagesByStep.get(stepId);
+    if (bucket) bucket.push(message);
+    else messagesByStep.set(stepId, [message]);
+  }
+
+  const toolCallsByStep = new Map<string, ToolCallRecord[]>();
+  for (const toolCall of toolCallRecords) {
+    if (!toolCall.stepId) continue;
+    const bucket = toolCallsByStep.get(toolCall.stepId);
+    if (bucket) bucket.push(toolCall);
+    else toolCallsByStep.set(toolCall.stepId, [toolCall]);
+  }
+
+  return sorted.map((step) => {
+    const items: Array<{ timestamp: number; block: TurnContentBlock }> = [];
+
+    const stepMessages = messagesByStep.get(step.id) ?? [];
+    for (const original of stepMessages) {
+      const msg = original;
+      const timestamp = new Date(msg.createdAt).getTime();
+      if (msg.contentParts?.some((part) => part.type !== "text"))
+        items.push({
+          timestamp,
+          block: { type: "media", parts: msg.contentParts, messageId: msg.id },
+        });
+
+      const isThinking =
+        msg.metadata?.type === "thinking" || msg.metadata?.kind === "thought";
+      if (isThinking) {
+        if (hasDisplayableReasoning(msg.content))
+          items.push({
+            timestamp,
+            block: { type: "thinking", content: msg.content },
+          });
+        continue;
+      }
+      for (const block of visualizationReplyParts(msg))
+        items.push({ timestamp, block });
+      if (msg.content.trim()) {
+        const sources = Array.isArray(msg.metadata?.sources)
+          ? msg.metadata.sources.flatMap((source) => {
+              if (
+                !source ||
+                typeof source !== "object" ||
+                Array.isArray(source)
+              )
+                return [];
+              const record = source as Record<string, unknown>;
+              if (
+                typeof record.id !== "string" ||
+                typeof record.url !== "string"
+              )
+                return [];
+              try {
+                if (!["http:", "https:"].includes(new URL(record.url).protocol))
+                  return [];
+              } catch {
+                return [];
+              }
+              return [
+                {
+                  id: record.id,
+                  url: record.url,
+                  ...(typeof record.title === "string"
+                    ? { title: record.title }
+                    : {}),
+                },
+              ];
+            })
+          : [];
+        if (sources.length)
+          items.push({
+            timestamp,
+            block: { type: "sources", sources, messageId: msg.id },
+          });
+      }
+    }
+
+    const stepToolCalls = toolCallsByStep.get(step.id) ?? [];
+    for (const tc of stepToolCalls) {
+      items.push({
+        timestamp: new Date(tc.startedAt).getTime(),
+        block: {
+          type: "tool_call",
+          call: {
+            id: tc.id,
+            contentParts: tc.contentParts,
+            ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
+            toolId: tc.toolId,
+            inputSummary: tc.inputSummary ?? "",
+            outputSummary: tc.outputSummary ?? tc.error ?? "",
+            status: tc.status,
+            category: tc.category,
+            duration: tc.endedAt
+              ? computeToolDuration(tc.startedAt, tc.endedAt)
+              : null,
+            mutability: tc.mutability,
+          },
+        },
+      });
+
+      if (tc.mutability === "task" && childSessions) {
+        const child = childSessions.find(
+          (cs) =>
+            cs.parentSessionId === step.sessionId &&
+            Math.abs(
+              new Date(cs.createdAt).getTime() -
+                new Date(tc.startedAt).getTime(),
+            ) < 3000,
+        );
+        if (child) {
+          items.push({
+            timestamp: new Date(child.createdAt).getTime(),
+            block: { type: "sub_session", session: child },
+          });
+        }
+      }
+    }
+
+    const compaction = step.metadata?.contextCompaction as
+      | {
+          compacted?: boolean;
+          originalTokens?: number;
+          projectedTokens?: number;
+        }
+      | undefined;
+    if (
+      compaction?.compacted &&
+      typeof compaction.originalTokens === "number" &&
+      typeof compaction.projectedTokens === "number"
+    ) {
+      items.push({
+        timestamp: new Date(step.completedAt ?? step.startedAt).getTime(),
+        block: {
+          type: "context_compacted",
+          originalTokens: compaction.originalTokens,
+          compressedTokens: compaction.projectedTokens,
+          messageCount: 0,
+        },
+      });
+    }
+
+    items.sort((a, b) => a.timestamp - b.timestamp);
+    const merged = mergeConsecutiveBlocks(items.map((i) => i.block));
+    const blocks = groupParallelToolCalls(merged);
+
+    return {
+      stepId: step.id,
+      index: step.index,
+      status: step.status,
+      duration: computeDuration(step),
+      completedAt: step.completedAt,
+      blocks,
+    };
+  });
+}

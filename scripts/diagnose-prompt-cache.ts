@@ -3,13 +3,13 @@ import http from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildLoopSystemPrompt } from "../api/services/agent-runtime/loop-prompt.js";
-import { synaxAgentProfile } from "../api/services/agent-runtime/synax/synax-agent-profile.js";
+import { buildLoopSystemPrompt } from "../services/local-node/modules/agent-runtime/loop-prompt.js";
+import { synaxAgentProfile } from "../services/local-node/modules/agent-runtime/synax/synax-agent-profile.js";
 import {
   buildSynaxRuntimeState,
   synaxModePromptRegistry,
-} from "../api/services/agent-runtime/synax/synax-mode-prompt.js";
-import { snapshotRuntimeReminder } from "../api/services/agent-runtime/runtime-request-snapshot.js";
+} from "../services/local-node/modules/agent-runtime/synax/synax-mode-prompt.js";
+import { snapshotRuntimeReminder } from "../services/local-node/modules/agent-runtime/runtime-request-snapshot.js";
 import {
   fingerprintGatewayRequest,
   compareRequests,
@@ -17,15 +17,15 @@ import {
   summarizeCacheMeasurements,
   type CacheMeasurement,
   type CacheRequestFingerprint,
-} from "../api/services/llm-runtime/cache-diagnostics.js";
-import { normalizeUsage } from "../api/services/llm-runtime/usage.js";
-import { executePipeline } from "../api/services/llm-runtime/pipeline.js";
+} from "../services/local-node/infrastructure/llm-runtime/cache-diagnostics.js";
+import { normalizeUsage } from "../services/local-node/infrastructure/llm-runtime/usage.js";
+import { executePipeline } from "../services/local-node/infrastructure/llm-runtime/pipeline.js";
 import type {
   LlmGatewayMessage,
   LlmGatewayRequest,
   ResolvedModelSelection,
-} from "../api/services/llm-runtime/types.js";
-import type { AgentContextBundle } from "../api/services/agent-runtime/contracts.js";
+} from "../services/local-node/infrastructure/llm-runtime/types.js";
+import type { AgentContextBundle } from "../services/local-node/modules/agent-runtime/contracts.js";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {
@@ -157,7 +157,7 @@ const server = http.createServer((req, res) => {
 function fingerprintGatewayBody(body: unknown) {
   return fingerprintRequest([{ role: "wire", content: body }]);
 }
-import { fingerprintRequest } from "../api/services/llm-runtime/cache-diagnostics.js";
+import { fingerprintRequest } from "../services/local-node/infrastructure/llm-runtime/cache-diagnostics.js";
 
 const measurements: Array<
   CacheMeasurement & {
@@ -269,7 +269,7 @@ try {
     }
   } else if (live) {
     const { resolveGatewaySelection } =
-      await import("../api/services/llm-runtime/gateway.js");
+      await import("../services/local-node/infrastructure/llm-runtime/gateway.js");
     selections = [
       await resolveGatewaySelection({
         purpose: "validate",

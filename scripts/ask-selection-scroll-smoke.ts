@@ -11,8 +11,8 @@ const fixture = `
 import React, { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import '/src/index.css';
-import { InteractionCard } from '/src/react/features/agent-workspace/AgentInteractionPanel';
-import { useTranscriptScroll } from '/src/react/features/agent-workspace/useTranscriptScroll';
+import { InteractionCard } from '/src/features/agent-workspace/AgentInteractionPanel';
+import { useTranscriptScroll } from '/src/features/agent-workspace/useTranscriptScroll';
 const type = new URLSearchParams(location.search).get('type');
 const interaction = {
   id: 'ask-scroll', sessionId: 'fixture', runId: 'run', stepId: 'step', toolCallId: 'tool',
@@ -41,8 +41,8 @@ function App() {
 createRoot(document.getElementById('root')).render(<App />);
 `;
 const server = await createServer({
-  configFile: path.resolve("web/vite.config.ts"),
-  root: path.resolve("web"),
+  configFile: path.resolve("client/vite.config.ts"),
+  root: path.resolve("client"),
   logLevel: "error",
   server: { host: "127.0.0.1", port: 0, open: false },
   plugins: [{

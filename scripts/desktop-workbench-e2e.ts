@@ -155,12 +155,12 @@ try {
   check("native import command and real workspace import through UI");
 
   const runtime =
-    await import("../api/services/agent-runtime/session-runtime.js");
+    await import("../services/local-node/modules/agent-runtime/session-runtime.js");
   const { agentRuntimeStore } =
-    await import("../api/services/agent-runtime/session-store.js");
+    await import("../services/local-node/modules/agent-runtime/session-store.js");
   const { ensureSynaxAgentRegistered } =
-    await import("../api/services/agent-runtime/synax/index.js");
-  const database = await import("../api/db/index.js");
+    await import("../services/local-node/modules/agent-runtime/synax/index.js");
+  const database = await import("../services/local-node/infrastructure/database/index.js");
   closeDb = database.closeDb;
   ensureSynaxAgentRegistered();
   const session = runtime.agentSessionRuntime.create({
@@ -236,9 +236,9 @@ try {
       i % 2,
     );
   const { runBackgroundShellCommand } =
-    await import("../api/services/agent-runtime/tools/exec-async.js");
+    await import("../services/local-node/modules/agent-runtime/tools/exec-async.js");
   const { stopSessionBackgroundProcess } =
-    await import("../api/services/agent-runtime/session-background-processes.js");
+    await import("../services/local-node/modules/agent-runtime/session-background-processes.js");
   const command = `${JSON.stringify(process.execPath)} -e 'setInterval(()=>{},1000)'`;
   const service = await runBackgroundShellCommand(session.id, command, {
     cwd: repository,

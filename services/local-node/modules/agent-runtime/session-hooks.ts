@@ -1,0 +1,93 @@
+import type { AgentSession, ToolHookContext } from './contracts.js';
+import { logger } from '../../infrastructure/runtime/logger.js';
+
+// ── Event types ──────────────────────────────────────────────────────────────
+
+export type SessionHookEvent =
+  | { type: 'session:created'; session: AgentSession }
+  | { type: 'run:started'; sessionId: string; runId: string }
+  | { type: 'run:completed'; sessionId: string; runId: string; status: string }
+  | { type: 'step:before'; sessionId: string; runId: string; stepIndex: number }
+  | { type: 'step:after'; sessionId: string; runId: string; stepIndex: number }
+  | { type: 'tool:before'; ctx: ToolHookContext }
+  | { type: 'tool:after'; ctx: ToolHookContext };
+
+export type SessionHookEventType = SessionHookEvent['type'];
+
+// ── Hook interface ───────────────────────────────────────────────────────────
+
+export interface SessionHookFilter {
+  sessionId?: string;
+  profileId?: string;
+  eventTypes?: SessionHookEventType[];
+}
+
+export interface SessionHook {
+  id: string;
+  filter?: SessionHookFilter;
+  handler: (event: SessionHookEvent) => Promise<void> | void;
+}
+
+// ── Registry ─────────────────────────────────────────────────────────────────
+
+export class SessionHookRegistry {
+  private readonly hooks = new Map<string, SessionHook>();
+
+  register(hook: SessionHook): void {
+    this.hooks.set(hook.id, hook);
+  }
+
+  unregister(hookId: string): void {
+    this.hooks.delete(hookId);
+  }
+
+  async emit(event: SessionHookEvent): Promise<void> {
+    for (const hook of this.hooks.values()) {
+      if (!this.matches(hook, event)) continue;
+      try {
+        await hook.handler(event);
+      } catch (err) {
+        logger.warn({ hookId: hook.id, eventType: event.type, err },
+          '[session-hooks] hook handler failed');
+      }
+    }
+  }
+
+  private matches(hook: SessionHook, event: SessionHookEvent): boolean {
+    const f = hook.filter;
+    if (!f) return true;
+    if (f.eventTypes && !f.eventTypes.includes(event.type)) return false;
+    if (f.sessionId) {
+      const sid = 'sessionId' in event ? event.sessionId
+        : 'session' in event ? event.session.id
+        : 'ctx' in event ? event.ctx.sessionId
+        : null;
+      if (sid && sid !== f.sessionId) return false;
+    }
+    return true;
+  }
+}
+
+export const sessionHooks = new SessionHookRegistry();
+
+// ── Built-in bridge: forward lifecycle events to runtimeBus (SSE) ────────────
+
+import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
+
+sessionHooks.register({
+  id: 'runtime-bus-bridge',
+  // Only lifecycle events without a store-side emitter are bridged here; the
+  // store relays `session_changed` / `session_deleted` / `session_archived`
+  // itself, so bridging them would double-emit on the bus.
+  filter: { eventTypes: ['session:created', 'step:after'] },
+  handler: (event) => {
+    switch (event.type) {
+      case 'session:created':
+        emitRuntimeBusEvent({ type: 'session_created', sessionId: event.session.id });
+        break;
+      case 'step:after':
+        emitRuntimeBusEvent({ type: 'session_step_completed', sessionId: event.sessionId, runId: event.runId, stepIndex: event.stepIndex });
+        break;
+    }
+  },
+});

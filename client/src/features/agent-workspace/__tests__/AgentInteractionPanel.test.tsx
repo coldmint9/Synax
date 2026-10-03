@@ -1,0 +1,962 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  agentRuntimeApi,
+  type AgentInteraction,
+  type AgentSession,
+} from "../../../adapters/transport/agentRuntime";
+import type { Subscription } from "../../../adapters/transport/runtimeEventBus";
+import { useAgentSessionStore } from "../state/agentSessionStore";
+import { AgentInteractionPanel } from "../AgentInteractionPanel";
+
+const bus = vi.hoisted(() => ({ subscription: null as Subscription | null }));
+vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
+  subscribe: (subscription: Subscription) => {
+    bus.subscription = subscription;
+    return vi.fn();
+  },
+}));
+vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
+  ensureSessionLiveSubscription: vi.fn(),
+  releaseSessionLiveSubscription: vi.fn(),
+}));
+vi.mock("../../../shared/hooks/useLocale", () => ({
+  useLocale: () => ({ locale: "en", t: (key: string) => key }),
+}));
+
+const session: AgentSession = {
+  id: "s1",
+  projectId: "p1",
+  parentSessionId: null,
+  childSessionIds: [],
+  nodeId: null,
+  profileId: "synax",
+  status: "waiting_input",
+  title: null,
+  prompt: "Task",
+  contextSnapshotId: null,
+  thinkingMode: "standard",
+  createdAt: "",
+  updatedAt: "",
+  completedAt: null,
+  resultSummary: null,
+  blockedReason: null,
+  skillIds: [],
+  activeRunId: "r1",
+  pendingResumeToken: null,
+  model: null,
+  sessionMetadata: { mode: "plan" },
+};
+const clarification: AgentInteraction = {
+  id: "i1",
+  sessionId: "s1",
+  runId: "r1",
+  stepId: "step1",
+  toolCallId: "tool1",
+  kind: "clarification",
+  revision: 3,
+  status: "pending",
+  response: null,
+  createdAt: "",
+  resolvedAt: null,
+  request: {
+    title: "Clarify scope",
+    questions: [
+      {
+        id: "name",
+        type: "text",
+        label: "Name",
+        required: true,
+        min: 2,
+        max: 10,
+      },
+      { id: "notes", type: "textarea", label: "Notes" },
+      {
+        id: "count",
+        type: "number",
+        label: "Count",
+        required: true,
+        min: 1,
+        max: 5,
+      },
+      { id: "confirm", type: "boolean", label: "Confirmed", required: true },
+      {
+        id: "target",
+        type: "single_select",
+        label: "Target",
+        required: true,
+        allowOther: true,
+        options: [{ value: "web", label: "Web" }],
+      },
+      {
+        id: "checks",
+        type: "multi_select",
+        label: "Checks",
+        required: true,
+        min: 1,
+        max: 2,
+        allowOther: true,
+        options: [
+          { value: "unit", label: "Unit" },
+          { value: "ui", label: "UI" },
+        ],
+      },
+    ],
+  },
+};
+const plan: AgentInteraction = {
+  ...clarification,
+  id: "plan1",
+  kind: "plan_approval",
+  request: {
+    title: "Approve plan",
+    plan: {
+      title: "Ship forms",
+      objective: "Durable answers",
+      steps: [
+        {
+          id: "one",
+          title: "Implement UI",
+          description: "Native inputs",
+          dependsOn: [],
+          expectedFiles: ["form.tsx"],
+        },
+      ],
+      acceptanceCriteria: ["Reload retains requests"],
+      assumptions: ["API available"],
+      risks: ["Stale revision"],
+    },
+  },
+};
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  useAgentSessionStore.setState({
+    projectId: null,
+    sessions: [session],
+    selectedSessionId: session.id,
+    interactionState: null,
+  });
+  vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+    interactions: [clarification],
+  });
+  vi.spyOn(agentRuntimeApi, "replyInteraction").mockImplementation(
+    async (_sessionId, _id, body) => ({
+      interaction: { ...clarification, status: "answered", response: body },
+    }),
+  );
+});
+
+async function fillForm() {
+  const user = userEvent.setup();
+  await screen.findByRole("textbox", { name: "Name" });
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Synax");
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Notes" }),
+    "Keep inputs",
+  );
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.type(screen.getByRole("spinbutton", { name: "Count" }), "2");
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(
+    within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
+      "radio",
+      { name: "No" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(screen.getByRole("radio", { name: "Web" }));
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(screen.getByRole("checkbox", { name: "Unit" }));
+  return user;
+}
+
+describe("AgentInteractionPanel", () => {
+  it("shows one question at a time, keeps drafts when going back, and advances on Enter without posting", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    expect(screen.getByText("Question 1 of 6")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(
+      screen.queryByRole("textbox", { name: "Notes" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Submit answers" }),
+    ).not.toBeInTheDocument();
+    await user.type(name, "Synax{Enter}");
+    expect(screen.getByText("Question 2 of 6")).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Name" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Notes" })).toHaveFocus();
+    await user.type(screen.getByRole("textbox", { name: "Notes" }), "Draft");
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Synax");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("textbox", { name: "Notes" })).toHaveValue("Draft");
+    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
+  });
+
+  it("keeps a single question directly submittable without pagination", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "One question",
+            questions: [clarification.request.questions![0]],
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "Name" }),
+      "Synax",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Next" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Previous" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        { revision: 3, action: "submit", answers: { name: "Synax" } },
+      ),
+    );
+  });
+
+  it("renders Markdown in question and option copy", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Markdown question",
+            questions: [
+              {
+                id: "mode",
+                type: "single_select",
+                label: "Use `remote-ssh` and **keep it private**?",
+                options: [
+                  { value: "ssh", label: "Use `SSH`" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const { container } = render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("radio", { name: "Use `SSH`" });
+    expect(container.querySelector(".agent-request-label code")).toHaveTextContent(
+      "remote-ssh",
+    );
+    expect(container.querySelector(".agent-request-label strong")).toHaveTextContent(
+      "keep it private",
+    );
+    expect(container.querySelector(".agent-request-choice-copy code")).toHaveTextContent(
+      "SSH",
+    );
+  });
+
+  it("marks recommended options without selecting them", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Choose modes",
+            questions: [
+              {
+                id: "mode",
+                type: "multi_select",
+                label: "Modes",
+                required: true,
+                options: [
+                  { value: "fast", label: "Fast" },
+                  { value: "safe", label: "Safe" },
+                  { value: "cheap", label: "Cheap" },
+                ],
+                recommended: ["fast", "safe"],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const { container } = render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("checkbox", { name: "Fast (Recommended)" });
+
+    expect(container.querySelectorAll(".agent-request-choice-recommended")).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: "Fast (Recommended)" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Safe (Recommended)" })).not.toBeChecked();
+    const submit = screen.getByRole("button", { name: "Submit answers" });
+    expect(submit).toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Fast (Recommended)" }));
+    expect(submit).not.toBeDisabled();
+  });
+
+  it("does not treat single-select bounds as option-value length", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Choose one",
+            questions: [
+              {
+                id: "scenario",
+                type: "single_select",
+                label: "Primary scenario",
+                required: true,
+                min: 1,
+                max: 1,
+                options: [
+                  {
+                    value: "remote_developer_machine",
+                    label: "Remote developer machine",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("radio", { name: "Remote developer machine" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        {
+          revision: 3,
+          action: "submit",
+          answers: { scenario: "remote_developer_machine" },
+        },
+      ),
+    );
+  });
+
+  it.each(["codex", "claude-code"])(
+    "loads and answers persisted questions for the %s native CLI backend",
+    async (backendId) => {
+      const nativeSession = {
+        ...session,
+        sessionMetadata: {
+          mode: "chat",
+          backend: { id: backendId, version: 1, model: null, workDir: "/tmp" },
+        },
+      };
+      useAgentSessionStore.setState({ sessions: [nativeSession] });
+      render(<AgentInteractionPanel session={nativeSession} />);
+      const user = await fillForm();
+      await user.click(screen.getByRole("button", { name: "Submit answers" }));
+      await waitFor(() =>
+        expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+          "s1",
+          "i1",
+          expect.objectContaining({ revision: 3, action: "submit" }),
+        ),
+      );
+    },
+  );
+
+  it("keeps unsupported ACP forms hidden", () => {
+    render(
+      <AgentInteractionPanel
+        session={{
+          ...session,
+          sessionMetadata: { backend: { id: "codex-acp", version: 1 } },
+        }}
+      />,
+    );
+    expect(agentRuntimeApi.listInteractions).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("region", { name: "Agent requests" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders no empty panel or loading placeholder when the session is idle", () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockReturnValue(
+      new Promise(() => {}),
+    );
+    render(
+      <AgentInteractionPanel session={{ ...session, status: "completed" }} />,
+    );
+    expect(
+      screen.queryByRole("region", { name: "Agent requests" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading requests…")).not.toBeInTheDocument();
+  });
+
+  it("reloads durable questions and submits typed answers with the exact revision", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    const user = await fillForm();
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        {
+          revision: 3,
+          action: "submit",
+          answers: {
+            name: "Synax",
+            notes: "Keep inputs",
+            count: 2,
+            confirm: false,
+            target: "web",
+            checks: ["unit"],
+          },
+        },
+      ),
+    );
+  });
+
+  it("keeps the primary action disabled for incomplete or invalid answers", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("textbox", { name: "Name" });
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
+    const user = await fillForm();
+    for (let i = 0; i < 3; i++) {
+      await user.click(screen.getByRole("button", { name: "Previous" }));
+    }
+    await user.clear(screen.getByRole("spinbutton", { name: "Count" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Count" }), "8");
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(
+      screen.queryByText("Out of bounds (min 1, max 5)"),
+    ).not.toBeInTheDocument();
+    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
+  });
+
+  it("preserves values on server failure and refresh, then permits retry", async () => {
+    vi.mocked(agentRuntimeApi.replyInteraction).mockRejectedValueOnce(
+      new Error("Revision conflict; please retry"),
+    );
+    render(<AgentInteractionPanel session={session} />);
+    const user = await fillForm();
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Revision conflict",
+    );
+    act(() =>
+      bus.subscription?.events?.session_changed?.({
+        data: JSON.stringify({ sessionId: "s1" }),
+      } as MessageEvent),
+    );
+    await waitFor(() =>
+      expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.getByText("Question 6 of 6")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Unit" })).toBeChecked();
+    for (let i = 0; i < 5; i++) {
+      await user.click(screen.getByRole("button", { name: "Previous" }));
+    }
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Synax");
+    for (let i = 0; i < 3; i++) {
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
+    expect(
+      within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
+        "radio",
+        { name: "No" },
+      ),
+    ).toBeChecked();
+    for (let i = 0; i < 2; i++) {
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it.each([
+    ["Skip", "skip"],
+    ["Cancel request", "cancel"],
+  ])("supports %s without filling required answers", async (label, action) => {
+    render(<AgentInteractionPanel session={session} />);
+    fireEvent.click(await screen.findByRole("button", { name: label }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        { revision: 3, action },
+      ),
+    );
+  });
+
+  it("keeps plan execution disabled until required choices are selected", async () => {
+    const planWithChoice: AgentInteraction = {
+      ...plan,
+      request: {
+        ...plan.request,
+        questions: [
+          {
+            id: "implementation",
+            type: "single_select",
+            label: "Implementation",
+            required: true,
+            options: [
+              { value: "css", label: "Use CSS" },
+              { value: "component", label: "Use a component" },
+            ],
+          },
+        ],
+      },
+    };
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [planWithChoice],
+    });
+    render(<AgentInteractionPanel session={session} />);
+
+    const execute = await screen.findByRole("button", {
+      name: "Start execution",
+    });
+    expect(execute).toBeDisabled();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: "Use CSS" }));
+    expect(execute).not.toBeDisabled();
+    await userEvent.click(execute);
+
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "plan1",
+        { revision: 3, action: "execute" },
+      ),
+    );
+  });
+
+  it.each([
+    ["Start execution", "execute"],
+    ["Cancel", "cancel"],
+  ])("keeps %s as a one-time plan action", async (label, action) => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [plan],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    expect(await screen.findByText("Durable answers")).toBeVisible();
+    fireEvent.click(screen.getByText("Implement UI"));
+    expect(screen.getByText("form.tsx")).toBeVisible();
+    fireEvent.click(screen.getByText("Acceptance criteria"));
+    expect(screen.getByText("Reload retains requests")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Save plan" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Request revision" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Revision feedback" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "plan1",
+        {
+          revision: 3,
+          action,
+        },
+      ),
+    );
+  });
+
+  it("reports loading errors and retries the durable request", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockRejectedValueOnce(
+      new Error("Offline"),
+    );
+    render(<AgentInteractionPanel session={session} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+    expect(await screen.findByRole("textbox", { name: "Name" })).toBeVisible();
+  });
+
+  it("disables a pending form for a cancelled session", async () => {
+    render(
+      <AgentInteractionPanel session={{ ...session, status: "cancelled" }} />,
+    );
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
+    expect(agentRuntimeApi.replyInteraction).not.toHaveBeenCalled();
+  });
+
+  it("supports other values and validates multi-select cardinality", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    const user = await fillForm();
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    await user.click(
+      within(screen.getByRole("group", { name: "Target *" })).getByRole(
+        "radio",
+        { name: "Other" },
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByText("Enter an other option")).not.toBeInTheDocument();
+    await user.type(
+      screen.getByRole("textbox", { name: "Target — Other" }),
+      "Desktop",
+    );
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(screen.getByRole("checkbox", { name: "UI" }));
+    await user.click(
+      within(screen.getByRole("group", { name: "Checks *" })).getByRole(
+        "checkbox",
+        { name: "Other" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Checks — Other" }),
+      "Accessibility",
+    );
+    const submit = screen.getByRole("button", { name: "Submit answers" });
+    expect(submit).toBeDisabled();
+    expect(
+      screen.queryByText("Out of bounds (min 1, max 2)"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "UI" }));
+    expect(submit).not.toBeDisabled();
+    await user.click(submit);
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        expect.objectContaining({
+          answers: expect.objectContaining({
+            target: "Desktop",
+            checks: ["unit", "Accessibility"],
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("does not confuse numeric zero or false with an absent answer, and omits empty optional fields", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          request: {
+            title: "Zero is valid",
+            questions: [
+              {
+                id: "count",
+                type: "number",
+                label: "Count",
+                required: true,
+                min: 0,
+              },
+              {
+                id: "confirm",
+                type: "boolean",
+                label: "Confirmed",
+                required: true,
+              },
+              {
+                id: "notes",
+                type: "textarea",
+                label: "Optional notes",
+                required: false,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    fireEvent.change(await screen.findByRole("spinbutton", { name: "Count" }), {
+      target: { value: "0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Confirmed *" })).getByRole(
+        "radio",
+        { name: "No" },
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "i1",
+        {
+          revision: 3,
+          action: "submit",
+          answers: { count: 0, confirm: false },
+        },
+      ),
+    );
+  });
+
+  it("retains answered and skipped history alongside pending forms after reload", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          id: "old",
+          revision: 1,
+          status: "answered",
+          response: {
+            revision: 1,
+            action: "submit",
+            answers: { name: "Earlier answer", confirm: false },
+          },
+        },
+        {
+          ...plan,
+          status: "answered",
+          response: { revision: 3, action: "save" },
+        },
+        {
+          ...clarification,
+          id: "skipped",
+          revision: 2,
+          status: "answered",
+          response: { revision: 2, action: "skip" },
+        },
+        clarification,
+      ],
+    });
+    const { unmount } = render(<AgentInteractionPanel session={session} />);
+    await screen.findByLabelText("Clarify scope v1 — Answered");
+    expect(screen.queryByText("Interaction history")).not.toBeInTheDocument();
+    // A resolved ask stays folded into its mini title until the reader opens it.
+    const resolved = screen.getByLabelText("Clarify scope v1 \u2014 Answered");
+    expect(resolved).toHaveAttribute("aria-expanded", "false");
+    expect(resolved).toHaveTextContent("Answered");
+    expect(resolved.querySelector(".agent-history-version")).toBeNull();
+    expect(resolved.querySelector(".agent-history-status-dot")).toBeNull();
+    fireEvent.click(resolved);
+    expect(resolved).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("Earlier answer")).toBeVisible();
+    expect(
+      screen.getByLabelText("Approve plan v3 — Saved for later execution"),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Clarify scope v2 — Skipped · used the recommendation")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Next" })).toHaveLength(1);
+    unmount();
+    useAgentSessionStore.setState({ interactionState: null });
+    render(<AgentInteractionPanel session={session} />);
+    await screen.findByLabelText("Approve plan v3 — Saved for later execution");
+    expect(
+      screen.getByLabelText("Approve plan v3 — Saved for later execution"),
+    ).toBeVisible();
+  });
+
+  it("keeps the composer compact while resolved answers stay in the transcript", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...clarification,
+          id: "old",
+          status: "answered",
+          response: {
+            revision: 3,
+            action: "submit",
+            answers: { name: "Earlier answer" },
+          },
+        },
+        clarification,
+      ],
+    });
+    render(<AgentInteractionPanel session={session} compact />);
+    expect(
+      await screen.findByRole("button", { name: "Your input is needed" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("Earlier answer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Interaction history")).not.toBeInTheDocument();
+  });
+
+  it("refreshes on reconnect and same-session events, not another session’s events", async () => {
+    render(<AgentInteractionPanel session={session} />);
+    await screen.findByRole("textbox", { name: "Name" });
+    act(() =>
+      bus.subscription?.events?.session_changed?.({
+        data: JSON.stringify({ sessionId: "other" }),
+      } as MessageEvent),
+    );
+    expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(1);
+    act(() => bus.subscription?.onConnect?.());
+    await waitFor(() =>
+      expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(2),
+    );
+    act(() =>
+      bus.subscription?.events?.session_step_completed?.({
+        data: JSON.stringify({ sessionId: "s1" }),
+      } as MessageEvent),
+    );
+    await waitFor(() =>
+      expect(agentRuntimeApi.listInteractions).toHaveBeenCalledTimes(3),
+    );
+  });
+
+  it("does not carry draft answers to a different session or a new revision", async () => {
+    const { rerender } = render(<AgentInteractionPanel session={session} />);
+    await fillForm();
+    const second = { ...session, id: "s2" };
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [{ ...clarification, sessionId: "s2" }],
+    });
+    act(() =>
+      useAgentSessionStore.setState({
+        selectedSessionId: "s2",
+        sessions: [second],
+      }),
+    );
+    rerender(<AgentInteractionPanel session={second} />);
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue(
+      "",
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Old revision" },
+    });
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [{ ...clarification, sessionId: "s2", revision: 4 }],
+    });
+    rerender(
+      <AgentInteractionPanel
+        session={{ ...second, updatedAt: "new-revision" }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(""),
+    );
+  });
+
+  it("does not submit the same revision twice while a reply is pending", async () => {
+    let resolve!: (value: { interaction: AgentInteraction }) => void;
+    vi.mocked(agentRuntimeApi.replyInteraction).mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    render(<AgentInteractionPanel session={session} />);
+    await fillForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
+    expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("checkbox", { name: "Unit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    await act(async () =>
+      resolve({ interaction: { ...clarification, status: "answered" } }),
+    );
+  });
+
+  it("keeps the execute-or-cancel plan actions outside the scrolling body", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [plan],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    const execute = await screen.findByRole("button", {
+      name: "Start execution",
+    });
+    expect(execute.closest(".agent-request-body")).toBeNull();
+    expect(execute.closest("footer")).toHaveTextContent(
+      "write your changes in the composer",
+    );
+    expect(execute.closest("form")).not.toHaveClass("border-warning/40");
+  });
+
+  it("marks human acceptance criteria without adding a new reply contract", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...plan,
+          request: {
+            ...plan.request,
+            plan: {
+              ...plan.request.plan!,
+              humanAcceptanceCriteria: ["Reload retains requests"],
+            },
+          },
+        },
+      ],
+    });
+    render(<AgentInteractionPanel session={session} />);
+    fireEvent.click(await screen.findByText("Acceptance criteria"));
+    expect(screen.getByText("(user confirmation)")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Start execution" }));
+    await waitFor(() =>
+      expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+        "s1",
+        "plan1",
+        { revision: 3, action: "execute" },
+      ),
+    );
+  });
+
+  it("lets the user execute the current saved plan from its original card", async () => {
+    const saved = {
+      ...session,
+      status: "completed" as const,
+      sessionMetadata: {
+        mode: "plan",
+        plan: { ...plan.request.plan!, status: "saved" as const, revision: 3 },
+      },
+    };
+    useAgentSessionStore.setState({ sessions: [saved] });
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [
+        {
+          ...plan,
+          status: "cancelled",
+          response: { revision: 3, action: "cancel" },
+        },
+      ],
+    });
+    const original = useAgentSessionStore.getState().sendSessionMessage;
+    const send = vi.fn(async () => {});
+    useAgentSessionStore.setState({ sendSessionMessage: send });
+    try {
+      render(<AgentInteractionPanel session={saved} />);
+      fireEvent.click(
+        await screen.findByLabelText("Approve plan v3 — Deferred"),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Start execution" }));
+      await waitFor(() =>
+        expect(send).toHaveBeenCalledWith("s1", {
+          message: "Execute saved plan v3: Approve plan.",
+        }),
+      );
+    } finally {
+      useAgentSessionStore.setState({ sendSessionMessage: original });
+    }
+  });
+
+  it("loads after the parent selects the session, even if the panel mounted before selection", async () => {
+    useAgentSessionStore.setState({ selectedSessionId: null });
+    render(<AgentInteractionPanel session={session} />);
+    expect(agentRuntimeApi.listInteractions).not.toHaveBeenCalled();
+    act(() => useAgentSessionStore.setState({ selectedSessionId: session.id }));
+    expect(await screen.findByRole("textbox", { name: "Name" })).toBeVisible();
+  });
+});
