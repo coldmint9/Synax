@@ -64,17 +64,10 @@ for (const pkg of libsqlPackages) {
 const dynamicPackages = [
   "@anthropic-ai/claude-agent-sdk",
   "playwright-core",
-  "tree-sitter",
-  "node-gyp-build",
-  "node-addon-api",
   "node-pty",
 ];
 
-const treeSitterLangs = readdirSync(src).filter(
-  (d) => d.startsWith("tree-sitter-") && d !== "tree-sitter",
-);
-
-for (const pkg of [...dynamicPackages, ...treeSitterLangs]) {
+for (const pkg of dynamicPackages) {
   cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
   console.log(`  copied ${pkg}`);
 }
@@ -149,9 +142,6 @@ cpSync(join(root, "services/local-node/skills/builtin"), join(serverDist, "skill
 rmSync(join(serverDist, "prototypes/tree-embedding-bench"), { recursive: true, force: true });
 for (const name of ["analyzer-worker.cjs", "scan-pipeline-worker.thread.cjs"]) {
   rmSync(join(serverDist, "workers", name), { force: true });
-}
-for (const name of readdirSync(dest).filter(name => name === "tree-sitter" || name.startsWith("tree-sitter-"))) {
-  rmSync(join(dest, name), { recursive: true, force: true });
 }
 rmSync(join(serverDist, "migrations"), { recursive: true, force: true });
 cpSync(join(root, "services/local-node/infrastructure/database/migrations"), join(serverDist, "migrations"), {
