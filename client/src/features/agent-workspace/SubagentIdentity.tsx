@@ -5,9 +5,6 @@ const FALLBACK_NAMES = ["林墨", "许澄", "乔安", "沈砚", "顾言", "周�
 const FALLBACK_ROLES: Record<string, { name: string; description: string }> = {
   explorer: { name: "探索员", description: "读取代码、搜索线索并梳理系统结构。" },
   reviewer: { name: "审查员", description: "检查实现、发现风险并给出可执行的审查意见。" },
-  "wiki-explorer": { name: "知识探索员", description: "探索代码库结构，提炼模块职责和关键路径。" },
-  "wiki-verifier": { name: "知识校验员", description: "核对文档内容与代码证据，标记不一致之处。" },
-  "wiki-package-explorer": { name: "包结构探索员", description: "深入分析包结构、入口和依赖关系。" },
 };
 
 export function getSubagentNameFromId(

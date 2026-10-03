@@ -221,12 +221,12 @@ export const bashTool: RegisteredTool = {
       .string()
       .min(1)
       .max(4000)
-      .describe("The bash command to execute."),
+      .describe("The shell command to execute; no NUL bytes. Runs in the execution host shell reported by the runtime environment."),
     workdir: z
       .string()
       .optional()
       .describe(
-        "Workspace-relative working directory. Defaults to workspace root.",
+        "Existing directory relative to the session working directory (the default), or an absolute path permitted by the sandbox. External directories may require approval.",
       ),
     stdin: z
       .string()

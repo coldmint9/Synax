@@ -112,7 +112,7 @@ const navigateSchema = z
     url: z.string().trim().min(1).max(2048).optional()
       .describe("Absolute http(s) URL to open. Omit only when switching tabs with pageSeq."),
     newTab: z.boolean().optional().describe("Open the URL in a new tab instead of the active one."),
-    pageSeq: z.number().int().positive().optional().describe("Switch to this open tab (see the tabs list in any result) instead of navigating; url may be omitted."),
+    pageSeq: z.number().int().positive().optional().describe("Existing tab ID from the returned tabs list. Used only when url is omitted; when url is supplied this field is ignored."),
     headless: z.boolean().optional().describe(`Run without a visible window. Defaults to ${"SYNAX_BROWSER_HEADLESS"} or true. Only applies the first time the browser launches.`),
     timeoutMs: z.number().int().min(1_000).max(120_000).optional().describe("Navigation timeout in ms (default 30000). Raise it for slow dev-server cold starts."),
     depth: z.number().int().min(1).max(30).optional().describe("Limit snapshot depth for very large pages."),
@@ -210,7 +210,7 @@ export const browserTools: RegisteredTool[] = [
     description:
       "Open or switch tabs in this session's Chromium via Playwright and return an accessibility snapshot with [ref=eN] handles for interaction. Use for end-to-end debugging of web apps (local dev servers welcome). Only http(s) URLs; file:// is blocked. The browser stays open across browser.* calls until browser.close or idle timeout.",
     progressiveDetails:
-      "Accepts { url?, newTab?, pageSeq?, headless?, timeoutMs?, depth? }. Returns page url/title, open tabs and an AI snapshot with element refs. Feed refs into browser.click / browser.type.",
+      "Accepts { url?, newTab?, pageSeq?, headless?, timeoutMs?, depth? }. Supply url to navigate, or omit url and supply an existing pageSeq to switch tabs. url takes precedence over pageSeq; newTab only applies to URL navigation. Returns page url/title, open tabs and an AI snapshot with element refs. Feed fresh refs into browser.click / browser.type.",
     inputSchema: navigateSchema,
     async execute(input) {
       const args = navigateSchema.parse(input.args);
@@ -410,7 +410,7 @@ export const browserTools: RegisteredTool[] = [
     description:
       "List captured network requests (method, status, type, URL) or fetch one response body by seq. Use it to debug API traffic the page produced.",
     progressiveDetails:
-      "Accepts { filter?, sinceSeq?, limit? } to list, or { seq } to read one entry with its response body (text-ish bodies up to 50k chars). Buffer holds the most recent 400.",
+      "Accepts { filter?, sinceSeq?, limit? } to list, or { seq } to read one entry with its response body (text-ish bodies up to 50k chars). seq takes precedence over list filters; use an ID from this session's captured requests. Buffer holds the most recent 400; older IDs may no longer exist.",
     inputSchema: networkSchema,
     async execute(input) {
       const args = networkSchema.parse(input.args);

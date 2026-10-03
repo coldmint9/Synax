@@ -11,7 +11,7 @@ describe('toolRegistry', () => {
     const tools = toolRegistry.list();
     expect(tools.map((tool) => tool.id)).toEqual(expect.arrayContaining(['file.list', 'file.read', 'rg']));
     expect(tools.some((tool) => ['file.glob', 'grep.search'].includes(tool.id))).toBe(false);
-    for (const id of ['file.read', 'file.list', 'rg', 'bash', 'file.write', 'edit']) {
+    for (const id of ['file.read', 'file.list', 'rg', 'bash', 'file.write', 'file.patch']) {
       const tool = tools.find((candidate) => candidate.id === id);
       expect(typeof tool?.progressiveDetails).toBe('string');
     }

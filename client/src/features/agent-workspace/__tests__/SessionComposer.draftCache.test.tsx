@@ -1,6 +1,5 @@
 import { resetSessionComposerDrafts } from "../state/sessionComposerDraftStore";
 import { mediaDraftItems } from "../../media/useMediaDraft";
-import { useWikiStore } from "../../../shared/state/wikiStore";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +7,6 @@ import {
   agentRuntimeApi,
   type AgentSession,
 } from "../../../adapters/transport/agentRuntime";
-import { sessionPromptApi } from "../../../adapters/transport/sessionPrompt";
 import {
   runtimeMedia,
   type RuntimeAsset,
@@ -159,12 +157,7 @@ beforeEach(() => {
     composerModelId: "test-model",
     composerPermissionTier: "boundary",
     composerReasoningEffort: "high",
-    composerWikiAttachMode: "auto",
     composerDocumentId: null,
-  });
-  useWikiStore.setState({
-    documents: [],
-    loadProjectSnapshot: vi.fn(async () => {}),
   });
   vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
     interactions: [],
@@ -186,10 +179,6 @@ describe("SessionComposer draft cache", () => {
   });
 
   it("drops the cached draft once the new session is submitted", async () => {
-    vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
-      prompt: "Remember me",
-      wikiContext: { mode: "auto", documentId: null },
-    } as never);
     vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
       session,
       context: null,
@@ -211,7 +200,6 @@ describe("SessionComposer draft cache", () => {
   });
 
   it("keeps the cached draft when the submit fails", async () => {
-    vi.spyOn(sessionPromptApi, "build").mockRejectedValue(new Error("offline"));
     renderDraft();
     await typeDraft("Keep me");
 
@@ -261,10 +249,6 @@ describe("SessionComposer draft cache", () => {
   it("clears the cached attachments and references once submitted", async () => {
     saveDraftComposerContext("p1", cachedContext);
     vi.spyOn(runtimeMedia, "metadata").mockResolvedValue({ asset });
-    vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
-      prompt: "With context",
-      wikiContext: { mode: "auto", documentId: null },
-    } as never);
     vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
       session,
       context: null,

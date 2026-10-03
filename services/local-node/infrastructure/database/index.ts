@@ -249,7 +249,7 @@ function bootstrapMigrationLedger(
 
   const legacy = sqlite
     .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('wiki_snapshots', '_meta')",
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_meta'",
     )
     .all() as Array<{ name: string }>;
   if (legacy.length === 0) return;
@@ -279,8 +279,7 @@ function bootstrapMigrationLedger(
 
 function shouldRunMigrationsInThisProcess(): boolean {
   return (
-    process.env.SYNAX_AGENT_SESSION_CHILD !== "1" &&
-    process.env.SYNAX_WIKI_JOB_CHILD !== "1"
+    process.env.SYNAX_AGENT_SESSION_CHILD !== "1"
   );
 }
 
@@ -353,36 +352,7 @@ function ensureColumn(
   pinoLogger.info({ table, column }, "context db: column added");
 }
 
-function migrateWikiEvaluationsToGoals(sqlite: NativeDatabase.Database): void {
-  const legacy = sqlite
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wiki_evaluations'",
-    )
-    .get() as { name: string } | undefined;
-  if (!legacy) return;
-
-  const columns = sqlite
-    .prepare("PRAGMA table_info(wiki_evaluations)")
-    .all() as Array<{ name: string }>;
-  const hasDocumentId = columns.some((c) => c.name === "document_id");
-  const documentExpr = hasDocumentId ? "document_id" : "NULL";
-
-  sqlite.exec(`
-    INSERT OR IGNORE INTO wiki_goals (
-      id, project_id, scope, document_id, content, anchor_json,
-      status, plan_node_id, created_at, updated_at, resolved_at
-    )
-    SELECT
-      id, project_id, 'document', ${documentExpr}, content, NULL,
-      status, plan_node_id, created_at, updated_at, resolved_at
-    FROM wiki_evaluations;
-  `);
-  sqlite.exec("DROP TABLE IF EXISTS wiki_evaluations");
-  pinoLogger.info("context db: migrated wiki_evaluations → wiki_goals");
-}
-
 function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
-  migrateWikiEvaluationsToGoals(sqlite);
   ensureColumn(
     sqlite,
     "agent_runtime_sessions",
@@ -536,83 +506,7 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
     "evidence_used_json",
     "evidence_used_json TEXT NOT NULL DEFAULT '[]'",
   );
-  ensureColumn(
-    sqlite,
-    "wiki_refresh_tasks",
-    "draft_ids_json",
-    "draft_ids_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_refresh_tasks",
-    "affected_document_ids_json",
-    "affected_document_ids_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "pipeline_stage",
-    "pipeline_stage TEXT NOT NULL DEFAULT 'pending'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "content_md",
-    "content_md TEXT NOT NULL DEFAULT ''",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "references_json",
-    "references_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "search_text",
-    "search_text TEXT NOT NULL DEFAULT ''",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "manual_state",
-    "manual_state TEXT NOT NULL DEFAULT 'none'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "stale_state",
-    "stale_state TEXT NOT NULL DEFAULT 'fresh'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_documents",
-    "is_section",
-    "is_section INTEGER NOT NULL DEFAULT 0",
-  );
-  ensureColumn(sqlite, "wiki_goals", "last_session_id", "last_session_id TEXT");
-  ensureColumn(
-    sqlite,
-    "wiki_plans",
-    "goal_ids_json",
-    "goal_ids_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "wiki_plan_nodes",
-    "goal_ids_json",
-    "goal_ids_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  try {
-    sqlite.exec(
-      `UPDATE wiki_plans SET goal_ids_json = evaluation_ids_json WHERE goal_ids_json = '[]' AND evaluation_ids_json != '[]'`,
-    );
-    sqlite.exec(
-      `UPDATE wiki_plan_nodes SET goal_ids_json = evaluation_ids_json WHERE goal_ids_json = '[]' AND evaluation_ids_json != '[]'`,
-    );
-  } catch {
-    /* columns may not exist on fresh DB */
-  }
+
 }
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {

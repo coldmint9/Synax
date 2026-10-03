@@ -174,7 +174,7 @@ const scenarios = live
   ? ["synthetic-stable-prefix"]
   : [
       "no-reference",
-      "code-map-wiki",
+      "code-map",
       "work-evidence",
       "saved-approved-plan",
       "long-history",
@@ -369,14 +369,7 @@ try {
                     sourceType: "code-map",
                     sourceId: "stable-scan",
                   },
-                  {
-                    id: `acblk-${step}-wiki`,
-                    kind: "wiki",
-                    title: "Wiki",
-                    content: "Synthetic documentation.",
-                    sourceType: "wiki",
-                    sourceId: "landscape",
-                  },
+
                 ],
               };
         const modeContext = {

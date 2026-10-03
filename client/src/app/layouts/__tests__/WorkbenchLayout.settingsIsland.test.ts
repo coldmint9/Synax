@@ -31,9 +31,6 @@ describe('canonical command deck', () => {
     expect(declaration('.workspace-island-slot--conversation', 'top', workPageStylesheet)).toBe('var(--workbench-island-top)');
     expect(declaration('.wh-btn', '-webkit-app-region')).toBe('no-drag');
   });
-  it('moves only the Wiki group another 40px left', () => {
-    expect(parseFloat(declaration('.workbench-header', '--island-center-offset')!) - parseFloat(declaration('.workbench-shell[data-active-panel="wiki"] .workbench-header', '--island-center-offset')!)).toBe(40);
-  });
   it('keeps contextual tools in flow while their measured width expands', () => {
     expect(declaration('.workbench-header', 'left')).toBe('calc(50% + var(--island-center-offset))');
     expect(declaration('.wh-pill-slot', 'width')).toBe('0');
@@ -79,7 +76,7 @@ describe('canonical command deck', () => {
     expect(declaration('.island-selection-pill', 'border')).toBe('0');
   });
   it('keeps unselected controls clear and uses foreground contrast with a local halo', () => {
-    const controls = '.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab)';
+    const controls = '.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn)';
     expect(declaration(controls, 'color')).toBe('var(--island-ink)');
     expect(declaration(controls, 'font-weight')).toBe('600');
     expect(declaration(controls, 'text-shadow')).toContain('--island-ink-halo');
@@ -90,7 +87,7 @@ describe('canonical command deck', () => {
     expect(declaration('.dark .synax-island', '--island-ink-halo')).toContain('var(--theme-shadow-rgb)');
   });
   it('represents collapsible navigation as toggle buttons, not fake tabs with no panel', () => {
-    const nav = headerSource.split('function MainNavTabs(')[1].split('function WikiToolbar(')[0];
+    const nav = headerSource.split('function MainNavTabs(')[1].split('function GitToolbar(')[0];
     expect(nav).toContain('aria-pressed={activePanel === tab.id}');
     expect(nav).not.toContain('Tabs.ListContainer');
     expect(nav).toContain('onClick={() => onPanelToggle(tab.id)}');

@@ -5,7 +5,7 @@ describe('profileService', () => {
   it('lists the Synax business agent profiles', () => {
     const ids = profileService.list().map((profile) => profile.id);
     expect(ids).toEqual(expect.arrayContaining(['planner', 'executor', 'reviewer', 'explorer']));
-    expect(ids).not.toContain('wiki');
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('limits v1 sub-sessions to read-only review and exploration profiles', () => {

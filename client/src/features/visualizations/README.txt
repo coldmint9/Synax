@@ -1,6 +1,6 @@
 Inline visualizations (2026-09-22)
 
-Authoring: api/skills/builtin/visualize/SKILL.md.
+Authoring: a configured visualize skill.
 The visualize skill writes a self-contained HTML fragment in an authorized session
 workspace and emits a standalone visualize file reference (optional title/wide mode).
 Existing synax-visualize HTML fences are also supported. A single bounded HTML read
@@ -24,7 +24,7 @@ The accepted demo lives only in __tests__/fixtures, not in product rendering cod
 Security boundaries:
 - sandbox="allow-scripts", no same-origin, navigation/download/permission grants.
 - Frame CSP blocks network, workers, nested documents, eval, forms and base URLs.
-- web/index.html's parent frame-src 'none' is required too: it blocks a script
+- client/index.html's parent frame-src 'none' is required too: it blocks a script
   navigating its own iframe before an HTTP request. srcdoc still renders normally.
 - Electron also rejects subframe navigation and exposes preload APIs only in the
   main frame. The retired native artifact manager/IPC protocol no longer exists.
@@ -35,13 +35,12 @@ Security boundaries:
 - CSP/sandbox isolate capabilities, not arbitrary JS CPU consumption. This is not
   a promise of OS-level isolation from an intentionally nonterminating script.
 
-Historical database migrations remain unchanged. Ordinary evidence artifacts and
-wiki/release artifacts are separate concepts and are not removed.
+Inline previews are independent of ordinary evidence and release artifacts.
 
 Verification:
-- npm test -- api/services/agent-runtime/__tests__/visualization-*.test.ts
-- npm run --prefix web test -- src/react/features/visualizations src/react/features/agent-workspace/__tests__/visualizationTimeline.test.ts
-- npm run build && npm run web:build && npm run test:visualize:web
+- NODE_ENV=test npm test -- services/local-node/modules/agent-runtime/__tests__/visualization-*.test.ts
+- NODE_ENV=test npm run --prefix client test -- src/features/visualizations src/features/agent-workspace/__tests__/visualizationTimeline.test.ts
+- npm run build && npm run client:build && npm run test:visualize:client
   Real production API + Web conversation, disposable DB, no model/network calls.
 - npm run build:electron && npm run test:visualize:desktop
   Native sandbox smoke using the real preview component and production preload;
@@ -49,7 +48,7 @@ Verification:
   existing Electron runtime; SYNAX_CHROME_PATH similarly selects Chromium.
 
 Regression for project/visualize's actual file-reference output:
-SYNAX_VISUALIZATION_REFERENCE=1 npm run test:visualize:web
-Uses reported-navbar.html as immutable test data; the user workspace and live DB
+SYNAX_VISUALIZATION_REFERENCE=1 npm run test:visualize:client
+Uses the visualization fixture as immutable test data; the user workspace and live DB
 are not changed. Checks a step-less work_result that lacks metadata, restores via
 GET /messages, then deletes the file and verifies stable reload.

@@ -42,7 +42,7 @@ export const verificationTool: RegisteredTool = {
     ),
   }),
   progressiveDetails:
-    'Accepts { command: string, workdir?: string, stdin?: string, criterion?: string, purpose: string, scope: string[], broader?: boolean, risk?: string, external?: boolean, timeoutMs?: number }. timeoutMs is the wall-clock window for the check and defaults to 120s; raise it for builds and broad suites, and re-run with a larger value after a [TIMED OUT] result. The check runs in the workspace with bash permissions, so it cannot stash/reset user changes or detach background jobs.',
+    "Accepts { command: string, workdir?: string, stdin?: string, criterion?: string, purpose: string, scope: string[], broader?: boolean, risk?: string, external?: boolean, timeoutMs?: number }. timeoutMs is the wall-clock window for the check and defaults to 120s; raise it for builds and broad suites, and re-run with a larger value after a [TIMED OUT] result. The check runs in the workspace with bash permissions, so it cannot stash/reset user changes or detach background jobs. Only available in goal mode with active work. If there are no approved criteria, provide criterion explicitly. An unscoped test/typecheck suite requires broader=true and risk describing a concrete unresolved risk; generic reassurance is rejected. scope entries are paths resolved relative to the session working directory under sandbox rules.",
   async execute(input) {
     const args = input.args as { command: string; workdir?: string; stdin?: string; criterion?: string; purpose: string; scope: string[]; broader: boolean; risk?: string; external: boolean; timeoutMs: number };
     const work = workStore.current(input.sessionId);

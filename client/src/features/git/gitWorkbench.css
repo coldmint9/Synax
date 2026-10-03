@@ -517,7 +517,7 @@
   }
 }
 
-/* Controls hosted in the Wiki-style secondary island, not the page body. */
+/* Controls hosted in the secondary island, not the page body. */
 .git-island-toolbar {
   display: flex;
   align-items: center;

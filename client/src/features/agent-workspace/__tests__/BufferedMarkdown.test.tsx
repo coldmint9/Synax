@@ -80,7 +80,7 @@ describe("BufferedMarkdown", () => {
     expect(container.querySelector(".markdown-stream-pending code")).toHaveTextContent("const x = 1");
     expect(container.querySelector(".markdown-stream-pending code")).not.toHaveTextContent("```");
     expect(
-      container.querySelector(".wiki-shiki-block"),
+      container.querySelector(".md-shiki-block"),
     ).not.toBeInTheDocument();
 
     rerender(
@@ -94,7 +94,7 @@ describe("BufferedMarkdown", () => {
     await waitFor(
       () =>
         expect(
-          container.querySelector(".wiki-shiki-block"),
+          container.querySelector(".md-shiki-block"),
         ).toBeInTheDocument(),
       { timeout: 5000 },
     );

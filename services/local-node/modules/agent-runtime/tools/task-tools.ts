@@ -156,7 +156,7 @@ export const taskCreateTool: RegisteredTool = {
   id: 'task.create',
   label: 'Create Task',
   description:
-    'Add a step to the session TODO list (visible to the user). Use for multi-step work — not the same as subagent.delegate.',
+    'Add a step to the session TODO list (visible to the user). Use for multi-step work — not the same as subagent.delegate. In goal mode with an approved plan, task structure is locked; update existing plan tasks instead.',
   category: 'task',
   internalGate: 'none',
   mutability: 'task',
@@ -182,7 +182,7 @@ export const taskCreateTool: RegisteredTool = {
 export const taskUpdateTool: RegisteredTool = {
   id: 'task.update',
   label: 'Update Task',
-  description: 'Update a session TODO item: mark in_progress, completed, or adjust dependencies.',
+  description: 'Update an existing session TODO item: mark in_progress, completed, or adjust dependencies. Use IDs returned by task.create/list. Before marking in_progress, complete or delete its open blockers. Dependency fields add links; they do not replace existing links.',
   category: 'task',
   internalGate: 'none',
   mutability: 'task',
@@ -224,7 +224,7 @@ export const taskUpdateTool: RegisteredTool = {
 export const taskGetTool: RegisteredTool = {
   id: 'task.get',
   label: 'Get Task',
-  description: 'Get full details of a task by ID.',
+  description: 'Get full details of a task in this session by an ID returned by task.create/list. Unknown IDs fail.',
   category: 'task',
   internalGate: 'none',
   mutability: 'read',

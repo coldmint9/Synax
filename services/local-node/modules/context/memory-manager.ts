@@ -4,7 +4,7 @@
 // \u957f\u671f\u9879\u76ee\u8bb0\u5fc6\u63d0\u53d6\u4e0e\u68c0\u7d22\u3002
 //
 // \u8bbe\u8ba1\u8981\u70b9\uff1a
-//   - 提取逻辑现在由本地 analyzer-service 兜底，离线时直接走规则匹配。
+//   - 提取逻辑现在由本地规则兜底，离线时直接走规则匹配。
 //   - \u68c0\u7d22\u8d70 FTS5\uff08\u5f53\u524d\u4f7f\u7528 searchService \u7684 searchMemories\uff09+ accessCount \u52a0\u6743\u3002
 //   - LRU \u6dd8\u6c70\u57fa\u4e8e access_count ASC, updated_at ASC\uff0c\u5f52\u6863\u800c\u975e\u5220\u9664\u3002
 // ---------------------------------------------------------------------------

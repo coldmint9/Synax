@@ -27,7 +27,7 @@ const base: ComponentProps<typeof AgentComposer> = {
   onContentChange: noop, onSubmit: noop, providerId: imageModel.providerId,
   modelId: imageModel.modelId, capability: 'image_generation', onModelSelect: noop,
   providers: [], globalConfig: null, documentId: null, onDocumentChange: noop,
-  wikiAttachMode: 'auto', onWikiAttachModeChange: noop, documents: [],
+
   skillIds: [], onSkillIdsChange: noop, reasoningEffort: 'high',
   onReasoningEffortChange: noop, permissionTier: 'boundary',
   onPermissionTierChange: noop, modeControl: <span>Mode</span>,

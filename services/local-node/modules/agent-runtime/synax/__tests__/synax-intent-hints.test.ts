@@ -44,7 +44,7 @@ describe('buildSynaxIntentPromptSection', () => {
     expect(section).toContain('Investigate and explain');
     expect(section).not.toContain('first and only tool');
     expect(section).not.toContain('subagent.delegate');
-    expect(section).not.toContain('wiki.search_batch');
+    expect(section).not.toContain('fixed sequence of tools');
     expect(section).toContain('advisory');
   });
 

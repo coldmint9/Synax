@@ -273,7 +273,6 @@ export function ensureLegacyGoalProfileRegistered(): void {
       loopHints: [
         "Work toward the user goal with bounded, verifiable steps.",
         "Read and search before editing. Prefer file.patch for surgical changes.",
-        "When wiki context is attached, keep documentation in sync after code changes.",
       ],
     });
     registerTitleGenerator(LEGACY_GOAL_PROFILE_ID, sessionTitleGenerator);

@@ -53,19 +53,12 @@ export {
   loadProjectRulesSection,
   truncateForPrompt,
 } from './synax-instructions.js';
-export { buildSynaxMdContent, ensureSynaxMd, readPackageJson } from './synax-md.js';
-export { bootstrapSynaxFromScan } from './synax-bootstrap.js';
-export {
-  buildSynaxRuntimeBlocks,
-  loadLatestCachedScan,
-  resolveWikiLandscapeTitle,
-} from './synax-runtime-context.js';
 export {
   SYNAX_MD_FILENAME,
   type LoadedInstructions,
 } from './synax-context-types.js';
 export {
-  EXPLORER_WIKI_PLAYBOOK,
+  EXPLORER_PLAYBOOK,
   buildExplorerSubagentPrompt,
   shouldWrapExplorerDelegatePrompt,
 } from './synax-explorer-delegate.js';

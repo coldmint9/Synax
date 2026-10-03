@@ -15,6 +15,7 @@ const evidence = z.array(z.object({
 export const workCheckpointTool: RegisteredTool = {
   id: 'work.checkpoint', label: 'Work checkpoint', category: 'task', internalGate: 'none', mutability: 'task', resumeBehavior: 'auto',
   description: 'Make a work-boundary or closing decision, not a per-step progress log. complete submits the final answer and evidence for acceptance; yield reports completed work, verification, remaining work and the next action, ending only this round without accepting the work (an executing approved goal automatically continues); blocked reports a real blocker requiring intervention, not a step threshold; continue identifies an unmet requirement, necessary next action and expected evidence. start requires a new user instruction. Must be the only call in the step.',
+  progressiveDetails: "Only available in goal mode with active work. start requires objective and a new user request; resolve child work first. continue requires unmetRequirement, nextAction and expectedEvidence; unmetRequirement must exactly match an approved criterion when criteria exist. For complete, cite successful current-work toolCallIds or evidence artifactIds, not media asset IDs. A completion attempt may return remaining requirements rather than complete the work.",
   inputSchema: z.object({
     action: z.enum(['start', 'continue', 'complete', 'yield', 'blocked']),
     summary: z.string().trim().min(1).max(16000),

@@ -100,27 +100,27 @@ describe("matchesProfile — profileIds precedence", () => {
   it("matches only the listed profile id", () => {
     const skill = summary({
       appliesTo: ["executor"],
-      profileIds: ["document-writer"],
+      profileIds: ["reviewer"],
     });
-    expect(matchesProfile(skill, "document-writer")).toBe(true);
+    expect(matchesProfile(skill, "reviewer")).toBe(true);
   });
 
   it("excludes other executors when profileIds is set", () => {
     const skill = summary({
       appliesTo: ["executor"],
-      profileIds: ["document-writer"],
+      profileIds: ["reviewer"],
     });
-    expect(matchesProfile(skill, "writer")).toBe(false);
+    expect(matchesProfile(skill, "executor")).toBe(false);
   });
 
   it("falls back to appliesTo when profileIds is empty", () => {
     const skill = summary({ appliesTo: ["executor"], profileIds: [] });
-    expect(matchesProfile(skill, "writer")).toBe(true);
+    expect(matchesProfile(skill, "executor")).toBe(true);
   });
 
   it("falls back to appliesTo when profileIds is absent", () => {
     const skill = summary({ appliesTo: ["executor"] });
-    expect(matchesProfile(skill, "writer")).toBe(true);
+    expect(matchesProfile(skill, "executor")).toBe(true);
   });
 
   it("still matches everything when appliesTo and profileIds are both empty", () => {

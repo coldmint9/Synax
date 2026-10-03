@@ -123,69 +123,6 @@ export function sendAgentSessionToParent(
   return true;
 }
 
-type LiveDeltaKind = "message_delta" | "thought_delta";
-
-interface PendingLiveDelta {
-  type: LiveDeltaKind;
-  stepId: string;
-  delta: string;
-}
-
-const pendingWikiLiveDeltas = new Map<string, PendingLiveDelta>();
-let wikiLiveFlushTimer: ReturnType<typeof setTimeout> | null = null;
-const WIKI_LIVE_DELTA_FLUSH_MS = 50;
-
-function flushWikiLiveDeltas(): void {
-  wikiLiveFlushTimer = null;
-  for (const [key, pending] of pendingWikiLiveDeltas) {
-    const sessionId = key.slice(0, key.indexOf(":"));
-    sendToParent({
-      type: "session:live",
-      sessionId,
-      event: {
-        type: pending.type,
-        stepId: pending.stepId,
-        delta: pending.delta,
-      },
-    });
-  }
-  pendingWikiLiveDeltas.clear();
-}
-
-function scheduleWikiLiveDeltaFlush(): void {
-  if (wikiLiveFlushTimer) return;
-  wikiLiveFlushTimer = setTimeout(
-    flushWikiLiveDeltas,
-    WIKI_LIVE_DELTA_FLUSH_MS,
-  );
-}
-
-function forwardSessionLiveToWikiParent(
-  sessionId: string,
-  event: SessionLiveEvent,
-): void {
-  if (event.type === "message_delta" || event.type === "thought_delta") {
-    const key = `${sessionId}:${event.type}:${event.stepId}`;
-    const pending = pendingWikiLiveDeltas.get(key);
-    if (pending) {
-      pending.delta += event.delta;
-    } else {
-      pendingWikiLiveDeltas.set(key, {
-        type: event.type,
-        stepId: event.stepId,
-        delta: event.delta,
-      });
-    }
-    scheduleWikiLiveDeltaFlush();
-    return;
-  }
-  if (wikiLiveFlushTimer) {
-    clearTimeout(wikiLiveFlushTimer);
-    flushWikiLiveDeltas();
-  }
-  sendToParent({ type: "session:live", sessionId, event });
-}
-
 /** Emit a live session event on the API process, or forward via IPC from a worker child. */
 export function emitSessionLive(
   sessionId: string,
@@ -195,10 +132,6 @@ export function emitSessionLive(
     // Stream chunks already carry completion events; forward only the start marker.
     if (event.type === "context_compaction_started")
       sendToParent({ type: "session:live", sessionId, event });
-    return;
-  }
-  if (process.env.SYNAX_WIKI_JOB_CHILD === "1") {
-    forwardSessionLiveToWikiParent(sessionId, event);
     return;
   }
   sessionLiveBus.emit(sessionId, event);

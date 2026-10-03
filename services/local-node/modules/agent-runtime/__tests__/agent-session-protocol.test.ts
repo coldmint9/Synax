@@ -11,7 +11,6 @@ describe('emitSessionLive', () => {
 
   afterEach(() => {
     delete process.env.SYNAX_AGENT_SESSION_CHILD;
-    delete process.env.SYNAX_WIKI_JOB_CHILD;
   });
 
   it('forwards message_delta chunks to sessionLiveBus on the API process', () => {
@@ -41,32 +40,6 @@ describe('emitSessionLive', () => {
     expect(sent).toEqual([]);
 
     process.send = originalSend;
-  });
-
-  it('forwards session:live to wiki job parent with batched deltas', () => {
-    vi.useFakeTimers();
-    process.env.SYNAX_WIKI_JOB_CHILD = '1';
-    const sent: unknown[] = [];
-    const originalSend = process.send;
-    process.send = ((message: unknown) => {
-      sent.push(message);
-      return true;
-    }) as typeof process.send;
-
-    emitSessionLive(sessionId, { type: 'message_delta', stepId: 'step-1', delta: 'hel' });
-    emitSessionLive(sessionId, { type: 'message_delta', stepId: 'step-1', delta: 'lo' });
-    expect(sent).toEqual([]);
-
-    vi.advanceTimersByTime(50);
-    expect(sent).toEqual([{
-      type: 'session:live',
-      sessionId,
-      event: { type: 'message_delta', stepId: 'step-1', delta: 'hello' },
-    }]);
-
-    process.send = originalSend;
-    delete process.env.SYNAX_WIKI_JOB_CHILD;
-    vi.useRealTimers();
   });
 });
 

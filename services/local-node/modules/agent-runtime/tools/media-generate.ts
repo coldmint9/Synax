@@ -47,6 +47,7 @@ export const mediaGenerateTool: RegisteredTool = {
   description:
     "Generate or edit images using a configured provider and any supported image model ID. Supports reference assets, masks, quality, dimensions, output format, and providerOptions. api=auto uses OpenAI Images for compatible connections or the provider SDK; api=responses uses the conversation model's hosted image tool. Streaming and controls depend on the selected adapter. Returns downloadable assets reusable with media.read or further edits. OpenAI examples: gpt-image-2.5-sunburst and gpt-image-2.5-flare. For other providers specify the image model explicitly.",
   category: "task",
+  progressiveDetails: "Use media.models to discover configured image models and their capabilities. Every reference/mask asset must be attached to this session (use media.read for local files); combined reference bytes must not exceed 100 MiB. A mask requires at least one reference image and the selected adapter must support editing. Images/Responses references must be nonempty PNG/JPEG/WebP files smaller than 50 MB (decimal); masks must be PNG. Images/Responses require PNG/WebP for transparent output and JPEG/WebP for outputCompression. responses requires n=1; SDK rejects stream=true and partialImages; Images/Responses reject aspectRatio and seed. Use size=auto or the documented size constraints for GPT Image 2. Other options depend on the selected model.",
   internalGate: "network",
   mutability: "task",
   resumeBehavior: "none",

@@ -146,7 +146,6 @@ export interface GlobalConfig {
   defaultImageModel?: MediaModelSelection | null;
   defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
-  wikiModel?: string;
   /** Empty means follow the model currently selected in the composer. */
   inputOptimizationModel?: string;
   version: number;
@@ -199,7 +198,6 @@ export interface UpdateGlobalConfigRequest {
   defaultImageModel?: MediaModelSelection | null;
   defaultVideoModel?: MediaModelSelection | null;
   terminalShellPath?: string;
-  wikiModel?: string;
   /** Empty means follow the model currently selected in the composer. */
   inputOptimizationModel?: string;
   providers?: ProviderDef[];

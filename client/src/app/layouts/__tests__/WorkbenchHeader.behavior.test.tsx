@@ -18,7 +18,7 @@ vi.mock('../IslandSelection', () => ({IslandSelection:({children}:{children:Reac
 const project = { id:'p',name:'Example',status:'healthy' } as ProjectSummary;
 const base = { chromeMode:'global' as const,activePanel:'sessions' as const,onPanelToggle:vi.fn(),hasProject:true,projectName:'Example',currentProjectId:'p',projects:[project],onProjectSwitch:vi.fn(),onCreateProject:vi.fn(),onRemoveProject:vi.fn(async()=>{}) };
 const wrapper = ({children}:{children:ReactNode}) => <MemoryRouter>{children}</MemoryRouter>;
-beforeEach(()=>{useAgentSessionStore.setState(useAgentSessionStore.getInitialState());useTerminalStore.setState({open:false});useShellStore.setState(s=>({preferences:{...s.preferences,locale:'en',wikiEnabled:false}}));});
+beforeEach(()=>{useAgentSessionStore.setState(useAgentSessionStore.getInitialState());useTerminalStore.setState({open:false});useShellStore.setState(s=>({preferences:{...s.preferences,locale:'en'}}));});
 afterEach(()=>{vi.clearAllMocks();useTerminalStore.setState(useTerminalStore.getInitialState());useShellStore.setState(useShellStore.getInitialState());});
 async function openRemoval(user:ReturnType<typeof userEvent.setup>){await user.click(screen.getByRole('button',{name:'appSwitchProject'}));await user.click(await screen.findByRole('menuitem',{name:'appRemoveProject: Example'}));return screen.findByRole('dialog',{name:'appRemoveProject'});}
 

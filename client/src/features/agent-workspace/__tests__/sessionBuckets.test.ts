@@ -94,29 +94,6 @@ describe("sessionBuckets", () => {
     ).toBe(false);
   });
 
-  it("detects wiki workflow sessions", () => {
-    expect(isWorkflowSession(makeSession({ profileId: "wiki-planner" }))).toBe(
-      true,
-    );
-    expect(isWorkflowSession(makeSession({ profileId: "wiki-writer" }))).toBe(
-      true,
-    );
-    expect(isWorkflowSession(makeSession({ profileId: "wiki-refresh" }))).toBe(
-      true,
-    );
-    expect(
-      isWorkflowSession(
-        makeSession({
-          profileId: "explorer",
-          sessionMetadata: { snapshotId: "snap-1", phase: "planner" },
-        }),
-      ),
-    ).toBe(true);
-    expect(isWorkflowSession(makeSession({ profileId: "plan-planner" }))).toBe(
-      true,
-    );
-  });
-
   it("classifies interactive sessions as sessions view bucket but not managed workspace sessions", () => {
     expect(
       isAgentWorkspaceSession(makeSession({ profileId: "explorer" })),
@@ -130,7 +107,7 @@ describe("sessionBuckets", () => {
   });
 
   it("classifies automation sessions as workflow view", () => {
-    expect(classifySession(makeSession({ profileId: "wiki-verifier" }))).toBe(
+    expect(classifySession(makeSession({ profileId: "plan-planner" }))).toBe(
       "workflow",
     );
   });

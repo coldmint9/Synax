@@ -76,12 +76,8 @@ describe('runMigrations ledger', () => {
       .prepare('SELECT file FROM _schema_migrations ORDER BY file')
       .all() as Array<{ file: string }>;
     expect(ledger.length).toBeGreaterThan(0);
-    expect(ledger.some((row) => row.file === '0020_wiki_drop_blocks.sql')).toBe(true);
+    expect(ledger.every((row) => fs.existsSync(path.join(migrations, row.file)))).toBe(true);
 
-    const blocks = getRawSqlite()
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_blocks'")
-      .get();
-    expect(blocks).toBeUndefined();
     const db = getRawSqlite();
     expect(db.prepare("SELECT content FROM agent_runtime_messages WHERE id='historical-message'").get()).toMatchObject({ content: 'Preserve this answer' });
     expect(db.prepare("SELECT status FROM agent_runtime_sessions WHERE id='historical-session'").get()).toMatchObject({ status: 'completed' });

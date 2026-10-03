@@ -1,11 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
   useNotificationStore,
   type NotificationType,
 } from "../state/notificationStore";
 import { subscribe } from "../../adapters/transport/taskNotificationBus";
 import { TaskNotificationEventType } from "../../adapters/transport/eventTypes";
-import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 
 interface TaskNotificationPayload {
   id: string;
@@ -27,18 +26,8 @@ const severityToType: Record<string, NotificationType> = {
 };
 
 export function useTaskNotificationListener(projectId: string | null) {
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
     if (!projectId) return;
-
-    const scheduleSessionRefresh = () => {
-      if (refreshTimer.current) return;
-      refreshTimer.current = setTimeout(() => {
-        refreshTimer.current = null;
-        void useAgentSessionStore.getState().refreshSessions();
-      }, 300);
-    };
 
     const handleEvent = (e: MessageEvent) => {
       try {
@@ -54,32 +43,13 @@ export function useTaskNotificationListener(projectId: string | null) {
       }
     };
 
-    const handleWikiProgress = (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data) as TaskNotificationPayload;
-        if (data.taskKind === "wiki_generate") {
-          scheduleSessionRefresh();
-        }
-      } catch {
-        /* ignore parse errors */
-      }
-    };
-
     const unsubscribe = subscribe(projectId, {
       events: {
-        [TaskNotificationEventType.TaskStarted]: handleWikiProgress,
-        [TaskNotificationEventType.TaskProgress]: handleWikiProgress,
         [TaskNotificationEventType.TaskCompleted]: handleEvent,
         [TaskNotificationEventType.TaskFailed]: handleEvent,
       },
     });
 
-    return () => {
-      unsubscribe();
-      if (refreshTimer.current) {
-        clearTimeout(refreshTimer.current);
-        refreshTimer.current = null;
-      }
-    };
+    return unsubscribe;
   }, [projectId]);
 }

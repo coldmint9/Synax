@@ -101,16 +101,16 @@ describe("workspace layout constraints", () => {
   it("keeps branch controls flush left and centers their icon and label", () => {
     expect(declaration(".ws-branch-trigger", "justify-content")).toBe("flex-start");
     expect(declaration(".ws-branch-trigger", "text-align")).toBe("left");
-    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "display")).toBe(
+    expect(declaration(".ws-branch-icon", "display")).toBe(
       "inline-flex",
     );
     expect(
-      declaration(".ws-branch-trigger > .ws-branch-icon", "align-items"),
+      declaration(".ws-branch-icon", "align-items"),
     ).toBe("center");
-    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "flex")).toBe(
+    expect(declaration(".ws-branch-icon", "flex")).toBe(
       "0 0 auto",
     );
-    expect(declaration(".ws-branch-trigger > .ws-branch-icon", "overflow")).toBe(
+    expect(declaration(".ws-branch-icon", "overflow")).toBe(
       "visible",
     );
   });
@@ -119,18 +119,11 @@ describe("workspace layout constraints", () => {
     const list = ".ws-branch-list";
     expect(declaration(list, "overflow-y")).toBe("auto");
     expect(declaration(list, "min-height")).toBe("0");
-    expect(declaration(list, "flex")).toBe("1 1 auto");
-    expect(declaration(list, "align-content")).toBe("flex-start");
+    expect(declaration(list, "max-height")).toBe("min(300px, 49vh)");
+    expect(declaration(".ws-branch-option", "flex-shrink")).toBe("0");
   });
 
-  it("lets pointer events pass through navigation rail padding over interactive artifacts", () => {
-    expect(
-      declaration(
-        ".workbench-shell .workspace-navigation-rail",
-        "pointer-events",
-      ),
-    ).toBe("none");
+  it("does not reserve a retired standalone navigation rail", () => {
+    expect(globalCss).not.toContain(".workspace-navigation-rail");
   });
-
-  expect(globalCss).toContain(".workspace-navigation-rail");
 });

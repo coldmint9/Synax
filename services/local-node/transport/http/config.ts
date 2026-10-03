@@ -185,7 +185,6 @@ const globalConfigPatchSchema = z
   .object({
     macWindowAppearance: macWindowAppearanceSchema.optional(),
     terminalShellPath: z.string().trim().max(4096).optional(),
-    wikiModel: z.string().trim().max(512).optional(),
     inputOptimizationModel: z.string().trim().max(512).optional(),
     defaultImageModel: mediaSelectionSchema.nullable().optional(),
     defaultVideoModel: mediaSelectionSchema.nullable().optional(),
@@ -551,7 +550,6 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
     nextProviders.map((provider) => [provider.id, provider]),
   );
   for (const [label, model] of [
-    ["Wiki", patch.wikiModel],
     ["输入优化 / Input optimization", patch.inputOptimizationModel],
   ] as const) {
     if (!model) continue;

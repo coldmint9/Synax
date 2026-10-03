@@ -13,7 +13,6 @@ const techStack = [
   { label: "SQLite + Drizzle", color: "warning" as const },
   { label: "Electron 42", color: "default" as const },
   { label: "Vite", color: "default" as const },
-  { label: "Tree-sitter", color: "success" as const },
   { label: "Vercel AI SDK", color: "accent" as const },
 ];
 

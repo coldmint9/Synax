@@ -30,7 +30,7 @@ describe("new session identity", () => {
     );
   });
 
-  it("replaces the coffee emoji without losing custom empty and search labels", () => {
+  it("keeps the sidebar empty state plain and preserves the custom label", () => {
     const { container } = render(
       <SessionTimeGroups
         groups={[]}
@@ -46,7 +46,7 @@ describe("new session identity", () => {
       />,
     );
     expect(container.textContent).not.toContain("☕");
-    expect(screen.getByRole("img", { name: "Synax" })).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("还没有会话，从一个念头开始")).toBeInTheDocument();
   });
 });

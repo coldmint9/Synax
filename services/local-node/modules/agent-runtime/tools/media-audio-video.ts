@@ -21,7 +21,7 @@ import {
 } from "./media-context.js";
 
 const common = z.object({
-  providerId: z.string().min(1).optional(),
+  providerId: z.string().min(1).optional().describe("Configured provider ID; defaults to the current conversation provider. It must expose the capability needed by this operation."),
   model: z
     .string()
     .min(1)
@@ -31,9 +31,10 @@ const common = z.object({
     ),
   providerOptions: z
     .record(z.string(), z.record(z.string(), z.json()))
-    .optional(),
+    .optional()
+    .describe("Provider-specific options grouped by namespace, e.g. {providerName: {optionName: value}}; values must be JSON."),
 });
-const assetId = z.string().regex(/^asset_[a-f0-9]{32}$/);
+const assetId = z.string().regex(/^asset_[a-f0-9]{32}$/).describe("Asset ID attached to this session; use media.read to attach local files first.");
 const speechSchema = common
   .extend({
     text: z.string().min(1).max(100_000),
@@ -119,6 +120,7 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
   {
     ...base,
     id: "media.speak",
+    progressiveDetails: "The configured provider must expose speechModel and support the exact model ID. voice, speed, language and instructions depend on that provider; do not assume the conversation model supports speech.",
     label: "Generate speech",
     description:
       "Convert text to an audio asset with any configured provider exposing a speech model. Specify the exact model and optional voice, format, language and providerOptions. Returns playable, downloadable audio.",
@@ -142,6 +144,7 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
   {
     ...base,
     id: "media.transcribe",
+    progressiveDetails: "audio must be an audio/* asset attached to this session. The configured provider must expose transcriptionModel and support the exact model ID.",
     label: "Transcribe audio",
     description:
       "Transcribe a session audio asset with a configured transcription model. Returns text, language and timestamped segments when supported. Use media.read to attach a workspace audio file first.",
@@ -178,6 +181,7 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
   {
     ...base,
     id: "media.video",
+    progressiveDetails: "Discover configured video models and supported controls with media.models first. All input assets must be attached to this session, with at most 100 MiB of combined reference bytes. image and frameImages require image/* assets; references may contain image/* or video/* assets. The provider must expose videoModel. Frame/input combinations and duration, resolution, fps and audio support depend on the selected model.",
     label: "Generate video",
     description:
       "Generate video using a configured provider exposing a video model. Supports text, an initial image, first/last frames, image/video references, duration, dimensions, audio and providerOptions as supported by that model. Returns playable, downloadable video. Generation may take several minutes.",

@@ -137,7 +137,6 @@ export type ArtifactType =
   | 'task'
   | 'subtask'
   | 'adr'
-  | 'wiki'
   | 'risk'
 
 export interface ArtifactConfig {
@@ -158,7 +157,6 @@ export const ARTIFACT_CONFIGS: ArtifactConfig[] = [
   { type: 'task',         label: 'Signal',        shortLabel: 'SIGNAL',   icon: 'CheckSquare',  accentVar: 'artifact-task',     aiPersona: 'Reality Analyst' },
   { type: 'subtask',      label: 'Sub Signal',    shortLabel: 'SUB',      icon: 'CornerDownRight', accentVar: 'artifact-subtask', aiPersona: 'Reality Analyst' },
   { type: 'adr',          label: 'Decision',      shortLabel: 'DECISION', icon: 'Scale',        accentVar: 'artifact-adr',      aiPersona: 'Decision Desk' },
-  { type: 'wiki',         label: 'Memory Note',   shortLabel: 'MEMO',     icon: 'BookOpen',     accentVar: 'artifact-wiki',     aiPersona: 'Memory Keeper' },
   { type: 'risk',         label: 'Risk',          shortLabel: 'RISK',     icon: 'AlertTriangle', accentVar: 'artifact-risk',     aiPersona: 'Reality Analyst' },
 ]
 

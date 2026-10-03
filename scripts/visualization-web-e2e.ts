@@ -218,8 +218,8 @@ try {
   await card.waitFor({ timeout: 30000 });
   const frame = card.frameLocator("iframe");
   if (reported) {
-    await frame.getByRole("tab", { name: "Wiki", exact: true }).click();
-    await frame.locator("#sx-panel-wiki").waitFor();
+    await frame.getByRole("tab", { name: "Documents", exact: true }).click();
+    await frame.locator("#sx-panel-documents").waitFor();
     await frame.locator("#sx-proj-btn").click();
     await frame.locator('[data-name="synax-docs"]').click();
     assert.equal(

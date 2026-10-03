@@ -214,7 +214,7 @@ class SessionProcessManager {
       state?.streams.delete(streamId);
       this.activeMainStreams.delete(sessionId);
       // ponytail: services retain one worker/session; use a host supervisor if the existing process cap becomes limiting.
-      // One-shot wiki/agent runs must free the process slot; otherwise idle
+      // One-shot agent runs must free the process slot; otherwise idle
       // children accumulate up to MAX_AGENT_SESSION_PROCESSES and block dispatch.
       if (
         state &&
@@ -422,7 +422,7 @@ class SessionProcessManager {
       state.child.send?.({ type: "session:interrupt", reason });
     }
 
-    // Free the slot immediately so wiki write-queue can dispatch the next doc.
+    // Free the slot immediately so another agent run can be dispatched.
     this.children.delete(sessionId);
     this.activeMainStreams.delete(sessionId);
 

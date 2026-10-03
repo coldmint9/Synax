@@ -14,7 +14,7 @@ const rgArgsSchema = z
       .min(1)
       .optional()
       .describe(
-        'Text or regex pattern when mode is search. Fixed-string unless regex=true; never begin it with "-".',
+        'Text or regex pattern required when mode is search. Fixed-string unless regex=true. Leading hyphens are passed as pattern text, not CLI options.',
       ),
     pattern: z
       .string()
@@ -28,7 +28,7 @@ const rgArgsSchema = z
       .min(1)
       .optional()
       .describe(
-        "Workspace-relative file or directory; defaults to the workspace root.",
+        "File or directory relative to the session working directory (default .), or an absolute path permitted by the sandbox. mode=files requires a directory.",
       ),
     limit: z
       .number()
@@ -36,7 +36,7 @@ const rgArgsSchema = z
       .positive()
       .max(300)
       .optional()
-      .describe("Max results (default 50; search caps at 200, files at 300)."),
+      .describe("Max results (search default 50, capped at 200; files default 100, capped at 300)."),
     caseSensitive: z
       .boolean()
       .optional()
@@ -98,7 +98,7 @@ export const rgTool: RegisteredTool = {
   resumeBehavior: "auto",
   internalGate: "none",
   progressiveDetails:
-    'Accepts { mode?: "search" | "files", query?: string, pattern?: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Default mode is search; query is required for search and pattern for mode=files, and the two are not interchangeable. path defaults to the workspace root, so narrow it to keep searches fast. limit caps at 200 for search and 300 for files. Examples: { "query": "Dialog", "path": "client/src/react/components/ui" } literal search inside one folder; { "query": "(?:--color|--bg|:root)", "regex": true, "filePattern": "*.css" } regex alternation, which silently returns nothing when regex is omitted; { "query": "resolveWorkspacePath", "wordBoundary": true, "contextLines": 2, "filePattern": "*.ts", "excludePattern": "*.test.ts" }; { "mode": "files", "pattern": "client/src/**/*.tsx" }. Pitfalls: set regex=true for ( ) | [ ] . * ? + alternations or character classes, otherwise the query is matched literally and reports no hits; never begin query or pattern with "-" (write (?:--color) instead of --color) because ripgrep reads a leading dash as a command-line flag and fails with an unrecognized-flag error.',
+    "Accepts { mode?: \"search\" | \"files\", query?: string, pattern?: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Default mode is search; query is required for search and pattern for mode=files, and the two are not interchangeable. path defaults to the workspace root, so narrow it to keep searches fast. limit caps at 200 for search and 300 for files. Examples: { \"query\": \"Dialog\", \"path\": \"client/src/react/components/ui\" } literal search inside one folder; { \"query\": \"(?:--color|--bg|:root)\", \"regex\": true, \"filePattern\": \"*.css\" } regex alternation, which silently returns nothing when regex is omitted; { \"query\": \"resolveWorkspacePath\", \"wordBoundary\": true, \"contextLines\": 2, \"filePattern\": \"*.ts\", \"excludePattern\": \"*.test.ts\" }; { \"mode\": \"files\", \"pattern\": \"client/src/**/*.tsx\" }. Pitfalls: set regex=true for ( ) | [ ] . * ? + alternations or character classes, otherwise the query is matched literally and reports no hits. Search mode requires query; files mode requires pattern. Files mode ignores text-search options, including query. Search limit defaults to 50 and caps at 200; files limit defaults to 100 and caps at 300. Leading hyphens are safely passed as patterns.",
   inputSchema: rgArgsSchema,
   getPattern(args) {
     const value = args as { mode?: string; query?: string; pattern?: string };

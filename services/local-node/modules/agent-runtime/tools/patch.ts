@@ -108,7 +108,7 @@ export const patchTool: RegisteredTool = {
   mutability: "write",
   resumeBehavior: "wait_permission",
   progressiveDetails:
-    "Accepts { patch: string }. Supports *** Add File, *** Update File (with @@ hunks and optional *** Move to) and *** Delete File. Every hunk is matched against current content before anything is written; a mismatch aborts the whole patch.",
+    "Accepts { patch: string }. Supports *** Add File, *** Update File (with @@ hunks and optional *** Move to) and *** Delete File. Every hunk is matched against current content before anything is written; a mismatch aborts the whole patch. Use concrete file paths in the envelope, relative to the session working directory or absolute paths permitted by the sandbox. Use exact current hunk text; read again if the file changed since your last read. Include a final *** End Patch marker, prefix added lines with +, and place *** Move to immediately after *** Update File when moving a file.",
   inputSchema: z.object({
     patch: z
       .string()

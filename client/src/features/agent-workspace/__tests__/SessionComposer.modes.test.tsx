@@ -1,6 +1,5 @@
 import { resetSessionComposerDrafts } from "../state/sessionComposerDraftStore";
 import { mediaDraftItems } from "../../media/useMediaDraft";
-import { useWikiStore } from "../../../shared/state/wikiStore";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import type { ComposerCommands } from "../composer/AgentComposer";
@@ -18,7 +17,6 @@ import {
   agentRuntimeApi,
   type AgentSession,
 } from "../../../adapters/transport/agentRuntime";
-import { sessionPromptApi } from "../../../adapters/transport/sessionPrompt";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
 import { useAcpDiscovery } from "../composer/useAcpDiscovery";
@@ -142,12 +140,7 @@ beforeEach(() => {
     composerModelId: "test-model",
     composerPermissionTier: "boundary",
     composerReasoningEffort: "high",
-    composerWikiAttachMode: "auto",
     composerDocumentId: null,
-  });
-  useWikiStore.setState({
-    documents: [],
-    loadProjectSnapshot: vi.fn(async () => {}),
   });
   vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
     interactions: [],
@@ -235,13 +228,13 @@ it("shows an optimistic draft immediately and restores its text if creation fail
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(screen.getByText("Keep my message")).toBeVisible();
   expect(input).toHaveValue("");
-  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
   expect(input).toBeDisabled();
   await act(async () => reject(new Error("Creation failed")));
   expect(input).toHaveValue("Keep my message");
   expect(input).toBeEnabled();
   expect(await screen.findByRole("alert")).toHaveTextContent("Creation failed");
-  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
 async function selectMode(mode: "goal", prefix = "") {
@@ -389,10 +382,6 @@ describe("SessionComposer mode controls", () => {
   it.each(["goal"] as const)(
     "sends the selected draft %s mode through createSession metadata",
     async (mode) => {
-      vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
-        prompt: "Scaffold",
-        wikiContext: { mode: "auto", documentId: null },
-      } as never);
       vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
         session,
         context: null,
@@ -418,16 +407,11 @@ describe("SessionComposer mode controls", () => {
           }),
         ),
       );
-      expect(sessionPromptApi.build).not.toHaveBeenCalled();
     },
   );
 
   it("sends plain session input without hidden implementation scaffolding", async () => {
     const send = vi.fn(async () => {});
-    vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
-      prompt: "你好",
-      wikiContext: { mode: "auto", documentId: null },
-    } as never);
     vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
       session,
       context: null,
@@ -453,7 +437,6 @@ describe("SessionComposer mode controls", () => {
       modelId: "test-model",
       reasoningEffort: "high",
     });
-    expect(sessionPromptApi.build).not.toHaveBeenCalled();
   });
 
   it("keeps the draft mode selectable when the remembered provider is an ACP engine", async () => {
@@ -694,7 +677,7 @@ it("finishes an old draft in the background without navigating away or clearing 
     expect(agentRuntimeApi.createSession).toHaveBeenCalledTimes(1),
   );
   expect(screen.getByText("First request")).toBeVisible();
-  expect(document.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+  expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
   expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   await userEvent.click(
     screen.getByRole("button", { name: "Open other conversation" }),

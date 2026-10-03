@@ -231,11 +231,9 @@ describe("WorkspaceDashboard", () => {
   it("falls back to the prompt headline for untitled subagents", () => {
     renderDashboard();
 
-    expect(screen.getByText("Investigation Task")).toBeTruthy();
-    expect(
-      screen.getByText("用只读方式深度调研 src/views/cli_chat 目录"),
-    ).toBeTruthy();
-    expect(screen.getByText("Writer")).toBeTruthy();
+    expect(screen.getByText(/Investigation Task/)).toBeTruthy();
+    expect(screen.getByText(/Investigation Task/)).toHaveTextContent("研究员 · Investigation Task");
+    expect(screen.getByText(/Writer/)).toBeTruthy();
   });
 
   it("opens non-file input sources in the content viewer", () => {
@@ -303,7 +301,7 @@ describe("WorkspaceDashboard", () => {
       { id: "file:src/views/cli_chat/utils/toolDisplay.js", kind: "file" },
     ]);
 
-    fireEvent.click(screen.getByText("Investigation Task"));
+    fireEvent.click(screen.getByText(/Investigation Task/));
     expect(
       useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
     ).toMatchObject([

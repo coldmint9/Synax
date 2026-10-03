@@ -23,7 +23,7 @@ export function createSynaxAdaptTool(synaxAgent: SynaxAgent): RegisteredTool {
       `Accepts { variantId: ${SYNAX_VARIANT_IDS.join(' | ')}, reason: string }. Updates loop behavior for the rest of this session.`,
     inputSchema: z.object({
       variantId: z.enum(SYNAX_VARIANT_IDS).describe('Specialized Synax variant to activate.'),
-      reason: z.string().min(1).describe('Why this variant fits the current task.'),
+      reason: z.string().min(1).describe('Non-whitespace explanation of why this variant fits the current task.'),
     }),
     execute: (input) => {
       const session = agentRuntimeStore.getSession(input.sessionId);

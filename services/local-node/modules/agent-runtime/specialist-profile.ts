@@ -37,13 +37,6 @@ const READ_CAPABILITIES = [
   "rg",
   "webSearch",
   "diff.read",
-  "wiki.get_snapshot",
-  "wiki.get_tree",
-  "wiki.search_content",
-  "wiki.search_batch",
-  "wiki.read_document",
-  "wiki.read_section",
-  "wiki.get_references",
 ];
 const WRITE_CAPABILITIES = ["file.write", "file.patch", "file.delete"];
 const SAFE_CAPABILITIES = [
@@ -71,7 +64,8 @@ const relativePathSchema = z
       path.posix.normalize(value).replace(/\/$/, "") !== "."
     );
   }, "writeScope and write paths must be safe relative paths, not roots, traversal or globs.")
-  .transform((value) => path.posix.normalize(value).replace(/\/$/, ""));
+  .transform((value) => path.posix.normalize(value).replace(/\/$/, ""))
+  .describe("Concrete file or directory relative to the child working directory. No absolute paths, roots (including .), .. segments, globs (* or ?), backslashes, colons, percent signs, control characters, leading ~, or surrounding whitespace. Example: client/src.");
 
 export interface SpecialistSpec {
   name: string;
@@ -91,14 +85,16 @@ export const specialistSpecSchema = z
       .array(identifierSchema)
       .max(32)
       .default([])
-      .transform(unique),
+      .transform(unique)
+      .describe(`Explicit specialist tool IDs only: ${SAFE_CAPABILITIES.join(", ")}. No shell, MCP, or further delegation. Write capabilities require writeScope and are unavailable in Plan mode.`),
     skillIds: z.array(identifierSchema).max(20).default([]).transform(unique),
     writeScope: z
       .array(relativePathSchema)
       .min(1)
       .max(32)
       .transform(unique)
-      .optional(),
+      .optional()
+      .describe("Required for file.write, file.patch or file.delete. Concrete relative file/directory paths; a directory includes its descendants, so use client/src rather than client/src/**. No roots, absolute paths, .. segments, globs or symlink components. Child writes must remain in this scope; delegate specialist writers serially."),
   })
   .strict();
 

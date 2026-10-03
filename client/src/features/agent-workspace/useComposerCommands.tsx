@@ -11,7 +11,6 @@ import {
   type CSSProperties,
 } from "react";
 import {
-  BookOpen,
   FileText,
   Plug,
   Sparkles,
@@ -23,14 +22,12 @@ import {
   type AgentSessionMode,
   type TurnReference,
 } from "../../adapters/transport/agentRuntime";
-import { useShellStore } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 
 const commands = [
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
-  { id: "wiki", zh: "Wiki 文档", en: "Wiki document", Icon: BookOpen },
   { id: "goal", zh: "目标模式", en: "Goal mode", Icon: Target },
 ] as const;
 
@@ -43,7 +40,7 @@ type Query = {
 };
 function findQuery(value: string, cursor: number): Query | null {
   const before = value.slice(0, cursor);
-  const detail = /(?:^|\s)\/(skill|mcp|file|wiki)\s+([^\n]*)$/.exec(before);
+  const detail = /(?:^|\s)\/(skill|mcp|file)\s+([^\n]*)$/.exec(before);
   if (detail)
     return {
       start: detail.index + detail[0].indexOf("/"),
@@ -86,7 +83,6 @@ export function useComposerCommands({
   disabled: boolean;
   onAttachFiles?: (files: File[]) => void;
 }) {
-  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const { locale } = useLocale(),
     zh = locale === "zh";
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -111,9 +107,9 @@ export function useComposerCommands({
     setOptions([]);
     setActive(0);
     setError("");
-  }, [sessionId, projectId, backendId, disabled, wikiEnabled]);
+  }, [sessionId, projectId, backendId, disabled]);
   useEffect(() => {
-    if (!query?.command || (query.command === "wiki" && !wikiEnabled)) {
+    if (!query?.command) {
       setLoading(false);
       return;
     }
@@ -144,7 +140,7 @@ export function useComposerCommands({
       current = false;
       clearTimeout(timer);
     };
-  }, [projectId, sessionId, query?.command, query?.search, wikiEnabled]);
+  }, [projectId, sessionId, query?.command, query?.search]);
   useEffect(() => {
     if (!query) return;
     const dismiss = (event: PointerEvent) => {
@@ -225,7 +221,6 @@ export function useComposerCommands({
           : unavailable(ref.kind),
       }))
     : commands
-        .filter((cmd) => cmd.id !== "wiki" || wikiEnabled)
         .filter((cmd) => cmd.id.includes(query?.search.toLowerCase() ?? ""))
         .map((cmd) => ({
           id: cmd.id,
@@ -238,8 +233,7 @@ export function useComposerCommands({
 
   const updateQuery = (value: string, cursor: number) => {
     if (disabled) return;
-    const found = findQuery(value, cursor);
-    const next = found?.command === "wiki" && !wikiEnabled ? null : found;
+    const next = findQuery(value, cursor);
     setQuery(next);
     if (next?.search !== query?.search || next?.command !== query?.command) {
       setActive(0);

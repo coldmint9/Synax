@@ -2,24 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildSessionPrompt } from "../session-prompt.js";
 
 describe("buildSessionPrompt", () => {
-  it("builds direct mode with wiki context", () => {
-    const prompt = buildSessionPrompt({
-      mode: "direct",
-      content: "Fix auth flow",
-      documentTitle: "Authentication",
-      documentId: "doc-1",
-      anchorJson: { type: "heading", heading: "Login", quote: "token refresh" },
-      locale: "en",
-    });
 
-    expect(prompt).toContain("## User Goal");
-    expect(prompt).toContain("Fix auth flow");
-    expect(prompt).toContain("## Wiki Context");
-    expect(prompt).toContain("Authentication");
-    expect(prompt).toContain("Keep wiki documentation aligned");
-  });
-
-  it("builds plan_node mode without wiki update instruction", () => {
+  it("builds plan_node mode with scoped instructions", () => {
     const prompt = buildSessionPrompt({
       mode: "plan_node",
       content: "Implement login redirect",
@@ -32,9 +16,8 @@ describe("buildSessionPrompt", () => {
       linkedGoals: [
         {
           id: "g1",
-          scope: "document",
+          scope: "project",
           content: "Fix auth",
-          anchorJson: null,
         },
       ],
       completedNodes: [{ title: "Setup", summary: "Added config" }],
@@ -48,9 +31,8 @@ describe("buildSessionPrompt", () => {
     expect(prompt).toContain("## Completed Dependencies");
     expect(prompt).toContain("Setup: Added config");
     expect(prompt).toContain("src/auth.ts");
-    expect(prompt).toContain("Do not update wiki documentation");
+    expect(prompt).toContain("Keep changes within the requested scope");
     expect(prompt).toContain("You may use shell");
-    expect(prompt).not.toContain("Keep wiki documentation aligned");
   });
 
   it("includes redo feedback in plan_node mode", () => {
@@ -69,37 +51,5 @@ describe("buildSessionPrompt", () => {
 
     expect(prompt).toContain("## Redo Feedback");
     expect(prompt).toContain("Tests still failing on edge case");
-  });
-
-  it("builds auto mode with matched wiki document", () => {
-    const prompt = buildSessionPrompt({
-      mode: "direct",
-      content: "Fix auth flow",
-      documentTitle: "Authentication",
-      documentId: "doc-1",
-      wikiAttachMode: "auto",
-      wikiAutoMatched: true,
-      locale: "en",
-    });
-
-    expect(prompt).toContain("## Wiki Context (auto-matched)");
-    expect(prompt).toContain("Matched automatically from goal intent.");
-    expect(prompt).toContain("Authentication");
-  });
-
-  it("builds auto mode without matched wiki document", () => {
-    const prompt = buildSessionPrompt({
-      mode: "direct",
-      content: "Refactor utils",
-      wikiAttachMode: "auto",
-      wikiAutoMatched: false,
-      locale: "en",
-    });
-
-    expect(prompt).toContain("## Wiki Context (auto)");
-    expect(prompt).toContain(
-      "No specific wiki document matched automatically.",
-    );
-    expect(prompt).not.toContain("Document:");
   });
 });

@@ -7,11 +7,12 @@ import { GIT_MR_PROVIDER_ID } from './constants.js';
 import { loadGitSkill, validateGitSkills } from './skills.js';
 
 const empty = z.object({}).strict();
-const fileInput = z.object({ fileId: z.string().min(1).max(200) }).strict();
+const fileInput = z.object({ fileId: z.string().min(1).max(200).describe('File ID returned by git.conflicts.list for the bound MR; not a filesystem path.') }).strict();
 /** No root/MR/path inputs: all authority comes from the persisted server binding. */
 function scopedTool<S extends z.ZodType>(id: string, description: string, schema: S, action: (projectId: string, mrId: string, args: z.output<S>) => Promise<unknown>, write = false): RegisteredTool {
   return {
     id, label: id, description, category: write ? 'write' : id === 'skill.load' ? 'skill' : 'read',
+    progressiveDetails: 'Scoped to this Git manager session\'s persisted MR binding. Do not supply project, root, MR or filesystem path arguments. Reopen the Git manager session if its MR authority changed.',
     internalGate: write ? 'write' : id === 'skill.load' ? 'skill' : 'none',
     mutability: write ? 'write' : 'read', resumeBehavior: write ? 'none' : 'auto', inputSchema: schema,
     getPattern: () => id,
@@ -49,7 +50,7 @@ const tools: RegisteredTool[] = [
     const text = file[args.side as 'base' | 'target' | 'source' | 'result'];
     return { fileId: file.id, revision: file.revision, side: args.side, offset: args.offset, content: text.slice(args.offset, args.offset + args.limit), totalCharacters: text.length, truncated: args.offset + args.limit < text.length };
   }),
-  scopedTool('git.resolution.propose', 'Store an immutable text conflict proposal. Does not apply it, run checks or update any branch.', z.object({ fileId: z.string().min(1).max(200), revision: z.string().min(1).max(256), content: z.string().max(2 * 1024 * 1024), rationale: z.string().min(1).max(16_000) }).strict(), (projectId, mrId, args) => gitMrService.propose(projectId, mrId, args), true),
+  scopedTool('git.resolution.propose', 'Store an immutable text conflict proposal for an MR in conflicted status. Requires a text file ID and its current revision from git.diff.read or git.blob.read; reread if stale. Does not apply it, run checks or update any branch.', z.object({ fileId: z.string().min(1).max(200).describe('Text file ID from the bound MR; not a path.'), revision: z.string().min(1).max(256).describe('Current file revision from git.diff.read or git.blob.read; stale revisions are rejected.'), content: z.string().max(2 * 1024 * 1024), rationale: z.string().min(1).max(16_000) }).strict(), (projectId, mrId, args) => gitMrService.propose(projectId, mrId, args), true),
   scopedTool('skill.load', 'Load one of the six version-pinned bundled Git operation skills. Project/local skills are forbidden.', z.object({ skillId: z.string().min(1).max(150) }).strict(), async (_projectId, _mrId, args) => loadGitSkill(args.skillId)),
 ];
 export const gitMrToolProvider: SessionToolProvider = {

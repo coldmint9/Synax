@@ -18,8 +18,8 @@ const props: ComponentProps<typeof AgentComposer> = {
   globalConfig: null,
   documentId: null,
   onDocumentChange: noop,
-  wikiAttachMode: "auto",
-  onWikiAttachModeChange: noop,
+
+
   documents: [],
   skillIds: [],
   onSkillIdsChange: noop,

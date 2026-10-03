@@ -95,7 +95,6 @@ import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
 import { buildRuntimeEnvironment } from "./prompt-environment.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
-import { enrichContextForPrompt } from "./synax/synax-runtime-context.js";
 import { resolvePromptLocale } from "../prompts/locale-infer.js";
 import { readSessionPermissionConfig } from "./session-permissions.js";
 import { memoryManager } from "../context/memory-manager.js";
@@ -2758,19 +2757,7 @@ export class AgentLoopRuntime {
     );
     const locale = resolvePromptLocale(input.input.locale, userRequest);
 
-    let contextForPrompt = input.context;
-    try {
-      const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
-      contextForPrompt = enrichContextForPrompt(
-        input.context,
-        session.projectId,
-        workDir,
-        userRequest,
-        input.sessionId,
-      );
-    } catch {
-      contextForPrompt = input.context;
-    }
+    const contextForPrompt = input.context;
 
     const systemPromptContent = buildLoopSystemPrompt({
       profile: input.profile,

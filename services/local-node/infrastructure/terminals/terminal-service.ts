@@ -103,7 +103,7 @@ export async function createServiceTerminal(
   });
 }
 
-/** Session/wiki workers borrow the API host's PTY; no native handle lives in a short-lived model worker. */
+/** Session workers borrow the API host's PTY; no native handle lives in a short-lived model worker. */
 export async function startBackgroundTerminal(
   sessionId: string,
   command: string,
@@ -122,8 +122,7 @@ export async function startBackgroundTerminal(
   assertRuntimeExecutionCurrent();
   const requestId = randomUUID();
   const inWorker =
-    process.env.SYNAX_AGENT_SESSION_CHILD === "1" ||
-    process.env.SYNAX_WIKI_JOB_CHILD === "1";
+    process.env.SYNAX_AGENT_SESSION_CHILD === "1";
   let terminal: TerminalInfo;
   const origin = process.env.SYNAX_TERMINAL_HOST_ORIGIN;
   let authorization: string | undefined;

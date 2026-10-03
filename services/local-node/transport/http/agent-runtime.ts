@@ -437,7 +437,7 @@ agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
 agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
-      kind: z.enum(["skill", "mcp", "file", "wiki"]),
+      kind: z.enum(["skill", "mcp", "file"]),
       q: z.string().max(256).default(""),
       sessionId: z.string().optional(),
     })

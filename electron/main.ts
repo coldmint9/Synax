@@ -452,7 +452,6 @@ function registerIPC(): void {
       hasSession: state.hasSession === true,
       hasViewer: state.hasViewer === true,
       inWork: state.inWork === true,
-      inWiki: state.inWiki === true,
       dark: state.dark === true,
     });
   });

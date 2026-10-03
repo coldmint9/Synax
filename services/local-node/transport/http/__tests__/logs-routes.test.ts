@@ -13,7 +13,7 @@ describe('log routes', () => {
     const { logger } = await import('../../../infrastructure/runtime/logger.js');
     logger.info({ method: 'GET', path: '/api/health', status: 200, ms: 12 }, 'request');
     logger.error({ method: 'POST', path: '/api/projects', status: 503, ms: 5, err: 'boom' }, 'request');
-    logger.warn({ feature: 'wiki-refresh' }, 'degraded');
+    logger.warn({ feature: 'scan-refresh' }, 'degraded');
 
     const { logRoutes } = await import('../logs.js');
 
@@ -51,7 +51,7 @@ describe('log routes', () => {
         expect.objectContaining({
           level: 'warn',
           message: 'degraded',
-          context: expect.objectContaining({ feature: 'wiki-refresh' }),
+          context: expect.objectContaining({ feature: 'scan-refresh' }),
         }),
       ]),
     );

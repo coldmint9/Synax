@@ -36,7 +36,7 @@ const config = {
       kind: "api",
       status: "live",
       models: [
-        { id: "wiki-test-model", label: "Wiki test model", isDefault: true },
+        { id: "optimization-test-model", label: "Optimization test model", isDefault: true },
       ],
     },
     {
@@ -51,12 +51,12 @@ const config = {
     openai: {
       providerId: "openai",
       apiKeyMasked: "sk-test",
-      extra: { model: "wiki-test-model" },
+      extra: { model: "optimization-test-model" },
     },
   },
 } as unknown as GlobalConfig;
 beforeEach(() => {
-  useShellStore.getState().setWikiEnabled(false);
+  
 });
 
 it("always offers current-model fallback and excludes ACP models", () => {
@@ -88,11 +88,11 @@ it("saves an optimization-specific model and allows restoring the default", asyn
   }
   render(<Settings />);
   const input = screen.getByRole("combobox");
-  await userEvent.selectOptions(input, "openai/wiki-test-model");
+  await userEvent.selectOptions(input, "openai/optimization-test-model");
   expect(save).toHaveBeenCalledWith({
-    inputOptimizationModel: "openai/wiki-test-model",
+    inputOptimizationModel: "openai/optimization-test-model",
   });
-  expect(input).toHaveValue("openai/wiki-test-model");
+  expect(input).toHaveValue("openai/optimization-test-model");
   await userEvent.selectOptions(input, "default");
   expect(save).toHaveBeenLastCalledWith({ inputOptimizationModel: "" });
 });
@@ -108,7 +108,7 @@ it("retains the saved model and shows an error when saving fails", async () => {
   );
   await userEvent.selectOptions(
     screen.getByRole("combobox"),
-    "openai/wiki-test-model",
+    "openai/optimization-test-model",
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
   await waitFor(() =>

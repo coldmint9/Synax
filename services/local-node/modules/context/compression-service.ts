@@ -2,7 +2,7 @@
 // api/services/context/compression-service.ts
 //
 // 上下文压缩策略：
-//   summarizeEntries   -> 本地规则化摘要，避免依赖外部 analyzer 服务
+//   summarizeEntries   -> 本地规则化摘要，避免依赖外部服务
 //   buildSlidingWindow -> 保留最近 N 条，并把旧条目摘要写入 snapshot
 //   maybeCompress      -> 超出阈值时自动压缩
 // ---------------------------------------------------------------------------

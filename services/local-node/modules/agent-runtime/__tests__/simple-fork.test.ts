@@ -344,14 +344,14 @@ it("keeps the fork fully usable after the source keeps running and is deleted", 
     createdAt: new Date().toISOString(),
   });
   // UI classification markers live on session metadata; a fork must stay a
-  // first-class interactive session without inheriting wiki business links.
+  // first-class interactive session without inheriting source business links.
   store.updateSession(sourceId, {
     sessionMetadata: {
       ...store.getSession(sourceId).sessionMetadata,
       mode: "chat",
       source: "agent-dock",
-      goalId: "wiki-goal",
-      documentId: "wiki-doc",
+      goalId: "source-goal",
+      documentId: "source-doc",
     },
   });
   message("reply");

@@ -107,7 +107,7 @@ function captureDockContext(): () => boolean {
     useShellStore.getState().currentProjectId === projectId;
 }
 
-/** Agent execution and composer state shared by the workspace and its Wiki dock. */
+/** Agent execution and composer state shared by the workspace dock. */
 export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
   ...initialState,
   reset: () => {
@@ -265,39 +265,7 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
         return;
       }
 
-      const wikiAttachMode = s.composerWikiAttachMode;
-      const { prompt, wikiContext } = await sessionPromptApi.build(projectId, {
-        mode: "direct",
-        content: content || "附件输入 / Media input",
-        wikiAttachMode,
-        documentId: wikiAttachMode === "manual" ? s.composerDocumentId : null,
-        documentTitle:
-          wikiAttachMode === "manual" && s.composerDocumentId
-            ? (useWikiStore
-                .getState()
-                .documents.find((d) => d.id === s.composerDocumentId)?.title ??
-              null)
-            : null,
-        anchorJson: wikiAttachMode === "manual" ? s.composerAnchorJson : null,
-      });
-      if (!isCurrentContext()) return;
-
-      const documentId = wikiContext.documentId;
-      const goal = await goalApi.create(projectId, {
-        content: content || "附件输入 / Media input",
-        scope: documentId ? "document" : "project",
-        documentId: documentId ?? null,
-        anchorJson: wikiContext.anchorJson,
-      });
-      if (!isCurrentContext()) return;
-      try {
-        const goals = await goalApi.list(projectId, "active");
-        if (!isCurrentContext()) return;
-        useWikiStore.setState({ goals });
-      } catch {
-        // A failed sidebar refresh does not prevent submitting the session.
-      }
-      if (!isCurrentContext()) return;
+      const prompt = content || "附件输入 / Media input";
 
       const payload = await agentRuntimeApi.createSession({
         projectId,
@@ -307,18 +275,12 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
           s.composerSkillIds.length > 0 ? s.composerSkillIds : undefined,
         reasoningEffort: s.composerReasoningEffort,
         permissionTier: s.composerPermissionTier,
-        // A Wiki goal record is context, not consent to autonomous Goal mode.
         sessionMetadata: createSynaxSessionMetadata("chat", {
           source: "agent-dock",
-          goalId: goal.id,
-          documentId: documentId ?? null,
-          wikiAttachMode,
           userPrompt: content,
         }),
       });
       if (!isCurrentContext()) return;
-
-      void goalApi.linkLastSession(goal.id, payload.session.id).catch(() => {});
 
       targetSessionId = payload.session.id;
       if (get().session.sessionId === s.session.sessionId)
@@ -335,7 +297,6 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
             error: null,
           },
           dockState: "working",
-          composerAnchorJson: null,
           composerSkillIds: [],
           composerReasoningEffort: "high",
         });

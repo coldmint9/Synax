@@ -18,15 +18,17 @@ export const humanQuestionSchema = z
       .array(z.object({ value: z.string().min(1).max(200), label: text }))
       .min(1)
       .max(20)
-      .optional(),
+      .optional()
+      .describe("Required for single_select and multi_select. Option values must be unique within this question."),
     recommended: z
       .array(z.string().min(1).max(200))
       .min(1)
       .max(20)
-      .optional(),
+      .optional()
+      .describe("Select questions only. Unique values copied from options[].value; single_select allows at most one recommendation. Omit for other question types."),
     allowOther: z.boolean().default(false),
-    min: z.number().finite().optional(),
-    max: z.number().finite().optional(),
+    min: z.number().finite().optional().describe("Optional lower bound; must not exceed max when both are supplied."),
+    max: z.number().finite().optional().describe("Optional upper bound; must be at least min when both are supplied."),
   })
   .superRefine((q, ctx) => {
     if (q.type.endsWith("_select") && !q.options?.length)
@@ -73,7 +75,7 @@ export type HumanQuestion = z.infer<typeof humanQuestionSchema>;
 export const humanAskSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
-    questions: z.array(humanQuestionSchema).min(1).max(5),
+    questions: z.array(humanQuestionSchema).min(1).max(5).describe("One to five questions with distinct IDs. Select questions require options; recommendations must refer to those option values."),
   })
   .refine(
     (v) => new Set(v.questions.map((q) => q.id)).size === v.questions.length,
@@ -89,13 +91,13 @@ export const agentPlanSchema = z
           id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
           title: text,
           description: text,
-          dependsOn: z.array(z.string()).max(40).default([]),
+          dependsOn: z.array(z.string()).max(40).default([]).describe("IDs of earlier steps in this array only; no self, forward or unknown references. Step IDs must be unique."),
           expectedFiles: z.array(z.string().max(500)).max(80).default([]),
         }),
       )
       .min(1)
       .max(40),
-    humanAcceptanceCriteria: z.array(text).max(30).default([]),
+    humanAcceptanceCriteria: z.array(text).max(30).default([]).describe("Criteria requiring human judgment; each must exactly match an entry in acceptanceCriteria."),
     acceptanceCriteria: z.array(text).min(1).max(30),
     assumptions: z.array(text).max(30).default([]),
     risks: z.array(text).max(30).default([]),

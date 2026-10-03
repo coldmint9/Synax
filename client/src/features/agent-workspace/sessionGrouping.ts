@@ -17,10 +17,6 @@ const PROFILE_CATEGORY: Record<
   string,
   { group: string; icon: string; isBuiltin: boolean }
 > = {
-  "wiki-planner": { group: "Wiki Agent", icon: "BookOpen", isBuiltin: true },
-  "wiki-writer": { group: "Wiki Agent", icon: "BookOpen", isBuiltin: true },
-  "wiki-explorer": { group: "Wiki Agent", icon: "BookOpen", isBuiltin: true },
-  "wiki-generator": { group: "Wiki Agent", icon: "BookOpen", isBuiltin: true },
   explorer: { group: "General", icon: "Compass", isBuiltin: false },
   reviewer: { group: "General", icon: "ClipboardCheck", isBuiltin: false },
 };

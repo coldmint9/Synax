@@ -132,7 +132,7 @@ describe("desktop platform contract", () => {
     }
     const views = items.find((item) => item.label === "视图").submenu;
     expect(views.map((item: any) => item.label)).not.toContain("Work");
-    expect(views.map((item: any) => item.label)).not.toContain("Wiki");
+    expect(views.filter((item: any) => item.id?.startsWith("view:")).map((item: any) => item.id)).toEqual(["view:conversation"]);
     expect(views.map((item: any) => item.label)).not.toContain("Coordinates");
   });
 
@@ -454,7 +454,6 @@ it("keeps desktop commands contextual and uses the import dialog instead of a fa
     hasSession: false,
     hasViewer: false,
     inWork: false,
-    inWiki: false,
     dark: false,
   });
   const get = (id: string): any => {
@@ -472,7 +471,6 @@ it("keeps desktop commands contextual and uses the import dialog instead of a fa
     hasSession: true,
     hasViewer: true,
     inWork: true,
-    inWiki: false,
     dark: true,
   });
   expect(get("session:new").enabled).toBe(true);

@@ -8,9 +8,9 @@
 
 </div>
 
-Synax 把 Agent 对话、源码、文件差异和终端放在同一个应用里。导入本地项目后，可以直接开始任务，也可以先从源码生成 Wiki，了解项目结构，再沿着文档中的引用查看代码。
+Synax 把 Agent 对话、源码、文件差异和终端放在同一个应用里。导入本地项目后，可以直接开始任务，查看源码、审查改动，并在终端中验证结果。
 
-项目目前处于 alpha 阶段。Wiki 和规划功能仍在实验中，默认关闭。
+项目目前处于 alpha 阶段。
 
 ## 快速开始
 
@@ -46,23 +46,16 @@ npm run dev:all
 
 `npm run dev` 是同一脚本的别名。Web 开发 Profile 使用 `3211` 端口运行 API、使用 `5174` 端口运行 Web 开发服务，并将数据放在 `~/.synax/web-dev`，然后打开 [localhost:5174](http://localhost:5174) 即可使用。
 
-#### 日常使用的 Web 生产模式（推荐）
+#### 生产构建
+
+构建运行服务和前端：
 
 ```bash
 npm run build
 npm run client:build
-npm run start:client
 ```
 
-生产模式使用构建后的前端，等待本地运行服务 ready 后再监听 `5173`，实时订阅通过共享 WebSocket 传输。`dev:all` 仍用于开发。不要同时启动两个使用相同 `DATA_ROOT` 的运行服务；若已有兼容的运行服务，可通过 `SYNAX_API_ORIGIN=http://127.0.0.1:<端口>` 显式连接。
-
-如需 HTTP/2，为 `localhost` 配置浏览器信任的 TLS 证书，然后启动：
-
-```bash
-WEB_TLS_CERT=/绝对路径/localhost-cert.pem WEB_TLS_KEY=/绝对路径/localhost-key.pem npm run start:client
-```
-
-TLS 入口让普通请求和静态资源使用 HTTP/2，WebSocket 使用兼容的 HTTP/1.1 upgrade；无证书时仍支持 HTTP/1.1 + 共享 WebSocket。程序不会安装根证书、绕过证书验证或降低鉴权要求。更换 `WEB_PORT` 时，自行连接的后端也必须配置相同的允许来源端口。
+构建产物分别位于 `server-dist/` 和 `client/dist/`。浏览器使用流程通过 `npm run dev:all` 启动；打包桌面应用使用 `npm run build:desktop`。
 
 #### 本地存储维护（默认只读）
 
@@ -97,7 +90,7 @@ npm run dev:desktop
 npm run make:desktop
 ```
 
-产物保存在 `out/make/`。需要在目标**操作系统和 CPU 架构**上构建，libSQL、tree-sitter 和 node-pty 都包含原生二进制。打包后的应用自带运行时，使用者无需另外安装 Node.js。
+产物保存在 `out/make/`。需要在目标**操作系统和 CPU 架构**上构建，libSQL 和 node-pty 包含原生二进制。打包后的应用自带运行时，使用者无需另外安装 Node.js。
 
 Electron 桌面版通过应用托管的 Cua Driver 提供电脑操作能力。桌面打包时会下载固定版本的 Cua Driver 0.30.2，并校验 SHA-256 后放入安装包；也可以设置 `SYNAX_CUA_DRIVER_PATH` 指向已安装的**相同版本**可执行文件。开发模式使用该路径，或从 `PATH` 查找 `cua-driver`（同样要求 0.30.2）。macOS 需在系统设置中为 **Synax** 授予「辅助功能」和「屏幕录制」权限，然后重启 Synax。项目设置页提供驱动状态及权限设置入口。Cua 在界面加载后异步启动，权限缺失或版本不匹配不会阻塞应用其他功能。
 
@@ -126,7 +119,7 @@ npm run dev:client   # 仅 Web，5174 端口，~/.synax/web-dev
 | `WEB_PORT` | `5173`         | `5174`       | Web 开发服务端口     |
 | `WEB_HOST` | `0.0.0.0`      | 继承         | Web 开发服务监听地址 |
 
-独立运行默认值适用于 `start:local` 和 `start:client`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:local`、`dev:client` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
+独立运行默认值适用于 `start:local`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:local`、`dev:client` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
 
 ## 本地 Git 合并请求
 

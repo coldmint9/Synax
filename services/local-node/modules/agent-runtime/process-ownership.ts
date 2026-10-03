@@ -32,9 +32,7 @@ export interface OwnedProcessRecord {
 }
 const INTERNAL_ENV = [
   "AGENT_SESSION_INIT",
-  "WIKI_JOB_INIT",
   "SYNAX_AGENT_SESSION_CHILD",
-  "SYNAX_WIKI_JOB_CHILD",
   "SYNAX_RUNTIME_HOST_ID",
   "SYNAX_RUNTIME_DATA_ROOT",
   "SYNAX_RECORDED_START",
@@ -48,8 +46,7 @@ export function externalCommandEnvironment(
   const env = { ...(inherit ? process.env : {}), ...overrides };
   const runtimeRoot = process.env.SYNAX_RUNTIME_DATA_ROOT;
   const internalWorker =
-    process.env.SYNAX_AGENT_SESSION_CHILD === "1" ||
-    process.env.SYNAX_WIKI_JOB_CHILD === "1";
+    process.env.SYNAX_AGENT_SESSION_CHILD === "1";
   if (
     env.DATA_ROOT &&
     ((runtimeRoot &&

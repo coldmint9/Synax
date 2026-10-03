@@ -1,17 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAgentDockStore } from "./agentDockStore";
 import { initialDockSessionState } from "../dock/dockSessionStream";
-import { goalApi } from "../../../adapters/transport/goal";
-import { sessionPromptApi } from "../../../adapters/transport/sessionPrompt";
 import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
-import { useWikiStore } from "../../../shared/state/wikiStore";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { useNotificationStore } from "../../../shared/state/notificationStore";
 import { useAgentSessionStore } from "./agentSessionStore";
 
 beforeEach(() => {
   useAgentDockStore.getState().reset();
-  useWikiStore.getState().reset();
   useShellStore.setState({ currentProjectId: "project" });
   useAgentSessionStore.setState({ selectedSessionId: null, permissions: [] });
 });
@@ -120,12 +116,6 @@ it("does not change the new dock session when an old approval finishes", async (
 });
 
 it("does not replace the visible title when parallel session creation finishes out of order", async () => {
-  vi.spyOn(sessionPromptApi, "build").mockImplementation(
-    async (_id, input) => ({ prompt: input.content, wikiContext: {} }) as any,
-  );
-  vi.spyOn(goalApi, "create").mockResolvedValue({ id: "goal" } as any);
-  vi.spyOn(goalApi, "list").mockResolvedValue([]);
-  vi.spyOn(goalApi, "linkLastSession").mockResolvedValue(undefined as any);
   vi.spyOn(agentRuntimeApi, "streamTurn").mockResolvedValue(undefined);
   const pendingCreates: Array<(session: any) => void> = [];
   vi.spyOn(agentRuntimeApi, "createSession").mockImplementation(
@@ -151,115 +141,7 @@ it("does not replace the visible title when parallel session creation finishes o
   expect(agentRuntimeApi.streamTurn).toHaveBeenCalledTimes(2);
 });
 
-it("resets dock state and attachments independently of the Wiki document selection", () => {
-  useAgentDockStore.setState({
-    session: { ...initialDockSessionState, sessionId: "active-session" },
-    dockState: "expanded",
-    composerContent: "Draft for the current project",
-    composerContentParts: [{ type: "text", text: "Attached context" }],
-  });
-
-  useWikiStore.getState().reset();
-  expect(useAgentDockStore.getState()).toMatchObject({
-    session: { sessionId: "active-session" },
-    dockState: "expanded",
-    composerContent: "Draft for the current project",
-  });
-
-  useWikiStore.setState({ selectedDocumentId: "wiki-document" });
-  useAgentDockStore.getState().reset();
-  expect(useAgentDockStore.getState()).toMatchObject({
-    session: { sessionId: null, status: "idle" },
-    dockState: "idle",
-    composerContent: "",
-    composerContentParts: [],
-  });
-  expect(useWikiStore.getState().selectedDocumentId).toBe("wiki-document");
-});
-
-it("uses the Wiki document context while submitting through the independent dock", async () => {
-  const anchor = { type: "heading" as const, heading: "Appendix" };
-  useWikiStore.setState({
-    documents: [
-      {
-        id: "wiki-document",
-        snapshotId: "snapshot",
-        projectId: "project",
-        title: "Architecture",
-        docType: "module",
-        parentId: null,
-        contentMd: "# Architecture",
-        references: [],
-        pipelineStage: "drafted",
-        sortOrder: 0,
-        manualState: "none",
-        staleState: "fresh",
-        isSection: false,
-        createdAt: "2026-09-20",
-        updatedAt: "2026-09-20",
-      },
-    ],
-  });
-  vi.spyOn(sessionPromptApi, "build").mockResolvedValue({
-    prompt: "Review the appendix with document context",
-    wikiContext: {
-      mode: "manual",
-      documentId: "wiki-document",
-      documentTitle: "Architecture",
-      anchorJson: anchor,
-      autoMatched: false,
-    },
-  });
-  vi.spyOn(goalApi, "create").mockResolvedValue({ id: "wiki-goal" } as any);
-  vi.spyOn(goalApi, "list").mockResolvedValue([]);
-  vi.spyOn(goalApi, "linkLastSession").mockResolvedValue(undefined);
-  vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
-    session: { id: "dock-session", title: "Review appendix" },
-  } as any);
-  vi.spyOn(agentRuntimeApi, "streamTurn").mockResolvedValue(undefined);
-  const dock = useAgentDockStore.getState();
-  dock.openComposer({
-    content: "Review the appendix",
-    documentId: "wiki-document",
-    anchor,
-  });
-  dock.setComposerProviderId("custom-api:kiro-local");
-  dock.setComposerModelId("claude-opus-5");
-
-  await dock.submitSession("project");
-
-  expect(sessionPromptApi.build).toHaveBeenCalledWith("project", {
-    mode: "direct",
-    content: "Review the appendix",
-    wikiAttachMode: "manual",
-    documentId: "wiki-document",
-    documentTitle: "Architecture",
-    anchorJson: anchor,
-  });
-  expect(agentRuntimeApi.createSession).toHaveBeenCalledWith(
-    expect.objectContaining({
-      prompt: "Review the appendix with document context",
-      sessionMetadata: expect.objectContaining({
-        mode: "chat",
-        source: "agent-dock",
-        goalId: "wiki-goal",
-        userPrompt: "Review the appendix",
-        documentId: "wiki-document",
-      }),
-    }),
-  );
-  expect(agentRuntimeApi.streamTurn).toHaveBeenCalledWith(
-    "dock-session",
-    expect.objectContaining({ model: "custom-api:kiro-local/claude-opus-5" }),
-    expect.any(Function),
-  );
-  expect(goalApi.linkLastSession).toHaveBeenCalledWith(
-    "wiki-goal",
-    "dock-session",
-  );
-});
-
-const creationStages = ["prompt", "goal", "goals", "session"] as const;
+const creationStages = ["session"] as const;
 const contextChanges = ["reset", "project-switch"] as const;
 const outcomes = ["resolve", "reject"] as const;
 
@@ -273,29 +155,9 @@ it.each(
   "ignores $stage $outcome after $change while the session ID is still null",
   async ({ stage, change, outcome }) => {
     const pending = deferred<any>();
-    const results = {
-      prompt: {
-        prompt: "Old prompt",
-        wikiContext: { documentId: null, anchorJson: null },
-      },
-      goal: { id: "old-goal" },
-      goals: [{ id: "old-goal" }],
-      session: { session: { id: "old-session", title: "Old title" } },
-    };
-    const calls = {
-      prompt: vi
-        .spyOn(sessionPromptApi, "build")
-        .mockResolvedValue(results.prompt as any),
-      goal: vi.spyOn(goalApi, "create").mockResolvedValue(results.goal as any),
-      goals: vi.spyOn(goalApi, "list").mockResolvedValue(results.goals as any),
-      session: vi
-        .spyOn(agentRuntimeApi, "createSession")
-        .mockResolvedValue(results.session as any),
-    };
+    const results = { session: { session: { id: "old-session", title: "Old title" } } };
+    const calls = { session: vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue(results.session as any) };
     calls[stage].mockImplementationOnce(() => pending.promise);
-    const link = vi
-      .spyOn(goalApi, "linkLastSession")
-      .mockResolvedValue(undefined);
     const stream = vi
       .spyOn(agentRuntimeApi, "streamTurn")
       .mockResolvedValue(undefined);
@@ -309,7 +171,6 @@ it.each(
     changeContext(change);
     useAgentDockStore.getState().openComposer({ content: "New request" });
     const currentGoals = [{ id: "current-goal" }] as any;
-    useWikiStore.setState({ goals: currentGoals });
     if (outcome === "resolve") pending.resolve(results[stage]);
     else pending.reject(new Error("Old request failed"));
     await submission;
@@ -319,8 +180,6 @@ it.each(
       dockState: "input",
       composerContent: "New request",
     });
-    expect(useWikiStore.getState().goals).toBe(currentGoals);
-    expect(link).not.toHaveBeenCalled();
     expect(stream).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
     if (stage !== "session") expect(calls.session).not.toHaveBeenCalled();

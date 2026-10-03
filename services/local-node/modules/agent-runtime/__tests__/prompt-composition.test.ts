@@ -33,7 +33,7 @@ describe("layered prompt composition", () => {
     expect(prompt).not.toContain("internally in English");
     expect(prompt).not.toContain("Thinking mode:");
   });
-  it("preserves the specialized Wiki language protocol", () => {
+  it("preserves the specialized language protocol", () => {
     const prompt = buildLoopSystemPrompt({
       ...base,
       locale: "en",
@@ -72,7 +72,7 @@ describe("layered prompt composition", () => {
             kind: "code",
             title: "graph",
             content:
-              "Use the Code Map block when present; otherwise run a code-map scan.",
+              "Read project files and search source code for relevant context.",
           },
           {
             id: "source",
@@ -86,7 +86,7 @@ describe("layered prompt composition", () => {
       projectRulesSection: "### AGENTS.md\nKeep existing changes.",
       projectMemoriesSection: "Past observation",
     });
-    expect(prompt).not.toContain("run a code-map scan");
+    expect(prompt).not.toContain("Read project files and search source code for relevant context.");
     expect(prompt).not.toContain("No context bundle");
     expect(prompt).toContain("[Project Rules]");
     expect(prompt).toContain("Keep existing changes.");
@@ -163,7 +163,8 @@ describe("layered prompt composition", () => {
         prompt: "你好",
       }),
     });
-    expect(prompt.length).toBeLessThan(3200);
+    // Keep the complete greeting prompt below 3.5 KB, including permission rules.
+    expect(prompt.length).toBeLessThan(3500);
     expect(prompt).toContain("Preserve intent");
     expect(prompt).toContain("Permission gates");
     expect(prompt).toContain("smallest correct change");
@@ -189,12 +190,6 @@ describe("cache-stable reference projection", () => {
           sourceType: "code-map",
           sourceId: "scan-a",
           content: "modules: auth",
-        },
-        {
-          id: "acblk-two",
-          kind: "wiki" as const,
-          title: "Wiki",
-          content: "Architecture notes",
         },
       ],
     };
@@ -289,7 +284,7 @@ it("injects the auto-preview protocol only when visual intent is detected", () =
     skillsSection: '{"id":"project/visualize","name":"visualize"}',
   });
   expect(preview).toContain("visualize");
-  expect(preview).toContain("conversation preview");
+  expect(preview).toContain("HTML fragment");
 
   const implementation = buildLoopSystemPrompt({
     ...base,

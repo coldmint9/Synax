@@ -90,7 +90,7 @@ export const TimelineEntryView = memo(function TimelineEntryView({
       />
     );
   if (entry.kind === "user") {
-    // App-composed prompts (language directive + wiki context + instructions)
+    // App-composed prompts (language directive + context + instructions)
     // are scaffolding, not conversation: collapse them into an indicator the
     // reader can expand if they actually want to inspect the payload.
     if (entry.injected) {

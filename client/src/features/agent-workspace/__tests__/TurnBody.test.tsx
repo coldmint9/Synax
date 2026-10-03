@@ -71,16 +71,16 @@ describe("TurnBody", () => {
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
 
-  it("shows the thinking dots while a streaming turn is waiting for content", () => {
+  it("shows an accessible thinking status while a streaming turn is waiting for content", () => {
     const { container } = render(
       <TurnBody turn={emptyTurn} entryId="entry-1" isStreaming />,
     );
 
-    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(container.querySelector('[data-testid="thinking-indicator"]')).toHaveAttribute("role", "status");
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
   });
 
-  it("does not show the thinking dots for an empty completed turn", () => {
+  it("does not show a thinking status for an empty completed turn", () => {
     const { container } = render(
       <TurnBody
         turn={{ ...emptyTurn, status: "completed" }}

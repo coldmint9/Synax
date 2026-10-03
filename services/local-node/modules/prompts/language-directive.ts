@@ -15,7 +15,7 @@ const LANGUAGE_LABELS: Record<Locale, string> = {
 };
 
 /**
- * Reminder for wiki outline generation: titles and keyQuestions follow UI locale.
+ * Reminder for outline generation: titles and keyQuestions follow UI locale.
  */
 export function buildOutlineLanguageRequirement(locale: Locale): string {
   const lang = LANGUAGE_LABELS[locale];

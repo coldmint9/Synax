@@ -731,7 +731,7 @@ export interface SessionCapabilities {
 }
 
 export interface TurnReference {
-  kind: "skill" | "mcp" | "file" | "wiki";
+  kind: "skill" | "mcp" | "file";
   id: string;
   label?: string;
 }

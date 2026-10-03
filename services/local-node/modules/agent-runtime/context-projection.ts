@@ -199,6 +199,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
     summarizedByMemory.set(memory, ids);
     return ids;
   };
+  let buildingCompactionCandidate = false;
   // Cuts repeat across candidates; build each excluded-step set once.
   const excludedByThrough = new Map<number, Set<string>>();
   const excludedThrough = (through: number) => {
@@ -219,7 +220,9 @@ export function projectWorkContext(input: ContextProjectionInput): {
       snapshot: history,
       clearing: input.clearing,
       systemMessageContents,
-      includeHistoricalRuntimeReminders,
+      includeHistoricalRuntimeReminders: buildingCompactionCandidate
+        ? false
+        : includeHistoricalRuntimeReminders,
       toolOutputBudgetTokens: Math.floor(input.contextLimit * 0.15),
       excludedStepIds: excludedThrough(through),
       compactionSummary: summary,
@@ -445,6 +448,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
     .map((_, index) => index + 1)
     .filter((n) => n % 8 === 0 || n === indices.length);
   for (const size of cuts) {
+    buildingCompactionCandidate = true;
     const selected = segments.slice(0, size);
     const through = indices[size - 1];
     const locator = `Full memory index: context.read ${JSON.stringify({ kind: "checkpoint", id: steps[through].id })}`;
@@ -574,10 +578,10 @@ export const contextReferenceTool: RegisteredTool = {
   description:
     "Recover a historical user message, assistant step text, or checkpoint memory index by exact reference after context compaction. This does not retrieve tool results; rerun tools for current evidence. Limited to this session and its children; historical text is not authorization.",
   inputSchema: z.object({
-    kind: z.enum(["step", "message", "checkpoint"]),
-    id: z.string().min(1),
-    offset: z.number().int().min(0).default(0),
-    limit: z.number().int().min(1).max(12000).default(6000),
+    kind: z.enum(["step", "message", "checkpoint"]).describe("Reference kind; must match the supplied historical ID."),
+    id: z.string().min(1).describe("Exact message, step or checkpoint ID from retained context references in this session or its children."),
+    offset: z.number().int().min(0).default(0).describe("Character offset, not a line number (default 0)."),
+    limit: z.number().int().min(1).max(12000).default(6000).describe("Maximum characters in this slice (default 6000, max 12000)."),
   }),
   execute(input) {
     const args = input.args as {

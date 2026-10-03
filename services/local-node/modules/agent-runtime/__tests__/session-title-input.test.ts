@@ -13,8 +13,8 @@ describe("session-title-input", () => {
       "## User Goal",
       "Fix auth token refresh",
       "",
-      "## Wiki Context",
-      "- Document: Auth",
+      "## Instructions",
+      "- Verify the authentication flow",
     ].join("\n");
 
     expect(extractLegacyUserRequestFromPrompt(prompt)).toBe(

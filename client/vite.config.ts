@@ -27,7 +27,7 @@ process.env.no_proxy = process.env.NO_PROXY;
 
 export default defineConfig({
   // Both the web server and Electron's standard app:// origin serve assets at the root.
-  // Relative assets break when reloading a nested Work/Wiki route.
+  // Relative assets break when reloading a nested workspace route.
   base: "/",
   plugins: [react(), removeCrossOrigin()],
   build: {

@@ -12,7 +12,6 @@ export interface DesktopMenuState {
   hasSession: boolean;
   hasViewer: boolean;
   inWork: boolean;
-  inWiki: boolean;
   dark: boolean;
 }
 
@@ -21,7 +20,6 @@ let context: DesktopMenuState = {
   hasSession: false,
   hasViewer: false,
   inWork: false,
-  inWiki: false,
   dark: false,
 };
 let checkUiUpdates: (() => void) | null = null;

@@ -27,7 +27,6 @@ export interface SynaxSessionMetadata {
   goalContent?: string;
   goalId?: string;
   documentId?: string | null;
-  wikiAttachMode?: "auto" | "manual";
   planId?: string;
   planNodeId?: string;
   planNodeTitle?: string;

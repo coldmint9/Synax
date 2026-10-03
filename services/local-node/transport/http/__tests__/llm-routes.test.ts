@@ -57,7 +57,7 @@ describe("llm routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        purpose: "wiki",
+        purpose: "analyze",
         messages: [{ role: "user", content: "ping" }],
       }),
     });
@@ -77,7 +77,7 @@ describe("llm routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        purpose: "wiki",
+        purpose: "analyze",
         messages: [{ role: "user", content: "ping" }],
       }),
     });

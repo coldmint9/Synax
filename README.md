@@ -8,9 +8,9 @@ English | [简体中文](./README.zh-CN.md)
 
 </div>
 
-Synax brings agent conversations, source files, diffs, and a terminal into one app. Import a local project to start working with an agent, or generate a Wiki to read through its architecture and follow references back to the code.
+Synax brings agent conversations, source files, diffs, and a terminal into one app. Import a local project to start working with an agent, inspect source files, review changes, and verify them in the terminal.
 
-The project is in alpha. Wiki and planning are experimental and disabled by default.
+The project is in alpha.
 
 ## Quick Start
 
@@ -46,23 +46,16 @@ npm run dev:all
 
 `npm run dev` is an alias for the same script. The Web development profile uses the API on `3211`, the web development server on `5174`, and the data root `~/.synax/web-dev`; then open [localhost:5174](http://localhost:5174).
 
-#### Production Web mode for everyday use (recommended)
+#### Production builds
+
+Build the runtime and frontend:
 
 ```bash
 npm run build
 npm run client:build
-npm run start:client
 ```
 
-This serves the built frontend on port `5173` after the local runtime reports ready, with realtime observations on a shared WebSocket. Keep `dev:all` for development. Do not start two runtime owners for the same `DATA_ROOT`; set `SYNAX_API_ORIGIN=http://127.0.0.1:<port>` to explicitly attach to an existing compatible runtime instead.
-
-For HTTP/2, provide a TLS certificate for `localhost` that your browser trusts:
-
-```bash
-WEB_TLS_CERT=/absolute/path/localhost-cert.pem WEB_TLS_KEY=/absolute/path/localhost-key.pem npm run start:client
-```
-
-The TLS entry uses HTTP/2 for ordinary requests/assets and compatible HTTP/1.1 upgrades for WebSocket. Without certificates, HTTP/1.1 plus shared WebSocket is supported. The app never installs a root certificate, bypasses certificate validation, or relaxes authorization. When changing `WEB_PORT`, an independently started backend must allow the same origin port.
+The build outputs are `server-dist/` and `client/dist/`. Use `npm run dev:all` for the browser workflow, or `npm run build:desktop` to package the desktop application.
 
 #### Local storage maintenance (read-only by default)
 
@@ -97,7 +90,7 @@ To produce an installable desktop build instead of running it in development mod
 npm run make:desktop
 ```
 
-Artifacts are written to `out/make/`. Build on the target operating system **and CPU architecture** — libSQL, tree-sitter, and node-pty ship native binaries. Packaged apps include their own runtime, so end users do not need a separate Node.js installation.
+Artifacts are written to `out/make/`. Build on the target operating system **and CPU architecture** — libSQL and node-pty ship native binaries. Packaged apps include their own runtime, so end users do not need a separate Node.js installation.
 
 Computer Use is available in the Electron desktop app through an app-hosted Cua Driver. Desktop packaging downloads a pinned Cua Driver 0.30.2 executable and verifies its SHA-256 before bundling; `SYNAX_CUA_DRIVER_PATH` may point to an already installed **matching** executable. Development mode uses that override or finds `cua-driver` on `PATH` (the executable must also be 0.30.2). On macOS, grant **Synax** Accessibility and Screen Recording permissions in System Settings, then relaunch Synax. The project settings page displays the Driver status and permission shortcuts. Cua starts asynchronously after the UI loads; a missing grant or incompatible binary does not block the rest of the app.
 
@@ -126,7 +119,7 @@ npm run dev:client   # Web only, port 5174, ~/.synax/web-dev
 | `WEB_PORT` | `5173`             | `5174`              | Web development server port     |
 | `WEB_HOST` | `0.0.0.0`          | inherited           | Web development server bind address |
 
-The standalone defaults apply to `start:local` and `start:client`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:local`, `dev:client`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
+The standalone defaults apply to `start:local`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:local`, `dev:client`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
 
 ## Local Git merge requests
 

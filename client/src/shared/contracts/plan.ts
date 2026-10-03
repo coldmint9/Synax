@@ -24,7 +24,6 @@ export interface PlanTask {
   sprintId: string | null
   linkedReqs: string[]
   linkedAdrs: string[]
-  linkedWiki: string[]
   gitBranch: string
   origin: 'manual' | 'derived'
   originRef?: TaskOriginRef

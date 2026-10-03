@@ -31,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const content = <button>Wiki tools</button>;
+const content = <button>Git tools</button>;
 describe("ToolbarPill", () => {
   it("measures natural width, updates after resize and disconnects on unmount", () => {
     const { container, unmount } = render(<ToolbarPill visible>{content}</ToolbarPill>);
@@ -58,7 +58,7 @@ describe("ToolbarPill", () => {
     act(() => vi.advanceTimersByTime(280));
     expect(slot?.querySelector("button")).toBeNull();
     rerender(<ToolbarPill visible>{content}</ToolbarPill>);
-    expect(screen.getByRole("button", { name: "Wiki tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Git tools" })).toBeTruthy();
     expect(slot).not.toHaveAttribute("inert");
   });
 
@@ -78,7 +78,7 @@ describe("ToolbarPill", () => {
     act(() => vi.advanceTimersByTime(100));
     rerender(<ToolbarPill visible>{content}</ToolbarPill>);
     act(() => vi.advanceTimersByTime(280));
-    expect(screen.getByRole("button", { name: "Wiki tools" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Git tools" })).toBeTruthy();
   });
   it("falls back to a usable static pill when GSAP cannot load", async () => {
     vi.mocked(loadMotion).mockRejectedValueOnce(new Error("Motion chunk unavailable"));
@@ -88,7 +88,7 @@ describe("ToolbarPill", () => {
     expect(slot.style.width).toBe("");
     expect(slot.style.opacity).toBe("");
     expect(slot.style.transform).toBe("");
-    expect(screen.getByRole("button", { name: "Wiki tools" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Git tools" })).toBeEnabled();
   });
 
 });

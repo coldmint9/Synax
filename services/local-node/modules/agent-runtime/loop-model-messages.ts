@@ -268,8 +268,20 @@ function retainRecentToolOutputs(
   const budgetChars = Math.max(4_000, Math.floor(budgetTokens * 4));
   let remaining = budgetChars;
   const retained = new Set<string>();
+  const protectedCalls = calls.filter(isProtectedToolCall);
+  for (const call of protectedCalls) retained.add(call.id);
+  remaining -= protectedCalls.reduce(
+    (total, call) =>
+      total +
+      Math.min(
+        MAX_TOOL_OUTPUT_TEXT,
+        JSON.stringify(call.outputRef ?? call.outputSummary ?? "").length,
+      ),
+    0,
+  );
   for (const call of [...calls].reverse()) {
     if (call.status !== "completed" && call.status !== "compacted") continue;
+    if (retained.has(call.id)) continue;
     const size = Math.min(
       MAX_TOOL_OUTPUT_TEXT,
       JSON.stringify(call.outputRef ?? call.outputSummary ?? "").length,
@@ -280,6 +292,22 @@ function retainRecentToolOutputs(
     if (remaining <= 0) break;
   }
   return retained;
+}
+
+/**
+ * These results carry durable task state or information that cannot safely be
+ * recovered by rerunning a read tool. They stay in the model projection even
+ * when ordinary historical reads are reduced to a re-read marker.
+ */
+function isProtectedToolCall(call: ToolCallRecord): boolean {
+  return (
+    call.toolId === "skill.load" ||
+    call.toolId.startsWith("task.") ||
+    call.status === "failed" ||
+    call.status === "denied" ||
+    call.status === "cancelled" ||
+    Boolean(call.error)
+  );
 }
 
 function buildRunMessages(
@@ -708,7 +736,8 @@ function buildClearSet(
 
   const clearable = allToolCalls
     .filter((tc) => tc.status === "completed" || tc.status === "compacted")
-    .filter((tc) => !excludeSet.has(tc.toolId));
+    .filter((tc) => !excludeSet.has(tc.toolId))
+    .filter((tc) => !isProtectedToolCall(tc));
 
   if (clearable.length <= clearing.keepRecent) return null;
 

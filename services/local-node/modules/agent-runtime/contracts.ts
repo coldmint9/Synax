@@ -252,7 +252,7 @@ export interface AgentProfile {
   /** Mount every registered tool for this profile instead of filtering by
    *  `allowedCapabilities`. Used by the primary Synax agent, which mounts its
    *  tools up front instead of disclosing them progressively. Session-scoped
-   *  providers still decide what they supply (wiki reads need a generated wiki). */
+   *  providers still decide what they supply (providers expose the supported context). */
   mountAllTools?: boolean;
 }
 
@@ -280,7 +280,7 @@ export interface AgentSession {
   mcpServerIds: string[];
   activeRunId: string | null;
   pendingResumeToken: string | null;
-  /** Arbitrary JSON payload for session-specific orchestrator state (wiki snapshot, pipeline phase, etc.).
+  /** Arbitrary JSON payload for session-specific orchestrator state (pipeline phase, etc.).
    *  Persisted to DB so state survives pause/interrupt and server restart. */
   sessionMetadata: Record<string, unknown> | null;
 }
@@ -395,7 +395,6 @@ export interface AgentContextBlock {
     | "code"
     | "diff"
     | "review"
-    | "wiki"
     | "system";
   title: string;
   content: string;
@@ -520,7 +519,7 @@ export const buildContextRequestSchema = z.object({
   nodeId: z.string().min(1).max(256).nullable().optional(),
   profileId: z.string().min(1).max(64).optional(),
   include: z
-    .array(z.enum(["coord", "memory", "graph", "review", "wiki"]))
+    .array(z.enum(["coord", "memory", "graph", "review"]))
     .max(10)
     .optional(),
 });
@@ -545,7 +544,7 @@ export type ClearInactiveSessionsBody = z.infer<
 >;
 
 export const turnReferenceSchema = z.object({
-  kind: z.enum(["skill", "mcp", "file", "wiki"]),
+  kind: z.enum(["skill", "mcp", "file"]),
   id: z.string().min(1).max(1024),
   label: z.string().max(256).optional(),
 });
@@ -556,7 +555,7 @@ export const streamTurnRequestSchema = z.object({
   message: z.string().max(100_000).optional(),
   /**
    * Marks a message the runtime composed on the user's behalf (goal prompt
-   * scaffolding, wiki context, language directive…). The transcript shows those
+   * scaffolding, language directive…). The transcript shows those
    * as an "injected" chip instead of a user bubble.
    */
   messageSource: z.enum(["user", "system_injection"]).optional(),
@@ -651,7 +650,7 @@ export interface ToolHook {
 
 /**
  * A provider that supplies session-scoped tools and hooks.
- * Implementations reconstruct tools/hooks from persisted state (e.g., wiki DB)
+ * Implementations reconstruct tools/hooks from persisted state (e.g., session DB)
  * so that interrupted sessions can resume without losing access to
  * their profile-specific tools.
  */

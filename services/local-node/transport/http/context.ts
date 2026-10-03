@@ -498,7 +498,7 @@ contextRoutes.post('/memories/extract', async (c) => {
   }
 });
 
-// POST /memories/relevant — 为 analyzer / context 流程返回相关长期记忆
+// POST /memories/relevant — 为 context 流程返回相关长期记忆
 contextRoutes.post('/memories/relevant', async (c) => {
   const body = await parseJsonBody(c);
   if (!body.ok) return c.json({ error: body.error }, 400);

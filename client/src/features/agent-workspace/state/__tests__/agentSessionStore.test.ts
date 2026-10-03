@@ -147,39 +147,6 @@ describe("useAgentSessionStore.loadMoreSessions", () => {
 });
 
 describe("useAgentSessionStore.submitSessionDraft", () => {
-  it("creates a session with enriched prompt and wiki metadata", async () => {
-    const session = await useAgentSessionStore
-      .getState()
-      .submitSessionDraft("project-a", {
-        message: "Improve auth",
-        prompt:
-          "## User Goal\nImprove auth\n\n## Wiki Context\n- Document ID: doc_1",
-        wikiAttachMode: "auto",
-        documentId: "doc_1",
-      });
-
-    expect(agentRuntimeApi.createSession).toHaveBeenCalledWith({
-      projectId: "project-a",
-      backendId: "native",
-      model: undefined,
-      reasoningEffort: undefined,
-      mcpServerIds: undefined,
-      profileId: "synax",
-      prompt:
-        "## User Goal\nImprove auth\n\n## Wiki Context\n- Document ID: doc_1",
-      skillIds: undefined,
-      permissionTier: undefined,
-      sessionMetadata: {
-        mode: "chat",
-        source: "session-page",
-        userPrompt: "Improve auth",
-        wikiAttachMode: "auto",
-        documentId: "doc_1",
-      },
-    });
-    expect(session.id).toBe("ars_new");
-    expect(useAgentSessionStore.getState().sessions[0]?.id).toBe("ars_new");
-  });
 
   it("falls back to message when prompt is omitted", async () => {
     await useAgentSessionStore.getState().submitSessionDraft("project-a", {

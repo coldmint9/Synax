@@ -14,7 +14,6 @@ export type LlmPurpose =
   | "semantic"
   | "seed"
   | "review"
-  | "wiki"
   | "context-signal"
   | "validate";
 

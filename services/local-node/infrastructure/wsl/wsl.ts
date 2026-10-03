@@ -125,9 +125,7 @@ export async function assertWslDistribution(
 const WSL_ENV_BLOCKED = new Set(["PATH", "HOME", "SHELL", "COMSPEC"]);
 const WSL_ENV_INTERNAL = new Set([
   "AGENT_SESSION_INIT",
-  "WIKI_JOB_INIT",
   "SYNAX_AGENT_SESSION_CHILD",
-  "SYNAX_WIKI_JOB_CHILD",
   "SYNAX_RUNTIME_HOST_ID",
   "SYNAX_RUNTIME_DATA_ROOT",
 ]);

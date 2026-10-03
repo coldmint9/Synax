@@ -1,11 +1,10 @@
 import { resolveSynaxMode } from "./synaxDisplay";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
 
-/** Primary sessions page vs wiki/automation workflow sub-page. */
+/** Primary sessions page vs automation workflow sub-page. */
 export type SessionListView = "sessions" | "workflow";
 
 const WORKFLOW_PROFILE_IDS = new Set([
-  "wiki-refresh",
   "plan-planner",
   "plan-generator",
 ]);
@@ -16,15 +15,7 @@ const WORKSPACE_SESSION_MODES = new Set(["plan", "goal", "plan_node"]);
 export function isWorkflowSession(session: AgentSession): boolean {
   const { profileId, sessionMetadata } = session;
 
-  if (profileId.startsWith("wiki-") || WORKFLOW_PROFILE_IDS.has(profileId)) {
-    return true;
-  }
-
-  if (
-    sessionMetadata &&
-    typeof sessionMetadata.snapshotId === "string" &&
-    sessionMetadata.snapshotId
-  ) {
+  if (WORKFLOW_PROFILE_IDS.has(profileId)) {
     return true;
   }
 
@@ -50,7 +41,7 @@ export function isAgentWorkspaceSession(session: AgentSession): boolean {
   );
 }
 
-/** Sessions page shows interactive Synax sessions; workflow page shows wiki/plan automation. */
+/** Sessions page shows interactive Synax sessions; workflow page shows plan automation. */
 export function classifySession(session: AgentSession): SessionListView {
   if (isWorkflowSession(session)) return "workflow";
   return "sessions";

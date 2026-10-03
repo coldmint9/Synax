@@ -17,7 +17,7 @@ describe("LayoutSection", () => {
       preferences: {
         ...state.preferences,
         locale: "en",
-        wikiEnabled: false,
+        
         sessionFoldWorkRuns: true,
         userMessageFontWeight: 450,
       },
@@ -25,22 +25,6 @@ describe("LayoutSection", () => {
   });
 
   afterEach(() => cleanup());
-
-  it("persists the experimental Wiki opt-in and restores it after reload", () => {
-    render(<LayoutSection />);
-    expect(screen.getByText("Wiki (Experimental)")).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: "Wiki" });
-    expect(toggle).not.toBeChecked();
-    fireEvent.click(toggle);
-    expect(useShellStore.getState().preferences.wikiEnabled).toBe(true);
-    useShellStore.setState((state) => ({
-      preferences: { ...state.preferences, wikiEnabled: false },
-    }));
-    hydrateShellPreferences();
-    expect(useShellStore.getState().preferences.wikiEnabled).toBe(true);
-    fireEvent.click(toggle);
-    expect(useShellStore.getState().preferences.wikiEnabled).toBe(false);
-  });
 
   it("moves the work-log fold preference into settings", () => {
     render(<LayoutSection />);

@@ -15,11 +15,11 @@ interface Props {
 
 /**
  * Tick width per distance from the hovered turn. Numbers come from the design
- * reference: the hovered mark is 42px, then 40 / 28 / 20, and everything
- * further out settles back to the resting 10px hairline.
+ * reference at half scale: the hovered mark is 21px, then 20 / 14 / 10,
+ * and everything further out settles back to the resting 5px hairline.
  */
-const RIPPLE_WIDTHS = [42, 40, 28, 20];
-const RESTING_WIDTH = 10;
+const RIPPLE_WIDTHS = [21, 20, 14, 10];
+const RESTING_WIDTH = 5;
 
 /** Where in the scrollport the "you are here" probe line sits. */
 const PROBE_RATIO = 0.35;

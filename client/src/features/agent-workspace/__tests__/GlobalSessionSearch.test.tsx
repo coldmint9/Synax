@@ -7,10 +7,10 @@ import { useShellStore } from "../../../shared/state/shellStore";
 
 const sessions = [
   { id: "chat & 1", projectId: "route-project", title: "needle chat", prompt: "hello", profileId: "synax", sessionMetadata: {} },
-  { id: "workflow", projectId: "route-project", title: "needle workflow", prompt: "hello", profileId: "wiki-refresh", sessionMetadata: {} },
+  { id: "workflow", projectId: "route-project", title: "needle workflow", prompt: "hello", profileId: "plan-planner", sessionMetadata: {} },
 ] as AgentSession[];
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}{location.search}</output>; }
-function mount(path = "/projects/route-project/wiki") {
+function mount(path = "/projects/route-project/sessions") {
   return render(<MemoryRouter initialEntries={[path]}><textarea aria-label="Editor" /><GlobalSessionSearch /><Location /></MemoryRouter>);
 }
 function shortcut(metaKey = false) { fireEvent.keyDown(window, { key: "f", metaKey, ctrlKey: !metaKey }); }

@@ -6,8 +6,6 @@ import type {
 import { contextService } from "../context/context-service.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
-import { resolveSessionWorkDir } from "./tools/workspace.js";
-import { buildSynaxRuntimeBlocks } from "./synax/synax-runtime-context.js";
 
 export class AgentContextBuilder {
   constructor(private readonly store: AgentRuntimeStore = agentRuntimeStore) {}
@@ -20,17 +18,6 @@ export class AgentContextBuilder {
     const warnings: string[] = [];
     const blocks: AgentContextBlock[] = [];
 
-    if (input.sessionId) {
-      try {
-        const workDir = resolveSessionWorkDir(input.sessionId, projectId);
-        blocks.push(...buildSynaxRuntimeBlocks(projectId, workDir));
-      } catch (error) {
-        warnings.push(
-          `Synax runtime context unavailable: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
     for (const kind of include) {
       const normalizedKind =
         kind === "coord"
@@ -38,9 +25,6 @@ export class AgentContextBuilder {
           : kind === "graph"
             ? ("code" as const)
             : kind;
-      if (kind === "graph" && blocks.some((b) => b.sourceType === "code-map")) {
-        continue;
-      }
       blocks.push({
         id: makeRuntimeId("acblk"),
         kind: normalizedKind,
@@ -125,7 +109,7 @@ export class AgentContextBuilder {
       }
     }
     if (kind === "graph")
-      return "Use the Code Map block when present; otherwise run a code-map scan.";
+      return "Read project files and search source code for relevant context.";
     if (kind === "review")
       return "Review evidence hook prepared for completed action and goal review results.";
     return "Additional context hook prepared.";

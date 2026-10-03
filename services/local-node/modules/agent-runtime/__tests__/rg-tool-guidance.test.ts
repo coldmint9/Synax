@@ -52,9 +52,9 @@ describe("rg tool guidance", () => {
     expect(grepSearchTool.description).toMatch(/fixed-string by default/i);
   });
 
-  it("documents the leading-dash pitfall", () => {
-    expect(rgTool.progressiveDetails).toMatch(/never begin query or pattern with "-"/);
-    expect(rgTool.progressiveDetails).toMatch(/leading dash/);
+  it("documents the supported leading-hyphen behavior", () => {
+    expect(rgTool.progressiveDetails).toMatch(/Leading hyphens are safely passed as patterns/);
+    expect(rgTool.progressiveDetails).not.toMatch(/never begin query or pattern with "-"/);
   });
 
   it("ships argument examples", () => {

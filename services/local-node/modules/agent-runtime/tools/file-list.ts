@@ -16,8 +16,8 @@ export const fileListTool: RegisteredTool = {
   progressiveDetails:
     'Accepts { path?: string, limit?: number } and returns names only. Directories are returned with their relative paths.',
   inputSchema: z.object({
-    path: z.string().min(1).optional().describe('Workspace-relative directory path. Defaults to the workspace root.'),
-    limit: z.number().int().positive().max(300).optional().describe('Maximum number of entries to return.'),
+    path: z.string().min(1).optional().describe('Existing directory relative to the session working directory (default .), or an absolute path permitted by the sandbox. Lists immediate entries, not recursive descendants.'),
+    limit: z.number().int().positive().max(300).optional().describe('Maximum immediate entries (default 100, maximum 300).'),
   }),
   execute(input) {
     const args = (input.args ?? {}) as { path?: string; limit?: number };

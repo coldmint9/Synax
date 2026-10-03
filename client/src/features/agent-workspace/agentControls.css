@@ -678,7 +678,7 @@ textarea.agent-request-input {
   }
 }
 
-/* Session inputs keep writing separate from configuration; Wiki dock morphs stay compact. */
+/* Session inputs keep writing separate from configuration; dock morphs stay compact. */
 .agent-session-controls {
   container-type: inline-size;
 }

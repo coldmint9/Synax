@@ -195,7 +195,7 @@ describe("resolveLlmSelection", () => {
     const result = resolveLlmSelection({
       catalog,
       globalConfig,
-      purpose: "wiki",
+      purpose: "analyze",
       modelOverride: `${providerId}/claude-opus-5`,
     });
     expect(result).toMatchObject({
@@ -212,7 +212,7 @@ describe("resolveLlmSelection", () => {
         resolveLlmSelection({
           catalog,
           globalConfig,
-          purpose: "wiki",
+          purpose: "analyze",
           modelOverride,
         }),
       ).toThrow("Requested LLM model");
@@ -229,7 +229,7 @@ describe("resolveLlmSelection", () => {
       resolveLlmSelection({
         catalog,
         globalConfig,
-        purpose: "wiki",
+        purpose: "analyze",
         modelOverride: "openai/gpt-4o",
       }),
     ).toThrow("Requested LLM model");
@@ -269,7 +269,7 @@ describe("resolveLlmSelection", () => {
           },
         },
       },
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(result.providerId).toBe(providerId);
@@ -309,7 +309,7 @@ describe("resolveLlmSelection", () => {
           },
         },
       },
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(result.apiFormat).toBe("openai-responses");
@@ -322,7 +322,7 @@ describe("resolveLlmSelection", () => {
     const openai = resolveLlmSelection({
       catalog,
       globalConfig: createGlobalConfig(),
-      purpose: "wiki",
+      purpose: "analyze",
     });
     expect(openai.providerId).toBe("openai");
     expect(openai.apiFormat).toBe("openai");
@@ -361,7 +361,7 @@ describe("resolveLlmSelection", () => {
           },
         },
       },
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(custom.apiFormat).toBe("anthropic");
@@ -377,7 +377,7 @@ describe("resolveLlmSelection", () => {
         providerId: "anthropic",
         modelId: "claude-3-5-sonnet-latest",
       }),
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(result.providerId).toBe("anthropic");
@@ -406,7 +406,7 @@ describe("resolveLlmSelection", () => {
         globalConfig: createGlobalConfig({
           defaultApiProviderId: "unsupported",
         }),
-        purpose: "wiki",
+        purpose: "analyze",
       }),
     ).toThrow("No LLM provider configured. Please configure one in Settings.");
   });
@@ -450,7 +450,7 @@ describe("resolveLlmSelection", () => {
         providerId: "openai",
         modelId: "gpt-4o",
       }),
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(result.model).toBe("openai/gpt-4o-mini");
@@ -532,7 +532,7 @@ describe("resolveLlmSelection", () => {
           },
         },
       },
-      purpose: "wiki",
+      purpose: "analyze",
     });
 
     expect(result.provider.npm).toBe("@ai-sdk/deepseek");

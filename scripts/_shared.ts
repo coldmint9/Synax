@@ -33,14 +33,11 @@ export function resolveLocalServiceCommand(): string[] {
 export async function ensureWorkspaceInstall() {
   const hasRootDeps = existsSync(join(ROOT_DIR, "node_modules"));
   const hasClientDeps = existsSync(join(CLIENT_DIR, "node_modules"));
-  const hasTreeSitter = existsSync(
-    join(ROOT_DIR, "node_modules", "tree-sitter"),
-  );
   const hasReactRefresh = existsSync(
     join(CLIENT_DIR, "node_modules", "react-refresh"),
   );
 
-  if (hasRootDeps && hasClientDeps && hasTreeSitter && hasReactRefresh) {
+  if (hasRootDeps && hasClientDeps && hasReactRefresh) {
     return;
   }
 

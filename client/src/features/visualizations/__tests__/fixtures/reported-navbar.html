@@ -446,9 +446,9 @@
             <i data-lucide="bot" aria-hidden="true"></i>
             <span>Work</span>
           </button>
-          <button type="button" class="sx-tab" id="sx-tab-wiki" role="tab" aria-selected="false" aria-controls="sx-panel-wiki" data-tab="wiki" tabindex="-1">
+          <button type="button" class="sx-tab" id="sx-tab-documents" role="tab" aria-selected="false" aria-controls="sx-panel-documents" data-tab="documents" tabindex="-1">
             <i data-lucide="book-open" aria-hidden="true"></i>
-            <span>Wiki</span>
+            <span>Documents</span>
           </button>
         </div>
 
@@ -478,7 +478,7 @@
         </div>
       </nav>
 
-      <nav class="sx-pill" id="sx-toolbar" aria-label="Wiki 工具" hidden>
+      <nav class="sx-pill" id="sx-toolbar" aria-label="Documents 工具" hidden>
         <button type="button" class="sx-tab is-on" aria-pressed="true">文档</button>
         <button type="button" class="sx-tab" aria-pressed="false">规划</button>
       </nav>
@@ -497,7 +497,7 @@
         </div>
         <div class="sx-row">
           <span class="sx-dot" aria-hidden="true"></span>
-          <span class="sx-row-name">修复 Wiki 搜索高亮抖动</span>
+          <span class="sx-row-name">修复 Documents 搜索高亮抖动</span>
           <span class="sx-chip">已完成</span>
         </div>
         <div class="sx-row">
@@ -508,8 +508,8 @@
         <p class="sx-empty" data-empty hidden>没有匹配的会话</p>
       </div>
 
-      <div class="sx-panel" id="sx-panel-wiki" role="tabpanel" aria-labelledby="sx-tab-wiki" hidden>
-        <h3>Wiki</h3>
+      <div class="sx-panel" id="sx-panel-documents" role="tabpanel" aria-labelledby="sx-tab-documents" hidden>
+        <h3>Documents</h3>
         <p class="sx-sub">文档 12 · 规划 3</p>
         <div class="sx-row">
           <i data-lucide="file-text" aria-hidden="true"></i>
@@ -552,9 +552,9 @@
     const tabs = Array.from(root.querySelectorAll(".sx-tab[role='tab']"));
     const panels = {
       work: root.querySelector("#sx-panel-work"),
-      wiki: root.querySelector("#sx-panel-wiki"),
+      documents: root.querySelector("#sx-panel-documents"),
     };
-    const sectionLabel = { work: "Work", wiki: "Wiki" };
+    const sectionLabel = { work: "Work", documents: "Documents" };
     let activeTab = "work";
 
     const closeMenu = () => {
@@ -565,7 +565,7 @@
     const syncChrome = () => {
       const width = Math.round(stage.getBoundingClientRect().width);
       widthLive.textContent = width + "px";
-      toolbar.hidden = !(activeTab === "wiki" && width >= 640);
+      toolbar.hidden = !(activeTab === "documents" && width >= 640);
     };
 
     root.querySelectorAll(".sx-seg-btn").forEach((btn) => {
@@ -591,7 +591,7 @@
       Object.entries(panels).forEach(([key, panel]) => {
         panel.hidden = key !== id;
       });
-      crumb.textContent = (projLabel.textContent || "synax-web") + " / " + sectionLabel[id] + (id === "wiki" ? " / 文档" : " / 会话");
+      crumb.textContent = (projLabel.textContent || "synax-web") + " / " + sectionLabel[id] + (id === "documents" ? " / 文档" : " / 会话");
       syncChrome();
       announce.textContent = "已切换到 " + sectionLabel[id];
     };
@@ -638,7 +638,7 @@
         projLabel.textContent = item.dataset.name;
         closeMenu();
         projBtn.focus();
-        crumb.textContent = item.dataset.name + " / " + sectionLabel[activeTab] + (activeTab === "wiki" ? " / 文档" : " / 会话");
+        crumb.textContent = item.dataset.name + " / " + sectionLabel[activeTab] + (activeTab === "documents" ? " / 文档" : " / 会话");
         announce.textContent = "已切换到工作区 " + item.dataset.name;
       });
     });

@@ -16,7 +16,7 @@ const props = {
 };
 beforeEach(() => {
   useShellStore.setState((state) => ({
-    preferences: { ...state.preferences, wikiEnabled: true },
+    preferences: { ...state.preferences },
   }));
   vi.spyOn(agentRuntimeApi, "listReferenceOptions").mockResolvedValue({
     items: [],
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("context picker Back focus", () => {
-  it.each(["技能", "MCP 服务", "项目文件", "Wiki 文档"])(
+  it.each(["技能", "MCP 服务", "项目文件"])(
     "returns focus to %s and supports immediate keyboard reopening",
     async (label) => {
       const user = userEvent.setup();
@@ -64,8 +64,8 @@ describe("context picker Back focus", () => {
     );
     await user.click(screen.getByRole("button", { name: "返回上下文类型" }));
     expect(screen.getByRole("button", { name: "项目文件" })).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Wiki 文档" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "MCP 服务" })).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("combobox", { name: "搜索上下文" })).toHaveFocus();
     expect(screen.getByRole("combobox", { name: "搜索上下文" })).toHaveValue(

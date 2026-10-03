@@ -97,25 +97,6 @@ describe("synax session mode", () => {
 });
 
 describe("SynaxAgent", () => {
-  it.each(["agent-dock", "goal-dock"])(
-    "uses current user input and attached Wiki context for %s",
-    (source) => {
-      const state = synaxAgent.buildRuntimeStateSection({
-        profileId: SYNAX_AGENT_PROFILE_ID,
-        sessionMetadata: {
-          mode: "goal",
-          source,
-          userPrompt: "Current request",
-          goalContent: "Old request",
-          documentId: "doc-1",
-        },
-        prompt: "Scaffolded prompt",
-      });
-      expect(state).toContain("Objective: Current request");
-      expect(state).not.toContain("Old request");
-      expect(state).toContain("Related Wiki document: doc-1");
-    },
-  );
   it("builds mode prompt sections for goal sessions", () => {
     const section = synaxAgent.buildModePromptSection({
       profileId: SYNAX_AGENT_PROFILE_ID,

@@ -12,7 +12,6 @@
   max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
   white-space: nowrap;
 }
-.workbench-shell[data-active-panel="wiki"] .workbench-header { --island-center-offset: 90px; }
 .workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"]) .workbench-header { --island-center-offset: 0px; }
 .workbench-shell .workspace-island-slot .workbench-header {
   position: relative;
@@ -147,7 +146,7 @@
 }
 
 /* Clear ink controls share one flat, softly raised selection pill. */
-.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) {
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn) {
   color: var(--island-ink);
   font-weight: 600;
   text-shadow: 0 1px 1px var(--island-ink-halo), 0 0 3px var(--island-ink-halo);
@@ -158,16 +157,16 @@
   cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease;
 }
-.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab):hover:not(:disabled) {
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn):hover:not(:disabled) {
   background: transparent;
   color: var(--island-ink);
   box-shadow: none;
 }
 /* Only the glyphs receive a halo; do not filter their control or popovers. */
-.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) > svg {
+.synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn) > svg {
   filter: drop-shadow(0 1px 1px var(--island-ink-halo));
 }
-.synax-island :is(.wh-tab[aria-pressed="true"], .wh-pill-btn[aria-current="page"], .wiki-view-tab[aria-checked="true"]) {
+.synax-island :is(.wh-tab[aria-pressed="true"], .wh-pill-btn[aria-current="page"]) {
   background: transparent;
   color: var(--island-ink);
   font-weight: 700;
@@ -198,11 +197,11 @@
   --island-pill-shadow: 0 3px 9px rgb(var(--theme-shadow-rgb) / .28);
 }
 @media (prefers-contrast: more), (forced-colors: active) {
-  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) {
+  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn) {
     color: CanvasText;
     text-shadow: none;
   }
-  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn, .wiki-view-tab) > svg { filter: none; }
+  .synax-island :is(.wh-tab, .wh-btn, .wh-project-trigger, .wh-goal-menu, .wh-pill-btn) > svg { filter: none; }
   .synax-island .island-selection-pill,
   .synax-island :is(.wh-btn.active, .wh-project-trigger[data-open], .wh-goal-menu[data-open], .wh-pill-btn--primary) {
     outline: 1px solid CanvasText;

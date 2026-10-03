@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { AgentRun, AgentRuntimeMessage } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
@@ -119,16 +119,18 @@ it("does not scroll on mount into a session whose run already finished", () => {
   expect(scrollToBottom).not.toHaveBeenCalled();
 });
 
-it("keeps the live transcript mounted during a background detail refresh", () => {
+it("keeps cached messages mounted and waits for refreshed detail before showing live content", () => {
   useAgentSessionStore.setState({
     detailRefreshing: true,
     streamingStepId: "step-live",
+    messages: [{ id: "cached", sessionId: "s1", runId: "run-1", stepId: null, role: "assistant", content: "Cached answer", metadata: {}, createdAt: "" }],
   });
 
   render(<SessionTranscript />);
 
   expect(conversationProps.current).toMatchObject({
-    excludeStepId: "step-live",
-    unifiedLive: true,
+    excludeStepId: null,
+    unifiedLive: false,
   });
+  expect(screen.getByText("Cached answer")).toBeVisible();
 });

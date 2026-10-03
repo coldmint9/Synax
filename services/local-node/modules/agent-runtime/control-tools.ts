@@ -26,6 +26,7 @@ export const humanAskTool: RegisteredTool = {
   label: "Ask the user",
   description:
     "Ask up to five focused clarification questions as a durable form. This pauses execution until the user responds. For select questions, optionally include recommended option values in question.recommended; recommend at most one for single_select and any number for multi_select. Must be the only tool call in this step. Never ask for credentials. The user may skip the form instead of answering: a skip is not a refusal, it resolves as action:\"skip\" and you are expected to continue with the intent you recommended rather than asking again.",
+  progressiveDetails: "Question IDs must be unique. Select questions need options with unique values. Recommendations must be unique option values and are only allowed for select questions. If both min and max are given, min must not exceed max. Child agents return questions to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -56,6 +57,7 @@ export const planProposeTool: RegisteredTool = {
   label: "Propose a plan",
   description:
     "Submit a versioned implementation plan artifact from chat or goal. The report remains previewable across turns; the user may defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
+  progressiveDetails: "Step IDs must be unique and dependencies may refer only to earlier steps. humanAcceptanceCriteria must copy entries from acceptanceCriteria. In chat this requests a user decision; unrestricted goal sessions persist and execute immediately. Child agents return proposals to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -112,6 +114,7 @@ export const modeSwitchTool: RegisteredTool = {
   label: "Switch session mode",
   description:
     "Switch this Synax session between chat and goal when the user explicitly asks for a different workflow. Planning is automatic in chat. Switching to goal does not approve or execute a saved plan. Must be the only call in a step.",
+  progressiveDetails: "Child agents return workflow requests to the primary agent. Resolve pending child work before switching mode.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -156,6 +159,7 @@ export const planExecuteTool: RegisteredTool = {
   label: "Execute saved plan",
   description:
     "Start executing the current deferred plan. Planning returns to chat execution; only an explicitly chosen goal session remains in goal mode. Call only when the user explicitly instructs execution in the current turn instead of using the one-time execute shortcut. Must be the only call in a step.",
+  progressiveDetails: "Read the saved plan before using its revision. A saved current plan and an explicit execution instruction in the current user turn are required; a stale revision is rejected. Child agents return execution requests to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -203,6 +207,7 @@ export const goalFinishTool: RegisteredTool = {
   label: "Finish goal",
   description:
     "Use as the acceptance gate for an approved goal. Submit evidence for one or more criteria; the tool records accepted criteria and returns remaining criteria until the whole goal is complete. Invalid or foreign evidence is still rejected. A concrete blocker may still be reported. Must be the only call in a step.",
+  progressiveDetails: "Only available in goal mode with active work. Evidence must refer to exact approved criteria and successful tool calls or evidence artifacts from this work; asset IDs are not evidence artifact IDs. Completion still passes runtime acceptance.",
   category: "task",
   internalGate: "none",
   mutability: "task",

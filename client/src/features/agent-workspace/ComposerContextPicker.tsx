@@ -19,7 +19,6 @@ import {
   ArrowLeft,
   Minimize2,
   Loader2,
-  BookOpen,
   FileText,
   Plus,
   Plug,
@@ -31,7 +30,6 @@ import {
   type TurnReference,
   type TurnReferenceOption,
 } from "../../adapters/transport/agentRuntime";
-import { useShellStore } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { useAgentSessionStore } from "./state/agentSessionStore";
@@ -41,7 +39,6 @@ const contextTypes = [
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
-  { id: "wiki", zh: "Wiki 文档", en: "Wiki document", Icon: BookOpen },
 ] as const;
 
 interface Props {
@@ -89,7 +86,6 @@ function ContextPickerContent({
   open,
   close,
 }: Props & { open: boolean; close: () => void }) {
-  const wikiEnabled = useShellStore((s) => s.preferences.wikiEnabled);
   const { locale } = useLocale(),
     zh = locale === "zh";
   const attachmentInput = useRef<HTMLInputElement>(null);
@@ -195,12 +191,9 @@ function ContextPickerContent({
       }
     }
   };
-  const previousWikiEnabled = useRef(wikiEnabled);
   useEffect(() => {
-    if (open && (disabled || previousWikiEnabled.current !== wikiEnabled))
-      close();
-    previousWikiEnabled.current = wikiEnabled;
-  }, [open, disabled, wikiEnabled, close]);
+    if (open && disabled) close();
+  }, [open, disabled, close]);
   useEffect(() => {
     if (!open || !kind) return;
     let current = true;
@@ -416,7 +409,6 @@ function ContextPickerContent({
               {zh ? "添加上下文" : "Add context"}
             </div>
             {contextTypes
-              .filter((type) => type.id !== "wiki" || wikiEnabled)
               .map(({ id, Icon, ...labels }) => {
                 const unavailable =
                   backendId !== "native" && (id === "skill" || id === "mcp");

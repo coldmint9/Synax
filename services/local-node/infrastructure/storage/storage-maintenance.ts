@@ -3,10 +3,9 @@ import path from "node:path";
 import NativeDatabase from "libsql";
 import { DATA_ROOT } from "../runtime/env.js";
 
-const CACHE_TABLES = new Set(["wiki_scan_git_cache", "wiki_scan_cache"]);
-const FTS_NAMES = new Set(["agent_search_messages", "agent_search_sessions", "wiki_documents_fts"]);
+const CACHE_TABLES = new Set<string>();
+const FTS_NAMES = new Set(["agent_search_messages", "agent_search_sessions"]);
 const CATEGORIES: Record<string, string> = {
-  wiki_scan_git_cache: "regenerable-cache", wiki_scan_cache: "regenerable-cache",
   agent_runtime_stream_records: "replay", agent_runtime_events: "events",
   conversation_history_journal: "undo-journal", agent_runtime_processes: "process-receipts",
 };
@@ -38,7 +37,7 @@ export function reportStorage(db: NativeDatabase.Database, dbPath: string): Stor
     current.bytes += row.bytes; current.payloadBytes += row.payloadBytes; if (!current.names.includes(row.name)) current.names.push(row.name); categories.set(category, current);
   }
   const rows: Record<string, number> = {};
-  for (const name of ["agent_runtime_events", "agent_runtime_stream_records", "agent_runtime_processes", "conversation_history_journal", "wiki_scan_git_cache", "agent_runtime_sessions"]) {
+  for (const name of ["agent_runtime_events", "agent_runtime_stream_records", "agent_runtime_processes", "conversation_history_journal", "agent_runtime_sessions"]) {
     try { rows[name] = Number((db.prepare(`SELECT count(*) AS n FROM "${name}"`).get() as { n: number }).n); } catch { /* optional table */ }
   }
   return { path: dbPath, fileBytes: fileSize(dbPath), walBytes: fileSize(`${dbPath}-wal`), shmBytes: fileSize(`${dbPath}-shm`), pageSize, pageCount, freePages, freeBytes: freePages * pageSize, allocatedBytes: (pageCount - freePages) * pageSize, integrity: String((db.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check), categories: [...categories].map(([category, value]) => ({ category, ...value })).sort((a, b) => b.bytes - a.bytes), rows };
@@ -51,10 +50,6 @@ function sizeOf(db: NativeDatabase.Database, table: string, where = "1=1", args:
 }
 export function planMaintenance(db: NativeDatabase.Database, dataRoot = DATA_ROOT, now = Date.now()): MaintenancePlan {
   const active = activeProjectIds(dataRoot); let orphanScanCacheRows = 0, orphanScanCacheBytes = 0;
-  try {
-    const rows = db.prepare("SELECT project_id,result_json FROM wiki_scan_git_cache").all() as Array<{ project_id: string; result_json: string }>;
-    for (const row of rows) if (active && !active.has(row.project_id)) { orphanScanCacheRows++; orphanScanCacheBytes += Buffer.byteLength(row.result_json); }
-  } catch { /* optional table */ }
   let closedOwnerlessProcessRows = 0, closedOwnerlessProcessBytes = 0;
   try {
     const rows = db.prepare("SELECT count(*) AS n,coalesce(sum(length(command_label)+length(id)),0) AS bytes FROM agent_runtime_processes WHERE state='closed' AND kind='command' AND session_id IS NULL AND ended_at IS NOT NULL AND ended_at<?").get(new Date(now - 30 * 86400_000).toISOString()) as { n: number; bytes: number }; closedOwnerlessProcessRows = rows.n; closedOwnerlessProcessBytes = rows.bytes;
@@ -68,9 +63,7 @@ export function planMaintenance(db: NativeDatabase.Database, dataRoot = DATA_ROO
 }
 export function applyMaintenance(db: NativeDatabase.Database, plan: MaintenancePlan, dataRoot = DATA_ROOT, now = Date.now()): { deletedCacheRows: number; deletedProcessRows: number; deletedReplayRows: number; optimizedFts: string[] } {
   const active = activeProjectIds(dataRoot); let deletedCacheRows = 0;
-  if (plan.orphanScanCacheRows) {
-    try { for (const row of db.prepare("SELECT project_id FROM wiki_scan_git_cache").all() as Array<{ project_id: string }>) if (active && !active.has(row.project_id)) deletedCacheRows += db.prepare("DELETE FROM wiki_scan_git_cache WHERE project_id=?").run(row.project_id).changes; } catch { /* optional */ }
-  }
+  // No generated-document cache remains after the documentation module removal.
   let deletedProcessRows = 0;
   try { deletedProcessRows = db.prepare("DELETE FROM agent_runtime_processes WHERE state='closed' AND kind='command' AND session_id IS NULL AND ended_at IS NOT NULL AND ended_at<?").run(new Date(now - 30 * 86400_000).toISOString()).changes; } catch { /* optional */ }
   let deletedReplayRows = 0;

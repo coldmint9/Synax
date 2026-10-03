@@ -9,8 +9,7 @@ import { runtimeMedia } from "../../adapters/transport/runtimeMedia";
 import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { FileViewer } from "../../shared/ui/file-viewer/FileViewer";
-import { WikiMarkdown } from "../wiki/WikiMarkdown";
-import "../wiki/wiki-theme.css";
+import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 import {
   getWorkspaceDraft,
   registerWorkspaceSaveHandler,
@@ -419,10 +418,12 @@ export const CodeViewer = memo(function CodeViewer({
               )}
             </div>
           ) : (
-            <article className="file-viewer-markdown wiki-doc mx-auto w-full px-5 py-4">
-              <div className="wiki-markdown">
-                <WikiMarkdown content={content} />
-              </div>
+            <article className="file-viewer-markdown mx-auto w-full px-5 py-4">
+              <MarkdownRenderer
+                content={content}
+                className="feed-prose"
+                conversationClass={false}
+              />
             </article>
           )
         ) : (

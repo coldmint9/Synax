@@ -152,8 +152,7 @@ function emit(level: ApiLogLevel, args: unknown[]): void {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     fallbackWrite(`[api-logger] failed to write daily log file: ${message}`);
   }
-  const isWorkerChild = process.env.SYNAX_WIKI_JOB_CHILD === '1'
-    || process.env.SYNAX_AGENT_SESSION_CHILD === '1';
+  const isWorkerChild = process.env.SYNAX_AGENT_SESSION_CHILD === '1';
   if (!isWorkerChild) {
     persistApiLog({
       level,

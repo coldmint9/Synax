@@ -602,7 +602,7 @@ export const webSearchTool: RegisteredTool = {
   resumeBehavior: "auto",
   internalGate: "none",
   progressiveDetails:
-    "Accepts { query | queries, limit?, domains?, timeRange? }. `queries` runs up to 5 searches concurrently in one call and returns merged, per-query annotated results with per-batch metadata (and per-query errors when only some queries fail). Returns titles, URLs, snippets and per-call source references. If the configured channel is missing credentials, disconnected, rejected or unreachable, Synax falls back to a public no-auth DuckDuckGo search. Cite returned URLs, and do not invent publication dates or claim to have read full pages.",
+    "Accepts { query | queries, limit?, domains?, timeRange? }. Provide exactly one of query or queries. queries is an array of 1-5 query strings, with 2-5 recommended for independent searches; each uses the shared limit, domains and timeRange. limit applies per query. Batch results are merged with per-query metadata and partial errors. Domains must be hostnames such as example.com, not URLs with a scheme or path. Returns titles, URLs, snippets and per-call source references. If the configured channel is unavailable, Synax falls back to public DuckDuckGo search. Cite returned URLs; do not invent publication dates or claim to have read full pages.",
   inputSchema,
   async execute(input) {
     const args = inputSchema.parse(input.args);

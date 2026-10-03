@@ -11,7 +11,7 @@ export const diffReadTool: RegisteredTool = {
   mutability: 'read',
   resumeBehavior: 'auto',
   internalGate: 'none',
-  progressiveDetails: 'Accepts { staged?: boolean }.',
+  progressiveDetails: "Accepts { staged?: boolean }. Requires a Git working directory. Returns git diff --stat only, not full hunks or untracked files; use bash for a full diff when needed.",
   inputSchema: z.object({
     staged: z.boolean().optional().describe('Read the staged diff instead of the working tree diff.'),
   }),

@@ -121,7 +121,6 @@ if (process.isMainFrame)
       hasSession: boolean;
       hasViewer: boolean;
       inWork: boolean;
-      inWiki: boolean;
       dark: boolean;
     }) => ipcRenderer.send("menu:update-state", state),
     updateProjects: (projects: { id: string; name: string }[]) => {

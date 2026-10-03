@@ -18,9 +18,9 @@ export const fileWriteTool: RegisteredTool = {
   mutability: "write",
   resumeBehavior: "wait_permission",
   progressiveDetails:
-    "Accepts { path: string, content: string }. Reading the file first is recommended but not required: file.write reads it automatically when this session has not, and flags the overwrite. Avoid creating docs or README files unless explicitly requested.",
+    "Accepts { path: string, content: string }. Reading the file first is recommended but not required: file.write reads it automatically when this session has not, and flags the overwrite. A file changed on disk since this session read it must be read again before writing. content replaces the entire file and may be empty. Avoid creating docs or README files unless explicitly requested.",
   inputSchema: z.object({
-    path: z.string().min(1).describe("Workspace-relative file path to write."),
+    path: z.string().min(1).describe("File path relative to the session working directory, or an absolute path permitted by the sandbox. External writes may require approval; specialist writes must use safe relative paths within writeScope."),
     content: z.string().describe("Complete text content to write."),
   }),
   getPattern(args) {

@@ -75,7 +75,14 @@ function withCompactionDiagnostic(
 export async function maybeLlmCompactContext(
   input: Input,
 ): Promise<LlmCompactionResult> {
-  const baseline = projectWorkContext({ ...input, forceCompact: false });
+  // Build the summary from the complete history. Tool-output eviction belongs
+  // to the final request projection; it must not become the source material
+  // for the checkpoint that is meant to preserve that history.
+  const baseline = projectWorkContext({
+    ...input,
+    clearing: undefined,
+    forceCompact: false,
+  });
   const hard = Math.max(0, input.contextLimit - input.outputReserve);
   if (!input.force && baseline.originalTokens < hard * ACTIVE_THRESHOLD) {
     return { projection: baseline, didCompact: false, usedLlm: false };
@@ -90,7 +97,13 @@ export async function maybeLlmCompactContext(
   }
 
   const source = serializeMessagesForSummary(
-    baseline.messages.slice(0, Math.max(1, baseline.messages.length - RECENT_MESSAGES)),
+    baseline.messages
+      .filter(
+        (message) =>
+          message.role !== "system" ||
+          !String(message.content).includes("<system-reminder>"),
+      )
+      .slice(0, Math.max(1, baseline.messages.length - RECENT_MESSAGES)),
   );
   logger.info(
     {

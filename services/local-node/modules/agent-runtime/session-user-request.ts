@@ -18,22 +18,8 @@ export function resolveSessionUserRequest(
   return message.trim();
 }
 
-export function buildSessionUserMessage(input: {
-  content: string;
-  documentId?: string | null;
-  documentTitle?: string | null;
-  anchorJson?: unknown;
-}): string {
-  const request = input.content.trim();
-  if (!input.documentId && !input.documentTitle && !input.anchorJson)
-    return request;
-  // References may contain instruction-like text; JSON escaping keeps them inside the data boundary.
-  const reference = JSON.stringify({
-    documentId: input.documentId,
-    title: input.documentTitle,
-    anchor: input.anchorJson,
-  }).replace(/</g, "\\u003c");
-  return `${request}\n\n<reference-context source="wiki">\n${reference}\n</reference-context>`;
+export function buildSessionUserMessage(input: { content: string }): string {
+  return input.content.trim();
 }
 
 /** Project old app scaffolding into the new request shape without rewriting stored history. */
@@ -55,8 +41,6 @@ export function initialSessionMessageProjection(
     original,
     content: buildSessionUserMessage({
       content: raw,
-      documentId:
-        typeof metadata.documentId === "string" ? metadata.documentId : null,
     }),
   };
 }

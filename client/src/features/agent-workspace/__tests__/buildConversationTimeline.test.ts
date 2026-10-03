@@ -57,7 +57,7 @@ function makeMessage(
     runId: RUN_ID,
     stepId: null,
     role: "user",
-    content: "Fix the wiki search module",
+    content: "Fix the search module",
     metadata: {},
     createdAt: "2026-01-01T00:00:01.000Z",
     ...partial,
@@ -158,7 +158,7 @@ describe("buildConversationTimeline", () => {
 
     expect(timeline.map((entry) => entry.kind)).toEqual(["user", "agent"]);
     if (timeline[0]?.kind === "user") {
-      expect(timeline[0].content).toBe("Fix the wiki search module");
+      expect(timeline[0].content).toBe("Fix the search module");
     }
   });
 

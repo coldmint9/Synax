@@ -8,6 +8,7 @@ import {
   rmSync,
 } from "node:fs";
 import { join, sep } from "node:path";
+import { validateCuaArtifact } from "./validate-cua-artifact.js";
 
 const root = join(import.meta.dirname, "..");
 const serverDist = join(root, "server-dist");
@@ -59,7 +60,7 @@ for (const pkg of libsqlPackages) {
   console.log(`  copied ${pkg}`);
 }
 
-// tree-sitter packages use dynamic import() at runtime
+// These runtime packages resolve resources dynamically.
 const dynamicPackages = [
   "@anthropic-ai/claude-agent-sdk",
   "playwright-core",
@@ -121,10 +122,22 @@ copyRuntimePackage("trash");
 const cuaHelperModules = join(root, "cua-helper-dist", "node_modules");
 mkdirSync(cuaHelperModules, { recursive: true });
 copyRuntimePackage("@trycua/cua-driver", src, cuaHelperModules);
+// These are direct runtime imports from the generated CUA bindings. Keep them
+// explicit as well as manifest-driven so a hoisted npm layout cannot leave the
+// helper with an incomplete dependency tree.
+copyRuntimePackage("@ubjs/core", src, cuaHelperModules);
+copyRuntimePackage("@ubjs/node", src, cuaHelperModules);
 for (const name of readdirSync(join(src, "@trycua")).filter(name => name.startsWith("cua-driver-")))
   copyRuntimePackage(`@trycua/${name}`, src, cuaHelperModules);
-for (const name of readdirSync(join(src, "@ubjs")).filter(name => name.startsWith("node-") || name === "node"))
+for (const name of readdirSync(join(src, "@ubjs")).filter(name => name.startsWith("node-")))
   copyRuntimePackage(`@ubjs/${name}`, src, cuaHelperModules);
+
+validateCuaArtifact({
+  helperRoot: join(root, "cua-helper-dist"),
+  platform: process.platform,
+  arch: process.arch,
+  requireDriver: false,
+});
 
 
 // Drop stale packaged skills when upgrading from the retired prototype platform.
@@ -132,12 +145,13 @@ rmSync(join(serverDist, "skills/builtin"), { recursive: true, force: true });
 cpSync(join(root, "services/local-node/skills/builtin"), join(serverDist, "skills/builtin"), {
   recursive: true,
 });
-for (const name of ["eval-set.json", "eval-set-synax.json", "fixtures"]) {
-  cpSync(
-    join(root, "services/local-node/prototypes/tree-embedding-bench", name),
-    join(serverDist, "prototypes/tree-embedding-bench", name),
-    { recursive: true },
-  );
+// Remove retired analysis artifacts from incremental builds.
+rmSync(join(serverDist, "prototypes/tree-embedding-bench"), { recursive: true, force: true });
+for (const name of ["analyzer-worker.cjs", "scan-pipeline-worker.thread.cjs"]) {
+  rmSync(join(serverDist, "workers", name), { force: true });
+}
+for (const name of readdirSync(dest).filter(name => name === "tree-sitter" || name.startsWith("tree-sitter-"))) {
+  rmSync(join(dest, name), { recursive: true, force: true });
 }
 rmSync(join(serverDist, "migrations"), { recursive: true, force: true });
 cpSync(join(root, "services/local-node/infrastructure/database/migrations"), join(serverDist, "migrations"), {

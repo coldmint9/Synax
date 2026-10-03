@@ -529,47 +529,6 @@ try {
     "native menu actions and opaque, static desktop surfaces in both themes",
   );
 
-  // Outline-only Wiki must not expose workflow navigation; generated content must.
-  db.prepare(
-    `INSERT INTO wiki_snapshots (id,project_id,branch,head_commit_sha,working_tree_hash,status,document_ids_json,created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    "e2e-wiki",
-    projectId,
-    "feature/ui",
-    git(repository, "rev-parse", "HEAD"),
-    "e2e",
-    "outline_ready",
-    '["e2e-doc"]',
-    stamp,
-    "system",
-  );
-  db.prepare(
-    `INSERT INTO wiki_documents (id,snapshot_id,project_id,title,doc_type,sort_order,created_at,updated_at,content_md,is_section) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    "e2e-doc",
-    "e2e-wiki",
-    projectId,
-    "Overview",
-    "landscape",
-    0,
-    stamp,
-    stamp,
-    "",
-    0,
-  );
-  await page.reload();
-  await page.locator(".workspace-dashboard--pinned").waitFor();
-  assert.equal(await page.getByRole("button", { name: /Workflow/ }).count(), 0);
-  db.prepare(
-    "UPDATE wiki_snapshots SET status='ready' WHERE id='e2e-wiki'",
-  ).run();
-  db.prepare(
-    "UPDATE wiki_documents SET content_md='# Generated overview' WHERE id='e2e-doc'",
-  ).run();
-  await page.reload();
-  await page.getByRole("button", { name: /Workflow/ }).waitFor();
-  check("Workflow shortcut distinguishes outline-only from generated Wiki");
-
   await desktop.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setContentSize(900, 650),
   );

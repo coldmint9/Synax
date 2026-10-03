@@ -105,7 +105,7 @@ export async function measureContextComposition(input: {
     result.toolDefinitions += tokens;
   }
 
-  // File/Wiki references share a prompt section. Skills now arrive through
+  // File references share a prompt section. Skills now arrive through
   // persisted skill.load tool results; legacy callers may still provide a
   // selected skill line, so keep its accounting classification here.
   const skillSections = input.skillsSection

@@ -27,7 +27,6 @@ function connect(projectId: string) {
     TaskNotificationEventType.TaskProgress,
     TaskNotificationEventType.TaskCompleted,
     TaskNotificationEventType.TaskFailed,
-    TaskNotificationEventType.WikiSnapshot,
     TaskNotificationEventType.DocumentCommitted,
   ]
   for (const type of eventTypes) {
@@ -51,7 +50,7 @@ export function subscribe(projectId: string, sub: Subscription): () => void {
     currentProjectId = null
   }
   if (subscribers.size >= 1) connect(projectId)
-  // Late subscribers miss the initial wiki_snapshot pushed on connect — refetch then.
+  // Late subscribers miss anything pushed on connect — refetch then.
   if (alreadyOpen && es?.readyState === AuthenticatedEventSource.OPEN) {
     queueMicrotask(() => sub.onConnect?.())
   }

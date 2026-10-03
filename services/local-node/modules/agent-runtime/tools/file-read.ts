@@ -71,7 +71,7 @@ export const fileReadTool: RegisteredTool = {
   id: "file.read",
   label: "Read File",
   description:
-    "Read a workspace file. Rejects binary files. Large files are truncated with a notice. Use glob or grep first when you do not know the exact path.",
+    "Read an existing text file. Rejects directories and binary files. Large files are truncated with a notice. Use rg first when you do not know the exact path; use media.read for images, audio, video or documents.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
@@ -79,14 +79,14 @@ export const fileReadTool: RegisteredTool = {
   progressiveDetails:
     "Accepts { path: string, maxBytes?: number }. Prefer larger reads over many tiny slices when you need more context from the same file.",
   inputSchema: z.object({
-    path: z.string().min(1).describe("Workspace-relative file path to read."),
+    path: z.string().min(1).describe("Existing file path relative to the session working directory, or an absolute path permitted by the sandbox. External paths may require approval."),
     maxBytes: z
       .number()
       .int()
       .positive()
       .max(MAX_READ_BYTES)
       .optional()
-      .describe("Maximum bytes to read."),
+      .describe(`Maximum bytes to read (default and maximum ${MAX_READ_BYTES}); larger files are truncated. No offset parameter; use bash for a bounded slice beyond this limit.`),
   }),
   getPattern(args) {
     return typeof args === "object" &&
@@ -127,7 +127,7 @@ export const fileReadTool: RegisteredTool = {
     recordSessionFileRead(input.sessionId, relPath, buffer, stat);
 
     const truncationNotice = truncated
-      ? `\n\n[FILE TRUNCATED: showing ${maxBytes} of ${buffer.length} bytes. Use maxBytes or re-read with an offset to see more.]`
+      ? `\n\n[FILE TRUNCATED: showing ${maxBytes} of ${buffer.length} bytes. maxBytes is capped at ${MAX_READ_BYTES}; use bash to read a bounded slice beyond this limit. file.read has no offset parameter.]`
       : "";
 
     return {

@@ -179,13 +179,7 @@ export function buildSynaxRuntimeState(
         ),
       );
     else if (userPrompt) lines.push(`Objective: ${userPrompt}`);
-    if (
-      isAgentDockSource(context.metadata.source) &&
-      context.metadata.documentId
-    )
-      lines.push(
-        `Related Wiki document: ${context.metadata.documentId}. Keep affected documentation aligned with the authorized change.`,
-      );
+
   }
   if (context.mode === "plan_node") {
     if (context.metadata.planNodeTitle)

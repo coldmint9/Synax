@@ -34,9 +34,9 @@ describe("unified composer plus menu", () => {
       screen.getByRole("button", { name: /添加附件.*图片/ }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "项目文件" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "对话" })).toBeChecked();
-    await userEvent.click(screen.getByRole("radio", { name: "计划" }));
-    expect(props.onModeChange).toHaveBeenCalledWith("plan");
+    expect(screen.getByRole("radio", { name: "Chat" })).toBeChecked();
+    await userEvent.click(screen.getByRole("radio", { name: "Goal" }));
+    expect(props.onModeChange).toHaveBeenCalledWith("goal");
     await waitFor(() =>
       expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument(),
     );
@@ -85,7 +85,7 @@ describe("unified composer plus menu", () => {
   it("locks mode switching independently from attachment/context actions", async () => {
     render(<ComposerContextPicker {...props} mode="goal" modeDisabled />);
     await open();
-    expect(screen.getByRole("radio", { name: "目标" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Goal" })).toBeChecked();
     const change = props.onModeChange.mock.calls.length;
     for (const radio of screen.getAllByRole("radio")) {
       expect(radio).toHaveAttribute("aria-disabled", "true");

@@ -74,7 +74,7 @@ describe("SessionLiveTurn", () => {
     expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(1);
     rerender(<SessionLiveTurn {...props} steps={[persisted]} streamingCompletedSteps={[]} />);
     expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
-    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(9);
+    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
     expect(screen.getByRole("status")).toHaveAccessibleName();
   });
 

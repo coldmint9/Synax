@@ -80,7 +80,7 @@ export const jevSessionToolProvider: SessionToolProvider = {
     const tool: RegisteredTool = {
       id: 'computer.use', label: 'Computer Use (Jev)', category: 'mcp', mutability: 'task', resumeBehavior: 'wait_permission',
       description: 'Observe one exact Cua window, ask Jev to choose from complete semantic actions, execute at most one approved action, and reobserve. Requires TypeSafe Jev API configuration. Does not access arbitrary coordinates.',
-      progressiveDetails: 'Accepts { goal, pid, windowId, text? }. A single side-effect action per call. If evidence is absent, abstain.',
+      progressiveDetails: 'Accepts { goal, pid, windowId, text? }. Use the exact process/window IDs from a current Cua observation; stale or inaccessible windows may fail. text is only for the requested typing action. A single side-effect action per call. If evidence is absent, abstain. If Direct Cua fallback is returned, wait for its tools to mount on the next step and use those available tool names. Requires the Cua runtime and a configured Jev provider connection.',
       inputSchema: schema,
       async execute(input) {
         const args = schema.parse(input.args);

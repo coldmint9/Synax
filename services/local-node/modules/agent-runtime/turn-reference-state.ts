@@ -3,7 +3,7 @@ import type { StructuredToolCall } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 
 export interface TurnReference {
-  kind: "skill" | "mcp" | "file" | "wiki";
+  kind: "skill" | "mcp" | "file";
   id: string;
   label?: string;
 }

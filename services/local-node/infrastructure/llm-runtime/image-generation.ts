@@ -13,11 +13,11 @@ export const imageGenerationOptionsSchema = z.object({
     .enum(["auto", "images", "responses", "sdk"])
     .default("auto")
     .describe(
-      "Use Images API for generation/edit batches, or Responses API for providers exposing the hosted image tool.",
+      "auto selects an adapter. images/responses require an OpenAI-compatible provider; sdk uses the provider imageModel. responses requires n=1. SDK adapters reject stream=true and partialImages; Images/Responses reject aspectRatio and seed.",
     ),
   model: z.string().trim().min(1).max(256).default("gpt-image-2.5-sunburst"),
   prompt: z.string().trim().min(1).max(32_000),
-  n: z.number().int().min(1).max(10).default(1),
+  n: z.number().int().min(1).max(10).default(1).describe("Image count; api=responses requires exactly 1. Use api=images for batches."),
   size: z
     .string()
     .default("auto")
@@ -29,23 +29,26 @@ export const imageGenerationOptionsSchema = z.object({
         .every(
           (edge) => Number.isSafeInteger(Number(edge)) && Number(edge) > 0,
         );
-    }, "Use auto or a positive WIDTHxHEIGHT."),
-  quality: z.string().min(1).max(64).default("auto"),
+    }, "Use auto or a positive WIDTHxHEIGHT.")
+    .describe("auto or positive WIDTHxHEIGHT, e.g. 1024x1024. For GPT Image 2 on Images/Responses: multiples of 16, at most 3840 per edge, ratio 1:3 to 3:1, and 655360-8294400 total pixels. SDK sizes depend on the model."),
+  quality: z.string().min(1).max(64).default("auto").describe("Model-dependent quality. Responses accepts auto, low, medium, high, xhigh or max."),
   background: z.enum(["auto", "opaque", "transparent"]).default("auto"),
   outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
-  outputCompression: z.number().int().min(0).max(100).optional(),
+  outputCompression: z.number().int().min(0).max(100).optional().describe("Images/Responses compression requires outputFormat jpeg or webp; omit for png."),
   moderation: z.enum(["auto", "low"]).optional(),
-  inputFidelity: z.enum(["high", "low"]).optional(),
-  stream: z.boolean().optional(),
-  partialImages: z.number().int().min(0).max(3).optional(),
+  inputFidelity: z.enum(["high", "low"]).optional().describe("Edit fidelity; Images/Responses require at least one reference image when supplied."),
+  stream: z.boolean().optional().describe("Images/Responses default to streaming. SDK adapters require false or omission; true is rejected."),
+  partialImages: z.number().int().min(0).max(3).optional().describe("Preview count for Images/Responses with streaming enabled; rejected by SDK adapters or stream=false."),
   aspectRatio: z
     .string()
     .regex(/^\d+:\d+$/)
-    .optional(),
-  seed: z.number().int().optional(),
+    .optional()
+    .describe("WIDTH:HEIGHT for SDK models supporting aspect ratios. Images/Responses reject this; use size there."),
+  seed: z.number().int().optional().describe("SDK model seed when supported. Images/Responses reject this field."),
   providerOptions: z
     .record(z.string(), z.record(z.string(), z.json()))
-    .optional(),
+    .optional()
+    .describe("Provider namespaces mapped to parameter objects, e.g. { openai: { parameter: value } }. Values must be JSON; do not pass a flat parameter map."),
 });
 export type ImageGenerationOptions = z.infer<
   typeof imageGenerationOptionsSchema

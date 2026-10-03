@@ -51,9 +51,9 @@ export const CONTEXT_MEMORY_MAX_PER_PROJECT = Number(
   env("CONTEXT_MEMORY_MAX_PER_PROJECT", "500"),
 );
 
-/** 确定性工具结果清除：触发阈值（占 contextLimit 的比例） */
+/** 确定性工具结果清除：高水位阈值（占 contextLimit 的比例） */
 export const CONTEXT_TOOL_CLEAR_THRESHOLD = Number(
-  env("CONTEXT_TOOL_CLEAR_THRESHOLD", "0.5"),
+  env("CONTEXT_TOOL_CLEAR_THRESHOLD", "0.8"),
 );
 
 /** 确定性工具结果清除：保留最近 N 个完整结果 */
@@ -67,15 +67,8 @@ export const CONTEXT_TOOL_CLEAR_EXCLUDE = env(
   "task.create,task.update,task.get,task.list",
 ).split(",");
 
-/** Wiki Phase 2: max document-writer agents in flight (queue worker slots) */
-export const WIKI_WRITE_CONCURRENCY = Number(
-  env("WIKI_WRITE_CONCURRENCY", "2"),
-);
 
-/** Wall-clock timeout for a single wiki agent run (document writer / verifier / corrector) */
-export const WIKI_AGENT_RUN_TIMEOUT_MS = Number(
-  env("WIKI_AGENT_RUN_TIMEOUT_MS", "900000"),
-);
+
 
 /** Auto-reject permission requests after this duration (ms). Default 10 min. */
 export const PERMISSION_TIMEOUT_MS = Number(
@@ -99,8 +92,7 @@ export function agentSessionsRunInProcess(): boolean {
   if (explicit === "1") return true;
   if (explicit === "0") return false;
   return (
-    process.env.SYNAX_AGENT_SESSION_CHILD !== "1" &&
-    process.env.SYNAX_WIKI_JOB_CHILD !== "1"
+    process.env.SYNAX_AGENT_SESSION_CHILD !== "1"
   );
 }
 
@@ -143,10 +135,6 @@ export function llmRateLimiterEnabled(): boolean {
   return !["0", "false", "off"].includes(raw.trim().toLowerCase());
 }
 
-/** Wiki Phase 2: max verifier/corrector agents in flight */
-export const WIKI_VERIFY_CONCURRENCY = Number(
-  env("WIKI_VERIFY_CONCURRENCY", "3"),
-);
 
 /** 本地 EmbeddingGemma (llama.cpp) 服务地址，供 tree-embedding-bench 原型使用 */
 export const EMBEDDING_BASE_URL = env(

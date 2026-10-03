@@ -490,7 +490,6 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
     global: {
       ...globalBase,
       terminalShellPath: config.terminalShellPath ?? "",
-      wikiModel: config.wikiModel ?? "",
       inputOptimizationModel: config.inputOptimizationModel ?? "",
       macWindowAppearance:
         config.macWindowAppearance ?? globalBase.macWindowAppearance,
@@ -622,7 +621,6 @@ function mergeGlobalConfigLayers(
   return {
     version: Math.max(template.version ?? 1, global.version ?? 1),
     terminalShellPath: global.terminalShellPath ?? "",
-    wikiModel: global.wikiModel ?? "",
     inputOptimizationModel: global.inputOptimizationModel ?? "",
     macWindowAppearance:
       global.macWindowAppearance ??
@@ -718,7 +716,6 @@ function applyGlobalConfigPatch(
   const globalTouched =
     patch.defaultImageModel !== undefined ||
     patch.defaultVideoModel !== undefined ||
-    patch.wikiModel !== undefined ||
     patch.inputOptimizationModel !== undefined ||
     patch.terminalShellPath !== undefined ||
     patch.sessionArchiveRetentionDays !== undefined ||
@@ -772,7 +769,6 @@ function applyGlobalConfigPatch(
 
   const nextGlobal: GlobalConfig = {
     ...layers.global,
-    wikiModel: patch.wikiModel ?? current.wikiModel ?? "",
     defaultImageModel: patch.defaultImageModel !== undefined ? patch.defaultImageModel : current.defaultImageModel,
     defaultVideoModel: patch.defaultVideoModel !== undefined ? patch.defaultVideoModel : current.defaultVideoModel,
     inputOptimizationModel:

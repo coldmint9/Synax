@@ -16,7 +16,7 @@ export const fileDeleteTool: RegisteredTool = {
   progressiveDetails:
     'Accepts { path: string }. Confirm the file exists and is no longer needed before deleting. Use only for explicit removal requests.',
   inputSchema: z.object({
-    path: z.string().min(1).describe('Workspace-relative file path to delete.'),
+    path: z.string().min(1).describe('Existing file path relative to the session working directory, or an absolute path permitted by the sandbox. Directories are rejected; specialist writes must use safe relative paths within writeScope.'),
   }),
   getPattern(args) {
     return typeof args === 'object' && args && 'path' in args && typeof (args as { path?: unknown }).path === 'string'

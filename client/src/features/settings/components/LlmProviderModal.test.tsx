@@ -71,7 +71,7 @@ describe("provider setup", () => {
       models: ["model-a", "model-b"],
     });
     await models(user);
-    await user.click(screen.getByRole("button", { name: "高级模型设置" }));
+    expect(screen.getByRole("heading", { name: "高级模型设置" })).toBeVisible();
     await user.click(
       within(screen.getByRole("group", { name: "输入能力" })).getByRole("checkbox", { name: "图片" }),
     );
@@ -123,7 +123,7 @@ describe("provider setup", () => {
     onSave.mockRejectedValueOnce(new Error("Network unavailable"));
     await user.click(screen.getByRole("button", { name: "连接并获取模型" }));
     expect(await screen.findByText(/No models endpoint/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "手动添加模型" }));
+    expect(screen.getByRole("heading", { name: "手动添加模型" })).toBeVisible();
     await user.type(
       screen.getByRole("textbox", { name: "模型 ID" }),
       "manual-model{Enter}",
@@ -133,13 +133,13 @@ describe("provider setup", () => {
       "Network unavailable",
     );
     expect(onClose).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "保存", exact: true }));
+    await user.click(screen.getByRole("button", { name: "添加供应商", exact: true }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(onSave).toHaveBeenCalledTimes(2);
     expect(onSave.mock.calls[1][0].model).toBe("manual-model");
   });
 
-  it("keeps editing autosave and the saved masked key", async () => {
+  it("saves edited connection settings explicitly and preserves the masked key", async () => {
     const { onSave, user } = setup(
       {
         apiKey: "",
@@ -152,10 +152,15 @@ describe("provider setup", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "服务地址" }), {
       target: { value: "https://new.example.com/v1" },
     });
-    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0].apiKeyMasked).toBe("sk-****");
+    expect(onSave).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "管理模型" }));
     expect(screen.getByRole("checkbox", { name: "model-a" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "完成", exact: true }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      baseUrl: "https://new.example.com/v1",
+      apiKeyMasked: "sk-****",
+    });
   });
 
   it("preserves default model when adding another manually and saves effort in canonical order", async () => {
@@ -165,7 +170,7 @@ describe("provider setup", () => {
       reasoningEfforts: ["high", "low", "medium", "high"],
     });
     await models(user);
-    await user.click(screen.getByRole("button", { name: "手动添加模型" }));
+    expect(screen.getByRole("heading", { name: "手动添加模型" })).toBeVisible();
     await user.type(
       screen.getByRole("textbox", { name: "模型 ID" }),
       "model-c{Enter}",

@@ -3,6 +3,7 @@ import path from "node:path";
 import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
+import { validateCuaArtifact } from "./scripts/validate-cua-artifact.js";
 import {
   desktopProduct,
   desktopIcon,
@@ -27,6 +28,12 @@ const config: ForgeConfig = {
           `Native dependencies must be built on ${platform}/${arch}; use the matching desktop CI runner, not ${process.platform}/${process.arch}.`,
         );
       }
+      validateCuaArtifact({
+        helperRoot: path.resolve("cua-helper-dist"),
+        driverPath: path.resolve("dist/cua-driver/cua-driver"),
+        platform,
+        arch,
+      });
     },
     postMake: async (_config, results) => normalizeDesktopArtifacts(results),
   },

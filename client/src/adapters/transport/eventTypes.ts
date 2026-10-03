@@ -3,7 +3,6 @@ export const TaskNotificationEventType = {
   TaskProgress: 'task_progress',
   TaskCompleted: 'task_completed',
   TaskFailed: 'task_failed',
-  WikiSnapshot: 'wiki_snapshot',
   DocumentCommitted: 'document_committed',
 } as const
 

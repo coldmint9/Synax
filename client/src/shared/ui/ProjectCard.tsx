@@ -134,7 +134,7 @@ export function ProjectCard({
               )}
         </div>
         <Link
-          to={`/projects/${project.id}/wiki`}
+          to={resolveSessionsEntryPath(project.id)}
           className="inline-flex shrink-0 items-center text-[10px] text-muted-foreground/40 transition hover:text-primary"
         >
           {t("cardEnter")}

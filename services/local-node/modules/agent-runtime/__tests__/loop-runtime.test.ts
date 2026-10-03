@@ -2683,7 +2683,7 @@ describe("provider-bound session initialization prompt", () => {
       expect(system).toContain('"selectedForTurnMount":true');
       expect(system).toContain("\\u003c/reference-context>FILE_EVIDENCE");
       expect(system).toContain(
-        "User-selected file and Wiki references for this turn",
+        "User-selected file references for this turn",
       );
       const serializedMessages = JSON.stringify(capturedRequests[0].messages);
       expect(serializedMessages).toContain(marker);
@@ -2722,7 +2722,9 @@ describe("provider-bound session initialization prompt", () => {
   it.each([300_000, 500_000, 500_001])(
     "preserves tool clearing and dedup at %i input tokens in a 1M window",
     async (inputTokens) => {
-      const shouldClear = inputTokens > 500_000;
+      // Tool clearing now waits for the high-water mark (80% by default),
+      // leaving the 50% range for memory preparation and checkpointing.
+      const shouldClear = inputTokens > 800_000;
       vi.mocked(resolveGatewaySelection).mockResolvedValueOnce({
         modelDef: { reasoning: true, contextLimit: 1_000_000 },
         providerId: "fixture",
@@ -2890,7 +2892,6 @@ describe("provider-bound session initialization prompt", () => {
       const prompt = buildSessionPrompt({
         mode: "session",
         content: message,
-        wikiAttachMode: "auto",
         locale: "zh",
       });
       const session = agentSessionRuntime.create({
@@ -2903,7 +2904,6 @@ describe("provider-bound session initialization prompt", () => {
           source: "session-page",
           mode: "chat",
           goalContent: message,
-          wikiAttachMode: "auto",
         },
       });
       queueMockStep(makeTextStep("根据已有信息作答。"));
@@ -2923,7 +2923,7 @@ describe("provider-bound session initialization prompt", () => {
       expect(text).not.toContain("first and only tool call");
       expect(text).not.toContain("One logical change per step");
       expect(text).not.toContain("otherwise run a code-map scan");
-      expect(text).not.toContain("Keep wiki documentation aligned");
+      expect(text).not.toContain("Unrequested documentation work");
       expect(text).toContain("Finish this turn with a concise answer");
       expect(request.reasoningEffort).toBe("max");
       expect(workStore.current(session.id)?.objective).toBe(message);
@@ -2937,7 +2937,6 @@ describe("provider-bound session initialization prompt", () => {
     const prompt = buildSessionPrompt({
       mode: "direct",
       content: raw,
-      wikiAttachMode: "auto",
     });
     const session = agentSessionRuntime.create({
       projectId: "prompt-fixture",

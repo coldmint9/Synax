@@ -98,7 +98,7 @@ export function LlmProviderCard({
       </button>
 
       {expanded && (
-        <div className="space-y-2 border-t wiki-soft-rule p-3">
+        <div className="space-y-2 border-t soft-rule p-3">
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[11px]">
             <span className="text-muted-foreground">API Key</span>
             <span className="text-foreground font-mono truncate">

@@ -570,8 +570,6 @@
   --agent-foreground: 0 0% 100%;
   --human: 21 94% 46%;
   --human-foreground: 0 0% 100%;
-  --wiki: 21 94% 46%;
-  --wiki-foreground: 0 0% 100%;
   --arch: 264 91% 64%;
   --arch-foreground: 0 0% 100%;
   --req: 46 100% 50%;
@@ -594,15 +592,10 @@
   --import-step-done: var(--cx-accent-bottom-hsl);
   --import-step-active: var(--cx-accent-bottom-hsl);
   --import-step-pending: 0 0% 60%;
-  --wiki-surface: var(--cx-gray-75-hsl);
-  --wiki-surface-strong: var(--cx-gray-100-hsl);
-  --wiki-panel: var(--cx-gray-0-hsl);
-  --wiki-panel-foreground: var(--cx-text-hsl);
-  --wiki-panel-muted: var(--cx-gray-75-hsl);
-  --wiki-accent: var(--cx-accent-soft-hsl);
-  --wiki-accent-foreground: var(--cx-accent-strong-hsl);
-  --wiki-warm: var(--cx-accent-soft-hsl);
-  --wiki-shadow: 0 0% 40%;
+  --panel-surface: var(--cx-gray-0-hsl);
+  --panel-surface-foreground: var(--cx-text-hsl);
+  --panel-surface-muted: var(--cx-gray-75-hsl);
+  --panel-shadow: 0 0% 40%;
   --verdict-bug: 1 75% 52%;
   --verdict-risk: 21 94% 46%;
   --verdict-new-req: 264 91% 64%;
@@ -649,7 +642,6 @@
   --ring: var(--cx-accent-strong-hsl);
   --agent: 144 100% 52%;
   --human: 27 100% 64%;
-  --wiki: 27 100% 64%;
   --arch: 264 82% 73%;
   --req: 46 100% 60%;
   --reality: 209 100% 64%;
@@ -668,15 +660,10 @@
   --import-step-done: var(--cx-accent-bottom-hsl);
   --import-step-active: var(--cx-accent-bottom-hsl);
   --import-step-pending: 0 0% 48%;
-  --wiki-surface: var(--background-hsl);
-  --wiki-surface-strong: var(--ui-canvas-hsl);
-  --wiki-panel: var(--ui-panel-hsl);
-  --wiki-panel-foreground: var(--foreground-hsl);
-  --wiki-panel-muted: var(--card);
-  --wiki-accent: var(--cx-accent-soft-hsl);
-  --wiki-accent-foreground: var(--foreground-hsl);
-  --wiki-warm: var(--secondary);
-  --wiki-shadow: 0 0% 0%;
+  --panel-surface: var(--ui-panel-hsl);
+  --panel-surface-foreground: var(--foreground-hsl);
+  --panel-surface-muted: var(--card);
+  --panel-shadow: 0 0% 0%;
   --icon-bg-alpha: 0.14;
   --icon-border-alpha: 0.24;
   --verdict-bug: 1 82% 62%;
@@ -860,11 +847,6 @@
     pointer-events: none;
   }
 
-  .electron-macos .wiki-panel:first-child .wiki-panel-header {
-    height: var(--desktop-titlebar-height);
-    padding-top: 18px;
-  }
-
   .activity-bar {
     position: absolute;
     left: 12px;
@@ -986,15 +968,15 @@
   }
 
   /* Center the whole island group on the default Work content-column anchor.
-     The Wiki slot participates in layout: growing it to the right moves the
+     The project slot participates in layout: growing it to the right moves the
      primary pill left by half that growth. Work's live slot still follows its
      actual conversation column. Both routes share the same top inset. */
-  /* Give the expanded Wiki group a little more room on the right. */
+  /* Give the expanded project group a little more room on the right. */
   /* No project means no sidebar to compensate for. Keep macOS titlebar
      positioning and the project/conversation/viewer layouts unchanged. */
   /* Git and Settings have no session sidebar. Center their island on the
      full viewport rather than the Work conversation column. */
-  /* Keep the primary controls at their natural size while the Wiki slot grows. */
+  /* Keep the primary controls at their natural size while the project slot grows. */
 
   /* Animate actual layout width so both pills move together, not just pixels.
      The measured natural width includes translated labels and toolbar modes. */
@@ -1101,117 +1083,8 @@
     padding: 0;
   }
 
-  /* ── Wiki view mode tabs (文档/规划) ── */
-  .wiki-view-tabs {
-    display: flex;
-    align-items: center;
-  }
-
-  /* ── Wiki Workspace panels ── */
-  .wiki-panel {
-    margin: 10px 0 10px 10px;
-    border-radius: 14px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-    background: var(--surface);
-    box-shadow: var(--surface-shadow);
-  }
-
-  .wiki-panel-header {
-    height: 28px;
-    display: flex;
-    align-items: center;
-    padding: 0 10px;
-    gap: 4px;
-  }
-
-  .wiki-separator {
-    width: 6px;
-    margin: 8px 0;
-    align-self: stretch;
-    flex-shrink: 0;
-    cursor: col-resize;
-  }
-
-  /* Wiki sidebar progress — visible track even at 0% */
-  .wiki-panel [data-slot="progress-bar-track"],
-  .wiki-panel .progress-bar__track {
-    height: 4px !important;
-    border-radius: 999px !important;
-    background: hsl(var(--border-hsl) / 0.42) !important;
-  }
-  .wiki-panel [data-slot="progress-bar-fill"],
-  .wiki-panel .progress-bar__fill {
-    border-radius: 999px !important;
-    background-color: var(--progress-bar-fill) !important;
-  }
-  .wiki-panel .progress-bar--accent {
-    --progress-bar-fill: hsl(var(--primary));
-  }
-  .wiki-panel .progress-bar--success {
-    --progress-bar-fill: var(--success);
-  }
-  .wiki-panel .progress-bar--warning {
-    --progress-bar-fill: var(--warning);
-  }
-  .wiki-panel .progress-bar--danger {
-    --progress-bar-fill: hsl(var(--destructive));
-  }
-
-  .wiki-tabs {
-    display: flex;
-    align-items: center;
-    width: 100%;
-  }
-
-  .wiki-issue-popover {
-    position: fixed;
-    width: 320px;
-    max-height: 400px;
-    border-radius: 16px;
-    background: var(--overlay);
-    border: 1px solid var(--border);
-    box-shadow: var(--overlay-shadow);
-    animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .wiki-page-bg {
-    background:
-      var(--background);
-  }
-
-  .wiki-workbench-card {
-    border: 1px solid var(--border);
-    background: var(--surface);
-    box-shadow: var(--surface-shadow);
-  }
-
-  .wiki-reading-surface {
-    border: 1px solid var(--border);
-    background: var(--surface);
-    box-shadow: var(--surface-shadow);
-  }
-
-  .wiki-reading-copy {
-    font-family:
-      "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  }
-  .wiki-kicker {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-  }
-  .wiki-soft-rule {
+  .soft-rule {
     border-color: hsl(var(--border-hsl) / 0.55);
-  }
-  .wiki-fade-in {
-    animation: float-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   /* ── Settings surfaces ─────────────────────────────────────────────────────
@@ -1351,7 +1224,7 @@
     color: var(--success);
   }
   .settings-chip--muted {
-    background: hsl(var(--wiki-panel-muted) / 0.8);
+    background: hsl(var(--panel-surface-muted) / 0.8);
     color: hsl(var(--muted-foreground));
   }
 
@@ -1359,7 +1232,7 @@
     width: 6rem;
     border-radius: 999px;
     border: 1px solid hsl(var(--border-hsl) / 0.55);
-    background: hsl(var(--wiki-panel) / 0.6);
+    background: hsl(var(--panel-surface) / 0.6);
     padding: 4px 10px;
     font-size: 12px;
     outline: none;
@@ -1378,7 +1251,7 @@
     box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.08);
   }
 
-  /* ── Shared list surfaces (wiki-aligned pill selection) ── */
+  /* ── Shared list surfaces (aligned pill selection) ── */
   .list-surface {
     display: flex;
     flex-direction: column;
@@ -1425,11 +1298,11 @@
   .list-row:hover:not(.list-row--active):not(.list-row--section):not(
       :disabled
     ) {
-    background: hsl(var(--wiki-panel-muted) / 0.45);
+    background: hsl(var(--panel-surface-muted) / 0.45);
     color: var(--foreground);
   }
   .list-row--active {
-    background: hsl(var(--wiki-panel) / 0.96);
+    background: hsl(var(--panel-surface) / 0.96);
     border-color: hsl(var(--border-hsl) / 0.55);
     border-left: 2px solid hsl(var(--primary) / 0.6);
     color: var(--foreground);
@@ -1437,7 +1310,7 @@
     box-shadow: var(--surface-shadow);
   }
   .dark .list-row--active {
-    background: hsl(var(--wiki-panel) / 0.72);
+    background: hsl(var(--panel-surface) / 0.72);
     border-left: 2px solid hsl(var(--primary) / 0.5);
   }
   .list-row--section {
@@ -1488,7 +1361,7 @@
     margin-bottom: 8px;
     border-radius: 10px;
     border: 1px solid hsl(var(--border-hsl) / 0.45);
-    background: hsl(var(--wiki-panel) / 0.55);
+    background: hsl(var(--panel-surface) / 0.55);
     padding: 8px 12px;
   }
 
@@ -1500,7 +1373,7 @@
     border-radius: 8px;
     margin-bottom: 4px;
     border: 1px solid hsl(var(--border-hsl) / 0.45);
-    background: hsl(var(--wiki-panel) / 0.4);
+    background: hsl(var(--panel-surface) / 0.4);
     cursor: pointer;
     text-align: left;
     transition:
@@ -1509,17 +1382,17 @@
       border-color 120ms ease;
   }
   .list-card:hover:not(.list-card--active) {
-    background: hsl(var(--wiki-panel-muted) / 0.5);
+    background: hsl(var(--panel-surface-muted) / 0.5);
   }
   .list-card--active {
-    background: hsl(var(--wiki-panel) / 1);
+    background: hsl(var(--panel-surface) / 1);
     border-color: hsl(var(--border-hsl) / 0.55);
     color: var(--foreground);
     font-weight: 500;
     box-shadow: var(--surface-shadow);
   }
   .dark .list-card--active {
-    background: hsl(var(--wiki-panel) / 0.85);
+    background: hsl(var(--panel-surface) / 0.85);
     border-color: hsl(var(--border-hsl) / 0.6);
   }
   .list-card--muted {
@@ -1567,25 +1440,10 @@
       border-color 120ms ease;
   }
   .sp-list-item:hover {
-    background: hsl(var(--wiki-panel-muted) / 0.45);
+    background: hsl(var(--panel-surface-muted) / 0.45);
     color: var(--foreground);
   }
 
-  /* ── Search keyword highlight inside wiki blocks ──────────────────────── */
-  mark.wiki-search-highlight {
-    @apply bg-warning/40 text-foreground rounded-sm px-0.5;
-    animation: wiki-highlight-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-  @keyframes wiki-highlight-pop {
-    0% {
-      background-color: hsl(var(--warning-hsl) / 0.7);
-      transform: scale(1.05);
-    }
-    100% {
-      background-color: hsl(var(--warning-hsl) / 0.4);
-      transform: scale(1);
-    }
-  }
   @keyframes float-in {
     0% {
       opacity: 0;
@@ -2644,8 +2502,8 @@
   word-break: break-word;
 }
 
-/* Mermaid and Shiki are shared by Wiki and transcript Markdown. */
-.wiki-mermaid {
+/* Mermaid and Shiki are shared by previews and transcript Markdown. */
+.md-mermaid {
   max-width: 100%;
   margin: 0.75rem 0;
   padding: 0.75rem;
@@ -2654,14 +2512,14 @@
   border-radius: var(--theme-radius-lg);
   background: color-mix(in srgb, var(--ui-accent) 3.5%, transparent);
 }
-.wiki-mermaid svg {
+.md-mermaid svg {
   display: block;
   max-width: 100%;
   height: auto;
   margin: 0 auto;
 }
 /* Round box-shaped nodes only; preserve semantic shapes and connectors. */
-.wiki-mermaid :where(
+.md-mermaid :where(
   .node[data-shape="rectangle"],
   .node[data-shape="rounded"],
   .actor,
@@ -2673,28 +2531,28 @@
   rx: var(--theme-radius-lg);
   ry: var(--theme-radius-lg);
 }
-/* Shiki emits a dual-theme pre. Keep the same surface in transcript and Wiki. */
-.agent-conversation-copy .wiki-shiki-block,
-.agent-conversation-copy .wiki-shiki-block pre {
+/* Shiki emits a dual-theme pre. Keep the same surface in transcript and previews. */
+.agent-conversation-copy .md-shiki-block,
+.agent-conversation-copy .md-shiki-block pre {
   max-width: 100%;
   overflow-x: auto;
   border-radius: 0.65rem;
 }
-.agent-conversation-copy .wiki-shiki-block pre {
+.agent-conversation-copy .md-shiki-block pre {
   margin: 0.625rem 0;
   padding: 0.75rem;
 }
-.agent-conversation-copy .wiki-shiki-block .shiki,
-.agent-conversation-copy .wiki-shiki-block .shiki span {
+.agent-conversation-copy .md-shiki-block .shiki,
+.agent-conversation-copy .md-shiki-block .shiki span {
   color: var(--shiki-light) !important;
   background-color: transparent !important;
 }
-html.dark .agent-conversation-copy .wiki-shiki-block .shiki,
-html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
+html.dark .agent-conversation-copy .md-shiki-block .shiki,
+html.dark .agent-conversation-copy .md-shiki-block .shiki span {
   color: var(--shiki-dark) !important;
   background-color: transparent !important;
 }
-.agent-conversation-copy .wiki-shiki-block .shiki span {
+.agent-conversation-copy .md-shiki-block .shiki span {
   background-color: transparent !important;
 }
 
@@ -2718,10 +2576,9 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.agent-conversation-copy .markdown-code-block .wiki-shiki-block,
+.agent-conversation-copy .markdown-code-block .md-shiki-block,
 .agent-conversation-copy .markdown-code-block pre,
-.markdown-code-block .wiki-shiki-block,
-.markdown-code-block .wiki-tree-block,
+.markdown-code-block .md-shiki-block,
 .markdown-code-block pre {
   margin: 0;
   border: 0;
@@ -2742,8 +2599,8 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   background: transparent;
 }
 /* Keep Shiki token colors, but let the shared surface own the background. */
-.markdown-code-block .wiki-shiki-block .shiki,
-.markdown-code-block .wiki-shiki-block .shiki span {
+.markdown-code-block .md-shiki-block .shiki,
+.markdown-code-block .md-shiki-block .shiki span {
   background-color: transparent !important;
 }
 
@@ -3596,9 +3453,9 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
 
 /* ───────────────────────────────────────────────────────────────────────────
    Conversation turn rail (session minimap)
-   Resting state is a tight column of 10x2 hairlines on a 17px pitch; moving the
-   pointer over the rail thickens the hovered tick (6px) and ripples the nearby
-   ticks wider (42 / 40 / 28 / 20), then slides out a preview of the turn under
+   Resting state is a tight column of 5x1 hairlines on an 8.5px pitch; moving the
+   pointer over the rail thickens the hovered tick (3px) and ripples the nearby
+   ticks wider (21 / 20 / 14 / 10), then slides out a preview of the turn under
    the cursor. Geometry mirrors the design reference, flipped to the left
    because this rail hugs the right edge.
    ─────────────────────────────────────────────────────────────────────────── */
@@ -3622,7 +3479,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   pointer-events: none;
   display: flex;
   align-items: center;
-  padding: 6px 8px;
+  padding: 3px 4px;
   max-height: min(72vh, 34rem);
 }
 
@@ -3630,9 +3487,9 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* Mark boxes are 12px tall and the ticks sit on a tight 17px pitch so a long
+  /* Mark boxes are 6px tall and the ticks sit on a tight 8.5px pitch so a long
      session still reads as one ruler. */
-  gap: 5px;
+  gap: 2.5px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3652,8 +3509,8 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 42px;
-  height: 12px;
+  min-width: 21px;
+  height: 6px;
   padding: 0;
   border: none;
   background: transparent;
@@ -3667,7 +3524,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
 
 .session-nav-float-tick {
   display: block;
-  height: 2px;
+  height: 1px;
   border-radius: 999px;
   background: hsl(var(--muted-foreground) / 0.42);
   transition:
@@ -3679,7 +3536,7 @@ html.dark .agent-conversation-copy .wiki-shiki-block .shiki span {
 .session-nav-float-mark:hover .session-nav-float-tick,
 .session-nav-float-mark[data-hovered="true"] .session-nav-float-tick,
 .session-nav-float-mark:focus-visible .session-nav-float-tick {
-  height: 6px;
+  height: 3px;
   background: hsl(var(--foreground-hsl) / 0.92);
 }
 .session-nav-float-mark[data-active="true"] .session-nav-float-tick {
@@ -3780,7 +3637,7 @@ input[type="radio"] {
   border: 1px solid hsl(var(--border-hsl) / 0.75);
   background: var(--background);
   color: hsl(var(--muted-foreground));
-  box-shadow: 0 2px 8px hsl(var(--wiki-shadow) / 0.12);
+  box-shadow: 0 2px 8px hsl(var(--panel-shadow) / 0.12);
   transition:
     background 120ms ease,
     color 120ms ease,
@@ -3789,7 +3646,7 @@ input[type="radio"] {
 .session-panel-collapse:hover {
   background: hsl(var(--primary) / 0.12);
   color: hsl(var(--primary));
-  box-shadow: 0 3px 12px hsl(var(--wiki-shadow) / 0.18);
+  box-shadow: 0 3px 12px hsl(var(--panel-shadow) / 0.18);
 }
 .session-panel-collapse--left {
   right: -1px;
@@ -3944,7 +3801,7 @@ input[type="radio"] {
 }
 
 /* The Agent view used to fork the palette with a dark-green primary and a
-   hard-coded ink colour. Those overrides are gone on purpose: Agent, Wiki and
+   hard-coded ink colour. Those overrides are gone on purpose: Agent, previews and
    Settings now all render the one accent defined in :root. */
 
 /* The composer footer is an overlay, not an opaque panel. The transcript
@@ -4838,7 +4695,7 @@ input[type="radio"] {
   background: hsl(var(--destructive) / 0.2);
 }
 
-/* Narrow-window header layout. Keep the project switcher, Wiki/Agent tabs,
+/* Narrow-window header layout. Keep the project switcher, view tabs,
    and primary actions usable without letting the centered pill overflow the
    viewport. */
 
@@ -5928,7 +5785,7 @@ input[type="radio"] {
 }
 
 /* File previews have no separate document header, so retain the first heading. */
-.file-viewer-markdown .wiki-markdown > h1:first-child {
+.file-viewer-markdown .feed-prose > h1:first-child {
   display: block;
   font-size: 2em;
   font-weight: 700;

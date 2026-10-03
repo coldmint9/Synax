@@ -2,7 +2,6 @@ import { buildSessionUserMessage } from "./session-user-request.js";
 import { buildLanguageDirective } from "../prompts/language-directive.js";
 
 export type SessionPromptMode = "session" | "direct" | "plan_node";
-export type SessionWikiAttachMode = "auto" | "manual";
 
 export type SessionReferenceAnchor = {
   type: "heading" | "selection";
@@ -10,12 +9,11 @@ export type SessionReferenceAnchor = {
   quote?: string;
 };
 
-/** Prompt data only: the runtime does not depend on the Wiki persistence model. */
+/** Prompt data only for session and plan execution. */
 export type LinkedGoalPromptContext = {
   id: string;
   content: string;
-  scope: "project" | "document";
-  anchorJson: SessionReferenceAnchor | null;
+  scope: "project";
 };
 
 export type PlanNodePromptContext = {
@@ -33,11 +31,6 @@ export type CompletedNodePromptContext = {
 export function buildSessionPrompt(input: {
   mode?: SessionPromptMode;
   content: string;
-  documentTitle?: string | null;
-  documentId?: string | null;
-  anchorJson?: SessionReferenceAnchor | null;
-  wikiAttachMode?: SessionWikiAttachMode;
-  wikiAutoMatched?: boolean;
   node?: PlanNodePromptContext;
   linkedGoals?: LinkedGoalPromptContext[];
   completedNodes?: CompletedNodePromptContext[];
@@ -57,12 +50,7 @@ export function buildSessionPrompt(input: {
 function buildDirectPrompt(
   input: {
     content: string;
-    documentTitle?: string | null;
-    documentId?: string | null;
-    anchorJson?: SessionReferenceAnchor | null;
-    wikiAttachMode?: SessionWikiAttachMode;
-    wikiAutoMatched?: boolean;
-  },
+            },
   locale: "zh" | "en",
 ): string {
   const lines: string[] = [
@@ -72,34 +60,6 @@ function buildDirectPrompt(
     input.content.trim(),
   ];
 
-  const wikiMode = input.wikiAttachMode ?? "manual";
-
-  if (input.documentId || input.documentTitle) {
-    lines.push(
-      "",
-      wikiMode === "auto" && input.wikiAutoMatched
-        ? "## Wiki Context (auto-matched)"
-        : "## Wiki Context",
-    );
-    if (wikiMode === "auto" && input.wikiAutoMatched) {
-      lines.push("- Matched automatically from goal intent.");
-    }
-    if (input.documentTitle) lines.push(`- Document: ${input.documentTitle}`);
-    if (input.documentId) lines.push(`- Document ID: ${input.documentId}`);
-    if (input.anchorJson) {
-      appendAnchorLines(lines, input.anchorJson);
-    }
-    lines.push(
-      "- Keep wiki documentation aligned when you change related code.",
-    );
-  } else if (wikiMode === "auto") {
-    lines.push(
-      "",
-      "## Wiki Context (auto)",
-      "- No specific wiki document matched automatically.",
-      "- Infer related design context from the codebase and keep wiki aligned when you change related areas.",
-    );
-  }
 
   lines.push(
     "",
@@ -124,12 +84,10 @@ function buildPlanNodePrompt(
   const node = input.node;
   const goalDetails = (input.linkedGoals ?? [])
     .map((g, i) => {
-      const anchor = g.anchorJson
-        ? `\n- Anchor: ${g.anchorJson.type}${g.anchorJson.heading ? ` §${g.anchorJson.heading}` : ""}${g.anchorJson.quote ? ` "${g.anchorJson.quote.slice(0, 120)}"` : ""}`
-        : "";
+      const anchor = "";
       return `### Goal ${i + 1} [${g.id}]
 - Content: ${g.content}
-- Scope: ${g.scope}${anchor}`;
+- Scope: ${g.scope}`;
     })
     .join("\n\n");
 
@@ -172,20 +130,9 @@ function buildPlanNodePrompt(
     "1. Read relevant code with rg and file.read before writing.",
     "2. Use file.patch for edits; file.write only for complete new files.",
     "3. Prefer expected files; explain clearly if you must go outside that scope.",
-    "4. Do not update wiki documentation — wiki refresh runs after the full plan completes.",
+    "4. Keep changes within the requested scope and verify them before finishing.",
     "5. You may use shell to run tests and verify changes.",
     "6. End with a structured summary: what changed and how to verify.",
   ].join("\n");
 }
 
-function appendAnchorLines(
-  lines: string[],
-  anchor: SessionReferenceAnchor,
-): void {
-  if (anchor.type === "heading" && anchor.heading) {
-    lines.push(`- Anchor heading: ${anchor.heading}`);
-  }
-  if (anchor.quote) {
-    lines.push(`- Selected quote: "${anchor.quote.slice(0, 300)}"`);
-  }
-}

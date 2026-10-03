@@ -32,8 +32,8 @@ const props = {
   globalConfig: null,
   documentId: null,
   onDocumentChange: vi.fn(),
-  wikiAttachMode: "auto" as const,
-  onWikiAttachModeChange: vi.fn(),
+
+
   documents: [],
   skillIds: [],
   onSkillIdsChange: vi.fn(),
@@ -261,9 +261,9 @@ describe("compact session mode control", () => {
     expect(listbox).toHaveFocus();
     await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^Chat\b/ }).id));
     await user.keyboard("{ArrowDown}");
-    await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^Plan\b/ }).id));
+    await waitFor(() => expect(listbox).toHaveAttribute("aria-activedescendant", screen.getByRole("option", { name: /^Goal\b/ }).id));
     await user.keyboard("{Enter}");
-    expect(onChange).toHaveBeenCalledWith("plan");
+    expect(onChange).toHaveBeenCalledWith("goal");
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 

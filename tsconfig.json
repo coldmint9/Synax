@@ -15,5 +15,5 @@
     }
   },
   "include": ["services/**/*.ts", "packages/**/*.ts"],
-  "exclude": ["node_modules", "dist", "client", "analyzer"]
+  "exclude": ["node_modules", "dist", "client"]
 }

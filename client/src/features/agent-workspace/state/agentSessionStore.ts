@@ -157,8 +157,6 @@ export type SessionInputBody = {
   permissionTier?: SynaxPermissionTier;
   skillIds?: string[];
   mcpServerIds?: string[];
-  wikiAttachMode?: "auto" | "manual";
-  documentId?: string | null;
   gitWorkspace?: GitWorkspaceSelection;
 };
 
@@ -1304,8 +1302,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         });
       }
       const prompt = body.prompt?.trim() || message || "附件输入 / Media input";
-      const wikiAttachMode = body.wikiAttachMode;
-      const documentId = body.documentId ?? null;
       const mode = body.mode ?? get().draftMode;
       if (isAcpSession(undefined, body.model) && mode !== "chat") {
         throw new AppError(
@@ -1329,7 +1325,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           source: "session-page",
           userPrompt: message,
           ...(body.mediaGeneration ? { mediaGeneration: body.mediaGeneration } : {}),
-          ...(wikiAttachMode ? { wikiAttachMode, documentId } : {}),
         }),
       });
       set((s) =>

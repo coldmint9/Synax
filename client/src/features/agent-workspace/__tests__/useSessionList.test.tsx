@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -115,7 +115,9 @@ function List() {
 }
 
 describe("pinned session sections", () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-03T12:00:00Z"));
     useAgentSessionStore.setState({
       projectId: "p1",
       sessionListTotal: 2,
@@ -146,8 +148,8 @@ describe("pinned session sections", () => {
       container.querySelectorAll(".session-list-section--separated"),
     ).toHaveLength(1);
     expect(container.querySelectorAll(".session-list-pin, .lucide-pin")).toHaveLength(0);
-    const ordinaryLabel = container.querySelector(".session-list-section-label")!;
-    expect(ordinaryLabel).toHaveTextContent("会话· 1");
+    const ordinaryLabel = Array.from(container.querySelectorAll(".session-list-section-label")).find((label) => label.textContent?.startsWith("之前"))!;
+    expect(ordinaryLabel).toHaveTextContent("之前· 1");
     expect(ordinaryLabel.tagName).not.toBe("BUTTON");
     fireEvent.click(headers()[0]);
     expect(headers()[0].getAttribute("aria-expanded")).toBe("false");

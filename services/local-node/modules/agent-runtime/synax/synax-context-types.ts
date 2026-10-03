@@ -9,7 +9,7 @@ export const SYNAX_RULES_DIR = 'rules';
  * Order is precedence order: later files win conflicts, so AGENTS.md is the
  * canonical rules file and CLAUDE.md is the fallback. SYNAX.md and
  * SYNAX.local.md are deprecated as rule sources and are no longer loaded;
- * SYNAX.md remains a generated repo playbook artifact (see synax-md.ts).
+ * SYNAX.md can contain project-maintained instructions.
  */
 export const PROJECT_RULE_FILES = [
   CLAUDE_MD_FILENAME,

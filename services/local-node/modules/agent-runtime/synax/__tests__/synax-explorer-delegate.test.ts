@@ -19,6 +19,6 @@ describe('shouldWrapExplorerDelegatePrompt', () => {
   it('wraps only the builtin explorer profile', () => {
     expect(shouldWrapExplorerDelegatePrompt('explorer')).toBe(true);
     expect(shouldWrapExplorerDelegatePrompt('reviewer')).toBe(false);
-    expect(shouldWrapExplorerDelegatePrompt('wiki-explorer')).toBe(false);
+    expect(shouldWrapExplorerDelegatePrompt('custom-explorer')).toBe(false);
   });
 });

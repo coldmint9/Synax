@@ -167,7 +167,7 @@ export class ToolRegistry {
       mutability: "task",
       resumeBehavior: "auto",
       progressiveDetails:
-        "Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. Specialists are scoped to this task. One child level; at most 3 active children. No shell; file writes need an explicit scope.",
+        "Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. specialist takes precedence over profileId. Builtin profiles: explorer, reviewer. One child level; at most 3 active children. Specialists have no shell or further delegation. Write capabilities require writeScope: concrete paths relative to the child working directory, e.g. [\"client/src\"]. A directory includes descendants; do not add /**. No absolute paths, roots (including .), .. segments, globs or symlink components. Only one specialist writer may be active; wait for it to finish before delegating another. Plan specialists cannot write files. Permissions are inherited and cannot be expanded.",
       inputSchema: z.object({
         contentParts: contentPartsSchema.optional(),
         specialist: specialistSpecSchema.optional(),
@@ -180,12 +180,12 @@ export class ToolRegistry {
           .string()
           .optional()
           .describe(
-            "Child agent profile. Defaults to explorer. Must be a subagent-capable profile.",
+            "Builtin child profile: explorer (default) or reviewer. Ignored when specialist is supplied.",
           ),
         prompt: z
           .string()
           .min(1)
-          .describe("Bounded prompt for the child agent session."),
+          .describe("Non-whitespace prompt for the child agent session; specialist prompts are limited to 20,000 characters after trimming."),
         nodeId: z
           .string()
           .min(1)
@@ -240,9 +240,6 @@ export class ToolRegistry {
         const ALLOWED_SUBTASK_PROFILES = [
           "explorer",
           "reviewer",
-          "wiki-explorer",
-          "wiki-verifier",
-          "wiki-package-explorer",
         ];
         if (!args.specialist && !ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
           throw new AgentValidationError(
@@ -390,17 +387,11 @@ export class ToolRegistry {
                 {
                   explorer: "探索员",
                   reviewer: "审查员",
-                  "wiki-explorer": "知识探索员",
-                  "wiki-verifier": "知识校验员",
-                  "wiki-package-explorer": "包结构探索员",
                 }[profileId] ?? "研究员",
               roleDescription:
                 {
                   explorer: "读取代码、搜索线索并梳理系统结构。",
                   reviewer: "检查实现、发现风险并给出可执行的审查意见。",
-                  "wiki-explorer": "探索代码库结构，提炼模块职责和关键路径。",
-                  "wiki-verifier": "核对文档内容与代码证据，标记不一致之处。",
-                  "wiki-package-explorer": "深入分析包结构、入口和依赖关系。",
                 }[profileId] ?? "根据委派任务进行分析和整理。",
             };
         const namedChild = this.store.updateSessionMetadata(child.id, {
@@ -463,7 +454,7 @@ export class ToolRegistry {
       mutability: "read",
       resumeBehavior: "auto",
       progressiveDetails:
-        "Accepts { skillId: string } and returns full content only after the runtime gate.",
+        "Accepts { skillId: string } and returns full content only after the runtime gate. Use an exact skillId from the available-skills catalog, not a filesystem path or display name. Loading still checks availability, profile and permission rules.",
       inputSchema: z.object({
         skillId: z.string().min(1).describe("Skill id to load."),
       }),

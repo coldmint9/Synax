@@ -43,7 +43,7 @@ describe('parseSkillFile — profile-ids and injection', () => {
 
   it('parses profile-ids into profileIds', () => {
     const parsed = parseSkillFile(fixture);
-    expect(parsed.profileIds).toEqual(['wiki-document-writer']);
+    expect(parsed.profileIds).toEqual(['executor']);
   });
 
   it('parses injection mode', () => {

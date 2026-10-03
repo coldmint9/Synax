@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 
-const STORAGE_KEY = 'wiki-scroll-positions'
+const STORAGE_KEY = 'synax-scroll-positions'
 const MAX_ENTRIES = 20
 
 function loadPositions(): Record<string, number> {

@@ -155,7 +155,7 @@ try {
         ?.submenu?.items.find((item) => item.id === "ui:check-updates")?.label,
     };
   });
-  assert(!menus.views.includes("Wiki"));
+  assert(menus.views.includes("返回对话"));
   assert(!menus.views.includes("Work"));
   if (process.platform === "darwin" || process.platform === "win32")
     assert.equal(menus.updater, "软件更新…");
@@ -325,9 +325,6 @@ try {
       const Database = req('libsql');
       const db = new Database(':memory:');
       assert.equal(db.prepare('SELECT 1 AS ok').get().ok, 1); db.close();
-      const Parser = req('tree-sitter');
-      const parser = new Parser(); parser.setLanguage(req('tree-sitter-javascript'));
-      assert.equal(parser.parse('const x = 1;').rootNode.hasError, false);
       const child = require('node:child_process').fork(__filename, ['--child'], { execArgv: [], stdio: ['ignore','pipe','pipe','ipc'] });
       let replied = false;
       child.once('message', () => { replied = true; });

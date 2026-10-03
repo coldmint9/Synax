@@ -73,8 +73,8 @@ export const designWriteTool: RegisteredTool = {
   resumeBehavior: "auto",
   inputSchema: z
     .object({
-      content: z.string().min(1),
-      expectedRevision: revision,
+      content: z.string().min(1).describe("Complete Markdown draft; include all content to retain."),
+      expectedRevision: revision.describe("Revision returned by design.read or design.preview. A mismatch rejects the update; re-read before retrying."),
       status: status.optional(),
     })
     .strict(),
@@ -116,13 +116,13 @@ export const designImplementTool: RegisteredTool = {
   id: "design.implement",
   label: "Implement design draft",
   description:
-    "Use the current Markdown design draft as context for ordinary workspace execution. Requires an explicit user instruction and works in Plan, Chat, or Goal mode.",
+    "Use the non-empty saved Markdown design draft as context for ordinary workspace execution. Requires an explicit user instruction in the current turn. Read the draft first and pass its revision to detect stale content. Transitions to chat execution and marks the draft implementing.",
   category: "task",
   internalGate: "none",
   mutability: "task",
   resumeBehavior: "auto",
   inputSchema: z
-    .object({ revision, reason: z.string().trim().min(1).max(4000).optional() })
+    .object({ revision: revision.describe("Current design revision from design.read/preview; a mismatch rejects implementation."), reason: z.string().trim().min(1).max(4000).optional() })
     .strict(),
   execute(input) {
     if (!input.runId)

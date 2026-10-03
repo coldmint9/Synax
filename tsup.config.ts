@@ -5,9 +5,6 @@ export default defineConfig({
     server: "services/local-node/entrypoints/http-server.ts",
     "services/cloud-node/server": "services/cloud-node/server.ts",
     cli: "cli/index.ts",
-    "workers/analyzer-worker": "services/worker/jobs/analyzer-worker.ts",
-    "workers/scan-pipeline-worker.thread":
-      "services/worker/jobs/scan-pipeline-worker.thread.ts",
     "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
   },
   format: ["cjs"],

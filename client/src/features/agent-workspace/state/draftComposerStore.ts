@@ -4,7 +4,7 @@ import type { RuntimeContentPart } from "../../../adapters/transport/runtimeMedi
 const STORAGE_KEY = "synax.draftComposer";
 const CONTEXT_KEY = "synax.draftComposerContext";
 
-const REFERENCE_KINDS = new Set(["skill", "mcp", "file", "wiki"]);
+const REFERENCE_KINDS = new Set(["skill", "mcp", "file"]);
 
 /**
  * Per-project cache of the new-session composer text so a draft survives

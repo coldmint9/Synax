@@ -24,7 +24,6 @@ export function useElectronMenu() {
   const projectId =
     location.pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? currentProjectId;
   const inWork = location.pathname.includes("/sessions");
-  const inWiki = location.pathname.includes("/wiki");
 
   useEffect(() => {
     if (!api) return;
@@ -41,9 +40,6 @@ export function useElectronMenu() {
           break;
         case "session:new":
           if (projectId) navigate(newSessionPath(projectId));
-          break;
-        case "view:wiki":
-          if (projectId) navigate(`/projects/${projectId}/wiki`);
           break;
         case "view:conversation":
         case "view:sessions":
@@ -77,15 +73,7 @@ export function useElectronMenu() {
       hasSession: Boolean(selectedSessionId),
       hasViewer: inWork && Boolean(workspace.activeTabId),
       inWork,
-      inWiki,
       dark: theme === "dark",
     });
-  }, [
-    projectId,
-    selectedSessionId,
-    workspace.activeTabId,
-    inWork,
-    inWiki,
-    theme,
-  ]);
+  }, [projectId, selectedSessionId, workspace.activeTabId, inWork, theme]);
 }
