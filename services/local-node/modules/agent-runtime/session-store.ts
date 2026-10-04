@@ -1007,6 +1007,21 @@ export class AgentRuntimeStore {
         "UPDATE agent_runtime_sessions SET archived_at = ?, archive_batch_id = ? WHERE id = ?",
       );
       for (const id of archivedSessionIds) archive.run(archivedAt, root.id, id);
+      const archived = new Set(archivedSessionIds);
+      const parentIds = new Set(rows.map((row) => row.parent_session_id).filter((id): id is string => id !== null && !archived.has(id)));
+      const updateParent = db.prepare("UPDATE agent_runtime_sessions SET child_session_ids_json = ?, updated_at = ? WHERE id = ?");
+      for (const parentId of parentIds) {
+        const parent = db.prepare("SELECT child_session_ids_json FROM agent_runtime_sessions WHERE id = ?").get(parentId) as { child_session_ids_json: string | null } | undefined;
+        if (!parent) continue;
+        const children = (() => {
+          try {
+            const parsed = parent.child_session_ids_json ? JSON.parse(parent.child_session_ids_json) : [];
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+          } catch { return []; }
+        })();
+        const next = children.filter((id) => !archived.has(id));
+        if (next.length !== children.length) updateParent.run(stringify(next), archivedAt, parentId);
+      }
     })();
     for (const id of archivedSessionIds) {
       sessionLiveBus.cleanup(id);
@@ -1198,6 +1213,20 @@ export class AgentRuntimeStore {
           childSessionIds: nextChildSessionIds,
           updatedAt: deletedAt,
         });
+      }
+
+      const liveRows = db.prepare("SELECT id, parent_session_id, child_session_ids_json FROM agent_runtime_sessions WHERE archived_at IS NULL").all() as Array<{ id: string; parent_session_id: string | null; child_session_ids_json: string | null }>;
+      const updateLineage = db.prepare("UPDATE agent_runtime_sessions SET parent_session_id = ?, child_session_ids_json = ?, updated_at = ? WHERE id = ?");
+      for (const row of liveRows) {
+        const childIds = (() => {
+          try {
+            const parsed = row.child_session_ids_json ? JSON.parse(row.child_session_ids_json) : [];
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+          } catch { return []; }
+        })();
+        const nextParent = row.parent_session_id && deleteSet.has(row.parent_session_id) ? null : row.parent_session_id;
+        const nextChildren = childIds.filter((id) => !deleteSet.has(id));
+        if (nextParent !== row.parent_session_id || nextChildren.length !== childIds.length) updateLineage.run(nextParent, stringify(nextChildren), deletedAt, row.id);
       }
 
       for (const id of deleteIds) {
@@ -1419,8 +1448,15 @@ export class AgentRuntimeStore {
     })();
   }
 
+  private collectionSessionState(sessionId: string): "visible" | "archived" | "missing" {
+    const row = getRawSqlite().prepare("SELECT archived_at FROM agent_runtime_sessions WHERE id = ?").get(sessionId) as { archived_at: string | null } | undefined;
+    if (!row) return "missing";
+    if (row.archived_at) throw new AgentNotFoundError(sessionId);
+    return "visible";
+  }
+
   listMessages(sessionId: string): AgentRuntimeMessage[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
     const rows = getRawSqlite()
@@ -1513,7 +1549,7 @@ export class AgentRuntimeStore {
   }
 
   listEvents(sessionId: string, after?: string): RuntimeEvent[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (boundaryOnlySession(sessionId)) {
       const items = diagnosticPage(sessionId, "events", {
         limit: 64,
@@ -1676,7 +1712,7 @@ export class AgentRuntimeStore {
   }
 
   listRuns(sessionId: string): AgentRun[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return listVersionEntities<AgentRun>(sessionId, "runs").sort(
         (a, b) =>
@@ -1945,7 +1981,7 @@ export class AgentRuntimeStore {
   }
 
   listToolCalls(sessionId: string): ToolCallRecord[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return listVersionEntities<ToolCallRecord>(sessionId, "tools");
     const rows = getRawSqlite()
@@ -2026,7 +2062,7 @@ export class AgentRuntimeStore {
   }
 
   listPermissions(sessionId: string): PermissionDecision[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return listVersionEntities<PermissionDecision>(sessionId, "permissions");
     const rows = getRawSqlite()
@@ -2086,7 +2122,7 @@ export class AgentRuntimeStore {
   }
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {
-    this.getSession(sessionId);
+    if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return listVersionEntities<EvidenceArtifact>(sessionId, "artifacts");
     const rows = getRawSqlite()

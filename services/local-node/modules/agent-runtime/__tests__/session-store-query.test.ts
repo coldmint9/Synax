@@ -296,7 +296,7 @@ describe("listSessions SQL scoping", () => {
     );
     expect(sessionQueries).toHaveLength(1);
     expect(sessionQueries[0]!.sql).toContain(
-      "WHERE project_id = ? AND status = ?",
+      "project_id = ? AND status = ?",
     );
     expect(sessionQueries[0]!.sql).toContain(
       "ORDER BY updated_at DESC LIMIT ?",
@@ -381,8 +381,9 @@ describe("listSessionTree traversal", () => {
     );
 
     expect(result.map((s) => s.id)).toEqual(["root", "child"]);
-    expect(statements).toHaveLength(1);
-    const [query] = statements;
+    const query = statements.find((statement) => statement.sql.includes("WITH RECURSIVE session_tree"));
+    expect(query).toBeDefined();
+    expect(statements.filter((statement) => statement.sql.includes("WITH RECURSIVE session_tree"))).toHaveLength(1);
     expect(query!.sql).toContain("WITH RECURSIVE session_tree");
     expect(query!.sql).toContain("child.parent_session_id = parent.id");
     expect(query!.sql).toContain("json_each");

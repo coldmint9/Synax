@@ -95,7 +95,7 @@ npm run client:build
 - 后端/CLI 类型检查、后端构建、客户端构建通过；客户端仍提示现有大 chunk 警告。
 - 生产 bundle 实测：嵌入 WASM、双路异步 RPC、无 Node globals，通过。
 - Chromium 实际页面 + 独立 DATA_ROOT/API：默认关闭 → 无效输入 → 保存开启 → 刷新持久化 → 关闭刷新，通过；1365px 与 390px 截图检查，控制台无 pageerror，Code Mode 面板无横向溢出。
-- 最终全量 `npm test`：313 files passed / 10 failed；2419 tests passed / 14 failed / 1 skipped。14 个失败用例均在生产基线 `3ba78f03` 导出的独立目录上复现，不属于本次新增回归；分类和处置见 `code-mode-baseline-failures.md`。
+- 基线修复后完整 `npm test`：322 个测试文件通过、1 个既有 `agent-work-routes` 时序失败；2427 通过、1 失败、1 跳过。该失败单独运行 3/3 通过；五项基线门禁的定向回归 179 项全部通过，分类和处置见 `code-mode-baseline-failures.md`。
 - 基线失败涉及 checkpoint-files/recovery、context-epochs、run-coordinator、session-capabilities/runtime/store-query、subagent-controls、visualization-integration、runtime-http-lifecycle。
 - 未验证：Windows/Linux/Electron 安装包实机、真实付费模型 token/延迟收益、第三方安全审计。不得将以上构建/单测替代这些验证。
 

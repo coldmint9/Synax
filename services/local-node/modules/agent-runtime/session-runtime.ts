@@ -273,7 +273,17 @@ export class AgentSessionRuntime {
     return this.store.listSessionTree(sessionId);
   }
 
+  /** Pause the root session for one-click resume; descendants are hard-interrupted. */
   cancel(sessionId: string): AgentSession {
+    return this.stopTree(sessionId, "paused");
+  }
+
+  /** Hard-stop a session subtree. Interrupted sessions may resume only with a new turn. */
+  interrupt(sessionId: string): AgentSession {
+    return this.stopTree(sessionId, "interrupted");
+  }
+
+  private stopTree(sessionId: string, rootStatus: "paused" | "interrupted"): AgentSession {
     const tree = this.store.listSessionTree(sessionId);
     const targets = tree.filter(
       (session) =>
@@ -292,11 +302,12 @@ export class AgentSessionRuntime {
     const ids = targets.map((session) => session.id);
     agentLoopRuntime.interruptSessions(ids, "User stopped run.");
     sessionProcessManager.interruptSessions(ids, "User stopped run.");
-    for (const session of targets) this.cancelOne(session.id);
+    for (const session of targets)
+      this.stopOne(session.id, session.id === sessionId ? rootStatus : "interrupted");
     return this.store.getSession(sessionId);
   }
 
-  private cancelOne(sessionId: string): void {
+  private stopOne(sessionId: string, status: "paused" | "interrupted"): void {
     // Stop the execution, but preserve the Work and goal checkpoints for playback.
     this.store.updateSessionMetadata(sessionId, {
       manualStop: { at: nowIso(), reason: "Stopped by user." },
@@ -331,9 +342,9 @@ export class AgentSessionRuntime {
       }
     }
     this.store.updateSession(sessionId, {
-      status: "paused",
+      status,
       updatedAt: now,
-      completedAt: null,
+      completedAt: status === "interrupted" ? now : null,
       resultSummary: reason,
       blockedReason: null,
       activeRunId: null,
@@ -343,7 +354,7 @@ export class AgentSessionRuntime {
       sessionId,
       type: "progress_updated",
       summary: "Session stopped",
-      payload: { reason, preservedEvents: true, resumable: true },
+      payload: { reason, preservedEvents: true, resumable: status === "paused" },
     });
   }
 

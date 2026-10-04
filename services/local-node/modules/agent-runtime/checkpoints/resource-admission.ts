@@ -10,7 +10,9 @@ export const HISTORY_RESOURCE_LIMITS = {
   wal: 64 * MiB,
   freeDisk: 512 * MiB,
   externalDirectory: 2 * 1024 * MiB,
-  externalInFlight: 128 * MiB,
+  // A single streamed before-image may exceed the legacy 128 MiB cap; keep
+  // the admission limit below the 512 MiB free-disk safety reserve.
+  externalInFlight: 256 * MiB,
 };
 interface Sample {
   at: number;

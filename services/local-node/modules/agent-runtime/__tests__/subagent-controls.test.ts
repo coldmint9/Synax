@@ -69,7 +69,7 @@ describe("subagent lifecycle controls", () => {
       endedAt: null,
       error: null,
     });
-    agentSessionRuntime.cancel(root.id);
+    agentSessionRuntime.interrupt(root.id);
     const stream = vi.spyOn(agentLoopRuntime, "streamRun");
     try {
       await execution.recoverIncompleteSubtasks(root.id);
@@ -168,7 +168,7 @@ describe("subagent lifecycle controls", () => {
       interrupt: vi.fn(async () => {}),
     });
     await coordinator.interrupt(root.id, "Stop parent", () =>
-      agentSessionRuntime.cancel(root.id),
+      agentSessionRuntime.interrupt(root.id),
     );
     for (const id of [root.id, child.id, grandchild.id, paused.id]) {
       expect(agentRuntimeStore.getSession(id)).toMatchObject({

@@ -137,14 +137,21 @@ describe("history recovery safety", () => {
       [path.join(root, "a")],
     );
     await started;
-    await expect(
-      recordFileChange(
-        id,
-        () => fs.writeFile(path.join(root, "a"), "two"),
-        false,
-        [path.join(root, "a")],
-      ),
-    ).rejects.toThrow("same file");
+    const previousWait = process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS;
+    process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS = "0";
+    try {
+      await expect(
+        recordFileChange(
+          id,
+          () => fs.writeFile(path.join(root, "a"), "two"),
+          false,
+          [path.join(root, "a")],
+        ),
+      ).rejects.toThrow("same file");
+    } finally {
+      if (previousWait === undefined) delete process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS;
+      else process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS = previousWait;
+    }
     await recordFileChange(
       id,
       () => fs.writeFile(path.join(root, "b"), "independent"),

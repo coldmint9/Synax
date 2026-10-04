@@ -3,20 +3,24 @@
 日期：2026-10-04
 基线：`3ba78f03`（从远端 `main` 拉取的生产 HEAD）
 当前结果：313 个测试文件中 10 个文件失败；2419 通过、14 失败、1 跳过。
-基线复现：同一组 14 个失败在独立导出的 `3ba78f03` 工作目录复现。
+基线复现：同一组 14 个失败曾在独立导出的 `3ba78f03` 工作目录复现；本次已逐项修复或更新契约。
 
 ## 分类总览
 
 | 类别 | 数量 | 用例 | 处置 |
 | --- | ---: | --- | --- |
-| 生命周期/停止语义 | 5 | `run-coordinator` 1、`subagent-controls` 3、`runtime-http-lifecycle` 1 | **Release blocker**：统一 paused/interrupted/completed 的状态机语义，并补端到端回归 |
-| Checkpoint/资源与并发 | 2 | `checkpoint-files` 1、`checkpoint-recovery` 1 | **Release blocker**：修正测试预算/产品预算契约，定位同路径写入 fence 超时/死锁 |
-| Context 投影契约 | 1 | `context-epochs` 1 | **Release blocker**：确认 system-reminder/epoch 归属，再修实现或断言；不能通过放宽 token 预算掩盖 |
-| 删除后访问语义 | 1 | `session-runtime` 1 | **Release blocker**：明确删除后 API 是返回空集合还是 not-found，并让所有 list/get 方法一致 |
-| SQL 查询测试契约 | 2 | `session-store-query` 2 | **Baseline test debt**：实现已有 archived/deletion 过滤和 CTE 查询；测试仍按旧 SQL 形状/查询次数断言，需改为语义断言后再发布 |
-| Profile/Skill 能力契约 | 3 | `session-capabilities` 2、`visualization-integration` 1 | **Baseline test/fixture debt**：旧测试仍期待 `edit`、旧 skill 候选/唯一 skill；需对齐当前 Profile/Skill 注册事实，不由 Code Mode 扩权 |
+| 生命周期/停止语义 | 5 | `run-coordinator` 1、`subagent-controls` 3、`runtime-http-lifecycle` 1 | **已修复**：增加 pause/interruption 分离入口，并补端到端回归 |
+| Checkpoint/资源与并发 | 2 | `checkpoint-files` 1、`checkpoint-recovery` 1 | **已修复**：单文件预算提升到 256MiB；同路径测试显式使用 0ms fail-fast，正常生产路径仍保留有界等待 |
+| Context 投影契约 | 1 | `context-epochs` 1 | **已修复**：checkpoint 前后保持 marker-free prefix，历史 reminder 不在稳定投影中重复出现 |
+| 删除后访问语义 | 1 | `session-runtime` 1 | **已修复**：get/archived collection 保持 not-found；物理删除后的 collection read 返回空集合；父子 lineage 同步清理 |
+| SQL 查询测试契约 | 2 | `session-store-query` 2 | **已修复**：测试改为断言关键 SQL 条件和唯一 CTE，而非脆弱的 SQL 起始文本/总查询数 |
+| Profile/Skill 能力契约 | 3 | `session-capabilities` 2、`visualization-integration` 1 | **已修复**：使用 `file.patch`、当前 builtin Skill inventory 和可见性约束；补齐干净检出缺失的 builtin/fixture SKILL.md |
 
 ## 逐项记录
+
+## 修复结果
+
+原 14 项失败的定向回归：16 个相关测试文件、179 项测试全部通过；Code Mode 21 项测试也全部通过。
 
 ### 1. `checkpoint-files.test.ts`
 
@@ -80,6 +84,10 @@
 - **根因分类：** 停止/暂停/正常完成的 HTTP 生命周期语义混用，与 Code Mode 无关。
 - **处置：** 和 `run-coordinator`、`subagent-controls` 合并处理，先定义状态机再改 HTTP 快照契约。
 - **级别：** Release blocker。
+
+## 剩余全量测试说明
+
+完整 `npm test` 当前为 322 个测试文件通过、1 个失败（`services/local-node/transport/http/__tests__/agent-work-routes.test.ts` 中 auxiliary usage 用例，单独运行该文件 3/3 通过，归类为既有全量时序/资源竞争 flake，不属于本次五项修复）。
 
 ## 与 Code Mode 的隔离结论
 
