@@ -6,7 +6,7 @@ import { mcpClientManager } from '../../infrastructure/mcp/mcp-client-manager.js
 import { configuredJevProviderId, resolveJevCredentials } from './jev-credentials.js';
 import { resolveComputerUseStrategy } from './strategy.js';
 import { enableDirectFallback } from './fallback.js';
-import { visualCandidates } from './visual-regions.js';
+import { desktopVisualCandidates, visualCandidates } from './visual-regions.js';
 import { LiveJevDecisionService, MockJevDecisionService, JevInvalidDecisionError, validateJevDecision, type Candidate, type JevDecisionService } from './jev-decision.js';
 import { resolveEffectiveComputerUseSettings } from './effective-settings.js';
 
@@ -46,6 +46,48 @@ export function describeCuaObservationFailure(structured: unknown): string | nul
   return null;
 }
 
+type DesktopCapture = { captureId: string; displayId: string };
+
+/** Long-edge cap for the fallback capture: readable for Jev without shipping a full 2x frame. */
+const DESKTOP_CAPTURE_MAX_DIMENSION = 1280;
+
+/**
+ * Capture the primary desktop. The Driver documents `display_id="primary"` as
+ * the portable desktop target, so that is the only display this path addresses.
+ */
+async function observeDesktopCapture(projectId: string | undefined, sessionId: string, signal?: AbortSignal): Promise<DesktopCapture | null> {
+  const capture = await mcpClientManager.callTool(
+    CUA_SERVER_ID, 'get_desktop_state', { max_image_dimension: DESKTOP_CAPTURE_MAX_DIMENSION }, projectId, sessionId, signal,
+  );
+  const state = capture.structuredContent as { capture_id?: unknown; display?: unknown } | undefined;
+  const captureId = state?.capture_id;
+  if (!capture.ok || typeof captureId !== 'string' || !captureId) return null;
+  const displayId = typeof state?.display === 'string' && state.display.trim() ? state.display.trim() : 'primary';
+  return { captureId, displayId };
+}
+
+/**
+ * Window-scoped grounding can fail while the desktop capture registry still
+ * works (macOS 27 exposes no AX window for the target and refuses window
+ * captures). Re-ground on capture-bound desktop visual regions so Jev keeps
+ * deciding real Cua actions instead of collapsing to `abstain`.
+ */
+async function desktopObservationCandidates(projectId: string | undefined, sessionId: string, signal?: AbortSignal): Promise<{ candidates: Candidate[]; capture: DesktopCapture } | null> {
+  const capture = await observeDesktopCapture(projectId, sessionId, signal);
+  if (!capture) return null;
+  const parsed = await mcpClientManager.callTool(
+    CUA_SERVER_ID, 'parse_visual_regions',
+    { capture_id: capture.captureId, options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 } },
+    projectId, sessionId, signal,
+  );
+  if (!parsed.ok) return null;
+  return { candidates: desktopVisualCandidates(parsed.structuredContent, capture.captureId, capture.displayId), capture };
+}
+
+function standaloneCandidates(reobserve: string): Candidate[] {
+  return [{ id: 'reobserve', description: reobserve }, { id: 'abstain', description: 'Stop: insufficient evidence' }];
+}
+
 export function makeCandidates(structured: unknown, pid: number, windowId: number, text?: string): Candidate[] {
   if (!structured || typeof structured !== 'object') return [{ id: 'reobserve', description: 'Reobserve the window' }, { id: 'abstain', description: 'Stop: insufficient evidence' }];
   const state = structured as { snapshot_id?: unknown; elements?: unknown };
@@ -79,8 +121,8 @@ export const jevSessionToolProvider: SessionToolProvider = {
     try { if (resolveComputerUseStrategy(settings) !== 'jev') return []; } catch { return []; }
     const tool: RegisteredTool = {
       id: 'computer.use', label: 'Computer Use (Jev)', category: 'mcp', mutability: 'task', resumeBehavior: 'wait_permission',
-      description: 'Observe one exact Cua window, ask Jev to choose from complete semantic actions, execute at most one approved action, and reobserve. Requires TypeSafe Jev API configuration. Does not access arbitrary coordinates.',
-      progressiveDetails: 'Accepts { goal, pid, windowId, text? }. Use the exact process/window IDs from a current Cua observation; stale or inaccessible windows may fail. text is only for the requested typing action. A single side-effect action per call. If evidence is absent, abstain. If Direct Cua fallback is returned, wait for its tools to mount on the next step and use those available tool names. Requires the Cua runtime and a configured Jev provider connection.',
+      description: 'Observe the target Cua window, ask Jev to choose from complete semantic actions, execute at most one approved action, and reobserve. When the window surface cannot be resolved at all — as on macOS 27, where the target exposes no AX window and window captures are refused — observe the primary desktop instead and let Jev decide from capture-bound visual regions. Requires TypeSafe Jev API configuration. Does not access arbitrary coordinates.',
+      progressiveDetails: 'Accepts { goal, pid, windowId, text? }. Use the exact process/window IDs from a current Cua observation; stale or inaccessible windows may fail. text is only for the requested typing action. A single side-effect action per call. If evidence is absent, abstain. If Direct Cua fallback is returned, wait for its tools to mount on the next step and use those available tool names. Window-scoped grounding failures fall back to a capture-bound primary-desktop observation whose click candidates carry scope:"desktop"; the result reports which scope was used. Requires the Cua runtime and a configured Jev provider connection.',
       inputSchema: schema,
       async execute(input) {
         const args = schema.parse(input.args);
@@ -96,11 +138,30 @@ export const jevSessionToolProvider: SessionToolProvider = {
             : 'Jev is enabled but no Jev API key is configured: set it in Settings -> Computer Use, or set TYPESAFE_API_KEY for the API sidecar');
         }
         const observer = await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
-        if (!observer.ok) throw new Error(observer.error ?? 'Cua observation failed');
-        const observationFailure = describeCuaObservationFailure(observer.structuredContent);
-        if (observationFailure) throw new Error(observationFailure);
-        let candidates = makeCandidates(observer.structuredContent, args.pid, args.windowId, args.text);
-        if (configured.perception !== 'disabled' && !candidates.some(candidate => candidate.tool)) {
+        const observationFailure = observer.ok
+          ? describeCuaObservationFailure(observer.structuredContent)
+          : (observer.error ?? 'Cua observation failed');
+        let scope: 'window' | 'desktop' = 'window';
+        let desktopCapture: DesktopCapture | null = null;
+        let candidates: Candidate[];
+        if (observationFailure) {
+          const fallback = await desktopObservationCandidates(session.projectId, sessionId, input.abortSignal)
+            .catch((error: unknown) => {
+              throw new Error(
+                `${observationFailure} Desktop fallback also failed: ${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+              );
+            });
+          // Fail closed with the original, actionable reason when the desktop
+          // capture registry is unavailable too.
+          if (!fallback) throw new Error(observationFailure);
+          scope = 'desktop';
+          desktopCapture = fallback.capture;
+          candidates = [...fallback.candidates, ...standaloneCandidates('Reobserve the primary desktop')];
+        } else {
+          candidates = makeCandidates(observer.structuredContent, args.pid, args.windowId, args.text);
+        }
+        if (scope === 'window' && configured.perception !== 'disabled' && !candidates.some(candidate => candidate.tool)) {
           const tools = mcpClientManager.getCachedTools(CUA_SERVER_ID, session.projectId, sessionId);
           const parser = tools.find(tool => tool.name === 'parse_visual_regions');
           const click = tools.find(tool => tool.name === 'click');
@@ -131,6 +192,9 @@ export const jevSessionToolProvider: SessionToolProvider = {
         const compactObservation = JSON.stringify({
           pid: args.pid,
           window_id: args.windowId,
+          scope,
+          ...(desktopCapture ? { display_id: desktopCapture.displayId } : {}),
+          ...(observationFailure ? { window_observation_error: observationFailure } : {}),
           elements: candidates.filter(candidate => candidate.tool).map(candidate => ({ id: candidate.id, description: candidate.description })),
         }).slice(0, 12_000);
         const client: JevDecisionService = mock
@@ -158,11 +222,19 @@ export const jevSessionToolProvider: SessionToolProvider = {
         signal.throwIfAborted();
         const executed = await mcpClientManager.callTool(CUA_SERVER_ID, selected.tool, selected.args, session.projectId, sessionId, signal);
         if (!executed.ok) throw new Error(executed.error ?? 'Cua action failed; reobserve before retrying');
-        const after = await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
-        const afterFailure = after.ok ? describeCuaObservationFailure(after.structuredContent) : null;
+        const after = scope === 'desktop'
+          ? await mcpClientManager.callTool(CUA_SERVER_ID, 'get_desktop_state', { max_image_dimension: DESKTOP_CAPTURE_MAX_DIMENSION }, session.projectId, sessionId, input.abortSignal)
+          : await mcpClientManager.callTool(CUA_SERVER_ID, 'get_window_state', { pid: args.pid, window_id: args.windowId, include_screenshot: false, max_elements: 80 }, session.projectId, sessionId, input.abortSignal);
+        const afterFailure = after.ok ? describeCuaObservationFailure(after.structuredContent) : (after.error ?? 'Cua observation failed');
+        const verified = after.ok && !afterFailure;
         return {
-          result: { acted: true, selected: selected.id, confidence: decision.confidence, action: executed.structuredContent, after: after.structuredContent, verification: after.ok && !afterFailure ? 'fresh_observation' : 'unverified', observationError: after.error ?? afterFailure },
-          displaySummary: `Jev selected ${selected.id}; ${after.ok && !afterFailure ? 'fresh window state captured' : 'post-action verification unavailable'}`,
+          result: {
+            acted: true, scope, selected: selected.id, confidence: decision.confidence,
+            action: executed.structuredContent, after: after.structuredContent,
+            verification: verified ? 'fresh_observation' : 'unverified',
+            ...(verified ? {} : { observationError: afterFailure }),
+          },
+          displaySummary: `Jev selected ${selected.id}; ${verified ? (scope === 'desktop' ? 'fresh primary-desktop capture taken' : 'fresh window state captured') : 'post-action verification unavailable'}`,
           artifacts: [],
         };
       },
