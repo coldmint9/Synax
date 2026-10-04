@@ -75,6 +75,31 @@ it("lists local branches and prevents choosing a branch used by another worktree
     "r",
   );
 });
+it("confirms and transfers dirty files before switching", async () => {
+  const dirtyBranches = { ...branches, dirtyFileCount: 2 };
+  vi.mocked(agentRuntimeApi.listSessionBranches).mockResolvedValue(dirtyBranches);
+  vi.mocked(agentRuntimeApi.switchSessionBranch).mockResolvedValue({
+    ...dirtyBranches,
+    current: "feature",
+    dirtyFileCount: 0,
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(
+    <RepositoryBranchPicker
+      sessionId="s"
+      rootId="r"
+      branch="main"
+      onSwitched={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: /Switch Git branch/ }));
+  await userEvent.click(await screen.findByRole("option", { name: "feature" }));
+  await waitFor(() =>
+    expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith("s", "feature", "r", true),
+  );
+  expect(confirm).toHaveBeenCalledOnce();
+  confirm.mockRestore();
+});
 it("keeps a failed switch visible without duplicating its alert in a closing menu", async () => {
   vi.mocked(agentRuntimeApi.switchSessionBranch).mockRejectedValue(
     new Error("uncommitted changes"),

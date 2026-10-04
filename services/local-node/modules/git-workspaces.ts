@@ -988,11 +988,12 @@ export async function attachDetachedGitBranch(
   });
 }
 
-/** Change this worktree, never discard edits, auto-stash, or guess remote refs. */
+/** Change this worktree, optionally carrying all local edits to the target branch. */
 export async function switchGitBranch(
   repositoryPath: RepositoryInput,
   branch: string,
   assertIdle: (root: string) => void = () => {},
+  options: { transferChanges?: boolean } = {},
 ): Promise<string> {
   const context = await assertRepository(repositoryPath);
   return withRepositoryLock(context, async () => {
@@ -1003,7 +1004,7 @@ export async function switchGitBranch(
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();
     if (current === branch) return current;
-    await assertCheckoutSafe(context);
+    await assertNoGitOperation(context);
     const occupied = (await rawWorktrees(context)).find(
       (item) =>
         item.branch === branch &&
@@ -1015,7 +1016,51 @@ export async function switchGitBranch(
         409,
       );
     assertIdle(context.root);
-    await git(context.location, context.root, ["switch", "--no-guess", branch]);
+    const dirty = await countGitCheckoutChanges(context.location);
+    let stashRef: string | undefined;
+    if (dirty && !options.transferChanges)
+      throw new GitWorkspaceError(
+        "Commit or stash uncommitted changes before switching branches.",
+        409,
+      );
+    if (dirty) {
+      const marker = `synax-branch-transfer-${randomUUID()}`;
+      await git(context.location, context.root, ["stash", "push", "-u", "-m", marker]);
+      const stashList = await git(context.location, context.root, [
+        "stash",
+        "list",
+        "--format=%H%x00%s",
+        "-1",
+      ]);
+      const entry = stashList.stdout.split("\0")[0]?.trim();
+      if (!entry || !stashList.stdout.includes(marker))
+        throw new GitWorkspaceError(
+          "Git created no identifiable temporary stash for the branch transfer.",
+          500,
+        );
+      // Git's stash commands require a stash selector, while the hash is only
+      // useful for diagnostics. The newly created entry is always stash@{0}
+      // while this repository lock is held.
+      stashRef = "stash@{0}";
+    }
+    try {
+      await git(context.location, context.root, ["switch", "--no-guess", branch]);
+      if (stashRef) {
+        try {
+          await git(context.location, context.root, ["stash", "apply", "--index", stashRef]);
+          await git(context.location, context.root, ["stash", "drop", stashRef]);
+        } catch (error) {
+          throw new GitWorkspaceError(
+            `The branch changed, but applying transferred changes conflicted. The temporary stash is ${stashRef}. Resolve the conflicts or run git stash apply ${stashRef}. ${error instanceof Error ? error.message : String(error)}`,
+            409,
+          );
+        }
+      }
+    } catch (error) {
+      if (stashRef && error instanceof GitWorkspaceError && error.status === 409)
+        throw error;
+      throw error;
+    }
     return (
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();

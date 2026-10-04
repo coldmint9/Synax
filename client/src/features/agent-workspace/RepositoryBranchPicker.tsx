@@ -108,6 +108,16 @@ function BranchPickerContent({
     if (!name || disabled || mutating.current) return;
     const option = data?.branches.find((item) => item.name === name);
     if (!option || option.occupied) return;
+    const transferChanges = Boolean(data?.dirtyFileCount);
+    if (
+      transferChanges &&
+      !window.confirm(
+        zh
+          ? `当前有 ${data?.dirtyFileCount} 个未提交文件。是否将这些改动转移到分支“${name}”？`
+          : `There are ${data?.dirtyFileCount} uncommitted files. Transfer them to “${name}”?`,
+      )
+    )
+      return;
     close();
     if (name === data?.current) return;
     const request = ++generation.current;
@@ -115,11 +125,9 @@ function BranchPickerContent({
     setSwitching(true);
     setError(null);
     try {
-      const result = await agentRuntimeApi.switchSessionBranch(
-        sessionId,
-        name,
-        rootId,
-      );
+      const result = transferChanges
+        ? await agentRuntimeApi.switchSessionBranch(sessionId, name, rootId, true)
+        : await agentRuntimeApi.switchSessionBranch(sessionId, name, rootId);
       if (request === generation.current) {
         setData(result);
         refreshWorkspace(sessionId, rootId);

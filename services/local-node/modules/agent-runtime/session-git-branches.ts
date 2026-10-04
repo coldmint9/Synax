@@ -136,6 +136,7 @@ export function switchSessionGitBranch(
   sessionId: string,
   branch: string,
   rootId?: string,
+  transferChanges = false,
 ) {
   return withGitErrors(async () => {
     const session = agentRuntimeStore.getSession(sessionId);
@@ -153,6 +154,7 @@ export function switchSessionGitBranch(
         assertRepositoryIdle(physicalRoot);
         checkoutPath = physicalRoot;
       },
+      { transferChanges },
     );
     // Several sessions can share one physical checkout; invalidate every snapshot.
     for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {

@@ -1131,12 +1131,17 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/git/branches/create`,
       { method: "POST", body: JSON.stringify({ branch, rootId }) },
     ),
-  switchSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
+  switchSessionBranch: (
+    sessionId: string,
+    branch: string,
+    rootId?: string,
+    transferChanges = false,
+  ) =>
     request<SessionGitBranches>(
       `/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`,
       {
         method: "POST",
-        body: JSON.stringify({ branch, rootId }),
+        body: JSON.stringify({ branch, rootId, transferChanges }),
       },
     ),
   getSessionEnvironment: (sessionId: string) =>

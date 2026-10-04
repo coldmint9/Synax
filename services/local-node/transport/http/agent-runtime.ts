@@ -1549,6 +1549,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/git/branches", async (c) => {
 const switchBranchSchema = z.object({
   branch: z.string().min(1).max(1024),
   rootId: z.string().min(1).optional(),
+  transferChanges: z.boolean().optional(),
 });
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/git/branches/switch",
@@ -1563,6 +1564,7 @@ agentRuntimeRoutes.post(
           c.req.param("sessionId"),
           parsed.data.branch,
           parsed.data.rootId,
+          parsed.data.transferChanges ?? false,
         ),
       );
     } catch (error) {

@@ -35,8 +35,8 @@ function session(root = one, includeReference = true) {
   ] } });
   return created;
 }
-function switchBranch(id: string, rootId?: string) {
-  return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/switch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: 'feature', rootId }) });
+function switchBranch(id: string, rootId?: string, transferChanges = false) {
+  return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/switch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: 'feature', rootId, transferChanges }) });
 }
 it('requires an explicit member and switches only the selected checkout', async () => {
   const owner = session();
@@ -129,6 +129,26 @@ it('counts a staged rename as one changed file', async () => {
   git(one, 'mv', 'file.txt', 'renamed file.txt');
   const result = await agentRuntimeRoutes.request(`/sessions/${owner.id}/git/branches?rootId=primary`);
   expect((await result.json()).dirtyFileCount).toBe(1);
+});
+it('transfers tracked and untracked changes when explicitly requested', async () => {
+  const owner = session(one, false);
+  fs.writeFileSync(path.join(one, 'file.txt'), 'transferred');
+  fs.writeFileSync(path.join(one, 'untracked.txt'), 'also transferred');
+  const result = await switchBranch(owner.id, 'primary', true);
+  expect(result.status, await result.clone().text()).toBe(200);
+  expect(git(one, 'branch', '--show-current')).toBe('feature');
+  expect(fs.readFileSync(path.join(one, 'file.txt'), 'utf8')).toBe('transferred');
+  expect(fs.readFileSync(path.join(one, 'untracked.txt'), 'utf8')).toBe('also transferred');
+  expect(git(one, 'stash', 'list')).toBe('');
+});
+it('keeps dirty changes in place when transfer was not confirmed', async () => {
+  const owner = session(one, false);
+  fs.writeFileSync(path.join(one, 'file.txt'), 'keep here');
+  const result = await switchBranch(owner.id, 'primary');
+  expect(result.status).toBe(409);
+  expect(git(one, 'branch', '--show-current')).toBe('main');
+  expect(fs.readFileSync(path.join(one, 'file.txt'), 'utf8')).toBe('keep here');
+  expect(git(one, 'stash', 'list')).toBe('');
 });
 it('does not require a local main branch to create a branch', async () => {
   const owner = session(one, false);
