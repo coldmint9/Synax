@@ -1,6 +1,7 @@
 import { useWorkbenchPageActive } from "../../app/layouts/CachedWorkbenchPage";
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import {
   agentRuntimeApi,
   type SessionEnvironment,
@@ -66,6 +67,23 @@ export function useSessionEnvironment(sessionId: string | null) {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
+    const refreshFromRuntimeEvent = (event: MessageEvent) => {
+      let payload: { sessionId?: string } | null = null;
+      try {
+        payload = JSON.parse(event.data) as { sessionId?: string };
+      } catch {
+        return;
+      }
+      if (payload?.sessionId !== sessionId || cancelled || inFlight) return;
+      cache.delete(sessionId);
+      void reload();
+    };
+    const unsubscribe = subscribe({
+      events: {
+        session_changed: refreshFromRuntimeEvent,
+        session_step_completed: refreshFromRuntimeEvent,
+      },
+    });
     const tick = async () => {
       if (cancelled || document.hidden || inFlight) return;
       clearTimeout(timer);
@@ -85,6 +103,7 @@ export function useSessionEnvironment(sessionId: string | null) {
       ++generation.current;
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
+      unsubscribe();
     };
   }, [sessionId, reload, active]);
 
