@@ -49,6 +49,7 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
     label: `${tool.title || tool.name} (MCP ${serverId})`,
     description: tool.description ?? `Call MCP tool ${tool.name} on server ${serverId}.`,
     category: 'mcp',
+    codeModeReadOnly: tool.readOnlyHint === true,
     mutability: tool.readOnlyHint ? 'read' : 'task',
     resumeBehavior: 'wait_permission',
     progressiveDetails: `Executes MCP tool ${tool.name} on configured server ${serverId}.`,

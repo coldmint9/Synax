@@ -5,6 +5,7 @@ export default defineConfig({
     server: "services/local-node/entrypoints/http-server.ts",
     "services/cloud-node/server": "services/cloud-node/server.ts",
     cli: "cli/index.ts",
+    "workers/code-mode": "services/local-node/modules/agent-runtime/code-mode/worker.mjs",
     "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
   },
   format: ["cjs"],

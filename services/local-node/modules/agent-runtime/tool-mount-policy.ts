@@ -1,3 +1,4 @@
+import { CODE_TOOL_IDS, codeModeEnabled } from "./code-mode/policy.js";
 import { assertGitMrBinding } from './git/binding.js';
 import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
@@ -25,7 +26,7 @@ export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): 
  * unmounted tool must not be advertised to the model or capability UI at all.
  */
 const PLAN_TOOLS = new Set([
-  'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
+  'code.run', 'code.tools', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
   'webSearch',
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
@@ -37,6 +38,7 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
+  if (CODE_TOOL_IDS.has(tool.id) && !codeModeEnabled(session)) return false;
   if (session.profileId === 'git-manager') {
     try { assertGitMrBinding(session.id); } catch { return false; }
     return (GIT_MANAGER_TOOL_IDS as readonly string[]).includes(tool.id);

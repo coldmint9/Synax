@@ -2,7 +2,7 @@
   "name": "synax",
   "productName": "Synax",
   "private": false,
-  "version": "1.6.7",
+  "version": "1.7.0",
   "license": "Apache-2.0",
   "author": "Synax",
   "description": "Synax AI coding workspace",
@@ -67,7 +67,9 @@
     "storage:compact": "tsx scripts/storage-maintenance.ts --compact",
     "version:sync": "node scripts/release-version.mjs sync",
     "version:patch": "node scripts/release-version.mjs patch",
-    "version:minor": "node scripts/release-version.mjs minor"
+    "version:minor": "node scripts/release-version.mjs minor",
+    "test:code-mode": "vitest run services/local-node/modules/agent-runtime/code-mode",
+    "test:code-mode:bundle": "node scripts/code-mode-smoke.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
@@ -90,6 +92,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.270",
     "@hono/node-server": "^1.13.0",
     "@internationalized/date": "^3.12.4",
+    "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
     "@libsql/client": "^0.17.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
@@ -115,6 +118,7 @@
     "parse5": "^7.3.0",
     "pino": "^9.6.0",
     "playwright-core": "^1.61.1",
+    "quickjs-emscripten-core": "0.32.0",
     "react": "19.2.6",
     "react-aria": "^3.52.1",
     "react-aria-components": "^1.21.1",

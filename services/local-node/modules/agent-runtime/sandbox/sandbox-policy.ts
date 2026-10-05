@@ -20,6 +20,10 @@ const approvals = new AsyncLocalStorage<{
   toolId?: string;
 }>();
 
+export function withoutSandboxApproval<T>(action: () => T): T {
+  return approvals.exit(action);
+}
+
 /** Approval is scoped to one execution, never persisted as a sandbox bypass. */
 export function withSandboxApproval<T>(
   sessionId: string,

@@ -53,9 +53,7 @@ function toToolDefs(
       title: typeof tool.title === "string" ? tool.title : undefined,
       description:
         typeof tool.description === "string" ? tool.description : undefined,
-      readOnlyHint: Boolean(
-        (tool.annotations as Record<string, unknown> | undefined)?.readOnlyHint,
-      ),
+      readOnlyHint: (tool.annotations as Record<string, unknown> | undefined)?.readOnlyHint === true,
       inputSchema: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema as Record<string, unknown> : undefined,
       outputSchema: tool.outputSchema && typeof tool.outputSchema === "object" ? tool.outputSchema as Record<string, unknown> : undefined,
     }))
@@ -176,7 +174,7 @@ export class McpClientManager {
           throw new Error("The MCP project has no registered workspace. Set an explicit cwd.");
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         const client = new Client(
-          { name: "synax-host", version: "1.6.7" },
+          { name: "synax-host", version: "1.7.0" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -375,7 +373,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "1.6.7" },
+      { name: "synax-host-probe", version: "1.7.0" },
       { capabilities: {} },
     );
     try {

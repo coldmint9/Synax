@@ -1,3 +1,7 @@
+import { waitForCodeRead } from "./code-mode/cancellation.js";
+import { createCodeTools } from "./code-mode/tools.js";
+import { canComposeTool } from "./code-mode/policy.js";
+import { codeParentId } from "./code-mode/history.js";
 import { extensionStore } from "../extensions/extension-store.js";
 import { customToolProvider } from "../extensions/custom-tool-provider.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
@@ -103,6 +107,8 @@ function summarize(value: unknown): string {
 }
 
 export interface ExecuteToolOptions {
+  /** Internal read-only composition: never suspend for approval. */
+  codeModeParentId?: string;
   abortSignal?: AbortSignal;
   runId?: string | null;
   stepId?: string | null;
@@ -154,6 +160,7 @@ export class ToolRegistry {
       ...browserTools,
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
+    for (const tool of createCodeTools(this, this.store, this.profiles)) this.register(tool);
     this.registerProvider(mcpSessionToolProvider);
     this.registerProvider(jevSessionToolProvider);
     this.registerProvider(customToolProvider);
@@ -604,7 +611,9 @@ export class ToolRegistry {
     const profile = this.profiles.getForSession(session);
     const tool = this.getForSession(sessionId, toolId);
 
-    const controlError = controlToolError(session, tool, args);
+    const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
+      ? "Tool is no longer approved for Code Mode."
+      : controlToolError(session, tool, args);
     if (
       controlError ||
       (!profileCanUseTool(profile, tool) &&
@@ -683,6 +692,7 @@ export class ToolRegistry {
         toolId: tool.id,
         category: tool.category,
         mutability: tool.mutability,
+        ...(codeParentId(record) ? { parentToolCallId: codeParentId(record) } : {}),
       },
     });
 
@@ -734,6 +744,16 @@ export class ToolRegistry {
       permissionDecisionId: decision.id,
     });
 
+    if (decision.action === "ask" && options.codeModeParentId) {
+      const reason = "Code Mode cannot wait for approval. Invoke this tool directly to request permission.";
+      const denied = this.store.updatePermission(sessionId, decision.id, { action: "deny", resolvedAt: nowIso(), reason });
+      const recordDenied = this.store.updateToolCall(sessionId, record.id, { status: "denied", error: reason, outputSummary: reason, endedAt: nowIso() });
+      this.events.append({ sessionId, type: "tool_result", summary: reason, payload: {
+        runId: record.runId, stepId: record.stepId, toolCallId: record.id,
+        parentToolCallId: options.codeModeParentId, status: "denied",
+      } });
+      return { record: recordDenied, permission: denied };
+    }
     if (decision.action === "ask" && session.profileId === "specialist") {
       const reason =
         "This operation needs user approval. Return the permission blocker to the primary agent; specialists never open their own approval dialog.";
@@ -978,7 +998,7 @@ export class ToolRegistry {
         (tool.mutability === "write" ||
           tool.id === "bash" ||
           tool.id === "verification.run" ||
-          tool.category === "mcp");
+          (tool.category === "mcp" && !codeParentId(record)));
       const fingerprintScope =
         typeof (args as { path?: unknown })?.path === "string"
           ? [(args as { path: string }).path]
@@ -999,13 +1019,14 @@ export class ToolRegistry {
         assertRuntimeExecutionCurrent();
         assertHistoryUnlocked(sessionId);
         assertGrantCurrent();
-        return inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
+        const result = inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
+        return codeParentId(record) ? waitForCodeRead(result, abortSignal) : result;
       };
       const checkpointMutation =
         tool.mutability === "write" ||
         tool.id === "bash" ||
         tool.id === "verification.run" ||
-        tool.category === "mcp";
+        (tool.category === "mcp" && !codeParentId(record));
       let undoPaths: string[] | undefined;
       if (
         ["file.write", "file.delete"].includes(tool.id) &&
@@ -1049,10 +1070,7 @@ export class ToolRegistry {
         };
       }
       const outputSummary = result.displaySummary.slice(0, SUMMARY_LIMIT);
-      const status =
-        result.displaySummary.length > SUMMARY_LIMIT
-          ? "compacted"
-          : "completed";
+      const status = result.outcome ?? (result.displaySummary.length > SUMMARY_LIMIT ? "compacted" : "completed");
 
       for (const artifact of result.artifacts) {
         this.evidence.append({
@@ -1070,6 +1088,7 @@ export class ToolRegistry {
         status,
         outputSummary,
         outputRef: result.result ?? null,
+        error: result.outcome ? outputSummary : null,
         contentParts: result.contentParts,
         endedAt: nowIso(),
       });
@@ -1119,6 +1138,7 @@ export class ToolRegistry {
           runId: completed.runId,
           stepId: completed.stepId,
           toolCallId: completed.id,
+          ...(codeParentId(completed) ? { parentToolCallId: codeParentId(completed) } : {}),
           status,
           followUpHints: result.followUpHints ?? [],
         },
@@ -1132,7 +1152,7 @@ export class ToolRegistry {
         (tool.mutability === "write" ||
           tool.id === "bash" ||
           tool.id === "verification.run" ||
-          tool.category === "mcp")
+          (tool.category === "mcp" && !codeParentId(record)))
       ) {
         work.hasChanges = true;
         work.changeVersion++;
@@ -1158,6 +1178,7 @@ export class ToolRegistry {
           runId: failed.runId,
           stepId: failed.stepId,
           toolCallId: failed.id,
+          ...(codeParentId(failed) ? { parentToolCallId: codeParentId(failed) } : {}),
           status: failed.status,
           error: message,
         },

@@ -58,12 +58,19 @@ export interface ComputerUseSettings {
   perception: 'disabled' | 'auto' | 'required'
 }
 
+export interface CodeModeSettings {
+  enabled: boolean
+  /** Exact runtime MCP tool IDs approved by the project administrator. */
+  mcpTools: string[]
+}
+
 export interface ProjectSettings {
   projectId: string
   version: number
   basics: ProjectBasics
   provider: ProjectProviderOverride
   mcpServers: McpServerConfig[]
+  codeMode?: CodeModeSettings
   computerUse: ComputerUseSettings
   collaboration: CollaborationSettings
   notifications: NotificationSettings
@@ -77,6 +84,7 @@ export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
   mcpServers?: McpServerConfig[]
+  codeMode?: Partial<CodeModeSettings>
   computerUse?: Partial<ComputerUseSettings>
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>

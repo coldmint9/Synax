@@ -248,7 +248,7 @@ export async function withCheckpointMutation<T>(
   const deadline = Date.now() + mutationWaitBudgetMs(),
     startedAt = Date.now();
   let attempt = 0,
-    lastConflict: MutationConflict | null = null,
+    lastConflict: MutationConflict,
     recovered = false;
   for (;;) {
     signal?.throwIfAborted();
@@ -262,10 +262,10 @@ export async function withCheckpointMutation<T>(
           won: true as const,
           value: await recordClaimedMutation(claim.id, action, prepared),
         };
-      lastConflict = claim;
-      return { won: false as const };
+      return { won: false as const, conflict: claim };
     });
     if (outcome.won) return outcome.value;
+    lastConflict = outcome.conflict;
     // A holder whose process is gone can never finish. Reaping it here keeps one
     // dead writer from wedging the root until unrelated maintenance happens to run.
     if (!recovered) {

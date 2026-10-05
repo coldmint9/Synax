@@ -52,12 +52,19 @@ export interface ComplianceSettings {
   piiMasking: boolean
 }
 
+export interface CodeModeSettings {
+  enabled: boolean
+  /** Exact runtime MCP tool IDs approved by the project administrator. */
+  mcpTools: string[]
+}
+
 export interface ProjectSettings {
   projectId: string
   version: number
   basics: ProjectBasics
   provider: ProjectProviderOverride
   mcpServers: McpServerConfig[]
+  codeMode?: CodeModeSettings
   computerUse: ComputerUseSettings
   collaboration: CollaborationSettings
   notifications: NotificationSettings
@@ -71,13 +78,14 @@ export interface UpdateProjectSettingsRequest {
   basics?: Partial<ProjectBasics>
   provider?: Partial<ProjectProviderOverride>
   mcpServers?: McpServerConfig[]
+  codeMode?: Partial<CodeModeSettings>
   computerUse?: Partial<ComputerUseSettings>
   collaboration?: Partial<CollaborationSettings>
   notifications?: Partial<NotificationSettings>
   compliance?: Partial<ComplianceSettings>
 }
 
-export type ProjectSettingsSection = 'basics' | 'provider' | 'computerUse' | 'mcp' | 'collaboration' | 'notifications' | 'compliance'
+export type ProjectSettingsSection = 'codeMode' | 'basics' | 'provider' | 'computerUse' | 'mcp' | 'collaboration' | 'notifications' | 'compliance'
 
 export interface HighRiskAuthEnvelope {
   confirmPhrase: string
@@ -100,6 +108,7 @@ export function createDefaultProjectSettings(projectId: string, updatedBy = 'sys
     },
     provider: {},
     mcpServers: [],
+    codeMode: { enabled: false, mcpTools: [] },
     computerUse: DEFAULT_COMPUTER_USE_SETTINGS,
     collaboration: {
       agentsAllowDirectCommit: false,

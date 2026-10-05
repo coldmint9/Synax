@@ -606,6 +606,8 @@ export interface ToolExecutionArtifactInput {
 }
 
 export interface ToolExecutionResult {
+  /** Logical failure with a structured output retained for audit and projection. */
+  outcome?: "failed" | "denied";
   contentParts?: RuntimeContentPart[];
   suspend?: { interactionId: string };
   result: unknown;
@@ -615,6 +617,8 @@ export interface ToolExecutionResult {
 }
 
 export interface RegisteredTool {
+  /** Set by the MCP adapter only when the server explicitly declares read-only. */
+  codeModeReadOnly?: boolean;
   id: string;
   label: string;
   description: string;

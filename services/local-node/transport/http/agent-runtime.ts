@@ -258,7 +258,7 @@ async function archiveSessionAfterShutdown(
     );
     await closeAcpAgentSessions(sessionIds);
     await stopSessionBackgroundProcesses(sessionIds);
-    agentSessionRuntime.cancel(sessionId);
+    agentSessionRuntime.interrupt(sessionId);
 
     return { ...agentSessionRuntime.archive(sessionId), parentId };
   });
@@ -720,7 +720,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
       id,
       "User requested session stop.",
       () => {
-        agentSessionRuntime.cancel(id);
+        agentSessionRuntime.interrupt(id);
         for (const session of agentRuntimeStore.listSessionTree(id))
           invalidateSessionEnvironment(session.id);
         if (parentId) invalidateSessionEnvironment(parentId);

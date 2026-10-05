@@ -91,7 +91,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   // next request look evicted even though the conversation itself is unchanged.
   // Keep the persisted snapshots until the context compaction boundary replaces
   // them with a deterministic checkpoint.
-  const includeHistoricalRuntimeReminders = true;
+  let includeHistoricalRuntimeReminders = true;
   const systemMessageContents = new Set<string>();
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
@@ -125,6 +125,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   }
   const boundaryState = sessionContextBoundary(input.sessionId, history);
   const { steps, boundary } = boundaryState;
+  includeHistoricalRuntimeReminders = !boundaryState.checkpointWork?.checkpoint;
   const policy = resolveContextCompactionPolicy(
     session.sessionMetadata?.contextCompactionPolicy,
   );

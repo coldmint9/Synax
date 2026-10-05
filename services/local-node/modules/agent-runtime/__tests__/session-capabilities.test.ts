@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,7 +30,8 @@ describe('resolveSessionCapabilities', () => {
     expect(caps.tools.available.some((tool) => tool.id === 'file.write')).toBe(false);
     expect(caps.tools.visible).toEqual(caps.tools.available);
     expect(caps.skills.active).toEqual([]);
-    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(['synax-builtin/synax-explore']);
+    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(expect.arrayContaining(['synax-builtin/synax-explore', 'synax-builtin/visualize']));
+    expect(caps.skills.candidates.some((skill) => skill.id.includes('interactive-artifacts'))).toBe(false);
   });
 
   it('exposes write tools for executor from the start', () => {
@@ -38,7 +39,7 @@ describe('resolveSessionCapabilities', () => {
     const caps = resolveSessionCapabilities(session.id);
 
     expect(caps.tools.visible.some((tool) => tool.id === 'file.write')).toBe(true);
-    expect(caps.tools.visible.some((tool) => tool.id === 'edit')).toBe(true);
+    expect(caps.tools.visible.some((tool) => tool.id === 'file.patch')).toBe(true);
     expect(caps.tools.visible.some((tool) => tool.id === 'task.create')).toBe(true);
   });
 });

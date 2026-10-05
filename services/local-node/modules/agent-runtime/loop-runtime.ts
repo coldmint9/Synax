@@ -1,3 +1,4 @@
+import { isCodeNestedCall } from "./code-mode/history.js";
 import { createHash } from "node:crypto";
 import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
 import {
@@ -876,7 +877,7 @@ export class AgentLoopRuntime {
               (message) =>
                 message.role === "user" || message.role === "assistant",
             );
-          const previousToolCalls = this.store.listRunToolCalls(run.id);
+          const previousToolCalls = this.store.listRunToolCalls(run.id).filter((call) => !isCodeNestedCall(call));
           const previousSteps = this.store.listRunSteps(run.id);
           const previousStep =
             previousSteps.find(
@@ -1781,7 +1782,7 @@ export class AgentLoopRuntime {
           const doomLoop = workStore.current(sessionId)
             ? null
             : detectDoomLoop(
-                this.store.listRunToolCalls(run.id),
+                this.store.listRunToolCalls(run.id).filter((call) => !isCodeNestedCall(call)),
                 profile?.doomLoopThreshold,
               );
           if (doomLoop) {
@@ -2772,7 +2773,7 @@ export class AgentLoopRuntime {
     projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
       systemMessageContents: projection.systemMessageContents,
-      toolCalls: this.store.listToolCalls(input.sessionId),
+      toolCalls: this.store.listToolCalls(input.sessionId).filter((call) => !isCodeNestedCall(call)),
     };
     if (projection.compacted)
       yield {
@@ -3294,7 +3295,7 @@ export class AgentLoopRuntime {
   ): Promise<void> {
     const runs = this.store.listRuns(sessionId);
     for (const run of runs) {
-      const calls = this.store.listRunToolCalls(run.id);
+      const calls = this.store.listRunToolCalls(run.id).filter((call) => !isCodeNestedCall(call));
       for (const call of calls) {
         if (call.toolId !== "subagent.delegate") continue;
         if (call.status === "completed" || call.status === "failed") continue;
@@ -3446,7 +3447,7 @@ export class AgentLoopRuntime {
     }
 
     const incompleteTools = this.store
-      .listRunToolCalls(lastRun.id)
+      .listRunToolCalls(lastRun.id).filter((call) => !isCodeNestedCall(call))
       .filter((tc) => tc.status === "running" || tc.status === "pending");
 
     const parts: string[] = [

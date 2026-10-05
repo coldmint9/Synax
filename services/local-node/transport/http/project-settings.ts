@@ -54,6 +54,7 @@ function discoveryDirectories(
 }
 
 const sectionSchema = z.enum([
+  "codeMode",
   "basics",
   "provider",
   "computerUse",

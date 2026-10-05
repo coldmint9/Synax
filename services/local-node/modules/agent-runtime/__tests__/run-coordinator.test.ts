@@ -465,7 +465,7 @@ describe("parent-hosted child control", () => {
     const interrupt = vi.fn(async () => {});
     coordinator = new RunCoordinator({ execute, interrupt });
     await coordinator.interrupt(child.id, "Stop child", () =>
-      agentSessionRuntime.cancel(child.id),
+      agentSessionRuntime.interrupt(child.id),
     );
     expect(interrupt).toHaveBeenCalledWith(child.id, "Stop child");
     expect(agentRuntimeStore.getSession(child.id).status).toBe("interrupted");
