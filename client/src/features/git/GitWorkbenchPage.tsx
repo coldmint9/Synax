@@ -75,7 +75,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   const [branchLoading, setBranchLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [refreshVersion, setRefreshVersion] = useState(0);
   const openRequest = (id: string) =>
     navigate(
       `/projects/${encodeURIComponent(projectId)}/git/mr/${encodeURIComponent(id)}`,
@@ -150,7 +149,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
     return () => {
       active = false;
     };
-  }, [projectId, rootId, refreshVersion]);
+  }, [projectId, rootId]);
   async function perform(action: () => Promise<unknown>) {
     setBusy(true);
     setError("");
@@ -228,21 +227,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <option value="presets">预设</option>
         </select>
         <span className="wh-divider" aria-hidden="true" />
-        <button
-          type="button"
-          className="wh-pill-btn wh-pill-btn--neutral"
-          disabled={busy || loading}
-          aria-label="刷新 Git 工作台"
-          title="刷新 Git 工作台"
-          onClick={() =>
-            void perform(async () => {
-              setRefreshVersion((value) => value + 1);
-            })
-          }
-        >
-          <RefreshCw size={14} />
-          <span className="git-island-action-label">刷新</span>
-        </button>
         <button
           type="button"
           className="wh-pill-btn wh-pill-btn--primary"
@@ -450,7 +434,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                 <p className="mr-empty">无法读取仓库历史。</p>
               ) : (
                 <GitHistoryTree
-                  key={`${projectId}/${rootId}/${refreshVersion}`}
+                  key={`${projectId}/${rootId}`}
                   workspace={workspace}
                   projectId={projectId}
                   rootId={rootId ?? undefined}

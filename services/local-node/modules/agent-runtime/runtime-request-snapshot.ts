@@ -37,7 +37,10 @@ export function snapshotRuntimeReminder(
 ): RuntimeReminderSnapshot {
   const saved = readRuntimeReminder(metadata);
   if (saved) return saved;
-  const content = `<system-reminder>\n${sections.filter(Boolean).join("\n")}\n</system-reminder>`;
+  const visibleSections = sections.filter(Boolean);
+  const content = visibleSections.length
+    ? `<system-reminder>\n${visibleSections.join("\n")}\n</system-reminder>`
+    : "";
   return {
     version: 1,
     content,

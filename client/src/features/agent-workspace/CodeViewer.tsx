@@ -1,6 +1,6 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, RefreshCw, Save } from "lucide-react";
+import { Download, Save } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionEnvironmentInputSource,
@@ -362,15 +362,6 @@ export const CodeViewer = memo(function CodeViewer({
             <Download size={11} />
           </a>
         )}
-        <button
-          type="button"
-          className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          onClick={() => void load()}
-          aria-label="刷新文件"
-          title="刷新文件"
-        >
-          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-        </button>
       </div>
       {!loading && !error && truncated && (
         <p role="status" className="px-3 py-1 text-xs text-muted-foreground">

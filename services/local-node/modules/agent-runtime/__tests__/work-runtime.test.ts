@@ -433,9 +433,9 @@ describe("durable cooperative work runtime", () => {
     expect(workStore.current(session.id)?.status).toBe("closing");
     expect(store.getRun(run.id).status).toBe("running");
     expect(workRuntime.toolError(session.id, "bash")).toBeNull();
-    expect(workRuntime.prompt(session.id)).toContain(
-      "Finish this turn with a concise answer",
-    );
+    // Chat work state remains available to the runtime, but it no longer
+    // emits a model-facing reminder or dictates the response shape.
+    expect(workRuntime.prompt(session.id)).toBe("");
   });
 
   it("stalled steps nudge without gating tools, and a concrete continuation resets the advisory state", async () => {

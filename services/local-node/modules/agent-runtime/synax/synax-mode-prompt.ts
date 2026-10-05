@@ -25,7 +25,7 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
 
   buildSection(context: SynaxModePromptContext): string | null {
     return [
-      "Session mode: chat. Automatically plan complex or explicitly planning-oriented requests and persist the latest plan report. Planning is a base capability, not a separate session mode. End with concise results, actual checks, and remaining or unverified work; no structured acceptance or automatic continuation.",
+      "Session mode: chat. Automatically plan complex or explicitly planning-oriented requests and persist the latest plan report. Planning is a base capability, not a separate session mode. Chat ends the current conversational turn; it does not use structured goal acceptance or automatic continuation.",
       "When a request needs a plan, use plan.propose even in chat. A saved plan is previewable across turns; approval or an explicit execution instruction is required before deferred execution. Execution stays in chat unless goal was selected.",
     ]
       .filter(Boolean)

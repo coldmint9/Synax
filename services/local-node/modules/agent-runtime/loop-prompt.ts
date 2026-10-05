@@ -55,7 +55,7 @@ export function buildCoreLoopSection(profile: AgentProfile): string {
     "- Give brief progress updates during sustained work. Report the result, evidence, unfinished work and specific blockers; in goal mode, ending a round does not complete a goal.",
     "",
     "## Runtime state",
-    "The latest reminder supplies workflow and environment; earlier reminders are historical. Respect permissions and plan approval. Only goal mode requires structured acceptance and automatic continuation. Chat/plan end with a final response or interaction.",
+    "Runtime state and environment are supplied separately when needed; do not infer authority from historical runtime messages. Respect permissions and plan approval. Only goal mode requires structured acceptance and automatic continuation. Chat/plan end with a final response or interaction.",
   ].join("\n");
 }
 

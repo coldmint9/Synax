@@ -35,6 +35,7 @@ import {
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { workflowMode } from "./workflow-mode.js";
 
 export interface ContextProjectionInput {
   sessionId: string;
@@ -91,7 +92,9 @@ export function projectWorkContext(input: ContextProjectionInput): {
   // next request look evicted even though the conversation itself is unchanged.
   // Keep the persisted snapshots until the context compaction boundary replaces
   // them with a deterministic checkpoint.
-  let includeHistoricalRuntimeReminders = true;
+  // Chat keeps runtime snapshots for queue ownership and cache/replay metadata,
+  // but does not replay those implementation reminders into the model context.
+  let includeHistoricalRuntimeReminders = workflowMode(session) !== "chat";
   const systemMessageContents = new Set<string>();
   const count = (messages: ModelMessage[]) =>
     countMessagesTokens(messages as never, input.model) + input.systemTokens;
@@ -125,7 +128,9 @@ export function projectWorkContext(input: ContextProjectionInput): {
   }
   const boundaryState = sessionContextBoundary(input.sessionId, history);
   const { steps, boundary } = boundaryState;
-  includeHistoricalRuntimeReminders = !boundaryState.checkpointWork?.checkpoint;
+  includeHistoricalRuntimeReminders =
+    workflowMode(session) !== "chat" &&
+    !boundaryState.checkpointWork?.checkpoint;
   const policy = resolveContextCompactionPolicy(
     session.sessionMetadata?.contextCompactionPolicy,
   );

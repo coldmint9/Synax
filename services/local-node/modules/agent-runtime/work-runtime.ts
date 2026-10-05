@@ -426,7 +426,7 @@ class WorkRuntime {
     if (!usesGoalWorkflow(session)) {
       return workflowMode(session) === 'plan'
         ? 'Planning is read-only. Research and propose a plan; do not execute it without user approval. A final response ends this turn, not an implementation or goal acceptance.'
-        : 'Finish this turn with a concise answer describing delivered results, actual checks, and any unverified or remaining work. Checks may use normal execution tools. No structured acceptance or automatic continuation is required.';
+        : '';
     }
     const inventory = evidenceInventory(work, this.calls(work), planBoundaryOf(session));
     // Advertise exactly what completion accepts: work-owned successful proof that

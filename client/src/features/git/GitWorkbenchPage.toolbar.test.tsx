@@ -105,8 +105,10 @@ describe("Git secondary island", () => {
       screen.queryByRole("option", { name: "运行记录" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Git 工作台" }));
-    await waitFor(() => expect(gitMrApi.list).toHaveBeenCalledTimes(2));
+    // The workbench toolbar no longer exposes a manual refresh action.
+    expect(
+      screen.queryByRole("button", { name: "刷新 Git 工作台" }),
+    ).toBeNull();
     fireEvent.click(create);
     expect(screen.getByRole("dialog")).toHaveTextContent("新建合并请求");
   });

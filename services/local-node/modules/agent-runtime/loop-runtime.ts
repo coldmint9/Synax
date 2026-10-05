@@ -2625,10 +2625,12 @@ export class AgentLoopRuntime {
       session.sessionMetadata,
     );
     const locale = resolvePromptLocale(input.input.locale, userRequest);
+    const mode = workflowMode(session);
 
     const contextForPrompt = input.context;
 
-    const systemPromptContent = buildLoopSystemPrompt({
+    const systemPromptContent = [
+      buildLoopSystemPrompt({
       profile: input.profile,
       context: contextForPrompt,
       locale,
@@ -2653,7 +2655,14 @@ export class AgentLoopRuntime {
       skillsSection,
       selectedReferencesSection: selectedReferences?.content,
       visualizationIntent,
-    });
+      }),
+      // Chat has no routine runtime-reminder message. Keep the execution
+      // environment in the stable system instruction so tools still resolve
+      // relative paths without re-injecting workflow/finish directives.
+      mode === "chat"
+        ? buildRuntimeEnvironment(input.sessionId, session.projectId)
+        : "",
+    ].filter(Boolean).join("\n\n");
 
     // Static instructions/reference preview; the complete request also contains historical and latest reminders
     // Writing this every step churned session_metadata (12+ KB rows) and emitted
@@ -2684,19 +2693,17 @@ export class AgentLoopRuntime {
       input.profile.consecutiveFailureReminderThreshold,
     );
 
-    const stepNote = buildLoopStepNote({
-      ...input,
-      mode: workflowMode(session),
-    });
-    const tailReminders = [
-      buildRuntimeEnvironment(input.sessionId, session.projectId),
-      workRuntime.prompt(input.sessionId) ?? "",
-      synaxAgent.buildRuntimeStateSection(session) ?? "",
-      goalEvidenceSection(session, input.previousToolCalls) ?? "",
-      stepNote,
-      failureReminder ?? "",
-      needsInstructionOverride ? userRequest : "",
-    ].filter(Boolean);
+    const tailReminders = mode === "chat"
+      ? []
+      : [
+          buildRuntimeEnvironment(input.sessionId, session.projectId),
+          workRuntime.prompt(input.sessionId) ?? "",
+          synaxAgent.buildRuntimeStateSection(session) ?? "",
+          goalEvidenceSection(session, input.previousToolCalls) ?? "",
+          buildLoopStepNote({ ...input, mode }),
+          failureReminder ?? "",
+          needsInstructionOverride ? userRequest : "",
+        ].filter(Boolean);
 
     const currentStep = this.store.getRunStep(input.stepId);
     const reminder = snapshotRuntimeReminder(
@@ -2712,10 +2719,12 @@ export class AgentLoopRuntime {
         )
         .map((message) => message.id),
     );
-    const reminderTokens = countMessagesTokens(
-      [runtimeReminderMessage(reminder)],
-      input.input.model ?? undefined,
-    );
+    const reminderTokens = reminder.content
+      ? countMessagesTokens(
+          [runtimeReminderMessage(reminder)],
+          input.input.model ?? undefined,
+        )
+      : 0;
     const toolComposition = await measureContextComposition({
       messages: [],
       tools: toolSet,
@@ -2770,7 +2779,7 @@ export class AgentLoopRuntime {
         }),
     });
     conversationMessages = projection.messages;
-    projection.systemMessageContents.add(reminder.content);
+    if (reminder.content) projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
       systemMessageContents: projection.systemMessageContents,
       toolCalls: this.store.listToolCalls(input.sessionId).filter((call) => !isCodeNestedCall(call)),
