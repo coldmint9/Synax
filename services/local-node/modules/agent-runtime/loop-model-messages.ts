@@ -705,18 +705,6 @@ function normalizeToolCallId(value: unknown): string {
   return makeRuntimeId("mtc");
 }
 
-/**
- * Compute the set of tool call IDs whose output has been cleared from context.
- * Exported so that dedup logic can skip cleared calls (they should be re-executed).
- */
-export function computeClearedToolCallIds(
-  store: AgentRuntimeStore,
-  sessionId: string,
-  clearing?: ClearingOptions,
-): Set<string> | null {
-  return buildClearSet(createLoopHistoryReader(store, sessionId), clearing);
-}
-
 function buildClearSet(
   history: LoopHistoryReader,
   clearing: ClearingOptions | undefined,

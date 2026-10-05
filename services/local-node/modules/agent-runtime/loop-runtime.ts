@@ -51,7 +51,6 @@ import { workRuntime } from "./work-runtime.js";
 import { workStore } from "./work-store.js";
 import {
   projectWorkContext,
-  evictedContextToolIds,
 } from "./context-projection.js";
 import { maybeLlmCompactContext } from "./llm-context-compaction.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
@@ -65,7 +64,6 @@ import {
 import {
   rootGoal,
   goalStopReason,
-  belongsToPlanExecution,
   goalEvidenceSection,
   type PlanExecutionBoundary,
 } from "./control-runtime.js";
@@ -133,7 +131,6 @@ import {
   CONTEXT_TOOL_CLEAR_KEEP_RECENT,
   CONTEXT_TOOL_CLEAR_EXCLUDE,
 } from "../../infrastructure/runtime/env.js";
-import { computeClearedToolCallIds } from "./loop-model-messages.js";
 import { inputQueueService } from "./input-queue-service.js";
 import { warmupMcpForSession } from "../../infrastructure/mcp/mcp-session-tool-provider.js";
 
@@ -1471,141 +1468,12 @@ export class AgentLoopRuntime {
             : modelResult.step.toolCalls;
           const allCalls = withIds(calls.slice(0, 50));
 
-          // Build dedup index from previous steps — same tool + same args on a
-          // read-only tool is needless re-execution that burns context.  Fold it.
-          // However, if the original output has been cleared from context, the LLM
-          // legitimately needs the data again — skip those from the dedup index.
-          const clearedIds = evictedContextToolIds(sessionId);
-          const clearedToolOutputs = computeClearedToolCallIds(
-            this.store,
-            sessionId,
-            {
-              contextLimit: runContextLimit,
-              threshold: CONTEXT_TOOL_CLEAR_THRESHOLD,
-              keepRecent: CONTEXT_TOOL_CLEAR_KEEP_RECENT,
-              excludeTools: CONTEXT_TOOL_CLEAR_EXCLUDE,
-              priorInputTokens: null,
-              forceActivated: clearingActivated,
-            },
-          );
-          for (const id of clearedToolOutputs ?? []) clearedIds.add(id);
-
-          const dedupIndex = new Map<string, ToolCallRecord>();
-          for (const prev of this.store.listRunToolCalls(run.id)) {
-            const boundary = rootGoal(this.store.getSession(sessionId)).root
-              .sessionMetadata?.plan as PlanExecutionBoundary | undefined;
-            if (
-              boundary?.executionId &&
-              !belongsToPlanExecution(prev, boundary)
-            )
-              continue;
-            if (prev.status === "completed" || prev.status === "compacted") {
-              // Don't dedup against calls whose output was cleared from context
-              if (clearedIds.has(prev.id)) continue;
-              if (
-                prev.stepId &&
-                this.store.getRunStep(prev.stepId).metadata
-                  .workChangeVersion !==
-                  workStore.current(sessionId)?.changeVersion
-              )
-                continue;
-              dedupIndex.set(`${prev.toolId}:${prev.argsHash}`, prev);
-            }
-          }
-
           // Unified parallel: launch all tool calls concurrently, no arbitrary cap.
           // The LLM already determined these calls are independent when it emitted
           // them together. If a write depends on a read, the LLM should call the
           // read in step N and the write in step N+1.
           const executions = await Promise.all(
             allCalls.map(async (call) => {
-              const tool = this.tools.list().find((t) => t.id === call.toolId);
-              if (
-                this.store.getRunStep(step.id).metadata.source !==
-                  "turn_reference" &&
-                tool?.mutability === "read" &&
-                !["bash", "verification.run", "context.read"].includes(
-                  tool.id,
-                ) &&
-                tool.category !== "mcp"
-              ) {
-                const argsHash = this.store.hashArgs(call.args);
-                const prev = dedupIndex.get(`${call.toolId}:${argsHash}`);
-                if (prev) {
-                  // Safety valve: if the same call has already been deduped 2+ times
-                  // in this run, the LLM clearly can't see the original result (likely
-                  // cleared or compacted away). Re-execute instead of deduping again.
-                  const priorDedups = this.store
-                    .listRunToolCalls(run.id)
-                    .filter(
-                      (tc) =>
-                        tc.toolId === call.toolId &&
-                        tc.argsHash === argsHash &&
-                        tc.status === "compacted" &&
-                        tc.outputRef === null,
-                    ).length;
-                  if (priorDedups >= 2) {
-                    logger.info(
-                      {
-                        sessionId,
-                        runId: run.id,
-                        stepId: step.id,
-                        toolId: call.toolId,
-                        argsHash,
-                        priorDedups,
-                      },
-                      "[agent-runtime] dedup safety valve — re-executing after repeated dedup misses",
-                    );
-                    return this.tools
-                      .execute(sessionId, call.toolId, call.args, {
-                        runId: run.id,
-                        stepId: step.id,
-                        modelToolCallId: call.id,
-                        resumeToken: optionsResumeToken(
-                          run.id,
-                          step.id,
-                          call.id,
-                        ),
-                        abortSignal: runAbortSignal,
-                      })
-                      .then((exec) => ({ call, exec }));
-                  }
-
-                  logger.info(
-                    {
-                      sessionId,
-                      runId: run.id,
-                      stepId: step.id,
-                      toolId: call.toolId,
-                      argsHash,
-                      originalCallId: prev.id,
-                    },
-                    "[agent-runtime] tool call deduplicated",
-                  );
-                  const dedupRecord = this.store.appendToolCall({
-                    id: makeRuntimeId("tc"),
-                    sessionId,
-                    runId: run.id,
-                    stepId: step.id,
-                    modelToolCallId: call.id,
-                    toolId: call.toolId,
-                    category: tool.category,
-                    mutability: tool.mutability,
-                    argsHash,
-                    inputSummary: prev.inputSummary,
-                    inputRef: call.toolId === "skill.load" ? call.args : null,
-                    outputSummary: `[Duplicate of earlier ${call.toolId} call — the result is already in your context above. Re-read what you received earlier instead of calling again.]`,
-                    outputRef: null,
-                    status: "compacted",
-                    permissionDecisionId: null,
-                    startedAt: nowIso(),
-                    endedAt: nowIso(),
-                    error: null,
-                  });
-                  return { call, exec: { record: dedupRecord } };
-                }
-              }
-
               return this.tools
                 .execute(sessionId, call.toolId, call.args, {
                   runId: run.id,

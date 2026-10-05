@@ -640,18 +640,3 @@ export const contextReferenceTool: RegisteredTool = {
     };
   },
 };
-
-/** Deduplication must use the actual projection boundary, not the old context-window percentage. */
-export function evictedContextToolIds(sessionId: string): Set<string> {
-  const work = workStore.current(sessionId);
-  if (!work) return new Set();
-  const history = createLoopHistoryReader(store, sessionId);
-  const { steps, boundary } = sessionContextBoundary(sessionId, history);
-  const excluded = new Set(steps.slice(0, boundary + 1).map((s) => s.id));
-  return new Set(
-    history
-      .listToolCalls()
-      .filter((c) => c.stepId && excluded.has(c.stepId))
-      .map((c) => c.id),
-  );
-}

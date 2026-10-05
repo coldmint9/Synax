@@ -2720,7 +2720,7 @@ describe("provider-bound session initialization prompt", () => {
   });
 
   it.each([300_000, 500_000, 500_001])(
-    "preserves tool clearing and dedup at %i input tokens in a 1M window",
+    "re-executes repeated reads and preserves tool clearing at %i input tokens in a 1M window",
     async (inputTokens) => {
       // Tool clearing now waits for the high-water mark (80% by default),
       // leaving the 50% range for memory preparation and checkpointing.
@@ -2802,8 +2802,10 @@ describe("provider-bound session initialization prompt", () => {
         // The first call is inserted before parallel execution and must remain eligible for re-reading.
         expect(initialCalls[0].modelToolCallId).toBe("read-0");
         const reread = calls.find((c) => c.modelToolCallId === "reread-0")!;
-        expect(reread.status).toBe(shouldClear ? "completed" : "compacted");
-        expect(reread.outputRef === null).toBe(!shouldClear);
+        // Repeated read-only calls are always executed: identical args do not
+        // imply an identical result (mutable workspace, session state).
+        expect(reread.status).toBe("completed");
+        expect(reread.outputRef).not.toBeNull();
         expect(
           JSON.stringify(capturedRequests[2].messages).includes(
             "result cleared",
