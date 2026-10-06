@@ -1335,7 +1335,7 @@ describe("agentLoopRuntime", () => {
     );
   });
 
-  it("waits for task.run child completion and injects the child summary into the parent tool result", async () => {
+  it("acknowledges background delegation and retains the result in the child session", async () => {
     queueMockStep(
       makeToolStep({
         message: "I am delegating this as a read-only subtask.",
@@ -1374,21 +1374,20 @@ describe("agentLoopRuntime", () => {
       .listSessions({ projectId: executorInput.projectId })
       .filter((candidate) => candidate.parentSessionId === session.id);
     expect(childSessions).toHaveLength(1);
-    expect(childSessions[0]?.status).toBe("completed");
-    expect(childSessions[0]?.resultSummary).toBe(
-      "Child summary: the module is read-only and safe.",
-    );
+    await vi.waitFor(() => {
+      const child = agentRuntimeStore.getSession(childSessions[0]!.id);
+      expect(child.status).toBe("completed");
+      expect(child.resultSummary).toBe("Child summary: the module is read-only and safe.");
+    });
 
     const [taskCall] = agentRuntimeStore
       .listToolCalls(session.id)
       .filter((call) => call.toolId === "subagent.delegate");
     expect(taskCall.outputSummary).toContain(childSessions[0]!.id);
-    expect(taskCall.outputSummary).toContain(
-      "Child summary: the module is read-only and safe.",
-    );
-    expect((taskCall.outputRef as { childSummary?: string }).childSummary).toBe(
-      "Child summary: the module is read-only and safe.",
-    );
+    expect(taskCall.status).toBe("completed");
+    expect(taskCall.outputSummary).toContain("accepted and running in background");
+    expect(taskCall.outputRef).toMatchObject({ childSessionId: childSessions[0]!.id, childStatus: "running" });
+    expect(taskCall.outputRef).not.toHaveProperty("childSummary");
     expect(agentLoopRuntime.listMessages(session.id).at(-1)?.content).toBe(
       "Parent run complete after child summary.",
     );
