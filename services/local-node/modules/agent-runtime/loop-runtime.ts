@@ -116,7 +116,6 @@ import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import {
   runChildToCompletion,
-  resolvePerChildTimeoutMs,
 } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -3233,10 +3232,7 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal,
   ): Promise<ToolCallRecord> {
     if (!result || typeof result !== "object") return record;
-    const taskResult = result as {
-      taskId?: unknown;
-      session?: { id?: unknown };
-    };
+    const taskResult = result as { taskId?: unknown; session?: { id?: unknown } };
     const childSessionId =
       typeof taskResult.taskId === "string"
         ? taskResult.taskId
@@ -3245,52 +3241,21 @@ export class AgentLoopRuntime {
           : null;
     if (!childSessionId) return record;
 
-    // Run the child with a wall-clock timeout so a hung sub-agent (e.g. a stalled
-    // LLM call) aborts itself instead of blocking the parent's Promise.all forever.
-    // The budget follows the same `limits.agentTimeoutMs` setting as the main
-    // agent, so children are no longer capped at a shorter hard-coded ceiling.
-    const childProjectId = this.store.tryGetSession(childSessionId)?.projectId;
-    const childResult = await runChildToCompletion(
+    void runChildToCompletion(
       childSessionId,
       { profileId: "subagent", prompt: "" },
-      { timeoutMs: resolvePerChildTimeoutMs(childProjectId), abortSignal },
-    );
+      { abortSignal },
+    ).catch((err) => {
+      logger.warn({ childSessionId, err }, "[agent-runtime] background subagent failed");
+    });
 
-    const childSession = this.store.tryGetSession(childSessionId);
-    const childSummary =
-      childSession?.resultSummary ??
-      childResult.error ??
-      `Child session ${childSessionId} finished with status ${childSession?.status ?? "deleted"}.`;
-    const status =
-      childResult.status === "completed" ? record.status : "failed";
-    const outputSummary = truncateSummary(
-      `Subtask ${childSessionId} ${childResult.status}: ${childSummary}`,
-    );
-    const updated = this.store.updateToolCall(record.sessionId, record.id, {
-      status,
-      outputSummary,
-      outputRef: {
-        ...(result as Record<string, unknown>),
-        childSessionId,
-        childStatus: childSession?.status ?? "deleted",
-        childSummary,
-      },
+    return this.store.updateToolCall(record.sessionId, record.id, {
+      status: "completed",
+      outputSummary: `Subtask ${childSessionId} accepted and running in background.`,
+      outputRef: { ...(result as Record<string, unknown>), childSessionId, childStatus: "running" },
       endedAt: nowIso(),
-      error: status === "failed" ? childSummary : null,
+      error: null,
     });
-    this.events.append({
-      sessionId: record.sessionId,
-      type: "tool_result",
-      summary: `subagent.delegate: ${outputSummary}`,
-      payload: {
-        runId: record.runId,
-        stepId: record.stepId,
-        toolCallId: record.id,
-        childSessionId,
-        childStatus: childSession?.status ?? "deleted",
-      },
-    });
-    return updated;
   }
 
   /**

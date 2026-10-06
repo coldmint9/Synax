@@ -7,41 +7,44 @@ import {
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
-import { getEffectiveConfig } from "../../infrastructure/runtime/config/config-store.js";
+/** A child is governed by liveness, not by a total wall-clock budget. */
+export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
+export const SUBAGENT_LEASE_DURATION_MS = 30_000;
+/** Compatibility value for callers that still pass the old option. */
+export const DEFAULT_PER_CHILD_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
-/** Fallback per-child wall-clock budget. Mirrors the main-agent default in
- *  config-defaults.ts (`limits.agentTimeoutMs: 300_000`) so a child never gets a
- *  shorter budget than the parent. Production callers resolve the project's
- *  configured value via resolvePerChildTimeoutMs(). */
-export const DEFAULT_PER_CHILD_TIMEOUT_MS = 300_000;
+export type SubagentLiveness = "healthy" | "stale" | "waiting" | "completed";
 
-/**
- * Per-child wall-clock budget, taken from the same setting the main agent uses:
- * `limits.agentTimeoutMs` of the project's effective config (project → global →
- * default). Sub-agents therefore follow the user's "Agent timeout" setting
- * instead of a hard-coded 180s ceiling. Falls back to the default on any
- * config-read problem so delegation never fails because of a bad config file.
- */
-export function resolvePerChildTimeoutMs(
-  projectId: string | null | undefined,
-): number {
-  if (!projectId) return DEFAULT_PER_CHILD_TIMEOUT_MS;
-  try {
-    const configured = getEffectiveConfig(projectId).limits?.agentTimeoutMs;
-    if (
-      typeof configured === "number" &&
-      Number.isFinite(configured) &&
-      configured > 0
-    ) {
-      return configured;
-    }
-  } catch (err) {
-    logger.warn(
-      { projectId, err },
-      "[subagent-orchestrator] failed to read configured agent timeout; using default",
-    );
-  }
-  return DEFAULT_PER_CHILD_TIMEOUT_MS;
+export interface SubagentTaskMetadata {
+  state?: string;
+  phase?: string;
+  lastHeartbeatAt?: string;
+  lastProgressAt?: string;
+  leaseExpiresAt?: string;
+  completedAt?: string;
+  consumedAt?: string;
+}
+
+export interface PersistedSubagentResult {
+  childSessionId: string;
+  parentSessionId: string | null;
+  status: string;
+  summary: string | null;
+  error: string | null;
+  metadata: SubagentTaskMetadata | null;
+}
+
+export function getSubagentLiveness(
+  status: string,
+  metadata: SubagentTaskMetadata | null | undefined,
+  now = Date.now(),
+): SubagentLiveness {
+  if (["completed", "failed", "cancelled", "interrupted"].includes(status))
+    return "completed";
+  if (metadata?.state === "waiting" || metadata?.phase === "waiting")
+    return "waiting";
+  const lease = metadata?.leaseExpiresAt ? Date.parse(metadata.leaseExpiresAt) : NaN;
+  return Number.isFinite(lease) && lease >= now ? "healthy" : "stale";
 }
 /** Mirror of the existing subagent.delegate concurrency cap. */
 export const DEFAULT_MAX_CONCURRENCY = 5;
@@ -71,6 +74,7 @@ export interface SubagentResult {
 
 export interface RunBatchOptions {
   maxConcurrency?: number;
+  /** Deprecated compatibility field; total wall-clock time is not used. */
   perChildTimeoutMs?: number;
   abortSignal?: AbortSignal;
   /** Called synchronously right after each child session is created, before it
@@ -98,6 +102,38 @@ const defaultDeps: OrchestratorDeps = {
     return agentRuntimeStore;
   },
 };
+
+export function readPersistedSubagentResult(
+  childSessionId: string,
+  expectedParentSessionId?: string | null,
+  deps: OrchestratorDeps = defaultDeps,
+): PersistedSubagentResult | null {
+  const child = deps.store.tryGetSession(childSessionId);
+  if (!child) return null;
+  if (expectedParentSessionId !== undefined && child.parentSessionId !== expectedParentSessionId)
+    return null;
+  return {
+    childSessionId,
+    parentSessionId: child.parentSessionId ?? null,
+    status: child.status,
+    summary: child.resultSummary ?? null,
+    error: child.blockedReason ?? null,
+    metadata: (child.sessionMetadata?.subagentTask as SubagentTaskMetadata | undefined) ?? null,
+  };
+}
+
+export function acknowledgePersistedSubagentResult(
+  childSessionId: string,
+  expectedParentSessionId?: string | null,
+  deps: OrchestratorDeps = defaultDeps,
+): boolean {
+  const result = readPersistedSubagentResult(childSessionId, expectedParentSessionId, deps);
+  if (!result || result.metadata?.consumedAt) return false;
+  deps.store.updateSessionMetadata?.(childSessionId, {
+    subagentTask: { ...(result.metadata ?? {}), consumedAt: nowIso() },
+  });
+  return true;
+}
 
 /** Child statuses the delegating parent can never resolve in-run: nothing drives
  *  another round or a resume while the delegate call is returning. Left alone they
@@ -150,9 +186,7 @@ function reapUnresolvableChild(
 export async function runChildToCompletion(
   childSessionId: string,
   spec: SubagentSpec,
-  opts: { timeoutMs: number; abortSignal?: AbortSignal } = {
-    timeoutMs: DEFAULT_PER_CHILD_TIMEOUT_MS,
-  },
+  opts: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
   deps: OrchestratorDeps = defaultDeps,
 ): Promise<SubagentResult> {
   const existing = deps.store.tryGetSession(childSessionId);
@@ -163,7 +197,21 @@ export async function runChildToCompletion(
   )
     return mapChildToResult(childSessionId, spec, false, deps);
   const controller = new AbortController();
-  let timedOut = false;
+  const startedAt = nowIso();
+  const touch = (phase: string) => {
+    deps.store.updateSessionMetadata?.(childSessionId, {
+      subagentTask: {
+        state: "running",
+        phase,
+        startedAt,
+        lastHeartbeatAt: nowIso(),
+        lastProgressAt: nowIso(),
+        leaseExpiresAt: new Date(Date.now() + SUBAGENT_LEASE_DURATION_MS).toISOString(),
+      },
+    });
+  };
+  touch("starting");
+  const heartbeat = setInterval(() => touch("running"), SUBAGENT_HEARTBEAT_INTERVAL_MS);
 
   const onParentAbort = () => {
     if (!controller.signal.aborted)
@@ -173,13 +221,13 @@ export async function runChildToCompletion(
   else
     opts.abortSignal?.addEventListener("abort", onParentAbort, { once: true });
 
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (!controller.signal.aborted)
-      controller.abort(
-        new Error(`Subagent timed out after ${opts.timeoutMs}ms.`),
-      );
-  }, opts.timeoutMs);
+  const timer =
+    typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
+      ? setTimeout(() => {
+          if (!controller.signal.aborted)
+            controller.abort(new Error(`Subagent timed out after ${opts.timeoutMs}ms.`));
+        }, opts.timeoutMs)
+      : undefined;
 
   try {
     for await (const _chunk of deps.loop.streamRun(
@@ -191,16 +239,31 @@ export async function runChildToCompletion(
     }
   } catch (err) {
     logger.warn(
-      { childSessionId, profileId: spec.profileId, timedOut, err },
+      { childSessionId, profileId: spec.profileId, err },
       "[subagent-orchestrator] child stream errored",
     );
   } finally {
-    clearTimeout(timer);
+    clearInterval(heartbeat);
+    if (timer) clearTimeout(timer);
     opts.abortSignal?.removeEventListener("abort", onParentAbort);
-    reapUnresolvableChild(childSessionId, timedOut, opts.timeoutMs, deps);
+    const finalChild = deps.store.tryGetSession(childSessionId);
+    const finalState = finalChild?.status === "completed"
+      ? "completed"
+      : ["waiting_permission", "waiting_input", "paused"].includes(finalChild?.status ?? "")
+        ? "waiting"
+        : "failed";
+    deps.store.updateSessionMetadata?.(childSessionId, {
+      subagentTask: {
+        state: finalState,
+        phase: finalState,
+        lastHeartbeatAt: nowIso(),
+        lastProgressAt: nowIso(),
+        completedAt: nowIso(),
+      },
+    });
   }
 
-  return mapChildToResult(childSessionId, spec, timedOut, deps);
+  return mapChildToResult(childSessionId, spec, false, deps);
 }
 
 function mapChildToResult(
@@ -271,8 +334,6 @@ export async function runBatch(
   deps: OrchestratorDeps = defaultDeps,
 ): Promise<SubagentResult[]> {
   const maxConcurrency = opts.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
-  const perChildTimeoutMs =
-    opts.perChildTimeoutMs ?? DEFAULT_PER_CHILD_TIMEOUT_MS;
   const results = new Array<SubagentResult>(specs.length);
 
   // Phase 1: create all child sessions synchronously, in order. Any creation
@@ -330,7 +391,7 @@ export async function runBatch(
       results[item.index] = await runChildToCompletion(
         item.childSessionId,
         item.spec,
-        { timeoutMs: perChildTimeoutMs, abortSignal: opts.abortSignal },
+        { abortSignal: opts.abortSignal },
         deps,
       );
     }
@@ -376,7 +437,6 @@ export async function runBatch(
       parentSessionId,
       total: specs.length,
       byStatus: tallyStatus(results),
-      perChildTimeoutMs,
       maxConcurrency,
     },
     "[subagent-orchestrator] batch complete",
