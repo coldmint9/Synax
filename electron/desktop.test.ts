@@ -79,6 +79,54 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("native dialog options", () => {
+  function registerDialogs(parent: unknown, trusted = true) {
+    const handlers = new Map<string, (event: unknown, options: unknown) => unknown>();
+    const dialog = {
+      showOpenDialog: vi.fn().mockResolvedValue({ canceled: false, filePaths: ["/workspace"] }),
+      showSaveDialog: vi.fn().mockResolvedValue({ canceled: false, filePath: "/export.txt" }),
+    };
+    const source = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
+    const start = source.indexOf('  ipcMain.handle("dialog:open",');
+    const end = source.indexOf('  ipcMain.handle("app:version",', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    runInNewContext(transpileModule(source.slice(start, end), {}).outputText, {
+      ipcMain: { handle: (channel: string, handler: (event: unknown, options: unknown) => unknown) => handlers.set(channel, handler) },
+      trustedNotificationSender: () => trusted,
+      BrowserWindow: { fromWebContents: () => parent },
+      dialog,
+    });
+    return { handlers, dialog };
+  }
+
+  it.each([true, false])("preserves directory selection options with parent=%s", async (hasParent) => {
+    const parent = hasParent ? { id: 1 } : null;
+    const { handlers, dialog } = registerDialogs(parent);
+    const options = { properties: ["openDirectory"] };
+    const result = await handlers.get("dialog:open")!({ sender: {} }, options);
+    expect(dialog.showOpenDialog).toHaveBeenCalledExactlyOnceWith(...(parent ? [parent, options] : [options]));
+    expect(result).toEqual({ canceled: false, filePaths: ["/workspace"] });
+  });
+
+  it.each([true, false])("preserves save options with parent=%s", async (hasParent) => {
+    const parent = hasParent ? { id: 1 } : null;
+    const { handlers, dialog } = registerDialogs(parent);
+    const options = { defaultPath: "/export.txt", filters: [{ name: "Text", extensions: ["txt"] }] };
+    await handlers.get("dialog:save")!({ sender: {} }, options);
+    expect(dialog.showSaveDialog).toHaveBeenCalledExactlyOnceWith(...(parent ? [parent, options] : [options]));
+  });
+
+  it("rejects untrusted requests before opening a native dialog", () => {
+    const { handlers, dialog } = registerDialogs({ id: 1 }, false);
+    for (const channel of ["dialog:open", "dialog:save"]) {
+      expect(() => handlers.get(channel)!({ sender: {} }, {})).toThrow("Untrusted dialog request");
+    }
+    expect(dialog.showOpenDialog).not.toHaveBeenCalled();
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+  });
+});
+
 function onPlatform(value: NodeJS.Platform) {
   Object.defineProperty(process, "platform", { value });
 }

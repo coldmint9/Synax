@@ -293,12 +293,12 @@ function registerIPC(): void {
   ipcMain.handle("dialog:open", (event, options: Electron.OpenDialogOptions) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted dialog request");
     const parent = BrowserWindow.fromWebContents(event.sender);
-    return dialog.showOpenDialog(parent ?? options);
+    return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options);
   });
   ipcMain.handle("dialog:save", (event, options: Electron.SaveDialogOptions) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted dialog request");
     const parent = BrowserWindow.fromWebContents(event.sender);
-    return dialog.showSaveDialog(parent ?? options);
+    return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options);
   });
   ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("window:mac-appearance:get", (event) => {
