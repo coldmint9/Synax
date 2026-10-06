@@ -24,7 +24,7 @@ export class NativeCapabilities {
     const profile = this.profiles.getForSession(session);
     const webDisabled = getGlobalConfigForRuntime().webSearch.routing === "disabled";
     return this.registry.listForSession(sessionId).filter((tool) =>
-      modelCanUseTool(profile, tool) && !CODE_TOOL_IDS.has(tool.id) && !(webDisabled && tool.id === "webSearch"));
+      modelCanUseTool(profile, tool) && !CODE_TOOL_IDS.has(tool.id) && tool.id !== "agent.execute" && !(webDisabled && tool.id === "webSearch"));
   }
 
   private catalog(sessionId: string, tools = this.available(sessionId)) {
@@ -55,7 +55,7 @@ export class NativeCapabilities {
    * Current definitions rehydrate bounded contracts; no stale history is needed. */
   project(sessionId: string, allowed: CapabilityTool[]): { tools: CapabilityTool[]; prompt: string } {
     if (!nativeCapabilitiesEnabled(this.store.getSession(sessionId)))
-      return { tools: allowed.filter((tool) => tool.id !== "agent.discover" && tool.id !== "agent.execute"), prompt: "" };
+      return { tools: allowed.filter((tool) => tool.id !== "agent.discover"), prompt: "" };
     const business = allowed.filter((tool) => !CODE_TOOL_IDS.has(tool.id));
     const catalog = this.catalog(sessionId, business);
     const state = this.state(sessionId, catalog);
@@ -79,12 +79,10 @@ export class NativeCapabilities {
         "## Native capabilities",
         "Only a small working set of tool schemas is exposed. Use agent.discover to search capabilities or load exact IDs. An empty query pages through the directory; hidden tools are not unavailable tools.",
         `Capability groups (counts): ${JSON.stringify(Object.fromEntries([...groups].sort()))}.`,
-        tools.some((tool) => tool.id === "agent.execute")
-          ? "Use direct calls for simple operations. Use agent.execute for dependent or parallel reads, filtering and aggregation; await tools.call(runtimeToolId, args) and return a small JSON result. Discover unfamiliar contracts before programming. Tool IDs below are runtime IDs, not provider-sanitized names."
-          : "Composition is disabled by the current policy. Use direct calls, discovering their schemas as needed.",
-        `Currently composable IDs: ${JSON.stringify(composable)}.`,
-        "Only currently supplied contracts may be composed. Discovery is effective on the next model step: finish discovery before executing dependent code. Re-discover missing or changed contracts. The dynamic working set is bounded and older contracts may be evicted.",
-        "Writes, Shell, browser/computer actions, questions, approvals and workflow changes use direct tools. Discover their schemas as needed. Code cannot suspend for approval, recurse into execution, or replay automatically. After partial failure, inspect the recorded result before choosing the next action.",
+        "Code Mode is the automatic execution mechanism. Submit normal tool operations; the loop compiles and schedules them. Do not call code.run or agent.execute to opt into composition.",
+        `Sandbox-composable IDs: ${JSON.stringify(composable)}.`,
+        "Reads may run with bounded concurrency. Writes and patches execute in submission order as barriers; use the result of a preceding model step when constructing dependent arguments. The loop pauses at approval and resumes only unfinished operations. Never resubmit completed writes.",
+        "Discover missing contracts first; disclosure takes effect on the next model step. Shell, browser and workflow controls use their host lifecycle within the same ordered program. Existing permissions and file-change checks still apply.",
       ].join("\n"),
     };
   }
@@ -94,7 +92,7 @@ export class NativeCapabilities {
     const contract = catalog.get(id);
     const advertised = this.store.getSession(sessionId).sessionMetadata?.advertisedCapabilities as
       { owner?: string; contracts?: Record<string, string> } | undefined;
-    if (!contract?.compose || advertised?.owner !== sessionId || advertised.contracts?.[id] !== contract.version)
+    if (!contract || (!CORE_TOOL_IDS.has(id) && (!contract.compose || advertised?.owner !== sessionId || advertised.contracts?.[id] !== contract.version)))
       throw new Error(`Contract for ${id} is not currently disclosed or composable. Discover it before executing.`);
     this.noteUse(sessionId, id);
   }
@@ -155,8 +153,8 @@ export class NativeCapabilities {
         }, `Discovered ${selected.length} capability contracts.`);
       },
     }, {
-      id: "agent.execute", label: "Native read composition", category: "read", mutability: "read", resumeBehavior: "none",
-      description: "Native execution channel for read-only JavaScript composition. Submit an async function body using await tools.call(runtimeToolId,args), then return a compact JSON result. Use currently supplied contracts; discover others first. Up to 4 parallel calls, 32 total calls and 15 seconds. No imports, Node, direct filesystem/network, writes, Shell or nested execution. Await all calls. Failure never automatically replays code or asks for approval.",
+      id: "agent.execute", label: "Legacy composition adapter", category: "read", mutability: "read", resumeBehavior: "none",
+      description: "Legacy compatibility execution channel. Native loops compose operations automatically. Supports approved reads, file.write and file.patch. Submit an async function body using await tools.call(runtimeToolId,args), then return a compact JSON result. Use currently supplied contracts; discover others first. Up to 4 parallel calls, 32 total calls and 15 seconds. No imports, Node, direct filesystem/network, Shell or nested execution. Await all calls. Failure never automatically replays code or asks for approval.",
       inputSchema: z.object({ code: z.string().min(1).max(CODE_LIMITS.maxCodeBytes) }).strict(),
       execute: createCompositionExecutor(this.registry, this.store, this.profiles, (sessionId, id) => this.assertContract(sessionId, id)),
     }];

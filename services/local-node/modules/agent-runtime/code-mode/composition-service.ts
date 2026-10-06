@@ -62,10 +62,12 @@ export function createCompositionExecutor(
       durationMs: number;
       error?: string;
     }> = [];
+    let tail: Promise<unknown> = Promise.resolve();
     const result = await executeCode({
       code: (input.args as { code: string }).code,
       signal: input.abortSignal,
-      callTool: async (toolId, args, signal) => {
+      callTool: (toolId, args, signal) => {
+        const next = tail.then(async () => {
         const trace: (typeof nestedCalls)[number] = {
           toolId,
           status: "running",
@@ -128,6 +130,9 @@ export function createCompositionExecutor(
         } finally {
           trace.durationMs = Date.now() - started;
         }
+        });
+        tail = next;
+        return next;
       },
     });
     // Calls that ignored cancellation cannot be allowed to change the returned

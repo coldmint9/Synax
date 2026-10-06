@@ -49,9 +49,7 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
-  if (NATIVE_PROTOCOL_IDS.has(tool.id) && (!nativeCapabilitiesEnabled(session) ||
-      (tool.id === 'agent.execute' && !codeModeEnabled(session)))) return false;
-  if (CODE_TOOL_IDS.has(tool.id) && !codeModeEnabled(session)) return false;
+  if (NATIVE_PROTOCOL_IDS.has(tool.id) && !nativeCapabilitiesEnabled(session)) return false;
   if (session.profileId === 'git-manager') {
     try { assertGitMrBinding(session.id); } catch { return false; }
     return (GIT_MANAGER_TOOL_IDS as readonly string[]).includes(tool.id);

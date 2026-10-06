@@ -113,12 +113,12 @@ export function createCodeTools(
     },
     {
       id: "code.run",
-      label: "Code Mode (read-only)",
+      label: "Code Mode compatibility adapter",
       category: "read",
       mutability: "read",
       resumeBehavior: "none",
       description:
-        "Run an isolated JavaScript async function body for read-only tool composition and data processing. Discover IDs/schemas with code.tools, then await tools.call(id, args). Return a small JSON summary. Promise.all is supported up to 4 concurrent calls; 32 calls and 15 seconds total. No Node, filesystem, network, imports, Shell or writes. Await ALL calls. Stateless: no automatic replay or approval inside code; use direct tools for approval or after an error.",
+        "Run an isolated JavaScript async function body for tool composition with approved reads, file.write and file.patch and data processing. Discover IDs/schemas with code.tools, then await tools.call(id, args). Return a small JSON summary. Promise.all is supported up to 4 concurrent calls; 32 calls and 15 seconds total. No Node, direct filesystem, network, imports or Shell. File writes and patches go through tools.call and retain their permissions. Await ALL calls. Stateless: no automatic replay or approval inside code; use direct tools for approval or after an error.",
       inputSchema: z
         .object({ code: z.string().min(1).max(CODE_LIMITS.maxCodeBytes) })
         .strict(),

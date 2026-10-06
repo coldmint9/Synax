@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Switch } from "@headlessui/react";
 import { Code2 } from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { Description, Field, Label, TextArea } from "@/shared/ui/ui/Field";
@@ -16,18 +15,14 @@ export function CodeModeSettings({
   onSave: (value: Config) => Promise<void>;
 }) {
   const zh = locale.startsWith("zh");
-  const [enabled, setEnabled] = useState(value?.enabled ?? false);
   const [mcp, setMcp] = useState((value?.mcpTools ?? []).join("\n"));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   useEffect(() => {
-    setEnabled(value?.enabled ?? false);
     setMcp((value?.mcpTools ?? []).join("\n"));
   }, [value]);
-  const dirty =
-    enabled !== (value?.enabled ?? false) ||
-    mcp !== (value?.mcpTools ?? []).join("\n");
+  const dirty = mcp !== (value?.mcpTools ?? []).join("\n");
   const save = async () => {
     const mcpTools = [
       ...new Set(
@@ -55,7 +50,7 @@ export function CodeModeSettings({
     setError(null);
     setSaved(false);
     try {
-      await onSave({ enabled, mcpTools });
+      await onSave({ mcpTools });
       setSaved(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -78,35 +73,12 @@ export function CodeModeSettings({
           void save();
         }}
       >
-        <Field disabled={saving} className="grid-cols-[1fr_auto] items-center">
-          <div className="grid gap-1.5">
-            <Label>{zh ? "允许只读编排" : "Allow read-only composition"}</Label>
-            <Description>
-              {zh
-                ? "允许原生 Synax 代理组合读取、搜索和汇总操作。工具按需披露与编排权限分别管理；关闭此项仍可直接调用获准工具。"
-                : "Allow the native Synax agent to compose reads, searches and summaries. Tool discovery and composition permissions are independent; authorized direct calls remain available when this is off."}
-            </Description>
-          </div>
-          <Switch
-            checked={enabled}
-            onChange={(checked) => {
-              setEnabled(checked);
-              setSaved(false);
-            }}
-            className="group relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-muted transition-colors data-checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <span
-              aria-hidden="true"
-              className="size-4 translate-x-1 rounded-full bg-background shadow transition-transform group-data-checked:translate-x-6"
-            />
-          </Switch>
-        </Field>
         <p className="text-xs leading-relaxed text-muted-foreground">
           {zh
-            ? "每次最多 15 秒、32 次调用、4 路并发。无 Shell、写文件或直接网络访问；需要审批的操作请使用直接工具。运维可通过 SYNAX_CODE_MODE=0 全局关闭。"
-            : "Up to 15 seconds, 32 calls and 4 concurrent calls per execution. No Shell, writes or direct network access. Use direct tools for approvals. Operators can disable globally with SYNAX_CODE_MODE=0."}
+            ? "原生编排默认启用，支持组合读取、搜索、汇总和文件写入操作。各项操作继续遵循现有工具权限与审批要求。"
+            : "Native composition is enabled by default and supports reads, searches, summaries and file writes. Each operation follows existing tool permissions and approval requirements."}
         </p>
-        <Field disabled={saving || !enabled}>
+        <Field disabled={saving}>
           <Label>
             {zh
               ? "允许编排的 MCP 工具（可选）"

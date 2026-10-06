@@ -14,9 +14,10 @@ import type {
 import { createDefaultProjectSettings } from './project-settings-types.js'
 
 const codeModePatchSchema = z.object({
+  // Legacy clients may still send this field; discard it after validation.
   enabled: z.boolean().optional(),
   mcpTools: z.array(z.string().min(5).max(256).regex(/^mcp\.[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/)).max(64).optional(),
-}).strict()
+}).strict().transform(({ mcpTools }) => ({ mcpTools }))
 
 const computerUsePatchSchema = z.object({
   enabled: z.boolean().optional(),
@@ -122,20 +123,25 @@ export function getProjectSettings(projectId: string, includeSecrets = false): P
     } else {
       settings = createDefaultProjectSettings(projectId)
     }
+  } else if (
+    settings.schemaVersion !== 3 ||
+    Object.prototype.hasOwnProperty.call(settings.codeMode ?? {}, 'enabled')
+  ) {
+    writeJsonAtomic(filePath, {
+      ...settings,
+      schemaVersion: 3,
+      codeMode: { mcpTools: settings.codeMode?.mcpTools ?? [] },
+    })
   }
 
   return normalizeSettings(settings, includeSecrets)
 }
 
-/** Only call when creating a new project. Reading an old/unconfigured project
- * must never opt it into composition. Keep codeMode as the sole stored policy
- * for compatibility with existing settings clients. */
+/** Initialize settings for a new project, preserving any legacy configuration. */
 export function initializeProjectSettings(projectId: string): ProjectSettings {
   if (fs.existsSync(settingsPath(projectId))) return getProjectSettings(projectId)
   const legacy = migrateFromLegacyProjectConfig(projectId)
   const settings = legacy ?? createDefaultProjectSettings(projectId)
-  if (!legacy && process.env.SYNAX_NATIVE_CAPABILITIES === '1')
-    settings.codeMode = { enabled: true, mcpTools: [] }
   writeJsonAtomic(settingsPath(projectId), prepareSettingsForStorage(settings))
   return normalizeSettings(settings, false)
 }
@@ -153,7 +159,10 @@ export function updateProjectSettings(
     basics: patch.basics ? { ...existing.basics, ...patch.basics } : existing.basics,
     provider: patch.provider ? mergeProvider(existing.provider, patch.provider) : existing.provider,
     mcpServers: patch.mcpServers ?? existing.mcpServers ?? [],
-    codeMode: { enabled: existing.codeMode?.enabled ?? false, mcpTools: existing.codeMode?.mcpTools ?? [], ...(patch.codeMode !== undefined ? codeModePatchSchema.parse(patch.codeMode) : {}) },
+    codeMode: {
+      mcpTools: (patch.codeMode !== undefined ? codeModePatchSchema.parse(patch.codeMode).mcpTools : undefined)
+        ?? existing.codeMode?.mcpTools ?? [],
+    },
     computerUse: patch.computerUse ? { ...existing.computerUse, ...computerUsePatchSchema.parse(patch.computerUse) } : existing.computerUse,
     collaboration: patch.collaboration
       ? { ...existing.collaboration, ...patch.collaboration, reviewPolicy: patch.collaboration.reviewPolicy ?? existing.collaboration.reviewPolicy }
@@ -229,9 +238,9 @@ function mergeProvider(existing: ProjectSettings['provider'], patch: Partial<Pro
 function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): ProjectSettings {
   return {
     ...settings,
-    schemaVersion: 2,
+    schemaVersion: 3,
     mcpServers: settings.mcpServers ?? [],
-    codeMode: { enabled: settings.codeMode?.enabled === true, mcpTools: settings.codeMode?.mcpTools ?? [] },
+    codeMode: { mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,
@@ -243,8 +252,9 @@ function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): 
 function prepareSettingsForStorage(settings: ProjectSettings): ProjectSettings {
   return {
     ...settings,
+    schemaVersion: 3,
     mcpServers: settings.mcpServers ?? [],
-    codeMode: { enabled: settings.codeMode?.enabled === true, mcpTools: settings.codeMode?.mcpTools ?? [] },
+    codeMode: { mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,
     provider: {
       ...settings.provider,

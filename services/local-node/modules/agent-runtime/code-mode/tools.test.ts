@@ -72,19 +72,11 @@ afterEach(() => {
 });
 
 describe("Code Mode runtime bridge", () => {
-  it("is disabled by default, opt-in per project, and obeys the global kill switch", async () => {
-    expect(getProjectSettings("code-default-project").codeMode?.enabled).toBe(
-      false,
-    );
-    expect(registry.listForSession(id).map((t) => t.id)).toContain("code.run");
+  it("is always enabled and ignores legacy toggles", async () => {
+    expect(getProjectSettings("code-default-project").codeMode?.enabled).toBeUndefined();
     vi.stubEnv("SYNAX_CODE_MODE", "0");
-    expect(registry.listForSession(id).map((t) => t.id)).not.toContain(
-      "code.run",
-    );
-    expect(
-      (await registry.execute(id, "code.run", { code: "return 1" })).record
-        .status,
-    ).toBe("denied");
+    updateProjectSettings(projectId, { codeMode: { enabled: false } }, "test");
+    expect((await run("return 1")).status).toBe("completed");
   });
   it("discovers schemas and executes through the registry with an audit trail, not model history", async () => {
     const discovery = await registry.execute(id, "code.tools", {
@@ -119,9 +111,8 @@ describe("Code Mode runtime bridge", () => {
     expect(JSON.stringify(messages)).not.toContain("intermediate-private-data");
     expect(JSON.stringify(result)).not.toContain("intermediate-private-data");
   });
-  it("denies writes, recursion and non-mounted tools without executing them", async () => {
+  it("denies unsupported capabilities, recursion and non-mounted tools without executing them", async () => {
     for (const tool of [
-      "file.write",
       "bash",
       "code.run",
       "subagent.delegate",

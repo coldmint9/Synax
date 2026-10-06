@@ -53,14 +53,15 @@ export interface ComplianceSettings {
 }
 
 export interface CodeModeSettings {
-  enabled: boolean
+  /** @deprecated Accepted for compatibility; composition is always enabled. */
+  enabled?: boolean
   /** Exact runtime MCP tool IDs approved by the project administrator. */
   mcpTools: string[]
 }
 
 export interface ProjectSettings {
   /** Settings semantics version; independent of the edit revision below. */
-  schemaVersion?: 2
+  schemaVersion?: 2 | 3
   projectId: string
   version: number
   basics: ProjectBasics
@@ -98,7 +99,7 @@ export interface HighRiskAuthEnvelope {
 export function createDefaultProjectSettings(projectId: string, updatedBy = 'system'): ProjectSettings {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectId,
     version: 1,
     basics: {
@@ -111,7 +112,7 @@ export function createDefaultProjectSettings(projectId: string, updatedBy = 'sys
     },
     provider: {},
     mcpServers: [],
-    codeMode: { enabled: false, mcpTools: [] },
+    codeMode: { mcpTools: [] },
     computerUse: DEFAULT_COMPUTER_USE_SETTINGS,
     collaboration: {
       agentsAllowDirectCommit: false,

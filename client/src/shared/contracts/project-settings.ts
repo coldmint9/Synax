@@ -59,13 +59,14 @@ export interface ComputerUseSettings {
 }
 
 export interface CodeModeSettings {
-  enabled: boolean
+  /** @deprecated Accepted for compatibility; composition is always enabled. */
+  enabled?: boolean
   /** Exact runtime MCP tool IDs approved by the project administrator. */
   mcpTools: string[]
 }
 
 export interface ProjectSettings {
-  schemaVersion?: 2
+  schemaVersion?: 2 | 3
   projectId: string
   version: number
   basics: ProjectBasics

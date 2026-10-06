@@ -37,14 +37,14 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 
 ### 原生能力路径（分阶段启用）
 
-设置 `SYNAX_NATIVE_CAPABILITIES=1` 后，原生会话使用固定的 `agent.discover` / `agent.execute` 入口。模型首轮仅接收常用读取与必要控制工具，其他 schema 按需披露；旧 `code.tools` / `code.run` 保留兼容但不同时展示。关闭该发布开关可恢复旧工具面。
+原生会话直接使用固定的 `agent.discover` 入口和执行循环内的自动编排。模型首轮仅接收常用读取与必要控制工具，其他 schema 按需披露；`agent.execute`、`code.tools` 和 `code.run` 不作为模型入口展示。执行循环会自动安排读取、写入和补丁，写操作遵循原有权限与审批。
 
 | 入口 | 实际约束/行为 | 依据 |
 | --- | --- | --- |
 | `agent.discover` | 支持 query/group、最多 4 个精确 ids、cursor 分页；每页最多 4 个契约，动态工作集最多 12 个、估算 8,000 tokens；下一模型步骤生效；披露不授予权限 | native-capabilities/service.ts、disclosure.ts |
-| `agent.execute` | 复用隔离编排服务；内部调用必须使用本轮已披露且版本有效的契约，并重新校验原有权限；限制和禁止自动重放行为沿用 Code Mode | code-mode/composition-service.ts、native-capabilities/service.ts |
+| 执行循环自动编排 | 普通工具调用进入持久化编排队列；只读调用可限并发，写入/补丁按顺序形成屏障；审批暂停后只继续未完成操作；内部调用重新校验契约和权限 | native-capabilities/loop-composition.ts、loop-runtime.ts |
 
-编排权限关闭时仍可发现与直接调用获准工具。旧项目策略保持不变；发布开关开启后新创建项目默认允许内置只读编排，MCP 精确允许列表仍为空。完整架构和发布验收见 `docs/design/2026-10-06-native-agent-capabilities.md`。
+编排权限关闭时仍可发现与直接调用获准工具。旧项目迁移只保留 MCP 精确允许列表；新项目默认启用原生编排，MCP 列表仍为空。完整架构和发布验收见 `docs/design/2026-10-06-native-agent-capabilities.md`。
 
 ## 媒体
 

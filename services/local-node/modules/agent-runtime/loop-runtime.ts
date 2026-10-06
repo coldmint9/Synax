@@ -1,3 +1,4 @@
+import { LoopComposition } from "./native-capabilities/loop-composition.js";
 import { isCodeNestedCall } from "./code-mode/history.js";
 import { createHash } from "node:crypto";
 import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
@@ -158,6 +159,34 @@ export class AgentLoopRuntime {
   // default at call time rather than capturing an uninitialized singleton.
   private get tools(): ToolRegistry {
     return this.toolsOverride ?? toolRegistry;
+  }
+
+  /** Continue the durable program after approving its exact pending operation. */
+  private async *resumeComposition(sessionId: string, runId: string, stepId: string,
+    signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk, boolean> {
+    const composition = new LoopComposition(this.store, this.tools);
+    if (!composition.hasProgram(stepId)) return false;
+    const executions = await composition.execute(sessionId, runId, stepId, [], signal);
+    for (const { call, exec } of executions) {
+      this.appendToolCallPart({ sessionId, runId, stepId, record: exec.record, reason: call.reason });
+      if (exec.record.status === "pending" && exec.permission) {
+        this.store.updateRunStep(stepId, { status: "waiting_permission", finishReason: "permission_required" });
+        this.store.updateRun(runId, { status: "waiting_permission", stopReason: exec.permission.reason });
+        this.store.updateSession(sessionId, { status: "waiting_permission", activeRunId: runId,
+          pendingResumeToken: exec.permission.resumeToken, blockedReason: exec.permission.reason });
+        const event = this.events.append({ sessionId, type: "permission_requested", summary: exec.permission.reason,
+          payload: { runId, stepId, permissionId: exec.permission.id, toolCallId: exec.record.id } });
+        yield { type: "permission_requested", runId, stepId, permission: exec.permission, toolCall: exec.record, event };
+        return true;
+      }
+      const record = call.toolId === "subagent.delegate" && exec.record.status === "completed"
+        ? await this.awaitTaskResult(exec.record, exec.toolResult?.result, signal) : exec.record;
+      this.appendToolResultPart({ sessionId, runId, stepId, record });
+      yield { type: "tool_result", runId, stepId, toolCall: record };
+      emitSessionLive(sessionId, { type: "tool_result", stepId, toolCall: record });
+    }
+    this.store.updateRunStep(stepId, { status: "completed", completedAt: nowIso(), finishReason: "tool_calls" });
+    return false;
   }
 
   listMessages(sessionId: string): AgentRuntimeMessage[] {
@@ -770,8 +799,11 @@ export class AgentLoopRuntime {
             stepId: pendingResume.step.id,
             toolCall: resumedToolExecution.record,
           };
+          const resumedStepId = pendingResume.step.id;
           pendingPermission = null;
           pendingResume = null;
+          const waitingAgain = yield* this.resumeComposition(sessionId, run.id, resumedStepId, runAbortSignal);
+          if (waitingAgain) return;
         }
 
         rebuildSessionFileReads(
@@ -1468,22 +1500,8 @@ export class AgentLoopRuntime {
             : modelResult.step.toolCalls;
           const allCalls = withIds(calls.slice(0, 50));
 
-          // Unified parallel: launch all tool calls concurrently, no arbitrary cap.
-          // The LLM already determined these calls are independent when it emitted
-          // them together. If a write depends on a read, the LLM should call the
-          // read in step N and the write in step N+1.
-          const executions = await Promise.all(
-            allCalls.map(async (call) => {
-              return this.tools
-                .execute(sessionId, call.toolId, call.args, {
-                  runId: run.id,
-                  stepId: step.id,
-                  modelToolCallId: call.id,
-                  resumeToken: optionsResumeToken(run.id, step.id, call.id),
-                  abortSignal: runAbortSignal,
-                })
-                .then((exec) => ({ call, exec }));
-            }),
+          const executions = await new LoopComposition(this.store, this.tools).execute(
+            sessionId, run.id, step.id, allCalls, runAbortSignal,
           );
 
           // Emit tool_call events in model-dictated order (allCalls order)
@@ -2534,7 +2552,9 @@ export class AgentLoopRuntime {
         !(webSearchDisabled && tool.id === "webSearch"),
     );
     const capabilityProjection = this.tools.capabilities.project(input.sessionId, allowedTools);
-    const modelTools = capabilityProjection.tools;
+    const modelTools = capabilityProjection.tools.filter((tool) =>
+      !["code.run", "code.tools", "agent.execute"].includes(tool.id),
+    );
     const toolSet = buildLoopToolSet(modelTools, undefined, { stableNames: Boolean(capabilityProjection.prompt) });
     const contextLimit =
       (input as { contextLimit?: number }).contextLimit ??
