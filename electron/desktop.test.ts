@@ -27,6 +27,8 @@ const electron = vi.hoisted(() => ({
 const spawn = vi.hoisted(() => vi.fn());
 const stageCuaDriver = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../scripts/stage-cua-driver.js", () => ({ stageCuaDriver }));
+const validateCuaArtifact = vi.hoisted(() => vi.fn());
+vi.mock("../scripts/validate-cua-artifact.js", () => ({ validateCuaArtifact }));
 vi.mock("electron", () => electron);
 vi.mock("node:child_process", () => ({
   spawn,
@@ -482,6 +484,12 @@ describe("desktop platform contract", () => {
       process.platform,
       process.arch,
     );
+    expect(validateCuaArtifact).toHaveBeenCalledExactlyOnceWith({
+      helperRoot: expect.stringMatching(/cua-helper-dist$/),
+      driverPath: expect.stringMatching(/cua-driver[/\\]cua-driver$/),
+      platform: process.platform,
+      arch: process.arch,
+    });
     const other = process.platform === "win32" ? "darwin" : "win32";
     await expect(prePackage({}, other, process.arch)).rejects.toThrow(
       "Native dependencies",
@@ -493,6 +501,7 @@ describe("desktop platform contract", () => {
         process.arch === "arm64" ? "x64" : "arm64",
       ),
     ).rejects.toThrow("Native dependencies");
+    expect(validateCuaArtifact).toHaveBeenCalledTimes(1);
   });
 });
 
