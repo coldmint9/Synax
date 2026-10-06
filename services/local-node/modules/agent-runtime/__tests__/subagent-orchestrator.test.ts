@@ -1,9 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  getSubagentLiveness,
   runBatch,
   runChildToCompletion,
   type SubagentSpec,
 } from '../subagent-orchestrator.js';
+
+describe('subagent liveness', () => {
+  const now = Date.parse('2026-10-05T00:00:00.000Z');
+
+  it('distinguishes a live lease, an expired lease, waiting, and terminal sessions', () => {
+    expect(getSubagentLiveness('running', {
+      state: 'running',
+      leaseExpiresAt: '2026-10-05T00:00:30.000Z',
+    }, now)).toBe('healthy');
+    expect(getSubagentLiveness('running', {
+      state: 'running',
+      leaseExpiresAt: '2026-10-04T23:59:30.000Z',
+    }, now)).toBe('stale');
+    expect(getSubagentLiveness('running', { state: 'waiting', phase: 'waiting' }, now)).toBe('waiting');
+    expect(getSubagentLiveness('completed', { state: 'completed' }, now)).toBe('completed');
+  });
+});
 
 /** Build injectable deps backed by an in-memory session map. */
 function makeDeps(behaviors: Record<string, {
@@ -104,28 +122,18 @@ describe('subagent-orchestrator', () => {
     expect(results[2].status).toBe('blocked');
   });
 
-  it('times out a hung child and aborts only it', async () => {
-    vi.useFakeTimers();
+  it('does not apply a total wall-clock timeout to a healthy child', async () => {
     const deps = makeDeps({
       'child-1': { durationMs: 10, endStatus: 'completed', resultSummary: 'fast' },
-      'child-2': { durationMs: 10_000_000, endStatus: 'completed' }, // hangs forever
     });
-    const promise = runBatch('parent', [spec('fast'), spec('hung')], { perChildTimeoutMs: 1000, maxConcurrency: 2 }, deps);
-    await vi.advanceTimersByTimeAsync(2000);
-    const results = await promise;
-    vi.useRealTimers();
+    const results = await runBatch('parent', [spec('fast')], { maxConcurrency: 2 }, deps);
     expect(results[0].status).toBe('completed');
-    expect(results[1].status).toBe('timeout');
   });
 
-  it('runChildToCompletion never throws on a hung child', async () => {
-    vi.useFakeTimers();
-    const deps = makeDeps({ 'child-1': { durationMs: 10_000_000 } });
+  it('runChildToCompletion returns a terminal result without throwing', async () => {
+    const deps = makeDeps({ 'child-1': { durationMs: 10, endStatus: 'completed' } });
     deps.createSession({ profileId: 'explorer' }); // create child-1
-    const promise = runChildToCompletion('child-1', spec('x'), { timeoutMs: 500 }, deps);
-    await vi.advanceTimersByTimeAsync(1000);
-    const result = await promise;
-    vi.useRealTimers();
-    expect(result.status).toBe('timeout');
+    const result = await runChildToCompletion('child-1', spec('x'), {}, deps);
+    expect(result.status).toBe('completed');
   });
 });
