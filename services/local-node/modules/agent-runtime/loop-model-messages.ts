@@ -14,7 +14,7 @@ import type {
   AgentRuntimeMessage,
   ToolCallRecord,
 } from "./contracts.js";
-import type { LoopToolSet } from "./loop-ai-tools.js";
+import { toModelToolName, type LoopToolSet } from "./loop-ai-tools.js";
 import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
 
@@ -132,7 +132,7 @@ function systemMessage(content: string, contents?: Set<string>): ModelMessage {
 export function buildLoopModelMessages(
   store: AgentRuntimeStore,
   sessionId: string,
-  toolSet: Pick<LoopToolSet, "resolveModelToolName">,
+  toolSet: Pick<LoopToolSet, "resolveModelToolName" | "resolveHistoricalModelToolName">,
   opts?: BuildMessagesOptions | string | null,
 ): ModelMessage[] {
   const options: BuildMessagesOptions =
@@ -314,7 +314,7 @@ function isProtectedToolCall(call: ToolCallRecord): boolean {
 function buildRunMessages(
   history: LoopHistoryReader,
   runId: string,
-  toolSet: Pick<LoopToolSet, "resolveModelToolName">,
+  toolSet: Pick<LoopToolSet, "resolveModelToolName" | "resolveHistoricalModelToolName">,
   clearSet: Set<string> | null,
   excludedStepIds?: Set<string>,
   injected: AgentRuntimeMessage[] = [],
@@ -456,6 +456,7 @@ function buildRunMessages(
           toolCallId,
           toolName:
             toolSet.resolveModelToolName(record.toolId) ??
+            toolSet.resolveHistoricalModelToolName?.(record.toolId) ??
             sanitizeToolName(record.toolId),
           input: toToolCallInput(record, clearSet),
           providerOptions: (
@@ -493,6 +494,7 @@ function buildRunMessages(
           toolCallId: normalizeToolCallId(record.modelToolCallId ?? record.id),
           toolName:
             toolSet.resolveModelToolName(record.toolId) ??
+            toolSet.resolveHistoricalModelToolName?.(record.toolId) ??
             sanitizeToolName(record.toolId),
           output: shouldClear
             ? toClearedOutput(record)
@@ -628,7 +630,7 @@ function toToolResultOutput(
     };
   }
 
-  if (record.toolId === "code.run" && record.outputRef && typeof record.outputRef === "object") {
+  if (["code.run", "agent.execute"].includes(record.toolId) && record.outputRef && typeof record.outputRef === "object") {
     // The raw journal/UI retains the complete trace. Model context needs the
     // aggregate first, not dozens of nested call receipts or diagnostic logs.
     const raw = record.outputRef as Record<string, unknown>;
@@ -712,7 +714,7 @@ function summarizeToolInput(
 }
 
 function sanitizeToolName(toolId: string): string {
-  return toolId.replace(/[^A-Za-z0-9_-]/g, "_").replace(/_+/g, "_") || "tool";
+  return toModelToolName(toolId, false);
 }
 
 function normalizeToolCallId(value: unknown): string {

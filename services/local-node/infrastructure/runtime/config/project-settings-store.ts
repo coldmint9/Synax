@@ -127,6 +127,19 @@ export function getProjectSettings(projectId: string, includeSecrets = false): P
   return normalizeSettings(settings, includeSecrets)
 }
 
+/** Only call when creating a new project. Reading an old/unconfigured project
+ * must never opt it into composition. Keep codeMode as the sole stored policy
+ * for compatibility with existing settings clients. */
+export function initializeProjectSettings(projectId: string): ProjectSettings {
+  if (fs.existsSync(settingsPath(projectId))) return getProjectSettings(projectId)
+  const legacy = migrateFromLegacyProjectConfig(projectId)
+  const settings = legacy ?? createDefaultProjectSettings(projectId)
+  if (!legacy && process.env.SYNAX_NATIVE_CAPABILITIES === '1')
+    settings.codeMode = { enabled: true, mcpTools: [] }
+  writeJsonAtomic(settingsPath(projectId), prepareSettingsForStorage(settings))
+  return normalizeSettings(settings, false)
+}
+
 export function updateProjectSettings(
   projectId: string,
   patch: UpdateProjectSettingsRequest,
@@ -216,6 +229,7 @@ function mergeProvider(existing: ProjectSettings['provider'], patch: Partial<Pro
 function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): ProjectSettings {
   return {
     ...settings,
+    schemaVersion: 2,
     mcpServers: settings.mcpServers ?? [],
     codeMode: { enabled: settings.codeMode?.enabled === true, mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,

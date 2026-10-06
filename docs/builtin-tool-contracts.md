@@ -35,6 +35,17 @@
 
 MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。允许的 MCP 请求仍可能发送代码组装的参数到外部服务器。全局运维关闭：SYNAX_CODE_MODE=0。
 
+### 原生能力路径（分阶段启用）
+
+设置 `SYNAX_NATIVE_CAPABILITIES=1` 后，原生会话使用固定的 `agent.discover` / `agent.execute` 入口。模型首轮仅接收常用读取与必要控制工具，其他 schema 按需披露；旧 `code.tools` / `code.run` 保留兼容但不同时展示。关闭该发布开关可恢复旧工具面。
+
+| 入口 | 实际约束/行为 | 依据 |
+| --- | --- | --- |
+| `agent.discover` | 支持 query/group、最多 4 个精确 ids、cursor 分页；每页最多 4 个契约，动态工作集最多 12 个、估算 8,000 tokens；下一模型步骤生效；披露不授予权限 | native-capabilities/service.ts、disclosure.ts |
+| `agent.execute` | 复用隔离编排服务；内部调用必须使用本轮已披露且版本有效的契约，并重新校验原有权限；限制和禁止自动重放行为沿用 Code Mode | code-mode/composition-service.ts、native-capabilities/service.ts |
+
+编排权限关闭时仍可发现与直接调用获准工具。旧项目策略保持不变；发布开关开启后新创建项目默认允许内置只读编排，MCP 精确允许列表仍为空。完整架构和发布验收见 `docs/design/2026-10-06-native-agent-capabilities.md`。
+
 ## 媒体
 
 媒体引用须属于当前会话；图像和视频请求的引用总预算由 `media-context.ts` 限制为 100 MiB。模型和可选生成能力依赖实际 provider，不将某个 provider 的规则错误地声明为通用 schema 限制。

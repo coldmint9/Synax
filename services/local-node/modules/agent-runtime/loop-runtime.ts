@@ -109,7 +109,7 @@ import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
-import { profileCanUseTool } from "./tool-mount-policy.js";
+import { modelCanUseTool } from "./tool-mount-policy.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
@@ -2523,13 +2523,7 @@ export class AgentLoopRuntime {
       .listForSession(input.sessionId)
       .filter(
         (tool) =>
-          profileCanUseTool(input.profile, tool) ||
-          ["work.checkpoint", "context.read"].includes(tool.id) ||
-          (tool.id === "verification.run" &&
-            profileCanUseTool(input.profile, { id: "bash" })) ||
-          tool.category === "skill" ||
-          tool.category === "mcp" ||
-          tool.id === "tools.invalid",
+          modelCanUseTool(input.profile, tool),
       );
     const session = this.store.getSession(input.sessionId);
     const userRequest = resolveSessionUserRequest(session, input.prompt);
@@ -2540,7 +2534,9 @@ export class AgentLoopRuntime {
         !controlToolError(session, tool) &&
         !(webSearchDisabled && tool.id === "webSearch"),
     );
-    const toolSet = buildLoopToolSet(allowedTools);
+    const capabilityProjection = this.tools.capabilities.project(input.sessionId, allowedTools);
+    const modelTools = capabilityProjection.tools;
+    const toolSet = buildLoopToolSet(modelTools, undefined, { stableNames: Boolean(capabilityProjection.prompt) });
     const contextLimit =
       (input as { contextLimit?: number }).contextLimit ??
       DEFAULT_CONTEXT_LIMIT;
@@ -2637,7 +2633,7 @@ export class AgentLoopRuntime {
       permissionTier: permissionConfig.permissionTier,
       effectivePermissionRules: session.permissionRules,
       isSubSession: Boolean(session.parentSessionId),
-      availableToolIds: allowedTools.map((tool) => tool.id),
+      availableToolIds: modelTools.map((tool) => tool.id),
       modePromptSection: synaxAgent.buildModePromptSection(session),
       variantPromptSection: synaxAgent.buildVariantPromptSection(session),
       intentPromptSection: synaxAgent.isSynaxSession(session)
@@ -2656,6 +2652,7 @@ export class AgentLoopRuntime {
       selectedReferencesSection: selectedReferences?.content,
       visualizationIntent,
       }),
+      capabilityProjection.prompt,
       // Chat has no routine runtime-reminder message. Keep the execution
       // environment in the stable system instruction so tools still resolve
       // relative paths without re-injecting workflow/finish directives.

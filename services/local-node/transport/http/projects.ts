@@ -31,6 +31,7 @@ import {
 import { dirname, join, normalize, resolve } from "node:path";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
+import { initializeProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
 import { contextService } from "../../modules/context/context-service.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { revokeAllProjectToolGrants } from "../../modules/agent-runtime/project-tool-grants.js";
@@ -596,6 +597,7 @@ projectRoutes.post("/workspaces", async (c) => {
   }
   projects.set(project.id, project);
   try {
+    initializeProjectSettings(project.id);
     saveProjectsToDisk();
   } catch (error) {
     projects.delete(project.id);
@@ -1164,6 +1166,7 @@ projectRoutes.post("/", async (c) => {
   };
 
   projects.set(id, project);
+  initializeProjectSettings(id);
   saveProjectsToDisk();
   logger.info({ projectId: id, name, kind: source.kind }, "[projects] created");
 

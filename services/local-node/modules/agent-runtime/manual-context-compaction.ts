@@ -5,6 +5,7 @@ import { projectWorkContext } from "./context-projection.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { toolRegistry } from "./tool-registry.js";
 import { maybeLlmCompactContext } from "./llm-context-compaction.js";
+import { nativeCapabilitiesEnabled } from "./native-capabilities/policy.js";
 
 export interface ContextCompactionResult {
   compacted: boolean;
@@ -54,7 +55,7 @@ export function compactSessionContext(
   const stats = store.getSessionStats(sessionId);
   const projection = projectWorkContext({
     sessionId,
-    toolSet: buildLoopToolSet(toolRegistry.listForSession(sessionId)),
+    toolSet: buildLoopToolSet(toolRegistry.listForSession(sessionId), undefined, { stableNames: nativeCapabilitiesEnabled(store.getSession(sessionId)) }),
     contextLimit: stats.contextLimit,
     outputReserve: Math.min(8192, Math.floor(stats.contextLimit / 4)),
     systemTokens: 0,
@@ -81,7 +82,7 @@ export async function compactSessionContextWithLlm(
     sessionId,
     projectId: session.projectId,
     runId: null,
-    toolSet: buildLoopToolSet(toolRegistry.listForSession(sessionId)),
+    toolSet: buildLoopToolSet(toolRegistry.listForSession(sessionId), undefined, { stableNames: nativeCapabilitiesEnabled(session) }),
     contextLimit: stats.contextLimit,
     outputReserve: Math.min(8192, Math.floor(stats.contextLimit / 4)),
     systemTokens: 0,

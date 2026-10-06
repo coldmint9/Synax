@@ -1,4 +1,5 @@
 import { CODE_TOOL_IDS, codeModeEnabled } from "./code-mode/policy.js";
+import { NATIVE_PROTOCOL_IDS, nativeCapabilitiesEnabled } from "./native-capabilities/policy.js";
 import { assertGitMrBinding } from './git/binding.js';
 import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
@@ -13,9 +14,18 @@ import { getStoredPlan } from './plan-execution.js';
  * progressive disclosure.
  */
 export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): boolean {
+  if (NATIVE_PROTOCOL_IDS.has(tool.id) && profile.id !== 'git-manager') return true;
   if (profile.allowedCapabilities.includes(tool.id)) return true;
   if (!profile.mountAllTools) return false;
   return true;
+}
+
+/** Shared model/discovery eligibility; does not replace execution checks. */
+export function modelCanUseTool(profile: AgentProfile, tool: { id: string; category: string }): boolean {
+  return profileCanUseTool(profile, tool) ||
+    ["work.checkpoint", "context.read", "tools.invalid"].includes(tool.id) ||
+    (tool.id === "verification.run" && profileCanUseTool(profile, { id: "bash" })) ||
+    tool.category === "skill" || tool.category === "mcp";
 }
 
 /**
@@ -26,6 +36,7 @@ export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): 
  * unmounted tool must not be advertised to the model or capability UI at all.
  */
 const PLAN_TOOLS = new Set([
+  'agent.discover', 'agent.execute',
   'code.run', 'code.tools', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
   'webSearch',
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
@@ -38,6 +49,8 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
+  if (NATIVE_PROTOCOL_IDS.has(tool.id) && (!nativeCapabilitiesEnabled(session) ||
+      (tool.id === 'agent.execute' && !codeModeEnabled(session)))) return false;
   if (CODE_TOOL_IDS.has(tool.id) && !codeModeEnabled(session)) return false;
   if (session.profileId === 'git-manager') {
     try { assertGitMrBinding(session.id); } catch { return false; }

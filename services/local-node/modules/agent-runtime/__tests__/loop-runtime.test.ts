@@ -1,5 +1,6 @@
 import { updateProjectSettings } from "../../../infrastructure/runtime/config/project-settings-store.js";
 import { codeParentId } from "../code-mode/history.js";
+import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from "../tools/workspace.js";
 import { clearVersionSessionFixture } from "./version-session-fixture.js";
 import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
@@ -441,6 +442,39 @@ describe("agentLoopRuntime", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
       updateProjectSettings(projectId, { codeMode: { enabled: false } }, "test");
+    }
+  });
+
+  it("discloses schemas on the next real model request and uses native composition", async () => {
+    vi.stubEnv("SYNAX_NATIVE_CAPABILITIES", "1");
+    ensureSynaxAgentRegistered();
+    const projectId = "native-disclosure-loop";
+    updateProjectSettings(projectId, { codeMode: { enabled: true, mcpTools: [] } }, "test");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-native-loop-"));
+    fs.writeFileSync(path.join(dir, "input.txt"), "private-intermediate-payload");
+    const session = agentSessionRuntime.create({ projectId, profileId: "synax", prompt: "Summarize input", permissionTier: "boundary", sessionMetadata: { mode: "chat" } });
+    setSessionWorkspaceRoot(session.id, dir);
+    const start = capturedRequests.length;
+    try {
+      queueMockStep(makeToolStep({ toolName: "agent_discover", toolCallId: "native-discover", args: { ids: ["task.list"] } }));
+      queueMockStep(makeToolStep({ toolName: "agent_execute", toolCallId: "native-execute", args: { code: 'await tools.call("file.read", { path: "input.txt" }); return "read complete";' } }));
+      queueMockStep(makeTextStep("Done."));
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Summarize input" }));
+      const requests = capturedRequests.slice(start);
+      expect(requests).toHaveLength(3);
+      expect(requests[0].tools).toContain("agent_discover");
+      expect(requests[0].tools).toContain("agent_execute");
+      expect(requests[0].tools).toContain("file_read");
+      expect(requests[0].tools).not.toContain("task_list");
+      expect(requests[1].tools).toContain("task_list");
+      expect(requests[0].tools).not.toContain("code_run");
+      expect(JSON.stringify(requests.map((request) => request.messages))).not.toContain("private-intermediate-payload");
+      expect(JSON.stringify(requests.at(-1)?.messages)).toContain("read complete");
+      expect(agentRuntimeStore.listToolCalls(session.id).find((call) => call.toolId === "agent.execute")?.status).toBe("completed");
+    } finally {
+      vi.unstubAllEnvs();
+      clearSessionWorkspaceRoot(session.id);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

@@ -59,6 +59,8 @@ export interface CodeModeSettings {
 }
 
 export interface ProjectSettings {
+  /** Settings semantics version; independent of the edit revision below. */
+  schemaVersion?: 2
   projectId: string
   version: number
   basics: ProjectBasics
@@ -96,6 +98,7 @@ export interface HighRiskAuthEnvelope {
 export function createDefaultProjectSettings(projectId: string, updatedBy = 'system'): ProjectSettings {
   const now = new Date().toISOString()
   return {
+    schemaVersion: 2,
     projectId,
     version: 1,
     basics: {

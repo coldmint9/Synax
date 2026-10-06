@@ -1,5 +1,6 @@
 import { waitForCodeRead } from "./code-mode/cancellation.js";
 import { createCodeTools } from "./code-mode/tools.js";
+import { NativeCapabilities } from "./native-capabilities/service.js";
 import { canComposeTool } from "./code-mode/policy.js";
 import { codeParentId } from "./code-mode/history.js";
 import { extensionStore } from "../extensions/extension-store.js";
@@ -128,6 +129,8 @@ export class ToolRegistry {
   private readonly hooks = new Map<string, ToolHook>();
   private readonly providers = new Map<string, SessionToolProvider>();
 
+  readonly capabilities: NativeCapabilities;
+
   constructor(
     private readonly store: AgentRuntimeStore = agentRuntimeStore,
     private readonly permissions: PermissionPolicy = permissionPolicy,
@@ -161,6 +164,8 @@ export class ToolRegistry {
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
     for (const tool of createCodeTools(this, this.store, this.profiles)) this.register(tool);
+    this.capabilities = new NativeCapabilities(this, this.store, this.profiles);
+    for (const tool of this.capabilities.tools()) this.register(tool);
     this.registerProvider(mcpSessionToolProvider);
     this.registerProvider(jevSessionToolProvider);
     this.registerProvider(customToolProvider);
@@ -611,6 +616,7 @@ export class ToolRegistry {
     const profile = this.profiles.getForSession(session);
     const tool = this.getForSession(sessionId, toolId);
 
+    this.capabilities.noteUse(sessionId, toolId);
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
       ? "Tool is no longer approved for Code Mode."
       : controlToolError(session, tool, args);

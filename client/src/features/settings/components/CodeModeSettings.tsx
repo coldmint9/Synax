@@ -65,10 +65,10 @@ export function CodeModeSettings({
   };
   return (
     <SettingsCard
-      title="Code Mode"
+      title={zh ? "Agent 能力" : "Agent capabilities"}
       icon={Code2}
       description={
-        zh ? "只读编排 · 按项目启用" : "Read-only composition · Per project"
+        zh ? "原生执行策略 · 按项目管理" : "Native execution policy · Per project"
       }
     >
       <form
@@ -80,11 +80,11 @@ export function CodeModeSettings({
       >
         <Field disabled={saving} className="grid-cols-[1fr_auto] items-center">
           <div className="grid gap-1.5">
-            <Label>{zh ? "启用 Code Mode" : "Enable Code Mode"}</Label>
+            <Label>{zh ? "允许只读编排" : "Allow read-only composition"}</Label>
             <Description>
               {zh
-                ? "让原生 Synax 代理用隔离 JavaScript 批量读取、搜索和汇总。默认关闭，直接工具调用不受影响。"
-                : "Let the native Synax agent compose reads, searches and summaries in isolated JavaScript. Off by default; direct tools are unchanged."}
+                ? "允许原生 Synax 代理组合读取、搜索和汇总操作。工具按需披露与编排权限分别管理；关闭此项仍可直接调用获准工具。"
+                : "Allow the native Synax agent to compose reads, searches and summaries. Tool discovery and composition permissions are independent; authorized direct calls remain available when this is off."}
             </Description>
           </div>
           <Switch
@@ -141,8 +141,8 @@ export function CodeModeSettings({
                 ? "保存中…"
                 : "Saving…"
               : zh
-                ? "保存 Code Mode 设置"
-                : "Save Code Mode settings"}
+                ? "保存 Agent 能力设置"
+                : "Save agent capability settings"}
           </Button>
           {saved && (
             <span role="status" className="text-xs text-muted-foreground">

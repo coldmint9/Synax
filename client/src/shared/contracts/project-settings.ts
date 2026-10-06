@@ -65,6 +65,7 @@ export interface CodeModeSettings {
 }
 
 export interface ProjectSettings {
+  schemaVersion?: 2
   projectId: string
   version: number
   basics: ProjectBasics

@@ -9,11 +9,11 @@ describe("Code Mode settings", () => {
     render(<CodeModeSettings locale="en" onSave={onSave} />);
     const user = userEvent.setup();
     expect(
-      screen.getByRole("switch", { name: "Enable Code Mode" }),
+      screen.getByRole("switch", { name: "Allow read-only composition" }),
     ).not.toBeChecked();
     expect(screen.getByRole("textbox")).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Save Code Mode settings" }),
+      screen.getByRole("button", { name: "Save agent capability settings" }),
     ).toBeDisabled();
     await user.click(screen.getByRole("switch"));
     await user.type(
@@ -21,7 +21,7 @@ describe("Code Mode settings", () => {
       "mcp.docs.search\nmcp.docs.search\nmcp.docs.read",
     );
     await user.click(
-      screen.getByRole("button", { name: "Save Code Mode settings" }),
+      screen.getByRole("button", { name: "Save agent capability settings" }),
     );
     expect(onSave).toHaveBeenCalledWith({
       enabled: true,
@@ -41,7 +41,7 @@ describe("Code Mode settings", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox"), "*");
     await user.click(
-      screen.getByRole("button", { name: "Save Code Mode settings" }),
+      screen.getByRole("button", { name: "Save agent capability settings" }),
     );
     expect(screen.getByRole("alert")).toHaveTextContent("Wildcards");
     expect(onSave).not.toHaveBeenCalled();
@@ -55,12 +55,12 @@ describe("Code Mode settings", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("switch"));
     await user.click(
-      screen.getByRole("button", { name: "保存 Code Mode 设置" }),
+      screen.getByRole("button", { name: "保存 Agent 能力设置" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("offline");
     expect(screen.getByRole("switch")).toBeChecked();
     await user.click(
-      screen.getByRole("button", { name: "保存 Code Mode 设置" }),
+      screen.getByRole("button", { name: "保存 Agent 能力设置" }),
     );
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("status")).toHaveTextContent("已保存");
@@ -77,7 +77,7 @@ describe("Code Mode settings", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("switch"));
     await user.click(
-      screen.getByRole("button", { name: "Save Code Mode settings" }),
+      screen.getByRole("button", { name: "Save agent capability settings" }),
     );
     expect(screen.getByRole("switch")).toBeDisabled();
     expect(screen.getByRole("textbox")).toBeDisabled();
