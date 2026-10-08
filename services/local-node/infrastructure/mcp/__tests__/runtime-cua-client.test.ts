@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,30 @@ afterEach(() => {
 });
 
 describe('runtime Cua MCP', () => {
+  it('spawns one child for concurrent warmups and reaps it on close', async () => {
+    const { setRuntimeCuaConnection, CUA_SERVER_ID } = await import('../runtime-cua-config.js');
+    const { mcpClientManager } = await import('../mcp-client-manager.js');
+    const starts = path.join(root, 'starts.txt');
+    setRuntimeCuaConnection({ generation: 'concurrent', command: process.execPath, args: [fixture], environment: [{ name: 'MCP_FIXTURE_START_LOG', value: starts }] });
+    let pids: number[] = [];
+    try {
+      await Promise.all(Array.from({ length: 12 }, () =>
+        mcpClientManager.warmup([CUA_SERVER_ID], 'project-concurrent', 'session-a')));
+      pids = fs.readFileSync(starts, 'utf8').trim().split('\n').map(Number);
+      expect(pids).toHaveLength(1);
+      mcpClientManager.closeAll();
+      await vi.waitFor(() => {
+        for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+      }, { timeout: 5_000 });
+    } finally {
+      mcpClientManager.closeAll();
+      setRuntimeCuaConnection(null);
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGTERM'); } catch { /* already reaped */ }
+      }
+    }
+  }, 20_000);
+
   it('preserves JSON schemas and structured results in isolated session clients', async () => {
     const { setRuntimeCuaConnection, CUA_SERVER_ID } = await import('../runtime-cua-config.js');
     const { mcpClientManager } = await import('../mcp-client-manager.js');

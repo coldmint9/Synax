@@ -1,6 +1,10 @@
 import readline from "node:readline";
 import fs from "node:fs";
 
+if (process.env.MCP_FIXTURE_START_LOG) {
+  fs.appendFileSync(process.env.MCP_FIXTURE_START_LOG, `${process.pid}\n`);
+}
+
 function send(id, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }

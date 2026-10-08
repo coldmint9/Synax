@@ -59,43 +59,53 @@ export async function startCuaHelperBridge(
     env: mergeEnvironment(process.env, options.environment),
     stderr: 'pipe',
   });
-  await client.connect(transport);
-
-  const driverStderr = transport.stderr;
-  if (driverStderr && options.onDriverStderr) {
-    let buffer = '';
-    driverStderr.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) if (line.trim()) options.onDriverStderr?.(line);
-    });
-  }
-
   const server = new Server(
     { name: 'synax-cua', version: '0.30.2' },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => client.listTools());
-  server.setRequestHandler(CallToolRequestSchema, async (request) =>
-    client.callTool({
-      name: request.params.name,
-      arguments: request.params.arguments ?? {},
-    }),
-  );
-
-  const serverTransport = new StdioServerTransport();
-  await server.connect(serverTransport);
-
   let closed = false;
-  return {
-    async close(): Promise<void> {
-      if (closed) return;
-      closed = true;
-      await server.close().catch(() => undefined);
-      await client.close().catch(() => undefined);
-    },
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await server.close().catch(() => undefined);
+    await client.close().catch(() => undefined);
+    // connect can fail before the client takes ownership of the transport.
+    await transport.close().catch(() => undefined);
   };
+
+  try {
+    await client.connect(transport);
+
+    const driverStderr = transport.stderr;
+    if (driverStderr && options.onDriverStderr) {
+      let buffer = '';
+      driverStderr.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        // Bound a diagnostic line even if the driver never writes a newline.
+        buffer = buffer.slice(-16_384);
+        for (const line of lines) if (line.trim()) options.onDriverStderr?.(line);
+      });
+    } else {
+      driverStderr?.on('data', () => undefined);
+    }
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => client.listTools());
+    server.setRequestHandler(CallToolRequestSchema, async (request) =>
+      client.callTool({
+        name: request.params.name,
+        arguments: request.params.arguments ?? {},
+      }),
+    );
+
+    const serverTransport = new StdioServerTransport();
+    await server.connect(serverTransport);
+    return { close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
 
 /** Generation is exposed to the driver so logs can be correlated per helper run. */

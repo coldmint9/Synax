@@ -115,7 +115,7 @@ export async function loadSdk(): Promise<SdkModule> {
   return (await import('@trycua/cua-driver')) as SdkModule;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes(CUA_VERSION_FLAG)) {
     process.stdout.write(`synax-cua ${CUA_SDK_VERSION}\n`);
@@ -148,6 +148,9 @@ async function main(): Promise<void> {
   const shutdown = async (code: number): Promise<void> => {
     if (stopping) return;
     stopping = true;
+    // A signal/EOF can arrive while the bridge is connecting. Wait until it
+    // has either handed back its resources or cleaned up its failed startup.
+    await startup.catch(() => undefined);
     try {
       await bridge?.close();
     } catch (error) {
@@ -163,22 +166,40 @@ async function main(): Promise<void> {
     process.exit(code);
   };
 
-  const started = await host.start();
-  const generation = generationOverride ?? started.generation;
-  log(`host started: generation=${generation}`);
-
-  bridge = await startCuaHelperBridge({
-    mcp: started.mcp,
-    generation,
-    environment: generationEnvironment(generation),
-    onDriverStderr: log,
-  });
-  log('mcp bridge ready on stdio');
-
   // MCP frames arrive on stdin; EOF means the owning Synax session went away.
   process.stdin.on('end', () => void shutdown(0));
+  process.stdin.on('close', () => void shutdown(0));
   process.on('SIGTERM', () => void shutdown(0));
   process.on('SIGINT', () => void shutdown(0));
+
+  const startup = (async () => {
+    const started = await host.start();
+    const generation = generationOverride ?? started.generation;
+    log(`host started: generation=${generation}`);
+    // Avoid opening a new transport after its owner has already disconnected.
+    if (!stopping) {
+      bridge = await startCuaHelperBridge({
+        mcp: started.mcp,
+        generation,
+        environment: generationEnvironment(generation),
+        onDriverStderr: log,
+      });
+      log('mcp bridge ready on stdio');
+    }
+    return started;
+  })();
+  if (process.stdin.readableEnded || process.stdin.destroyed) void shutdown(0);
+
+  let started: Awaited<ReturnType<HostLike['start']>>;
+  try {
+    started = await startup;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`startup failed: ${message}`);
+    await shutdown(/permission/i.test(message) ? CUA_EXIT_CODES.permission : CUA_EXIT_CODES.unavailable);
+    return;
+  }
+  if (stopping) return;
 
   void host
     .waitForExit(started.generation)

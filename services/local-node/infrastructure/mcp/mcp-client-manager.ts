@@ -30,7 +30,7 @@ const CALL_TIMEOUT_MS = 60_000;
 
 type ServerState =
   | { status: "idle" }
-  | { status: "starting" }
+  | { status: "starting"; transport?: Transport }
   | {
       status: "ready";
       client: Client;
@@ -159,13 +159,18 @@ export class McpClientManager {
     const key = this.key(config.id, projectId, sessionId);
     const existing = this.servers.get(key);
     if (existing?.status === "ready") { existing.lastUsed = Date.now(); return existing; }
-    if (existing?.status === "starting") {
-      const pending = this.inflight.get(key);
-      if (pending) return pending;
-    }
+    const pending = this.inflight.get(key);
+    if (pending) return pending;
 
-    const promise = (async (): Promise<ServerState> => {
+    // The marker owns this startup. Closing or replacing it invalidates the
+    // result, even when connect/listTools finishes after a new startup began.
+    const starting: ServerState & { status: "starting" } = { status: "starting" };
+    this.servers.set(key, starting);
+
+    let promise!: Promise<ServerState>;
+    promise = (async (): Promise<ServerState> => {
       let transport: Transport | undefined;
+      let client: Client | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const project = projectId ? readWorkspaceProject(projectId) : undefined;
@@ -173,7 +178,8 @@ export class McpClientManager {
         if (config.id !== CUA_SERVER_ID && config.transport !== "http" && projectId && !location && !config.cwd)
           throw new Error("The MCP project has no registered workspace. Set an explicit cwd.");
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
-        const client = new Client(
+        starting.transport = transport;
+        client = new Client(
           { name: "synax-host", version: "1.9.0" },
           { capabilities: {} },
         );
@@ -181,7 +187,10 @@ export class McpClientManager {
           void transport?.close().catch(() => undefined);
         }, START_TIMEOUT_MS);
         await client.connect(transport);
-        clearTimeout(timer);
+        // Drain piped diagnostics so a noisy helper cannot block on stderr.
+        if ('stderr' in transport) {
+          (transport.stderr as { resume?: () => void } | null)?.resume?.();
+        }
         const listed = await client.listTools();
         const tools = toToolDefs(
           (listed as { tools?: Array<Record<string, unknown>> }).tools ?? [],
@@ -193,6 +202,11 @@ export class McpClientManager {
           tools,
           lastUsed: Date.now(),
         };
+        if (this.servers.get(key) !== starting) {
+          await client.close().catch(() => undefined);
+          await transport.close().catch(() => undefined);
+          return { status: "failed", error: "MCP server closed during startup" };
+        }
         this.servers.set(key, state);
         if (config.id === CUA_SERVER_ID) this.startCuaSweep();
         logger.info(
@@ -202,9 +216,10 @@ export class McpClientManager {
         return state;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        await client?.close().catch(() => undefined);
         await transport?.close().catch(() => undefined);
         const state: ServerState = { status: "failed", error: message };
-        this.servers.set(key, state);
+        if (this.servers.get(key) === starting) this.servers.set(key, state);
         logger.warn(
           { serverId: key, err: message },
           "[mcp] server start failed",
@@ -212,7 +227,8 @@ export class McpClientManager {
         return state;
       } finally {
         clearTimeout(timer);
-        this.inflight.delete(key);
+        // A close may have allowed a newer startup to take this key.
+        if (this.inflight.get(key) === promise) this.inflight.delete(key);
       }
     })();
 
@@ -347,7 +363,7 @@ export class McpClientManager {
         this.closeServer(serverId, projectId, sessionId);
         return { ok: false, text: "", error: `Cua operation outcome unknown: ${message}. Reobserve before any further action; do not repeat it automatically.` };
       }
-      this.servers.delete(this.key(serverId, projectId, sessionId));
+      this.closeServer(serverId, projectId, sessionId);
       const restarted = await this.startServer(config, projectId, sessionId);
       if (restarted.status === "ready") {
         try {
@@ -404,18 +420,14 @@ export class McpClientManager {
     const key = this.key(serverId, projectId, sessionId);
     const state = this.servers.get(key);
     this.servers.delete(key);
+    this.inflight.delete(key);
+    if (state?.status === 'starting') {
+      void state.transport?.close().catch(() => undefined);
+    }
     if (state?.status === 'ready') {
       void state.client.close().catch(() => undefined);
       void state.transport.close().catch(() => undefined);
     }
-    const pending = this.inflight.get(key);
-    if (pending) void pending.then(started => {
-      if (started.status === 'ready') {
-        void started.client.close().catch(() => undefined);
-        void started.transport.close().catch(() => undefined);
-      }
-      if (this.servers.get(key) === started) this.servers.delete(key);
-    });
   }
 
   closeCua(): void {
@@ -427,12 +439,9 @@ export class McpClientManager {
 
   closeAll(): void {
     if (this.cuaSweep) { clearInterval(this.cuaSweep); this.cuaSweep = null; }
-    for (const [id, state] of this.servers.entries()) {
-      if (state.status === "ready") {
-        void state.client.close().catch(() => undefined);
-        void state.transport.close().catch(() => undefined);
-      }
-      this.servers.delete(id);
+    for (const key of [...this.servers.keys()]) {
+      const [projectId, serverId, sessionId] = JSON.parse(key) as [string | null, string, string | null];
+      this.closeServer(serverId, projectId ?? undefined, sessionId ?? undefined);
     }
   }
 }
