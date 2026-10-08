@@ -7,9 +7,11 @@ import {
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
-/** A child is governed by liveness, not by a total wall-clock budget. */
+/** A child is governed by execution progress, not a total wall-clock budget. */
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
 export const SUBAGENT_LEASE_DURATION_MS = 30_000;
+/** Allow slow reasoning/tools, but never renew progress with a timer. */
+export const SUBAGENT_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 /** Compatibility value for callers that still pass the old option. */
 export const DEFAULT_PER_CHILD_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
@@ -43,6 +45,9 @@ export function getSubagentLiveness(
     return "completed";
   if (metadata?.state === "waiting" || metadata?.phase === "waiting")
     return "waiting";
+  const progress = metadata?.lastProgressAt ? Date.parse(metadata.lastProgressAt) : NaN;
+  if (Number.isFinite(progress) && now - progress >= SUBAGENT_PROGRESS_TIMEOUT_MS)
+    return "stale";
   const lease = metadata?.leaseExpiresAt ? Date.parse(metadata.leaseExpiresAt) : NaN;
   return Number.isFinite(lease) && lease >= now ? "healthy" : "stale";
 }
@@ -150,7 +155,8 @@ function reapUnresolvableChild(
   childSessionId: string,
   timedOut: boolean,
   timeoutMs: number,
-  deps: OrchestratorDeps,
+  deps: Pick<OrchestratorDeps, "store">,
+  failureReason?: string,
 ): void {
   let child: ReturnType<AgentRuntimeStore["tryGetSession"]> | undefined;
   try {
@@ -160,14 +166,16 @@ function reapUnresolvableChild(
   }
   if (!child || !UNRESOLVABLE_CHILD_STATUSES.has(child.status)) return;
   if (child.sessionMetadata?.runtimeControl) return;
-  const reason = timedOut
+  const reason = failureReason ?? (timedOut
     ? `Subagent timed out after ${timeoutMs}ms.`
-    : `Subagent ended as ${child.status} without a terminal result.`;
+    : `Subagent ended as ${child.status} without a terminal result.`);
   try {
     deps.store.updateSession(childSessionId, {
       status: "failed",
       updatedAt: nowIso(),
       blockedReason: reason,
+      activeRunId: null,
+      completedAt: nowIso(),
     });
   } catch (err) {
     logger.warn(
@@ -177,11 +185,37 @@ function reapUnresolvableChild(
   }
 }
 
+/** Wait without spending model turns. Expired persisted leases have no live owner. */
+export async function waitForChildSessions(
+  parentSessionId: string,
+  abortSignal: AbortSignal,
+  shouldYield: () => boolean = () => false,
+  deps: Pick<OrchestratorDeps, "store"> = defaultDeps,
+): Promise<boolean> {
+  let waited = false;
+  while (!shouldYield()) {
+    if (abortSignal.aborted)
+      throw abortSignal.reason ?? new Error("Parent aborted while waiting for subagents.");
+    const children = deps.store.listSessionTree(parentSessionId).filter(child =>
+      child.id !== parentSessionId && ["queued", "running"].includes(child.status),
+    );
+    if (!children.length) return waited;
+    waited = true;
+    for (const child of children) {
+      const metadata = child.sessionMetadata?.subagentTask as SubagentTaskMetadata | undefined;
+      if (getSubagentLiveness(child.status, metadata) === "stale")
+        reapUnresolvableChild(child.id, false, 0, deps, "Subagent execution lease expired or progress stalled.");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  return waited;
+}
+
 /**
- * Run a single already-created child session to completion with a wall-clock
- * timeout. Never throws — any failure/timeout is folded into the returned
- * SubagentResult. On timeout the child's own run is aborted and finalized (it
- * does not leak), but sibling work is untouched.
+ * Run a child with a progress watchdog and optional explicit timeout.
+ * Any failure/timeout is folded into the returned
+ * SubagentResult. On timeout the child is aborted and finalized; sibling work
+ * is untouched. Uncooperative upstream reads cannot hold the result open.
  */
 export async function runChildToCompletion(
   childSessionId: string,
@@ -189,6 +223,7 @@ export async function runChildToCompletion(
   opts: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    progressTimeoutMs?: number;
     input?: import("./contracts.js").StreamTurnRequest;
     resume?: boolean;
   } = {},
@@ -203,6 +238,9 @@ export async function runChildToCompletion(
     return mapChildToResult(childSessionId, spec, false, deps);
   const controller = new AbortController();
   const startedAt = nowIso();
+  let lastProgressAt = Date.now();
+  let timedOut = false;
+  const progressTimeoutMs = opts.progressTimeoutMs ?? SUBAGENT_PROGRESS_TIMEOUT_MS;
   const touch = (phase: string) => {
     deps.store.updateSessionMetadata?.(childSessionId, {
       subagentTask: {
@@ -210,13 +248,20 @@ export async function runChildToCompletion(
         phase,
         startedAt,
         lastHeartbeatAt: nowIso(),
-        lastProgressAt: nowIso(),
+        lastProgressAt: new Date(lastProgressAt).toISOString(),
         leaseExpiresAt: new Date(Date.now() + SUBAGENT_LEASE_DURATION_MS).toISOString(),
       },
     });
   };
   touch("starting");
-  const heartbeat = setInterval(() => touch("running"), SUBAGENT_HEARTBEAT_INTERVAL_MS);
+  const heartbeat = setInterval(() => {
+    if (Date.now() - lastProgressAt >= progressTimeoutMs) {
+      timedOut = true;
+      controller.abort(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
+      return;
+    }
+    touch("running");
+  }, Math.min(SUBAGENT_HEARTBEAT_INTERVAL_MS, progressTimeoutMs));
 
   const onParentAbort = () => {
     if (!controller.signal.aborted)
@@ -229,17 +274,37 @@ export async function runChildToCompletion(
   const timer =
     typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
       ? setTimeout(() => {
-          if (!controller.signal.aborted)
+          if (!controller.signal.aborted) {
+            timedOut = true;
             controller.abort(new Error(`Subagent timed out after ${opts.timeoutMs}ms.`));
+          }
         }, opts.timeoutMs)
       : undefined;
 
+  let stream: AsyncGenerator<import("./contracts.js").AgentRunStreamChunk> | undefined;
   try {
-    const stream = opts.resume
+    stream = opts.resume
       ? deps.loop.streamContinue(childSessionId, opts.input ?? {}, controller.signal)
       : deps.loop.streamRun(childSessionId, opts.input ?? {}, controller.signal);
-    for await (const _chunk of stream) {
-      // Child persists its own messages/events; we only need the final status.
+    while (true) {
+      // Race the read too: some upstream streams do not honor AbortSignal.
+      controller.signal.throwIfAborted();
+      let rejectAbort!: () => void;
+      const aborted = new Promise<never>((_resolve, reject) => {
+        rejectAbort = () => reject(controller.signal.reason ?? new Error("Subagent aborted."));
+        controller.signal.addEventListener("abort", rejectAbort, { once: true });
+      });
+      let chunk: IteratorResult<import("./contracts.js").AgentRunStreamChunk>;
+      try {
+        chunk = await Promise.race([stream.next(), aborted]);
+      } finally {
+        // A single pending abort promise for the whole stream would retain a
+        // race handler per chunk until completion on long-running children.
+        controller.signal.removeEventListener("abort", rejectAbort);
+      }
+      if (chunk.done) break;
+      lastProgressAt = Date.now();
+      touch("running");
     }
   } catch (err) {
     logger.warn(
@@ -250,6 +315,15 @@ export async function runChildToCompletion(
     clearInterval(heartbeat);
     if (timer) clearTimeout(timer);
     opts.abortSignal?.removeEventListener("abort", onParentAbort);
+    if (controller.signal.aborted)
+      void stream?.return(undefined).catch((err) => {
+        logger.warn({ childSessionId, err }, "[subagent-orchestrator] child stream cleanup failed");
+      });
+    reapUnresolvableChild(
+      childSessionId, timedOut, opts.timeoutMs ?? progressTimeoutMs, deps,
+      controller.signal.aborted && controller.signal.reason instanceof Error
+        ? controller.signal.reason.message : undefined,
+    );
     const finalChild = deps.store.tryGetSession(childSessionId);
     const finalState = finalChild?.status === "completed"
       ? "completed"
@@ -261,13 +335,13 @@ export async function runChildToCompletion(
         state: finalState,
         phase: finalState,
         lastHeartbeatAt: nowIso(),
-        lastProgressAt: nowIso(),
+        lastProgressAt: new Date(lastProgressAt).toISOString(),
         completedAt: nowIso(),
       },
     });
   }
 
-  return mapChildToResult(childSessionId, spec, false, deps);
+  return mapChildToResult(childSessionId, spec, timedOut, deps);
 }
 
 function mapChildToResult(
@@ -323,7 +397,7 @@ function mapChildToResult(
  *
  * Guarantees the model-driven path lacks:
  *  - bounded concurrency (slots, not all-at-once)
- *  - per-child wall-clock timeout (a hung child is aborted, not infinite)
+ *  - per-child progress watchdog (a stalled child is aborted)
  *  - failure isolation (one child failing/timing out never rejects the batch)
  *  - ordered results (output[i] corresponds to specs[i])
  *

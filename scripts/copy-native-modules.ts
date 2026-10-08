@@ -110,6 +110,7 @@ function copyRuntimePackage(
 copyRuntimePackage("trash");
 // PDF.js loads its ESM worker relative to the package; ship both intact.
 copyRuntimePackage("pdfjs-dist");
+copyRuntimePackage("@napi-rs/canvas");
 // The standalone Computer Use helper owns the CUA SDK and its native driver.
 // Synax never loads them itself, so they ship beside the helper instead of with
 // the API sidecar. Keeping them out of server-dist also keeps the helper's

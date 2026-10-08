@@ -1,14 +1,15 @@
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import { type RuntimeContentPart } from "./content-parts.js";
+import { type RuntimeContentPart, type InputCapabilities } from "./content-parts.js";
 import { getAsset, readAsset, assetPath } from "./media-assets.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveFileParts } from "./file-input/index.js";
 export async function codexMediaInput(
   input: StreamTurnRequest,
   text: string,
+  capability?: InputCapabilities,
 ): Promise<unknown[]> {
-  const parts = await resolveFileParts(input.contentParts ?? [{ type: "text", text }]);
+  const parts = await resolveFileParts(input.contentParts ?? [{ type: "text", text }], undefined, capability);
   if (parts.some((p) => p.type !== "text" && p.type !== "image"))
     throw new AgentRuntimeError(
       "Codex only supports text and image attachments.",
@@ -26,9 +27,10 @@ export async function codexMediaInput(
 export async function claudeMediaInput(
   input: StreamTurnRequest,
   text: string,
+  capability?: InputCapabilities,
 ): Promise<any> {
   if (!input.contentParts) return text;
-  const parts = await resolveFileParts(input.contentParts);
+  const parts = await resolveFileParts(input.contentParts, undefined, capability);
   if (parts.some((p) => p.type !== "text" && p.type !== "image"))
     throw new AgentRuntimeError(
       "Claude Code only supports text and image attachments.",
@@ -53,9 +55,10 @@ export async function claudeMediaInput(
 export async function acpMediaInput(
   parts: RuntimeContentPart[],
   text: string,
+  capability?: InputCapabilities,
 ): Promise<ContentBlock[]> {
   if (!parts.length) return [{ type: "text", text }];
-  parts = await resolveFileParts(parts);
+  parts = await resolveFileParts(parts, undefined, capability);
   return (await Promise.all(
     parts.map(async (p) => {
       if (p.type === "text") return p;

@@ -13,7 +13,7 @@ import {
   type RuntimeContentPart,
   type RuntimeAsset,
 } from "./content-parts.js";
-import { getAsset, readAsset, validateAssets } from "./media-assets.js";
+import { getAsset, readAsset, validateAssets, modelContentParts } from "./media-assets.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveMediaProfile } from "../../infrastructure/llm-runtime/providers/media-profile.js";
@@ -285,36 +285,51 @@ export async function resolveMediaMessages(
 ): Promise<LlmGatewayMessage[]> {
   if (!projectId && referencedAssets(messages).length)
     throw new AgentRuntimeError("Media requires a project context.", "MEDIA_PROJECT_REQUIRED", 400);
-  // Documents, including historical asset references, become text before any
-  // provider-specific MIME or modality checks. Their bytes never reach the API.
-  const parsedAssets = new Map<string, string>();
-  messages = await Promise.all(messages.map(async (message) => {
-    if (!Array.isArray(message.content)) return message;
-    const content = await Promise.all(message.content.map(async (part) => {
-      if (part.type !== "file") return part;
+  // PDF page images follow the selected model's verified image capability.
+  const capability = nativeInputCapabilities(selection);
+  const existingVisuals = [...new Map(referencedAssets(messages, projectId).filter(a => isNativeVisual(a.mediaType)).map(a => [a.id, a])).values()];
+  let remainingFiles = Math.max(0, capability.maxFiles - existingVisuals.length);
+  let remainingBytes = Math.max(0, capability.maxTotalBytes - existingVisuals.reduce((sum, a) => sum + a.size, 0));
+  const parsedAssets = new Map<string, ReturnType<typeof modelContentParts>>();
+  const resolvedMessages: LlmGatewayMessage[] = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      resolvedMessages.push(message);
+      continue;
+    }
+    const content: ReturnType<typeof modelContentParts> = [];
+    for (const part of message.content) {
+      if (part.type !== "file") { content.push(part); continue; }
       const id = assetId(part.data);
       if (!id) {
-        if (isNativeVisual(part.mediaType)) return part;
+        if (isNativeVisual(part.mediaType)) { content.push(part); continue; }
         throw new AgentRuntimeError("Document input requires a local asset reference; use a file parsing tool first.", "UNSUPPORTED_FILE", 422);
       }
       const asset = getAsset(id, projectId);
-      if (isNativeVisual(asset.mediaType)) return part;
-      let text = parsedAssets.get(id);
-      if (text === undefined) {
+      if (isNativeVisual(asset.mediaType)) { content.push(part); continue; }
+      let parsed = parsedAssets.get(id);
+      if (!parsed) {
         try {
-          text = (await parseAssetInput(asset)).text;
+          const parts = await resolveFileParts([{ type: "file", assetId: id }], projectId, {
+            ...capability, maxFiles: remainingFiles, maxTotalBytes: remainingBytes,
+          });
+          for (const p of parts) if (p.type !== "text") {
+            remainingFiles--;
+            remainingBytes -= getAsset(p.assetId, projectId).size;
+          }
+          parsed = modelContentParts(parts).map(part => part.type === "text" ? { type: "text", text: part.text } : part);
         } catch (error) {
           if (!(error instanceof AgentRuntimeError) ||
             !(message.role === "assistant" || message.providerOptions?.synax?.toolCallId || message.providerOptions?.synax?.generatedMedia)) throw error;
-          text = `Binary asset retained for download or a parsing tool: ${JSON.stringify(asset)}. ${error.message}`;
+          parsed = [{ type: "text", text: `Binary asset retained for download or a parsing tool: ${JSON.stringify(asset)}. ${error.message}` }];
         }
-        parsedAssets.set(id, text);
+        parsedAssets.set(id, parsed);
       }
-      return { type: "text" as const, text };
-    }));
-    return { ...message, content } as LlmGatewayMessage;
-  }));
-  const capability = nativeInputCapabilities(selection);
+      content.push(...parsed);
+    }
+    resolvedMessages.push({ ...message, content } as LlmGatewayMessage);
+  }
+  messages = resolvedMessages;
   // Google accepts native assistant media (including thought signatures).
   // Chat/Responses/Anthropic accept prior generated files as explicit context.
   if (selection.provider.npm !== "@ai-sdk/google")

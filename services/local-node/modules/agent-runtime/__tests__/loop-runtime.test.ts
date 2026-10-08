@@ -386,6 +386,7 @@ vi.mock("../../../infrastructure/llm-runtime/gateway.js", () => ({
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { interactionService } from "../interaction-service.js";
 import { agentLoopRuntime } from "../loop-runtime.js";
+import { runChildToCompletion } from "../subagent-orchestrator.js";
 import { inputQueueService } from "../input-queue-service.js";
 import type { AgentRunStreamChunk } from "../contracts.js";
 import { permissionPolicy } from "../permission-policy.js";
@@ -453,6 +454,73 @@ describe("agentLoopRuntime", () => {
     expect(agentRuntimeStore.listRuns(child.id)[0].status).toBe("interrupted");
     expect(agentRuntimeStore.listRunSteps(agentRuntimeStore.listRuns(child.id)[0].id)[0].status).toBe("interrupted");
     expect(agentRuntimeStore.getSession(completed.id)).toMatchObject({ status: "completed", resultSummary: "Saved result" });
+  });
+
+  it("preserves the reaped terminal state when an aborted child cleans up late", async () => {
+    const parent = agentSessionRuntime.create(executorInput);
+    const child = agentSessionRuntime.create({
+      ...executorInput, profileId: "explorer", parentSessionId: parent.id,
+    });
+    let started!: () => void;
+    const modelStarted = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const modelPending = new Promise<void>(resolve => { release = resolve; });
+    mockStepResults.push({
+      onStart() { started(); },
+      fullStream: (async function* () {
+        await modelPending;
+        throw new Error("Delayed upstream cancellation");
+      })(),
+    });
+    const controller = new AbortController();
+    const pending = runChildToCompletion(child.id, { profileId: "explorer", prompt: "Child work" }, {
+      abortSignal: controller.signal, input: { message: "Child work" },
+    });
+    await modelStarted;
+    controller.abort();
+    expect(await pending).toMatchObject({ status: "failed" });
+    const reaped = agentRuntimeStore.getSession(child.id);
+    expect(reaped).toMatchObject({ status: "failed", activeRunId: null });
+    release();
+    await agentLoopRuntime.waitForIdleSessions([child.id]);
+    expect(agentRuntimeStore.getSession(child.id)).toEqual(reaped);
+    expect(agentRuntimeStore.listRuns(child.id)[0].status).toBe("failed");
+  });
+
+  it("waits for background children without generating repeated final answers", async () => {
+    const parent = agentSessionRuntime.create(executorInput);
+    const child = agentSessionRuntime.create({
+      ...executorInput, profileId: "explorer", parentSessionId: parent.id,
+    });
+    agentRuntimeStore.updateSession(child.id, { status: "running" });
+    agentRuntimeStore.updateSessionMetadata(child.id, {
+      subagentTask: {
+        state: "running",
+        lastProgressAt: new Date().toISOString(),
+        leaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+      },
+    });
+    const before = capturedRequests.length;
+    queueMockStep(makeTextStep("Implementation complete; waiting for review."));
+    queueMockStep(makeTextStep("Review received; implementation complete."));
+    const finished = collectChunks(agentLoopRuntime.streamRun(parent.id, { message: "Parent work" }));
+    try {
+      await vi.waitFor(() => {
+        const run = agentRuntimeStore.listRuns(parent.id)[0];
+        expect(agentRuntimeStore.listRunSteps(run.id)[0]?.metadata.awaitingSubagents).toBe(true);
+        expect(capturedRequests.length).toBe(before + 1);
+      });
+      await new Promise(resolve => setTimeout(resolve, 250));
+      expect(capturedRequests.length).toBe(before + 1);
+      expect(agentRuntimeStore.getSession(parent.id).status).toBe("running");
+    } finally {
+      agentRuntimeStore.updateSession(child.id, { status: "completed", resultSummary: "Review passed" });
+      await finished;
+    }
+    expect(capturedRequests.length).toBe(before + 2);
+    expect(agentRuntimeStore.getSession(parent.id)).toMatchObject({
+      status: "completed", resultSummary: "Review received; implementation complete.",
+    });
   });
 
   it("keeps waiting children intact when the parent finishes normally", async () => {

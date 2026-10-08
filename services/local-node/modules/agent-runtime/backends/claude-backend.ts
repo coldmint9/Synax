@@ -1,4 +1,4 @@
-import { validateInputMedia } from "../media-capabilities.js";
+import { validateInputMedia, sessionInputCapabilities } from "../media-capabilities.js";
 import { claudeMediaInput } from "../media-backend-input.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -153,7 +153,7 @@ export class ClaudeBackend implements BackendAdapter {
       type: "user",
       message: {
         role: "user",
-        content: await claudeMediaInput(input, turn.message),
+        content: await claudeMediaInput(input, turn.message, input.contentParts?.some(p => p.type === "file") ? await sessionInputCapabilities(turn.sessionId, input.model) : undefined),
       },
       parent_tool_use_id: null,
       session_id: "",

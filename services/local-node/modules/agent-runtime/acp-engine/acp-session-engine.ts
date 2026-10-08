@@ -1,5 +1,5 @@
 import { persistInlineVisualization } from "../visualization-integration.js";
-import { validateInputMedia } from '../media-capabilities.js';
+import { validateInputMedia, sessionInputCapabilities } from '../media-capabilities.js';
 import { hasInlineMedia, normalizeMediaPayload } from '../media-tool-content.js';
 import { acpMediaInput } from '../media-backend-input.js';
 import { normalizeInput, hasInput, type RuntimeContentPart } from '../content-parts.js';
@@ -320,7 +320,7 @@ class AcpSessionEngine {
 
       const promptResult = await pooled.connection.conn.prompt({
         sessionId: pooled.acpSessionId,
-        prompt: await acpMediaInput(contentParts ?? [], prompt),
+        prompt: await acpMediaInput(contentParts ?? [], prompt, contentParts?.some(p => p.type === "file") ? await sessionInputCapabilities(sessionId, parsed.modelId) : undefined),
       });
 
       await updates;

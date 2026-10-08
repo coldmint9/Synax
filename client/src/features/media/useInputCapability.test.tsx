@@ -19,7 +19,6 @@ function draft(
 }
 describe("provider capabilities only gate visual attachments", () => {
   it.each([
-    "application/pdf",
     "text/plain",
     "text/csv",
     "application/json",
@@ -60,5 +59,55 @@ describe("provider capabilities only gate visual attachments", () => {
       expect(result.current.text).toContain("当前模型不支持"),
     );
     expect(result.current.blocked).toBe(true);
+  });
+  it.each([
+    { modalities: ["text"], verified: true },
+    { modalities: ["text"], verified: false },
+  ])(
+    "warns about PDF visuals without blocking text input",
+    async (capability) => {
+      vi.mocked(apiRequest).mockResolvedValue({
+        ...capability,
+        maxFiles: 10,
+        maxFileBytes: 50 * 1024 * 1024,
+        maxTotalBytes: 100 * 1024 * 1024,
+      });
+      const { result } = renderHook(() =>
+        useInputCapability(
+          "project",
+          "session",
+          "native",
+          "text-only",
+          draft("application/pdf"),
+        ),
+      );
+      await waitFor(() =>
+        expect(result.current.text).toContain("图片和流程图无法识别"),
+      );
+      expect(result.current.blocked).toBe(false);
+      expect(result.current.error).toBe(false);
+    },
+  );
+  it("shows that PDF visuals are included when the model accepts images", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      modalities: ["text", "image"],
+      verified: true,
+      maxFiles: 10,
+      maxFileBytes: 50 * 1024 * 1024,
+      maxTotalBytes: 100 * 1024 * 1024,
+    });
+    const { result } = renderHook(() =>
+      useInputCapability(
+        "project",
+        "session",
+        "native",
+        "vision",
+        draft("application/pdf"),
+      ),
+    );
+    await waitFor(() =>
+      expect(result.current.text).toContain("结合文字、图片和流程图"),
+    );
+    expect(result.current.blocked).toBe(false);
   });
 });

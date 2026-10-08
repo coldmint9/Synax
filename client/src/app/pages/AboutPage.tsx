@@ -2,7 +2,7 @@ import { ScrollArea, Surface, Text, Badge, Separator } from "@/shared/ui/ui/Disp
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../../shared/ui/IconSurface";
 
-const VERSION = "1.10.1";
+const VERSION = "1.11.1";
 const REPO_URL = "https://github.com/coldmint9/Synax";
 const AUTHOR_URL = "https://github.com/coldmint9";
 

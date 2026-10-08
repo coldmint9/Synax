@@ -46,12 +46,22 @@ export function documentFixtures() {
   };
 }
 /** A complete one-page PDF, including xref, with a standard text layer. */
-export function makePdf(content = "PDF text layer") {
-  const stream = `BT /F1 12 Tf 72 720 Td (${content}) Tj ET`;
+export function makePdf(
+  content = "PDF text layer",
+  drawing = "",
+  pageCount = 1,
+) {
+  const stream = `BT /F1 12 Tf 72 720 Td (${content}) Tj ET\n${drawing}`;
+  const fontId = 3 + pageCount;
+  const streamId = fontId + 1;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, i) => `${3 + i} 0 R`).join(" ")}] /Count ${pageCount} >>`,
+    ...Array.from(
+      { length: pageCount },
+      () =>
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${streamId} 0 R >>`,
+    ),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
   ];
@@ -62,9 +72,17 @@ export function makePdf(content = "PDF text layer") {
     value += `${index + 1} 0 obj\n${object}\nendobj\n`;
   });
   const xref = Buffer.byteLength(value);
-  value += `xref\n0 6\n0000000000 65535 f \n${offsets
+  value += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
     .slice(1)
     .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
-    .join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    .join(
+      "",
+    )}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(value);
 }
+// A pair of boxes connected by an arrow, drawn as PDF vectors.
+export const flowchartDrawing =
+  "0 0 1 RG 2 w 72 600 100 40 re S 72 500 100 40 re S 122 600 m 122 540 l S 117 545 m 122 540 l 127 545 l S";
+// A small embedded red/green/blue/white bitmap, without an external image file.
+export const bitmapDrawing =
+  "q 120 0 0 120 72 500 cm BI /W 2 /H 2 /CS /RGB /BPC 8 /F /AHx ID FF000000FF000000FFFFFFFF> EI Q";

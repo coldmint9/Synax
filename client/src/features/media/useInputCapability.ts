@@ -13,9 +13,17 @@ export function useInputCapability(
   const [cap, setCap] = useState<InputCapabilities>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const key =
-    media?.parts.filter((p) => p.type === "image" || p.type === "video").map((p) => p.type === "text" ? "" : p.assetId).join(",") ??
-    "";
+  const visualKey =
+    media?.parts
+      .filter((p) => p.type === "image" || p.type === "video")
+      .map((p) => (p.type === "text" ? "" : p.assetId))
+      .join(",") ?? "";
+  const pdfKey =
+    media?.items
+      .filter((item) => item.asset?.mediaType === "application/pdf")
+      .map((item) => item.asset!.id)
+      .join(",") ?? "";
+  const key = [visualKey, pdfKey].filter(Boolean).join(",");
   useEffect(() => {
     let active = true;
     setCap(undefined);
@@ -46,7 +54,7 @@ export function useInputCapability(
   }, [projectId, sessionId, backendId, model, key, version]);
   let reason = error;
   const deferred = backendId.endsWith("-acp") && !sessionId;
-  if (cap && !cap.verified && !deferred)
+  if (visualKey && cap && !cap.verified && !deferred)
     reason =
       cap.reason ??
       "输入模态未确认，请在设置声明或选择兼容模型 / Input modalities unconfirmed";
@@ -54,7 +62,11 @@ export function useInputCapability(
     for (const item of media.items) {
       if (!item.asset) continue;
       const a = item.asset;
-      if (a.mediaType === "image/svg+xml" || (!a.mediaType.startsWith("image/") && !a.mediaType.startsWith("video/"))) continue;
+      if (
+        a.mediaType === "image/svg+xml" ||
+        (!a.mediaType.startsWith("image/") && !a.mediaType.startsWith("video/"))
+      )
+        continue;
       const modality = a.mediaType.split("/")[0];
       const type = ["image", "audio", "video"].includes(modality)
         ? modality
@@ -73,25 +85,42 @@ export function useInputCapability(
         reason = `${a.filename} 超过模型文件上限 / Backend file limit exceeded`;
     }
     if (
-      media.items.reduce((sum, i) => sum + (i.asset && i.asset.mediaType !== "image/svg+xml" && /^(image|video)\//.test(i.asset.mediaType) ? i.asset.size : 0), 0) >
-      cap.maxTotalBytes
+      media.items.reduce(
+        (sum, i) =>
+          sum +
+          (i.asset &&
+          i.asset.mediaType !== "image/svg+xml" &&
+          /^(image|video)\//.test(i.asset.mediaType)
+            ? i.asset.size
+            : 0),
+        0,
+      ) > cap.maxTotalBytes
     )
       reason = "附件合计超过模型请求上限 / Backend request limit exceeded";
   }
   return {
-    blocked: Boolean(key && (loading || reason)),
+    blocked: Boolean(visualKey && (loading || reason)),
     text: !key
       ? ""
       : loading
         ? "正在检查输入能力… / Checking modalities…"
-        : reason ||
-          (!cap?.verified
-            ? "创建会话时协商附件能力 / Negotiated on session creation"
-            : `输入 / Input: ${cap.modalities.join(" · ")}${
-                cap.status === "declared"
-                  ? "（传输未确认 / transport unverified）"
-                  : ""
-              }`),
-    error: Boolean(reason),
+        : !visualKey && pdfKey
+          ? cap?.verified &&
+            cap.modalities.includes("image") &&
+            (!cap.mediaTypes?.length ||
+              cap.mediaTypes.some(
+                (type) => type === "image/png" || type === "image/*",
+              ))
+            ? "PDF 将结合文字、图片和流程图解析。"
+            : "PDF 仅解析文字；其中的图片和流程图无法识别。"
+          : reason ||
+            (!cap?.verified
+              ? "创建会话时协商附件能力 / Negotiated on session creation"
+              : `输入 / Input: ${cap.modalities.join(" · ")}${
+                  cap.status === "declared"
+                    ? "（传输未确认 / transport unverified）"
+                    : ""
+                }`),
+    error: Boolean(visualKey && reason),
   };
 }

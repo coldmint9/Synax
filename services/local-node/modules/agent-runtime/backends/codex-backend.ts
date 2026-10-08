@@ -1,4 +1,4 @@
-import { validateInputMedia } from '../media-capabilities.js';
+import { validateInputMedia, sessionInputCapabilities } from '../media-capabilities.js';
 import { codexMediaInput } from '../media-backend-input.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -106,7 +106,7 @@ export class CodexBackend implements BackendAdapter {
       ...(usageBaseline ? { totalUsage: usageBaseline } : {}), isolated: connection.isolated, model: response.model ?? connection.config.model, cwd: turn.workDir, approvalPolicy: 'untrusted', sandbox, instructionSources: response.instructionSources } });
     acceptingTurn = true;
     entry.startingTurn = entry.rpc.request('turn/start', { threadId: entry.threadId,
-      input: await codexMediaInput(input, turn.message), model,
+      input: await codexMediaInput(input, turn.message, input.contentParts?.some(p => p.type === 'file') ? await sessionInputCapabilities(turn.sessionId, input.model) : undefined), model,
       ...(input.reasoningEffort && input.reasoningEffort !== 'max' ? { effort: input.reasoningEffort } : {}),
       approvalPolicy: 'untrusted', sandboxPolicy: { type: 'workspaceWrite', writableRoots: turn.workspace.writableRoots, networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true },
     });

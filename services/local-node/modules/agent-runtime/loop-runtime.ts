@@ -118,6 +118,7 @@ import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import {
   runChildToCompletion,
+  waitForChildSessions,
 } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -1300,6 +1301,26 @@ export class AgentLoopRuntime {
               (modelResult.step.contentParts?.length
                 ? "Generated media is attached."
                 : undefined);
+            const currentWork = workStore.current(sessionId)!;
+            if (workRuntime.pendingChildren(currentWork)) {
+              this.store.updateRunStep(step.id, {
+                metadata: { ...this.store.getRunStep(step.id).metadata, awaitingSubagents: true },
+              });
+              await waitForChildSessions(
+                sessionId,
+                runAbortSignal,
+                () => Boolean(inputQueueService.getForceInjectId(sessionId)),
+                { store: this.store },
+              );
+              this.store.updateRunStep(step.id, {
+                status: "completed",
+                completedAt: nowIso(),
+                finishReason: "children_settled",
+                metadata: { ...this.store.getRunStep(step.id).metadata, awaitingSubagents: false },
+              });
+              currentPrompt = "Background subagents have settled or new user input is pending. Inspect child results and address any remaining work before finishing.";
+              continue;
+            }
             try {
               if (!finalText)
                 throw new AgentValidationError(
@@ -1963,17 +1984,25 @@ export class AgentLoopRuntime {
             "[agent-runtime] child shutdown not confirmed",
           );
         }
+        const latestSession = this.store.getSession(sessionId);
+        const externallyReaped = latestSession.status === "failed" &&
+          latestSession.activeRunId !== run.id &&
+          (latestSession.sessionMetadata?.subagentTask as { state?: string } | undefined)?.state === "failed";
+        const superseded = externallyReaped || Boolean(
+          latestSession.activeRunId && latestSession.activeRunId !== run.id,
+        );
+        const sessionStatus: AgentSession["status"] = isAbort && !externallyReaped
+          ? "interrupted"
+          : "failed";
         const failedRun = this.store.updateRun(run.id, {
-          status: isAbort ? "interrupted" : "failed",
+          status: sessionStatus,
           completedAt: nowIso(),
           stopReason: message,
         });
 
-        const sessionStatus: AgentSession["status"] = isAbort
-          ? "interrupted"
-          : "failed";
-
-        this.store.updateSession(sessionId, {
+        // A watchdog or a newer run may have taken ownership while descendant
+        // shutdown was awaited. An old executor must not rewrite that session.
+        if (!superseded) this.store.updateSession(sessionId, {
           status: sessionStatus,
           updatedAt: nowIso(),
           completedAt: sessionStatus === "failed" ? nowIso() : null,

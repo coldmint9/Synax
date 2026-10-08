@@ -1,7 +1,10 @@
-import { createAsset } from "./media-assets.js";
+import { createAsset, getAsset } from "./media-assets.js";
 import { resolveFileParts } from "./file-input/index.js";
+import { MAX_PARSED_CHARACTERS } from "./file-input/registry.js";
+import { AgentRuntimeError } from "./runtime-errors.js";
 import {
   MAX_FILE_BYTES,
+  contentText,
   modalityForMime,
   type RuntimeContentPart,
 } from "./content-parts.js";
@@ -61,7 +64,17 @@ export async function importToolContent(
         }),
       });
   }
-  return resolveFileParts(parts, projectId);
+  // Keep PDFs as local references until the consuming model is selected;
+  // eagerly converting to text here would permanently discard diagrams.
+  const resolved: RuntimeContentPart[] = [];
+  for (const part of parts) {
+    if (part.type !== "text" && getAsset(part.assetId, projectId).mediaType === "application/pdf")
+      resolved.push(part);
+    else resolved.push(...await resolveFileParts([part], projectId));
+  }
+  if (contentText(resolved).length > MAX_PARSED_CHARACTERS)
+    throw new AgentRuntimeError("输入及文件解析文字合计超过 100000 字符，请拆分后发送。", "FILE_TEXT_TOO_LARGE", 413);
+  return resolved;
 }
 export function hasInlineMedia(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasInlineMedia);

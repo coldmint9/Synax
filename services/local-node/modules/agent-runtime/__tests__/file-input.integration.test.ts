@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as mediaCapabilities from "../media-capabilities.js";
 import { Hono } from "hono";
 import fs from "node:fs";
 import path from "node:path";
@@ -22,7 +23,14 @@ import {
 } from "../media-backend-input.js";
 import { importToolContent } from "../media-tool-content.js";
 import { mediaReadTool } from "../tools/media-read.js";
-import { documentFixtures, officeTypes } from "./file-input-fixtures.js";
+import {
+  documentFixtures,
+  officeTypes,
+  makePdf,
+  flowchartDrawing,
+  bitmapDrawing,
+} from "./file-input-fixtures.js";
+import { resolveFileParts } from "../file-input/index.js";
 import {
   executorInput,
   resetAgentRuntimeFixtures,
@@ -51,6 +59,193 @@ const selection: ResolvedModelSelection = {
 const fixtures = documentFixtures();
 beforeEach(resetAgentRuntimeFixtures);
 describe("document inputs independent of provider capabilities", () => {
+  const visionSelection: ResolvedModelSelection = {
+    ...selection,
+    provider: { ...selection.provider, npm: "@ai-sdk/openai" },
+    modelDef: { ...selection.modelDef, inputModalities: ["text", "image"] },
+  };
+  it("reads ten PDF visual pages while retaining the source and every rendered asset", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const asset = await createAsset(
+      session.projectId,
+      "ten-pages.pdf",
+      makePdf("Context", flowchartDrawing, 10),
+      "application/pdf",
+    );
+    bindAssets(session.id, [{ type: "file", assetId: asset.id }]);
+    const capability = vi
+      .spyOn(mediaCapabilities, "sessionInputCapabilities")
+      .mockResolvedValue(nativeInputCapabilities(visionSelection));
+    try {
+      const read = await mediaReadTool.execute({
+        sessionId: session.id,
+        runId: null,
+        stepId: null,
+        toolCallId: "read-pdf",
+        toolId: "media.read",
+        category: "read",
+        mutability: "read",
+        args: { assetId: asset.id },
+      });
+      const images = read.contentParts!.filter((p) => p.type === "image");
+      expect(images).toHaveLength(10);
+      expect(sessionHasAsset(session.id, asset.id)).toBe(true);
+      for (const image of images)
+        expect(sessionHasAsset(session.id, image.assetId)).toBe(true);
+    } finally {
+      capability.mockRestore();
+    }
+  });
+  it("accepts scanned PDF uploads and warns a text model when no text layer exists", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const form = new FormData();
+    form.set("projectId", session.projectId);
+    form.set(
+      "file",
+      new File([new Uint8Array(makePdf("", bitmapDrawing))], "scan.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    const response = await new Hono()
+      .route("/assets", runtimeAssetRoutes)
+      .request("/assets", { method: "POST", body: form });
+    expect(response.status).toBe(201);
+    const { asset } = await response.json();
+    const messages = await resolveMediaMessages(
+      [
+        {
+          role: "user",
+          content: modelContentParts([{ type: "file", assetId: asset.id }]),
+        },
+      ],
+      selection,
+      session.projectId,
+    );
+    expect(JSON.stringify(messages)).toContain("图片和流程图无法识别");
+    expect((messages[0].content as any[]).every((p) => p.type === "text")).toBe(
+      true,
+    );
+  });
+  it.each([flowchartDrawing, bitmapDrawing])(
+    "sends PDF visual pages with text context to an image model",
+    async (drawing) => {
+      const session = agentSessionRuntime.create(executorInput);
+      const asset = await createAsset(
+        session.projectId,
+        "diagram.pdf",
+        makePdf("Surrounding context", drawing),
+        "application/pdf",
+      );
+      const messages = await resolveMediaMessages(
+        [
+          {
+            role: "user",
+            content: modelContentParts([
+              { type: "text", text: "Explain the diagram" },
+              { type: "file", assetId: asset.id },
+            ]),
+          },
+        ],
+        visionSelection,
+        session.projectId,
+      );
+      const content = messages[0].content as any[];
+      expect(
+        content
+          .filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n"),
+      ).toContain("Surrounding context");
+      expect(
+        content
+          .filter((p) => p.type === "text")
+          .map((p) => p.text)
+          .join("\n"),
+      ).toContain("第 1 页完整页面图像");
+      const image = content.find((p) => p.type === "file");
+      expect(image.mediaType).toBe("image/png");
+      expect(Buffer.from(image.data).subarray(1, 4).toString()).toBe("PNG");
+    },
+  );
+  it.each([
+    selection,
+    {
+      ...selection,
+      modelDef: { ...selection.modelDef, inputModalities: undefined },
+    },
+  ])(
+    "warns text-only and undeclared models about unread PDF diagrams",
+    async (model) => {
+      const session = agentSessionRuntime.create(executorInput);
+      const asset = await createAsset(
+        session.projectId,
+        "diagram.pdf",
+        makePdf("Visible text", flowchartDrawing),
+        "application/pdf",
+      );
+      const messages = await resolveMediaMessages(
+        [
+          {
+            role: "user",
+            content: modelContentParts([{ type: "file", assetId: asset.id }]),
+          },
+        ],
+        model,
+        session.projectId,
+      );
+      expect(
+        (messages[0].content as any[]).every((p) => p.type === "text"),
+      ).toBe(true);
+      expect(JSON.stringify(messages)).toContain("Visible text");
+      expect(JSON.stringify(messages)).toContain("图片和流程图无法识别");
+    },
+  );
+  it("shares the image budget across PDFs and sends page images through backend adapters", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const assets = await Promise.all(
+      ["a", "b"].map((name) =>
+        createAsset(
+          session.projectId,
+          `${name}.pdf`,
+          makePdf("Context", flowchartDrawing),
+          "application/pdf",
+        ),
+      ),
+    );
+    const parts = assets.map((asset) => ({
+      type: "file" as const,
+      assetId: asset.id,
+    }));
+    const capability = {
+      ...nativeInputCapabilities(visionSelection),
+      maxFiles: 1,
+    };
+    const resolved = await resolveFileParts(
+      parts,
+      session.projectId,
+      capability,
+    );
+    expect(resolved.filter((p) => p.type === "image")).toHaveLength(1);
+    expect(JSON.stringify(resolved)).toContain("超过本次图片数量或体积限制");
+    const codex = await codexMediaInput(
+      { contentParts: parts.slice(0, 1) },
+      "",
+      capability,
+    );
+    expect(codex.some((p: any) => p.type === "localImage")).toBe(true);
+    const claude = await claudeMediaInput(
+      { contentParts: parts.slice(0, 1) },
+      "",
+      capability,
+    );
+    expect(
+      claude.some(
+        (p: any) => p.type === "image" && p.source.media_type === "image/png",
+      ),
+    ).toBe(true);
+    const acp = await acpMediaInput(parts.slice(0, 1), "", capability);
+    expect(acp.some((p) => p.type === "image")).toBe(true);
+  });
   it.each([
     "text/javascript",
     "application/javascript",
@@ -80,9 +275,7 @@ describe("document inputs independent of provider capabilities", () => {
         [
           {
             role: "user",
-            content: modelContentParts(
-              [{ type: "file", assetId: asset.id }],
-            ),
+            content: modelContentParts([{ type: "file", assetId: asset.id }]),
           },
         ],
         selection,
@@ -227,6 +420,37 @@ describe("document inputs independent of provider capabilities", () => {
     });
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: "UNSUPPORTED_FILE" });
+  });
+  it("retains tool-returned PDFs until the consuming model can resolve their visuals", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const imported = await importToolContent(session.projectId, [
+      {
+        type: "file",
+        name: "tool-diagram.pdf",
+        mimeType: "application/pdf",
+        data: makePdf("Tool context", flowchartDrawing).toString("base64"),
+      },
+    ]);
+    expect(imported[0].type).toBe("file");
+    const messages = await resolveMediaMessages(
+      [{ role: "user", content: modelContentParts(imported) }],
+      visionSelection,
+      session.projectId,
+    );
+    expect(
+      (messages[0].content as any[]).some(
+        (p) => p.type === "file" && p.mediaType === "image/png",
+      ),
+    ).toBe(true);
+    expect(
+      JSON.stringify(
+        messages
+          .filter((m) => m.role === "user")
+          .flatMap((m) =>
+            (m.content as any[]).filter((p) => p.type === "text"),
+          ),
+      ),
+    ).toContain("Tool context");
   });
   it("turns character files in historical messages into text with no declared media capabilities", async () => {
     const session = agentSessionRuntime.create(executorInput);

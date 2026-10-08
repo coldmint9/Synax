@@ -1,8 +1,13 @@
 import { unzipSync } from "fflate";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { registerFileParser, type FileParserInput } from "./registry.js";
+import {
+  registerFileParser,
+  type FileParserInput,
+  type ParsedDocument,
+} from "./registry.js";
 
 type Node = Record<string, any>;
 const xmlParser = new XMLParser({
@@ -186,17 +191,24 @@ registerFileParser({
   id: "pdf",
   supports: (input) => input.mediaType === "application/pdf",
   async parse(input) {
-    const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const { getDocument, GlobalWorkerOptions, OPS } =
+      await import("pdfjs-dist/legacy/build/pdf.mjs");
     const require = createRequire(
       typeof __filename === "string" ? __filename : import.meta.url,
     );
     const root = path.dirname(require.resolve("pdfjs-dist/package.json"));
+    // Electron may skip PDF.js's Node defaults. Resolve the shipped worker
+    // explicitly; a file URL also handles spaces and non-ASCII install paths.
+    GlobalWorkerOptions.workerSrc = pathToFileURL(
+      path.join(root, "legacy/build/pdf.worker.mjs"),
+    ).href;
     const task = getDocument({
       data: Uint8Array.from(input.bytes),
       cMapUrl: `${path.join(root, "cmaps")}${path.sep}`,
       cMapPacked: true,
       standardFontDataUrl: `${path.join(root, "standard_fonts")}${path.sep}`,
-      useSystemFonts: true,
+      // Node renders shipped font outlines without a DOM font registry.
+      useSystemFonts: false,
       isEvalSupported: false,
       useWorkerFetch: false,
     });
@@ -205,6 +217,23 @@ registerFileParser({
       if (document.numPages > 1000)
         throw new Error("PDF 页数超过 1000 页，请拆分读取。");
       const pages: string[] = [];
+      const images: NonNullable<ParsedDocument["images"]> = [];
+      const visualPages: number[] = [];
+      const omittedPages: number[] = [];
+      const failedPages: number[] = [];
+      let imageBytes = 0;
+      const visualOps = new Set([
+        OPS.paintImageXObject,
+        OPS.paintInlineImageXObject,
+        OPS.paintImageMaskXObject,
+        OPS.paintImageXObjectRepeat,
+        OPS.paintImageMaskXObjectRepeat,
+        OPS.paintImageMaskXObjectGroup,
+        OPS.paintInlineImageXObjectGroup,
+        OPS.paintSolidColorImageMask,
+        OPS.constructPath,
+        OPS.shadingFill,
+      ]);
       let length = 0;
       for (let index = 1; index <= document.numPages; index++) {
         const page = await document.getPage(index);
@@ -219,9 +248,67 @@ registerFileParser({
         if (length > 100_000)
           throw new Error("PDF 文字超过 100000 字符，请拆分读取。");
         if (value) pages.push(`第 ${index} 页\n${value}`);
+        const operators = await page.getOperatorList();
+        if (operators.fnArray.some((op) => visualOps.has(op))) {
+          visualPages.push(index);
+          if (input.visual) {
+            if (images.length >= Math.min(10, input.visual.maxPages)) {
+              omittedPages.push(index);
+            } else {
+              try {
+                // Full pages preserve vector diagrams and their surrounding text.
+                const {
+                  default: { createCanvas },
+                } = await import("@napi-rs/canvas");
+                const base = page.getViewport({ scale: 1 });
+                const scale = Math.min(
+                  2,
+                  2000 / Math.max(base.width, base.height),
+                );
+                const viewport = page.getViewport({ scale });
+                const canvas = createCanvas(
+                  Math.max(1, Math.ceil(viewport.width)),
+                  Math.max(1, Math.ceil(viewport.height)),
+                );
+                await page.render({
+                  canvasContext: canvas.getContext("2d") as never,
+                  viewport,
+                }).promise;
+                const bytes = await canvas.encode("png");
+                if (
+                  bytes.length >
+                    Math.min(5 * 1024 * 1024, input.visual.maxImageBytes) ||
+                  imageBytes + bytes.length >
+                    Math.min(20 * 1024 * 1024, input.visual.maxTotalBytes)
+                ) {
+                  omittedPages.push(index);
+                } else {
+                  images.push({ page: index, bytes, mediaType: "image/png" });
+                  imageBytes += bytes.length;
+                }
+                canvas.width = canvas.height = 1;
+              } catch {
+                failedPages.push(index);
+              }
+            }
+          }
+        }
         page.cleanup();
       }
-      return pages.join("\n\n");
+      const warnings: string[] = [];
+      if (visualPages.length && !input.visual)
+        warnings.push(
+          `当前模型不支持或尚未确认图片输入；PDF 第 ${visualPages.join("、")} 页包含图片或流程图，仅提取文字，图片和流程图无法识别。`,
+        );
+      if (omittedPages.length)
+        warnings.push(
+          `PDF 第 ${omittedPages.join("、")} 页的图片或流程图超过本次图片数量或体积限制，未提供给模型识别，请拆分文件后读取。`,
+        );
+      if (failedPages.length)
+        warnings.push(
+          `PDF 第 ${failedPages.join("、")} 页的图片或流程图渲染失败，未提供给模型识别，仅保留可提取的文字。`,
+        );
+      return { text: pages.join("\n\n"), images, warnings };
     } finally {
       await task.destroy();
     }

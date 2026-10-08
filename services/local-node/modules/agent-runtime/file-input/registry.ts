@@ -4,16 +4,21 @@ export interface FileParserInput {
   filename: string;
   mediaType: string;
   bytes: Uint8Array;
+  visual?: { maxPages: number; maxImageBytes: number; maxTotalBytes: number };
 }
-export interface ParsedFile {
+export interface ParsedDocument {
   text: string;
+  images?: { page: number; bytes: Uint8Array; mediaType: "image/png" }[];
+  warnings?: string[];
+}
+export interface ParsedFile extends ParsedDocument {
   parserId: string;
 }
 /** Trusted runtime extensions register parsers; skills may call media.read or return text through tools. */
 export interface FileParser {
   id: string;
   supports(input: FileParserInput): boolean;
-  parse(input: FileParserInput): Promise<string>;
+  parse(input: FileParserInput): Promise<string | ParsedDocument>;
 }
 export const MAX_PARSED_CHARACTERS = 100_000;
 const parsers = new Map<string, FileParser>();
@@ -50,10 +55,13 @@ export async function parseFileInput(
     .reverse()
     .find((candidate) => candidate.supports(input));
   let text: string | undefined;
+  let document: ParsedDocument | undefined;
   try {
-    text = parser
+    const result = parser
       ? await parser.parse(input)
       : decodeCharacterFile(input.bytes);
+    document = typeof result === "object" ? result : undefined;
+    text = document ? document.text : (result as string | undefined);
   } catch (error) {
     if (error instanceof AgentRuntimeError) throw error;
     throw new AgentRuntimeError(
@@ -68,18 +76,22 @@ export async function parseFileInput(
       "UNSUPPORTED_FILE",
       422,
     );
-  if (!text.trim())
+  if (!text.trim() && !document?.images?.length && !document?.warnings?.length)
     throw new AgentRuntimeError(
       `${input.filename} 没有可读取的文字。扫描 PDF 请通过 OCR skill/tool 转换后输入。`,
       "FILE_TEXT_EMPTY",
       422,
     );
-  const formatted = `文件：${input.filename}\n${text}`;
+  const formatted = `文件：${input.filename}\n${text}${document?.warnings?.length ? `\n\n${document.warnings.join("\n")}\n请在回复中明确告知用户上述视觉内容未被识别，不要推测遗漏的图片或流程图内容。` : ""}`;
   if (formatted.length > MAX_PARSED_CHARACTERS)
     throw new AgentRuntimeError(
       `${input.filename} 解析文字超过 ${MAX_PARSED_CHARACTERS} 字符，请拆分文件或通过工具分段读取。`,
       "FILE_TEXT_TOO_LARGE",
       413,
     );
-  return { text: formatted, parserId: parser?.id ?? "character-text" };
+  return {
+    ...document,
+    text: formatted,
+    parserId: parser?.id ?? "character-text",
+  };
 }
