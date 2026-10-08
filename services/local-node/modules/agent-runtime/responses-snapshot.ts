@@ -1,11 +1,27 @@
 /**
- * Minimal lossless envelope for OpenAI Responses stream state.
+ * Bounded diagnostic envelope for OpenAI Responses stream state.
  *
  * AI SDK already maps Responses events to the common LanguageModelV3 stream,
- * but the raw response identity/status/output must remain available for replay,
- * diagnostics, and provider-specific tooling. This accumulator deliberately
- * stores completed output items rather than every token delta.
+ * Response identity/status and standard usage remain available. Large raw
+ * diagnostic copies are explicitly omitted; replay uses the separately stored
+ * reasoningParts, messages and tool calls, whose signatures remain untouched.
  */
+import { whitelistRawUsage } from "../../infrastructure/llm-runtime/usage.js";
+import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
+import { VersionStoreError } from "./checkpoints/version-store/limits.js";
+
+const OUTPUT_DIAGNOSTIC_BYTES = 512 * 1024;
+const USAGE_DIAGNOSTIC_BYTES = 64 * 1024;
+
+function exceedsDiagnosticBudget(value: unknown, bytes: number): boolean {
+  try {
+    assertBatchInput(value, bytes);
+    return false;
+  } catch (error) {
+    if (error instanceof VersionStoreError && error.code === "VERSION_BATCH_BUDGET") return true;
+    throw error;
+  }
+}
 export interface ResponsesProtocolSnapshot {
   protocol: 'openai-responses'
   responseId?: string
@@ -13,6 +29,7 @@ export interface ResponsesProtocolSnapshot {
   output?: unknown[]
   incompleteDetails?: unknown
   usage?: Record<string, unknown>
+  diagnosticProjection?: { omittedFields: string[]; reason: 'diagnostic_byte_budget' }
 }
 
 export class ResponsesSnapshotAccumulator {
@@ -51,13 +68,27 @@ export class ResponsesSnapshotAccumulator {
 
   snapshot(): ResponsesProtocolSnapshot | undefined {
     if (!this.responseId && !this.status && this.output.length === 0 && !this.usage) return undefined
+    const omittedFields: string[] = [];
+    const omitOutput = exceedsDiagnosticBudget(this.output, OUTPUT_DIAGNOSTIC_BYTES);
+    if (omitOutput) omittedFields.push('output');
+    let usage = this.usage;
+    if (usage && exceedsDiagnosticBudget(usage, USAGE_DIAGNOSTIC_BYTES)) {
+      usage = whitelistRawUsage(usage);
+      omittedFields.push('usage.extensions');
+    }
+    const omitIncompleteDetails = this.incompleteDetails !== undefined &&
+      exceedsDiagnosticBudget(this.incompleteDetails, USAGE_DIAGNOSTIC_BYTES);
+    if (omitIncompleteDetails) omittedFields.push('incompleteDetails');
     return {
       protocol: 'openai-responses',
       ...(this.responseId ? { responseId: this.responseId } : {}),
       ...(this.status ? { status: this.status } : {}),
-      ...(this.output.length > 0 ? { output: this.output } : {}),
-      ...(this.incompleteDetails !== undefined ? { incompleteDetails: this.incompleteDetails } : {}),
-      ...(this.usage ? { usage: this.usage } : {}),
+      ...(this.output.length > 0 && !omitOutput ? { output: this.output } : {}),
+      ...(this.incompleteDetails !== undefined && !omitIncompleteDetails ? { incompleteDetails: this.incompleteDetails } : {}),
+      ...(usage ? { usage } : {}),
+      ...(omittedFields.length ? {
+        diagnosticProjection: { omittedFields, reason: 'diagnostic_byte_budget' as const },
+      } : {}),
     }
   }
 

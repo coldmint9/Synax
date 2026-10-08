@@ -763,8 +763,25 @@ textarea.agent-request-input {
   scroll-margin-block: 1rem;
 }
 .agent-controls-stack--dock .agent-request-surface {
+  display: flex;
+  flex-direction: column;
+  max-height: min(36rem, calc(100dvh - 8rem), calc(var(--agent-command-rail-max-height, 100dvh) - 6rem));
   border: 0;
   border-radius: 0;
+}
+.agent-controls-stack--dock .agent-request-header,
+.agent-controls-stack--dock .agent-request-footer {
+  flex-shrink: 0;
+}
+.agent-controls-stack--dock .agent-request-fields {
+  /* Keep fieldset's disabled semantics without its anonymous layout box,
+     which prevents the scroll body from shrinking in Chromium. */
+  display: contents;
+}
+.agent-controls-stack--dock .agent-request-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-composer-input-slot,

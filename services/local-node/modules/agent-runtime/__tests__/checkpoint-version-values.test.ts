@@ -113,7 +113,7 @@ describe("bounded runtime values", () => {
     ).toThrow(/cyclic|JSON/i);
     expect(() =>
       records.write("messages", "s", "bad", 0, {
-        metadata: { large: "x".repeat(1024 * 1024 + 1) },
+        metadata: { large: "x".repeat(16 * 1024 * 1024 + 1) },
       }),
     ).toThrow(/budget|limit/i);
     expect(objects.stats()).toEqual(before);

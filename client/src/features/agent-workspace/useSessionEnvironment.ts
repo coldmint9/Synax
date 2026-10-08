@@ -74,7 +74,10 @@ export function useSessionEnvironment(sessionId: string | null) {
       } catch {
         return;
       }
-      if (payload?.sessionId !== sessionId || cancelled || inFlight) return;
+      const changedId = payload?.sessionId;
+      const belongsToSession = changedId === sessionId ||
+        cache.get(sessionId)?.subagents?.some((child) => child.id === changedId);
+      if (!belongsToSession || cancelled || inFlight) return;
       cache.delete(sessionId);
       void reload();
     };

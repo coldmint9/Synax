@@ -4,6 +4,7 @@ import { SessionStaticTimeline } from "../SessionStaticTimeline";
 import { useAgentSessionStore as store } from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 import type {
+  AgentInteraction,
   AgentRuntimeMessage,
   AgentSession,
 } from "../../../adapters/transport/agentRuntime";
@@ -29,6 +30,57 @@ afterEach(() => {
   act(() => store.setState(store.getInitialState()));
   vi.clearAllMocks();
 });
+
+it.each(["clarification", "plan_approval"] as const)(
+  "leaves pending %s in the composer and restores its resolved transcript history",
+  (kind) => {
+    const session = { id: "s", status: "waiting_input" } as AgentSession;
+    const interaction = {
+      id: "request",
+      sessionId: "s",
+      stepId: "step",
+      kind,
+      status: "pending",
+      createdAt: "2026-01-01T00:00:00Z",
+      request: { title: "Request" },
+    } as AgentInteraction;
+    store.setState({
+      ...store.getInitialState(),
+      interactionState: {
+        sessionId: "s",
+        loading: false,
+        error: null,
+        items: [interaction],
+      },
+    });
+    const { container } = render(
+      <SessionStaticTimeline
+        session={session}
+        runs={[]}
+        steps={[]}
+        messages={[]}
+        toolCalls={[]}
+      />,
+    );
+    expect(container).not.toHaveTextContent("interaction-request");
+    for (const status of ["answered", "cancelled"] as const) {
+      act(() => store.setState({
+        interactionState: {
+          ...store.getState().interactionState!,
+          items: [{ ...interaction, status }],
+        },
+      }));
+      expect(container).toHaveTextContent("interaction-request");
+    }
+    act(() => store.setState({
+      interactionState: {
+        ...store.getState().interactionState!,
+        items: [interaction],
+      },
+    }));
+    expect(container).not.toHaveTextContent("interaction-request");
+  },
+);
 
 it("keeps only the latest activity working between steps until the session stops", () => {
   const tool = (id: string) => ({
@@ -290,13 +342,13 @@ it.each(["live", "snapshot"])(
         container.textContent!.indexOf("interaction-question"),
       );
     }
-    // Plan approvals still render inline while pending.
+    // Plan approvals also belong exclusively to the composer while pending.
     act(() => store.setState({
       interactionState: {
         ...current,
         items: current.items.map((item) => ({ ...item, kind: "plan_approval" })),
       },
     }));
-    expect(container.textContent).toContain("interaction-question");
+    expect(container.textContent).not.toContain("interaction-question");
   },
 );

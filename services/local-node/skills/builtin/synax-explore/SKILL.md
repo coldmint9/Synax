@@ -1,6 +1,6 @@
 ---
 name: synax-explore
-description: Explore a codebase wiki-first, then confirm with read-only code evidence and cited paths.
+description: Explore a codebase through repository documentation and read-only code evidence with cited paths.
 version: 1.0.0
 synax:
   applies-to: [explorer, executor]
@@ -18,9 +18,9 @@ Investigate architecture and behavior without making edits.
 
 ## Instructions
 
-1. Start with wiki search and document reads when wiki coverage exists.
-2. Use read-only file, glob, list, grep, and diff tools for implementation evidence.
-3. Summarize with cited wiki sections and file paths.
+1. Start with repository documentation and indexes when coverage exists.
+2. Use read-only file, list, search, and diff tools for implementation evidence.
+3. Summarize with cited documentation sections and file paths.
 4. Do not propose edits unless the user explicitly asks to implement changes.
 
 ## Output

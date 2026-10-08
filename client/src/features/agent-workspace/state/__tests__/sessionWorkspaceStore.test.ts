@@ -3,6 +3,7 @@ import {
   EMPTY_SESSION_WORKSPACE,
   openWorkspaceDiff,
   openWorkspaceFile,
+  openWorkspaceSubagent,
   openWorkspaceTab,
   useSessionWorkspaceStore,
 } from "../sessionWorkspaceStore";
@@ -10,6 +11,33 @@ import {
 describe("sessionWorkspaceStore", () => {
   beforeEach(() => {
     useSessionWorkspaceStore.setState({ sessions: {} });
+  });
+
+  it("opens child conversations beside the parent without discarding file tabs", () => {
+    const store = useSessionWorkspaceStore.getState();
+    store.openTab("parent", { kind: "file", title: "a.ts", path: "a.ts", dirty: true });
+    store.enterFocus("parent");
+    openWorkspaceSubagent("parent", "child-a", "林墨");
+    expect(useSessionWorkspaceStore.getState().sessions.parent).toMatchObject({
+      tabs: [{ id: "file:a.ts", dirty: true }],
+      activeTabId: null,
+      presentation: "dock",
+      subagent: { sessionId: "child-a", title: "林墨" },
+    });
+    openWorkspaceSubagent("parent", "child-b", "江岚");
+    expect(useSessionWorkspaceStore.getState().sessions.parent.subagent?.sessionId).toBe("child-b");
+    expect(useSessionWorkspaceStore.getState().sessions.other).toBeUndefined();
+    store.closeSubagent("parent");
+    expect(useSessionWorkspaceStore.getState().sessions.parent.subagent).toBeUndefined();
+    expect(useSessionWorkspaceStore.getState().sessions.parent.tabs).toHaveLength(1);
+  });
+
+  it("closes a deleted child conversation without changing other parents", () => {
+    openWorkspaceSubagent("parent", "child-a", "林墨");
+    openWorkspaceSubagent("other", "child-b", "江岚");
+    useSessionWorkspaceStore.getState().removeSessions(["child-a"]);
+    expect(useSessionWorkspaceStore.getState().sessions.parent.subagent).toBeUndefined();
+    expect(useSessionWorkspaceStore.getState().sessions.other.subagent?.sessionId).toBe("child-b");
   });
 
   it("keeps tabs isolated per session and restores the prior active tab", () => {

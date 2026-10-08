@@ -1,7 +1,6 @@
 import { Bot } from "lucide-react";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
 
-const FALLBACK_NAMES = ["林墨", "许澄", "乔安", "沈砚", "顾言", "周宁"];
 const FALLBACK_ROLES: Record<string, { name: string; description: string }> = {
   explorer: { name: "探索员", description: "读取代码、搜索线索并梳理系统结构。" },
   reviewer: { name: "审查员", description: "检查实现、发现风险并给出可执行的审查意见。" },
@@ -14,11 +13,7 @@ export function getSubagentNameFromId(
   if (typeof persistedName === "string" && persistedName.trim()) {
     return persistedName.trim();
   }
-  const seed = Array.from(id).reduce(
-    (sum, char) => sum + char.charCodeAt(0),
-    0,
-  );
-  return FALLBACK_NAMES[seed % FALLBACK_NAMES.length];
+  return `子代理 ${id.slice(0, 8)}`;
 }
 
 export function getSubagentName(session: AgentSession): string {

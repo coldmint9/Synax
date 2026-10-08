@@ -51,6 +51,7 @@ import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/s
 import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
 import { WorkbenchIsland } from "./WorkbenchIsland";
+import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
 
 export type ChromeMode =
@@ -413,6 +414,10 @@ export function WorkbenchHeader({
                   <ThemeToggle />
                 </div>
             </IslandSurface>
+
+            {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
+              <SubagentIsland sessionId={selectedSessionId} />
+            ) : null}
 
             <GoalToolbarPill
               sessionId={goalSessionId}

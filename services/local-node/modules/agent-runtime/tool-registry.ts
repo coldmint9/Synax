@@ -173,7 +173,7 @@ export class ToolRegistry {
       id: "subagent.delegate",
       label: "Run Subtask",
       description:
-        "Delegate a focused subtask to a child agent with a clean context. Use this when a task would produce large intermediate noise (reading many files, searching, exploring) but the final useful result is just a short summary. The child runs in isolation — its intermediate steps do NOT enter your context, only the final summary returns. Do NOT delegate if: the task is simple (1-2 tool calls), you need the intermediate details for subsequent reasoning, or the task cannot be described in one focused prompt.",
+        "Delegate a focused subtask to a child agent with a clean context. Generate a spontaneous name for the child and provide it in name with the delegation; any naming style is welcome and names may repeat. Use this when a task would produce large intermediate noise (reading many files, searching, exploring) but the final useful result is just a short summary. The child runs in isolation — its intermediate steps do NOT enter your context, only the final summary returns. Do NOT delegate if: the task is simple (1-2 tool calls), you need the intermediate details for subsequent reasoning, or the task cannot be described in one focused prompt.",
       category: "task",
       internalGate: "task",
       mutability: "task",
@@ -181,6 +181,9 @@ export class ToolRegistry {
       progressiveDetails:
         "Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. specialist takes precedence over profileId. Builtin profiles: explorer, reviewer. One child level; at most 3 active children. Specialists have no shell or further delegation. Write capabilities require writeScope: concrete paths relative to the child working directory, e.g. [\"client/src\"]. A directory includes descendants; do not add /**. No absolute paths, roots (including .), .. segments, globs or symlink components. Only one specialist writer may be active; wait for it to finish before delegating another. Plan specialists cannot write files. Permissions are inherited and cannot be expanded.",
       inputSchema: z.object({
+        name: z.string().trim().min(1).describe(
+          "Generate a free-form, spontaneous display name for this child when delegating. Any language, nickname, phrase, number or emoji is welcome; names do not need to be unique. This is the child's identity, independent of its profile or specialist role.",
+        ),
         contentParts: contentPartsSchema.optional(),
         specialist: specialistSpecSchema.optional(),
         deliverable: z.string().min(1).max(4000).optional(),
@@ -221,6 +224,7 @@ export class ToolRegistry {
         }
 
         const args = input.args as {
+          name: string;
           contentParts?: RuntimeContentPart[];
           profileId?: string;
           prompt: string;
@@ -340,28 +344,7 @@ export class ToolRegistry {
               "Parent workspace operation is still running. Delegate writer tasks separately.",
             );
         }
-        const subagentNames = [
-          "林墨",
-          "许澄",
-          "乔安",
-          "沈砚",
-          "顾言",
-          "周宁",
-          "苏遥",
-          "程野",
-          "陆川",
-          "唐宁",
-          "谢言",
-          "江屿",
-          "宋知",
-          "顾清",
-          "沈舟",
-          "温言",
-        ];
-        const subagentName = this.store.allocateSubagentName(
-          parent.id,
-          subagentNames,
-        );
+        const subagentName = args.name.trim();
         const child = agentSessionRuntime.create(
           args.specialist
             ? buildSpecialistChildInput(

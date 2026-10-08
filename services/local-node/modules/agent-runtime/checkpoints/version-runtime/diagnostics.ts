@@ -5,6 +5,8 @@ import { mapLegacyHistoryRow } from "../../session-store.js";
 import { versionRepository } from "./bridge.js";
 import { readVersionSnapshot } from "../version-store/read-snapshot.js";
 import { admitVersionGrowth } from "../resource-admission.js";
+import { PAGE_BYTES } from "../version-store/limits.js";
+import { RUNTIME_ENTITY_READ_BYTES } from "./batch-input.js";
 
 export const diagnosticTables: Record<string, string> = {
   work: "agent_runtime_work", contexts: "agent_runtime_context_bundles", compactions: "agent_runtime_compaction_summaries",
@@ -88,11 +90,11 @@ export function diagnosticVisible(
 ): boolean {
   return Boolean(visible(sessionId, kind, id));
 }
-function projection(kind: string, preview: boolean): string {
+function projection(kind: string, preview: boolean, maxBytes: number): string {
   const db = getRawSqlite();
   let cache = projections.get(db);
   if (!cache) projections.set(db, (cache = new Map()));
-  const key = `${kind}:${preview}`;
+  const key = `${kind}:${preview}:${maxBytes}`;
   if (cache.has(key)) return cache.get(key)!;
   const columns = (
     db.prepare(`PRAGMA table_info(${table(kind)})`).all() as {
@@ -107,7 +109,7 @@ function projection(kind: string, preview: boolean): string {
     .map((c) => {
       const name = `"${c.name}"`;
       if (!preview)
-        return `CASE WHEN ${size}<=1048576 THEN ${name} ELSE NULL END AS ${name}`;
+        return `CASE WHEN ${size}<=${maxBytes} THEN ${name} ELSE NULL END AS ${name}`;
       if (!/TEXT/i.test(c.type)) return name;
       const fallback = c.name.endsWith("_json")
         ? `'${["content_parts_json", "patterns_json", "source_refs_json"].includes(c.name) ? "[]" : "{}"}'`
@@ -123,13 +125,16 @@ export function readDiagnostic(
   kind: string,
   id: string,
   preview = false,
+  maxBytes = PAGE_BYTES,
 ): Record<string, unknown> | undefined {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > RUNTIME_ENTITY_READ_BYTES)
+    throw new AgentRuntimeError("Invalid execution detail materialization budget.", "HISTORY_PAGE_REQUIRED", 413);
   return readVersionSnapshot(getRawSqlite(), () => {
     const location = visible(sessionId, kind, id);
     if (!location) return undefined;
     const row = getRawSqlite()
       .prepare(
-        `SELECT ${projection(kind, preview)} FROM ${table(kind)} WHERE session_id=? AND id=?`,
+        `SELECT ${projection(kind, preview, maxBytes)} FROM ${table(kind)} WHERE session_id=? AND id=?`,
       )
       .get(sessionId, id) as Record<string, unknown> | undefined;
     if (!row) return undefined;

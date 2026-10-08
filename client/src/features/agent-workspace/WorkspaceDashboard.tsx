@@ -7,7 +7,6 @@ import {
   useState,
 } from "react";
 import {
-  Bot,
   Check,
   ChevronRight,
   FileDiff,
@@ -28,7 +27,6 @@ import type {
   SessionEnvironmentFile,
   SessionEnvironmentInputSource,
   SessionEnvironmentRepository,
-  SessionEnvironmentSubagent,
 } from "../../adapters/transport/agentRuntime";
 import {
   DashboardPanel,
@@ -40,7 +38,6 @@ import { ChangedFilesViewport } from "./ChangedFilesViewport";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
-import { SubagentControls } from "./SubagentControls";
 import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -56,7 +53,6 @@ import {
   openWorkspaceDiff,
   openWorkspaceFile,
   openWorkspaceInputSource,
-  openWorkspaceSubagent,
   useSessionWorkspaceStore,
 } from "./state/sessionWorkspaceStore";
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
@@ -64,7 +60,6 @@ import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 import { getProjectThemeColor } from "./projectThemeColor";
-import { getSubagentNameFromId } from "./SubagentIdentity";
 
 const EMPTY_TODOS: import("../../adapters/transport/agentRuntime").TodoItem[] = [];
 
@@ -126,38 +121,6 @@ function buildChangedFileTree(
   return root;
 }
 
-const STATUS_KEY: Record<string, I18nKey> = {
-  queued: "workspaceStatusQueued",
-  running: "workspaceStatusRunning",
-  waiting_permission: "workspaceStatusWaitingPermission",
-  waiting_input: "workspaceStatusWaitingInput",
-  completed: "workspaceStatusCompleted",
-  failed: "workspaceStatusFailed",
-  cancelled: "workspaceStatusCancelled",
-  interrupted: "workspaceStatusInterrupted",
-  paused: "workspaceStatusPaused",
-};
-
-function statusText(
-  status: string,
-  t: ReturnType<typeof useLocale>["t"],
-): string {
-  const key = STATUS_KEY[status];
-  return key ? t(key) : status;
-}
-
-const STATUS_CHIP: Record<string, string> = {
-  queued: "bg-primary/12 text-primary",
-  running: "bg-[var(--color-run)]/15 text-[var(--color-run)]",
-  waiting_permission: "bg-warning/15 text-warning",
-  waiting_input: "bg-warning/15 text-warning",
-  interrupted: "bg-warning/15 text-warning",
-  paused: "bg-warning/15 text-warning",
-  completed: "bg-success/15 text-success",
-  failed: "bg-danger/15 text-danger",
-  cancelled: "bg-foreground/10 text-foreground/70",
-};
-
 const CHANGE_META: Record<
   EnvironmentChangeStatus,
   { letter: string; tone: string; labelKey: I18nKey }
@@ -193,30 +156,6 @@ const CHANGE_META: Record<
     labelKey: "workspaceChangeUnknown",
   },
 };
-
-/**
- * Subagent sessions usually have no title of their own, so fall back to the
- * first heading line of the prompt instead of showing a column of "Subagent".
- */
-function subagentHeadline(sub: SessionEnvironmentSubagent): string {
-  const title = sub.title?.trim();
-  if (title && title.toLowerCase() !== "subagent") return title;
-  const [firstLine] = sub.prompt.split("\n");
-  const cleaned = (firstLine ?? "").replace(/^#+\s*/, "").trim();
-  return cleaned || "Subagent";
-}
-
-/** Prompt preview with the headline line removed so the two lines differ. */
-function subagentPreview(sub: SessionEnvironmentSubagent): string {
-  const lines = sub.prompt
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const hasHeadline =
-    !sub.title?.trim() || sub.title.trim().toLowerCase() === "subagent";
-  const body = (hasHeadline ? lines.slice(1) : lines).join(" ");
-  return body || sub.prompt.trim();
-}
 
 /** Git changes stay pinned inside the project card; only directories collapse. */
 function GitChangesSection({ icon, title, actions, children }: {
@@ -550,10 +489,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     () => buildChangedFileTree(changedFiles),
     [changedFiles],
   );
-  const subagents = environment?.subagents ?? [];
-  const runningSubagents = subagents.filter(
-    (sub) => sub.status === "running",
-  ).length;
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
 
   if (sessionId && environment && repositories.length > 0) {
@@ -595,34 +530,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             workspacePath={environment.workspacePath}
           />
         </DashboardPanel>
-        {subagents.length > 0 && (
-          <DashboardPanel id="subagents" label={t("workspaceCardSubagents")}>
-            <WorkspaceCard
-              icon={<Bot size={13} />}
-              title={t("workspaceCardSubagents")}
-              count={subagents.length}
-              summary={
-                runningSubagents > 0
-                  ? t("workspaceRunningCount", { count: runningSubagents })
-                  : null
-              }
-            >
-              {subagents.map((sub) => (
-                <SubagentRow
-                  key={sub.id}
-                  sub={sub}
-                  onOpen={() =>
-                    openWorkspaceSubagent(
-                      sessionId,
-                      sub.id,
-                      subagentHeadline(sub),
-                    )
-                  }
-                />
-              ))}
-            </WorkspaceCard>
-          </DashboardPanel>
-        )}
+
         {todos.length > 0 && (
           <DashboardPanel
             id="progress"
@@ -826,36 +734,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             />
           </DashboardPanel>
 
-          {/* Only meaningful once the session actually spawned subagents — an
-              empty placeholder here is pure noise. */}
-          {subagents.length > 0 ? (
-            <DashboardPanel id="subagents" label={t("workspaceCardSubagents")}>
-              <WorkspaceCard
-                icon={<Bot size={13} />}
-                title={t("workspaceCardSubagents")}
-                count={subagents.length}
-                summary={
-                  runningSubagents > 0
-                    ? t("workspaceRunningCount", { count: runningSubagents })
-                    : null
-                }
-              >
-                {subagents.map((sub) => (
-                  <SubagentRow
-                    key={sub.id}
-                    sub={sub}
-                    onOpen={() =>
-                      openWorkspaceSubagent(
-                        sessionId,
-                        sub.id,
-                        subagentHeadline(sub),
-                      )
-                    }
-                  />
-                ))}
-              </WorkspaceCard>
-            </DashboardPanel>
-          ) : null}
+
         </>
       ) : loading ? (
         <div className="ws-placeholder">{t("workspaceLoading")}</div>
@@ -1098,48 +977,6 @@ function RepositoryCard({
         />
       )}
     </section>
-  );
-}
-
-function SubagentRow({
-  sub,
-  onOpen,
-}: {
-  sub: SessionEnvironmentSubagent;
-  onOpen: () => void;
-}) {
-  const { t } = useLocale();
-  return (
-    <div className="ws-row ws-row--subagent">
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        onClick={onOpen}
-      >
-        <Bot size={11} className="ws-row-icon" />
-        <span className="ws-row-main">
-          <span className="ws-row-file">
-            {getSubagentNameFromId(sub.id, sub.subagentName)}
-          </span>
-          <span className="ws-row-sub">
-            {(sub.roleName || "研究员") + " · " + subagentHeadline(sub)}
-          </span>
-        </span>
-      </button>
-      <div className="ws-row-actions">
-        <span
-          className={`ws-chip ${STATUS_CHIP[sub.status] ?? "bg-foreground/10 text-foreground/70"}`}
-        >
-          {statusText(sub.status, t)}
-        </span>
-        <SubagentControls
-          sessionId={sub.id}
-          parentSessionId={sub.parentSessionId}
-          status={sub.status}
-          title={subagentHeadline(sub)}
-        />
-      </div>
-    </div>
   );
 }
 

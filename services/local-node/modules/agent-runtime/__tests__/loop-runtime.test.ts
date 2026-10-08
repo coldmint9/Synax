@@ -79,6 +79,7 @@ const capturedRequests: Array<{
 const mockStepResults: Array<{
   contentParts?: import("../content-parts.js").RuntimeContentPart[];
   fullStream: AsyncIterable<MockStreamEvent>;
+  onStart?: (signal?: AbortSignal) => void;
   tools?: { resolveToolId: (name: string) => string | undefined };
   mustFinalize?: boolean;
   model?: string | null;
@@ -157,6 +158,7 @@ function parseJsonToolShorthand(
  * real implementation does, yielding text_delta / thought_delta / step_complete.
  */
 async function* mockStreamLoopModelStep(input: {
+  abortSignal?: AbortSignal;
   request?: {
     messages: Array<{ role: string; content: unknown }>;
     reasoningEffort?: string;
@@ -218,6 +220,7 @@ async function* mockStreamLoopModelStep(input: {
   const data = mockStepResults.shift();
   if (!data)
     throw new Error("No mock step data queued — call queueMockStep() first.");
+  data.onStart?.(input.abortSignal);
 
   let text = "";
   let thought = "";
@@ -412,6 +415,56 @@ describe("agentLoopRuntime", () => {
       force: true,
     });
     fs.writeFileSync(API_SESSION_LOG_FILE, "", "utf8");
+  });
+
+  it("stops active and queued children when the parent model fails, preserving completed results", async () => {
+    const parent = agentSessionRuntime.create(executorInput);
+    const child = agentSessionRuntime.create({ ...executorInput, profileId: "explorer", parentSessionId: parent.id });
+    const queued = agentSessionRuntime.create({ ...executorInput, profileId: "explorer", parentSessionId: parent.id });
+    const completed = agentSessionRuntime.create({ ...executorInput, profileId: "explorer", parentSessionId: parent.id });
+    agentRuntimeStore.updateSession(completed.id, { status: "completed", resultSummary: "Saved result" });
+    let childSignal: AbortSignal | undefined;
+    let started!: () => void;
+    const childStarted = new Promise<void>((resolve) => { started = resolve; });
+    let rejectModel!: (error: unknown) => void;
+    const modelPending = new Promise<void>((_resolve, reject) => { rejectModel = reject; });
+    mockStepResults.push({
+      onStart(signal) {
+        childSignal = signal;
+        signal?.addEventListener("abort", () => rejectModel(signal.reason), { once: true });
+        started();
+      },
+      fullStream: (async function* () {
+        await modelPending;
+      })(),
+    });
+    const childFinished = collectChunks(agentLoopRuntime.streamRun(child.id, { message: "Child work" }));
+    await childStarted;
+    queueMockStep({ fullStream: (async function* () { throw new Error("Provider unavailable"); })() });
+    const chunks = await collectChunks(agentLoopRuntime.streamRun(parent.id, { message: "Parent work" }));
+    await childFinished;
+    expect(chunks.some((chunk) => (chunk as AgentRunStreamChunk).type === "run_failed")).toBe(true);
+    expect(childSignal?.aborted).toBe(true);
+    expect(agentRuntimeStore.getSession(parent.id).status).toBe("failed");
+    expect(agentRuntimeStore.getSession(child.id).status).toBe("interrupted");
+    expect(agentRuntimeStore.getSession(queued.id)).toMatchObject({
+      status: "interrupted", blockedReason: expect.stringContaining("Provider unavailable"),
+    });
+    expect(agentRuntimeStore.listRuns(child.id)[0].status).toBe("interrupted");
+    expect(agentRuntimeStore.listRunSteps(agentRuntimeStore.listRuns(child.id)[0].id)[0].status).toBe("interrupted");
+    expect(agentRuntimeStore.getSession(completed.id)).toMatchObject({ status: "completed", resultSummary: "Saved result" });
+  });
+
+  it("keeps waiting children intact when the parent finishes normally", async () => {
+    const parent = agentSessionRuntime.create(executorInput);
+    const child = agentSessionRuntime.create({
+      ...executorInput, profileId: "explorer", parentSessionId: parent.id,
+    });
+    const waiting = agentRuntimeStore.updateSession(child.id, { status: "waiting_input" });
+    queueMockStep(makeTextStep("Parent reply"));
+    await collectChunks(agentLoopRuntime.streamRun(parent.id, { message: "Parent work" }));
+    expect(agentRuntimeStore.getSession(parent.id).status).toBe("completed");
+    expect(agentRuntimeStore.getSession(child.id)).toEqual(waiting);
   });
 
   it("discloses schemas on the next real model request and uses native composition", async () => {
@@ -1311,6 +1364,7 @@ describe("agentLoopRuntime", () => {
         toolName: "subagent_delegate",
         toolCallId: "call-task",
         args: {
+          name: "随手翻翻",
           profileId: "explorer",
           prompt: "Inspect the module and summarize the result.",
         },
@@ -1581,13 +1635,13 @@ describe("agentLoopRuntime", () => {
           type: "tool-call",
           toolCallId: "call-sub-1",
           toolName: "subagent_delegate",
-          input: { profileId: "explorer", prompt: "Check module A." },
+          input: { name: "云朵 A", profileId: "explorer", prompt: "Check module A." },
         },
         {
           type: "tool-call",
           toolCallId: "call-sub-2",
           toolName: "subagent_delegate",
-          input: { profileId: "explorer", prompt: "Check module B." },
+          input: { name: "小鸭 B", profileId: "explorer", prompt: "Check module B." },
         },
         { type: "finish-step", finishReason: "tool-calls", usage: {} },
         { type: "finish", finishReason: "tool-calls", totalUsage: {} },
@@ -2334,6 +2388,7 @@ describe("agentLoopRuntime", () => {
         toolName: "subagent_delegate",
         toolCallId: "specialist-1",
         args: {
+          name: "包子侦探 🔎",
           specialist: {
             name: "Package expert",
             role: "Node package reviewer",
@@ -2369,6 +2424,7 @@ describe("agentLoopRuntime", () => {
       profileId: "specialist",
       status: expect.stringMatching(/^(completed|failed)$/),
       sessionMetadata: {
+        subagentName: "包子侦探 🔎",
         specialist: { name: "Package expert", capabilities: ["file.read"] },
       },
     }));

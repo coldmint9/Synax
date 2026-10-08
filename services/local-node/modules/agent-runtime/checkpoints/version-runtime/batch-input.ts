@@ -3,6 +3,7 @@ import {
   PAGE_ROWS,
   VersionStoreError,
 } from "../version-store/limits.js";
+import { MAX_TEXT_BYTES } from "../version-store/text.js";
 
 export interface RuntimeWrite {
   /** Trusted repository-only copy of immutable field payloads. */
@@ -14,6 +15,11 @@ export interface RuntimeWrite {
   fields: Record<string, unknown>;
 }
 export const RUNTIME_BATCH_BYTES = PAGE_BYTES;
+// A single model/tool record can contain large replay fields. Its ingestion
+// budget must not inherit the much smaller transport/page batch budget.
+export const RUNTIME_ENTITY_BYTES = MAX_TEXT_BYTES;
+// Persistence adds a small execution epoch to the admitted business value.
+export const RUNTIME_ENTITY_READ_BYTES = RUNTIME_ENTITY_BYTES + 1024;
 
 /** Count JSON bytes incrementally BEFORE copying/serializing the supplied graph.
  * Accessors and custom prototypes are rejected rather than executed. */

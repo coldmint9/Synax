@@ -25,6 +25,8 @@ export interface WorkspaceSessionState {
   tabs: WorkspaceTab[];
   activeTabId: string | null;
   presentation: WorkspacePresentation;
+  /** Child conversation shown beside the parent transcript. */
+  subagent?: { sessionId: string; title: string };
   /** Keep the inspected project when a file viewer temporarily replaces the dashboard. */
   selectedRootId?: string;
 }
@@ -63,6 +65,8 @@ export function clearWorkspaceDraft(tabId: string): void {
 
 interface SessionWorkspaceStoreState {
   sessions: SessionWorkspaceRecord;
+  openSubagent: (sessionId: string, childSessionId: string, title: string) => void;
+  closeSubagent: (sessionId: string) => void;
   openTab: (sessionId: string, tab: Omit<WorkspaceTab, "id">) => void;
   activateTab: (sessionId: string, id: string) => void;
   selectRepository: (sessionId: string, rootId: string) => void;
@@ -118,6 +122,24 @@ function patchSession(
 export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
   (set, get) => ({
     sessions: {},
+
+    openSubagent: (sessionId, childSessionId, title) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) => ({
+          ...current,
+          subagent: { sessionId: childSessionId, title },
+          activeTabId: null,
+          presentation: "dock",
+        })),
+      })),
+
+    closeSubagent: (sessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) => ({
+          ...current,
+          subagent: undefined,
+        })),
+      })),
 
     openTab: (sessionId, tab) =>
       set((state) => {
@@ -277,7 +299,8 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
             (tab) =>
               tab.kind !== "subagent" || !removed.has(tab.sessionId ?? ""),
           );
-          if (tabs.length === workspace.tabs.length) continue;
+          const subagentRemoved = Boolean(workspace.subagent && removed.has(workspace.subagent.sessionId));
+          if (tabs.length === workspace.tabs.length && !subagentRemoved) continue;
           changed = true;
           const activeTabId = tabs.some(
             (tab) => tab.id === workspace.activeTabId,
@@ -286,6 +309,7 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
             : null;
           sessions[ownerId] = {
             ...workspace,
+            subagent: subagentRemoved ? undefined : workspace.subagent,
             tabs,
             activeTabId,
             presentation: activeTabId ? workspace.presentation : "dock",
@@ -380,9 +404,5 @@ export function openWorkspaceSubagent(
   subagentSessionId: string,
   title: string,
 ): void {
-  openWorkspaceTab(ownerSessionId, {
-    kind: "subagent",
-    title,
-    sessionId: subagentSessionId,
-  });
+  useSessionWorkspaceStore.getState().openSubagent(ownerSessionId, subagentSessionId, title);
 }

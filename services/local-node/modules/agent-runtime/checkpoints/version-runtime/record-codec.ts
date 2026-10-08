@@ -3,7 +3,9 @@ import { VersionText, MAX_TEXT_BYTES } from "../version-store/text.js";
 import { VersionStoreError, assertObjectId } from "../version-store/limits.js";
 import { atomicVersionWrite } from "../version-store/transaction.js";
 
-const METADATA_BYTES = 1024 * 1024;
+// Nested JSON is encoded through VersionText just like large string fields.
+// Keep its preflight bound consistent with that chunked storage capacity.
+const METADATA_BYTES = MAX_TEXT_BYTES;
 const INLINE_BYTES = 1024;
 type Value =
   | null

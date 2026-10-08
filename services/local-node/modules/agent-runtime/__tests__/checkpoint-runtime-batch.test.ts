@@ -26,6 +26,30 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 describe("bounded runtime batch publication", () => {
+  it("chunks large nested replay metadata for a single record without widening batch or page budgets", () => {
+    const signature = "汉".repeat(400000);
+    const record = {
+      id: "large-step", sessionId: "s", runId: "run",
+      metadata: { reasoningParts: [{ text: "", signature }], protocol: { responseId: "response" } },
+    };
+    const before = repo.head("s");
+    expect(() => repo.putBatch("s", [{ table: "steps", id: record.id, fields: record }])).toThrow(/byte budget/);
+    expect(repo.head("s")).toEqual(before);
+    repo.put("s", "steps", record.id, record);
+    expect(repo.get("s", "steps", record.id, 2 * 1024 * 1024)).toEqual(record);
+    expect(repo.list("s", "steps", { field: "runId", value: "run" })).toEqual([record]);
+    expect(() => repo.page("s", "steps")).toThrow(/budget/);
+    expect(repo.page("s", "steps", { preview: true }).items[0].historyProjection).toMatchObject({ omittedFields: ["metadata"] });
+    const head = repo.head("s");
+    const stats = objects.stats();
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(() => repo.put("s", "steps", "cyclic", { metadata: cycle })).toThrow(/Cyclic/);
+    const getter = { get secret() { throw new Error("must not execute"); } };
+    expect(() => repo.put("s", "steps", "getter", { metadata: getter })).toThrow(/accessors/);
+    expect(repo.head("s")).toEqual(head);
+    expect(objects.stats()).toEqual(stats);
+  });
   it("publishes all events with one revision, preserving ordered content and counts", () => {
     const before = repo.head("s");
     const events = Array.from({ length: 128 }, (_, n) => ({

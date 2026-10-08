@@ -2,7 +2,7 @@ import { admitVersionGrowth } from "../resource-admission.js";
 import { listDiagnostics, isDiagnostic, readDiagnostic, trackDiagnostic } from "./diagnostics.js";
 import { retainVersionRecordAssets } from "./assets.js";
 import type { RuntimeContentPart } from "../../content-parts.js";
-import { assertBatchInput } from "./batch-input.js";
+import { assertBatchInput, RUNTIME_ENTITY_BYTES, RUNTIME_ENTITY_READ_BYTES } from "./batch-input.js";
 import { getRawSqlite } from "../../../../infrastructure/database/index.js";
 import { AgentNotFoundError, AgentRuntimeError } from "../../runtime-errors.js";
 import {
@@ -50,7 +50,7 @@ export function writeVersionEntity<T>(
   value: T,
   writeControl: () => T,
 ): T {
-  assertBatchInput(value);
+  assertBatchInput(value, RUNTIME_ENTITY_BYTES);
   const db = getRawSqlite();
   return atomicVersionWrite(db, () => {
     if (versionRuntimeMode(sessionId) !== "native")
@@ -205,7 +205,7 @@ export function readVersionEntity<T>(
   return readVersionSnapshot(getRawSqlite(), () => {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      row = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId)) ? readDiagnostic(sessionId, kind, id) : repo.get(sessionId, kind, id);
+      row = boundaryOnlySession(sessionId) && (isDiagnostic(kind) || appendOnlySession(sessionId)) ? readDiagnostic(sessionId, kind, id, false, RUNTIME_ENTITY_READ_BYTES) : repo.get(sessionId, kind, id, RUNTIME_ENTITY_READ_BYTES);
     if (!row) throw new AgentNotFoundError(id);
     const result = {
       ...normalizeVersionEntity(kind, row, head.epoch),

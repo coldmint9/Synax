@@ -37,6 +37,7 @@ import {
 } from "./manual-context-compaction.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { runtimeBus } from "./runtime-bus.js";
+import { finalizeStoppedSessions } from "./stopped-session-cleanup.js";
 import {
   ensureSessionTitleGenerated,
   maybeScheduleSessionTitleFromStreamChunk,
@@ -636,6 +637,25 @@ class SessionProcessManager {
         );
       }
       const current = this.children.get(sessionId);
+      const released = this.terminatingChildren.has(child);
+      if (current?.child === child || (released && !current)) {
+        // Descendants execute in this worker too. Its exit confirms they can
+        // no longer update their own sessions, runs or steps.
+        try {
+          if (agentRuntimeStore.tryGetSession(sessionId)) {
+            const reason = `Agent session worker exited (code ${code}, signal ${signal}).`;
+            const ids = agentRuntimeStore
+              .listSessionTree(sessionId)
+              .map((session) => session.id);
+            finalizeStoppedSessions(ids, reason);
+          }
+        } catch (error) {
+          logger.error(
+            { sessionId, err: error },
+            "[agent-session] failed to reconcile exited worker",
+          );
+        }
+      }
       if (current?.child === child) {
         for (const compaction of current.compactions.values()) {
           clearTimeout(compaction.timer);
@@ -658,7 +678,8 @@ class SessionProcessManager {
         }
         this.children.delete(sessionId);
       }
-      this.activeMainStreams.delete(sessionId);
+      if (!current || current.child === child)
+        this.activeMainStreams.delete(sessionId);
     });
 
     const ready = this.waitForChildReady(sessionId);

@@ -38,6 +38,34 @@
   min-height: 0;
   container-type: inline-size;
 }
+.work-session-layout {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.subagent-conversation-panel {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+  border-left: 1px solid var(--work-line);
+  background: var(--background);
+}
+.subagent-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.subagent-conversation-header { display: flex; align-items: center; gap: 9px; padding: 12px; border-bottom: 1px solid var(--work-line); }
+.subagent-conversation-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.subagent-conversation-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; }
+.subagent-conversation-close:hover { background: var(--ui-panel-soft); }
+.subagent-conversation-close:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+@media (max-width: 767px) {
+  .work-page[data-subagent="true"] .work-session-layout { flex-direction: column; }
+  .subagent-conversation-panel { flex: 0 0 42%; width: 100%; max-height: 42%; border-left: 0; border-top: 1px solid var(--work-line); }
+  .subagent-conversation-panel > .session-panel-resizer { display: none; }
+  .work-page[data-subagent="true"] .agent-command-rail { bottom: calc(42% + 10px); }
+}
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */
 :root .work-page .session-chat {

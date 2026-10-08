@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, FolderOpen, Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { Field, Input, Label } from "@/shared/ui/ui/Field";
 import {
@@ -22,7 +22,8 @@ import { DirectoryPickerDialog } from "../../shared/ui/directory-picker/Director
 import { useShellStore } from "../../shared/state/shellStore";
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
-import { useWorkspaceCopy, workspacePathKey } from "./workspaceCopy";
+import { GitWorktreesSection } from "../settings/components/GitWorktreesSection";
+import { useWorkspaceCopy } from "./workspaceCopy";
 import "./workspaceManagement.css";
 
 type Selection = { path: string; name: string };
@@ -49,8 +50,6 @@ export function WorkspaceManagementContent({
   const [busy, setBusy] = useState<Busy | null>("load");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [selection, setSelection] = useState<Selection | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -58,7 +57,6 @@ export function WorkspaceManagementContent({
   const lock = useRef(false);
   const addTrigger = useRef<HTMLButtonElement>(null);
   const cancelRemove = useRef<HTMLButtonElement>(null);
-  const closeAdd = useRef<HTMLButtonElement>(null);
   const removeButtons = useRef(new Map<string, HTMLButtonElement>());
   const focusAfter = useRef<string | "add" | null>(null);
   const primary = workspace?.roots.find((root) => root.role === "primary");
@@ -70,14 +68,6 @@ export function WorkspaceManagementContent({
   const filtered = roots.filter((root) =>
     `${root.name} ${root.path}`.toLowerCase().includes(query),
   );
-  const duplicate = Boolean(
-    selection &&
-    roots.some(
-      (root) =>
-        workspacePathKey(root.path) === workspacePathKey(selection.path),
-    ),
-  );
-
   const run = useCallback(
     async (action: Busy, failure: string, work: () => Promise<void>) => {
       if (lock.current || !active.current) return;
@@ -124,48 +114,41 @@ export function WorkspaceManagementContent({
       ? addTrigger.current
       : (removeButtons.current.get(target) ?? addTrigger.current)
     )?.focus();
-  }, [busy, adding, removeId, workspace]);
+  }, [busy, removeId, workspace]);
   useLayoutEffect(() => {
     if (removeId && !busy) cancelRemove.current?.focus();
   }, [removeId]);
-  useLayoutEffect(() => {
-    if (adding) closeAdd.current?.focus();
-  }, [adding]);
-
-  const browse = () => {
-    if (busy || !location) return;
-    if (!isElectron || location.kind === "wsl") {
-      setPickerOpen(true);
-      return;
-    }
-    void run("browse", c.browseError, async () => {
-      const result = await openDirectoryPicker();
-      if (active.current && result) setSelection(result);
-    });
-  };
-  const add = () => {
-    if (!selection || !location || duplicate || roots.length >= 50) return;
-    const selected = selection;
+  const addSelection = (selected: Selection) => {
+    if (!location || roots.length >= 50) return;
     void run("add", c.addError, async () => {
       const result = await projectApi.addReference(workspaceId, {
         location:
           location.kind === "wsl"
-            ? {
-                kind: "wsl",
-                distribution: location.distribution,
-                path: selected.path,
-              }
+            ? { kind: "wsl", distribution: location.distribution, path: selected.path }
             : { kind: "host", path: selected.path },
         ...(selected.name.trim() ? { name: selected.name.trim() } : {}),
       });
       if (!active.current) return;
       setWorkspace(result);
-      setSelection(null);
-      setAdding(false);
       setNotice(c.added);
       focusAfter.current = "add";
     });
   };
+
+  const browse = () => {
+    if (busy || !location) return;
+    setError(null);
+    setNotice("");
+    if (!isElectron || location.kind === "wsl") {
+      setPickerOpen(true);
+      return;
+    }
+    void (async () => {
+      const result = await openDirectoryPicker();
+      if (active.current && result) addSelection(result);
+    })();
+  };
+
   const remove = () => {
     if (
       !removeId ||
@@ -218,15 +201,10 @@ export function WorkspaceManagementContent({
             disabled={
               disabled ||
               !workspace ||
-              adding ||
               Boolean(removeId) ||
               roots.length >= 50
             }
-            onClick={() => {
-              setAdding(true);
-              setError(null);
-              setNotice("");
-            }}
+            onClick={browse}
           >
             <Plus size={14} />
             {c.addProject}
@@ -270,66 +248,6 @@ export function WorkspaceManagementContent({
             {notice}
           </p>
         )}
-        {adding && (
-          <section aria-label={c.addProject} className="workspace-manager-add">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={disabled}
-              onClick={browse}
-            >
-              <FolderOpen size={14} />
-              {selection ? c.reselect : c.chooseFolder}
-            </Button>
-            {selection && (
-              <>
-                <p className="workspace-manager-note" title={selection.path}>
-                  {selection.path}
-                </p>
-                <Field>
-                  <Label>{c.projectName}</Label>
-                  <Input
-                    disabled={disabled}
-                    value={selection.name}
-                    onChange={(e) =>
-                      setSelection({ ...selection, name: e.target.value })
-                    }
-                  />
-                </Field>
-              </>
-            )}
-            {duplicate && (
-              <p role="alert" className="workspace-manager-error">
-                {c.duplicate}
-              </p>
-            )}
-            <div className="workspace-manager-actions">
-              <Button
-                ref={closeAdd}
-                variant="ghost"
-                size="sm"
-                disabled={disabled}
-                onClick={() => {
-                  setAdding(false);
-                  setSelection(null);
-                  setError(null);
-                  focusAfter.current = "add";
-                }}
-              >
-                {c.cancel}
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={disabled || !selection || duplicate}
-                pending={busy === "add"}
-                onClick={add}
-              >
-                {c.confirmAdd}
-              </Button>
-            </div>
-          </section>
-        )}
         <div role="list" aria-label={c.members}>
           {filtered.map((root) => (
             <div key={root.id} className="workspace-manager-member">
@@ -351,7 +269,7 @@ export function WorkspaceManagementContent({
                     }}
                     variant="ghost"
                     size="sm"
-                    disabled={disabled || adding}
+                    disabled={disabled}
                     aria-label={`${c.remove}: ${root.name}`}
                     onClick={() => {
                       setRemoveId(root.id);
@@ -405,14 +323,14 @@ export function WorkspaceManagementContent({
           <p className="workspace-manager-note">
             {query ? c.noMatches : c.noRoots}
           </p>
+          )}
+        </div>
+        {primary && primary.status === "available" && (
+          <div className="workspace-manager-worktrees">
+            <GitWorktreesSection projectId={workspaceId} />
+          </div>
         )}
-        {roots.length === 1 && (
-          <p className="workspace-manager-note">{c.noReferences}</p>
-        )}
-        <p className="workspace-manager-note mt-5">{c.unlinkHint}</p>
-        <p className="workspace-manager-note">{c.nextRun}</p>
-      </div>
-      <DirectoryPickerDialog
+        <DirectoryPickerDialog
         open={pickerOpen}
         locationKind={location?.kind ?? "host"}
         distribution={
@@ -421,10 +339,8 @@ export function WorkspaceManagementContent({
         labels={{ title: c.pickerTitle, confirm: c.chooseFolder }}
         onClose={() => setPickerOpen(false)}
         onSelect={(item) => {
-          if (active.current) {
-            setSelection(item);
-            setPickerOpen(false);
-          }
+          setPickerOpen(false);
+          addSelection(item);
         }}
       />
     </main>

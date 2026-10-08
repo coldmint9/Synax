@@ -344,12 +344,12 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         },
       );
     }
-    // Pending questions belong to the composer; retain resolved history and plan approvals.
+    // Pending requests, including plan approvals, belong to the composer;
+    // retain only resolved history to avoid displaying the same form twice.
     // Filter after anchoring snapshots so tool activity keeps its original ordering.
     return entries.filter(
       (entry) =>
         entry.kind !== "interaction" ||
-        entry.interaction.kind !== "clarification" ||
         entry.interaction.status !== "pending",
     );
   }, [

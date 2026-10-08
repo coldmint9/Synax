@@ -30,6 +30,7 @@ import {
   assertObjectId,
 } from "../version-store/limits.js";
 import { RuntimeRecordCodec } from "./record-codec.js";
+import { MAX_TEXT_BYTES } from "../version-store/text.js";
 
 export interface RecordPageOptions {
   reverse?: boolean;
@@ -421,23 +422,28 @@ export class RuntimeVersionRepository {
       revision: head.revision,
     };
   }
-  /** Complete execution history. Page limits bound each read, never the result.
-   * UI callers use page() instead; execution must never consume a preview. */
+  /** Complete execution history. Page the small record references, then decode
+   * each record with its own budget. UI callers keep the bounded page() API. */
   list(
     sessionId: string,
     table: string,
     scope?: RecordPageOptions["scope"],
   ): Record<string, unknown>[] {
     return readVersionSnapshot(this.objects.db, () => {
+      const { roots } = this.roots(sessionId);
+      const state = this.table(roots, table);
+      const orderRoot = scope
+        ? (this.tree.get(roots.stateRoot, scopeKey(table, scope.field, scope.value)) ?? null)
+        : state.order;
       const items: Record<string, unknown>[] = [];
       let cursor: string | undefined;
       do {
-        const page = this.pageSnapshot(sessionId, table, {
+        const page = this.tree.page(orderRoot, {
           limit: PAGE_ROWS,
-          scope,
-          cursor,
+          after: cursor,
         });
-        items.push(...page.items);
+        for (const entry of page.entries)
+          items.push(this.records.read(entry.value, MAX_TEXT_BYTES * 2));
         cursor = page.next;
       } while (cursor);
       return items;

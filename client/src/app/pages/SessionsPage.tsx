@@ -15,6 +15,7 @@ import { SessionTranscript } from "../../features/agent-workspace/SessionTranscr
 import { AgentCommandRail } from "../../features/agent-workspace/AgentCommandRail";
 
 import { SessionWorkspacePanel } from "../../features/agent-workspace/SessionWorkspacePanel";
+import { SubagentConversationPanel } from "../../features/agent-workspace/SubagentConversationPanel";
 import { SessionListPanel } from "../../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../../features/agent-workspace/SessionComposer";
 import { SessionPanelCollapseButton } from "../../features/agent-workspace/SessionPanelCollapseButton";
@@ -209,6 +210,7 @@ export default memo(function SessionsPage() {
       : undefined;
   });
   const workspaceState = useSessionWorkspace(agentSessionId);
+  const selectedSubagent = workspaceState.subagent;
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId);
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
   const narrowWorkspace = useMediaQuery("(max-width: 767px)");
@@ -246,12 +248,12 @@ export default memo(function SessionsPage() {
 
   const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width;
   const commandRailRight =
-    showTranscript && wideWorkspace && !workspaceFullscreen
+    showTranscript && !narrowWorkspace && (selectedSubagent || (wideWorkspace && !workspaceFullscreen))
       ? rightPanel.width
       : 0;
 
   return (
-    <div className="agent-page-shell work-page relative flex h-full min-h-0">
+    <div className="agent-page-shell work-page relative flex h-full min-h-0" data-subagent={showTranscript && selectedSubagent ? "true" : undefined}>
       <>
         <aside
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? "overflow-visible" : "overflow-hidden"}`}
@@ -290,7 +292,7 @@ export default memo(function SessionsPage() {
         </aside>
 
         {showTranscript ? (
-          <>
+          <div className="work-session-layout">
             <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
               <WorkbenchIslandSlot placement="conversation" />
               {agentSessionId && (
@@ -319,13 +321,18 @@ export default memo(function SessionsPage() {
                 />
               )}
             </div>
-            {wideWorkspace && !workspaceFullscreen ? (
+            {selectedSubagent && agentSessionId ? (
+              <aside className="subagent-conversation-panel" style={!narrowWorkspace ? { width: rightPanel.width } : undefined}>
+                <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={rightPanel.startResize} role="separator" aria-orientation="vertical" />
+                <SubagentConversationPanel ownerSessionId={agentSessionId} sessionId={selectedSubagent.sessionId} title={selectedSubagent.title} />
+              </aside>
+            ) : wideWorkspace && !workspaceFullscreen ? (
               <SessionDetailSidebar
                 width={rightPanel.width}
                 onResize={rightPanel.startResize}
               />
             ) : null}
-          </>
+          </div>
         ) : isNewDraft ? (
           <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
             <WorkbenchIslandSlot placement="conversation" />

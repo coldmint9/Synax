@@ -1,4 +1,5 @@
 import { LoopComposition } from "./native-capabilities/loop-composition.js";
+import { finalizeStoppedSessions } from "./stopped-session-cleanup.js";
 import { isCodeNestedCall } from "./code-mode/history.js";
 import { createHash } from "node:crypto";
 import { coalesceLoopDeltas } from "./loop-delta-bursts.js";
@@ -1945,6 +1946,23 @@ export class AgentLoopRuntime {
           "[agent-runtime] run failed",
         );
         const isAbort = Boolean(runAbortSignal.aborted);
+        // Background delegates outlive individual model/tool steps. Stop their
+        // executions before reconciling persisted state when this run fails.
+        const childIds = this.store
+          .listSessionTree(sessionId)
+          .filter((child) => child.id !== sessionId)
+          .map((child) => child.id);
+        const childStopReason = `Parent session stopped: ${message}`;
+        this.interruptSessions(childIds, childStopReason);
+        try {
+          await this.waitForIdleSessions(childIds);
+          finalizeStoppedSessions(childIds, childStopReason, this.store);
+        } catch (cleanupError) {
+          logger.warn(
+            { sessionId, err: cleanupError },
+            "[agent-runtime] child shutdown not confirmed",
+          );
+        }
         const failedRun = this.store.updateRun(run.id, {
           status: isAbort ? "interrupted" : "failed",
           completedAt: nowIso(),

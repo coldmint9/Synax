@@ -136,10 +136,9 @@ describe("WorkspaceDashboard", () => {
 
     expect(screen.getByText("feature/dynamic-workflow-refactor")).toBeTruthy();
 
-    expect(screen.getByRole("button", { name: /^Subagents/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Subagents/ })).toBeNull();
     expect(screen.getByRole("heading", { name: "Git 变更" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /^输入源/ })).toBeTruthy();
-    expect(screen.getByText("运行中 1")).toBeTruthy();
     expect(screen.getByText("已暂存 1")).toBeTruthy();
     expect(container.querySelectorAll("[data-file-type-icon]")).toHaveLength(5);
     expect(
@@ -228,12 +227,11 @@ describe("WorkspaceDashboard", () => {
     );
   });
 
-  it("falls back to the prompt headline for untitled subagents", () => {
+  it("does not render the old subagent widget even when subagents exist", () => {
     renderDashboard();
 
-    expect(screen.getByText(/Investigation Task/)).toBeTruthy();
-    expect(screen.getByText(/Investigation Task/)).toHaveTextContent("研究员 · Investigation Task");
-    expect(screen.getByText(/Writer/)).toBeTruthy();
+    expect(screen.queryByText(/Investigation Task/)).toBeNull();
+    expect(screen.queryByText(/Writer/)).toBeNull();
   });
 
   it("opens non-file input sources in the content viewer", () => {
@@ -275,7 +273,7 @@ describe("WorkspaceDashboard", () => {
     ));
   });
 
-  it("opens diff, file, and subagent tabs from the card rows", () => {
+  it("opens diff and file tabs from the card rows", () => {
     renderDashboard();
 
     fireEvent.click(screen.getByText("BlockAsk.vue"));
@@ -301,17 +299,6 @@ describe("WorkspaceDashboard", () => {
       { id: "file:src/views/cli_chat/utils/toolDisplay.js", kind: "file" },
     ]);
 
-    fireEvent.click(screen.getByText(/Investigation Task/));
-    expect(
-      useSessionWorkspaceStore.getState().sessions["session-1"].tabs,
-    ).toMatchObject([
-      {
-        id: "diff:src/views/cli_chat/components/blocks/BlockAsk.vue",
-        kind: "diff",
-      },
-      { id: "file:src/views/cli_chat/utils/toolDisplay.js", kind: "file" },
-      { id: "subagent:sub-1", kind: "subagent" },
-    ]);
   });
 
   it("switches git changes between tree and flat views while input files stay flat", () => {
