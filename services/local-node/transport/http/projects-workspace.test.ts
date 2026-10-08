@@ -244,6 +244,43 @@ describe('workspace creation and repository selection API', () => {
 });
 
 describe('project workspace references API', () => {
+  it('enforces the same 50-member limit when adding to an existing workspace', async () => {
+    const items = JSON.parse(fs.readFileSync(projectsFile, 'utf8')).items as ProjectRecord[];
+    items.find(item => item.id === 'main')!.references = Array.from({ length: 49 }, (_, index) => ({
+      id: `ref-${index}`, name: `Member ${index}`, localPath: directory(`member-${index}`),
+    }));
+    fs.writeFileSync(projectsFile, JSON.stringify({ items }));
+    vi.resetModules();
+    ({ projectRoutes: routes } = await import('./projects.js'));
+    await expectRejected({ localPath });
+    expect(await workspace()).toHaveLength(50);
+  });
+
+  it('queues removal behind in-flight addition so the removed membership cannot reappear', async () => {
+    const initial = await addReference({ localPath });
+    const referenceId = initial[1].id;
+    const module = await import('../../modules/project-workspace.js');
+    const validate = module.validateProjectReferenceLocation;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    vi.spyOn(module, 'validateProjectReferenceLocation').mockImplementationOnce(async (...args) => {
+      entered();
+      await gate;
+      return validate(...args);
+    });
+    const addition = postReference({ localPath: secondPath });
+    await waiting;
+    const removal = routes.request(`/main/references/${referenceId}`, { method: 'DELETE' });
+    release();
+    expect((await addition).status).toBe(201);
+    expect((await removal).status).toBe(200);
+    expect((await workspace()).map(root => root.path)).toEqual([mainPath, secondPath]);
+    expect(diskProject().references).toHaveLength(1);
+    expect(fs.existsSync(localPath)).toBe(true);
+  });
+
   it('returns only the primary root for a legacy single-directory project without changing its JSON', async () => {
     const before = fs.readFileSync(projectsFile, 'utf8');
     expect(await workspace()).toEqual([

@@ -1,0 +1,98 @@
+.project-create-container.ui-dialog-container {
+  max-width: 520px;
+}
+.project-create-panel.ui-dialog-panel {
+  gap: 18px;
+  padding: 22px;
+}
+.project-create-header.ui-dialog-header {
+  display: block;
+}
+.project-create-form {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 18px;
+}
+.project-create-body.ui-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.project-create-projects {
+  min-width: 0;
+}
+.project-create-heading {
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.project-create-environment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.project-create-list {
+  max-height: 270px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.project-create-panel .workspace-project-row {
+  gap: 8px;
+  padding: 12px 0;
+}
+.project-create-panel .workspace-project-icon {
+  display: none;
+}
+.project-create-panel .workspace-project-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  opacity: 1;
+}
+.project-create-panel .workspace-project-text strong {
+  font-size: 13px;
+}
+.project-create-empty {
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+.project-create-empty p {
+  margin-bottom: 8px;
+}
+.project-create-browse.ui-button {
+  margin-top: 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  justify-content: flex-start;
+  padding-left: 0;
+}
+.project-create-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+.project-create-error {
+  color: hsl(var(--destructive));
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.project-create-footer.ui-dialog-footer {
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid hsl(var(--border-hsl) / 0.6);
+}
+@media (max-width: 480px) {
+  .project-create-panel.ui-dialog-panel {
+    padding: 18px;
+  }
+  .project-create-panel .workspace-project-actions .ui-button {
+    font-size: 11px;
+  }
+}

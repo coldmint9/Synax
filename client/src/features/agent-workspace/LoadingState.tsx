@@ -76,19 +76,6 @@ export function PixelLoader({ variant = "Drive" }: { variant?: string }) {
   return <LoaderGrid delays={delays} dur={dur} round={round} />;
 }
 
-/** Elapsed time only (no grid, no label) — minimal left-aligned round footer. */
-export function ElapsedTimer() {
-  const elapsed = useElapsed();
-  return (
-    <span
-      role="timer"
-      className="inline-block px-1 py-2 font-mono text-[12px] tabular-nums text-muted-foreground"
-    >
-      {elapsed}
-    </span>
-  );
-}
-
 function useElapsed() {
   const [ds, setDs] = useState(0);
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { WorkbenchHeader } from '../WorkbenchHeader';
@@ -17,12 +17,22 @@ vi.mock('../useIslandPresence', () => ({ useIslandPresence: (open:boolean) => ({
 vi.mock('../IslandSelection', () => ({IslandSelection:({children}:{children:ReactNode})=><div>{children}</div>}));
 const project = { id:'p',name:'Example',status:'healthy' } as ProjectSummary;
 const base = { chromeMode:'global' as const,activePanel:'sessions' as const,onPanelToggle:vi.fn(),hasProject:true,projectName:'Example',currentProjectId:'p',projects:[project],onProjectSwitch:vi.fn(),onCreateProject:vi.fn(),onRemoveProject:vi.fn(async()=>{}) };
-const wrapper = ({children}:{children:ReactNode}) => <MemoryRouter>{children}</MemoryRouter>;
+function RouteMarker(){const location=useLocation();return <output data-testid="route">{location.pathname}</output>;}
+const wrapper = ({children}:{children:ReactNode}) => <MemoryRouter>{children}<RouteMarker/></MemoryRouter>;
 beforeEach(()=>{useAgentSessionStore.setState(useAgentSessionStore.getInitialState());useTerminalStore.setState({open:false});useShellStore.setState(s=>({preferences:{...s.preferences,locale:'en'}}));});
 afterEach(()=>{vi.clearAllMocks();useTerminalStore.setState(useTerminalStore.getInitialState());useShellStore.setState(useShellStore.getInitialState());});
-async function openRemoval(user:ReturnType<typeof userEvent.setup>){await user.click(screen.getByRole('button',{name:'appSwitchProject'}));await user.click(await screen.findByRole('menuitem',{name:'appRemoveProject: Example'}));return screen.findByRole('dialog',{name:'appRemoveProject'});}
+async function openRemoval(user:ReturnType<typeof userEvent.setup>){await user.click(screen.getByRole('button',{name:'appSwitchProject'}));await user.click(await screen.findByRole('menuitem',{name:'Workspace actions: Example'}));await user.click(await screen.findByRole('menuitem',{name:'appRemoveProject: Example'}));return screen.findByRole('dialog',{name:'appRemoveProject'});}
 
 describe('workbench action state',()=>{
+ it('opens management for the menu target without switching the current workspace',async()=>{
+  const user=userEvent.setup();
+  render(<WorkbenchHeader {...base} projects={[project,{...project,id:'other',name:'Other'}]}/>,{wrapper});
+  await user.click(screen.getByRole('button',{name:'appSwitchProject'}));
+  await user.click(await screen.findByRole('menuitem',{name:'Workspace actions: Other'}));
+  await user.click(screen.getByRole('menuitem',{name:'Manage workspace'}));
+  expect(screen.getByTestId('route')).toHaveTextContent('/workspaces/other/manage');
+  expect(base.onProjectSwitch).not.toHaveBeenCalled();
+ });
  it('keeps Settings selection independent from Terminal',()=>{
   useTerminalStore.setState({open:true});const view=render(<WorkbenchHeader {...base}/>,{wrapper});
   expect(screen.getByRole('button',{name:'appSettings'})).toHaveAttribute('aria-pressed','false');

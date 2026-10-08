@@ -11,7 +11,6 @@ import { useLocale } from "../../shared/hooks/useLocale";
 import type { I18nKey } from "../../shared/lib/i18n";
 import { SettingsCard } from "./components/SettingsCard";
 import { GitWorktreesSection } from "./components/GitWorktreesSection";
-import { ProjectReferencesSection } from "./components/ProjectReferencesSection";
 import { ProjectToolGrantsSection } from "./components/ProjectToolGrantsSection";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 
@@ -129,7 +128,6 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
             <CodeModeSettings value={settings.codeMode} locale={useShellLocale} onSave={async data => { await patchSection("codeMode", data); }} />
             <ComputerUseSettings value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
             <ProjectToolGrantsSection projectId={projectId} />
-            <ProjectReferencesSection projectId={projectId} />
             <ProviderTab
               settings={settings}
               globalConfig={globalConfig}

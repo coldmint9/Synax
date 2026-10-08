@@ -5,7 +5,7 @@ import { ThinkingTrace } from "./ThinkingTrace";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolBlocksToBatches } from "./toolCallUtils";
 import { ThinkingBlock } from "./ThinkingBlock";
-import { ElapsedTimer, PixelLoader } from "./LoadingState";
+import { PixelLoader } from "./LoadingState";
 import {
   hasDisplayableReasoning,
   latestActivityPreview,
@@ -91,7 +91,6 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
           ) : undefined
         }
         maxHeight={maxHeight}
-        footer={isStreaming ? <ElapsedTimer /> : undefined}
       >
         <div className="bui-tool-list">
           {activityBlocks.flatMap((block) =>

@@ -9,6 +9,7 @@ const GitWorkbenchPage = lazy(() => import("../features/git/GitWorkbenchPage"));
 const AboutPage = lazy(() => import("./pages/AboutPage"));
 const GlobalSettingsPage = lazy(() => import("../features/settings/GlobalSettingsPage"));
 const ProjectSettingsPage = lazy(() => import("../features/settings/ProjectSettingsPage"));
+const WorkspaceManagementPage = lazy(() => import("../features/workspace/WorkspaceManagementPage"));
 import { useElectronMenu } from "../adapters/electron/electron-menu";
 import { useTabKeyBehavior } from "../shared/hooks/useTabKeyBehavior";
 import { WorkspaceFileMutationHost } from "../features/agent-workspace/WorkspaceFileMutationHost";
@@ -55,6 +56,7 @@ export default function App() {
               <Route path="/" element={<WelcomeView />} />
               <Route path="/settings" element={<Suspense fallback={<PageLoading />}><GlobalSettingsPage /></Suspense>} />
               <Route path="/about" element={<Suspense fallback={<PageLoading />}><AboutPage /></Suspense>} />
+              <Route path="/workspaces/:workspaceId/manage" element={<Suspense fallback={<PageLoading />}><WorkspaceManagementPage /></Suspense>} />
               <Route
                 path="/projects/:projectId"
                 element={<Navigate to="sessions" replace />}

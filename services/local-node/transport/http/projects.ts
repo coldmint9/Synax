@@ -636,6 +636,8 @@ projectRoutes.post("/:id/references", async (c) => {
       const resolved = await resolveRootInput(parsed.data);
       // Validation occurs inside the project queue so concurrent writes see every prior membership.
       const latest = projects.get(projectId)!;
+      if (projectWorkspaceRoots(latest).length >= 50)
+        throw new Error("A workspace supports up to 50 projects.");
       const location = await validateProjectReferenceLocation(
         latest,
         resolved.location,
@@ -664,26 +666,32 @@ projectRoutes.post("/:id/references", async (c) => {
   }
 });
 
-projectRoutes.delete("/:id/references/:referenceId", (c) => {
-  const project = projects.get(c.req.param("id"));
-  if (!project) return c.json({ error: "Project not found" }, 404);
+projectRoutes.delete("/:id/references/:referenceId", async (c) => {
+  const projectId = c.req.param("id");
   const referenceId = c.req.param("referenceId");
-  if (!project.references?.some((reference) => reference.id === referenceId))
-    return c.json({ error: "Reference not found" }, 404);
-  const updated = {
-    ...project,
-    references: project.references.filter(
-      (reference) => reference.id !== referenceId,
-    ),
-    updatedAt: new Date().toISOString(),
-  };
-  atomicWriteJson(PROJECTS_FILE, {
-    items: [...projects.values()].map((item) =>
-      item.id === project.id ? updated : item,
-    ),
-  });
-  projects.set(project.id, updated);
-  return c.json({ roots: projectWorkspaceRoots(updated) });
+  try {
+    const roots = await withProjectMutation(projectId, async () => {
+      const project = projects.get(projectId);
+      if (!project) throw Object.assign(new Error("Project not found"), { status: 404 });
+      if (!project.references?.some(reference => reference.id === referenceId))
+        throw Object.assign(new Error("Reference not found"), { status: 404 });
+      const updated = {
+        ...project,
+        references: project.references.filter(reference => reference.id !== referenceId),
+        updatedAt: new Date().toISOString(),
+      };
+      atomicWriteJson(PROJECTS_FILE, {
+        items: [...projects.values()].map(item => item.id === projectId ? updated : item),
+      });
+      projects.set(projectId, updated);
+      return projectWorkspaceRoots(updated);
+    });
+    return c.json({ roots });
+  } catch (error) {
+    if ((error as { status?: number }).status === 404)
+      return c.json({ error: (error as Error).message }, 404);
+    throw error;
+  }
 });
 
 // ─── Project Routes ────────────────────────────────────────────────────────

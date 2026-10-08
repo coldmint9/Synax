@@ -19,31 +19,32 @@ import type { ProjectSummary } from "../../shared/state/shellStore";
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { ProjectCreateDialog } from "./ProjectCreateDialog";
 
-const { navigate, nativePicker } = vi.hoisted(() => ({
+const { navigate, nativePicker, runtime } = vi.hoisted(() => ({
   navigate: vi.fn(),
   nativePicker: vi.fn(),
+  runtime: { electron: true },
 }));
-
 vi.mock("react-router-dom", () => ({ useNavigate: () => navigate }));
 vi.mock("../../adapters/transport/project", () => ({
-  projectApi: {
-    listProjects: vi.fn(),
-    createWorkspace: vi.fn(),
-    createProject: vi.fn(),
-  },
+  projectApi: { listProjects: vi.fn(), createWorkspace: vi.fn() },
 }));
-vi.mock("../../adapters/transport/fs", () => ({ listRemoteDirectories: vi.fn() }));
-vi.mock("../../adapters/transport/wsl", () => ({ listWslDistributions: vi.fn() }));
-// Exercise the Electron branch too: its native helper only returns one directory.
+vi.mock("../../adapters/transport/fs", () => ({
+  listRemoteDirectories: vi.fn(),
+}));
+vi.mock("../../adapters/transport/wsl", () => ({
+  listWslDistributions: vi.fn(),
+}));
 vi.mock("../../adapters/electron/open-directory-picker", () => ({
-  isElectron: true,
+  get isElectron() {
+    return runtime.electron;
+  },
   openDirectoryPicker: nativePicker,
 }));
 
-function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
+function project(): ProjectSummary {
   return {
-    id: "existing",
-    name: "Existing",
+    id: "created",
+    name: "Workspace",
     status: "healthy",
     environment: "development",
     healthScore: 100,
@@ -51,11 +52,9 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     activeHumans: 1,
     openRisks: 0,
     updatedAt: "now",
-    source: { kind: "localPath", localPath: "/repos/existing" },
-    ...overrides,
+    source: { kind: "localPath", localPath: "/repos/api" },
   };
 }
-
 function directoryListing(): RemoteDirectoryListing {
   return {
     path: "/repos",
@@ -70,7 +69,6 @@ function directoryListing(): RemoteDirectoryListing {
     ],
   };
 }
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -80,577 +78,322 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-
-async function addPath(path: string) {
-  await userEvent.setup().click(screen.getByRole("tab", { name: "本地" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
-    target: { value: path },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "添加" }));
+async function addNative(name: string, path = `/repos/${name}`) {
+  nativePicker.mockResolvedValueOnce({ path, name });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: /选择文件夹|添加项目/ }));
+  await waitFor(() =>
+    expect(screen.getByRole("list", { name: "工作区项目" })).toHaveTextContent(
+      name,
+    ),
+  );
 }
-
-async function renderDialog(onClose = vi.fn()) {
-  const view = render(<ProjectCreateDialog open onClose={onClose} />);
-  await waitFor(() => expect(projectApi.listProjects).toHaveBeenCalled());
-  return { ...view, onClose };
+function row(name: string) {
+  return screen
+    .getAllByRole("listitem")
+    .find((item) => within(item).queryByText(name, { exact: true }))!;
 }
-
 const desktopWindow = window as Window & { electronAPI?: { platform: string } };
 
-describe("ProjectCreateDialog", () => {
-  afterEach(() => {
-    delete desktopWindow.electronAPI;
-    vi.restoreAllMocks();
-  });
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(projectApi.listProjects)
-      .mockReset()
-      .mockResolvedValue({ items: [project()], total: 1 });
-    vi.mocked(projectApi.createWorkspace).mockReset();
-    vi.mocked(listRemoteDirectories)
-      .mockReset()
-      .mockResolvedValue(directoryListing());
-    vi.mocked(listWslDistributions)
-      .mockReset()
-      .mockResolvedValue({
-        available: true,
-        items: [{ name: "Ubuntu", version: 2, default: true }],
-      });
-  });
-
-  it("creates a WSL2 workspace with distribution plus Linux path", async () => {
-    desktopWindow.electronAPI = { platform: "win32" };
-    vi.mocked(projectApi.createWorkspace).mockResolvedValueOnce({
-      project: project({ id: "wsl" }),
-    });
-    const { onClose } = await renderDialog();
-    await waitFor(() => expect(listWslDistributions).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: "WSL2" }));
-    const pathInput = screen.getByRole("textbox", { name: "项目目录路径" });
-    fireEvent.change(pathInput, { target: { value: "/home/dev/app" } });
-    fireEvent.click(screen.getByRole("button", { name: "添加" }));
-    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(projectApi.createWorkspace).toHaveBeenCalledWith({
-      name: "app",
-      roots: [
-        {
-          location: {
-            kind: "wsl",
-            distribution: "Ubuntu",
-            path: "/home/dev/app",
-          },
-          name: "app",
-        },
+beforeEach(() => {
+  vi.clearAllMocks();
+  runtime.electron = true;
+  nativePicker.mockReset().mockResolvedValue(null);
+  vi.mocked(projectApi.createWorkspace)
+    .mockReset()
+    .mockResolvedValue({ project: project() });
+  vi.mocked(listRemoteDirectories)
+    .mockReset()
+    .mockResolvedValue(directoryListing());
+  vi.mocked(listWslDistributions)
+    .mockReset()
+    .mockResolvedValue({
+      available: true,
+      items: [
+        { name: "Ubuntu", version: 2, default: true },
+        { name: "Legacy", version: 1, default: false },
       ],
     });
-  });
+});
+afterEach(() => {
+  delete desktopWindow.electronAPI;
+  vi.restoreAllMocks();
+});
 
-  it.each(["darwin", "linux", undefined])(
-    "hides WSL2 outside the Windows desktop (%s), regardless of browser identity",
-    async (platform) => {
-      if (platform) desktopWindow.electronAPI = { platform };
-      vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      );
-      await renderDialog();
-      expect(screen.getByRole("tab", { name: "本地" })).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "WSL2" }),
-      ).not.toBeInTheDocument();
-      expect(screen.queryByText("Windows")).not.toBeInTheDocument();
-      expect(listWslDistributions).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    { available: false, items: [], reason: "WSL2 is unavailable" },
-    { available: true, items: [] },
-    {
-      available: false,
-      items: [{ name: "Ubuntu", version: 2 as const, default: true }],
-    },
-  ])("hides WSL2 without a usable capability result: %j", async (result) => {
-    desktopWindow.electronAPI = { platform: "win32" };
-    vi.mocked(listWslDistributions).mockResolvedValueOnce(result);
-    await renderDialog();
-    expect(listWslDistributions).toHaveBeenCalledExactlyOnceWith();
+describe("ProjectCreateDialog", () => {
+  it("shows the compact name and empty project fields together, with only directory selection", async () => {
+    await act(async () => { render(<ProjectCreateDialog open onClose={vi.fn()} />); });
+    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
     expect(
-      screen.queryByRole("button", { name: "WSL2" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("WSL2 is unavailable")).not.toBeInTheDocument();
-  });
-
-  it("keeps WSL2 hidden while detecting and after detection fails", async () => {
-    desktopWindow.electronAPI = { platform: "win32" };
-    const pending =
-      deferred<Awaited<ReturnType<typeof listWslDistributions>>>();
-    vi.mocked(listWslDistributions).mockReturnValueOnce(pending.promise);
-    await renderDialog();
+      within(screen.getByRole("region", { name: "工作区项目" })).getByText(
+        "选择现有项目目录，文件会保留在原位置。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
     expect(
-      screen.queryByRole("button", { name: "WSL2" }),
-    ).not.toBeInTheDocument();
-    await act(async () => pending.reject(new Error("WSL unavailable")));
-    expect(
-      screen.queryByRole("button", { name: "WSL2" }),
-    ).not.toBeInTheDocument();
-    await addPath("C:/repos/app");
-    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/app");
-  });
-
-  it("shows the remote SSH placeholder and keeps local creation unavailable", async () => {
-    await renderDialog();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "远程" }));
-    expect(screen.getByText("连接远程主机")).toBeInTheDocument();
-    expect(screen.getByText("SSH 主机连接功能即将支持。")).toBeInTheDocument();
+      screen.getByRole("button", { name: /选择文件夹|添加项目/ }),
+    ).toBeEnabled();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("textbox", { name: "项目目录路径" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "本地" }));
-    expect(
-      screen.getByRole("textbox", { name: "项目目录路径" }),
-    ).toBeInTheDocument();
+    expect(projectApi.listProjects).not.toHaveBeenCalled();
   });
 
-  it("uses one tab slider and resets directories when switching local / WSL2", async () => {
-    desktopWindow.electronAPI = { platform: "win32" };
-    vi.mocked(listWslDistributions).mockResolvedValueOnce({
-      available: true,
-      items: [
-        { name: "Debian", version: 2, default: false },
-        { name: "Ubuntu", version: 2, default: true },
-      ],
-    });
-    await renderDialog();
-    const wslTab = await screen.findByRole("button", { name: "WSL2" });
-    expect(screen.getAllByRole("tablist")).toHaveLength(1);
-    expect(
-      within(screen.getByRole("tablist", { name: "来源类型" })).getAllByRole(
-        "tab",
-      ),
-    ).toHaveLength(2);
-    await addPath("C:/repos/app");
-    fireEvent.click(wslTab);
-    expect(screen.getByRole("button", { name: "WSL2" })).toBeInTheDocument();
-    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /WSL2 发行版/ }),
-    ).toHaveTextContent("Ubuntu");
-    fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
-      target: { value: "/home/dev/app" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "添加" }));
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    fireEvent.click(screen.getByRole("button", { name: "WSL2" }));
-    expect(screen.getByRole("listitem")).toHaveTextContent(
-      "Ubuntu · /home/dev/app",
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /WSL2 发行版/ }));
-    await user.click(await screen.findByRole("option", { name: "Debian" }));
-    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
-    await addPath("C:/repos/local");
-    expect(
-      screen.queryByRole("button", { name: /WSL2 发行版/ }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/local");
-  });
-
-  it("browses multiple WSL directories in-app and submits all roots in one request despite repeated clicks", async () => {
-    const pending = deferred<{ project: ProjectSummary }>();
-    vi.mocked(projectApi.createWorkspace).mockReturnValueOnce(pending.promise);
-    const user = userEvent.setup();
-    const { onClose } = await renderDialog();
-    await user.click(screen.getByRole("tab", { name: "WSL2" }));
-    const dialog = screen.getByRole("dialog", { name: "创建工作区" });
-    expect(dialog).toHaveAttribute(
-      "aria-describedby",
-      "workspace-create-intro",
-    );
-    expect(screen.getByRole("list", { name: "工作区项目" })).toHaveClass(
-      "overflow-y-auto",
-    );
-    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveFocus();
-
-    const browse = screen.getByRole("button", { name: "选择文件夹" });
-    await user.click(browse);
-    expect(dialog.closest(".dialog-overlay")).toHaveAttribute("inert");
-    expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    await user.click(await screen.findByRole("checkbox", { name: "选择 api" }));
-    await user.click(screen.getByRole("checkbox", { name: "选择 web" }));
-    await user.click(screen.getByRole("button", { name: "添加所选项目 (2)" }));
-    expect(browse).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 2 个项目");
-    expect(nativePicker).not.toHaveBeenCalled();
-    expect(projectApi.createWorkspace).not.toHaveBeenCalled();
+  it("adds native directories immediately, keeps visual order and submits the default root first", async () => {
+    const onClose = vi.fn();
+    render(<ProjectCreateDialog open onClose={onClose} />);
+    await addNative("api");
+    await addNative("web");
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
       "api",
     );
+    await userEvent
+      .setup()
+      .click(within(row("web")).getByRole("button", { name: /^设为默认:/ }));
+    expect(
+      screen
+        .getAllByRole("listitem")
+        .map((item) => item.querySelector("strong")?.textContent),
+    ).toEqual(["api", "web"]);
+    expect(row("web")).toHaveAttribute("data-primary", "true");
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "创建工作区" }));
+    await waitFor(() =>
+      expect(projectApi.createWorkspace).toHaveBeenCalledWith({
+        name: "api",
+        roots: [
+          { localPath: "/repos/web", name: "web" },
+          { localPath: "/repos/api", name: "api" },
+        ],
+      }),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith(resolveSessionsEntryPath("created"));
+  });
 
+  it("preserves a user name, including an intentionally cleared name", async () => {
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "工作区名称" });
+    fireEvent.change(input, { target: { value: "My workspace" } });
+    await addNative("api");
+    expect(input).toHaveValue("My workspace");
+    fireEvent.change(input, { target: { value: "" } });
+    await addNative("web");
+    expect(input).toHaveValue("");
+    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
+  });
+
+  it("deduplicates normalized directory paths without replacing the name or default", async () => {
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    await addNative("api");
+    await addNative("api", "/repos/api/");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("此目录已在工作区中");
+    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
+      "api",
+    );
+    expect(row("api")).toHaveAttribute("data-primary", "true");
+  });
+
+  it("removes drafts immediately and selects the following default, wrapping at the end", async () => {
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    await addNative("api");
+    await addNative("web");
+    await addNative("shared");
+    fireEvent.click(
+      within(row("web")).getByRole("button", { name: /^设为默认:/ }),
+    );
+    fireEvent.click(within(row("web")).getByRole("button", { name: /^移除:/ }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(row("shared")).toHaveAttribute("data-primary", "true");
+    fireEvent.click(
+      within(row("shared")).getByRole("button", { name: /^移除:/ }),
+    );
+    expect(row("api")).toHaveAttribute("data-primary", "true");
+    fireEvent.click(within(row("api")).getByRole("button", { name: /^移除:/ }));
+    expect(
+      within(screen.getByRole("region", { name: "工作区项目" })).getByText(
+        "选择现有项目目录，文件会保留在原位置。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
+  });
+
+  it("locks submission and preserves the draft and default after failure for retry", async () => {
+    const pending =
+      deferred<Awaited<ReturnType<typeof projectApi.createWorkspace>>>();
+    vi.mocked(projectApi.createWorkspace).mockReturnValueOnce(pending.promise);
+    const onClose = vi.fn();
+    render(<ProjectCreateDialog open onClose={onClose} />);
+    await addNative("api");
+    await addNative("web");
+    fireEvent.click(
+      within(row("web")).getByRole("button", { name: /^设为默认:/ }),
+    );
     const submit = screen.getByRole("button", { name: "创建工作区" });
     act(() => {
       fireEvent.click(submit);
       fireEvent.click(submit);
     });
-    expect(projectApi.createWorkspace).toHaveBeenCalledTimes(1);
-    expect(projectApi.createWorkspace).toHaveBeenCalledWith({
-      name: "api",
-      roots: [
-        { localPath: "/repos/api", name: "api" },
-        { localPath: "/repos/web", name: "web" },
-      ],
-    });
-    expect(projectApi.createProject).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "创建中…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(projectApi.createWorkspace).toHaveBeenCalledOnce();
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toBeDisabled();
-    fireEvent.keyDown(document, { key: "Escape" });
-    fireEvent.click(dialog.closest(".dialog-overlay")!);
-    expect(onClose).not.toHaveBeenCalled();
-
-    await act(async () =>
-      pending.resolve({ project: project({ id: "created-workspace" }) }),
-    );
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledExactlyOnceWith(
-      resolveSessionsEntryPath("created-workspace"),
-    );
-  });
-
-  it("adds existing projects by id, deduplicates paths and preserves the chosen default root order", async () => {
-    vi.mocked(projectApi.listProjects).mockResolvedValueOnce({
-      items: [
-        project(),
-        project({
-          id: "without-path",
-          name: "Scratch",
-          source: { kind: "scratch" },
-        }),
-      ],
-      total: 2,
-    });
-    vi.mocked(projectApi.createWorkspace).mockResolvedValueOnce({
-      project: project({ id: "created" }),
-    });
-    const { onClose } = await renderDialog();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
     expect(
-      screen.queryByRole("button", { name: /Scratch/ }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Existing.*repos/ }),
-    );
-    await addPath("  /repos/existing  ");
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    expect(
-      screen.getByRole("button", { name: /Existing.*repos/ }),
+      screen.getByRole("button", { name: /选择文件夹|添加项目/ }),
     ).toBeDisabled();
-    await addPath("/repos/new");
-    const newMember = screen
-      .getByText("/repos/new")
-      .closest('[role="listitem"]')!;
-    fireEvent.click(
-      within(newMember as HTMLElement).getByRole("button", {
-        name: "设为默认: new",
-      }),
-    );
-    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("new默认项目");
-    fireEvent.change(screen.getByRole("textbox", { name: "工作区名称" }), {
-      target: { value: "  My workspace  " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(projectApi.createWorkspace).toHaveBeenCalledExactlyOnceWith({
-      name: "My workspace",
-      roots: [
-        { localPath: "/repos/new", name: "new" },
-        { projectId: "existing" },
-      ],
-    });
-    expect(projectApi.createProject).not.toHaveBeenCalled();
-  });
-
-  it("removes members, re-enables their existing option and accepts a workspace with just one root", async () => {
-    vi.mocked(projectApi.createWorkspace).mockResolvedValueOnce({
-      project: project({ id: "single" }),
-    });
-    const { onClose } = await renderDialog();
-    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Existing.*repos/ }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "移除 Existing" }));
-    expect(
-      screen.getByRole("button", { name: /Existing.*repos/ }),
-    ).toBeEnabled();
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
-    expect(screen.getByRole("button", { name: "创建工作区" })).toBeDisabled();
-    fireEvent.change(screen.getByRole("textbox", { name: "工作区名称" }), {
-      target: { value: "" },
-    });
-    await userEvent.setup().click(screen.getByRole("tab", { name: "本地" }));
-    const input = screen.getByRole("textbox", { name: "项目目录路径" });
-    fireEvent.change(input, { target: { value: "C:\\repos\\single" } });
-    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
-    fireEvent.keyDown(input, { key: "Enter" });
+    await act(async () => pending.reject(new Error("Unable to create")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Unable to create");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(row("web")).toHaveAttribute("data-primary", "true");
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
-      "single",
+      "api",
     );
-    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(projectApi.createWorkspace).toHaveBeenCalledExactlyOnceWith({
-      name: "single",
-      roots: [{ localPath: "C:\\repos\\single", name: "single" }],
-    });
-  });
-
-  it("keeps the name and selected roots after a submission error and retries the same payload", async () => {
-    vi.mocked(projectApi.createWorkspace)
-      .mockRejectedValueOnce(new Error("创建失败，请重试"))
-      .mockResolvedValueOnce({ project: project({ id: "retried" }) });
-    const { onClose } = await renderDialog();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Existing.*repos/ }),
-    );
-    await addPath("/repos/api");
-    fireEvent.change(screen.getByRole("textbox", { name: "工作区名称" }), {
-      target: { value: "Kept name" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "创建失败，请重试",
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 2 个项目");
-    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
-      "Kept name",
-    );
-    expect(screen.getByRole("button", { name: "移除 Existing" })).toBeEnabled();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    expect(
-      screen.getByRole("button", { name: /Existing.*repos/ }),
-    ).toBeDisabled();
     expect(onClose).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(projectApi.createWorkspace).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(projectApi.createWorkspace).mock.calls[1][0]).toEqual(
-      vi.mocked(projectApi.createWorkspace).mock.calls[0][0],
+    await waitFor(() =>
+      expect(projectApi.createWorkspace).toHaveBeenCalledTimes(2),
+    );
+    expect(vi.mocked(projectApi.createWorkspace).mock.calls[1]).toEqual(
+      vi.mocked(projectApi.createWorkspace).mock.calls[0],
     );
   });
 
-  it("allows manual paths when loading existing projects fails", async () => {
-    vi.mocked(projectApi.listProjects).mockRejectedValueOnce(
-      new Error("项目列表不可用"),
-    );
-    render(<ProjectCreateDialog open onClose={vi.fn()} />);
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "项目列表不可用",
-    );
-    await addPath("/repos/api");
-    expect(screen.getByRole("button", { name: "创建工作区" })).toBeEnabled();
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
-  });
-
-  it("uses the native picker for host folders in the Electron desktop", async () => {
-    vi.mocked(nativePicker).mockResolvedValueOnce({
-      path: "C:/repos/native",
-      name: "native",
-    });
-    const user = userEvent.setup();
-    await renderDialog();
-
-    await user.click(screen.getByRole("button", { name: "选择文件夹" }));
-
-    await waitFor(() => expect(nativePicker).toHaveBeenCalledOnce());
-    expect(screen.getByRole("listitem")).toHaveTextContent("C:/repos/native");
-    expect(screen.queryByRole("dialog", { name: "选择目录" })).not.toBeInTheDocument();
-  });
-
-  it("closes only the top dialog on Escape, traps and restores focus, and clears cancelled openings", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
+  it("ignores an old native picker result after close and reopen", async () => {
+    const pending = deferred<{ path: string; name: string } | null>();
+    nativePicker.mockReturnValueOnce(pending.promise);
     function Harness() {
-      const [open, setOpen] = useState(false);
+      const [open, setOpen] = useState(true);
       return (
         <>
-          <button onClick={() => setOpen(true)}>打开创建工作区</button>
-          <ProjectCreateDialog
-            open={open}
-            onClose={() => {
-              onClose();
-              setOpen(false);
-            }}
-          />
+          <button onClick={() => setOpen(true)}>Reopen</button>
+          <ProjectCreateDialog open={open} onClose={() => setOpen(false)} />
         </>
       );
     }
     render(<Harness />);
-    const opener = screen.getByRole("button", { name: "打开创建工作区" });
-    await user.click(opener);
-    await waitFor(() => expect(projectApi.listProjects).toHaveBeenCalled());
-    await addPath("/repos/kept");
-    screen.getByRole("button", { name: "关闭" }).focus();
-    await user.tab({ shift: true });
-    expect(screen.getByRole("button", { name: "创建工作区" })).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
-    const browse = screen.getByRole("button", { name: "选择文件夹" });
-    await user.click(browse);
-    await user.click(await screen.findByRole("checkbox", { name: "选择 api" }));
-    await user.keyboard("{Escape}");
-    expect(onClose).not.toHaveBeenCalled();
-    expect(browse).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
-    await user.click(browse);
-    await screen.findByRole("checkbox", { name: "选择 api" });
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
-    await user.click(screen.getByRole("button", { name: "取消" }));
-    expect(browse).toHaveFocus();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "本地" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "项目目录路径" }), {
-      target: { value: "/unfinished" },
-    });
-    await user.keyboard("{Escape}");
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(opener).toHaveFocus();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await user.click(opener);
-    await waitFor(() => expect(projectApi.listProjects).toHaveBeenCalled());
-    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
-    await user.click(screen.getByRole("button", { name: "手动输入路径" }));
-    expect(screen.getByRole("textbox", { name: "项目目录路径" })).toHaveValue(
-      "",
+    fireEvent.click(
+      screen.getByRole("button", { name: /选择文件夹|添加项目/ }),
     );
-    expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(projectApi.createWorkspace).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "取消" }));
-    expect(onClose).toHaveBeenCalledTimes(2);
-    expect(opener).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await act(async () =>
+      pending.resolve({ path: "/repos/stale", name: "stale" }),
+    );
+    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
+    await addNative("web");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
   });
 
-  it.each(["resolve", "reject"] as const)(
-    "ignores an old project list that later %ss after closing and reopening",
-    async (outcome) => {
-      const old = deferred<{ items: ProjectSummary[]; total: number }>();
-      const fresh = project({
-        id: "fresh",
-        name: "Fresh",
-        source: { kind: "localPath", localPath: "/repos/fresh" },
-      });
-      vi.mocked(projectApi.listProjects)
-        .mockReturnValueOnce(old.promise)
-        .mockResolvedValueOnce({ items: [fresh], total: 1 });
-      const onClose = vi.fn();
-      const { rerender } = render(
-        <ProjectCreateDialog open onClose={onClose} />,
+  it("ignores a create response after the parent closes the form", async () => {
+    const pending =
+      deferred<Awaited<ReturnType<typeof projectApi.createWorkspace>>>();
+    vi.mocked(projectApi.createWorkspace).mockReturnValueOnce(pending.promise);
+    const onClose = vi.fn();
+    const view = render(<ProjectCreateDialog open onClose={onClose} />);
+    await addNative("api");
+    fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
+    view.rerender(<ProjectCreateDialog open={false} onClose={onClose} />);
+    await act(async () => pending.resolve({ project: project() }));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "adds browser multi-selection directly with WSL=%s",
+    async (wsl) => {
+      runtime.electron = wsl;
+      if (wsl) desktopWindow.electronAPI = { platform: "win32" };
+      render(<ProjectCreateDialog open onClose={vi.fn()} />);
+      const user = userEvent.setup();
+      if (wsl)
+        await user.click(await screen.findByRole("button", { name: "WSL2" }));
+      await user.click(
+        screen.getByRole("button", { name: /选择文件夹|添加项目/ }),
       );
-      rerender(<ProjectCreateDialog open={false} onClose={onClose} />);
-      rerender(<ProjectCreateDialog open onClose={onClose} />);
-      await userEvent
-        .setup()
-        .click(screen.getByRole("button", { name: "已有项目" }));
-      await screen.findByRole("button", { name: /Fresh.*repos/ });
-      await act(async () => {
-        if (outcome === "resolve")
-          old.resolve({ items: [project()], total: 1 });
-        else old.reject(new Error("old list failed"));
+      const picker = await screen.findByRole("dialog", {
+        name: "选择工作区项目",
       });
-      expect(
-        screen.getByRole("button", { name: /Fresh.*repos/ }),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: /Existing.*repos/ }),
-      ).not.toBeInTheDocument();
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(onClose).not.toHaveBeenCalled();
+      await user.click(
+        await within(picker).findByRole("checkbox", { name: "选择 api" }),
+      );
+      await user.click(
+        within(picker).getByRole("checkbox", { name: "选择 web" }),
+      );
+      await user.click(
+        within(picker).getByRole("button", { name: /^添加所选项目/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "选择工作区项目" }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(screen.getAllByRole("listitem")).toHaveLength(2);
+      expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
+        "api",
+      );
+      expect(nativePicker).not.toHaveBeenCalled();
+      if (wsl) {
+        expect(listRemoteDirectories).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({
+            locationKind: "wsl",
+            distribution: "Ubuntu",
+          }),
+        );
+        expect(screen.getByRole("button", { name: "本地" })).toBeDisabled();
+      }
+      await user.click(screen.getByRole("button", { name: "创建工作区" }));
+      expect(projectApi.createWorkspace).toHaveBeenCalledWith({
+        name: "api",
+        roots: ["api", "web"].map((name) =>
+          wsl
+            ? {
+                location: {
+                  kind: "wsl",
+                  distribution: "Ubuntu",
+                  path: `/repos/${name}`,
+                },
+                name,
+              }
+            : { localPath: `/repos/${name}`, name },
+        ),
+      });
     },
   );
 
-  it.each(["resolve", "reject"] as const)(
-    "ignores an old submission that later %ss without unlocking or closing a new submission",
-    async (outcome) => {
-      const old = deferred<{ project: ProjectSummary }>();
-      const fresh = deferred<{ project: ProjectSummary }>();
-      vi.mocked(projectApi.createWorkspace)
-        .mockReturnValueOnce(old.promise)
-        .mockReturnValueOnce(fresh.promise);
-      const { rerender, onClose } = await renderDialog();
-      await addPath("/repos/old");
-      fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-      rerender(<ProjectCreateDialog open={false} onClose={onClose} />);
-      rerender(<ProjectCreateDialog open onClose={onClose} />);
-      await waitFor(() => expect(projectApi.listProjects).toHaveBeenCalled());
-      expect(screen.getByRole("status")).toHaveTextContent("已选择 0 个项目");
-      await addPath("/repos/fresh");
-      fireEvent.click(screen.getByRole("button", { name: "创建工作区" }));
-      await act(async () => {
-        if (outcome === "resolve")
-          old.resolve({ project: project({ id: "old-workspace" }) });
-        else old.reject(new Error("old submission failed"));
-      });
-      expect(screen.getByRole("button", { name: "创建中…" })).toBeDisabled();
-      expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
-        "fresh",
-      );
-      expect(screen.getByRole("status")).toHaveTextContent("已选择 1 个项目");
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(navigate).not.toHaveBeenCalled();
-      expect(onClose).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "创建中…" }));
-      expect(projectApi.createWorkspace).toHaveBeenCalledTimes(2);
-      await act(async () =>
-        fresh.resolve({ project: project({ id: "fresh-workspace" }) }),
-      );
-      expect(onClose).toHaveBeenCalledTimes(1);
-      expect(navigate).toHaveBeenCalledExactlyOnceWith(
-        resolveSessionsEntryPath("fresh-workspace"),
-      );
-    },
-  );
-  it("searches existing projects by path and blocks duplicate paths with trailing separators", async () => {
-    await renderDialog();
+  it("does not offer WSL when the Windows host has no WSL2 distributions", async () => {
+    desktopWindow.electronAPI = { platform: "win32" };
+    vi.mocked(listWslDistributions).mockResolvedValue({
+      available: true,
+      items: [{ name: "Legacy", version: 1, default: true }],
+    });
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    await waitFor(() => expect(listWslDistributions).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("button", { name: "WSL2", exact: true }),
+    ).not.toBeInTheDocument();
+    await addNative("api");
+    expect(screen.getByRole("listitem")).toHaveTextContent("/repos/api");
+  });
+
+  it("retains the draft when native picking is canceled or fails", async () => {
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    await addNative("api");
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "已有项目" }));
-    const search = screen.getByRole("textbox", { name: "搜索名称或路径" });
-    fireEvent.change(search, { target: { value: "no-such-project" } });
-    expect(screen.getByText("没有匹配的项目")).toBeInTheDocument();
-    fireEvent.change(search, { target: { value: "/repos/" } });
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Existing.*repos/ }),
+      .click(screen.getByRole("button", { name: /选择文件夹|添加项目/ }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    nativePicker.mockRejectedValueOnce(new Error("Picker unavailable"));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /选择文件夹|添加项目/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Picker unavailable",
     );
-    await addPath("/repos/existing/");
-    expect(
-      screen.getByRole("button", { name: "添加", exact: true }),
-    ).toBeDisabled();
-    expect(screen.getByText("此目录已在工作区中。")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(1);
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "项目目录路径" }), {
-      key: "Enter",
-    });
-    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(row("api")).toHaveAttribute("data-primary", "true");
   });
 });

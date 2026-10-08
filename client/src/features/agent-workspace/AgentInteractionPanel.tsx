@@ -609,8 +609,8 @@ function InteractionForm({
           {isPlan && (
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               {zh
-                ? "确认后按计划开始工作。你也可以在下方输入修改意见。"
-                : "Start working from this plan, or write your changes in the composer."}
+                ? "确认后按计划开始工作。如需修改，请先取消，再发送修改意见。"
+                : "Start working from this plan. To request changes, cancel first, then send your feedback."}
             </p>
           )}
           <div className="agent-request-footer-actions">
@@ -918,7 +918,7 @@ export function AgentInteractionPanel({
     (s) => s.refreshInteractions,
   );
   // Compact hosts render jump pills; the composer dock renders pending
-  // clarification cards in place of the free-text composer.
+  // interaction cards in place of the free-text composer.
   const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
   const acp = readSessionBackendId(session).endsWith("-acp");
 
@@ -1031,10 +1031,9 @@ export function AgentInteractionPanel({
   const current = state?.sessionId === session.id ? state : null;
   const pending =
     current?.items.filter((item) => item.status === "pending") ?? [];
-  const dockPending = pending.filter((item) => item.kind === "clarification");
   const waiting = session.status === "waiting_input" || pending.length > 0;
   const items = current?.items ?? [];
-  if (dock && !current?.error && !dockPending.length) return null;
+  if (dock && !current?.error && !pending.length) return null;
   if (
     !dock &&
     !waiting &&
@@ -1065,7 +1064,7 @@ export function AgentInteractionPanel({
         </p>
       )}
       {dock
-        ? dockPending.map((item) => (
+        ? pending.map((item) => (
             <InteractionCard
               key={`${item.id}:${item.revision}`}
               interaction={item}

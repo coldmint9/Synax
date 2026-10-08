@@ -31,7 +31,6 @@ export function isSessionComposerLocked(
     submitting?: boolean;
     hasPendingPermissions?: boolean;
     hasPendingInteractions?: boolean;
-    allowWaitingInputForPlanApproval?: boolean;
   } = {},
 ): boolean {
   if (options.submitting) return true;
@@ -39,8 +38,7 @@ export function isSessionComposerLocked(
   if (session.status === "stopping" || session.status === "queued") return true;
   if (
     options.hasPendingInteractions ||
-    (session.status === "waiting_input" &&
-      !options.allowWaitingInputForPlanApproval)
+    session.status === "waiting_input"
   )
     return true;
 

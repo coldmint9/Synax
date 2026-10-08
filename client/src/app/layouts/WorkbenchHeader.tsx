@@ -1,13 +1,14 @@
 import { Radio, RadioGroup } from "@headlessui/react";
 import { ToolbarPill } from "./ToolbarPill";
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { IslandSurface } from "./IslandSurface";
 import { ThemeToggle } from "../../shared/ui/ThemeToggle";
 import { useTerminalStore } from "../../features/terminal/terminalStore";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Menu, MenuButton, MenuAction, MenuOpenObserver } from "@/shared/ui/ui/Menu";
+import { useWorkspaceCopy } from "../../features/workspace/workspaceCopy";
 import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import { IslandMenuItems, IslandPopoverPanel } from "./IslandOverlays";
@@ -149,11 +150,15 @@ function ProjectSwitcher({
     projects.map((project) => project.id),
   );
   const currentBadge = badges[currentProjectId];
+  const c = useWorkspaceCopy();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [actionsProject, setActionsProject] = useState<ProjectSummary | null>(null);
 
   return (
     <Menu>
       {({ open, close }) => <>
-        <MenuOpenObserver open={open} onOpen={() => { onOpen?.(); void refreshBadges(); }} />
+        <MenuOpenObserver open={open} onOpen={() => { setActionsProject(null); onOpen?.(); void refreshBadges(); }} />
         <Tooltip content={displayName}>
           <MenuButton className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`} aria-label={t("appSwitchProject")}>
             {iconOnly && <Folder size={15} aria-hidden="true" />}
@@ -162,17 +167,24 @@ function ProjectSwitcher({
           </MenuButton>
         </Tooltip>
         <IslandMenuItems open={open} anchor={{ to: iconOnly ? "bottom start" : "top start", gap: 10, padding: 8 }} aria-label={t("appSwitchProject")} className="min-w-60">
+          {actionsProject ? <>
+            <MenuAction onClick={(event) => { event.preventDefault(); setActionsProject(null); }}>{c.backWorkspace}</MenuAction>
+            <div className="px-2.5 py-2 text-xs text-muted-foreground truncate">{actionsProject.name}</div>
+            <MenuAction onClick={() => { const target = actionsProject.id; setActionsProject(null); navigate(`/workspaces/${encodeURIComponent(target)}/manage`, { state: { workspaceReturnTo: location.pathname + location.search } }); }}>{c.manageWorkspace}</MenuAction>
+            <MenuAction danger aria-label={`${t("appRemoveProject")}: ${actionsProject.name}`} onClick={event => { close(); onRemoveRequest(event, actionsProject); setActionsProject(null); }}><Trash2 size={13} aria-hidden="true" />{t("appRemoveProject")}</MenuAction>
+          </> : <>
           {projects.map(project => <div key={project.id} className="flex items-center gap-1" role="none">
             <MenuAction onClick={() => onProjectSwitch(project.id)} className="min-w-0 flex-1">
               <span className="min-w-0 flex-1 truncate">{project.name}</span>
               <ProjectSessionBadgeMark badge={badges[project.id]} showCount />
               {project.id === currentProjectId && <Check size={13} aria-hidden="true" />}
             </MenuAction>
-            <MenuAction danger className="!w-8 shrink-0 !p-2" aria-label={`${t("appRemoveProject")}: ${project.name}`} onClick={event => { close(); onRemoveRequest(event, project); }}>
-              <Trash2 size={13} aria-hidden="true" />
+            <MenuAction className="!w-8 shrink-0 !p-2" aria-label={`${c.workspaceMore}: ${project.name}`} onClick={event => { event.preventDefault(); setActionsProject(project); }}>
+              <Ellipsis size={13} aria-hidden="true" />
             </MenuAction>
           </div>)}
           <MenuAction onClick={onCreateProject}><Plus size={14} aria-hidden="true" />{t("appImportProject")}</MenuAction>
+          </>}
         </IslandMenuItems>
       </>}
     </Menu>

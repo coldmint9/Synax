@@ -295,23 +295,10 @@ export function SessionComposer({
     currentInteractions?.items.filter((item) => item.status === "pending") ??
     [];
   const hasPendingInteractions = pendingInteractions.length > 0;
-  const pendingClarificationInteractions = pendingInteractions.filter(
-    (item) => item.kind === "clarification",
-  );
-  const hasPendingClarificationInteractions =
-    pendingClarificationInteractions.length > 0;
-  const onlyPlanApprovalPending = Boolean(
-    currentInteractions &&
-    !currentInteractions.loading &&
-    !currentInteractions.error &&
-    pendingInteractions.length > 0 &&
-    pendingInteractions.every((item) => item.kind === "plan_approval"),
-  );
   const isGenerating = isSessionComposerLocked(session, {
     submitting,
     hasPendingPermissions,
-    hasPendingInteractions: hasPendingInteractions && !onlyPlanApprovalPending,
-    allowWaitingInputForPlanApproval: onlyPlanApprovalPending,
+    hasPendingInteractions,
   });
   const queueWhileGenerating =
     !hasPendingInteractions && canEnqueueSessionInput(session);
@@ -852,7 +839,7 @@ export function SessionComposer({
           session={session}
         />
       )}
-      {session && !hasPendingClarificationInteractions && (
+      {session && !hasPendingInteractions && (
         <AgentInteractionPanel
           key={`interactions-${session.id}`}
           session={session}
@@ -927,17 +914,17 @@ export function SessionComposer({
             <div
               className="agent-dock-shell-content agent-composer-ask-switch"
               data-ask-active={
-                hasPendingClarificationInteractions ? "true" : "false"
+                hasPendingInteractions ? "true" : "false"
               }
             >
               <div
                 className="agent-composer-input-slot"
-                aria-hidden={hasPendingClarificationInteractions}
-                inert={hasPendingClarificationInteractions ? true : undefined}
+                aria-hidden={hasPendingInteractions}
+                inert={hasPendingInteractions ? true : undefined}
               >
                 {composer}
               </div>
-              {session && hasPendingClarificationInteractions && (
+              {session && hasPendingInteractions && (
                 <div className="agent-composer-ask-slot">
                   <AgentInteractionPanel session={session} dock />
                 </div>

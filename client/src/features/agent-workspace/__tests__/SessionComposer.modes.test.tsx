@@ -516,7 +516,7 @@ describe("SessionComposer mode controls", () => {
     );
   });
 
-  it("keeps free-text input enabled when only a one-time plan approval is pending", async () => {
+  it.each(["completed", "waiting_input"] as const)("replaces free-text input with the plan approval card while status is %s", async (status) => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
       interactions: [
         {
@@ -553,10 +553,32 @@ describe("SessionComposer mode controls", () => {
         },
       ],
     });
-    renderComposer({ ...session, status: "waiting_input", activeRunId: "r1" });
-    await screen.findByRole("button", { name: "Plan ready for review" });
+    const send = vi.fn(async () => {});
+    useAgentSessionStore.setState({ submitOrEnqueueSessionInput: send });
+    const { container } = renderComposer({ ...session, status, activeRunId: status === "waiting_input" ? "r1" : null });
+    const execute = await screen.findByRole("button", { name: "Start execution" });
+    expect(execute.closest(".agent-composer-ask-slot")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Plan ready for review" })).not.toBeInTheDocument();
     await expectModeUnavailable();
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
+    expect(container.querySelector('[data-ask-active="true"]')).not.toBeNull();
+    expect(container.querySelector(".agent-composer-input-slot")).toHaveAttribute("inert");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    expect(input).toBeDisabled();
+    expect(screen.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "Do not submit as a new turn" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(send).not.toHaveBeenCalled();
+
+    act(() => useAgentSessionStore.setState({
+      interactionState: {
+        ...useAgentSessionStore.getState().interactionState!,
+        items: [],
+      },
+    }));
+    if (status === "completed") {
+      expect(screen.getByRole("textbox", { name: "Message" })).toBeEnabled();
+    }
+    expect(input).toHaveValue("Do not submit as a new turn");
   });
 
   it.each(["chat"] as const)(

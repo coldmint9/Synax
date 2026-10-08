@@ -871,6 +871,22 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
+  it("renders plan approval actions in the composer dock and submits the explicit decision", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [plan],
+    });
+    vi.mocked(agentRuntimeApi.replyInteraction).mockImplementation(
+      async (_sessionId, _id, body) => ({
+        interaction: { ...plan, status: "answered", response: body },
+      }),
+    );
+    render(<AgentInteractionPanel session={session} dock />);
+    fireEvent.click(await screen.findByRole("button", { name: "Start execution" }));
+    await waitFor(() => expect(agentRuntimeApi.replyInteraction).toHaveBeenCalledWith(
+      "s1", "plan1", { revision: plan.revision, action: "execute" },
+    ));
+  });
+
   it("keeps the execute-or-cancel plan actions outside the scrolling body", async () => {
     vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
       interactions: [plan],
@@ -881,7 +897,7 @@ describe("AgentInteractionPanel", () => {
     });
     expect(execute.closest(".agent-request-body")).toBeNull();
     expect(execute.closest("footer")).toHaveTextContent(
-      "write your changes in the composer",
+      "cancel first, then send your feedback",
     );
     expect(execute.closest("form")).not.toHaveClass("border-warning/40");
   });
