@@ -58,7 +58,7 @@ export function buildGoalInstruction(goal: GoalState, plan?: GoalPlan): string {
   }
   const parsedPlan = planSchema.safeParse(plan);
   if (!parsedPlan.success || parsedPlan.data.status !== 'approved') {
-    lines.push('No approved plan: use plan.propose to submit or revise a plan with acceptance criteria. The runtime offers a one-time execute-or-cancel choice; if the user defers, call plan.execute only after an explicit later execution instruction.');
+    lines.push('No approved plan: use plan.propose to submit or revise a plan with acceptance criteria. With unrestricted permissions, the runtime persists and executes the plan immediately without user confirmation; continue implementation and verification. Other permission tiers offer a one-time execute-or-cancel choice; if the user defers, call plan.execute only after an explicit later execution instruction.');
   } else {
     lines.push(
       `Approved plan revision: ${parsedPlan.data.revision}. Execute only this approved version until every criterion is satisfied.`,

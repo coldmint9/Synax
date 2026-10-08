@@ -85,6 +85,19 @@ describe("native capability lifecycle", () => {
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
   });
 
+  it("reuses an idempotent disclosure without rewriting session metadata", async () => {
+    await discover([tool(0).id]);
+    const first = project();
+    const before = JSON.stringify(store.getSession(id).sessionMetadata);
+    await discover([tool(0).id]);
+    const after = JSON.stringify(store.getSession(id).sessionMetadata);
+    const second = project();
+
+    expect(after).toBe(before);
+    expect(second.tools.map((item) => item.id)).toEqual(first.tools.map((item) => item.id));
+    expect(second.prompt).toBe(first.prompt);
+  });
+
   it("rehydrates contracts after restart and summary-only history", async () => {
     await discover([tool(0).id]);
     registry = new ToolRegistry();

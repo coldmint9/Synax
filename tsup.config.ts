@@ -19,9 +19,11 @@ export default defineConfig({
   splitting: false,
   // These runtimes resolve package-relative resources and optional modules; ship them intact.
   noExternal: [
-    /^(?!(?:@anthropic-ai\/claude-agent-sdk|playwright-core|node-pty|trash|@vscode\/ripgrep-universal)(?:\/|$)).*/,
+    /^(?!(?:pdfjs-dist|@anthropic-ai\/claude-agent-sdk|playwright-core|node-pty|trash|@vscode\/ripgrep-universal)(?:\/|$)).*/,
   ],
   external: [
+    "pdfjs-dist",
+    "pdfjs-dist/*",
     "libsql",
     "node-pty",
     "@libsql/*",

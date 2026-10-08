@@ -159,13 +159,6 @@ export async function commitSessionWorkspace(
   input: SessionGitCommitInput = {},
 ): Promise<SessionGitCommitResult> {
   const session = getSession(sessionId);
-  if (session.activeRunId) {
-    throw new AgentRuntimeError(
-      "The session is still running. Wait for it to finish before committing.",
-      "GIT_SESSION_BUSY",
-      409,
-    );
-  }
 
   const root = resolveSessionRepository(
     sessionId,

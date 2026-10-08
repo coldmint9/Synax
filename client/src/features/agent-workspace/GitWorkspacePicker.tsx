@@ -17,6 +17,7 @@ import "./workspaceHill.css";
 
 interface Props {
   projectId: string;
+  rootId?: string;
   value: GitWorkspaceSelection;
   disabled: boolean;
   onChange: (selection: GitWorkspaceSelection) => void;
@@ -54,7 +55,7 @@ function selectionFromId(id: string): GitWorkspaceSelection | null {
 
 export function GitWorkspacePicker(props: Props) {
   return (
-    <Popover key={props.projectId}>
+    <Popover key={`${props.projectId}/${props.rootId ?? ""}`}>
       {({ open, close }) => (
         <GitWorkspacePickerContent {...props} open={open} close={close} />
       )}
@@ -64,6 +65,7 @@ export function GitWorkspacePicker(props: Props) {
 
 function GitWorkspacePickerContent({
   projectId,
+  rootId,
   value,
   disabled,
   onChange,
@@ -91,7 +93,7 @@ function GitWorkspacePickerContent({
     setLoading(true);
     setSummary(null);
     void projectApi
-      .listGitWorkspaces(projectId)
+      .listGitWorkspaces(projectId, rootId)
       .then((result) => {
         if (active) setSummary(result);
       })
@@ -104,7 +106,7 @@ function GitWorkspacePickerContent({
     return () => {
       active = false;
     };
-  }, [projectId]);
+  }, [projectId, rootId]);
 
   const options = useMemo<WorkspaceOption[]>(() => {
     if (!summary) return [];
@@ -221,7 +223,7 @@ function GitWorkspacePickerContent({
             const next = selectionFromId(id ?? "");
             if (!next || disabled) return;
             close();
-            onChange(next);
+            onChange(rootId ? { ...next, rootId } : next);
           }}
           immediate
           disabled={disabled || loading}

@@ -17,6 +17,8 @@ import {
 
 /** Discovery changes model visibility, never the underlying permissions. */
 export class NativeCapabilities {
+  private readonly catalogCache = new Map<string, { signature: string; catalog: Map<string, CapabilityContract> }>();
+
   constructor(private registry: ToolRegistry, private store: AgentRuntimeStore, private profiles: ProfileService) {}
 
   private available(sessionId: string): CapabilityTool[] {
@@ -36,6 +38,17 @@ export class NativeCapabilities {
       try { catalog.set(tool.id, capabilityContract(tool, profileCanUseTool(profile, tool) && canComposeTool(session, tool, config))); }
       catch { /* One incompatible provider schema must not break the core. */ }
     }
+    // The registry can be rebuilt after an MCP reconnect, so key this cache by
+    // the contract versions and effective compose grants rather than by the
+    // session alone. This keeps repeated loop projections cheap without
+    // allowing stale or newly unauthorized contracts to survive.
+    const signature = [...catalog.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, contract]) => `${id}:${contract.version}:${contract.compose ? "1" : "0"}`)
+      .join("|");
+    const cached = this.catalogCache.get(sessionId);
+    if (cached?.signature === signature) return cached.catalog;
+    this.catalogCache.set(sessionId, { signature, catalog });
     return catalog;
   }
 
@@ -48,6 +61,8 @@ export class NativeCapabilities {
   }
 
   private save(sessionId: string, state: DisclosureState) {
+    const current = readDisclosure(this.store.getSession(sessionId).sessionMetadata?.capabilityDisclosure, sessionId);
+    if (JSON.stringify(current) === JSON.stringify(state)) return;
     this.store.updateSessionMetadata(sessionId, { capabilityDisclosure: state });
   }
 
@@ -60,10 +75,12 @@ export class NativeCapabilities {
     const catalog = this.catalog(sessionId, business);
     const state = this.state(sessionId, catalog);
     const disclosed = new Set(state.entries.map((entry) => entry.id));
-    const tools = business.filter((tool) => CORE_TOOL_IDS.has(tool.id) || disclosed.has(tool.id));
+    const tools = business
+      .filter((tool) => CORE_TOOL_IDS.has(tool.id) || disclosed.has(tool.id))
+      .toSorted((a, b) => a.id.localeCompare(b.id));
     const advertised = {
       owner: sessionId,
-      contracts: Object.fromEntries(tools.flatMap((tool) => {
+        contracts: Object.fromEntries(tools.flatMap((tool) => {
         const contract = catalog.get(tool.id);
         return contract ? [[tool.id, contract.version]] : [];
       })),
@@ -78,6 +95,7 @@ export class NativeCapabilities {
       prompt: [
         "## Native capabilities",
         "Only a small working set of tool schemas is exposed. Use agent.discover to search capabilities or load exact IDs. An empty query pages through the directory; hidden tools are not unavailable tools.",
+        "Already exposed capability IDs are active for this model step; call them directly instead of discovering the same IDs again.",
         `Capability groups (counts): ${JSON.stringify(Object.fromEntries([...groups].sort()))}.`,
         "Code Mode is the automatic execution mechanism. Submit normal tool operations; the loop compiles and schedules them. Do not call code.run or agent.execute to opt into composition.",
         `Sandbox-composable IDs: ${JSON.stringify(composable)}.`,

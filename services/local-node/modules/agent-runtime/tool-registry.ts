@@ -32,6 +32,7 @@ import {
   assertSpecialistToolAllowed,
 } from "./specialist-profile.js";
 import { controlTools } from "./control-tools.js";
+import { subagentLifecycleTools } from "./subagent-tools.js";
 import { controlToolError } from "./control-policy.js";
 import { interactionService } from "./interaction-service.js";
 import type {
@@ -140,6 +141,7 @@ export class ToolRegistry {
   ) {
     [
       ...controlTools,
+      ...subagentLifecycleTools,
       ...designTools,
       ...workTools,
       verificationTool,

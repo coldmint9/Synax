@@ -8,6 +8,7 @@ import type { ProjectWorkspaceRoot } from '../../modules/project-workspace.js';
 const isolation = vi.hoisted(() => ({
   dataRoot: '', listSessions: vi.fn(), listGitWorkspaces: vi.fn(),
   createGitWorktree: vi.fn(), removeGitWorktree: vi.fn(), pruneGitWorktrees: vi.fn(),
+  previewGitWorktreePath: vi.fn(), previewGitWorktreeCleanup: vi.fn(), cleanupGitWorktrees: vi.fn(), previewGitWorktreePrune: vi.fn(), getRun: vi.fn(),
 }));
 
 // Keep the real route, directory validation and JSON store; isolate unrelated services.
@@ -20,13 +21,17 @@ vi.mock('../../infrastructure/runtime/env.js', () => ({
 vi.mock('../../infrastructure/runtime/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../../modules/context/context-service.js', () => ({ contextService: {} }));
 vi.mock('../../infrastructure/database/index.js', () => ({ getRawSqlite: vi.fn() }));
-vi.mock('../../modules/agent-runtime/session-store.js', () => ({ agentRuntimeStore: { listSessions: isolation.listSessions } }));
+vi.mock('../../modules/agent-runtime/session-store.js', () => ({ agentRuntimeStore: { listSessions: isolation.listSessions, getRun: isolation.getRun } }));
 vi.mock('../../modules/git-workspaces.js', () => ({
   GitWorkspaceError: class extends Error { constructor(message: string, public status: number) { super(message); } },
   createGitWorktree: isolation.createGitWorktree,
   listGitWorkspaces: isolation.listGitWorkspaces,
   pruneGitWorktrees: isolation.pruneGitWorktrees,
   removeGitWorktree: isolation.removeGitWorktree,
+  previewGitWorktreePath: isolation.previewGitWorktreePath,
+  previewGitWorktreeCleanup: isolation.previewGitWorktreeCleanup,
+  cleanupGitWorktrees: isolation.cleanupGitWorktrees,
+  previewGitWorktreePrune: isolation.previewGitWorktreePrune,
 }));
 
 let tempDir = '';
@@ -98,10 +103,91 @@ async function expectRejected(body: unknown, status = 400, id = 'main') {
   expect(await workspace()).toEqual(beforeRoots);
 }
 
+describe('worktree management HTTP contracts', () => {
+  it('scopes path and cleanup previews to the selected root', async () => {
+    const roots = await addReference({ localPath });
+    const rootId = roots.find(root => root.role === 'reference')!.id;
+    const preview = await routes.request(`/main/git/worktrees/preview?rootId=${rootId}&branch=feature%2Fpreview`);
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toEqual({ path: '/test/preview' });
+    expect(isolation.previewGitWorktreePath).toHaveBeenCalledWith(localPath, `main/${rootId}`, 'feature/preview');
+    const cleanup = await routes.request(`/main/git/worktrees/cleanup?rootId=${rootId}`);
+    expect(cleanup.status).toBe(200);
+    expect(await cleanup.json()).toEqual({ candidates: [], retained: [] });
+    expect(isolation.previewGitWorktreeCleanup).toHaveBeenCalledWith(localPath, `main/${rootId}`, expect.any(Function));
+    expect((await routes.request('/main/git/worktrees/cleanup')).status).toBe(400);
+    expect((await routes.request('/main/git/worktrees/preview?branch=feature')).status).toBe(400);
+    expect((await routes.request('/main/git/worktrees/cleanup?rootId=missing')).status).toBe(404);
+    expect((await routes.request('/main/git/worktrees/preview')).status).toBe(400);
+  });
+
+  it('executes only validated, deduplicated confirmed paths and preserves partial results', async () => {
+    const roots = await addReference({ localPath });
+    const rootId = roots.find(root => root.role === 'reference')!.id;
+    const results = [
+      { path: '/clean', branch: 'feature', status: 'removed' },
+      { path: '/busy', branch: null, status: 'skipped', reason: 'busy' },
+      { path: '/failed', branch: null, status: 'failed', reason: 'failed' },
+    ];
+    isolation.cleanupGitWorktrees.mockResolvedValue({ results });
+    const request = (body: unknown) => routes.request('/main/git/worktrees/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const response = await request({ rootId, paths: ['/clean', '/busy', '/clean', '/failed'] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ results });
+    expect(isolation.cleanupGitWorktrees).toHaveBeenCalledWith(localPath, `main/${rootId}`, ['/clean', '/busy', '/failed'], expect.any(Function));
+    for (const body of [{ rootId }, { rootId, paths: [] }, { rootId, paths: [7] }, { rootId, paths: Array(101).fill('/clean') }, { paths: ['/clean'] }]) {
+      expect((await request(body)).status).toBe(400);
+    }
+    expect(isolation.cleanupGitWorktrees).toHaveBeenCalledTimes(1);
+    expect((await routes.request('/main/git/worktrees/cleanup', { method: 'POST', body: '{' })).status).toBe(400);
+    expect((await routes.request('/missing/git/worktrees/cleanup')).status).toBe(404);
+  });
+
+  it('reads live session and run state when the deletion callback runs', async () => {
+    isolation.listSessions.mockReturnValue([]);
+    await routes.request('/main/git/worktrees/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [mainPath] }),
+    });
+    const readUsage = isolation.cleanupGitWorktrees.mock.calls[0][3];
+    const statuses = ['completed', 'failed', 'cancelled', 'interrupted', 'queued', 'running', 'stopping', 'waiting_permission', 'waiting_input', 'paused', 'future-state'];
+    const backend = { workDir: mainPath };
+    isolation.listSessions.mockReturnValue([
+      ...statuses.map(status => ({ status, sessionMetadata: { backend } })),
+      { status: 'completed', pendingResumeToken: 'pending', sessionMetadata: { backend } },
+      { status: 'completed', activeRunId: 'running', sessionMetadata: { backend } },
+      { status: 'completed', activeRunId: 'missing', sessionMetadata: { backend } },
+      { status: 'completed', activeRunId: 'finished', sessionMetadata: { backend } },
+    ]);
+    isolation.getRun.mockImplementation((id: string) => {
+      if (id === 'missing') throw new Error('missing run');
+      return { status: id === 'finished' ? 'completed' : 'running' };
+    });
+    const usage = await readUsage();
+    expect(usage.sessionCounts.get(mainPath)).toBe(15);
+    expect(usage.activeSessionCounts.get(mainPath)).toBe(10);
+  });
+
+  it('provides a prune path preview and rejects an unconfirmed repository-wide prune', async () => {
+    const response = await routes.request('/main/git/worktrees/prune');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ paths: [] });
+    expect(isolation.previewGitWorktreePrune).toHaveBeenCalledWith(mainPath);
+    expect((await routes.request('/main/git/worktrees/prune', { method: 'POST' })).status).toBe(400);
+    expect(isolation.pruneGitWorktrees).not.toHaveBeenCalled();
+  });
+});
+
 beforeEach(async () => {
   vi.clearAllMocks();
   isolation.listSessions.mockReturnValue([]);
   isolation.listGitWorkspaces.mockResolvedValue({ branches: [], worktrees: [] });
+  isolation.previewGitWorktreePath.mockResolvedValue({ path: '/test/preview' });
+  isolation.previewGitWorktreeCleanup.mockResolvedValue({ candidates: [], retained: [] });
+  isolation.cleanupGitWorktrees.mockResolvedValue({ results: [] });
+  isolation.previewGitWorktreePrune.mockResolvedValue({ paths: [] });
+  isolation.getRun.mockReset();
   isolation.createGitWorktree.mockResolvedValue({ path: '/test/worktree' });
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-projects-workspace-'));
   isolation.dataRoot = path.join(tempDir, 'data');
@@ -195,7 +281,7 @@ describe('workspace creation and repository selection API', () => {
     ]);
     expect((await routes.request(`/main/git/workspaces?rootId=${rootId}`)).status).toBe(200);
     expect(isolation.listSessions).toHaveBeenCalledWith({ limit: Number.MAX_SAFE_INTEGER });
-    expect(isolation.listGitWorkspaces).toHaveBeenLastCalledWith(localPath, `main/${rootId}`, new Map([[worktreePath, 2], [mainPath, 1]]));
+    expect(isolation.listGitWorkspaces).toHaveBeenLastCalledWith(localPath, `main/${rootId}`, new Map([[worktreePath, 2], [mainPath, 1]]), new Map([[worktreePath, 2], [mainPath, 1]]));
 
     const create = await routes.request('/main/git/worktrees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -204,15 +290,18 @@ describe('workspace creation and repository selection API', () => {
     expect(create.status).toBe(201);
     expect(isolation.createGitWorktree).toHaveBeenCalledWith(localPath, `main/${rootId}`, { rootId, branch: 'feature', createBranch: true });
 
-    expect((await routes.request(`/main/git/worktrees/prune?rootId=${rootId}`, { method: 'POST' })).status).toBe(200);
-    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath);
+    expect((await routes.request(`/main/git/worktrees/prune?rootId=${rootId}`, { method: 'POST' })).status).toBe(400);
+    expect((await routes.request(`/main/git/worktrees/prune?rootId=${rootId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [] }),
+    })).status).toBe(200);
+    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath, [], expect.any(Function));
     const remove = await routes.request('/main/git/worktrees', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rootId, path: worktreePath, force: true }),
     });
     expect(remove.status).toBe(200);
     expect(isolation.removeGitWorktree).toHaveBeenCalledWith(localPath, `main/${rootId}`, worktreePath, {
-      force: true, inUsePaths: new Set([worktreePath, mainPath]),
+      force: true, readUsage: expect.any(Function),
     });
   });
 
@@ -227,7 +316,7 @@ describe('workspace creation and repository selection API', () => {
       });
       expect(response.status).toBe(status);
     }
-    expect((await routes.request(`/main/git/worktrees/prune${kind === 'unknown' ? '?rootId=unknown' : ''}`, { method: 'POST' })).status).toBe(status);
+    expect((await routes.request('/main/git/worktrees/prune', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...selector, paths: [] }) })).status).toBe(status);
     expect(isolation.createGitWorktree).not.toHaveBeenCalled();
     expect(isolation.removeGitWorktree).not.toHaveBeenCalled();
     expect(isolation.pruneGitWorktrees).not.toHaveBeenCalled();
@@ -238,8 +327,10 @@ describe('workspace creation and repository selection API', () => {
     expect(response.status).toBe(201);
     const body = await response.json() as { project: ProjectRecord; roots: ProjectWorkspaceRoot[] };
     expect(body.roots).toHaveLength(1);
-    expect((await routes.request(`/${body.project.id}/git/worktrees/prune`, { method: 'POST' })).status).toBe(200);
-    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath);
+    expect((await routes.request(`/${body.project.id}/git/worktrees/prune`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [] }),
+    })).status).toBe(200);
+    expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath, [], expect.any(Function));
   });
 });
 

@@ -170,6 +170,26 @@ describe('session workspace Git roots', () => {
     expect([primary, reference].map(repositoryState)).toEqual(before)
   })
 
+  it('allows committing while the session is running without changing its active run', async () => {
+    const session = {
+      id: sessionId, projectId: primary.id, status: 'running', activeRunId: 'active-run', childSessionIds: [],
+    }
+    mocks.getSession.mockReturnValue(session)
+    const beforeHead = git(primary, 'rev-parse', 'HEAD').trim()
+    const referenceBefore = repositoryState(reference)
+
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: commit during active run', push: false,
+    })
+
+    expect(result.commitSha).not.toBe(beforeHead)
+    expect(result.commitSha).toBe(git(primary, 'rev-parse', 'HEAD').trim())
+    expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('primary working\n')
+    expect(git(primary, 'status', '--porcelain=v1')).toBe('')
+    expect(repositoryState(reference)).toEqual(referenceBefore)
+    expect(session).toMatchObject({ status: 'running', activeRunId: 'active-run' })
+  })
+
   it('commits the selected root only, then lets the other dirty root commit independently', async () => {
     // Keep a cached snapshot so each successful commit must also refresh its repository status.
     await getSessionEnvironment(sessionId)

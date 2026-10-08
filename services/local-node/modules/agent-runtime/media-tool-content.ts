@@ -1,4 +1,5 @@
 import { createAsset } from "./media-assets.js";
+import { resolveFileParts } from "./file-input/index.js";
 import {
   MAX_FILE_BYTES,
   modalityForMime,
@@ -35,7 +36,13 @@ export async function importToolContent(
         "application/octet-stream";
       const filename =
         p.name ??
-        `tool-${parts.length}.${({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "audio/wav": "wav", "audio/mpeg": "mp3", "application/pdf": "pdf" } as Record<string, string>)[mime] ?? "bin"}`;
+        `tool-${parts.length}.${({
+          "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+          "audio/wav": "wav", "audio/mpeg": "mp3", "application/pdf": "pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        } as Record<string, string>)[mime] ?? "bin"}`;
       const asset = await createAsset(
         projectId,
         filename,
@@ -54,7 +61,7 @@ export async function importToolContent(
         }),
       });
   }
-  return parts;
+  return resolveFileParts(parts, projectId);
 }
 export function hasInlineMedia(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasInlineMedia);

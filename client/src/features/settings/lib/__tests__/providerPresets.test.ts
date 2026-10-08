@@ -104,6 +104,24 @@ function makeConfig(
 }
 
 describe("providerPresets model metadata", () => {
+  it("keeps only text, image and video declarations across configuration round trips", () => {
+    const provider = makeProvider();
+    provider.models[0].inputModalities = ["text", "image", "video", "audio", "file"];
+    provider.models[0].outputModalities = ["text", "image", "video", "audio", "file"];
+    const draft = buildApiDrafts(makeConfig(provider), [provider]).find(
+      (item) => item.id === provider.id,
+    )!;
+    expect(draft.modelMeta["deepseek-chat"].inputModalities).toEqual(["text", "image", "video"]);
+    expect(draft.modelMeta["deepseek-chat"].outputModalities).toEqual(["text", "image", "video"]);
+    const savedModel = draftToProviderDef(draft).models.find(
+      (model) => model.id === "deepseek-chat",
+    )!;
+    expect(savedModel.inputModalities).toEqual(["text", "image", "video"]);
+    expect(savedModel.outputModalities).toEqual(["text", "image", "video"]);
+    expect(provider.models[1].inputModalities).toBeUndefined();
+    expect(draft.modelMeta["deepseek-reasoner"]).toBeUndefined();
+  });
+
   it("preserves typed model metadata when inserting and merging drafts", () => {
     const draft: ApiProviderDraft = {
       ...createCustomDraft([]),
@@ -151,7 +169,7 @@ describe("providerPresets model metadata", () => {
       modelMeta: {
         "future-model": {
           inputModalities: ["text", "image"] as const,
-          outputModalities: ["text", "image", "audio"] as const,
+          outputModalities: ["text", "image", "video"] as const,
         },
       },
     };
@@ -169,13 +187,13 @@ describe("providerPresets model metadata", () => {
     expect(provider.models[0].outputModalities).toEqual([
       "text",
       "image",
-      "audio",
+      "video",
     ]);
     expect(
       buildApiDrafts(makeConfig(provider), [provider]).find(
         (draft) => draft.id === provider.id,
       )!.modelMeta["future-model"].outputModalities,
-    ).toEqual(["text", "image", "audio"]);
+    ).toEqual(["text", "image", "video"]);
   });
 
   it("round-trips generation capabilities and media operations", () => {

@@ -25,8 +25,10 @@ interface Detail {
 
 export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId,
+  showHeader = true,
 }: {
   sessionId: string;
+  showHeader?: boolean;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const { t } = useLocale();
@@ -88,7 +90,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
 
   return (
     <div className="session-workspace-scroll min-h-0 flex-1 overflow-auto">
-      <div className="subagent-detail-header">
+      {showHeader && <div className="subagent-detail-header">
         <SubagentIdentity session={detail.session} />
         <span className="subagent-detail-id" title={detail.session.id}>
           {detail.session.id.slice(0, 8)}
@@ -104,7 +106,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
           onStopped={() => void load()}
           onDestroyed={() => setDestroyed(true)}
         />
-      </div>
+      </div>}
       <SubagentProfileCard session={detail.session} showIdentity={false} />
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView

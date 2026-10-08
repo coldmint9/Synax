@@ -474,14 +474,16 @@ export const createSessionRequestSchema = z
     permissionOverrides: permissionOverridesSchema.optional(),
     gitWorkspace: z
       .discriminatedUnion("kind", [
-        z.object({ kind: z.literal("default") }),
-        z.object({ kind: z.literal("new-worktree") }),
+        z.object({ kind: z.literal("default"), rootId: z.string().min(1).max(128).optional() }),
+        z.object({ kind: z.literal("new-worktree"), rootId: z.string().min(1).max(128).optional() }),
         z.object({
           kind: z.literal("worktree"),
+          rootId: z.string().min(1).max(128).optional(),
           path: z.string().min(1).max(4096),
         }),
         z.object({
           kind: z.literal("branch"),
+          rootId: z.string().min(1).max(128).optional(),
           branch: z.string().min(1).max(1024),
         }),
       ])

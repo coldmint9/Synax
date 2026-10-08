@@ -244,7 +244,7 @@ export function useMediaDraft(
       if (!item.asset) return [];
       return [
         {
-          type: item.asset.mediaType.startsWith("image/")
+          type: item.asset.mediaType.startsWith("image/") && item.asset.mediaType !== "image/svg+xml"
             ? "image"
             : item.asset.mediaType.startsWith("audio/")
               ? "audio"

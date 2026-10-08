@@ -86,6 +86,10 @@ function buildExecutionSection(availableToolIds: string[]): string {
     lines.push(
       "Delegate only independent, bounded work that can reduce elapsed time; keep immediate blockers local and do not repeat delegated work. When delegating, invent a spontaneous, free-form name and pass it in name; any naming style is welcome and names may repeat.",
     );
+  if (tools.has("subagent.lifecycle"))
+    lines.push(
+      "Use subagent.lifecycle to start asynchronous child work and to inspect, wait, message, pause, resume, cancel, or terminate only your own direct child sessions.",
+    );
   if (tools.has("context.read"))
     lines.push(
       "Use context.read only to recover compacted user input or assistant context; rerun tools for current evidence.",

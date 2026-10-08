@@ -135,6 +135,7 @@ describe("layered prompt composition", () => {
       metadata: { mode: "plan" },
     });
     expect(plan).toContain("no file edits or shell execution");
+    expect(plan).toContain("With unrestricted permissions, the plan executes immediately and returns to chat");
     const goal = synaxModePromptRegistry.buildSection({
       mode: "goal",
       prompt: "Feature",
@@ -168,6 +169,8 @@ describe("layered prompt composition", () => {
     expect(prompt).toContain("Preserve intent");
     expect(prompt).toContain("Permission gates");
     expect(prompt).toContain("smallest correct change");
+    expect(prompt).toContain("plan.propose saves and executes immediately without confirmation");
+    expect(prompt).toContain("Execution stays in chat unless goal was selected");
   });
 });
 

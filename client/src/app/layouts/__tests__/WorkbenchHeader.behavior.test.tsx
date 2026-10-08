@@ -24,6 +24,14 @@ afterEach(()=>{vi.clearAllMocks();useTerminalStore.setState(useTerminalStore.get
 async function openRemoval(user:ReturnType<typeof userEvent.setup>){await user.click(screen.getByRole('button',{name:'appSwitchProject'}));await user.click(await screen.findByRole('menuitem',{name:'Workspace actions: Example'}));await user.click(await screen.findByRole('menuitem',{name:'appRemoveProject: Example'}));return screen.findByRole('dialog',{name:'appRemoveProject'});}
 
 describe('workbench action state',()=>{
+ it('opens settings directly from the island button',async()=>{
+  const user=userEvent.setup();
+  render(<WorkbenchHeader {...base}/>,{wrapper});
+  await user.click(screen.getByRole('button',{name:'appSettings'}));
+  expect(base.onPanelToggle).toHaveBeenCalledWith('settings');
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Rearrange widgets'})).not.toBeInTheDocument();
+ });
  it('opens management for the menu target without switching the current workspace',async()=>{
   const user=userEvent.setup();
   render(<WorkbenchHeader {...base} projects={[project,{...project,id:'other',name:'Other'}]}/>,{wrapper});

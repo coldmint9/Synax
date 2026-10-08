@@ -26,7 +26,7 @@ export function MediaAttachButton({
         type="button"
         disabled={disabled}
         aria-label="添加附件 / Attach files"
-        title="图片、音频、视频、PDF或文件 / Attach files"
+        title="文字文件、图片、视频、PDF、DOCX、XLSX、PPTX / Attach files"
         className="agent-dock-composer-chip inline-flex size-8 items-center justify-center rounded-full disabled:opacity-50"
         onClick={() => ref.current?.click()}
       >

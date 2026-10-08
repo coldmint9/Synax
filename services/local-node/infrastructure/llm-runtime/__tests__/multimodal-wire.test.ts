@@ -231,13 +231,13 @@ describe("generic multimodal message transport", () => {
     };
     await expect(
       resolveMediaMessages([audio], selection(), "project"),
-    ).rejects.toThrow("cannot receive");
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
     const compiled = await resolveMediaMessages(
       [{ ...audio, providerOptions: { synax: { toolCallId: "speech" } } }],
       selection(),
       "project",
     );
-    expect(JSON.stringify(compiled)).toContain("Media asset retained");
+    expect(JSON.stringify(compiled)).toContain("Binary asset retained");
     expect(JSON.stringify(compiled)).toContain("voice.mp3");
     expect(JSON.stringify(compiled)).not.toContain("synax-asset:");
   });

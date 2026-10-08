@@ -14,7 +14,7 @@ export function useInputCapability(
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const key =
-    media?.parts.map((p) => (p.type === "text" ? "" : p.assetId)).join(",") ??
+    media?.parts.filter((p) => p.type === "image" || p.type === "video").map((p) => p.type === "text" ? "" : p.assetId).join(",") ??
     "";
   useEffect(() => {
     let active = true;
@@ -54,6 +54,7 @@ export function useInputCapability(
     for (const item of media.items) {
       if (!item.asset) continue;
       const a = item.asset;
+      if (a.mediaType === "image/svg+xml" || (!a.mediaType.startsWith("image/") && !a.mediaType.startsWith("video/"))) continue;
       const modality = a.mediaType.split("/")[0];
       const type = ["image", "audio", "video"].includes(modality)
         ? modality
@@ -72,7 +73,7 @@ export function useInputCapability(
         reason = `${a.filename} 超过模型文件上限 / Backend file limit exceeded`;
     }
     if (
-      media.items.reduce((sum, i) => sum + (i.asset?.size ?? 0), 0) >
+      media.items.reduce((sum, i) => sum + (i.asset && i.asset.mediaType !== "image/svg+xml" && /^(image|video)\//.test(i.asset.mediaType) ? i.asset.size : 0), 0) >
       cap.maxTotalBytes
     )
       reason = "附件合计超过模型请求上限 / Backend request limit exceeded";

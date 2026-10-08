@@ -18,23 +18,12 @@ import {
 } from "./state/dashboardLayoutStore";
 import "./workspaceDashboardLayout.css";
 import { useDashboardMinimumHeight } from "./useDashboardMinimumHeight";
-
-interface PanelProps {
-  id: string;
-  label: string;
-  children: ReactNode;
-}
-export function DashboardPanel({ children }: PanelProps) {
-  return <>{children}</>;
-}
-function collectPanels(children: ReactNode): PanelProps[] {
-  return Children.toArray(children).flatMap((child) => {
-    if (!isValidElement(child)) return [];
-    if (child.type === Fragment)
-      return collectPanels((child.props as { children: ReactNode }).children);
-    return child.type === DashboardPanel ? [child.props as PanelProps] : [];
-  });
-}
+import {
+  WorkspaceWidget as DashboardPanel,
+  collectWorkspaceWidgets,
+  type WorkspaceWidgetDefinition as PanelProps,
+} from "./WorkspaceWidget";
+export { WorkspaceWidget as DashboardPanel } from "./WorkspaceWidget";
 
 function layoutStatus(children: ReactNode): ReactNode[] {
   return Children.toArray(children).flatMap((child) => {
@@ -65,8 +54,12 @@ export function WorkspaceDashboardLayout({
 }) {
   const zh = useLocale().locale === "zh";
   const layout = useDashboardLayoutStore((s) => s.layouts[scope]);
-  const panels = collectPanels(children);
-  const ids = panels.map((panel) => panel.id);
+  const panels = collectWorkspaceWidgets(children);
+  const catalog = JSON.stringify(panels.map(({ id, label }) => ({ id, label })));
+  useEffect(() => {
+    useDashboardLayoutStore.getState().register(scope, JSON.parse(catalog));
+  }, [scope, catalog]);
+  const ids = panels.map((panel) => panel.id).filter((id) => !layout?.hidden?.includes(id));
   const order = panelOrder(layout?.order ?? [], ids);
   const viewport = useRef<HTMLDivElement>(null);
   useDashboardMinimumHeight(viewport);
@@ -228,6 +221,11 @@ export function WorkspaceDashboardLayout({
       data-arranging={Boolean(dragging || draft)}
     >
       {layoutStatus(children)}
+      {ids.length === 0 && (
+        <div className="ws-placeholder">
+          {zh ? "暂无工作组件，请点击右下角的「重新布局」添加。" : "No widgets. Add widgets using Rearrange widgets in the bottom-right corner."}
+        </div>
+      )}
       {order.map((id) => {
         const panel = panels.find((item) => item.id === id)!;
         const size = draft?.id === id ? draft.size : layout?.sizes[id];

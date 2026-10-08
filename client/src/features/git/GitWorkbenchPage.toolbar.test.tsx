@@ -84,6 +84,14 @@ function mount(path = "/projects/p/git") {
 }
 
 describe("Git secondary island", () => {
+  it("opens worktree management in the existing Island and keeps repository selection", async () => {
+    const { container } = mount("/projects/p/git?view=worktrees&rootId=root");
+    await screen.findByRole("table", { name: "Git 工作树列表" });
+    expect(container.querySelector('.git-island-views [data-island-option="worktrees"]')).toHaveAttribute("aria-current", "page");
+    expect(container.querySelector(".git-worktree-island")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "新建 MR" })).toBeNull();
+    expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", "root");
+  });
   it("hosts views and actions without duplicating them in the page", async () => {
     const { container } = mount();
     const island = container.querySelector(".wh-pill-slot")!;

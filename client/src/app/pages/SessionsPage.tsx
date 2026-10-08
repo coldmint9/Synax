@@ -15,6 +15,7 @@ import { SessionTranscript } from "../../features/agent-workspace/SessionTranscr
 import { AgentCommandRail } from "../../features/agent-workspace/AgentCommandRail";
 
 import { SessionWorkspacePanel } from "../../features/agent-workspace/SessionWorkspacePanel";
+import { WorkspaceWidgetDock } from "../../features/agent-workspace/WorkspaceWidgetDock";
 import { SubagentConversationPanel } from "../../features/agent-workspace/SubagentConversationPanel";
 import { SessionListPanel } from "../../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../../features/agent-workspace/SessionComposer";
@@ -32,8 +33,9 @@ const LEFT_PANEL_DEFAULT = 260;
 const LEFT_PANEL_MIN = 210;
 const LEFT_PANEL_MAX = 420;
 const RIGHT_PANEL_DEFAULT = 300;
-const RIGHT_PANEL_MIN = 280;
-const RIGHT_PANEL_MAX = 420;
+const RIGHT_PANEL_MIN = 240;
+const RIGHT_PANEL_MAX = 960;
+const MAIN_CONTENT_MIN = 320;
 const LEFT_PANEL_STORAGE_KEY = "synax-sessions-left-panel";
 const RIGHT_PANEL_STORAGE_KEY = "synax-sessions-right-panel";
 
@@ -80,7 +82,7 @@ function useResizablePanel(
 
   const startResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (collapsed) return;
+      if (collapsed && side === "left") return;
       event.preventDefault();
       event.currentTarget.setPointerCapture?.(event.pointerId);
       cleanupRef.current?.();
@@ -88,8 +90,12 @@ function useResizablePanel(
       const panel = event.currentTarget.parentElement!;
       const scale =
         panel.getBoundingClientRect().width / panel.offsetWidth || 1;
-      dragRef.current = { startX: event.clientX, startWidth: width, scale };
-      let nextWidth = width;
+      const startWidth = panel.offsetWidth || width;
+      dragRef.current = { startX: event.clientX, startWidth, scale };
+      const resizeMax = side === "right"
+        ? Math.min(max, Math.max(min, (panel.parentElement?.clientWidth ?? max + MAIN_CONTENT_MIN) - MAIN_CONTENT_MIN))
+        : max;
+      let nextWidth = startWidth;
       let frame = 0;
 
       const handleMove = (move: PointerEvent) => {
@@ -100,7 +106,7 @@ function useResizablePanel(
             ? move.clientX - drag.startX
             : drag.startX - move.clientX;
         nextWidth = Math.min(
-          max,
+          resizeMax,
           Math.max(min, drag.startWidth + delta / drag.scale),
         );
         if (!frame)
@@ -134,31 +140,6 @@ function useResizablePanel(
 
   return { width, collapsed, resizing, setCollapsed, startResize };
 }
-
-const SessionDetailSidebar = memo(function SessionDetailSidebar({
-  width,
-  onResize,
-}: {
-  width: number;
-  onResize: (event: React.PointerEvent<HTMLDivElement>) => void;
-}) {
-  const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
-
-  return (
-    <aside
-      className="session-workspace-sidebar session-workspace-sidebar--dock relative shrink-0"
-      style={{ width }}
-    >
-      <SessionWorkspacePanel sessionId={selectedSessionId} mode="dashboard" />
-      <div
-        className="session-panel-resizer session-panel-resizer--right"
-        onPointerDown={onResize}
-        role="separator"
-        aria-orientation="vertical"
-      />
-    </aside>
-  );
-});
 
 export default memo(function SessionsPage() {
   useSessionDetailPolling();
@@ -211,6 +192,21 @@ export default memo(function SessionsPage() {
   });
   const workspaceState = useSessionWorkspace(agentSessionId);
   const selectedSubagent = workspaceState.subagent;
+  const subagentFullscreen = Boolean(selectedSubagent?.fullscreen);
+  const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  useEffect(() => {
+    if (!layoutElement) return;
+    const measure = () => setLayoutWidth(layoutElement.clientWidth);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(layoutElement);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [layoutElement]);
+  const rightPanelWidth = layoutWidth > 0
+    ? Math.min(rightPanel.width, Math.max(RIGHT_PANEL_MIN, layoutWidth - MAIN_CONTENT_MIN))
+    : rightPanel.width;
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId);
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
   const narrowWorkspace = useMediaQuery("(max-width: 767px)");
@@ -249,7 +245,7 @@ export default memo(function SessionsPage() {
   const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width;
   const commandRailRight =
     showTranscript && !narrowWorkspace && (selectedSubagent || (wideWorkspace && !workspaceFullscreen))
-      ? rightPanel.width
+      ? (selectedSubagent ? rightPanelWidth : rightPanel.collapsed ? 40 : rightPanelWidth)
       : 0;
 
   return (
@@ -257,7 +253,7 @@ export default memo(function SessionsPage() {
       <>
         <aside
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? "overflow-visible" : "overflow-hidden"}`}
-          hidden={workspaceFullscreen}
+          hidden={workspaceFullscreen || subagentFullscreen}
           data-collapsed={leftPanel.collapsed ? "true" : undefined}
           data-resizing={leftPanel.resizing ? "true" : undefined}
           style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
@@ -292,8 +288,8 @@ export default memo(function SessionsPage() {
         </aside>
 
         {showTranscript ? (
-          <div className="work-session-layout">
-            <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div ref={setLayoutElement} className="work-session-layout" data-subagent-fullscreen={subagentFullscreen ? "true" : undefined}>
+            <div className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${subagentFullscreen ? "hidden" : "flex"}`}>
               <WorkbenchIslandSlot placement="conversation" />
               {agentSessionId && (
                 <WorkQuickActions
@@ -322,14 +318,19 @@ export default memo(function SessionsPage() {
               )}
             </div>
             {selectedSubagent && agentSessionId ? (
-              <aside className="subagent-conversation-panel" style={!narrowWorkspace ? { width: rightPanel.width } : undefined}>
-                <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={rightPanel.startResize} role="separator" aria-orientation="vertical" />
+              <aside className="subagent-conversation-panel" data-fullscreen={subagentFullscreen ? "true" : undefined} style={!narrowWorkspace && !subagentFullscreen ? { width: rightPanelWidth } : undefined}>
+                {!subagentFullscreen && <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={rightPanel.startResize} role="separator" aria-orientation="vertical" />}
                 <SubagentConversationPanel ownerSessionId={agentSessionId} sessionId={selectedSubagent.sessionId} title={selectedSubagent.title} />
               </aside>
             ) : wideWorkspace && !workspaceFullscreen ? (
-              <SessionDetailSidebar
-                width={rightPanel.width}
+              <WorkspaceWidgetDock
+                sessionId={agentSessionId}
+                scope={projectId}
+                width={rightPanelWidth}
                 onResize={rightPanel.startResize}
+                collapsed={rightPanel.collapsed}
+                resizing={rightPanel.resizing}
+                onToggle={() => rightPanel.setCollapsed((value) => !value)}
               />
             ) : null}
           </div>
@@ -380,7 +381,7 @@ export default memo(function SessionsPage() {
       </Dialog>
       {showTranscript && agentSessionId ? (
         <AgentCommandRail
-          hidden={hasWorkspaceContent}
+          hidden={hasWorkspaceContent || subagentFullscreen}
           sessionId={agentSessionId}
           readingHistory={historyReading}
           projectId={projectId}

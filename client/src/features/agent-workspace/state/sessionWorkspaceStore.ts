@@ -26,7 +26,7 @@ export interface WorkspaceSessionState {
   activeTabId: string | null;
   presentation: WorkspacePresentation;
   /** Child conversation shown beside the parent transcript. */
-  subagent?: { sessionId: string; title: string };
+  subagent?: { sessionId: string; title: string; fullscreen?: boolean };
   /** Keep the inspected project when a file viewer temporarily replaces the dashboard. */
   selectedRootId?: string;
 }
@@ -67,6 +67,7 @@ interface SessionWorkspaceStoreState {
   sessions: SessionWorkspaceRecord;
   openSubagent: (sessionId: string, childSessionId: string, title: string) => void;
   closeSubagent: (sessionId: string) => void;
+  setSubagentFullscreen: (sessionId: string, fullscreen: boolean) => void;
   openTab: (sessionId: string, tab: Omit<WorkspaceTab, "id">) => void;
   activateTab: (sessionId: string, id: string) => void;
   selectRepository: (sessionId: string, rootId: string) => void;
@@ -139,6 +140,15 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
           ...current,
           subagent: undefined,
         })),
+      })),
+
+    setSubagentFullscreen: (sessionId, fullscreen) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) =>
+          current.subagent
+            ? { ...current, subagent: { ...current.subagent, fullscreen } }
+            : current,
+        ),
       })),
 
     openTab: (sessionId, tab) =>

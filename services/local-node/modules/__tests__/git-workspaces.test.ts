@@ -124,7 +124,7 @@ describe("git workspace maintenance", () => {
 
       await expect(
         removeGitWorktree(repository, projectId, repository),
-      ).rejects.toThrow("primary worktree");
+      ).rejects.toThrow("主工作树不可删除");
       await expect(
         removeGitWorktree(repository, projectId, created.path, {
           inUsePaths: new Set([path.normalize(created.path)]),

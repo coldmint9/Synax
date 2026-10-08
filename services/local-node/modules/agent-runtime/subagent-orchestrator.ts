@@ -186,7 +186,12 @@ function reapUnresolvableChild(
 export async function runChildToCompletion(
   childSessionId: string,
   spec: SubagentSpec,
-  opts: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
+  opts: {
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    input?: import("./contracts.js").StreamTurnRequest;
+    resume?: boolean;
+  } = {},
   deps: OrchestratorDeps = defaultDeps,
 ): Promise<SubagentResult> {
   const existing = deps.store.tryGetSession(childSessionId);
@@ -230,11 +235,10 @@ export async function runChildToCompletion(
       : undefined;
 
   try {
-    for await (const _chunk of deps.loop.streamRun(
-      childSessionId,
-      {},
-      controller.signal,
-    )) {
+    const stream = opts.resume
+      ? deps.loop.streamContinue(childSessionId, opts.input ?? {}, controller.signal)
+      : deps.loop.streamRun(childSessionId, opts.input ?? {}, controller.signal);
+    for await (const _chunk of stream) {
       // Child persists its own messages/events; we only need the final status.
     }
   } catch (err) {

@@ -48,7 +48,12 @@ import {
   gitHistoryConflict,
   pruneGitWorktrees,
   removeGitWorktree,
+  previewGitWorktreePath,
+  previewGitWorktreeCleanup,
+  cleanupGitWorktrees,
+  previewGitWorktreePrune,
 } from "../../modules/git-workspaces.js";
+import { MAX_WORKTREE_CLEANUP_PATHS, isTerminalWorktreeSession } from "../../modules/git-worktree-management-contracts.js";
 
 // ---------------------------------------------------------------------------
 // Project store — in-memory Map 与磁盘 JSON 双写（原子写入）
@@ -263,6 +268,11 @@ const removeWorktreeSchema = z.object({
   force: z.boolean().optional().default(false),
 });
 
+const cleanupWorktreeSchema = z.object({
+  rootId: z.string().min(1).optional(),
+  paths: z.array(z.string().min(1).max(4096)).min(1).max(MAX_WORKTREE_CLEANUP_PATHS),
+});
+
 // ---------------------------------------------------------------------------
 // Helper: check for duplicate projects
 // ---------------------------------------------------------------------------
@@ -376,12 +386,18 @@ function projectGitRoot(
   };
 }
 
-function sessionWorktreeUsage(): Map<string, number> {
+function sessionWorktreeUsage(activeOnly = false): Map<string, number> {
   const counts = new Map<string, number>();
   const sessions = agentRuntimeStore.listSessions({
     limit: Number.MAX_SAFE_INTEGER,
   });
   for (const session of sessions) {
+    if (activeOnly && isTerminalWorktreeSession(session.status) && !session.pendingResumeToken) {
+      if (!session.activeRunId) continue;
+      try {
+        if (isTerminalWorktreeSession(agentRuntimeStore.getRun(session.activeRunId).status)) continue;
+      } catch { /* Missing run state must conservatively protect the worktree. */ }
+    }
     const backend = session.sessionMetadata?.backend as
       | { workDir?: string | null; workspaceRoots?: ProjectWorkspaceRoot[] }
       | undefined;
@@ -402,6 +418,10 @@ function sessionWorktreeUsage(): Map<string, number> {
     for (const key of paths) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
+}
+
+function readWorktreeSessionUsage() {
+  return { sessionCounts: sessionWorktreeUsage(), activeSessionCounts: sessionWorktreeUsage(true) };
 }
 
 function gitWorkspaceRouteError(c: Context, error: unknown) {
@@ -801,6 +821,7 @@ projectRoutes.get("/:id/git/workspaces", async (c) => {
         root.repository,
         root.scope,
         sessionWorktreeUsage(),
+        sessionWorktreeUsage(true),
       ),
     );
   } catch (error) {
@@ -912,6 +933,39 @@ projectRoutes.post("/:id/git/actions", async (c) => {
   } catch (error) { return gitWorkspaceRouteError(c, error); }
 });
 
+projectRoutes.get("/:id/git/worktrees/preview", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const branch = z.string().min(1).max(1024).safeParse(c.req.query("branch"));
+  if (!branch.success) return c.json({ error: "Invalid branch" }, 400);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"), true);
+    return c.json(await previewGitWorktreePath(root.repository, root.scope, branch.data));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.get("/:id/git/worktrees/cleanup", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"), true);
+    return c.json(await previewGitWorktreeCleanup(root.repository, root.scope, readWorktreeSessionUsage));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.post("/:id/git/worktrees/cleanup", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+  const parsed = cleanupWorktreeSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
+  try {
+    const root = projectGitRoot(project, parsed.data.rootId, true);
+    return c.json(await cleanupGitWorktrees(root.repository, root.scope, [...new Set(parsed.data.paths)], readWorktreeSessionUsage));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
 projectRoutes.post("/:id/git/worktrees", async (c) => {
   const project = projects.get(c.req.param("id"));
   if (!project) return c.json({ error: "Project not found" }, 404);
@@ -957,11 +1011,10 @@ projectRoutes.delete("/:id/git/worktrees", async (c) => {
       400,
     );
   try {
-    const usage = sessionWorktreeUsage();
     const root = projectGitRoot(project, parsed.data.rootId, true);
     await removeGitWorktree(root.repository, root.scope, parsed.data.path, {
       force: parsed.data.force,
-      inUsePaths: new Set(usage.keys()),
+      readUsage: readWorktreeSessionUsage,
     });
     return c.json({ removed: true });
   } catch (error) {
@@ -970,17 +1023,32 @@ projectRoutes.delete("/:id/git/worktrees", async (c) => {
 });
 
 /** POST /:id/git/worktrees/prune — remove stale Git worktree registrations. */
-projectRoutes.post("/:id/git/worktrees/prune", async (c) => {
+projectRoutes.get("/:id/git/worktrees/prune", async (c) => {
   const project = projects.get(c.req.param("id"));
   if (!project) return c.json({ error: "Project not found" }, 404);
   try {
     const root = projectGitRoot(project, c.req.query("rootId"), true);
-    await pruneGitWorktrees(root.repository);
+    return c.json(await previewGitWorktreePrune(root.repository));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.post("/:id/git/worktrees/prune", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const body = await c.req.json().catch(() => null);
+    const parsed = cleanupWorktreeSchema.extend({ paths: z.array(z.string().min(1).max(4096)).max(MAX_WORKTREE_CLEANUP_PATHS) }).safeParse(body);
+    if (!parsed.success) return c.json({ error: "Preview and confirm the complete prune path list first." }, 400);
+    const queryRoot = c.req.query("rootId");
+    if (queryRoot && parsed.data.rootId && queryRoot !== parsed.data.rootId) return c.json({ error: "Conflicting rootId" }, 400);
+    const root = projectGitRoot(project, parsed.data.rootId ?? queryRoot, true);
+    await pruneGitWorktrees(root.repository, [...new Set(parsed.data.paths)], readWorktreeSessionUsage);
     return c.json(
       await listGitWorkspaces(
         root.repository,
         root.scope,
         sessionWorktreeUsage(),
+        sessionWorktreeUsage(true),
       ),
     );
   } catch (error) {

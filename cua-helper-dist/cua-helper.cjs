@@ -7392,6 +7392,7 @@ var require_cross_spawn = __commonJS({
 var main_exports = {};
 __export(main_exports, {
   loadSdk: () => loadSdk,
+  main: () => main,
   parseGeneration: () => parseGeneration,
   readHelperPermissionStatus: () => readHelperPermissionStatus,
   requestHelperPermissions: () => requestHelperPermissions
@@ -16891,40 +16892,48 @@ async function startCuaHelperBridge(options) {
     env: mergeEnvironment(process.env, options.environment),
     stderr: "pipe"
   });
-  await client.connect(transport);
-  const driverStderr = transport.stderr;
-  if (driverStderr && options.onDriverStderr) {
-    let buffer = "";
-    driverStderr.on("data", (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) if (line.trim()) options.onDriverStderr?.(line);
-    });
-  }
   const server = new Server(
     { name: "synax-cua", version: "0.30.2" },
     { capabilities: { tools: {} } }
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => client.listTools());
-  server.setRequestHandler(
-    CallToolRequestSchema,
-    async (request) => client.callTool({
-      name: request.params.name,
-      arguments: request.params.arguments ?? {}
-    })
-  );
-  const serverTransport = new StdioServerTransport();
-  await server.connect(serverTransport);
   let closed = false;
-  return {
-    async close() {
-      if (closed) return;
-      closed = true;
-      await server.close().catch(() => void 0);
-      await client.close().catch(() => void 0);
-    }
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await server.close().catch(() => void 0);
+    await client.close().catch(() => void 0);
+    await transport.close().catch(() => void 0);
   };
+  try {
+    await client.connect(transport);
+    const driverStderr = transport.stderr;
+    if (driverStderr && options.onDriverStderr) {
+      let buffer = "";
+      driverStderr.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        buffer = buffer.slice(-16384);
+        for (const line of lines) if (line.trim()) options.onDriverStderr?.(line);
+      });
+    } else {
+      driverStderr?.on("data", () => void 0);
+    }
+    server.setRequestHandler(ListToolsRequestSchema, async () => client.listTools());
+    server.setRequestHandler(
+      CallToolRequestSchema,
+      async (request) => client.callTool({
+        name: request.params.name,
+        arguments: request.params.arguments ?? {}
+      })
+    );
+    const serverTransport = new StdioServerTransport();
+    await server.connect(serverTransport);
+    return { close };
+  } catch (error2) {
+    await close();
+    throw error2;
+  }
 }
 function generationEnvironment(generation) {
   return { SYNAX_CUA_GENERATION: generation };
@@ -17004,6 +17013,7 @@ async function main() {
   const shutdown = async (code) => {
     if (stopping) return;
     stopping = true;
+    await startup.catch(() => void 0);
     try {
       await bridge?.close();
     } catch (error2) {
@@ -17018,19 +17028,36 @@ async function main() {
     }
     import_node_process3.default.exit(code);
   };
-  const started = await host.start();
-  const generation = generationOverride ?? started.generation;
-  log(`host started: generation=${generation}`);
-  bridge = await startCuaHelperBridge({
-    mcp: started.mcp,
-    generation,
-    environment: generationEnvironment(generation),
-    onDriverStderr: log
-  });
-  log("mcp bridge ready on stdio");
   import_node_process3.default.stdin.on("end", () => void shutdown(0));
+  import_node_process3.default.stdin.on("close", () => void shutdown(0));
   import_node_process3.default.on("SIGTERM", () => void shutdown(0));
   import_node_process3.default.on("SIGINT", () => void shutdown(0));
+  const startup = (async () => {
+    const started2 = await host.start();
+    const generation = generationOverride ?? started2.generation;
+    log(`host started: generation=${generation}`);
+    if (!stopping) {
+      bridge = await startCuaHelperBridge({
+        mcp: started2.mcp,
+        generation,
+        environment: generationEnvironment(generation),
+        onDriverStderr: log
+      });
+      log("mcp bridge ready on stdio");
+    }
+    return started2;
+  })();
+  if (import_node_process3.default.stdin.readableEnded || import_node_process3.default.stdin.destroyed) void shutdown(0);
+  let started;
+  try {
+    started = await startup;
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    log(`startup failed: ${message}`);
+    await shutdown(/permission/i.test(message) ? CUA_EXIT_CODES.permission : CUA_EXIT_CODES.unavailable);
+    return;
+  }
+  if (stopping) return;
   void host.waitForExit(started.generation).then(() => shutdown(CUA_EXIT_CODES.unavailable)).catch((error2) => {
     log(`exit monitor failed: ${error2 instanceof Error ? error2.message : String(error2)}`);
   });
@@ -17049,6 +17076,7 @@ if (invokedDirectly) {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   loadSdk,
+  main,
   parseGeneration,
   readHelperPermissionStatus,
   requestHelperPermissions

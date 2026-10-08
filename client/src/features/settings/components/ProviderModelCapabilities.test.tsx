@@ -20,14 +20,17 @@ describe('provider media model settings', () => {
     }
     render(<Settings />);
     expect(screen.queryAllByRole('checkbox', { name: '文件' })).toHaveLength(0);
-    for (const label of ['文本', '图片', '音频', '视频']) {
+    expect(screen.queryAllByRole('checkbox', { name: '音频' })).toHaveLength(0);
+    for (const label of ['文本', '图片', '视频']) {
       const checkboxes = screen.getAllByRole('checkbox', { name: label });
       expect(checkboxes).toHaveLength(2);
       fireEvent.click(checkboxes[0]);
       fireEvent.click(checkboxes[1]);
     }
-    expect(draft.modelMeta.chat.inputModalities).toEqual(['text', 'image', 'audio', 'video']);
-    expect(draft.modelMeta.chat.outputModalities).toEqual(['text', 'image', 'audio', 'video']);
+    expect(draft.modelMeta.chat.inputModalities).toEqual(['text', 'image', 'video']);
+    expect(draft.modelMeta.chat.outputModalities).toEqual(['text', 'image', 'video']);
+    expect(draftToProviderDef(draft).models[0].inputModalities).toEqual(draft.modelMeta.chat.inputModalities);
+    expect(draftToProviderDef(draft).models[0].outputModalities).toEqual(draft.modelMeta.chat.outputModalities);
   });
 
   it('keeps generation operations and parameters scoped to the edited model', () => {

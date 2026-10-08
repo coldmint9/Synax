@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
+import { decodeCharacterFile } from "./file-input/registry.js";
 import {
   MAX_FILE_BYTES,
   MAX_INPUT_BYTES,
@@ -114,8 +115,8 @@ export function detectMediaType(
         : "application/zip";
   else {
     try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      if (!text.includes("\0"))
+      const text = decodeCharacterFile(bytes);
+      if (text !== undefined)
         detected = /<svg[\s>]/i.test(text.slice(0, 1024))
           ? "image/svg+xml"
           : /<!doctype html|<html[\s>]/i.test(text.slice(0, 1024))
@@ -141,10 +142,8 @@ export function detectMediaType(
     claimed &&
     detected &&
     claimed !== detected &&
-    !(
-      ["text/plain", "text/csv", "application/json"].includes(claimed) &&
-      detected === "text/plain"
-    )
+    // Character content is text regardless of browser MIME hints or extension.
+    !detected.startsWith("text/") && detected !== "application/json" && detected !== "image/svg+xml"
   )
     error(`File contents do not match ${claimed} (${filename}).`);
   if (

@@ -106,6 +106,9 @@ async function launchSidecar(): Promise<number> {
   } finally {
     clearTimeout(timer);
     lines.close();
+    // readline.close() pauses its input. Keep draining logs after readiness so
+    // a full stdout pipe cannot block the backend (including exit-time flushes).
+    child.stdout?.resume();
     events.removeListener("error", onError);
     events.removeListener("exit", onExit);
   }

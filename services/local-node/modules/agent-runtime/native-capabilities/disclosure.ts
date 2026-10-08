@@ -65,8 +65,10 @@ export function reconcileDisclosure(state: DisclosureState, catalog: Map<string,
 }
 
 export function disclose(state: DisclosureState, selected: CapabilityContract[], catalog: Map<string, CapabilityContract>): DisclosureState {
-  const additions = selected.filter((item) => !CORE_TOOL_IDS.has(item.id));
+  const known = new Set(state.entries.map((item) => item.id));
+  const additions = selected.filter((item) => !CORE_TOOL_IDS.has(item.id) && !known.has(item.id));
   const ids = new Set(additions.map((item) => item.id));
+  if (additions.length === 0) return reconcileDisclosure(state, catalog);
   const usedAt = Math.max(Date.now(), ...state.entries.map((item) => item.usedAt + 1));
   return reconcileDisclosure({ ...state, entries: [
     ...additions.map(({ id, version }) => ({ id, version, usedAt })),

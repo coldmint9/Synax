@@ -153,6 +153,7 @@ import {
   resolveRegisteredProjectWorkDir,
 } from "../../modules/agent-runtime/tools/workspace.js";
 import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
+import { readWorkspaceProject, projectWorkspaceRoots, workspaceRootLocation } from "../../modules/project-workspace.js";
 import {
   GitWorkspaceError,
   resolveGitWorkspaceSelection,
@@ -482,9 +483,17 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
-    const projectLocation = resolveProjectWorkspaceLocation(
+    let projectLocation = resolveProjectWorkspaceLocation(
       parsed.data.projectId,
     );
+    let gitScope = parsed.data.projectId;
+    if (parsed.data.gitWorkspace?.rootId) {
+      const project = readWorkspaceProject(parsed.data.projectId);
+      const root = project && projectWorkspaceRoots(project).find(item => item.id === parsed.data.gitWorkspace?.rootId);
+      if (!root || root.status !== "available") throw new AgentRuntimeError("所选仓库不存在或不可用。", "GIT_WORKSPACE_ERROR", 404);
+      projectLocation = workspaceRootLocation(root);
+      gitScope = root.role === "primary" ? parsed.data.projectId : `${parsed.data.projectId}/${root.id}`;
+    }
     if (
       projectLocation?.kind === "wsl" &&
       parsed.data.backendId &&
@@ -515,7 +524,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
       const selected = await resolveGitWorkspaceSelection(
         projectLocation ??
           resolveRegisteredProjectWorkDir(parsed.data.projectId),
-        parsed.data.projectId,
+        gitScope,
         parsed.data.gitWorkspace,
       );
       createInput = {

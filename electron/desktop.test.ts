@@ -255,6 +255,50 @@ describe("desktop platform contract", () => {
     );
   });
 
+  it.each([false, true])(
+    "keeps draining sidecar logs after readiness with isPackaged=%s",
+    async (isPackaged) => {
+      electron.app.isPackaged = isPackaged;
+      Object.defineProperty(process, "resourcesPath", {
+        value: "/test resources",
+        configurable: true,
+      });
+      const proc = child();
+      const launch = () => {
+        queueMicrotask(() => proc.stdout.write("SYNAX_DESKTOP_READY:54321\n"));
+        return proc;
+      };
+      const launcher = isPackaged ? electron.utilityProcess.fork : spawn;
+      launcher.mockImplementationOnce(launch);
+      const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        expect(await startSidecar()).toBe(54321);
+        // Exceed pipe/stream buffering so a paused reader cannot go unnoticed.
+        const logChunk = Buffer.from(`${"x".repeat(8191)}\n`);
+        stdout.mockClear();
+        for (let i = 0; i < 128; i++) proc.stdout.write(logChunk);
+        proc.stderr.write("backend diagnostic\n");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        expect(proc.stdout.isPaused()).toBe(false);
+        expect(proc.stdout.readableLength).toBe(0);
+        expect(proc.stdout.writableLength).toBe(0);
+        expect(stdout).toHaveBeenCalledTimes(128);
+        expect(stdout).toHaveBeenLastCalledWith(logChunk);
+        expect(stderr).toHaveBeenCalledWith(Buffer.from("backend diagnostic\n"));
+        expect(proc.stdout.listenerCount("data")).toBe(1);
+        expect(await startSidecar()).toBe(54321);
+        expect(proc.stdout.listenerCount("data")).toBe(1);
+      } finally {
+        stdout.mockRestore();
+        stderr.mockRestore();
+        proc.stdout.destroy();
+        proc.stderr.destroy();
+      }
+    },
+  );
+
   it("shares concurrent startup and waits for the bound port, including split output", async () => {
     const proc = child();
     spawn.mockImplementationOnce(() => {

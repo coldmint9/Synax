@@ -102,10 +102,12 @@ export default function GitHistoryTree({
   workspace,
   projectId,
   rootId,
+  focusCommitId,
 }: {
   workspace: GitWorkspaceSummary;
   projectId?: string;
   rootId?: string;
+  focusCommitId?: string;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<HistoryFilter>("all");
@@ -262,12 +264,12 @@ export default function GitHistoryTree({
     nextOffsetRef.current = 0;
     setPages([]);
     setNextOffset(0);
-    setSelectedId(null);
+    setSelectedId(focusCommitId ?? null);
     void loadPage(0);
     return () => {
       generation.current++;
     };
-  }, [projectId, rootId, workspace]);
+  }, [projectId, rootId, workspace, focusCommitId]);
   useEffect(() => {
     let active = true;
     setDetail(null);
@@ -341,7 +343,7 @@ export default function GitHistoryTree({
       ),
     MIN_RAIL_WIDTH,
   );
-  const selected = commits.find((commit) => commit.id === selectedId);
+  const selected = commits.find((commit) => commit.id === selectedId) ?? (detail?.id === selectedId ? detail : undefined);
   const graphHeight = filteredCommits.length * ROW_HEIGHT;
 
   const selectedIndex = filteredCommits.findIndex(

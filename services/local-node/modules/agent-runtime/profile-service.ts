@@ -38,6 +38,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
     defaultThinkingMode: "standard",
     allowedCapabilities: [
       "subagent.delegate",
+      "subagent.lifecycle",
       "task.create",
       "task.update",
       "task.get",
@@ -90,6 +91,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       "task.get",
       "task.list",
       "subagent.delegate",
+      "subagent.lifecycle",
       "skill.load",
       "browser.navigate",
       "browser.snapshot",

@@ -374,11 +374,11 @@ export interface EvidenceArtifact {
   createdAt: string;
 }
 
-export type GitWorkspaceSelection =
+export type GitWorkspaceSelection = (
   | { kind: "default" }
   | { kind: "new-worktree" }
   | { kind: "worktree"; path: string }
-  | { kind: "branch"; branch: string };
+  | { kind: "branch"; branch: string }) & { rootId?: string };
 
 export interface CreateSessionRequest {
   backendId?: BackendId;

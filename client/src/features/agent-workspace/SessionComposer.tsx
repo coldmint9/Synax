@@ -49,7 +49,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   EMPTY_INPUT_QUEUE,
   useAgentSessionStore,
@@ -148,6 +148,10 @@ export function SessionComposer({
     session ? "" : loadDraftComposer(projectId),
   );
   const [gitWorkspace, setGitWorkspace] = useState<GitWorkspaceSelection>();
+  const location = useLocation();
+  const [workspaceParams] = useSearchParams();
+  const preselectedWorktree = location.pathname.endsWith("/sessions/new") ? workspaceParams.get("worktree") : null;
+  const preselectedRootId = location.pathname.endsWith("/sessions/new") ? workspaceParams.get("rootId") ?? undefined : undefined;
   const [skillIds, setSkillIds] = sessionComposerSkills.useDraft(
     viewKey,
     () => [],
@@ -221,10 +225,10 @@ export function SessionComposer({
   );
   const createdDraftRef = useRef<AgentSession | null>(null);
   useLayoutEffect(() => {
-    setGitWorkspace(undefined);
+    setGitWorkspace(preselectedWorktree && !session ? { kind: "worktree", path: preselectedWorktree, rootId: preselectedRootId } : undefined);
     setOverlayOpen(false);
     createdDraftRef.current = null;
-  }, [viewKey]);
+  }, [viewKey, preselectedWorktree, preselectedRootId]);
   // Keep the new-session draft cached per project while typing; an empty
   // composer (sent or cleared) drops the cached entry.
   useEffect(() => {
@@ -901,6 +905,7 @@ export function SessionComposer({
                 variant="hill"
                 projectId={projectId}
                 value={gitWorkspace ?? { kind: "default" }}
+                rootId={preselectedRootId}
                 disabled={submitting || Boolean(createdDraftRef.current)}
                 onChange={setGitWorkspace}
               />

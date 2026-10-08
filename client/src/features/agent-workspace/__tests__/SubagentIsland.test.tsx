@@ -32,21 +32,39 @@ beforeEach(() => {
 });
 
 describe("SubagentIsland", () => {
-  it("hides before any child exists and retains a zero entry after completion", () => {
+  it("toggles fullscreen and returns with Escape without remounting the conversation", () => {
+    useSessionWorkspaceStore.getState().openSubagent("parent", "a", "林墨");
+    render(<Harness />);
+    const transcript = screen.getByText("记录 a");
+    fireEvent.click(screen.getByRole("button", { name: "全屏查看子代理对话" }));
+    expect(screen.getByRole("button", { name: "退出子代理全屏" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("记录 a")).toBe(transcript);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "全屏查看子代理对话" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("记录 a")).toBe(transcript);
+    fireEvent.click(screen.getByRole("button", { name: "全屏查看子代理对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "退出子代理全屏" }));
+    expect(useSessionWorkspaceStore.getState().sessions.parent.subagent?.fullscreen).toBe(false);
+  });
+
+  it("hides before any child exists and retains an icon without a count after completion", () => {
     const view = render(<Harness />);
     expect(screen.queryByRole("button", { name: /子代理，/ })).toBeNull();
     snapshot.subagents = [child("a", "completed")];
     view.rerender(<Harness />);
-    expect(screen.getByRole("button", { name: "子代理，0 个工作中" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "子代理" })).toBeInTheDocument();
+    expect(document.querySelector(".subagent-island-count")).toBeNull();
   });
 
   it("counts only running children and updates when states change", () => {
     snapshot.subagents = [child("a", "running"), child("b", "waiting_input"), child("c", "failed"), child("d", "queued")];
     const view = render(<Harness />);
     expect(screen.getByRole("button", { name: "子代理，1 个工作中" })).toBeInTheDocument();
+    expect(document.querySelector(".subagent-island-count")).toHaveTextContent("1");
     snapshot.subagents[0] = child("a", "completed");
     view.rerender(<Harness />);
-    expect(screen.getByRole("button", { name: "子代理，0 个工作中" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "子代理" })).toBeInTheDocument();
+    expect(document.querySelector(".subagent-island-count")).toBeNull();
   });
 
   it("opens, switches and closes the child pane while keeping the parent visible", async () => {
@@ -71,7 +89,7 @@ describe("SubagentIsland", () => {
   it("orders failed children first and supports Escape dismissal", async () => {
     snapshot.subagents = [child("a", "completed"), child("b", "failed")];
     render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: "子代理，0 个工作中" }));
+    fireEvent.click(screen.getByRole("button", { name: "子代理" }));
     const failed = await screen.findByRole("button", { name: /江岚.*检查布局/ });
     const rows = document.querySelectorAll(".subagent-island-row");
     expect(rows[0]).toBe(failed);

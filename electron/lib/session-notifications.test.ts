@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ supported: true, notices: [] as any[] }));
+const mocks = vi.hoisted(() => ({ supported: true, notices: [] as any[], setBadge: vi.fn() }));
 vi.mock("electron", () => ({
+  app: { dock: { setBadge: mocks.setBadge } },
   Notification: class extends EventEmitter {
     static isSupported() {
       return mocks.supported;
@@ -39,8 +40,68 @@ const win = () => ({
 beforeEach(() => {
   mocks.notices.length = 0;
   mocks.supported = true;
+  mocks.setBadge.mockClear();
 });
 describe("native session notifications", () => {
+  it("counts unread sessions on macOS until focus, dismissal or disable", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      const window = win();
+      const service = new SessionNotifications(() => window as any, async () => window as any, "/icon.png");
+      service.setEnabled(true);
+      service.show(payload);
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("1");
+      expect(service.show(payload)).toBe(false);
+      // An expired banner is still unread. Replacing its session does not add another count.
+      mocks.notices[0].emit("close");
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("1");
+      service.show({ ...payload, id: "event-2" });
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("1");
+      service.show({ ...payload, id: "event-3", sessionId: "s2" });
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("2");
+      service.dismiss("s1");
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("1");
+      service.clearBadge();
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("");
+      service.show({ ...payload, id: "event-4" });
+      service.setEnabled(false);
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("");
+    } finally {
+      platform.mockRestore();
+    }
+  });
+  it("removes failed deliveries from the macOS badge and clears it on activation", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      const window = win();
+      const service = new SessionNotifications(() => window as any, async () => window as any, "/icon.png");
+      service.setEnabled(true);
+      service.show(payload);
+      mocks.notices[0].emit("failed");
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("");
+      service.show(payload);
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("1");
+      mocks.notices[1].emit("click");
+      await Promise.resolve();
+      expect(mocks.setBadge).toHaveBeenLastCalledWith("");
+    } finally {
+      platform.mockRestore();
+    }
+  });
+  it("does not use the Dock API on other platforms", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    try {
+      const window = win();
+      const service = new SessionNotifications(() => window as any, async () => window as any, "/icon.png");
+      service.setEnabled(true);
+      service.show(payload);
+      service.clearBadge();
+      service.dispose();
+      expect(mocks.setBadge).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
   it("respects the preference and native support, and suppresses focused windows", () => {
     const window = win();
     const service = new SessionNotifications(

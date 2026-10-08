@@ -8,6 +8,7 @@ export interface DashboardPanelSize {
 export interface DashboardLayout {
   order: string[];
   sizes: Record<string, DashboardPanelSize>;
+  hidden?: string[];
 }
 const EMPTY: DashboardLayout = { order: [], sizes: {} };
 
@@ -48,7 +49,10 @@ function readLayouts(): Record<string, DashboardLayout> {
               : [],
           ),
         );
-        return [[scope, { order, sizes }]];
+        const hidden = Array.isArray(entry.hidden)
+          ? [...new Set(entry.hidden.filter((id) => typeof id === "string"))]
+          : [];
+        return [[scope, { order, sizes, hidden }]];
       }),
     );
   } catch {
@@ -62,6 +66,9 @@ export function panelOrder(saved: string[], visible: string[]): string[] {
 }
 interface State {
   layouts: Record<string, DashboardLayout>;
+  catalogs: Record<string, { id: string; label: string }[]>;
+  register: (scope: string, widgets: { id: string; label: string }[]) => void;
+  setVisible: (scope: string, id: string, visible: boolean) => void;
   move: (
     scope: string,
     id: string,
@@ -85,6 +92,18 @@ export const useDashboardLayoutStore = create<State>((set, get) => {
   };
   return {
     layouts: readLayouts(),
+    catalogs: {},
+    register: (scope, widgets) => {
+      if (JSON.stringify(get().catalogs[scope]) === JSON.stringify(widgets)) return;
+      set({ catalogs: { ...get().catalogs, [scope]: widgets } });
+    },
+    setVisible: (scope, id, visible) => {
+      const layout = get().layouts[scope] ?? EMPTY;
+      const hidden = new Set(layout.hidden ?? []);
+      if (visible) hidden.delete(id);
+      else hidden.add(id);
+      save(scope, { ...layout, hidden: [...hidden] });
+    },
     move: (scope, id, target, after, visible) => {
       if (id === target || !visible.includes(id) || !visible.includes(target))
         return;

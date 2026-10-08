@@ -14,7 +14,6 @@ import type { MediaAdapter, MediaOperation, ModelCapability } from "../../../sha
 const MODALITIES = [
   { id: "text", zh: "文本", en: "Text" },
   { id: "image", zh: "图片", en: "Image" },
-  { id: "audio", zh: "音频", en: "Audio" },
   { id: "video", zh: "视频", en: "Video" },
 ] as const satisfies ReadonlyArray<{ id: DeclaredModelModality; zh: string; en: string }>;
 const GENERATION_CAPABILITIES: Array<{ id: ModelCapability; zh: string; en: string }> = [

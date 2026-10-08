@@ -60,6 +60,7 @@ import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { useSessionEnvironment } from "./useSessionEnvironment";
 import { getProjectThemeColor } from "./projectThemeColor";
+import { useShellStore } from "../../shared/state/shellStore";
 
 const EMPTY_TODOS: import("../../adapters/transport/agentRuntime").TodoItem[] = [];
 
@@ -410,6 +411,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   const todos = useAgentSessionStore((state) =>
     state.selectedSessionId === sessionId ? state.sessionTodos : EMPTY_TODOS,
   );
+  const projectId = useShellStore((state) => state.currentProjectId);
   const c = useWorkspaceCopy();
   // The workspace panel already polls this snapshot; only fall back to owning
   // the request when rendered standalone.
@@ -531,12 +533,16 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
           />
         </DashboardPanel>
 
-        {todos.length > 0 && (
+        {(
           <DashboardPanel
             id="progress"
             label={locale === "zh" ? "任务进度" : "Progress"}
           >
-            <SessionTodoPanel key={sessionId} items={todos} />
+            {todos.length > 0 ? <SessionTodoPanel key={sessionId} items={todos} /> : (
+              <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"}>
+                <div className="ws-empty">{locale === "zh" ? "暂无任务" : "No tasks yet"}</div>
+              </WorkspaceCard>
+            )}
           </DashboardPanel>
         )}
         <DashboardPanel
@@ -557,8 +563,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
 
   return (
     <WorkspaceDashboardLayout
-      key={environment?.projectId ?? "default"}
-      scope={environment?.projectId ?? "default"}
+      key={environment?.projectId ?? projectId ?? "default"}
+      scope={environment?.projectId ?? projectId ?? "default"}
     >
       <DashboardPanel
         id="runtime"
@@ -741,12 +747,16 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       ) : null}
       {sessionId && (
         <>
-          {todos.length > 0 && (
+          {(
             <DashboardPanel
               id="progress"
               label={locale === "zh" ? "任务进度" : "Progress"}
             >
-              <SessionTodoPanel items={todos} />
+              {todos.length > 0 ? <SessionTodoPanel items={todos} /> : (
+                <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"}>
+                  <div className="ws-empty">{locale === "zh" ? "暂无任务" : "No tasks yet"}</div>
+                </WorkspaceCard>
+              )}
             </DashboardPanel>
           )}
           <DashboardPanel

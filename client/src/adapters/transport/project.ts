@@ -79,6 +79,8 @@ export interface GitWorktreeSummary {
   managed: boolean;
   dirty: boolean;
   sessionCount: number;
+  activeSessionCount?: number;
+  statusKnown?: boolean;
 }
 
 export interface GitCommitSummary {
@@ -112,6 +114,24 @@ async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const projectApi = {
+  previewGitWorktree(id: string, branch: string, rootId?: string): Promise<{ path: string }> {
+    const query = new URLSearchParams({ branch });
+    if (rootId) query.set("rootId", rootId);
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/preview?${query}`);
+  },
+  previewGitWorktreeCleanup(id: string, rootId?: string): Promise<import("../../../../services/local-node/modules/git-worktree-management-contracts").GitWorktreeCleanupPreview> {
+    const query = new URLSearchParams(rootId ? { rootId } : {});
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/cleanup?${query}`);
+  },
+  cleanupGitWorktrees(id: string, paths: string[], rootId?: string): Promise<import("../../../../services/local-node/modules/git-worktree-management-contracts").GitWorktreeCleanupResponse> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/cleanup`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths, rootId }),
+    });
+  },
+  previewGitWorktreePrune(id: string, rootId?: string): Promise<{ paths: string[] }> {
+    const query = new URLSearchParams(rootId ? { rootId } : {});
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune?${query}`);
+  },
   async createWorkspace(body: {
     name: string;
     roots: (
@@ -223,10 +243,10 @@ export const projectApi = {
     );
   },
 
-  pruneGitWorktrees(id: string, rootId?: string): Promise<GitWorkspaceSummary> {
+  pruneGitWorktrees(id: string, rootId?: string, paths: string[] = []): Promise<GitWorkspaceSummary> {
     return projectRequest(
       `${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
-      { method: "POST" },
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rootId, paths }) },
     );
   },
 

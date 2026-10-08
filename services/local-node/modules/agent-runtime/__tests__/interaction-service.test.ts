@@ -22,7 +22,7 @@ beforeEach(() => {
   ensureSynaxAgentRegistered();
 });
 function setup(
-  mode: "plan" | "goal" = "plan",
+  mode: "chat" | "plan" | "goal" = "plan",
   permissionTier?: "auto" | "unrestricted",
 ) {
   const session = agentSessionRuntime.create({
@@ -90,8 +90,8 @@ const questions = [
   },
 ];
 describe("persistent human input", () => {
-  it("auto-approves and executes a proposal in goal mode with unrestricted permissions", async () => {
-    const { session, run, step, call } = setup("goal", "unrestricted");
+  it.each(["chat", "plan", "goal"] as const)("auto-approves and executes a proposal in %s mode with unrestricted permissions", async (mode) => {
+    const { session, run, step, call } = setup(mode, "unrestricted");
     const result = await planProposeTool.execute({
       sessionId: session.id,
       runId: run.id,
@@ -115,14 +115,14 @@ describe("persistent human input", () => {
     expect(result.result).toMatchObject({ status: "approved", title: "Ship the change" });
     expect(interactionService.pending(session.id)).toBeNull();
     expect(store.getSession(session.id).sessionMetadata).toMatchObject({
-      mode: "goal",
+      mode: mode === "goal" ? "goal" : "chat",
       plan: { status: "approved" },
-      goal: { status: "executing" },
+      goal: mode === "goal" ? { status: "executing" } : null,
     });
   });
 
-  it("keeps plan approval interactive outside the auto-approved scope", async () => {
-    const { session, run, step, call } = setup("goal", "auto");
+  it.each(["chat", "plan", "goal"] as const)("keeps plan approval interactive in %s mode without unrestricted permissions", async (mode) => {
+    const { session, run, step, call } = setup(mode, "auto");
     const result = await planProposeTool.execute({
       sessionId: session.id,
       runId: run.id,
@@ -145,8 +145,9 @@ describe("persistent human input", () => {
     expect(result.suspend?.interactionId).toBeTruthy();
     expect(interactionService.pending(session.id)?.kind).toBe("plan_approval");
     expect(store.getSession(session.id).sessionMetadata).toMatchObject({
+      mode,
       plan: { status: "draft" },
-      goal: { status: "planning" },
+      ...(mode === "goal" ? { goal: { status: "planning" } } : {}),
     });
   });
 

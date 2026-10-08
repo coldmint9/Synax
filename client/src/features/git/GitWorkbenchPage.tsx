@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   GitMerge,
+  GitFork,
   ChevronRight,
   GitCommitHorizontal,
   FolderGit2,
@@ -28,12 +29,13 @@ import { IslandSelection } from "../../app/layouts/IslandSelection";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
+import { GitWorktreesView } from "./GitWorktreesView";
 import { Button } from "../../shared/ui/ui/Button";
 import { isTerminal, statusLabels } from "./mergeUi";
 import "./gitWorkbench.css";
 import "./gitHistory.css";
 import "./mergeRequest.css";
-type View = "requests" | "branches" | "presets";
+type View = "requests" | "branches" | "presets" | "worktrees";
 export default function GitWorkbenchPage() {
   const { projectId, mrId } = useParams();
   if (!projectId) return null;
@@ -52,7 +54,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedView = searchParams.get("view");
   const view: View =
-    requestedView === "requests" || requestedView === "presets"
+    requestedView === "requests" || requestedView === "presets" || requestedView === "worktrees"
       ? requestedView
       : "branches";
   const setView = (next: View) =>
@@ -68,6 +70,14 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   const [presets, setPresets] = useState<MergePreset[]>([]);
   const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>([]);
   const [rootId, setRootId] = useState<string | null>(null);
+  const [worktreeBusy, setWorktreeBusy] = useState(false);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const requestedRootId = searchParams.get("rootId");
+  useEffect(() => {
+    if (!roots.length || worktreeBusy) return;
+    const requested = roots.find(root => root.id === requestedRootId && root.status === "available");
+    if (requested) setRootId(requested.id);
+  }, [roots, requestedRootId, worktreeBusy]);
   const [workspace, setWorkspace] = useState<GitWorkspaceSummary | null>(null);
   const [error, setError] = useState("");
   const [branchError, setBranchError] = useState("");
@@ -149,7 +159,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
     return () => {
       active = false;
     };
-  }, [projectId, rootId]);
+  }, [projectId, rootId, workspaceRevision]);
   async function perform(action: () => Promise<unknown>) {
     setBusy(true);
     setError("");
@@ -200,6 +210,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               [
                 ["requests", "合并请求"],
                 ["branches", "历史树"],
+                ["worktrees", "工作树"],
                 ["presets", "预设"],
               ] as [View, string][]
             ).map(([id, label]) => (
@@ -209,6 +220,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                 type="button"
                 className={`wh-pill-btn ${view === id ? "wh-pill-btn--soft" : ""}`}
                 aria-current={view === id ? "page" : undefined}
+                disabled={worktreeBusy}
                 onClick={() => setView(id)}
               >
                 {label}
@@ -220,12 +232,15 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           className="git-island-view-select"
           aria-label="Git 视图"
           value={view}
+          disabled={worktreeBusy}
           onChange={(event) => setView(event.target.value as View)}
         >
           <option value="requests">合并请求</option>
           <option value="branches">历史树</option>
+          <option value="worktrees">工作树</option>
           <option value="presets">预设</option>
         </select>
+        {view !== "worktrees" && <>
         <span className="wh-divider" aria-hidden="true" />
         <button
           type="button"
@@ -238,6 +253,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <Plus size={14} />
           <span className="git-island-action-label">新建 MR</span>
         </button>
+        </>}
       </GitToolbarContent>
       <header className="git-page-heading flex shrink-0 items-center justify-between gap-5">
         <div className="flex min-w-0 items-center gap-3.5">
@@ -247,6 +263,8 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           >
             {view === "branches" ? (
               <GitCommitHorizontal size={22} strokeWidth={1.5} />
+            ) : view === "worktrees" ? (
+              <GitFork size={21} strokeWidth={1.5} />
             ) : view === "requests" ? (
               <GitMerge size={21} strokeWidth={1.5} />
             ) : (
@@ -259,7 +277,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                 ? "历史树"
                 : view === "requests"
                   ? "合并请求"
-                  : "合并预设"}
+                  : view === "worktrees" ? "工作树" : "合并预设"}
             </h1>
             <span
               className="mt-1.5 block truncate font-mono text-[11px] text-[var(--ui-subtle)]"
@@ -274,7 +292,10 @@ function GitWorkbench({ projectId }: { projectId: string }) {
             0,
             roots.findIndex((root) => root.id === rootId),
           )}
-          onChange={(index) => setRootId(roots[index].id)}
+          onChange={(index) => {
+            setRootId(roots[index].id);
+            setSearchParams(current => { const next = new URLSearchParams(current); next.set("rootId", roots[index].id); next.delete("commit"); return next; }, { replace: true });
+          }}
           className="min-w-0 max-w-[50%]"
         >
           <TabList
@@ -295,7 +316,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               <Tab
                 key={root.id}
                 className="git-control !min-w-0 !rounded-lg !px-3 !py-2 !text-xs"
-                disabled={root.status !== "available"}
+                disabled={worktreeBusy || root.status !== "available"}
                 title={root.name}
               >
                 <span className="truncate">{root.name}</span>
@@ -320,6 +341,14 @@ function GitWorkbench({ projectId }: { projectId: string }) {
         </div>
       ) : (
         <>
+          {view === "worktrees" && (
+            rootId === null || branchLoading ? <p className="mr-empty" role="status">正在读取工作树…</p> : !workspace ?
+            <div className="mr-empty"><p>无法读取工作树，请检查仓库路径与权限。</p><Button onClick={() => setWorkspaceRevision(value => value + 1)}>重试</Button></div> :
+            <GitWorktreesView key={`${projectId}/${rootId}`} projectId={projectId} rootId={rootId || undefined}
+              repositoryName={roots.find(root => root.id === rootId)?.name ?? "当前仓库"}
+              workspace={workspace} onUpdate={setWorkspace} onBusy={setWorktreeBusy}
+              onHistory={item => setSearchParams(current => { const next = new URLSearchParams(current); next.set("view", "branches"); if (rootId) next.set("rootId", rootId); next.set("commit", item.head); return next; })} />
+          )}
           {view === "requests" && (
             <div className="mr-index-content">
               {!filteredRequests.length ? (
@@ -438,6 +467,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
                   workspace={workspace}
                   projectId={projectId}
                   rootId={rootId ?? undefined}
+                  focusCommitId={searchParams.get("commit") ?? undefined}
                 />
               )}
             </section>

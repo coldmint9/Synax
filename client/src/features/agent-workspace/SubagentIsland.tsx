@@ -37,7 +37,9 @@ export function SubagentIsland({ sessionId }: { sessionId: string }) {
   const children = environment?.subagents ?? [];
   if (!children.length) return null;
   const running = children.filter((child) => child.status === "running").length;
-  const label = zh ? `子代理，${running} 个工作中` : `Subagents, ${running} working`;
+  const label = running > 0
+    ? (zh ? `子代理，${running} 个工作中` : `Subagents, ${running} working`)
+    : (zh ? "子代理" : "Subagents");
   const sorted = [...children].sort((a, b) => (PRIORITY[a.status] ?? 4) - (PRIORITY[b.status] ?? 4));
 
   return (
@@ -49,14 +51,16 @@ export function SubagentIsland({ sessionId }: { sessionId: string }) {
               <PopoverButton className="subagent-island-trigger" aria-label={label} title={label}>
                 <BotMessageSquare size={17} aria-hidden="true" />
                 {running > 0 && <span className="subagent-island-dot" aria-hidden="true" />}
-                <span className="subagent-island-count" aria-hidden="true">{running}</span>
+                {running > 0 && <span className="subagent-island-count" aria-hidden="true">{running}</span>}
               </PopoverButton>
             </IslandSurface>
             <PopoverPanel anchor={{ to: "bottom", gap: 8, padding: 12 }} focus className="subagent-island-list" aria-label={zh ? "当前主对话的子代理" : "Subagents of this conversation"}>
               <div className="subagent-island-list-header">
                 <div>
                   <strong>{t("workspaceCardSubagents")}</strong>
-                  <p>{zh ? `当前主对话 · ${running} 个工作中` : `Current conversation · ${running} working`}</p>
+                  <p>{running > 0
+                    ? (zh ? `当前主对话 · ${running} 个工作中` : `Current conversation · ${running} working`)
+                    : (zh ? "当前主对话 · 暂无子代理工作中" : "Current conversation · no subagents working")}</p>
                 </div>
                 <button type="button" className="subagent-island-close" onClick={() => close()} aria-label={zh ? "关闭子代理列表" : "Close subagent list"}><X size={15} /></button>
               </div>

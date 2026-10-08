@@ -17,6 +17,8 @@ import { getAsset, readAsset, validateAssets } from "./media-assets.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveMediaProfile } from "../../infrastructure/llm-runtime/providers/media-profile.js";
+import { parseAssetInput, resolveFileParts } from "./file-input/index.js";
+import { isNativeVisual } from "./file-input/registry.js";
 /**
  * Media input stays blocked while no layer declares the model's modalities, so
  * the message must name the action that works for every adapter.
@@ -59,9 +61,8 @@ export function nativeInputCapabilities(
           "text",
           ...declared.filter(
             (modality) =>
-              modality === "text" ||
-              !profile.carriers ||
-              profile.carriers.includes(modality),
+              (modality === "text" || modality === "image" || modality === "video") &&
+              (modality === "text" || !profile.carriers || profile.carriers.includes(modality)),
           ),
         ]),
       ]
@@ -75,7 +76,7 @@ export function nativeInputCapabilities(
         : "declared"
       : "undeclared",
     ...(usable ? {} : { reason: UNDECLARED_MODALITIES_REASON }),
-    ...(profile.mediaTypes ? { mediaTypes: profile.mediaTypes } : {}),
+    ...(profile.mediaTypes ? { mediaTypes: profile.mediaTypes.filter(isNativeVisual) } : {}),
     maxFileBytes: profile.limits.maxFileBytes ?? MAX_FILE_BYTES,
     maxTotalBytes: profile.limits.maxTotalBytes ?? MAX_INPUT_BYTES,
     maxFiles: profile.limits.maxFiles ?? 10,
@@ -193,8 +194,8 @@ export async function validateInputMedia(
 ): Promise<void> {
   const { agentRuntimeStore: store } = await import("./session-store.js");
   const session = store.getSession(sessionId);
-  const parts = inputParts(input);
-  validateAssets(parts, session.projectId);
+  validateAssets(inputParts(input), session.projectId);
+  const parts = await resolveFileParts(inputParts(input), session.projectId);
   if (!parts.some((p) => p.type !== "text") && !input.model) return;
   const { buildLoopModelMessages } = await import("./loop-model-messages.js");
   const { workStore } = await import("./work-store.js");
@@ -248,7 +249,9 @@ export async function validateInputMedia(
       session.projectId,
     ),
   ];
-  const unique = [...new Map(assets.map((a) => [a.id, a])).values()];
+  for (const asset of assets)
+    if (!isNativeVisual(asset.mediaType)) await parseAssetInput(asset);
+  const unique = [...new Map(assets.filter((asset) => isNativeVisual(asset.mediaType)).map((a) => [a.id, a])).values()];
   if (unique.length)
     assertMediaCapabilities(
       unique,
@@ -280,6 +283,37 @@ export async function resolveMediaMessages(
   selection: ResolvedModelSelection,
   projectId?: string,
 ): Promise<LlmGatewayMessage[]> {
+  if (!projectId && referencedAssets(messages).length)
+    throw new AgentRuntimeError("Media requires a project context.", "MEDIA_PROJECT_REQUIRED", 400);
+  // Documents, including historical asset references, become text before any
+  // provider-specific MIME or modality checks. Their bytes never reach the API.
+  const parsedAssets = new Map<string, string>();
+  messages = await Promise.all(messages.map(async (message) => {
+    if (!Array.isArray(message.content)) return message;
+    const content = await Promise.all(message.content.map(async (part) => {
+      if (part.type !== "file") return part;
+      const id = assetId(part.data);
+      if (!id) {
+        if (isNativeVisual(part.mediaType)) return part;
+        throw new AgentRuntimeError("Document input requires a local asset reference; use a file parsing tool first.", "UNSUPPORTED_FILE", 422);
+      }
+      const asset = getAsset(id, projectId);
+      if (isNativeVisual(asset.mediaType)) return part;
+      let text = parsedAssets.get(id);
+      if (text === undefined) {
+        try {
+          text = (await parseAssetInput(asset)).text;
+        } catch (error) {
+          if (!(error instanceof AgentRuntimeError) ||
+            !(message.role === "assistant" || message.providerOptions?.synax?.toolCallId || message.providerOptions?.synax?.generatedMedia)) throw error;
+          text = `Binary asset retained for download or a parsing tool: ${JSON.stringify(asset)}. ${error.message}`;
+        }
+        parsedAssets.set(id, text);
+      }
+      return { type: "text" as const, text };
+    }));
+    return { ...message, content } as LlmGatewayMessage;
+  }));
   const capability = nativeInputCapabilities(selection);
   // Google accepts native assistant media (including thought signatures).
   // Chat/Responses/Anthropic accept prior generated files as explicit context.

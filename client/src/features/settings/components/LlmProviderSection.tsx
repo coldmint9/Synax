@@ -245,7 +245,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
     })
     if (!result.ok) throw new Error(result.error || t('llmProviderDiscoverFailed'))
     const modalities = (value: string[] | undefined): DeclaredModelModality[] | undefined => {
-      const allowed = new Set<DeclaredModelModality>(['text', 'image', 'audio', 'video'])
+      const allowed = new Set<DeclaredModelModality>(['text', 'image', 'video'])
       const filtered = (value ?? []).filter((item): item is DeclaredModelModality => allowed.has(item as DeclaredModelModality))
       return filtered.length ? filtered : undefined
     }

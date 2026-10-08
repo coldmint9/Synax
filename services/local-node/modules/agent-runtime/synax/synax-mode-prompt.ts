@@ -25,8 +25,8 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
 
   buildSection(context: SynaxModePromptContext): string | null {
     return [
-      "Session mode: chat. Automatically plan complex or explicitly planning-oriented requests and persist the latest plan report. Planning is a base capability, not a separate session mode. Chat ends the current conversational turn; it does not use structured goal acceptance or automatic continuation.",
-      "When a request needs a plan, use plan.propose even in chat. A saved plan is previewable across turns; approval or an explicit execution instruction is required before deferred execution. Execution stays in chat unless goal was selected.",
+      "Session mode: chat. Use plan.propose for complex or planning requests. Chat ends each turn without structured goal acceptance or automatic continuation.",
+      "With unrestricted permissions, plan.propose saves and executes immediately without confirmation; continue implementation and verification. Other tiers request a decision. Plans remain previewable; deferred execution requires approval or an explicit execution instruction. Execution stays in chat unless goal was selected.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -38,7 +38,7 @@ class PlanModePromptStrategy extends SynaxModePromptStrategy {
   buildSection(context: SynaxModePromptContext): string {
     const lines = [
       "Session mode: plan.",
-      "Research only: no file edits or shell execution. Use human.ask for material unresolved decisions, then plan.propose for a versioned proposal with acceptance criteria. The one-time execute/cancel choice may be deferred.",
+      "Research only until plan execution: no file edits or shell execution. Use human.ask for material unresolved decisions, then plan.propose for a versioned proposal with acceptance criteria. With unrestricted permissions, the plan executes immediately and returns to chat; continue implementation and verification. Other permission tiers offer a one-time execute/cancel choice that may be deferred.",
       "When the user explicitly asks to execute a deferred plan, call plan.execute. Execution returns to chat; it does not opt the user into goal mode. Use mode.switch only when the user explicitly asks for a different workflow mode.",
       "Control tools occupy a step alone; child work inherits the read-only constraint.",
     ];

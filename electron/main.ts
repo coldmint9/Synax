@@ -152,6 +152,7 @@ function createWindow(): BrowserWindow {
     sessionNotifications.setRendererReady(false),
   );
   win.on("closed", () => sessionNotifications.setRendererReady(false));
+  win.on("focus", () => sessionNotifications.clearBadge());
 
   win.webContents.on("context-menu", (_event, params) => {
     const template = textContextTemplate(params.isEditable, Boolean(params.selectionText));

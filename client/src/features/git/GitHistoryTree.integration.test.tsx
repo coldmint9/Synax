@@ -85,16 +85,24 @@ beforeEach(() => {
     output: "Done",
   });
 });
-function mount() {
+function mount(focusCommitId?: string) {
   return render(
     <MemoryRouter>
       <ContextMenuProvider>
-        <GitHistoryTree workspace={workspace} projectId="p" rootId="r" />
+        <GitHistoryTree workspace={workspace} projectId="p" rootId="r" focusCommitId={focusCommitId} />
       </ContextMenuProvider>
     </MemoryRouter>,
   );
 }
 describe("history API interactions", () => {
+  it("opens a worktree HEAD even when its commit is outside the first history page", async () => {
+    vi.mocked(projectApi.gitCommit).mockResolvedValue({ ...await projectApi.gitCommit("p", older, "r"), id: older, subject: "Older worktree HEAD" });
+    vi.mocked(projectApi.gitCommit).mockClear();
+    mount(older);
+    await screen.findByText("Older worktree HEAD");
+    expect(projectApi.gitCommit).toHaveBeenCalledWith("p", older, "r");
+    expect(screen.getByRole("table", { name: "Git 提交历史" })).toBeInTheDocument();
+  });
   it("deduplicates overlapping pages and ignores scrolls after the final cursor", async () => {
     vi.mocked(projectApi.gitHistory).mockImplementation(async (_id, input) => ({
       commits: input?.offset

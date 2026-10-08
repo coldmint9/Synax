@@ -1,10 +1,10 @@
 .subagent-island-anchor {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 6px;
 }
-.workbench-header:has(> .subagent-island-anchor) { margin-top: 36px; }
 .subagent-island-anchor .synax-island-material.liquid-glass-surface[data-glass-state] {
   min-height: 30px;
   padding: 2px 5px;
@@ -50,5 +50,3 @@
 .subagent-island-status[data-status="failed"] { color: var(--color-danger); }
 .subagent-island-task { font-size: 11px; color: var(--ui-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-island-list-footer { padding: 8px 14px; border-top: 1px solid var(--ui-line); font-size: 10px; color: var(--ui-subtle); }
-.work-page:has(.subagent-island-anchor) { --work-transcript-top-inset: 92px; }
-.electron-macos .work-page:has(.subagent-island-anchor) { --work-transcript-top-inset: calc(var(--desktop-titlebar-height, 40px) + 44px); }

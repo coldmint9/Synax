@@ -7,7 +7,7 @@ import type {
 } from "../../../shared/contracts/config";
 import type { MediaAdapter, MediaCapabilities, ModelCapability } from "../../../shared/contracts/media-generation";
 
-export type DeclaredModelModality = "text" | "image" | "audio" | "video";
+export type DeclaredModelModality = "text" | "image" | "video";
 
 export type ModelMeta = {
   contextLimit?: number;
@@ -579,10 +579,10 @@ export function buildApiDrafts(
             {
               contextLimit: m.contextLimit,
               inputModalities: m.inputModalities?.filter(
-                (modality) => modality !== "file",
+                (modality): modality is DeclaredModelModality => ["text", "image", "video"].includes(modality),
               ),
               outputModalities: m.outputModalities?.filter(
-                (modality) => modality !== "file",
+                (modality): modality is DeclaredModelModality => ["text", "image", "video"].includes(modality),
               ),
               capabilities: m.capabilities,
               media: m.media,

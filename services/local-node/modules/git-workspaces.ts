@@ -14,6 +14,8 @@ import type { GitActionInput, GitActionResult } from "./git-history-contracts.js
 import type { MergeRequest, MergeFileSave } from "./git-mr/contracts.js";
 import { readFile as readMergeFile, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
 import { GitMrStore } from "./git-mr/store.js";
+import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, type GitWorktreeSummary, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
+export type { GitWorktreeSummary } from "./git-worktree-management-contracts.js";
 
 const execFileAsync = promisify(execFile);
 const operationQueues = new Map<string, Promise<void>>();
@@ -31,19 +33,6 @@ export interface GitBranchSummary {
   head: string;
   upstream: string | null;
   checkedOutPath: string | null;
-}
-
-export interface GitWorktreeSummary {
-  path: string;
-  head: string;
-  branch: string | null;
-  detached: boolean;
-  primary: boolean;
-  locked: boolean;
-  prunable: boolean;
-  managed: boolean;
-  dirty: boolean;
-  sessionCount: number;
 }
 
 export interface GitCommitSummary {
@@ -538,6 +527,7 @@ export async function listGitWorkspaces(
   repositoryPath: RepositoryInput,
   projectId: string,
   sessionCounts: ReadonlyMap<string, number> = new Map(),
+  activeSessionCounts: ReadonlyMap<string, number> = sessionCounts,
 ): Promise<GitWorkspaceSummary> {
   const context = await assertRepository(repositoryPath);
   const worktrees = await rawWorktrees(context);
@@ -550,6 +540,11 @@ export async function listGitWorkspaces(
     () => normalized(context.location, managedRootInput),
   );
   const canonicalSessionCounts = new Map<string, number>();
+  const canonicalActiveCounts = new Map<string, number>();
+  await Promise.all([...activeSessionCounts].map(async ([workDir, count]) => {
+    const key = await canonical(context.location, workDir).catch(() => normalized(context.location, workDir));
+    canonicalActiveCounts.set(key, (canonicalActiveCounts.get(key) ?? 0) + count);
+  }));
   await Promise.all(
     [...sessionCounts].map(async ([workDir, count]) => {
       const key = await canonical(context.location, workDir).catch(() =>
@@ -632,7 +627,7 @@ export async function listGitWorkspaces(
     });
   const dirtyResults = await Promise.all(
     worktrees.map(async (item) => {
-      if (item.prunable) return false;
+      if (item.prunable) return null;
       try {
         return Boolean(
           (
@@ -644,7 +639,7 @@ export async function listGitWorkspaces(
           ).stdout.trim(),
         );
       } catch {
-        return false;
+        return null;
       }
     }),
   );
@@ -657,7 +652,10 @@ export async function listGitWorkspaces(
       ...item,
       primary: index === 0,
       managed: isInside(context.location, managedRoot, item.path),
-      dirty: dirtyResults[index],
+      dirty: dirtyResults[index] ?? false,
+      statusKnown: dirtyResults[index] !== null,
+      activeSessionCount: [...canonicalActiveCounts].reduce((total, [candidate, count]) =>
+        total + (samePath(context.location, item.path, candidate) || isInside(context.location, item.path, candidate) ? count : 0), 0),
       sessionCount:
         canonicalSessionCounts.get(
           pathApi(context.location).normalize(item.path),
@@ -747,18 +745,64 @@ export async function createDetachedGitWorktree(
   });
 }
 
+export interface WorktreeSessionUsage {
+  sessionCounts: ReadonlyMap<string, number>;
+  activeSessionCounts: ReadonlyMap<string, number>;
+}
+export type ReadWorktreeSessionUsage = () => WorktreeSessionUsage | Promise<WorktreeSessionUsage>;
+
+export async function previewGitWorktreePath(repository: RepositoryInput, projectId: string, branch: string): Promise<{ path: string }> {
+  const context = await assertRepository(repository);
+  await assertBranchName(context, branch);
+  return { path: await managedWorktreePath(context.location, projectId, branch) };
+}
+
+export async function previewGitWorktreeCleanup(repository: RepositoryInput, projectId: string, readUsage?: ReadWorktreeSessionUsage): Promise<GitWorktreeCleanupPreview> {
+  const usage = await readUsage?.();
+  const summary = await listGitWorkspaces(repository, projectId, usage?.sessionCounts, usage?.activeSessionCounts);
+  const result: GitWorktreeCleanupPreview = { candidates: [], retained: [] };
+  for (const worktree of summary.worktrees) {
+    const reasons = cleanupReasons(worktree);
+    if (reasons.length) result.retained.push({ worktree, reasons });
+    else result.candidates.push(worktree);
+  }
+  return result;
+}
+
+function validateCleanupPaths(paths: string[]): void {
+  if (!Array.isArray(paths) || paths.length > MAX_WORKTREE_CLEANUP_PATHS || paths.some(value => typeof value !== "string" || !value.length || value.length > 4096 || value.includes("\0")))
+    throw new GitWorkspaceError("Invalid worktree path list.");
+}
+
+/** Every item acquires the repository lock and re-reads both usage and Git state. */
+export async function cleanupGitWorktrees(repository: RepositoryInput, projectId: string, paths: string[], readUsage?: ReadWorktreeSessionUsage): Promise<GitWorktreeCleanupResponse> {
+  validateCleanupPaths(paths);
+  const results: GitWorktreeCleanupResponse["results"] = [];
+  for (const worktreePath of new Set(paths)) {
+    let branch: string | null = null;
+    try {
+      await removeGitWorktree(repository, projectId, worktreePath, { readUsage, onTarget: target => { branch = target.branch; } });
+      results.push({ path: worktreePath, branch, status: "removed" });
+    } catch (error) {
+      results.push({ path: worktreePath, branch, status: error instanceof GitWorkspaceError && [404, 409].includes(error.status) ? "skipped" : "failed", reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { results };
+}
+
 export async function removeGitWorktree(
   repositoryPath: RepositoryInput,
   projectId: string,
   worktreePath: string,
-  options: { force?: boolean; inUsePaths?: ReadonlySet<string> } = {},
+  options: { force?: boolean; inUsePaths?: ReadonlySet<string>; readUsage?: ReadWorktreeSessionUsage; onTarget?: (target: GitWorktreeSummary) => void } = {},
 ): Promise<void> {
   const context = await assertRepository(repositoryPath);
   await withRepositoryLock(context, async () => {
     const requested = await canonical(context.location, worktreePath).catch(
       () => normalized(context.location, worktreePath),
     );
-    const summary = await listGitWorkspaces(context.location, projectId);
+    const usage = await options.readUsage?.();
+    const summary = await listGitWorkspaces(context.location, projectId, usage?.sessionCounts, usage?.activeSessionCounts);
     const target = summary.worktrees.find((item) =>
       samePath(context.location, item.path, requested),
     );
@@ -767,13 +811,14 @@ export async function removeGitWorktree(
         "The selected path is not a worktree of this project.",
         404,
       );
-    if (target.primary)
-      throw new GitWorkspaceError(
-        "The primary worktree cannot be removed.",
-        409,
-      );
+    options.onTarget?.(target);
+    const reasons = cleanupReasons(target);
+    if (reasons.length) throw new GitWorkspaceError(reasons.join("；"), 409);
+    // Listing Git status can take time; check live occupancy again just before removal.
+    const latestUsage = await options.readUsage?.();
+    const livePaths = [...(latestUsage?.activeSessionCounts ?? [])].filter(([, count]) => count > 0).map(([candidate]) => candidate);
     const inUsePaths = await Promise.all(
-      [...(options.inUsePaths ?? [])].map((candidate) =>
+      [...(options.inUsePaths ?? []), ...livePaths].map((candidate) =>
         canonical(context.location, candidate).catch(() =>
           normalized(context.location, candidate),
         ),
@@ -781,7 +826,7 @@ export async function removeGitWorktree(
     );
     if (
       inUsePaths.some((candidate) =>
-        samePath(context.location, candidate, target.path),
+        samePath(context.location, candidate, target.path) || isInside(context.location, target.path, candidate),
       )
     )
       throw new GitWorkspaceError(
@@ -791,7 +836,7 @@ export async function removeGitWorktree(
     await git(context.location, context.root, [
       "worktree",
       "remove",
-      ...(options.force ? ["--force"] : []),
+      "--",
       target.path,
     ]);
   });
@@ -799,11 +844,30 @@ export async function removeGitWorktree(
 
 export async function pruneGitWorktrees(
   repositoryPath: RepositoryInput,
+  confirmedPaths?: string[],
+  readUsage?: ReadWorktreeSessionUsage,
 ): Promise<void> {
+  if (!confirmedPaths) throw new GitWorkspaceError("Preview and confirm the complete prune path list first.", 409);
+  validateCleanupPaths(confirmedPaths);
   const context = await assertRepository(repositoryPath);
   await withRepositoryLock(context, async () => {
-    await git(context.location, context.root, ["worktree", "prune"]);
+    const current = (await rawWorktrees(context)).filter(item => item.prunable && !item.locked);
+    const expected = new Set(confirmedPaths.map(value => normalized(context.location, value)));
+    if (expected.size !== current.length || current.some(item => !expected.has(normalized(context.location, item.path))))
+      throw new GitWorkspaceError("Prune preview changed. Refresh and confirm the complete list.", 409);
+    const usage = await readUsage?.();
+    for (const [candidate, count] of usage?.activeSessionCounts ?? []) {
+      const canonicalCandidate = await canonical(context.location, candidate).catch(() => normalized(context.location, candidate));
+      if (count > 0 && current.some(item => samePath(context.location, item.path, canonicalCandidate) || isInside(context.location, item.path, canonicalCandidate)))
+        throw new GitWorkspaceError("A prunable worktree is still used by an active session.", 409);
+    }
+    if (current.length) await git(context.location, context.root, ["worktree", "prune", "--expire", "now"]);
   });
+}
+
+export async function previewGitWorktreePrune(repository: RepositoryInput): Promise<{ paths: string[] }> {
+  const context = await assertRepository(repository);
+  return { paths: (await rawWorktrees(context)).filter(item => item.prunable && !item.locked).map(item => item.path) };
 }
 
 export async function resolveGitWorkspaceSelection(

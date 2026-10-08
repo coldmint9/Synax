@@ -1,4 +1,5 @@
 import {
+  app,
   Notification,
   type BrowserWindow,
   type IpcMainEvent,
@@ -80,6 +81,7 @@ export class SessionNotifications {
   private rendererReady = false;
   private seen = new Set<string>();
   private active = new Map<string, Notification>();
+  private unread = new Set<string>();
   private pending: SessionNotificationTarget | null = null;
 
   constructor(
@@ -92,6 +94,7 @@ export class SessionNotifications {
     this.enabled = enabled;
     if (!enabled) {
       this.pending = null;
+      this.clearBadge();
       for (const sessionId of this.active.keys()) this.dismiss(sessionId);
     }
   }
@@ -102,9 +105,20 @@ export class SessionNotifications {
   }
 
   dismiss(sessionId: string): void {
+    if (this.unread.delete(sessionId)) this.updateBadge();
     const notification = this.active.get(sessionId);
     this.active.delete(sessionId);
     notification?.close();
+  }
+
+  clearBadge(): void {
+    this.unread.clear();
+    this.updateBadge();
+  }
+
+  private updateBadge(): void {
+    if (process.platform === "darwin")
+      app.dock?.setBadge(this.unread.size ? String(this.unread.size) : "");
   }
 
   show(value: unknown): boolean {
@@ -158,11 +172,15 @@ export class SessionNotifications {
       notification.on("action", activate);
       notification.on("close", remove);
       notification.on("failed", () => {
+        if (this.active.get(payload.sessionId) === notification &&
+            this.unread.delete(payload.sessionId)) this.updateBadge();
         remove();
         this.seen.delete(payload.id);
         console.warn("[notifications] Native notification delivery failed");
       });
       this.active.set(payload.sessionId, notification);
+      this.unread.add(payload.sessionId);
+      this.updateBadge();
       this.seen.add(payload.id);
       if (this.seen.size > 512)
         this.seen.delete(this.seen.values().next().value!);
@@ -171,6 +189,7 @@ export class SessionNotifications {
       if (this.active.size > 64) this.dismiss(this.active.keys().next().value!);
       return true;
     } catch {
+      if (this.unread.delete(payload.sessionId)) this.updateBadge();
       this.active.delete(payload.sessionId);
       this.seen.delete(payload.id);
       console.warn("[notifications] Native notification unavailable");
@@ -183,6 +202,7 @@ export class SessionNotifications {
     let window = this.getWindow();
     if (!window || window.isDestroyed()) window = await this.ensureWindow();
     if (!this.enabled || !window || window.isDestroyed()) return;
+    this.clearBadge();
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();

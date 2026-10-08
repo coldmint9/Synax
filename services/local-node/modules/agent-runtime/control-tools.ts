@@ -57,7 +57,7 @@ export const planProposeTool: RegisteredTool = {
   label: "Propose a plan",
   description:
     "Submit a versioned implementation plan artifact from chat or goal. The report remains previewable across turns; the user may defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
-  progressiveDetails: "Step IDs must be unique and dependencies may refer only to earlier steps. humanAcceptanceCriteria must copy entries from acceptanceCriteria. In chat this requests a user decision; unrestricted goal sessions persist and execute immediately. Child agents return proposals to the primary agent.",
+  progressiveDetails: "Step IDs must be unique and dependencies may refer only to earlier steps. humanAcceptanceCriteria must copy entries from acceptanceCriteria. Unrestricted sessions persist and execute immediately without user confirmation; other permission tiers request a user decision. Execution stays in chat unless goal was selected. Child agents return proposals to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -67,10 +67,7 @@ export const planProposeTool: RegisteredTool = {
     if (!input.runId || !input.stepId)
       throw new AgentValidationError("A plan requires an active run step.");
     const session = store.getSession(input.sessionId);
-    if (
-      session.sessionMetadata?.mode === "goal" &&
-      isUnrestrictedPermissionRules(session.permissionRules)
-    ) {
+    if (isUnrestrictedPermissionRules(session.permissionRules)) {
       const planArgs = agentPlanSchema.parse(input.args);
       const artifact = persistPlanProposal(input.sessionId, planArgs);
       const plan = executeStoredPlan({

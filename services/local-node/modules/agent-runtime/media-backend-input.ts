@@ -1,21 +1,23 @@
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import { inputParts, type RuntimeContentPart } from "./content-parts.js";
+import { type RuntimeContentPart } from "./content-parts.js";
 import { getAsset, readAsset, assetPath } from "./media-assets.js";
 import type { StreamTurnRequest } from "./contracts.js";
+import { resolveFileParts } from "./file-input/index.js";
 export async function codexMediaInput(
   input: StreamTurnRequest,
   text: string,
 ): Promise<unknown[]> {
-  if (inputParts(input).some((p) => p.type !== "text" && p.type !== "image"))
+  const parts = await resolveFileParts(input.contentParts ?? [{ type: "text", text }]);
+  if (parts.some((p) => p.type !== "text" && p.type !== "image"))
     throw new AgentRuntimeError(
       "Codex only supports text and image attachments.",
       "UNSUPPORTED_MEDIA",
       422,
     );
-  for (const part of inputParts(input))
+  for (const part of parts)
     if (part.type !== "text") await readAsset(part.assetId);
-  return (input.contentParts ?? [{ type: "text", text }]).map((p) =>
+  return parts.map((p) =>
     p.type === "text"
       ? { type: "text", text: p.text }
       : { type: "localImage", path: assetPath(p.assetId) },
@@ -26,14 +28,15 @@ export async function claudeMediaInput(
   text: string,
 ): Promise<any> {
   if (!input.contentParts) return text;
-  if (input.contentParts.some((p) => p.type !== "text" && p.type !== "image"))
+  const parts = await resolveFileParts(input.contentParts);
+  if (parts.some((p) => p.type !== "text" && p.type !== "image"))
     throw new AgentRuntimeError(
       "Claude Code only supports text and image attachments.",
       "UNSUPPORTED_MEDIA",
       422,
     );
   return Promise.all(
-    inputParts(input).map(async (p) =>
+    parts.map(async (p) =>
       p.type === "text"
         ? p
         : {
@@ -52,6 +55,7 @@ export async function acpMediaInput(
   text: string,
 ): Promise<ContentBlock[]> {
   if (!parts.length) return [{ type: "text", text }];
+  parts = await resolveFileParts(parts);
   return (await Promise.all(
     parts.map(async (p) => {
       if (p.type === "text") return p;

@@ -8,6 +8,9 @@ import {
 } from "../../modules/agent-runtime/media-assets.js";
 import { MAX_FILE_BYTES } from "../../modules/agent-runtime/content-parts.js";
 import { toHttpError } from "../../modules/agent-runtime/runtime-errors.js";
+import { parseFileInput } from "../../modules/agent-runtime/file-input/index.js";
+import { isNativeVisual } from "../../modules/agent-runtime/file-input/registry.js";
+import { detectMediaType } from "../../modules/agent-runtime/media-assets.js";
 export const runtimeAssetRoutes = new Hono();
 runtimeAssetRoutes.onError((error, c) => {
   const mapped = toHttpError(error);
@@ -32,12 +35,16 @@ runtimeAssetRoutes.post(
     const projectId = form.get("projectId");
     if (!(file instanceof File) || typeof projectId !== "string")
       return c.json({ error: "file and projectId are required." }, 400);
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const mediaType = detectMediaType(bytes, file.name, file.type);
+    if (!isNativeVisual(mediaType))
+      await parseFileInput({ filename: file.name, mediaType, bytes });
     return c.json(
       {
         asset: await createAsset(
           projectId,
           file.name,
-          Buffer.from(await file.arrayBuffer()),
+          bytes,
           file.type,
         ),
       },
