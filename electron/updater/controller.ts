@@ -213,7 +213,7 @@ export class UpdaterController {
       });
       this.installing = true;
       this.update({ phase: "installing", message: "正在重启并安装更新…" });
-      try { (await this.engine()).quitAndInstall(false, true); }
+      try { await (await this.engine()).quitAndInstall(false, true); }
       catch (error) { await this.failInstallation(); throw error; }
     });
   }

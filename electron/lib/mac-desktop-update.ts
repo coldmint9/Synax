@@ -131,15 +131,15 @@ export async function verifyMacBundle(
     "-verify_arch",
     arch === "x64" ? "x86_64" : "arm64",
   ]);
-  // Developer-signed installations must keep the same signing identity. Existing
-  // unsigned/ad-hoc builds use the SHA-256 verified artifact from our GitHub release.
+  // Certificate-signed installations must keep the same signing identity.
+  // Ad-hoc builds rely on the verified release checksum for publisher trust.
   let signature = "";
   try {
     signature = (await run("/usr/bin/codesign", ["-dv", current])).stderr;
   } catch {
     /* Unsigned build. */
   }
-  if (/^TeamIdentifier=(?!not set).+/m.test(signature)) {
+  if (/^TeamIdentifier=(?!not set).+/m.test(signature) || /^Authority=/m.test(signature)) {
     const requirement = (
       await run("/usr/bin/codesign", ["-d", "-r-", current])
     ).stdout.match(/^designated => (.+)$/m)?.[1];
@@ -153,6 +153,9 @@ export async function verifyMacBundle(
       requirement,
       bundle,
     ]);
+  } else if (/^Signature=adhoc$/m.test(signature)) {
+    // An ad-hoc signature identifies no publisher, but its seal must be intact.
+    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundle]);
   }
 }
 

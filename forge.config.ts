@@ -17,6 +17,13 @@ const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
 const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg", import.meta.url));
 const updateConfig = path.resolve("dist-electron/app-update.yml");
+export const adHocMacSigning = {
+  identity: "-",
+  identityValidation: false,
+  preAutoEntitlements: false,
+  // Ad-hoc signatures have no Apple trust chain to assess with Gatekeeper.
+  gatekeeperAssess: false,
+};
 
 const config: ForgeConfig = {
   hooks: {
@@ -24,8 +31,7 @@ const config: ForgeConfig = {
       ensureDmgNative();
     },
     prePackage: async (_config, platform, arch) => {
-      // macOS code signing is optional, including tag builds. When configured,
-      // packagerConfig.osxSign below still requires a valid installed identity.
+      // Certificate-free macOS builds use ad-hoc signing below.
       await fs.mkdir(path.dirname(updateConfig), { recursive: true });
       await fs.writeFile(updateConfig, JSON.stringify({
         provider: "generic",
@@ -62,10 +68,10 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     win32metadata: windowsMetadata(),
     appBundleId: "com.Synax.desktop",
-    ...(process.env.SYNAX_MAC_SIGN_IDENTITY ? {
-      osxSign: { identity: process.env.SYNAX_MAC_SIGN_IDENTITY },
-    } : {}),
-    ...(process.env.SYNAX_APPLE_ID && process.env.SYNAX_APPLE_APP_PASSWORD && process.env.SYNAX_APPLE_TEAM_ID ? {
+    osxSign: process.env.SYNAX_MAC_SIGN_IDENTITY ? {
+      identity: process.env.SYNAX_MAC_SIGN_IDENTITY,
+    } : adHocMacSigning,
+    ...(process.env.SYNAX_MAC_SIGN_IDENTITY && process.env.SYNAX_APPLE_ID && process.env.SYNAX_APPLE_APP_PASSWORD && process.env.SYNAX_APPLE_TEAM_ID ? {
       osxNotarize: {
         appleId: process.env.SYNAX_APPLE_ID,
         appleIdPassword: process.env.SYNAX_APPLE_APP_PASSWORD,

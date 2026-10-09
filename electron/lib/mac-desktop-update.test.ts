@@ -13,6 +13,7 @@ import {
 } from "./mac-desktop-update.js";
 import { hashFile, type DesktopManifest } from "./desktop-update-format.js";
 const run = promisify(execFile);
+const signFixture = (bundle: string) => run("/usr/bin/codesign", ["--force", "--sign", "-", "--timestamp=none", bundle]);
 let root: string;
 beforeEach(async () => {
   root = await fs.realpath(
@@ -49,6 +50,8 @@ describe.skipIf(process.platform !== "darwin")(
           path.join(bundle, "Contents/MacOS/Synax"),
         ]);
       }
+      await signFixture(target);
+      await signFixture(source);
       const directory = path.join(root, "cache");
       await fs.mkdir(directory);
       const name = `Synax-0.2.0-darwin-${arch}.zip`;
@@ -113,6 +116,8 @@ describe.skipIf(process.platform !== "darwin")(
           path.join(bundle, "Contents/MacOS/Synax"),
         ]);
       }
+      await signFixture(target);
+      await signFixture(source);
       const directory = path.join(root, "cache");
       await fs.mkdir(directory);
       const name = `Synax-0.2.0-darwin-${arch}.zip`;
@@ -185,6 +190,7 @@ describe.skipIf(process.platform !== "darwin")(
           "-o",
           path.join(bundle, "Contents/MacOS/Synax"),
         ]);
+        await signFixture(bundle);
         await expect(
           verifyMacBundle(bundle, bundle, "0.2.0", arch),
         ).resolves.toBeUndefined();
@@ -196,6 +202,8 @@ describe.skipIf(process.platform !== "darwin")(
             arch === "x64" ? "arm64" : "x64",
           ),
         ).rejects.toThrow();
+        await fs.appendFile(path.join(bundle, "Contents/Info.plist"), "\n<!-- modified after signing -->\n");
+        await expect(verifyMacBundle(bundle, bundle, "0.2.0", arch)).rejects.toThrow();
       },
       30_000,
     );

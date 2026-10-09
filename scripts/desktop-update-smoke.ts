@@ -4,9 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { signAsync } from "@electron/osx-sign";
+import { adHocMacSigning } from "../forge.config.js";
 import {
   hashFile,
-  desktopArtifactName,
   type DesktopManifest,
 } from "../electron/lib/desktop-update-feed.js";
 import {
@@ -47,6 +48,8 @@ async function bundle(directory: string, version: string): Promise<void> {
     path.join(root, "smoke-binary"),
     path.join(directory, "Contents/MacOS/Synax"),
   );
+  await signAsync({ app: directory, platform: "darwin", ...adHocMacSigning });
+  await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", directory]);
 }
 
 try {
@@ -76,34 +79,27 @@ int main(void) {
   ]);
   await bundle(target, "0.1.0");
   await bundle(source, version);
-  const dmg = path.join(cache, desktopArtifactName(version, "darwin", arch));
+  const zip = path.join(cache, `Synax-${version}-darwin-${arch}.zip`);
   await run(
-    "/usr/bin/hdiutil",
-    [
-      "create",
-      "-srcfolder",
-      path.dirname(source),
-      "-volname",
-      "Synax Update Smoke",
-      "-format",
-      "UDZO",
-      dmg,
-    ],
+    "/usr/bin/ditto",
+    ["-c", "-k", "--keepParent", source, zip],
     { timeout: 120_000 },
   );
+  const archive = {
+    name: path.basename(zip),
+    size: (await fs.stat(zip)).size,
+    sha256: await hashFile(zip),
+  };
   const manifest: DesktopManifest = {
     format: 1,
     version,
     platform: "darwin",
     arch,
-    artifact: {
-      name: path.basename(dmg),
-      size: (await fs.stat(dmg)).size,
-      sha256: await hashFile(dmg),
-    },
+    artifact: archive,
+    updateArchive: archive,
   };
   const installation = await prepareMacInstallation(
-    dmg,
+    zip,
     manifest,
     executable,
     cache,
@@ -138,7 +134,7 @@ int main(void) {
     "existing project and settings",
   );
   console.log(
-    `Desktop update smoke passed: ${arch}; DMG verification, staging, replacement, relaunch, health cleanup and data preservation.`,
+    `Desktop update smoke passed: ${arch}; ad-hoc signatures, ZIP verification, staging, replacement, relaunch, health cleanup and data preservation.`,
   );
 } finally {
   await fs.rm(root, { recursive: true, force: true });

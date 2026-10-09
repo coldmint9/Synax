@@ -22,23 +22,26 @@ it("builds updater constructors against the host Electron API instead of the npm
     import { EventEmitter } from 'node:events';
     import { pathToFileURL } from 'node:url';
     const originalLoad = Module._load;
+    const electronPath = Module.createRequire(import.meta.url).resolve('electron');
     let reads = 0;
     const host = {
       app: { getVersion() { reads++; return '1.12.1'; } },
       autoUpdater: new EventEmitter(),
     };
     Module._load = function(id, ...args) {
-      if (id === 'electron') return host;
+      if (id === 'electron' || id === electronPath) return host;
       return originalLoad.call(this, id, ...args);
     };
     const engine = await import(pathToFileURL(process.argv[1]).href);
-    for (const platform of ['darwin', 'win32']) {
-      const updater = engine.createFrameworkUpdater(platform);
+    for (const [platform, compatibility] of [['darwin', false], ['darwin', true], ['win32', false]]) {
+      const updater = await engine.createFrameworkUpdater(platform, async () => compatibility);
       assert.equal(updater.currentVersion.version, '1.12.1');
+      const type = platform === 'win32' ? 'NsisUpdater' : compatibility ? 'AdHocMacUpdater' : 'MacUpdater';
+      assert.ok(updater.constructor.name.includes(type));
       engine.configureFrameworkFeed(updater, platform, 'x64', null);
       assert.equal(updater.autoInstallOnAppQuit, false);
     }
-    assert.equal(reads, 2);
+    assert.equal(reads, 3);
     let provider;
     let requests = [];
     let failure = 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND';

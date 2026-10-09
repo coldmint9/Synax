@@ -567,13 +567,16 @@ describe("desktop platform contract", () => {
   });
 
   it.each([undefined, "Developer ID Application: Synax (TESTTEAM)"])(
-    "configures macOS code signing only when an identity is provided: %s",
+    "uses ad-hoc signing unless a macOS identity is provided: %s",
     async (identity) => {
       vi.stubEnv("SYNAX_MAC_SIGN_IDENTITY", identity);
       vi.resetModules();
       const { default: config } = await import("../forge.config.js");
       expect(config.packagerConfig?.osxSign).toEqual(
-        identity ? { identity } : undefined,
+        identity ? { identity } : {
+          identity: "-", identityValidation: false,
+          preAutoEntitlements: false, gatekeeperAssess: false,
+        },
       );
     },
   );

@@ -9,11 +9,15 @@ import {
   missingFrameworkChannel,
 } from "../updater/framework-feed.js";
 import { updateRequestUrl } from "./update-network.js";
+import { AdHocMacUpdater, needsMacCompatibilityUpdater } from "./mac-compat-updater.js";
 
-/** Extend only URL resolution. Transfers, cache, checksums, native signature
- * validation and process handoff remain owned by electron-updater. */
-export function createFrameworkUpdater(platform: string): AppUpdater {
-  if (platform === "darwin") return new MacUpdater();
+/** Share framework downloads; certificate-free macOS apps use our bundle installer. */
+export async function createFrameworkUpdater(
+  platform: string,
+  inspectMac = needsMacCompatibilityUpdater,
+): Promise<AppUpdater> {
+  if (platform === "darwin") return await inspectMac(process.execPath)
+    ? new AdHocMacUpdater() : new MacUpdater();
   if (platform === "win32") return new NsisUpdater();
   throw new Error("此平台请通过发布页手动安装更新。");
 }

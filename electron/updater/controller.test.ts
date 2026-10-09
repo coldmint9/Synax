@@ -125,6 +125,17 @@ it("surfaces native installation errors and persists a failed transaction", asyn
   expect(value.state.phase).toBe("error");
   expect(value.state.message).toContain("更新未完成");
 });
+it("records an asynchronous quitAndInstall rejection as failed without leaving a pending journal", async () => {
+  const value = await ready();
+  updater.quitAndInstall.mockRejectedValue(new Error("native failure"));
+  await expect(value.install()).resolves.toBeUndefined();
+  expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  expect(value.state.history).toHaveLength(1);
+  expect(value.state.history[0]).toMatchObject({ version: "0.2.0", outcome: "failed" });
+  expect(value.state.phase).toBe("error");
+  expect(value.state.message).toContain("更新未完成");
+  await expect(fs.stat(pending())).rejects.toThrow();
+});
 it("leaves the app running if the installation journal cannot be persisted", async () => {
   const value = await ready();
   await fs.mkdir(pending(), { recursive: true });
