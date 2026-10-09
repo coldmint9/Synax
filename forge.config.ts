@@ -23,6 +23,9 @@ export const adHocMacSigning = {
   preAutoEntitlements: false,
   // Ad-hoc signatures have no Apple trust chain to assess with Gatekeeper.
   gatekeeperAssess: false,
+  // Ad-hoc code has no Team ID for Hardened Runtime library validation.
+  // Reset inherited flags as Electron's upstream binaries may already be signed.
+  optionsForFile: () => ({ hardenedRuntime: false, signatureFlags: "0" }),
 };
 
 const config: ForgeConfig = {

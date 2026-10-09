@@ -48,21 +48,37 @@ async function bundle(directory: string, version: string): Promise<void> {
     path.join(root, "smoke-binary"),
     path.join(directory, "Contents/MacOS/Synax"),
   );
+  await fs.mkdir(path.join(directory, "Contents/Frameworks"), { recursive: true });
+  await fs.copyFile(
+    path.join(root, "libsynax-smoke.dylib"),
+    path.join(directory, "Contents/Frameworks/libsynax-smoke.dylib"),
+  );
   await signAsync({ app: directory, platform: "darwin", ...adHocMacSigning });
   await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", directory]);
+  // A valid resource seal alone does not prove dyld can load ad-hoc libraries.
+  await run(path.join(directory, "Contents/MacOS/Synax"), ["--check-library"]);
 }
 
 try {
   await fs.mkdir(cache, { recursive: true });
   await fs.mkdir(path.dirname(userData), { recursive: true });
   await fs.writeFile(userData, "existing project and settings");
-  // A tiny independent Mach-O fixture exercises Launch Services without touching
-  // a real Synax profile, opening user projects, or requiring a running API.
+  // Exercise the same ad-hoc executable + dynamic library combination as Electron,
+  // without touching a real Synax profile or requiring a running API.
+  await fs.writeFile(path.join(root, "library.c"), "int smoke_value(void) { return 42; }\n");
+  await run("/usr/bin/xcrun", [
+    "clang", "-dynamiclib", path.join(root, "library.c"),
+    "-install_name", "@rpath/libsynax-smoke.dylib",
+    "-o", path.join(root, "libsynax-smoke.dylib"),
+  ]);
   await fs.writeFile(
     path.join(root, "smoke.c"),
     `#include <stdio.h>
 #include <mach-o/dyld.h>
-int main(void) {
+extern int smoke_value(void);
+int main(int argc, char **argv) {
+  if (smoke_value() != 42) return 3;
+  if (argc > 1) return 0;
   char executable[4096], marker[8192]; unsigned int size = sizeof(executable);
   if (_NSGetExecutablePath(executable, &size) != 0) return 1;
   snprintf(marker, sizeof(marker), "%s.launched", executable);
@@ -74,6 +90,8 @@ int main(void) {
   await run("/usr/bin/xcrun", [
     "clang",
     path.join(root, "smoke.c"),
+    "-L", root, "-lsynax-smoke",
+    "-Wl,-rpath,@executable_path/../Frameworks",
     "-o",
     path.join(root, "smoke-binary"),
   ]);
@@ -134,7 +152,7 @@ int main(void) {
     "existing project and settings",
   );
   console.log(
-    `Desktop update smoke passed: ${arch}; ad-hoc signatures, ZIP verification, staging, replacement, relaunch, health cleanup and data preservation.`,
+    `Desktop update smoke passed: ${arch}; ad-hoc executable and dylib launch, ZIP verification, staging, replacement, relaunch, health cleanup and data preservation.`,
   );
 } finally {
   await fs.rm(root, { recursive: true, force: true });

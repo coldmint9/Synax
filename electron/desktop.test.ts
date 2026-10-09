@@ -576,8 +576,15 @@ describe("desktop platform contract", () => {
         identity ? { identity } : {
           identity: "-", identityValidation: false,
           preAutoEntitlements: false, gatekeeperAssess: false,
+          optionsForFile: expect.any(Function),
         },
       );
+      if (!identity) {
+        const signing = config.packagerConfig!.osxSign as {
+          optionsForFile: () => { hardenedRuntime: boolean; signatureFlags: string };
+        };
+        expect(signing.optionsForFile()).toEqual({ hardenedRuntime: false, signatureFlags: "0" });
+      }
     },
   );
 });
