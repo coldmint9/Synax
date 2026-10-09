@@ -563,4 +563,29 @@ describe("document inputs independent of provider capabilities", () => {
       (messages[0].content as any[]).every((part) => part.type === "text"),
     ).toBe(true);
   });
+  it("reads an image by workspace path and retains the source asset", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    const root = fs.mkdtempSync(path.join(process.cwd(), "image-read-"));
+    const file = path.join(root, "shot-day.png");
+    fs.writeFileSync(
+      file,
+      Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        Buffer.alloc(64),
+      ]),
+    );
+    try {
+      const read = await mediaReadTool.execute({
+        sessionId: session.id,
+        toolCallId: "image-read",
+        args: { path: file },
+      } as any);
+      expect(read.contentParts?.[0]).toMatchObject({ type: "image" });
+      expect(
+        sessionHasAsset(session.id, (read.result as any).asset.id),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

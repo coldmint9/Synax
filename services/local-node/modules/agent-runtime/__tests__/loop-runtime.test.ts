@@ -839,6 +839,45 @@ describe("agentLoopRuntime", () => {
   });
 
   it.each(["full", "boundary"])(
+    "automatically dequeues after a Native chat turn retains pending TODOs (%s)",
+    async (mode) => {
+      vi.stubEnv("SYNAX_VERSION_HISTORY", mode === "full" ? "legacy" : "boundary");
+      const { RunCoordinator } = await import("../run-coordinator.js");
+      const session = agentSessionRuntime.create({
+        ...executorInput,
+        profileId: "synax",
+        permissionTier: "unrestricted",
+        sessionMetadata: { mode: "chat" },
+      });
+      const coordinator = new RunCoordinator({
+        execute: (id, _mode, input, signal) => agentLoopRuntime.streamRun(id, input, signal),
+        interrupt: async () => {},
+      });
+      try {
+        queueMockStep(makeToolStep({
+          toolName: "task_create",
+          toolCallId: "pending-queued-turn",
+          args: { subject: "Remaining work", description: "Still pending" },
+        }));
+        queueMockStep(makeTextStep("This round ended with work remaining."));
+        queueMockStep(makeTextStep("The queued message has been processed."));
+        const accepted = coordinator.submit(session.id, { message: "Start work" }, "queue-pending-todos");
+        inputQueueService.enqueue(session.id, { message: "Explain the remaining work" });
+        await coordinator.waitForIdle();
+        expect(agentRuntimeStore.getRun(accepted.run.id).stopReason).toBe("round_yielded");
+        expect(inputQueueService.list(session.id)).toHaveLength(0);
+        expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(2);
+        expect(capturedRequests.at(-1)?.messages.filter((m) => m.role === "user").map((m) => m.content))
+          .toEqual(["Start work", "Explain the remaining work"]);
+      } finally {
+        await coordinator.waitForIdle();
+        clearVersionSessionFixture(session.id);
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it.each(["full", "boundary"])(
     "runs consecutive versioned Native turns under coordinator leases (%s)",
     async (mode) => {
       vi.stubEnv(

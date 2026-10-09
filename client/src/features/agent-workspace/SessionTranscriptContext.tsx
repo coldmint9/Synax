@@ -1,16 +1,19 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
+import type { FileLinkRoot } from "./fileLink";
 
 export interface TranscriptSessionScope {
   /** Session the rendered reply belongs to, or null outside a session. */
   sessionId: string | null;
   /** Workspace root, used to turn an absolute link into a relative path. */
   workspacePath: string | null;
+  roots: readonly FileLinkRoot[];
 }
 
 interface ScopedSession {
   sessionId: string | null;
   workspacePath?: string | null;
+  roots?: readonly FileLinkRoot[];
 }
 
 const TranscriptSessionContext = createContext<ScopedSession | null>(null);
@@ -26,15 +29,17 @@ const TranscriptSessionContext = createContext<ScopedSession | null>(null);
 export function TranscriptSessionProvider({
   sessionId,
   workspacePath,
+  roots,
   children,
 }: {
   sessionId: string | null | undefined;
   workspacePath?: string | null;
+  roots?: readonly FileLinkRoot[];
   children: ReactNode;
 }) {
   return (
     <TranscriptSessionContext.Provider
-      value={{ sessionId: sessionId ?? null, workspacePath }}
+      value={{ sessionId: sessionId ?? null, workspacePath, roots }}
     >
       {children}
     </TranscriptSessionContext.Provider>
@@ -52,6 +57,7 @@ export function useTranscriptSession(): TranscriptSessionScope {
     return {
       sessionId: polled.sessionId,
       workspacePath: polled.environment?.workspacePath ?? null,
+      roots: polled.environment?.repositories ?? [],
     };
   }
 
@@ -62,5 +68,8 @@ export function useTranscriptSession(): TranscriptSessionScope {
   return {
     sessionId: scoped.sessionId,
     workspacePath: scoped.workspacePath ?? inherited,
+    roots: scoped.roots ?? (polled.sessionId === scoped.sessionId
+      ? polled.environment?.repositories ?? []
+      : []),
   };
 }

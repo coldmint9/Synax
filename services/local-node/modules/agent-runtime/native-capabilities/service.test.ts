@@ -13,7 +13,7 @@ import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from "../tools/wor
 import { updateProjectSettings, initializeProjectSettings, getProjectSettings } from "../../../infrastructure/runtime/config/project-settings-store.js";
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 import { countTokens } from "../context-tokenizer.js";
-import { capabilityContract, disclose, readDisclosure, DISCLOSURE_LIMITS } from "./disclosure.js";
+import { capabilityContract, disclose, readDisclosure, reconcileDisclosure } from "./disclosure.js";
 import type { RegisteredTool } from "../contracts.js";
 
 let registry: ToolRegistry, id: string, dir: string;
@@ -106,14 +106,15 @@ describe("native capability lifecycle", () => {
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
   });
 
-  it("invalidates changed schemas and checks grants again at execution", async () => {
+  it("refreshes changed schemas on the next projection and checks grants again at execution", async () => {
     await discover([tool(0).id]);
     project();
     registry.register({ ...tool(0), inputSchema: z.object({ changed: z.boolean() }) });
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("failed");
-    expect(project().tools.map((item) => item.id)).not.toContain(tool(0).id);
-    await discover([tool(0).id]);
-    project();
+    const refreshed = project().tools.find((item) => item.id === tool(0).id);
+    expect(refreshed).toBeDefined();
+    expect(z.toJSONSchema(refreshed!.inputSchema!)).toMatchObject({ properties: { changed: { type: "boolean" } } });
+    expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("completed");
     updateProjectSettings(projectId, { codeMode: { mcpTools: [] } }, "test");
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("denied");
   });
@@ -158,16 +159,50 @@ describe("native capability lifecycle", () => {
     expect(new Set(found).size).toBe(10);
   });
 
-  it("bounds dynamic working sets by count and tokens and preserves recent additions", () => {
+  it("retains every discovered tool beyond the former count and token budgets", () => {
     const all = new Map(Array.from({ length: 30 }, (_, index) => {
       const contract = capabilityContract(tool(index), true);
-      return [contract.id, contract] as const;
+      return [contract.id, { ...contract, tokens: 9000 }] as const;
     }));
     let state = readDisclosure(null, id);
     for (const contract of all.values()) state = disclose(state, [contract], all);
-    expect(state.entries.length).toBeLessThanOrEqual(DISCLOSURE_LIMITS.count);
-    expect(state.entries.some((item) => item.id === tool(29).id)).toBe(true);
-    expect(state.entries.reduce((sum, item) => sum + all.get(item.id)!.tokens, 0)).toBeLessThanOrEqual(DISCLOSURE_LIMITS.tokens);
+    state = readDisclosure(JSON.parse(JSON.stringify(state)), id);
+    expect(new Set(state.entries.map((entry) => entry.id))).toEqual(new Set(all.keys()));
+    expect(reconcileDisclosure(state, all)).toEqual(state);
+  });
+
+  it("keeps all discovered tools in later model requests after rebuilding the registry", async () => {
+    for (let index = 1; index < 20; index++) registry.register(tool(index));
+    for (let index = 0; index < 20; index += 4) {
+      await discover(Array.from({ length: 4 }, (_, offset) => tool(index + offset).id));
+      project();
+    }
+    registry = new ToolRegistry();
+    for (let index = 0; index < 20; index++) registry.register(tool(index));
+    const projected = project();
+    const ids = projected.tools.map((item) => item.id);
+    for (let index = 0; index < 20; index++) expect(ids).toContain(tool(index).id);
+    expect(project().tools.map((item) => item.id)).toEqual(ids);
+    expect(projected.prompt).toContain("stay loaded across turns and context compaction");
+    expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
+  });
+
+  it("discovers oversized contracts and exposes every result in a page", async () => {
+    const large = { ...tool(1), description: "Detailed capability contract. ".repeat(10000) };
+    expect(capabilityContract(large, false).tokens).toBeGreaterThan(8000);
+    registry.register(large);
+    const ids = [tool(0).id, large.id];
+    expect((await discover(ids)).contracts.map((item) => item.id)).toEqual(ids);
+    expect(project().tools.map((item) => item.id)).toEqual(expect.arrayContaining(ids));
+  });
+
+  it("removes unavailable tools from persisted disclosure and rejects stale execution", async () => {
+    await discover([tool(0).id]);
+    project();
+    registry = new ToolRegistry();
+    expect(project().tools.map((item) => item.id)).not.toContain(tool(0).id);
+    expect(readDisclosure(store.getSession(id).sessionMetadata?.capabilityDisclosure, id).entries).toEqual([]);
+    expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("denied");
   });
 
   it("reduces first-request schema tokens by at least 50% for 100 extra tools", async () => {

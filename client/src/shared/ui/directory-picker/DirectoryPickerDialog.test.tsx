@@ -55,7 +55,7 @@ describe("DirectoryPickerDialog", () => {
     vi.mocked(listRemoteDirectories).mockResolvedValue(listing());
     const onSelect = vi.fn();
 
-    render(
+    const { container } = render(
       <DirectoryPickerDialog
         open
         initialPath="/home/dev"
@@ -74,9 +74,11 @@ describe("DirectoryPickerDialog", () => {
     expect(
       screen.queryByRole("checkbox", { name: "选择 work" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("dialog").closest(".dialog-overlay")?.parentElement,
-    ).toBe(document.body);
+    expect(container).not.toContainElement(screen.getByRole("dialog"));
+    expect(document.body).toContainElement(screen.getByRole("dialog"));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "目录路径" })).toHaveFocus(),
+    );
     expect(screen.getByRole("region", { name: "选择项目目录" })).toHaveClass(
       "overflow-y-auto",
     );

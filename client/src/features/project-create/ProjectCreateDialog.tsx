@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, X } from "lucide-react";
+import { AlertCircle, FolderOpen, Plus, X } from "lucide-react";
 import { AppSelect } from "../../shared/ui/AppSelect";
 import {
   Dialog,
@@ -238,11 +238,7 @@ function ProjectCreateForm({
   const busy = submitting || picking;
   return (
     <>
-      <Dialog
-        open={!pickerOpen}
-        onClose={close}
-        dismissible={!submitting && !pickerOpen}
-      >
+      <Dialog open onClose={close} dismissible={!submitting && !pickerOpen}>
         <DialogContainer className="project-create-container">
           <DialogPanel className="project-create-panel">
             <DialogHeader className="project-create-header">
@@ -366,6 +362,7 @@ function ProjectCreateForm({
                     </div>
                   ) : (
                     <div className="project-create-empty">
+                      <FolderOpen size={22} aria-hidden="true" />
                       <p>{c.folderHint}</p>
                     </div>
                   )}
@@ -390,7 +387,8 @@ function ProjectCreateForm({
                 </section>
                 {error && (
                   <p className="project-create-error" role="alert">
-                    {error}
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{error}</span>
                   </p>
                 )}
               </DialogBody>
@@ -415,25 +413,25 @@ function ProjectCreateForm({
             </form>
           </DialogPanel>
         </DialogContainer>
+        {pickerOpen && (
+          <DirectoryPickerDialog
+            open
+            multiple
+            locationKind={locationKind}
+            distribution={locationKind === "wsl" ? distribution : undefined}
+            onClose={finishPicker}
+            onSelect={(selection) => {
+              addSelections([selection]);
+              finishPicker();
+            }}
+            onSelectMultiple={(selections) => {
+              addSelections(selections);
+              finishPicker();
+            }}
+            labels={{ title: c.pickerTitle, confirmMultiple: c.pickerConfirm }}
+          />
+        )}
       </Dialog>
-      {pickerOpen && (
-        <DirectoryPickerDialog
-          open
-          multiple
-          locationKind={locationKind}
-          distribution={locationKind === "wsl" ? distribution : undefined}
-          onClose={finishPicker}
-          onSelect={(selection) => {
-            addSelections([selection]);
-            finishPicker();
-          }}
-          onSelectMultiple={(selections) => {
-            addSelections(selections);
-            finishPicker();
-          }}
-          labels={{ title: c.pickerTitle, confirmMultiple: c.pickerConfirm }}
-        />
-      )}
     </>
   );
 }

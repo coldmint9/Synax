@@ -861,8 +861,8 @@ export async function getSessionEnvironmentFileMedia(
     throw new AgentValidationError(`Image preview exceeds 20 MB: ${cleanPath}`);
   const bytes = fs.readFileSync(absolutePath);
   const mediaType = detectMediaType(bytes, cleanPath);
-  if (!mediaType.startsWith("image/"))
-    throw new AgentValidationError(`Unsupported image preview: ${cleanPath}`);
+  if (!mediaType.startsWith("image/") && mediaType !== "application/pdf")
+    throw new AgentValidationError(`Unsupported media preview: ${cleanPath}`);
   return { sessionId, path: cleanPath, mediaType, bytes };
 }
 

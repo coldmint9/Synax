@@ -1,4 +1,5 @@
 import type { Components } from "react-markdown";
+import { defaultUrlTransform } from "react-markdown";
 import { memo, useCallback, useMemo } from "react";
 import { parseFileLink, type FileLinkTarget } from "./fileLink";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -18,13 +19,13 @@ interface Props {
  * real URLs keep the default anchor behaviour.
  */
 function useMarkdownComponents(): Components {
-  const { sessionId, workspacePath } = useTranscriptSession();
+  const { sessionId, workspacePath, roots } = useTranscriptSession();
 
   const openTarget = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>, target: FileLinkTarget) => {
       if (!sessionId || event.defaultPrevented) return;
       event.preventDefault();
-      openWorkspaceFile(sessionId, target.path, target.line);
+      openWorkspaceFile(sessionId, target.path, target.line, target.rootId, target.rootName);
     },
     [sessionId],
   );
@@ -35,7 +36,7 @@ function useMarkdownComponents(): Components {
         const label = typeof children === "string" ? children : undefined;
         // A file link still renders as a file link without a session scope; it
         // simply keeps its href so nothing looks broken in isolated previews.
-        const target = parseFileLink(href, label, workspacePath);
+        const target = parseFileLink(href, label, workspacePath, roots);
 
         if (!target) {
           return (
@@ -63,7 +64,7 @@ function useMarkdownComponents(): Components {
         );
       },
     }),
-    [openTarget, workspacePath],
+    [openTarget, workspacePath, roots],
   );
 }
 
@@ -72,11 +73,17 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   className = "feed-prose",
 }: Props) {
   const components = useMarkdownComponents();
+  const { workspacePath, roots } = useTranscriptSession();
   return (
     <MarkdownRenderer
       content={content}
       className={className}
       components={components}
+      urlTransform={(url, key) =>
+        key === "href" && parseFileLink(url, undefined, workspacePath, roots)
+          ? url
+          : defaultUrlTransform(url)
+      }
     />
   );
 });

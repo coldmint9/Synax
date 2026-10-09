@@ -67,7 +67,7 @@ export class NativeCapabilities {
   }
 
   /** Called once before each model request, including requests after compaction.
-   * Current definitions rehydrate bounded contracts; no stale history is needed. */
+   * Current definitions rehydrate session discoveries; no stale history is needed. */
   project(sessionId: string, allowed: CapabilityTool[]): { tools: CapabilityTool[]; prompt: string } {
     if (!nativeCapabilitiesEnabled(this.store.getSession(sessionId)))
       return { tools: allowed.filter((tool) => tool.id !== "agent.discover"), prompt: "" };
@@ -94,8 +94,8 @@ export class NativeCapabilities {
       tools,
       prompt: [
         "## Native capabilities",
-        "Only a small working set of tool schemas is exposed. Use agent.discover to search capabilities or load exact IDs. An empty query pages through the directory; hidden tools are not unavailable tools.",
-        "Already exposed capability IDs are active for this model step; call them directly instead of discovering the same IDs again.",
+        "Core tools and all capabilities discovered in this session are exposed. Use agent.discover only for capabilities missing from the current tool list. An empty query pages through the directory; hidden tools are not unavailable tools.",
+        "Discovered capabilities stay loaded across turns and context compaction in this session while available and permitted; updated definitions are refreshed automatically. Call exposed tools directly. Do not search again to confirm availability or reload a known tool.",
         `Capability groups (counts): ${JSON.stringify(Object.fromEntries([...groups].sort()))}.`,
         "Code Mode is the automatic execution mechanism. Submit normal tool operations; the loop compiles and schedules them. Do not call code.run or agent.execute to opt into composition.",
         `Sandbox-composable IDs: ${JSON.stringify(composable)}.`,
@@ -129,7 +129,7 @@ export class NativeCapabilities {
   tools(): RegisteredTool[] {
     return [{
       id: "agent.discover", label: "Discover capabilities", category: "read", mutability: "read", resumeBehavior: "none",
-      description: "Native capability discovery. Search with query/group or load up to four exact runtime IDs. Omit filters to browse all capabilities; cursor pages results. Returns bounded contracts and exposes their direct tool schemas on the NEXT step. Discovery is not authorization. Do not execute dependent code in the same step.",
+      description: "Discover capabilities missing from the current tool list. Search with query/group or load up to four exact runtime IDs. Omit filters to browse all capabilities; cursor pages results. Discovered tools are exposed on the NEXT step and stay loaded for this session while available and permitted, including after context compaction. Call already exposed tools directly; do not rediscover them. Discovery is not authorization. Do not execute dependent code in the same step.",
       inputSchema: z.object({
         query: z.string().max(120).optional(), group: z.string().max(256).optional(),
         ids: z.array(z.string().min(1).max(256)).min(1).max(4).optional(),
@@ -146,16 +146,14 @@ export class NativeCapabilities {
           (!query || `${tool.id} ${tool.label} ${tool.description}`.toLowerCase().includes(query)));
         const offset = args.cursor ?? 0;
         const page = matching.slice(offset, offset + DISCLOSURE_LIMITS.page);
-        let tokens = 0;
         const selected: CapabilityContract[] = [];
         const unavailable: Array<{ id: string; reason: string }> = [];
         for (const tool of page) {
           const contract = catalog.get(tool.id);
-          if (!contract || tokens + contract.tokens > DISCLOSURE_LIMITS.tokens) {
-            unavailable.push({ id: tool.id, reason: contract ? "Contract exceeds remaining page budget; request this ID separately." : "Schema cannot be serialized." });
+          if (!contract) {
+            unavailable.push({ id: tool.id, reason: "Schema cannot be serialized." });
             continue;
           }
-          tokens += contract.tokens;
           selected.push(contract);
         }
         const state = disclose(this.state(input.sessionId, catalog), selected, catalog);
@@ -167,7 +165,7 @@ export class NativeCapabilities {
           total: matching.length,
           nextCursor: offset + page.length < matching.length ? offset + page.length : null,
           active: state.entries.map((entry) => entry.id),
-          nextAction: "Contracts and direct schemas are available on the next model step.",
+          nextAction: "Call the discovered tools directly from the next model step. They remain loaded in this session; no repeat discovery is needed while available and permitted.",
         }, `Discovered ${selected.length} capability contracts.`);
       },
     }, {

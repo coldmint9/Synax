@@ -5,6 +5,7 @@ export interface FileParserInput {
   filename: string;
   mediaType: string;
   bytes: Uint8Array;
+  loadImage?: (source: string) => Promise<Uint8Array>;
   visual?: {
     maxPages: number;
     maxImageBytes: number;
@@ -17,7 +18,7 @@ export interface ParsedDocument {
   images?: {
     page: number;
     bytes: Uint8Array;
-    mediaType: "image/png";
+    mediaType: string;
     context?: string;
   }[];
   warnings?: string[];

@@ -176,8 +176,10 @@ describe("headless Run coordinator", () => {
     },
   );
 
-  it("drains queued messages when a plain conversation ends in a round handoff", async () => {
+  it.each(["chat", "plan"])("drains queued messages after a %s round handoff with unfinished work", async (mode) => {
     const session = create();
+    agentRuntimeStore.updateSessionMetadata(session.id, { mode });
+    const work = workStore.create(session.id, "Unfinished conversation work");
     execute.mockImplementationOnce(async function* (id, _mode, input) {
       const run = activateAcceptedRun(id, input.acceptedRunId!, "user", null);
       await gate;
@@ -199,6 +201,7 @@ describe("headless Run coordinator", () => {
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
     expect(execute.mock.calls[1][2].message).toBe("Later");
     expect(inputQueueService.list(session.id)).toHaveLength(0);
+    expect(workStore.current(session.id)).toMatchObject({ id: work.id, status: "active" });
   });
 
   it("keeps queued messages while a settled goal round still has a continuation", async () => {

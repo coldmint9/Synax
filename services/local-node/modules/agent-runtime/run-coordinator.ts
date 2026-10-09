@@ -32,6 +32,7 @@ import { goalContinuationInput } from "./goal-continuation.js";
 import { inputQueueService } from "./input-queue-service.js";
 import { interactionService } from "./interaction-service.js";
 import { workStore } from "./work-store.js";
+import { usesGoalWorkflow } from "./workflow-mode.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 
 interface Owner {
@@ -197,7 +198,13 @@ export class RunCoordinator {
           // once no continuation applies (e.g. the goal finished), drain the queue.
           (latestRun.stopReason === "round_yielded" &&
             goalContinuationInput(sessionId, latestRun.id) !== null) ||
-          (work && work.status !== "completed") ||
+          // Chat/plan handoffs end the turn while retaining unfinished TODOs.
+          // Only goal work must finish before queued user turns can start.
+          (work &&
+            work.status !== "completed" &&
+            !(work.status === "active" &&
+              latestRun.stopReason === "round_yielded" &&
+              !usesGoalWorkflow(session))) ||
           interactionService.pending(sessionId)
         )
           return null;

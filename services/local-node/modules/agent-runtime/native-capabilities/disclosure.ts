@@ -16,7 +16,8 @@ export interface CapabilityContract {
 }
 export interface DisclosureEntry { id: string; version: string; usedAt: number }
 export interface DisclosureState { version: 1; owner: string; entries: DisclosureEntry[] }
-export const DISCLOSURE_LIMITS = { count: 12, tokens: 8000, page: 4 } as const;
+// Bound discovery responses, never the lifetime of discovered session tools.
+export const DISCLOSURE_LIMITS = { page: 4 } as const;
 
 // Weak references avoid keeping disconnected MCP tools alive indefinitely.
 const contracts = new WeakMap<object, { signature: string; contract: Omit<CapabilityContract, "compose"> }>();
@@ -48,19 +49,19 @@ export function readDisclosure(value: unknown, owner: string): DisclosureState {
   return {
     version: 1, owner,
     entries: state.entries.filter((entry) => entry && typeof entry.id === "string" &&
-      typeof entry.version === "string" && Number.isFinite(entry.usedAt)).slice(0, DISCLOSURE_LIMITS.count),
+      typeof entry.version === "string" && Number.isFinite(entry.usedAt)),
   };
 }
 
 export function reconcileDisclosure(state: DisclosureState, catalog: Map<string, CapabilityContract>): DisclosureState {
-  let tokens = 0;
-  const entries = [...state.entries].sort((a, b) => b.usedAt - a.usedAt).filter((entry) => {
+  const seen = new Set<string>();
+  const entries = state.entries.flatMap((entry) => {
     const contract = catalog.get(entry.id);
-    if (!contract || contract.version !== entry.version || CORE_TOOL_IDS.has(entry.id)) return false;
-    if (tokens + contract.tokens > DISCLOSURE_LIMITS.tokens) return false;
-    tokens += contract.tokens;
-    return true;
-  }).slice(0, DISCLOSURE_LIMITS.count);
+    if (!contract || CORE_TOOL_IDS.has(entry.id) || seen.has(entry.id)) return [];
+    seen.add(entry.id);
+    // Refresh definitions at the next projection, without requiring discovery again.
+    return [{ ...entry, version: contract.version }];
+  });
   return { ...state, entries };
 }
 

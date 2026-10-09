@@ -3,6 +3,14 @@ export interface FileLinkTarget {
   path: string;
   /** 1-based line from a `#L12` anchor or a `path:12` suffix. */
   line: number | null;
+  rootId?: string;
+  rootName?: string;
+}
+
+export interface FileLinkRoot {
+  rootId: string;
+  name: string;
+  workspacePath: string;
 }
 
 /** Any `scheme:` prefix, used to reject http/mailto/vscode style links. */
@@ -46,6 +54,7 @@ function toWorkspaceRelative(
 function parseCandidate(
   candidate: string,
   workspacePath?: string | null,
+  roots: readonly FileLinkRoot[] = [],
 ): FileLinkTarget | null {
   if (!candidate) return null;
 
@@ -53,7 +62,7 @@ function parseCandidate(
   if (/^file:/i.test(value)) {
     // `file:///abs/path` and `file:/abs/path` both denote a local absolute path.
     value = value.replace(/^file:\/\/+/i, "/").replace(/^file:/i, "");
-  } else if (SCHEME.test(value)) {
+  } else if (SCHEME.test(value) && !TRAILING_LINE.test(value)) {
     return null;
   }
 
@@ -71,7 +80,17 @@ function parseCandidate(
   const pathPart = match?.[1] ? match[1] : value;
   const inlineLine = match?.[1] ? Number(match[2]) : null;
 
-  const relative = toWorkspaceRelative(pathPart, workspacePath);
+  // A filename followed by a line number looks like a URL scheme. Only
+  // allow that colon after removing the numeric suffix, never a real URL.
+  if (SCHEME.test(pathPart) && !DRIVE_PATH.test(pathPart)) return null;
+
+  const root = [...roots]
+    .sort((a, b) => b.workspacePath.length - a.workspacePath.length)
+    .find((entry) => {
+      const base = entry.workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+      return pathPart.startsWith(`${base}/`);
+    });
+  const relative = toWorkspaceRelative(pathPart, root?.workspacePath ?? workspacePath);
   if (!relative) return null;
 
   const segments = relative.split("/");
@@ -84,6 +103,7 @@ function parseCandidate(
   return {
     path: relative,
     line: inlineLine ?? (fragment ? fragmentLine(fragment) : null),
+    ...(root ? { rootId: root.rootId, rootName: root.name } : {}),
   };
 }
 
@@ -99,13 +119,14 @@ export function parseFileLink(
   href: string | undefined,
   label: string | undefined,
   workspacePath?: string | null,
+  roots: readonly FileLinkRoot[] = [],
 ): FileLinkTarget | null {
   const raw = (href ?? "").trim();
   if (raw) {
-    const target = parseCandidate(raw, workspacePath);
+    const target = parseCandidate(raw, workspacePath, roots);
     if (target) return target;
     // A real URL (or a scheme we cannot read) is never re-interpreted as a path.
     if (SCHEME.test(raw) && !/^file:/i.test(raw)) return null;
   }
-  return parseCandidate((label ?? "").trim(), workspacePath);
+  return parseCandidate((label ?? "").trim(), workspacePath, roots);
 }

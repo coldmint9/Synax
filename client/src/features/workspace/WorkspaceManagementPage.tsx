@@ -5,10 +5,39 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus } from "lucide-react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useOutletContext,
+  useParams,
+} from "react-router-dom";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowUpRight,
+  Check,
+  Ellipsis,
+  Folder,
+  GitBranch,
+  Info,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { Field, Input, Label } from "@/shared/ui/ui/Field";
+import { Menu, MenuAction, MenuButton, MenuItems } from "@/shared/ui/ui/Menu";
+import {
+  Dialog,
+  DialogBody,
+  DialogContainer,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogTitle,
+} from "@/shared/ui/ui/Dialog";
 import {
   projectApi,
   type ProjectWorkspace,
@@ -20,9 +49,11 @@ import {
 } from "../../adapters/electron/open-directory-picker";
 import { DirectoryPickerDialog } from "../../shared/ui/directory-picker/DirectoryPickerDialog";
 import { useShellStore } from "../../shared/state/shellStore";
+import { useLocale } from "../../shared/hooks/useLocale";
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
-import { GitWorktreesSection } from "../settings/components/GitWorktreesSection";
+import { WorkspaceRenameDialog } from "./WorkspaceRenameDialog";
+import { WorkspaceRemoveDialog } from "./WorkspaceRemoveDialog";
 import { useWorkspaceCopy } from "./workspaceCopy";
 import "./workspaceManagement.css";
 
@@ -41,22 +72,28 @@ export function WorkspaceManagementContent({
   workspaceId: string;
 }) {
   const c = useWorkspaceCopy();
+  const { t } = useLocale();
   const navigate = useNavigate();
   const route = useLocation();
+  const outlet = useOutletContext<
+    { onRemoveProject?: (id: string) => Promise<void> } | undefined
+  >();
   const project = useShellStore((s) =>
     s.projects.find((p) => p.id === workspaceId),
   );
+  const currentProjectId = useShellStore((s) => s.currentProjectId);
   const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null);
   const [busy, setBusy] = useState<Busy | null>("load");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [removeWorkspaceOpen, setRemoveWorkspaceOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const active = useRef(false);
   const lock = useRef(false);
   const addTrigger = useRef<HTMLButtonElement>(null);
-  const cancelRemove = useRef<HTMLButtonElement>(null);
   const removeButtons = useRef(new Map<string, HTMLButtonElement>());
   const focusAfter = useRef<string | "add" | null>(null);
   const primary = workspace?.roots.find((root) => root.role === "primary");
@@ -68,6 +105,7 @@ export function WorkspaceManagementContent({
   const filtered = roots.filter((root) =>
     `${root.name} ${root.path}`.toLowerCase().includes(query),
   );
+  const removeTarget = roots.find((root) => root.id === removeId);
   const run = useCallback(
     async (action: Busy, failure: string, work: () => Promise<void>) => {
       if (lock.current || !active.current) return;
@@ -114,17 +152,18 @@ export function WorkspaceManagementContent({
       ? addTrigger.current
       : (removeButtons.current.get(target) ?? addTrigger.current)
     )?.focus();
-  }, [busy, removeId, workspace]);
-  useLayoutEffect(() => {
-    if (removeId && !busy) cancelRemove.current?.focus();
-  }, [removeId]);
+  }, [busy, removeId, workspace, pickerOpen]);
   const addSelection = (selected: Selection) => {
     if (!location || roots.length >= 50) return;
     void run("add", c.addError, async () => {
       const result = await projectApi.addReference(workspaceId, {
         location:
           location.kind === "wsl"
-            ? { kind: "wsl", distribution: location.distribution, path: selected.path }
+            ? {
+                kind: "wsl",
+                distribution: location.distribution,
+                path: selected.path,
+              }
             : { kind: "host", path: selected.path },
         ...(selected.name.trim() ? { name: selected.name.trim() } : {}),
       });
@@ -134,33 +173,36 @@ export function WorkspaceManagementContent({
       focusAfter.current = "add";
     });
   };
-
-  const browse = () => {
-    if (busy || !location) return;
+  const browse = async () => {
+    if (lock.current || busy || pickerOpen || !location) return;
     setError(null);
     setNotice("");
     if (!isElectron || location.kind === "wsl") {
       setPickerOpen(true);
       return;
     }
-    void (async () => {
-      const result = await openDirectoryPicker();
-      if (active.current && result) addSelection(result);
-    })();
+    let selected: Selection | null = null;
+    await run("browse", c.browseError, async () => {
+      selected = await openDirectoryPicker();
+    });
+    if (active.current && selected) addSelection(selected);
   };
-
+  const cancelRemove = () => {
+    if (busy) return;
+    focusAfter.current = removeId;
+    setRemoveId(null);
+    setError(null);
+  };
   const remove = () => {
-    if (
-      !removeId ||
-      roots.find((root) => root.id === removeId)?.role !== "reference"
-    )
-      return;
-    const id = removeId;
+    if (!removeTarget || removeTarget.role !== "reference") return;
     const next = filtered
-      .slice(filtered.findIndex((root) => root.id === id) + 1)
+      .slice(filtered.findIndex((root) => root.id === removeTarget.id) + 1)
       .find((root) => root.role === "reference");
     void run("remove", c.removeError, async () => {
-      const result = await projectApi.removeReference(workspaceId, id);
+      const result = await projectApi.removeReference(
+        workspaceId,
+        removeTarget.id,
+      );
       if (!active.current) return;
       setWorkspace(result);
       setRemoveId(null);
@@ -169,178 +211,308 @@ export function WorkspaceManagementContent({
     });
   };
   const back = () => {
-    const from = (route.state as { returnTo?: string } | null)?.returnTo;
+    const state = route.state as {
+      workspaceReturnTo?: string;
+      returnTo?: string;
+    } | null;
+    const from = state?.workspaceReturnTo ?? state?.returnTo;
     navigate(
-      from?.startsWith("/") ? from : resolveSessionsEntryPath(workspaceId),
+      from?.startsWith("/") && !from.startsWith("//")
+        ? from
+        : resolveSessionsEntryPath(workspaceId),
     );
   };
   const disabled = Boolean(busy);
-
   return (
     <main className="workspace-manager">
       <div className="workspace-manager-content">
-        <Button variant="ghost" size="sm" disabled={disabled} onClick={back}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={back}
+          className="workspace-manager-back"
+        >
           <ArrowLeft size={14} />
           {c.backWorkspace}
         </Button>
         <header className="workspace-manager-header">
-          <p>{c.manageWorkspace}</p>
-          <h1>{project?.name ?? primary?.name ?? workspaceId}</h1>
-          <p>
-            {c.projectCount.replace("{count}", String(roots.length))}
-            {location &&
-              ` · ${location.kind === "wsl" ? `WSL · ${location.distribution}` : c.localHost}`}
-          </p>
-        </header>
-        <div className="workspace-manager-heading">
-          <h2>{c.members}</h2>
-          <Button
-            ref={addTrigger}
-            variant="ghost"
-            size="sm"
-            disabled={
-              disabled ||
-              !workspace ||
-              Boolean(removeId) ||
-              roots.length >= 50
-            }
-            onClick={browse}
-          >
-            <Plus size={14} />
-            {c.addProject}
-          </Button>
-        </div>
-        {roots.length >= 50 && (
-          <p className="workspace-manager-note">{c.limit}</p>
-        )}
-        {(roots.length > 8 || search) && (
-          <Field className="workspace-manager-search">
-            <Label className="sr-only">{c.search}</Label>
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={c.search}
-            />
-          </Field>
-        )}
-        {busy === "load" && (
-          <p role="status" className="workspace-manager-status">
-            {c.loadingWorkspace}
-          </p>
-        )}
-        {error && (
-          <div role="alert" className="workspace-manager-error">
-            {error}
-            {!workspace && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={disabled}
-                onClick={() => void reload()}
-              >
-                {c.retry}
-              </Button>
+          <div className="workspace-manager-title">
+            <p className="workspace-manager-eyebrow">{c.manageWorkspace}</p>
+            <h1>{project?.name ?? primary?.name ?? workspaceId}</h1>
+            <p className="workspace-manager-note">
+              {workspace
+                ? c.projectCount.replace("{count}", String(roots.length))
+                : busy === "load"
+                  ? c.loadingWorkspace
+                  : c.loadError}
+              {location &&
+                ` · ${location.kind === "wsl" ? `WSL · ${location.distribution}` : c.localHost}`}
+            </p>
+          </div>
+          <div className="workspace-manager-header-actions">
+            <Button
+              aria-label={c.renameWorkspace}
+              disabled={!project}
+              onClick={() => setRenameOpen(true)}
+            >
+              <Pencil size={14} />
+              <span className="workspace-manager-rename-label">
+                {c.renameWorkspace}
+              </span>
+            </Button>
+            {outlet?.onRemoveProject && project && (
+              <Menu>
+                <MenuButton
+                  className="workspace-manager-more"
+                  aria-label={c.workspaceMore}
+                >
+                  <Ellipsis size={18} />
+                </MenuButton>
+                <MenuItems anchor={{ to: "bottom end", gap: 8, padding: 8 }}>
+                  <MenuAction
+                    danger
+                    onClick={() => setRemoveWorkspaceOpen(true)}
+                  >
+                    <Trash2 size={14} />
+                    {t("appRemoveProject")}
+                  </MenuAction>
+                </MenuItems>
+              </Menu>
             )}
           </div>
-        )}
+        </header>
         {notice && (
-          <p role="status" className="workspace-manager-status">
+          <p role="status" className="workspace-manager-notice">
+            <Check size={15} aria-hidden="true" />
             {notice}
           </p>
         )}
-        <div role="list" aria-label={c.members}>
-          {filtered.map((root) => (
-            <div key={root.id} className="workspace-manager-member">
-              <WorkspaceProjectRow
-                name={root.name}
-                path={
-                  root.location?.kind === "wsl"
-                    ? `${root.location.distribution} · ${root.path}`
-                    : root.path
-                }
-                primary={root.role === "primary"}
-                missing={root.status === "missing"}
-              >
-                {root.role === "reference" && (
-                  <Button
-                    ref={(el) => {
-                      if (el) removeButtons.current.set(root.id, el);
-                      else removeButtons.current.delete(root.id);
-                    }}
-                    variant="ghost"
-                    size="sm"
-                    disabled={disabled}
-                    aria-label={`${c.remove}: ${root.name}`}
-                    onClick={() => {
-                      setRemoveId(root.id);
-                      setError(null);
-                      setNotice("");
-                    }}
-                  >
-                    {c.remove}
-                  </Button>
-                )}
-              </WorkspaceProjectRow>
-              {removeId === root.id && (
-                <section
-                  className="workspace-manager-confirm"
-                  aria-label={c.removePrompt.replace("{name}", root.name)}
+        <section
+          className="workspace-manager-card"
+          aria-labelledby="workspace-members-title"
+          aria-busy={busy === "load"}
+        >
+          <div className="workspace-manager-heading">
+            <div>
+              <h2 id="workspace-members-title">
+                {c.members}
+                <span className="workspace-manager-count">
+                  {workspace ? roots.length : "—"}
+                </span>
+              </h2>
+              <p className="workspace-manager-note">{c.manageHint}</p>
+            </div>
+            <Button
+              ref={addTrigger}
+              variant="primary"
+              pending={busy === "add" || busy === "browse"}
+              disabled={
+                disabled ||
+                !location ||
+                Boolean(removeId) ||
+                pickerOpen ||
+                roots.length >= 50
+              }
+              onClick={() => void browse()}
+            >
+              <Plus size={14} />
+              {busy === "add" ? c.adding : c.addProject}
+            </Button>
+          </div>
+          {roots.length >= 50 && (
+            <p className="workspace-manager-limit">{c.limit}</p>
+          )}
+          {(roots.length > 8 || search) && (
+            <Field className="workspace-manager-search">
+              <Label className="sr-only">{c.search}</Label>
+              <Search size={15} aria-hidden="true" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={c.search}
+              />
+            </Field>
+          )}
+          {busy === "load" && (
+            <div className="workspace-manager-loading" role="status">
+              <span className="sr-only">{c.loadingWorkspace}</span>
+              {[0, 1, 2].map((i) => (
+                <div
+                  className="workspace-manager-skeleton"
+                  key={i}
+                  aria-hidden="true"
                 >
-                  <p className="text-sm font-medium">
-                    {c.removePrompt.replace("{name}", root.name)}
-                  </p>
-                  <p className="workspace-manager-note">{c.unlinkDetails}</p>
-                  <div className="workspace-manager-actions">
-                    <Button
-                      ref={cancelRemove}
-                      variant="ghost"
-                      size="sm"
-                      disabled={disabled}
-                      onClick={() => {
-                        setRemoveId(null);
-                        setError(null);
-                        focusAfter.current = root.id;
-                      }}
-                    >
-                      {c.cancel}
-                    </Button>
-                    <Button
-                      variant="danger-soft"
-                      size="sm"
-                      disabled={disabled}
-                      pending={busy === "remove"}
-                      onClick={remove}
-                    >
-                      {c.confirmRemove}
-                    </Button>
+                  <span />
+                  <div>
+                    <span />
+                    <span />
                   </div>
-                </section>
+                </div>
+              ))}
+            </div>
+          )}
+          {error && !removeId && (
+            <div role="alert" className="workspace-manager-error">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{error}</span>
+              {!workspace && (
+                <Button
+                  size="sm"
+                  disabled={disabled}
+                  onClick={() => void reload()}
+                >
+                  {c.retry}
+                </Button>
               )}
             </div>
-          ))}
-        </div>
-        {workspace && !filtered.length && (
-          <p className="workspace-manager-note">
-            {query ? c.noMatches : c.noRoots}
-          </p>
           )}
-        </div>
-        {primary && primary.status === "available" && (
-          <div className="workspace-manager-worktrees">
-            <GitWorktreesSection projectId={workspaceId} />
+          {busy !== "load" && (
+            <div role="list" aria-label={c.members}>
+              {filtered.map((root) => (
+                <div key={root.id} className="workspace-manager-member">
+                  <WorkspaceProjectRow
+                    name={root.name}
+                    path={
+                      root.location?.kind === "wsl"
+                        ? `${root.location.distribution} · ${root.path}`
+                        : root.path
+                    }
+                    primary={root.role === "primary"}
+                    missing={root.status === "missing"}
+                  >
+                    {root.role === "reference" && (
+                      <Button
+                        ref={(el) => {
+                          if (el) removeButtons.current.set(root.id, el);
+                          else removeButtons.current.delete(root.id);
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        disabled={disabled}
+                        aria-label={`${c.remove}: ${root.name}`}
+                        onClick={() => {
+                          setRemoveId(root.id);
+                          setError(null);
+                          setNotice("");
+                        }}
+                      >
+                        {c.remove}
+                      </Button>
+                    )}
+                  </WorkspaceProjectRow>
+                </div>
+              ))}
+            </div>
+          )}
+          {workspace && !filtered.length && busy !== "load" && (
+            <div className="workspace-manager-empty">
+              <Folder size={28} aria-hidden="true" />
+              <h3>{query ? c.noMatches : c.noRoots}</h3>
+              <p>{query ? c.search : c.emptyHint}</p>
+              {query && (
+                <Button variant="secondary" onClick={() => setSearch("")}>
+                  {c.clearSearch}
+                </Button>
+              )}
+            </div>
+          )}
+          <div className="workspace-manager-footer">
+            <Info size={14} aria-hidden="true" />
+            <span>
+              {c.unlinkHint} {c.nextRun}
+            </span>
           </div>
+        </section>
+        {primary?.status === "available" && (
+          <section className="workspace-manager-git">
+            <span className="workspace-manager-git-icon">
+              <GitBranch size={20} aria-hidden="true" />
+            </span>
+            <div>
+              <h2>{c.gitWorktrees}</h2>
+              <p className="workspace-manager-note">{c.gitWorktreesHint}</p>
+            </div>
+            <Link
+              className="workspace-manager-git-link"
+              to={`/projects/${encodeURIComponent(workspaceId)}/git?view=worktrees`}
+            >
+              {c.openGit}
+              <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
+          </section>
         )}
-        <DirectoryPickerDialog
+      </div>
+      <Dialog
+        open={Boolean(removeTarget)}
+        onClose={cancelRemove}
+        dismissible={!busy}
+      >
+        <DialogContainer size="sm">
+          <DialogPanel className="workspace-dialog">
+            <DialogHeader>
+              <Trash2
+                size={18}
+                className="text-destructive"
+                aria-hidden="true"
+              />
+              <DialogTitle>
+                {c.removePrompt.replace("{name}", removeTarget?.name ?? "")}
+              </DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              <p>{c.unlinkDetails}</p>
+              {error && (
+                <p
+                  role="alert"
+                  className="workspace-feedback workspace-feedback--error"
+                >
+                  {error}
+                </p>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              <Button autoFocus disabled={disabled} onClick={cancelRemove}>
+                {c.cancel}
+              </Button>
+              <Button
+                variant="danger"
+                pending={busy === "remove"}
+                disabled={disabled}
+                onClick={remove}
+              >
+                {busy === "remove" ? c.removing : c.confirmRemove}
+              </Button>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </Dialog>
+      <WorkspaceRenameDialog
+        workspace={renameOpen && project ? project : null}
+        onClose={() => setRenameOpen(false)}
+        onRenamed={() => setNotice(c.renamed)}
+      />
+      {outlet?.onRemoveProject && (
+        <WorkspaceRemoveDialog
+          workspace={removeWorkspaceOpen && project ? project : null}
+          currentProjectId={currentProjectId}
+          onRemove={outlet.onRemoveProject}
+          onClose={() => setRemoveWorkspaceOpen(false)}
+        />
+      )}
+      <DirectoryPickerDialog
         open={pickerOpen}
         locationKind={location?.kind ?? "host"}
         distribution={
           location?.kind === "wsl" ? location.distribution : undefined
         }
         labels={{ title: c.pickerTitle, confirm: c.chooseFolder }}
-        onClose={() => setPickerOpen(false)}
-        onSelect={(item) => {
+        onClose={() => {
+          focusAfter.current = "add";
           setPickerOpen(false);
-          addSelection(item);
+        }}
+        onSelect={(selected) => {
+          setPickerOpen(false);
+          addSelection(selected);
         }}
       />
     </main>

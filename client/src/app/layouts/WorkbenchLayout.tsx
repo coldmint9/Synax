@@ -229,10 +229,11 @@ function WorkbenchLayoutContent() {
       try {
         await projectApi.deleteProject(projectId);
         removeFromStore(projectId);
-        if (isCurrentProject) {
+        if (isCurrentProject || location.pathname === `/workspaces/${encodeURIComponent(projectId)}/manage`) {
           const remaining = useShellStore.getState().projects;
-          if (remaining.length > 0) {
-            navigate(resolveSessionsEntryPath(remaining[0].id), {
+          const next = remaining.find(project => project.id === effectiveProjectId) ?? remaining[0];
+          if (next) {
+            navigate(resolveSessionsEntryPath(next.id), {
               replace: true,
             });
           } else {
@@ -249,6 +250,7 @@ function WorkbenchLayoutContent() {
     },
     [
       effectiveProjectId,
+      location.pathname,
       unbindContext,
       setCurrentProjectId,
       removeFromStore,
@@ -296,7 +298,7 @@ function WorkbenchLayoutContent() {
                 }
               >
                 <Outlet
-                  context={{ onCreateProject: () => setCreateDialogOpen(true) }}
+                  context={{ onCreateProject: () => setCreateDialogOpen(true), onRemoveProject: handleRemoveProject }}
                 />
               </div>
             </div>

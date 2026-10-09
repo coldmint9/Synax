@@ -22,18 +22,21 @@ export type { FileParser, FileParserInput, ParsedFile } from "./registry.js";
 export async function parseAssetInput(
   asset: RuntimeAsset,
   visual?: import("./registry.js").FileParserInput["visual"],
+  loadImage?: import("./registry.js").FileParserInput["loadImage"],
 ): Promise<ParsedFile> {
   return parseFileInput({
     filename: asset.filename,
     mediaType: asset.mediaType,
     bytes: await readAsset(asset.id, asset.projectId),
     visual,
+    loadImage,
   });
 }
 export async function resolveFileParts(
   parts: RuntimeContentPart[],
   projectId?: string,
   capability?: InputCapabilities,
+  loadImage?: import("./registry.js").FileParserInput["loadImage"],
 ): Promise<RuntimeContentPart[]> {
   const output: RuntimeContentPart[] = [];
   let remainingPages = Math.max(
@@ -84,6 +87,7 @@ export async function resolveFileParts(
             maxTotalBytes: remainingBytes,
           }
         : undefined,
+      loadImage,
     );
     output.push({
       type: "text",

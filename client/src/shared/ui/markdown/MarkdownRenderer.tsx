@@ -1,5 +1,5 @@
 import ReactMarkdown from "react-markdown";
-import type { Components } from "react-markdown";
+import type { Components, UrlTransform } from "react-markdown";
 import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -32,6 +32,8 @@ interface Props {
   remarkPlugins?: PluggableList;
   rehypePlugins?: PluggableList;
   conversationClass?: boolean;
+  imageResolver?: (src: string) => string;
+  urlTransform?: UrlTransform;
 }
 
 export function MarkdownRenderer({
@@ -41,6 +43,8 @@ export function MarkdownRenderer({
   remarkPlugins,
   rehypePlugins,
   conversationClass = true,
+  imageResolver,
+  urlTransform,
 }: Props) {
   const rootClassName = conversationClass
     ? `agent-conversation-copy ${className}`
@@ -49,9 +53,14 @@ export function MarkdownRenderer({
   return (
     <div className={rootClassName}>
       <ReactMarkdown
+        urlTransform={urlTransform}
         remarkPlugins={[remarkGfm, remarkMath, ...(remarkPlugins ?? [])]}
         rehypePlugins={[rehypeKatex, ...(rehypePlugins ?? [])]}
-        components={{ ...sharedMarkdownComponents, ...components }}
+        components={{
+          ...sharedMarkdownComponents,
+          ...(imageResolver ? { img: ({ src, alt, title }) => <MarkdownImage src={imageResolver(src ?? "")} alt={alt ?? ""} title={title ?? undefined} /> } : {}),
+          ...components,
+        }}
       >
         {content}
       </ReactMarkdown>

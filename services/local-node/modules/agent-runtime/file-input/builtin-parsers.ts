@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { renderOfficePdf } from "./office-renderer.js";
+import { markdownImage } from "./markdown.js";
 import { OFFICE_DOCUMENT_TYPES as MIME } from "./document-types.js";
 import {
   registerFileParser,
@@ -21,6 +22,7 @@ const xmlParser = new XMLParser({
   parseTagValue: false,
   parseAttributeValue: false,
 });
+
 function xml(bytes?: Uint8Array): Node[] {
   if (!bytes) throw new Error("文档缺少必需的 XML 文件。");
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -506,3 +508,4 @@ const pdfParser = {
   },
 };
 registerFileParser(pdfParser);
+registerFileParser(markdownImage);

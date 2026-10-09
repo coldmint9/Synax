@@ -1,42 +1,22 @@
-import { Radio, RadioGroup } from "@headlessui/react";
 import { ToolbarPill } from "./ToolbarPill";
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
 import { IslandSurface } from "./IslandSurface";
 import { ThemeToggle } from "../../shared/ui/ThemeToggle";
 import { useTerminalStore } from "../../features/terminal/terminalStore";
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Menu, MenuButton, MenuAction, MenuOpenObserver } from "@/shared/ui/ui/Menu";
-import { useWorkspaceCopy } from "../../features/workspace/workspaceCopy";
+import { useState, useCallback, useEffect } from "react";
+import { WorkspaceSwitcher } from "../../features/workspace/WorkspaceSwitcher";
+import { WorkspaceRemoveDialog } from "../../features/workspace/WorkspaceRemoveDialog";
 import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
-import { IslandMenuItems, IslandPopoverPanel } from "./IslandOverlays";
+import { IslandPopoverPanel } from "./IslandOverlays";
 import { IslandSelection } from "./IslandSelection";
-import {
-  Dialog,
-  DialogContainer,
-  DialogPanel,
-  DialogHeader,
-  DialogIcon,
-  DialogTitle,
-  DialogBody,
-  DialogFooter,
-} from "@/shared/ui/ui/Dialog";
 import { Button } from "@/shared/ui/ui/Button";
 import {
   GitMerge,
   Bot,
-  Folder,
-  Search,
   Settings2,
-  Plus,
-  Trash2,
-  BookDashed,
-  Ellipsis,
-  Download,
-  RotateCcw,
-  Check,
   ChevronDown,
   Target,
 } from "lucide-react";
@@ -141,55 +121,15 @@ function ProjectSwitcher({
   onOpen?: () => void;
   iconOnly?: boolean;
 }) {
-  const { t } = useLocale();
-  const displayName = hasProject
-    ? projectName
-    : useShellStore.getState().preferences.locale === "zh"
-      ? "切换项目"
-      : "Switch project";
-  const { badges, refresh: refreshBadges } = useProjectSessionBadges(
-    projects.map((project) => project.id),
-  );
-  const currentBadge = badges[currentProjectId];
-  const c = useWorkspaceCopy();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [actionsProject, setActionsProject] = useState<ProjectSummary | null>(null);
-
-  return (
-    <Menu>
-      {({ open, close }) => <>
-        <MenuOpenObserver open={open} onOpen={() => { setActionsProject(null); onOpen?.(); void refreshBadges(); }} />
-        <Tooltip content={displayName}>
-          <MenuButton className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`} aria-label={t("appSwitchProject")}>
-            {iconOnly && <Folder size={15} aria-hidden="true" />}
-            {!iconOnly && <span className="wh-project-label">{displayName}</span>}
-            <ProjectSessionBadgeMark badge={currentBadge} className={iconOnly ? "project-session-badge--icon-trigger" : undefined} />
-          </MenuButton>
-        </Tooltip>
-        <IslandMenuItems open={open} anchor={{ to: iconOnly ? "bottom start" : "top start", gap: 10, padding: 8 }} aria-label={t("appSwitchProject")} className="min-w-60">
-          {actionsProject ? <>
-            <MenuAction onClick={(event) => { event.preventDefault(); setActionsProject(null); }}>{c.backWorkspace}</MenuAction>
-            <div className="px-2.5 py-2 text-xs text-muted-foreground truncate">{actionsProject.name}</div>
-            <MenuAction onClick={() => { const target = actionsProject.id; setActionsProject(null); navigate(`/workspaces/${encodeURIComponent(target)}/manage`, { state: { workspaceReturnTo: location.pathname + location.search } }); }}>{c.manageWorkspace}</MenuAction>
-            <MenuAction danger aria-label={`${t("appRemoveProject")}: ${actionsProject.name}`} onClick={event => { close(); onRemoveRequest(event, actionsProject); setActionsProject(null); }}><Trash2 size={13} aria-hidden="true" />{t("appRemoveProject")}</MenuAction>
-          </> : <>
-          {projects.map(project => <div key={project.id} className="flex items-center gap-1" role="none">
-            <MenuAction onClick={() => onProjectSwitch(project.id)} className="min-w-0 flex-1">
-              <span className="min-w-0 flex-1 truncate">{project.name}</span>
-              <ProjectSessionBadgeMark badge={badges[project.id]} showCount />
-              {project.id === currentProjectId && <Check size={13} aria-hidden="true" />}
-            </MenuAction>
-            <MenuAction className="!w-8 shrink-0 !p-2" aria-label={`${c.workspaceMore}: ${project.name}`} onClick={event => { event.preventDefault(); setActionsProject(project); }}>
-              <Ellipsis size={13} aria-hidden="true" />
-            </MenuAction>
-          </div>)}
-          <MenuAction onClick={onCreateProject}><Plus size={14} aria-hidden="true" />{t("appImportProject")}</MenuAction>
-          </>}
-        </IslandMenuItems>
-      </>}
-    </Menu>
-  );
+  const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
+  return <WorkspaceSwitcher
+    hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
+    projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
+    onRemoveRequest={onRemoveRequest} iconOnly={iconOnly}
+    onOpen={() => { onOpen?.(); void refresh(); }}
+    badge={<ProjectSessionBadgeMark badge={badges[currentProjectId]} className={iconOnly ? "project-session-badge--icon-trigger" : undefined} />}
+    renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
+  />;
 }
 
 function MainNavTabs({
@@ -282,37 +222,12 @@ export function WorkbenchHeader({
   const terminalOpen = useTerminalStore((state) => state.open);
   const gitToolbarVisible =
     activePanel === "git" && !location.pathname.includes("/git/mr/");
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [projectSwitcherUsed, setProjectSwitcherUsed] = useState(false);
-
-  const handleRemoveClick = useCallback(
-    (e: React.MouseEvent, project: ProjectSummary) => {
-      e.stopPropagation();
-      if (deleting) return;
-      setDeleteError(null);
-      setDeleteTarget(project);
-      setConfirmOpen(true);
-    },
-    [deleting],
-  );
-
-  const handleConfirmRemove = useCallback(async () => {
-    if (!deleteTarget || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await onRemoveProject(deleteTarget.id);
-      setConfirmOpen(false);
-      setDeleteTarget(null);
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDeleting(false);
-    }
-  }, [deleteTarget, deleting, onRemoveProject]);
+  const handleRemoveClick = useCallback((event: React.MouseEvent, project: ProjectSummary) => {
+    event.stopPropagation();
+    setDeleteTarget(project);
+  }, []);
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const goalSessionId = useAgentSessionStore((s) => {
@@ -429,55 +344,7 @@ export function WorkbenchHeader({
             </ToolbarPill>
           </>
 
-          {/* Remove project confirmation modal */}
-          <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} dismissible={!deleting}>
-            <>
-              <DialogContainer size="sm">
-                <DialogPanel>
-                  <DialogHeader>
-                    <DialogIcon className="bg-destructive/10 text-destructive">
-                      <Trash2 size={18} />
-                    </DialogIcon>
-                    <DialogTitle>{t("appRemoveProject")}</DialogTitle>
-                  </DialogHeader>
-                  <DialogBody>
-                    <p className="text-sm text-muted-foreground">
-                      {t("appRemoveProjectConfirm", {
-                        name: deleteTarget?.name ?? "",
-                      })}
-                    </p>
-                    {deleteTarget?.id === currentProjectId && (
-                      <p className="mt-2 text-xs text-warning">
-                        {t("appRemoveProjectRunning")}
-                      </p>
-                    )}
-                    {deleteError && <p role="alert" className="mt-2 text-sm text-destructive">{deleteError}</p>}
-                  </DialogBody>
-                  <DialogFooter>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={deleting}
-                      onClick={() => {
-                        setConfirmOpen(false);
-                        setDeleteTarget(null);
-                      }}
-                    >
-                      {t("appCancel")}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      disabled={deleting}
-                      onClick={() => void handleConfirmRemove()}
-                    >
-                      {deleting ? t("appRemoving") : t("appConfirmRemove")}
-                    </Button>
-                  </DialogFooter>
-                </DialogPanel>
-              </DialogContainer>
-            </>
-          </Dialog>
+          <WorkspaceRemoveDialog workspace={deleteTarget} currentProjectId={currentProjectId} onRemove={onRemoveProject} onClose={() => setDeleteTarget(null)} />
         </div>
       )}
     </WorkbenchIsland>

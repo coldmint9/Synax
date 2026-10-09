@@ -17,7 +17,7 @@ import {
   useSessionWorkspaceStore,
 } from "./state/sessionWorkspaceStore";
 
-type FilePreviewKind = "text" | "markdown" | "html" | "svg" | "image";
+type FilePreviewKind = "text" | "markdown" | "html" | "svg" | "image" | "pdf";
 
 const RASTER_IMAGE_EXTENSIONS = new Set([
   "png",
@@ -34,6 +34,7 @@ function previewKindForPath(path: string): FilePreviewKind {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (RASTER_IMAGE_EXTENSIONS.has(extension)) return "image";
   if (extension === "svg") return "svg";
+  if (extension === "pdf") return "pdf";
   if (extension === "html" || extension === "htm") return "html";
   if (extension === "md" || extension === "markdown") return "markdown";
   return "text";
@@ -77,13 +78,23 @@ export const CodeViewer = memo(function CodeViewer({
       ? previewKindForPath(inputSource.label)
       : "text"
     : previewKindForPath(path);
+  const markdownImageResolver = useCallback((src: string) => {
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(src) || !src) return src;
+    const base = path.split(/[\\/]/).slice(0, -1).join("/");
+    const resolved = `${base ? `${base}/` : ""}${src}`.split("/").reduce<string[]>((parts, part) => {
+      if (!part || part === ".") return parts;
+      if (part === "..") parts.pop(); else parts.push(part);
+      return parts;
+    }, []).join("/");
+    return `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/environment/file/media?path=${encodeURIComponent(resolved)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`;
+  }, [path, rootId, sessionId]);
 
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
 
   const editable = Boolean(
-    tabId && !inputSource && !truncated && previewKind !== "image",
+    tabId && !inputSource && !truncated && !["image", "svg", "pdf"].includes(previewKind),
   );
 
   const load = useCallback(async () => {
@@ -96,7 +107,7 @@ export const CodeViewer = memo(function CodeViewer({
       if (inputSource?.assetId) {
         const blob = await runtimeMedia.blob(inputSource.assetId);
         if (requestRef.current !== requestId) return;
-        if (previewKind === "image") {
+        if (previewKind === "image" || previewKind === "pdf") {
           setMediaBlob(blob);
           setContent("");
           contentRef.current = "";
@@ -112,7 +123,7 @@ export const CodeViewer = memo(function CodeViewer({
         if (tabId) setTabDirty(sessionId, tabId, false);
         return;
       }
-      if (!inputSource && previewKind === "image") {
+      if (!inputSource && (previewKind === "image" || previewKind === "pdf")) {
         const blob = await agentRuntimeApi.getSessionEnvironmentFileMedia(
           sessionId,
           path,
@@ -200,7 +211,7 @@ export const CodeViewer = memo(function CodeViewer({
       return;
     }
     const blob =
-      previewKind === "image"
+      previewKind === "image" || previewKind === "pdf"
         ? mediaBlob
         : previewKind === "svg"
           ? new Blob([content], { type: "image/svg+xml" })
@@ -392,18 +403,18 @@ export const CodeViewer = memo(function CodeViewer({
               referrerPolicy="no-referrer"
               srcDoc={content}
             />
-          ) : previewKind === "image" || previewKind === "svg" ? (
+          ) : previewKind === "image" || previewKind === "svg" || previewKind === "pdf" ? (
             <div
               className="file-viewer-media flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"
               role="region"
               aria-label={`${previewKind === "svg" ? "SVG" : "图片"}预览：${path}`}
             >
               {mediaUrl ? (
-                <img
-                  src={mediaUrl}
-                  alt={path.split(/[\\/]/).pop() ?? path}
-                  className="file-viewer-media-image block max-h-full max-w-full object-contain"
-                />
+                previewKind === "pdf" ? (
+                  <iframe title={`PDF 预览：${path}`} src={mediaUrl} className="h-full min-h-[70vh] w-full border-0" />
+                ) : (
+                  <img src={mediaUrl} alt={path.split(/[\\/]/).pop() ?? path} className="file-viewer-media-image block max-h-full max-w-full object-contain" />
+                )
               ) : (
                 <div className="file-viewer-status">生成预览中…</div>
               )}
@@ -414,6 +425,7 @@ export const CodeViewer = memo(function CodeViewer({
                 content={content}
                 className="feed-prose"
                 conversationClass={false}
+                imageResolver={markdownImageResolver}
               />
             </article>
           )

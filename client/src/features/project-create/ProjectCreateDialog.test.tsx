@@ -122,8 +122,43 @@ afterEach(() => {
 });
 
 describe("ProjectCreateDialog", () => {
+  it("focuses the nested directory picker and returns to the creation draft on Escape", async () => {
+    runtime.electron = false;
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ProjectCreateDialog open onClose={onClose} />);
+    await user.type(
+      screen.getByRole("textbox", { name: "工作区名称" }),
+      "保留草稿",
+    );
+    await user.click(screen.getByRole("button", { name: "选择文件夹" }));
+    const picker = await screen.findByRole("dialog", {
+      name: "选择工作区项目",
+    });
+    await waitFor(() =>
+      expect(
+        within(picker).getByRole("textbox", { name: "目录路径" }),
+      ).toHaveFocus(),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "选择工作区项目" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
+      "保留草稿",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "选择文件夹" })).toHaveFocus(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("shows the compact name and empty project fields together, with only directory selection", async () => {
-    await act(async () => { render(<ProjectCreateDialog open onClose={vi.fn()} />); });
+    await act(async () => {
+      render(<ProjectCreateDialog open onClose={vi.fn()} />);
+    });
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
     expect(
       within(screen.getByRole("region", { name: "工作区项目" })).getByText(

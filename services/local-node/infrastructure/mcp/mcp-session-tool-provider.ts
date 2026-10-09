@@ -34,14 +34,6 @@ function truncate(value: string): string {
   return value.length <= SUMMARY_LIMIT ? value : `${value.slice(0, SUMMARY_LIMIT)}…`
 }
 
-function parseToolId(toolId: string): { serverId: string; toolName: string } | null {
-  if (!toolId.startsWith(TOOL_PREFIX)) return null
-  const rest = toolId.slice(TOOL_PREFIX.length)
-  const slash = rest.indexOf('.')
-  if (slash <= 0 || slash >= rest.length - 1) return null
-  return { serverId: rest.slice(0, slash), toolName: rest.slice(slash + 1) }
-}
-
 function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
   const id = `${TOOL_PREFIX}${serverId}.${sanitizeName(tool.name)}`
   return {
@@ -58,12 +50,13 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
       catch { return z.object({}).catchall(z.unknown()); }
     })(),
     execute: async (input: ToolExecutionInput): Promise<ToolExecutionResult> => {
-      const parsed = parseToolId(input.toolId)
-      if (!parsed) {
+      if (input.toolId !== id) {
         throw new Error(`Invalid MCP tool id: ${input.toolId}`)
       }
       const session = agentRuntimeStore.getSession(input.sessionId)
-      const result = await mcpClientManager.callTool(parsed.serverId, parsed.toolName, input.args, session.projectId, input.sessionId, input.abortSignal)
+      // Runtime IDs are display aliases; sanitization and dotted server IDs
+      // cannot be reversed to recover the original MCP protocol target.
+      const result = await mcpClientManager.callTool(serverId, tool.name, input.args, session.projectId, input.sessionId, input.abortSignal)
       if (!result.ok) {
         return {
           contentParts: result.contentParts,

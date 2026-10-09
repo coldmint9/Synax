@@ -1,6 +1,12 @@
-import { DialogOverlay } from "../DialogOverlay";
+import {
+  Dialog,
+  DialogContainer,
+  DialogPanel,
+  DialogTitle,
+} from "../ui/Dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   ArrowUp,
   Check,
   ChevronRight,
@@ -14,8 +20,8 @@ import {
   listRemoteDirectories,
   type RemoteDirectoryListing,
 } from "../../../adapters/transport/fs";
-import { useDialogFocus } from "./useDialogFocus";
 import { useLocale } from "../../hooks/useLocale";
+import { Button } from "../ui/Button";
 import "../../../features/workspace/workspaceProjects.css";
 
 /**
@@ -152,7 +158,7 @@ function DirectoryPickerContent({
     [],
   );
   const lastPath = useRef<string | undefined>(initialPath);
-  const dialogRef = useDialogFocus(onClose);
+  const pathRef = useRef<HTMLInputElement>(null);
   const toggle = (entry: { path: string; name: string }) =>
     setSelected((items) =>
       items.some((item) => item.path === entry.path)
@@ -209,350 +215,361 @@ function DirectoryPickerContent({
   const activeEntry = filteredEntries[activeSearchIndex];
 
   return (
-    <DialogOverlay onClick={onClose}>
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        className="dialog-content workspace-directory-picker flex min-h-0 min-w-0 flex-col overflow-hidden"
-        role="dialog"
-        aria-modal="true"
-        aria-label={label.title}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-3 flex shrink-0 items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">
-              {label.title}
-            </h2>
-            <p className="mt-1 text-[11px] text-muted-foreground/70">
-              {multiple ? label.selectionHint : label.hint}
-            </p>
+    <Dialog open onClose={onClose} initialFocus={pathRef}>
+      <DialogContainer size="lg" className="max-w-[720px]!">
+        <DialogPanel className="workspace-directory-picker min-h-0 min-w-0 gap-0! overflow-hidden max-h-[min(760px,calc(100dvh-24px))]! rounded-xl! bg-card! p-5! text-[13px] text-card-foreground sm:p-6! [&_button]:rounded-lg [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-ring">
+          <div className="mb-4 flex shrink-0 items-start justify-between gap-3! border-b border-border pb-4">
+            <div>
+              <DialogTitle className="text-base font-semibold text-foreground">
+                {label.title}
+              </DialogTitle>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {multiple ? label.selectionHint : label.hint}
+              </p>
+            </div>
+            <Button
+              type="button"
+              aria-label={label.close}
+              variant="ghost"
+              iconOnly
+              className="text-muted-foreground"
+              onClick={onClose}
+            >
+              <X size={16} />
+            </Button>
           </div>
-          <button
-            type="button"
-            aria-label={label.close}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onClick={onClose}
-          >
-            <X size={16} />
-          </button>
-        </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
-          <label className="mb-3 block shrink-0">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">
-              {label.path}
-            </span>
-            <div className="flex gap-2">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+            <label className="mb-3 block shrink-0">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">
+                {label.path}
+              </span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  ref={pathRef}
+                  aria-label={label.path}
+                  className="import-input min-h-[34px] min-w-0 flex-1 rounded-lg! border-border! bg-card! text-[13px]!"
+                  value={pathInput}
+                  onChange={(event) => setPathInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      void load(pathInput.trim());
+                    }
+                  }}
+                  placeholder="/path/to/project"
+                  spellCheck={false}
+                />
+                <Button
+                  type="button"
+                  aria-label={label.refresh}
+                  className="min-h-[34px]"
+                  disabled={loading || !pathInput.trim()}
+                  onClick={() => void load(pathInput.trim())}
+                >
+                  <RefreshCw
+                    size={12}
+                    className={loading ? "animate-spin" : ""}
+                  />
+                  {label.refresh}
+                </Button>
+              </div>
+            </label>
+
+            <label className="workspace-directory-search min-h-[34px] rounded-lg! border-border! bg-card! [&_input]:text-[13px]!">
+              <Search size={14} aria-hidden="true" />
+              <span className="sr-only">{label.search}</span>
               <input
-                type="text"
-                data-dialog-autofocus
-                aria-label={label.path}
-                className="import-input min-w-0 flex-1"
-                value={pathInput}
-                onChange={(event) => setPathInput(event.target.value)}
+                type="search"
+                aria-label={label.search}
+                aria-controls="workspace-directory-results"
+                aria-activedescendant={
+                  normalizedSearch && activeEntry
+                    ? `workspace-directory-entry-${activeSearchIndex}`
+                    : undefined
+                }
+                value={searchQuery}
+                placeholder={label.searchPlaceholder}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setActiveSearchIndex(0);
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    void load(pathInput.trim());
+                    setActiveSearchIndex((index) =>
+                      Math.min(
+                        index + 1,
+                        Math.max(filteredEntries.length - 1, 0),
+                      ),
+                    );
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveSearchIndex((index) => Math.max(index - 1, 0));
+                  } else if (event.key === "Enter" && activeEntry) {
+                    event.preventDefault();
+                    void load(activeEntry.path);
+                    setSearchQuery("");
+                    setActiveSearchIndex(0);
+                  } else if (event.key === "Escape") {
+                    setSearchQuery("");
+                    setActiveSearchIndex(0);
                   }
                 }}
-                placeholder="/path/to/project"
-                spellCheck={false}
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  aria-label={label.close}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setActiveSearchIndex(0);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </label>
+
+            <div className="mb-3 flex shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground">
               <button
                 type="button"
-                aria-label={label.refresh}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40 disabled:opacity-50"
-                disabled={loading || !pathInput.trim()}
-                onClick={() => void load(pathInput.trim())}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
+                onClick={() => void load(listing?.parent ?? undefined)}
+                disabled={!listing?.parent}
+                aria-label={label.up}
               >
-                <RefreshCw
-                  size={12}
-                  className={loading ? "animate-spin" : ""}
-                />
-                {label.refresh}
+                <ArrowUp size={11} />
+                {label.up}
               </button>
+              {listing?.home && (
+                <button
+                  type="button"
+                  className="rounded-md px-1.5 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
+                  onClick={() => void load(listing.home)}
+                >
+                  {label.home}
+                </button>
+              )}
+              {crumbs.length > 1 && (
+                <span className="flex items-center gap-1">
+                  {crumbs.map((crumb, index) => (
+                    <span key={crumb.path} className="flex items-center gap-1">
+                      {index > 0 && (
+                        <span className="text-muted-foreground/40">/</span>
+                      )}
+                      <button
+                        type="button"
+                        className="max-w-[12rem] truncate rounded-md px-1 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
+                        title={crumb.path}
+                        onClick={() => void load(crumb.path)}
+                      >
+                        {crumb.name}
+                      </button>
+                    </span>
+                  ))}
+                </span>
+              )}
             </div>
-          </label>
 
-          <label className="workspace-directory-search">
-            <Search size={14} aria-hidden="true" />
-            <span className="sr-only">{label.search}</span>
-            <input
-              type="search"
-              aria-label={label.search}
-              aria-controls="workspace-directory-results"
-              aria-activedescendant={
-                normalizedSearch && activeEntry
-                  ? `workspace-directory-entry-${activeSearchIndex}`
-                  : undefined
-              }
-              value={searchQuery}
-              placeholder={label.searchPlaceholder}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-                setActiveSearchIndex(0);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveSearchIndex((index) =>
-                    Math.min(
-                      index + 1,
-                      Math.max(filteredEntries.length - 1, 0),
-                    ),
-                  );
-                } else if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveSearchIndex((index) => Math.max(index - 1, 0));
-                } else if (event.key === "Enter" && activeEntry) {
-                  event.preventDefault();
-                  void load(activeEntry.path);
-                  setSearchQuery("");
-                  setActiveSearchIndex(0);
-                } else if (event.key === "Escape") {
-                  setSearchQuery("");
-                  setActiveSearchIndex(0);
-                }
-              }}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                aria-label={label.close}
-                onClick={() => {
-                  setSearchQuery("");
-                  setActiveSearchIndex(0);
-                }}
-              >
-                <X size={13} />
-              </button>
-            )}
-          </label>
-
-          <div className="mb-2 flex shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
-              onClick={() => void load(listing?.parent ?? undefined)}
-              disabled={!listing?.parent}
-              aria-label={label.up}
+            <div
+              id="workspace-directory-results"
+              className="min-h-32 flex-1 overflow-y-auto overscroll-contain rounded-[10px] border border-border bg-card [&_.workspace-directory-open]:text-[13px] [&_.workspace-directory-entry]:min-h-10"
+              role="region"
+              aria-label={label.title}
+              aria-busy={loading}
             >
-              <ArrowUp size={11} />
-              {label.up}
-            </button>
-            {listing?.home && (
-              <button
-                type="button"
-                className="rounded-md px-1.5 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
-                onClick={() => void load(listing.home)}
-              >
-                {label.home}
-              </button>
-            )}
-            {crumbs.length > 1 && (
-              <span className="flex items-center gap-1">
-                {crumbs.map((crumb, index) => (
-                  <span key={crumb.path} className="flex items-center gap-1">
-                    {index > 0 && (
-                      <span className="text-muted-foreground/40">/</span>
+              {loading && (
+                <p
+                  className="flex min-h-32 items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground"
+                  role="status"
+                >
+                  <Loader2 size={13} className="animate-spin" />
+                  {label.loading}
+                </p>
+              )}
+              {error && (
+                <p
+                  role="alert"
+                  className="m-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs leading-relaxed text-destructive"
+                >
+                  <AlertCircle
+                    size={16}
+                    aria-hidden="true"
+                    className="mt-0.5 shrink-0"
+                  />
+                  <span className="min-w-0 break-words">{error}</span>
+                </p>
+              )}
+              {!loading && !error && filteredEntries.length === 0 && (
+                <p
+                  className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 py-6 text-center text-[13px] text-muted-foreground"
+                  role="status"
+                >
+                  <Folder size={24} aria-hidden="true" />
+                  {normalizedSearch ? label.noMatches : label.empty}
+                </p>
+              )}
+              {!loading &&
+                !error &&
+                filteredEntries.map((entry, index) => (
+                  <div
+                    key={entry.path}
+                    id={`workspace-directory-entry-${index}`}
+                    className="workspace-directory-entry"
+                    data-active={
+                      index === activeSearchIndex && normalizedSearch
+                        ? true
+                        : undefined
+                    }
+                    data-selected={
+                      selected.some((item) => item.path === entry.path) ||
+                      undefined
+                    }
+                  >
+                    {multiple && (
+                      <input
+                        type="checkbox"
+                        aria-label={`${label.select} ${entry.name}`}
+                        title={entry.path}
+                        checked={selected.some(
+                          (item) => item.path === entry.path,
+                        )}
+                        onChange={() => toggle(entry)}
+                      />
                     )}
                     <button
                       type="button"
-                      className="max-w-[12rem] truncate rounded-md px-1 py-0.5 transition hover:bg-muted/40 hover:text-foreground"
-                      title={crumb.path}
-                      onClick={() => void load(crumb.path)}
-                    >
-                      {crumb.name}
-                    </button>
-                  </span>
-                ))}
-              </span>
-            )}
-          </div>
-
-          <div
-            id="workspace-directory-results"
-            className="min-h-24 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-border/50 bg-background/60"
-            role="region"
-            aria-label={label.title}
-            aria-busy={loading}
-          >
-            {loading && (
-              <p className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-                <Loader2 size={13} className="animate-spin" />
-                {label.loading}
-              </p>
-            )}
-            {error && (
-              <p
-                role="alert"
-                className="break-words px-3 py-2 text-xs text-destructive"
-              >
-                {error}
-              </p>
-            )}
-            {!loading && !error && filteredEntries.length === 0 && (
-              <p className="px-3 py-2 text-xs text-muted-foreground">
-                {normalizedSearch ? label.noMatches : label.empty}
-              </p>
-            )}
-            {!loading &&
-              !error &&
-              filteredEntries.map((entry, index) => (
-                <div
-                  key={entry.path}
-                  id={`workspace-directory-entry-${index}`}
-                  className="workspace-directory-entry"
-                  data-active={
-                    index === activeSearchIndex && normalizedSearch
-                      ? true
-                      : undefined
-                  }
-                  data-selected={
-                    selected.some((item) => item.path === entry.path) ||
-                    undefined
-                  }
-                >
-                  {multiple && (
-                    <input
-                      type="checkbox"
-                      aria-label={`${label.select} ${entry.name}`}
+                      className="workspace-directory-open"
                       title={entry.path}
-                      checked={selected.some(
-                        (item) => item.path === entry.path,
-                      )}
-                      onChange={() => toggle(entry)}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="workspace-directory-open"
-                    title={entry.path}
-                    onClick={() => void load(entry.path)}
-                  >
-                    <Folder
-                      size={13}
-                      className={
-                        entry.hidden
-                          ? "text-muted-foreground/60"
-                          : "text-muted-foreground"
-                      }
-                    />
-                    <span className="min-w-0 flex-1 truncate">
-                      {entry.name}
-                    </span>
-                    <ChevronRight
-                      size={12}
-                      className="text-muted-foreground/50"
-                    />
-                  </button>
-                </div>
-              ))}
-            {!loading && !error && listing?.truncated && (
-              <p className="px-3 py-2 text-[11px] text-warning">
-                {label.truncated}
-              </p>
-            )}
+                      onClick={() => void load(entry.path)}
+                    >
+                      <Folder
+                        size={13}
+                        className={
+                          entry.hidden
+                            ? "text-muted-foreground/60"
+                            : "text-muted-foreground"
+                        }
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {entry.name}
+                      </span>
+                      <ChevronRight
+                        size={12}
+                        className="text-muted-foreground/50"
+                      />
+                    </button>
+                  </div>
+                ))}
+              {!loading && !error && listing?.truncated && (
+                <p className="border-t border-border bg-muted/40 px-3 py-2 text-xs text-warning">
+                  {label.truncated}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-3 flex shrink-0 flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={(event) => setShowHidden(event.target.checked)}
+                />
+                {label.showHidden}
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={showIgnored}
+                  onChange={(event) => setShowIgnored(event.target.checked)}
+                />
+                {label.showIgnored}
+              </label>
+              <span
+                className="ml-auto min-w-0 truncate font-mono"
+                title={current}
+              >
+                {current}
+              </span>
+            </div>
           </div>
 
-          <div className="mt-3 flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showHidden}
-                onChange={(event) => setShowHidden(event.target.checked)}
-              />
-              {label.showHidden}
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showIgnored}
-                onChange={(event) => setShowIgnored(event.target.checked)}
-              />
-              {label.showIgnored}
-            </label>
-            <span
-              className="ml-auto min-w-0 truncate font-mono"
-              title={current}
+          {multiple && selected.length > 0 && (
+            <div
+              className="workspace-directory-selection rounded-[10px] border border-border bg-muted/30 p-2 [&_button]:text-xs!"
+              aria-label={label.selectedCount.replace(
+                "{count}",
+                String(selected.length),
+              )}
             >
-              {current}
-            </span>
-          </div>
-        </div>
-
-        {multiple && selected.length > 0 && (
-          <div
-            className="workspace-directory-selection"
-            aria-label={label.selectedCount.replace(
-              "{count}",
-              String(selected.length),
-            )}
-          >
-            {selected.map((item) => (
+              {selected.map((item) => (
+                <button
+                  type="button"
+                  key={item.path}
+                  title={item.path}
+                  aria-label={`${label.removeSelection} ${item.name}`}
+                  onClick={() => toggle(item)}
+                >
+                  <Folder size={11} />
+                  <span>{item.name}</span>
+                  <X size={11} />
+                </button>
+              ))}
+            </div>
+          )}
+          {multiple && (
+            <div className="mt-3 flex shrink-0 items-center justify-between gap-2 text-xs">
+              <span role="status">
+                {label.selectedCount.replace(
+                  "{count}",
+                  String(selected.length),
+                )}
+              </span>
               <button
                 type="button"
-                key={item.path}
-                title={item.path}
-                aria-label={`${label.removeSelection} ${item.name}`}
-                onClick={() => toggle(item)}
+                disabled={!current || loading || Boolean(error)}
+                onClick={() =>
+                  toggle({ path: current, name: listing?.name || current })
+                }
               >
-                <Folder size={11} />
-                <span>{item.name}</span>
-                <X size={11} />
+                {selected.some((item) => item.path === current)
+                  ? label.deselectCurrent
+                  : label.selectCurrent}
               </button>
-            ))}
-          </div>
-        )}
-        {multiple && (
-          <div className="mt-3 flex shrink-0 items-center justify-between gap-2 text-xs">
-            <span role="status">
-              {label.selectedCount.replace("{count}", String(selected.length))}
-            </span>
-            <button
+            </div>
+          )}
+          <div className="mt-4 flex shrink-0 flex-wrap justify-end gap-2! border-t border-border pt-4">
+            <Button type="button" className="min-h-[34px]" onClick={onClose}>
+              {label.cancel}
+            </Button>
+            <Button
               type="button"
-              disabled={!current || loading || Boolean(error)}
+              variant="primary"
+              className="min-h-[34px]"
+              disabled={
+                multiple
+                  ? selected.length === 0 || !onSelectMultiple
+                  : !current || loading || Boolean(error)
+              }
               onClick={() =>
-                toggle({ path: current, name: listing?.name || current })
+                multiple
+                  ? onSelectMultiple?.(selected)
+                  : onSelect({ path: current, name: listing?.name || current })
               }
             >
-              {selected.some((item) => item.path === current)
-                ? label.deselectCurrent
-                : label.selectCurrent}
-            </button>
+              <Check size={12} />
+              {multiple
+                ? `${labels?.confirm ?? label.confirmMultiple} (${selected.length})`
+                : label.confirm}
+            </Button>
           </div>
-        )}
-        <div className="mt-3 flex shrink-0 justify-end gap-2">
-          <button
-            type="button"
-            className="rounded-lg border border-border/50 px-4 py-2 text-xs font-medium text-foreground transition hover:bg-muted/40"
-            onClick={onClose}
-          >
-            {label.cancel}
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
-            disabled={
-              multiple
-                ? selected.length === 0 || !onSelectMultiple
-                : !current || loading || Boolean(error)
-            }
-            onClick={() =>
-              multiple
-                ? onSelectMultiple?.(selected)
-                : onSelect({ path: current, name: listing?.name || current })
-            }
-          >
-            <Check size={12} />
-            {multiple
-              ? `${labels?.confirm ?? label.confirmMultiple} (${selected.length})`
-              : label.confirm}
-          </button>
-        </div>
-      </div>
-    </DialogOverlay>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   );
 }
