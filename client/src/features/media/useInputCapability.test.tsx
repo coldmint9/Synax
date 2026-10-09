@@ -18,27 +18,22 @@ function draft(
   } as MediaDraft;
 }
 describe("provider capabilities only gate visual attachments", () => {
-  it.each([
-    "text/plain",
-    "text/csv",
-    "application/json",
-    "image/svg+xml",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  ])("does not require provider media declarations for %s", async (mime) => {
-    const { result } = renderHook(() =>
-      useInputCapability(
-        "project",
-        "session",
-        "native",
-        "text-only",
-        draft(mime),
-      ),
-    );
-    await waitFor(() => expect(result.current.blocked).toBe(false));
-    expect(apiRequest).not.toHaveBeenCalled();
-  });
+  it.each(["text/plain", "text/csv", "application/json", "image/svg+xml"])(
+    "does not require provider media declarations for %s",
+    async (mime) => {
+      const { result } = renderHook(() =>
+        useInputCapability(
+          "project",
+          "session",
+          "native",
+          "text-only",
+          draft(mime),
+        ),
+      );
+      await waitFor(() => expect(result.current.blocked).toBe(false));
+      expect(apiRequest).not.toHaveBeenCalled();
+    },
+  );
   it("still blocks an image on a text-only provider", async () => {
     vi.mocked(apiRequest).mockResolvedValue({
       modalities: ["text"],
@@ -82,7 +77,7 @@ describe("provider capabilities only gate visual attachments", () => {
         ),
       );
       await waitFor(() =>
-        expect(result.current.text).toContain("图片和流程图无法识别"),
+        expect(result.current.text).toContain("图片、图表和流程图无法识别"),
       );
       expect(result.current.blocked).toBe(false);
       expect(result.current.error).toBe(false);
@@ -110,4 +105,34 @@ describe("provider capabilities only gate visual attachments", () => {
     );
     expect(result.current.blocked).toBe(false);
   });
+  it.each([
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ])(
+    "checks Office visual capability without blocking text-only input: %s",
+    async (mediaType) => {
+      vi.mocked(apiRequest).mockResolvedValue({
+        modalities: ["text"],
+        verified: true,
+        maxFiles: 10,
+        maxFileBytes: 50 * 1024 * 1024,
+        maxTotalBytes: 100 * 1024 * 1024,
+      });
+      const { result } = renderHook(() =>
+        useInputCapability(
+          "project",
+          "session",
+          "native",
+          "text",
+          draft(mediaType),
+        ),
+      );
+      await waitFor(() =>
+        expect(result.current.text).toContain("图片、图表和流程图无法识别"),
+      );
+      expect(result.current.blocked).toBe(false);
+      expect(apiRequest).toHaveBeenCalled();
+    },
+  );
 });

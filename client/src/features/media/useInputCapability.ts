@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../../adapters/transport/origin";
 import type { InputCapabilities } from "../../adapters/transport/runtimeMedia";
 import type { MediaDraft } from "./useMediaDraft";
+import { isVisualDocument } from "../../../../services/local-node/modules/agent-runtime/file-input/document-types";
 export function useInputCapability(
   projectId: string,
   sessionId: string | undefined,
@@ -20,9 +21,15 @@ export function useInputCapability(
       .join(",") ?? "";
   const pdfKey =
     media?.items
-      .filter((item) => item.asset?.mediaType === "application/pdf")
+      .filter((item) => item.asset && isVisualDocument(item.asset.mediaType))
       .map((item) => item.asset!.id)
       .join(",") ?? "";
+  const hasOffice = media?.items.some(
+    (item) =>
+      item.asset &&
+      item.asset.mediaType !== "application/pdf" &&
+      isVisualDocument(item.asset.mediaType),
+  );
   const key = [visualKey, pdfKey].filter(Boolean).join(",");
   useEffect(() => {
     let active = true;
@@ -111,8 +118,10 @@ export function useInputCapability(
               cap.mediaTypes.some(
                 (type) => type === "image/png" || type === "image/*",
               ))
-            ? "PDF 将结合文字、图片和流程图解析。"
-            : "PDF 仅解析文字；其中的图片和流程图无法识别。"
+            ? hasOffice
+              ? "文档将结合文字和可提取的图片解析；Office 图表与流程图的完整渲染需要 LibreOffice。"
+              : "PDF 将结合文字、图片和流程图解析。"
+            : "文档仅解析文字；其中的图片、图表和流程图无法识别。"
           : reason ||
             (!cap?.verified
               ? "创建会话时协商附件能力 / Negotiated on session creation"

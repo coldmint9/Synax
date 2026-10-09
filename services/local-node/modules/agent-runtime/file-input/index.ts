@@ -99,7 +99,7 @@ export async function resolveFileParts(
       );
       output.push({
         type: "text",
-        text: `文件：${asset.filename}，第 ${image.page} 页完整页面图像。请结合该页文字和前后文分析图片、流程图及其关系。`,
+        text: image.context ?? `文件：${asset.filename}，第 ${image.page} 页完整页面图像。请结合该页文字和前后文分析图片、流程图及其关系。`,
       });
       output.push({ type: "image", assetId: rendered.id, detail: "high" });
       remainingPages--;

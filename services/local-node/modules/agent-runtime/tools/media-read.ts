@@ -8,11 +8,12 @@ import { agentRuntimeStore } from "../session-store.js";
 import { resolveWorkspacePath } from "./workspace.js";
 import { resolveFileParts } from "../file-input/index.js";
 import { sessionInputCapabilities } from "../media-capabilities.js";
+import { isVisualDocument } from "../file-input/registry.js";
 export const mediaReadTool: RegisteredTool = {
   id: "media.read",
   label: "Read media",
   description:
-    "Read an attached asset by assetId or a workspace file by path. Provide exactly one assetId or path. Files must be at most 50 MiB. Character files, PDF text layers, DOCX, XLSX and PPTX are parsed locally into text. PDF pages containing images or vector diagrams are also rendered for models with confirmed image input; text-only models receive text and an explicit warning about unread visual content. Images and videos use native media input. Unsupported binary files are rejected; skills/tools may extend the parser registry.",
+    "Read an attached asset by assetId or a workspace file by path. Provide exactly one assetId or path. Files must be at most 50 MiB. PDF, DOCX, XLSX and PPTX provide text and visual context to models with confirmed image input. Office embedded images are extracted locally; complete Office layout, charts and vector diagrams require LibreOffice (optionally configured via SYNAX_LIBREOFFICE_PATH). Text-only models receive text and explicit warnings about unread visual content. Images and videos use native media input. Unsupported binary files are rejected; skills/tools may extend the parser registry.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
@@ -52,13 +53,13 @@ export const mediaReadTool: RegisteredTool = {
     const parts = [{ type: modalityForMime(asset.mediaType), assetId: asset.id }];
     if (args.assetOnly) bindAssets(input.sessionId, parts);
     const contentParts = args.assetOnly ? [] : await resolveFileParts(parts, session.projectId,
-      asset.mediaType === "application/pdf" ? await sessionInputCapabilities(input.sessionId,
+      isVisualDocument(asset.mediaType) ? await sessionInputCapabilities(input.sessionId,
         input.runId ? agentRuntimeStore.getRun(input.runId).model ?? undefined : undefined) : undefined);
     // Retain the source separately: ten rendered pages plus the source would
     // otherwise exceed the per-input ten-file validation limit.
     bindAssets(input.sessionId, [{ type: "file", assetId: asset.id }]);
     bindAssets(input.sessionId, contentParts);
-    const warnings = contentParts.filter(p => p.type === "text" && /无法识别|未提供给模型识别/.test(p.text));
+    const warnings = contentParts.filter(p => p.type === "text" && /无法识别|无法完整识别|未提供给模型识别/.test(p.text));
     return {
       result: { asset },
       contentParts,

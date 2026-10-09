@@ -1,15 +1,99 @@
 import { describe, expect, it, vi } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { parseFileInput, registerFileParser } from "../file-input/index.js";
+import * as officeRenderer from "../file-input/office-renderer.js";
 import {
   documentFixtures,
   officeTypes,
   makePdf,
   flowchartDrawing,
   bitmapDrawing,
+  officeVisualFixture,
 } from "./file-input-fixtures.js";
 const fixtures = documentFixtures();
 describe("file input parsers", () => {
+  it.each(["docx", "xlsx", "pptx"] as const)(
+    "extracts %s embedded images with source context and warns about unrendered diagrams",
+    async (kind) => {
+      const { createCanvas } = await import("@napi-rs/canvas");
+      const canvas = createCanvas(20, 20);
+      canvas.getContext("2d").fillRect(0, 0, 20, 20);
+      const input = {
+        filename: `visual.${kind}`,
+        mediaType: officeTypes[kind],
+        bytes: officeVisualFixture(kind, await canvas.encode("png")),
+      };
+      const renderer = vi
+        .spyOn(officeRenderer, "renderOfficePdf")
+        .mockRejectedValue(new Error("未安装 LibreOffice 文档渲染器"));
+      try {
+        const textOnly = await parseFileInput(input);
+        expect(textOnly.text).toContain("图片、图表和流程图无法识别");
+        expect(textOnly.images).toBeUndefined();
+        expect(renderer).not.toHaveBeenCalled();
+        const visual = await parseFileInput({
+          ...input,
+          visual: {
+            maxPages: 10,
+            maxImageBytes: 5 * 1024 * 1024,
+            maxTotalBytes: 20 * 1024 * 1024,
+          },
+        });
+        expect(visual.images).toHaveLength(1);
+        expect(visual.images![0].context).toContain(
+          kind === "docx"
+            ? "word/document.xml"
+            : kind === "xlsx"
+              ? "xl/drawings/drawing1.xml"
+              : "ppt/slides/slide1.xml",
+        );
+        expect(visual.images![0].context).toContain(
+          kind === "docx"
+            ? "Word 正文"
+            : kind === "xlsx"
+              ? "工作表：销售"
+              : "幻灯片 2",
+        );
+        expect(visual.text).toContain("未安装 LibreOffice");
+        expect(visual.text).toContain("矢量流程图未提供给模型识别");
+        const limited = await parseFileInput({
+          ...input,
+          visual: { maxPages: 0, maxImageBytes: 1, maxTotalBytes: 1 },
+        });
+        expect(limited.images).toEqual([]);
+        expect(limited.text).toContain("超过本次图片数量或体积限制");
+      } finally {
+        renderer.mockRestore();
+      }
+    },
+  );
+  it.each(["docx", "xlsx", "pptx"] as const)(
+    "uses full layout rendering for %s charts and vector diagrams",
+    async (kind) => {
+      const renderer = vi
+        .spyOn(officeRenderer, "renderOfficePdf")
+        .mockResolvedValue(makePdf("Rendered chart", flowchartDrawing));
+      try {
+        const result = await parseFileInput({
+          filename: `diagram.${kind}`,
+          mediaType: officeTypes[kind],
+          bytes: officeVisualFixture(kind, new Uint8Array(), true),
+          visual: {
+            maxPages: 10,
+            maxImageBytes: 5 * 1024 * 1024,
+            maxTotalBytes: 20 * 1024 * 1024,
+          },
+        });
+        expect(result.images).toHaveLength(1);
+        expect(result.images![0].context).toContain("第 1 页完整页面图像");
+        expect(result.warnings).toEqual([]);
+        expect(result.text).toContain("Rendered chart");
+        expect(renderer).toHaveBeenCalledWith(expect.any(Uint8Array), kind);
+      } finally {
+        renderer.mockRestore();
+      }
+    },
+  );
   it("extracts PDF text when the runtime has no default worker source", async () => {
     const { GlobalWorkerOptions } =
       await import("pdfjs-dist/legacy/build/pdf.mjs");

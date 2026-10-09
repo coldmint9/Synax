@@ -1,14 +1,25 @@
 import { AgentRuntimeError } from "../runtime-errors.js";
+export { isVisualDocument } from "./document-types.js";
 
 export interface FileParserInput {
   filename: string;
   mediaType: string;
   bytes: Uint8Array;
-  visual?: { maxPages: number; maxImageBytes: number; maxTotalBytes: number };
+  visual?: {
+    maxPages: number;
+    maxImageBytes: number;
+    maxTotalBytes: number;
+    renderAll?: boolean;
+  };
 }
 export interface ParsedDocument {
   text: string;
-  images?: { page: number; bytes: Uint8Array; mediaType: "image/png" }[];
+  images?: {
+    page: number;
+    bytes: Uint8Array;
+    mediaType: "image/png";
+    context?: string;
+  }[];
   warnings?: string[];
 }
 export interface ParsedFile extends ParsedDocument {

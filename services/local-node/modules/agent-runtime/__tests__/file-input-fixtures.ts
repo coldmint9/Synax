@@ -1,4 +1,4 @@
-import { zipSync, strToU8 } from "fflate";
+import { zipSync, strToU8, unzipSync } from "fflate";
 export const officeTypes = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -86,3 +86,53 @@ export const flowchartDrawing =
 // A small embedded red/green/blue/white bitmap, without an external image file.
 export const bitmapDrawing =
   "q 120 0 0 120 72 500 cm BI /W 2 /H 2 /CS /RGB /BPC 8 /F /AHx ID FF000000FF000000FFFFFFFF> EI Q";
+
+export function officeVisualFixture(
+  kind: "docx" | "xlsx" | "pptx",
+  image: Uint8Array,
+  drawingOnly = false,
+): Buffer {
+  const files = unzipSync(documentFixtures()[kind]);
+  const prefix = { docx: "word", xlsx: "xl", pptx: "ppt" }[kind];
+  const source = {
+    docx: "word/document.xml",
+    xlsx: "xl/drawings/drawing1.xml",
+    pptx: "ppt/slides/slide1.xml",
+  }[kind];
+  const drawing = drawingOnly
+    ? '<a:graphic xmlns:a="urn:drawing"><a:chart/></a:graphic>'
+    : '<a:graphic xmlns:a="urn:drawing"><a:blip r:embed="image1" xmlns:r="urn:rels"/></a:graphic>';
+  if (kind === "docx")
+    files[source] = strToU8(
+      new TextDecoder()
+        .decode(files[source])
+        .replace(
+          "</w:body>",
+          `<w:p><w:r><w:drawing>${drawing}</w:drawing></w:r></w:p></w:body>`,
+        ),
+    );
+  else if (kind === "pptx")
+    files[source] = strToU8(
+      new TextDecoder()
+        .decode(files[source])
+        .replace("</p:sld>", `${drawing}</p:sld>`),
+    );
+  else {
+    files[source] = strToU8(
+      `<xdr:wsDr xmlns:xdr="urn:drawing">${drawing}</xdr:wsDr>`,
+    );
+    files["xl/worksheets/_rels/sheet1.xml.rels"] = strToU8(
+      '<Relationships><Relationship Id="drawing1" Target="../drawings/drawing1.xml"/></Relationships>',
+    );
+  }
+  if (!drawingOnly) {
+    files[`${prefix}/media/image1.png`] = image;
+    const slash = source.lastIndexOf("/");
+    const relPath = `${source.slice(0, slash)}/_rels/${source.slice(slash + 1)}.rels`;
+    const target = kind === "docx" ? "media/image1.png" : "../media/image1.png";
+    files[relPath] = strToU8(
+      `<Relationships><Relationship Id="image1" Target="${target}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"/></Relationships>`,
+    );
+  }
+  return Buffer.from(zipSync(files));
+}

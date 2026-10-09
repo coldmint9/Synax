@@ -1,6 +1,6 @@
 import { createAsset, getAsset } from "./media-assets.js";
 import { resolveFileParts } from "./file-input/index.js";
-import { MAX_PARSED_CHARACTERS } from "./file-input/registry.js";
+import { MAX_PARSED_CHARACTERS, isVisualDocument } from "./file-input/registry.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import {
   MAX_FILE_BYTES,
@@ -64,11 +64,10 @@ export async function importToolContent(
         }),
       });
   }
-  // Keep PDFs as local references until the consuming model is selected;
-  // eagerly converting to text here would permanently discard diagrams.
+  // Preserve visual documents until the consuming model is selected.
   const resolved: RuntimeContentPart[] = [];
   for (const part of parts) {
-    if (part.type !== "text" && getAsset(part.assetId, projectId).mediaType === "application/pdf")
+    if (part.type !== "text" && isVisualDocument(getAsset(part.assetId, projectId).mediaType))
       resolved.push(part);
     else resolved.push(...await resolveFileParts([part], projectId));
   }

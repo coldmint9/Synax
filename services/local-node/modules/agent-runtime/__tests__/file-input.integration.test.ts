@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as mediaCapabilities from "../media-capabilities.js";
+import * as officeRenderer from "../file-input/office-renderer.js";
 import { Hono } from "hono";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +30,7 @@ import {
   makePdf,
   flowchartDrawing,
   bitmapDrawing,
+  officeVisualFixture,
 } from "./file-input-fixtures.js";
 import { resolveFileParts } from "../file-input/index.js";
 import {
@@ -408,8 +410,13 @@ describe("document inputs independent of provider capabilities", () => {
         data: fixtures.docx.toString("base64"),
       },
     ]);
-    expect(imported[0]).toMatchObject({ type: "text" });
-    expect(JSON.stringify(imported)).toContain("文档段落");
+    expect(imported[0]).toMatchObject({ type: "file" });
+    const resolved = await resolveMediaMessages(
+      [{ role: "user", content: modelContentParts(imported) }],
+      selection,
+      session.projectId,
+    );
+    expect(JSON.stringify(resolved)).toContain("文档段落");
     const app = new Hono().route("/assets", runtimeAssetRoutes);
     const form = new FormData();
     form.set("projectId", session.projectId);
@@ -452,6 +459,85 @@ describe("document inputs independent of provider capabilities", () => {
       ),
     ).toContain("Tool context");
   });
+  it.each(["docx", "xlsx", "pptx"] as const)(
+    "routes %s embedded visuals through uploads, model messages and media.read",
+    async (kind) => {
+      const session = agentSessionRuntime.create(executorInput);
+      const { createCanvas } = await import("@napi-rs/canvas");
+      const canvas = createCanvas(20, 20);
+      canvas.getContext("2d").fillRect(0, 0, 20, 20);
+      const bytes = officeVisualFixture(kind, await canvas.encode("png"));
+      const renderer = vi
+        .spyOn(officeRenderer, "renderOfficePdf")
+        .mockRejectedValue(new Error("未安装 LibreOffice 文档渲染器"));
+      const capabilities = vi
+        .spyOn(mediaCapabilities, "sessionInputCapabilities")
+        .mockResolvedValue(nativeInputCapabilities(visionSelection));
+      try {
+        const form = new FormData();
+        form.set("projectId", session.projectId);
+        form.set(
+          "file",
+          new File([new Uint8Array(bytes)], `visual.${kind}`, {
+            type: officeTypes[kind],
+          }),
+        );
+        const response = await new Hono()
+          .route("/assets", runtimeAssetRoutes)
+          .request("/assets", { method: "POST", body: form });
+        expect(response.status).toBe(201);
+        const { asset } = await response.json();
+        const parts = [{ type: "file" as const, assetId: asset.id }];
+        const vision = await resolveMediaMessages(
+          [{ role: "user", content: modelContentParts(parts) }],
+          visionSelection,
+          session.projectId,
+        );
+        expect(
+          (vision[0].content as any[]).some(
+            (p) => p.type === "file" && p.mediaType === "image/png",
+          ),
+        ).toBe(true);
+        const text = await resolveMediaMessages(
+          [{ role: "user", content: modelContentParts(parts) }],
+          selection,
+          session.projectId,
+        );
+        expect((text[0].content as any[]).every((p) => p.type === "text")).toBe(
+          true,
+        );
+        expect(JSON.stringify(text)).toContain("图片、图表和流程图无法识别");
+        bindAssets(session.id, parts);
+        const read = await mediaReadTool.execute({
+          sessionId: session.id,
+          runId: null,
+          stepId: null,
+          toolCallId: "office-read",
+          toolId: "media.read",
+          category: "read",
+          mutability: "read",
+          args: { assetId: asset.id },
+        });
+        const image = read.contentParts!.find((p) => p.type === "image")!;
+        expect(image).toBeDefined();
+        if (image.type === "image")
+          expect(sessionHasAsset(session.id, image.assetId)).toBe(true);
+        expect(read.displaySummary).toContain("未被识别");
+        const imported = await importToolContent(session.projectId, [
+          {
+            type: "file",
+            name: `tool.${kind}`,
+            mimeType: officeTypes[kind],
+            data: bytes.toString("base64"),
+          },
+        ]);
+        expect(imported[0].type).toBe("file");
+      } finally {
+        renderer.mockRestore();
+        capabilities.mockRestore();
+      }
+    },
+  );
   it("turns character files in historical messages into text with no declared media capabilities", async () => {
     const session = agentSessionRuntime.create(executorInput);
     const asset = await createAsset(
