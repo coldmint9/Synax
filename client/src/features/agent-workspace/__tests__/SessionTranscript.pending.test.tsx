@@ -174,6 +174,23 @@ it("shows one real message when it arrives before the run-start linkage and HTTP
   expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
 });
 
+it("holds partial history until the initial snapshot is ready, then preserves it during refresh", () => {
+  const message = {
+    id: "history-reply", sessionId: "s1", runId: "old-run", stepId: null,
+    role: "assistant" as const, content: "Complete history answer",
+    metadata: {}, createdAt: "2026-01-01T00:00:00Z",
+  };
+  const { container } = render(<SessionTranscript />);
+  act(() => useAgentSessionStore.setState({ messages: [message] }));
+  expect(screen.queryByText(message.content)).not.toBeInTheDocument();
+  expect(container.querySelector(".session-transcript-skeleton")).not.toBeNull();
+  act(() => useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: false }));
+  const answer = screen.getByText(message.content);
+  expect(container.querySelector(".session-transcript-skeleton")).toBeNull();
+  act(() => useAgentSessionStore.setState({ detailRefreshing: true }));
+  expect(screen.getByText(message.content)).toBe(answer);
+});
+
 it("keeps the dot matrix through tool-only work and removes it at the first assistant line", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(

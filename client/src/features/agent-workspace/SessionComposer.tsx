@@ -959,7 +959,7 @@ export function SessionComposer({
           </div>
         </NewSessionScene>
       ) : (
-        <div className="mx-auto w-full min-w-0 max-w-3xl">
+        <div className="relative mx-auto w-full min-w-0 max-w-3xl">
           {statusSlot}
           {composerShell}
         </div>

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const publishPreview = createRequire(import.meta.url)(
@@ -70,13 +71,32 @@ beforeEach(async () => {
         `Synax-0.2.0-${target}-Setup.exe`,
         "Synax-0.2.0-full.nupkg",
         "RELEASES",
+        `Synax-0.2.0-${target}-NSIS.exe`,
       );
-    if (!target.startsWith("linux")) names.push(`desktop-${target}.json`);
-    for (const name of names)
+    const updateName = target.startsWith("darwin")
+      ? `Synax-0.2.0-${target}.zip` : "Synax-0.2.0-full.nupkg";
+    if (!target.startsWith("linux")) names.push(
+      `desktop-${target}.json`, `${updateName}.blockmap`,
+      `stable-${target}${target.startsWith("darwin") ? "-mac" : ""}.yml`,
+    );
+    for (const name of names) {
+      let content = "fixture";
+      if (name.startsWith("desktop-")) content = JSON.stringify({
+        format: 1, blockMap: { name: `${updateName}.blockmap`, size: 7,
+          sha256: createHash("sha256").update("fixture").digest("hex") },
+      });
+      if (name.startsWith("stable-")) {
+        const artifact = target.startsWith("darwin") ? updateName : `Synax-0.2.0-${target}-NSIS.exe`;
+        const url = `https://github.com/coldmint9/Synax/releases/download/v0.2.0/${artifact}`;
+        const sha512 = createHash("sha512").update("fixture").digest("base64");
+        content = JSON.stringify({ version: "0.2.0", path: url, sha512,
+          files: [{ url, sha512, size: 7 }], releaseDate: new Date(0).toISOString() });
+      }
       await fs.writeFile(
         path.join(dir, name),
-        name.startsWith("desktop-") ? JSON.stringify({ format: 1 }) : "fixture",
+        content,
       );
+    }
   }
 });
 afterEach(async () => {
@@ -95,7 +115,7 @@ it("publishes all platforms before exposing a prerelease, without replacing late
       target_commitish: context.sha,
     }),
   );
-  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(12);
+  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(19);
   expect(git.createRef).toHaveBeenCalledWith(
     expect.objectContaining({ ref: "refs/tags/preview", sha: context.sha }),
   );
@@ -189,6 +209,9 @@ it("publishes successful platforms when Windows failed, without retaining stale 
     "Synax-0.2.0-full.nupkg",
     "RELEASES",
     "desktop-win32-x64.json",
+    "stable-win32-x64.yml",
+    "Synax-0.2.0-win32-x64-NSIS.exe",
+    "Synax-0.2.0-full.nupkg.blockmap",
   ])
     await fs.rm(path.join(root, "release-assets/make", name));
   input.github.rest.repos.getReleaseByTag.mockResolvedValue({
@@ -199,7 +222,7 @@ it("publishes successful platforms when Windows failed, without retaining stale 
   ]);
   await publishPreview(input, root);
   const { repos } = input.github.rest;
-  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(7);
+  expect(repos.uploadReleaseAsset).toHaveBeenCalledTimes(11);
   expect(repos.deleteReleaseAsset).toHaveBeenCalledWith(
     expect.objectContaining({ asset_id: 91 }),
   );

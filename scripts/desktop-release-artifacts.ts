@@ -23,8 +23,13 @@ export async function createDesktopReleaseArtifacts(
   const sourceName = desktopArtifactName(version, platform, arch);
   const updateName =
     platform === "darwin" ? `Synax-${version}-darwin-${arch}.zip` : sourceName;
+  const frameworkName = platform === "darwin"
+    ? updateName
+    : `Synax-${version}-win32-${arch}-NSIS.exe`;
+  const feedName = `stable-${platform}-${arch}${platform === "darwin" ? "-mac" : ""}.yml`;
   const candidates: string[] = [];
   const updateCandidates: string[] = [];
+  const frameworkCandidates: string[] = [];
   async function visit(directory: string): Promise<void> {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
@@ -32,6 +37,7 @@ export async function createDesktopReleaseArtifacts(
       else if (entry.isFile()) {
         if (entry.name === sourceName) candidates.push(file);
         if (entry.name === updateName) updateCandidates.push(file);
+        if (entry.name === frameworkName) frameworkCandidates.push(file);
       }
     }
   }
@@ -44,6 +50,21 @@ export async function createDesktopReleaseArtifacts(
       `Expected one ${updateName}, found ${updateCandidates.length}`,
     );
   const updateSource = updateCandidates[0];
+  if (frameworkCandidates.length !== 1)
+    throw new Error(`Expected one ${frameworkName}, found ${frameworkCandidates.length}`);
+  const frameworkSource = frameworkCandidates[0];
+  const frameworkSize = (await fs.stat(frameworkSource)).size;
+  if (!Number.isSafeInteger(frameworkSize) || frameworkSize <= 0)
+    throw new Error(`Invalid framework artifact size: ${frameworkName}`);
+  const sha512 = Buffer.from(await hashFile(frameworkSource, "sha512"), "hex").toString("base64");
+  const url = `https://github.com/coldmint9/Synax/releases/download/v${version}/${frameworkName}`;
+  const feed = {
+    version,
+    files: [{ url, sha512, size: frameworkSize }],
+    path: url,
+    sha512,
+    releaseDate: new Date().toISOString(),
+  };
   let manifest = validateDesktopManifest({
     format: 1,
     version,
@@ -79,5 +100,9 @@ export async function createDesktopReleaseArtifacts(
     path.join(output, desktopManifestName(platform, arch)),
     JSON.stringify(manifest, null, 2),
   );
+  // JSON is valid YAML 1.2. Expose the feed only after every artifact was validated.
+  const feedFile = path.join(output, feedName);
+  await fs.writeFile(`${feedFile}.tmp`, JSON.stringify(feed, null, 2));
+  await fs.rename(`${feedFile}.tmp`, feedFile);
   return manifest;
 }

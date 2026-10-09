@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
+import fs from "node:fs/promises";
 import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
@@ -15,6 +16,7 @@ import {
 const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
 const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg", import.meta.url));
+const updateConfig = path.resolve("dist-electron/app-update.yml");
 
 const config: ForgeConfig = {
   hooks: {
@@ -22,6 +24,19 @@ const config: ForgeConfig = {
       ensureDmgNative();
     },
     prePackage: async (_config, platform, arch) => {
+      if (platform === "darwin" && process.env.SYNAX_REQUIRE_SIGNED_UPDATES === "1" &&
+        !process.env.SYNAX_MAC_SIGN_IDENTITY)
+        throw new Error("Stable macOS updates require SYNAX_MAC_SIGN_IDENTITY and its installed Developer ID certificate.");
+      await fs.mkdir(path.dirname(updateConfig), { recursive: true });
+      await fs.writeFile(updateConfig, JSON.stringify({
+        provider: "generic",
+        url: "https://github.com/coldmint9/Synax/releases/latest/download/",
+        channel: `stable-${platform}-${arch}`,
+        updaterCacheDirName: "synax-framework-updater",
+        ...(process.env.SYNAX_WINDOWS_PUBLISHER
+          ? { publisherName: [process.env.SYNAX_WINDOWS_PUBLISHER] }
+          : {}),
+      }));
       await stageCuaDriver(platform, arch);
       if (platform !== process.platform || arch !== process.arch) {
         throw new Error(
@@ -48,9 +63,20 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     win32metadata: windowsMetadata(),
     appBundleId: "com.Synax.desktop",
+    ...(process.env.SYNAX_MAC_SIGN_IDENTITY ? {
+      osxSign: { identity: process.env.SYNAX_MAC_SIGN_IDENTITY },
+    } : {}),
+    ...(process.env.SYNAX_APPLE_ID && process.env.SYNAX_APPLE_APP_PASSWORD && process.env.SYNAX_APPLE_TEAM_ID ? {
+      osxNotarize: {
+        appleId: process.env.SYNAX_APPLE_ID,
+        appleIdPassword: process.env.SYNAX_APPLE_APP_PASSWORD,
+        teamId: process.env.SYNAX_APPLE_TEAM_ID,
+      },
+    } : {}),
     icon,
     asar: { unpack: "**/*.{node,dylib,dll,so}" },
     extraResource: [
+      updateConfig,
       "./server-dist",
       "./dist/cua-driver",
       "./cua-helper-dist",

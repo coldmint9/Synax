@@ -1,279 +1,137 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import {
-  UpdaterController,
-  type ControllerDependencies,
-} from "./controller.js";
+import type { AppUpdater, UpdateInfo } from "electron-updater";
+import { UpdaterController, type ControllerDependencies } from "./controller.js";
 import type { UpdaterRequest } from "./contract.js";
-import {
-  desktopArtifactName,
-  downloadDesktopRelease,
-  verifyDesktopArtifact,
-  type DesktopRelease,
-} from "../lib/desktop-update-feed.js";
-import { sha256 } from "../lib/ui-update-format.js";
-import { desktopReleaseDirectory } from "../lib/desktop-update-cache.js";
+import { configureUpdateNetwork } from "../lib/update-network.js";
+
 let root: string;
 let request: UpdaterRequest;
 let dependencies: ControllerDependencies;
-const release: DesktopRelease = {
-  manifest: {
-    format: 1,
-    version: "0.2.0",
-    platform: process.platform === "win32" ? "win32" : "darwin",
-    arch: process.arch as "arm64" | "x64",
-    artifact: {
-      name: desktopArtifactName(
-        "0.2.0",
-        process.platform === "win32" ? "win32" : "darwin",
-        process.arch as "arm64" | "x64",
-      ),
-      size: 10,
-      sha256: "a".repeat(64),
-    },
-  },
-  url: `https://github.com/coldmint9/Synax/releases/download/v0.2.0/${desktopArtifactName("0.2.0", process.platform === "win32" ? "win32" : "darwin", process.arch as "arm64" | "x64")}`,
-  notes: "New version",
+let updater: EventEmitter & {
+  checkForUpdates: ReturnType<typeof vi.fn>;
+  downloadUpdate: ReturnType<typeof vi.fn>;
+  quitAndInstall: ReturnType<typeof vi.fn>;
 };
+let info: UpdateInfo;
+let file: string;
+const bytes = Buffer.from("framework checked installer");
+const pending = () => path.join(root, "desktop-updates/framework-pending.json");
+function controller(value = request) { return new UpdaterController(value, () => {}, dependencies); }
+async function ready() {
+  const value = controller();
+  await value.initialize(); await value.check(); await value.download();
+  expect(value.state.phase).toBe("ready");
+  return value;
+}
 beforeEach(async () => {
-  root = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), "synax-controller-")),
-  );
-  request = {
-    currentVersion: "0.1.2",
-    uiVersion: null,
-    executable: path.join(root, "Synax.app/Contents/MacOS/Synax"),
-    profile: root,
-    parentPid: process.pid,
-  };
-  await fs.mkdir(path.dirname(request.executable), { recursive: true });
-  await fs.writeFile(path.resolve(request.executable, "../../Update.exe"), "");
-  dependencies = {
-    find: vi.fn().mockResolvedValue(release),
-    download: vi
-      .fn()
-      .mockResolvedValue(path.join(root, "desktop-updates/package/update.dmg")),
-    verify: vi.fn().mockResolvedValue(true),
-    install: vi.fn().mockResolvedValue(undefined),
-  };
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "synax-framework-"));
+  file = path.join(root, "installer.exe");
+  await fs.writeFile(file, bytes);
+  request = { currentVersion: "0.1.2", uiVersion: null, executable: path.join(root, "Synax.exe"), profile: root, parentPid: process.pid };
+  info = { version: "0.2.0", releaseDate: new Date().toISOString(), releaseNotes: "Release notes", path: file, sha512: "", files: [{ url: file, size: bytes.length, sha512: createHash("sha512").update(bytes).digest("base64") }] };
+  updater = Object.assign(new EventEmitter(), {
+    checkForUpdates: vi.fn(async () => ({ isUpdateAvailable: true, updateInfo: info })),
+    downloadUpdate: vi.fn(async () => [file]),
+    quitAndInstall: vi.fn(),
+  });
+  dependencies = { create: vi.fn(async () => updater as unknown as AppUpdater), configure: vi.fn(async () => {}), eligible: vi.fn(async () => {}) };
+  configureUpdateNetwork({ mode: "direct", customProxyUrl: "" });
 });
-afterEach(async () => {
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  await fs.rm(root, { recursive: true, force: true });
-});
-it.skipIf(!["darwin", "win32"].includes(process.platform))(
-  "streams a real artifact into a persistent cache and restores it offline after a new controller starts",
-  async () => {
-    const bytes = Buffer.from("complete and verified desktop package");
-    const downloadable = {
-      ...release,
-      manifest: {
-        ...release.manifest,
-        artifact: {
-          ...release.manifest.artifact,
-          size: bytes.length,
-          sha256: sha256(bytes),
-        },
-      },
-    };
-    const fetch = vi.fn(async () => new Response(bytes));
-    vi.stubGlobal("fetch", fetch);
-    dependencies.find = vi.fn().mockResolvedValue(downloadable);
-    dependencies.download = vi.fn(downloadDesktopRelease);
-    dependencies.verify = verifyDesktopArtifact;
-    const controller = new UpdaterController(request, () => {}, dependencies);
-    await controller.initialize();
-    await controller.check();
-    expect(controller.state.phase).toBe("available");
-    await controller.download();
-    expect(controller.state.phase).toBe("ready");
-    const directory = desktopReleaseDirectory(
-      controller.directory,
-      downloadable.manifest,
-    );
-    expect(
-      await fs.readFile(
-        path.join(directory, downloadable.manifest.artifact.name),
-      ),
-    ).toEqual(bytes);
-    vi.mocked(dependencies.find)
-      .mockClear()
-      .mockRejectedValue(new Error("offline"));
-    const restarted = new UpdaterController(request, () => {}, dependencies);
-    await restarted.initialize();
-    expect(restarted.state).toMatchObject({
-      phase: "ready",
-      progress: 1,
-      size: bytes.length,
-    });
-    await restarted.check();
-    expect(dependencies.find).not.toHaveBeenCalled();
-    expect(dependencies.download).toHaveBeenCalledOnce();
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(dependencies.install).not.toHaveBeenCalled();
-  },
-);
-it("publishes streamed progress and remains non-installable until verification and cache persistence finish", async () => {
-  const changed = vi.fn();
-  let finishDownload!: (file: string) => void;
-  let finishVerification!: (valid: boolean) => void;
-  vi.mocked(dependencies.verify)
-    .mockResolvedValueOnce(false)
-    .mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishVerification = resolve;
-        }),
-    );
-  vi.mocked(dependencies.download).mockImplementation(
-    async (_release, _directory, progress) => {
-      progress?.(0.25);
-      return new Promise((resolve) => {
-        finishDownload = resolve;
-      });
-    },
-  );
-  const controller = new UpdaterController(request, changed, dependencies);
-  await controller.initialize();
-  await controller.check();
-  const download = controller.download();
-  await vi.waitFor(() =>
-    expect(controller.state).toMatchObject({
-      phase: "downloading",
-      progress: 0.25,
-    }),
-  );
-  await controller.install();
-  expect(dependencies.install).not.toHaveBeenCalled();
-  const directory = desktopReleaseDirectory(
-    controller.directory,
-    release.manifest,
-  );
-  finishDownload(path.join(directory, release.manifest.artifact.name));
-  await vi.waitFor(() => expect(controller.state.phase).toBe("verifying"));
-  await expect(
-    fs.access(path.join(directory, "release.json")),
-  ).rejects.toThrow();
-  await controller.install();
-  expect(dependencies.install).not.toHaveBeenCalled();
-  finishVerification(true);
-  await download;
-  expect(controller.state).toMatchObject({ phase: "ready", progress: 1 });
-  expect(
-    JSON.parse(await fs.readFile(path.join(directory, "release.json"), "utf8")),
-  ).toEqual(release);
-  expect(
-    changed.mock.calls.some(
-      ([state]) => state.phase === "downloading" && state.progress === 0.25,
-    ),
-  ).toBe(true);
-});
+afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 
-it.skipIf(!["darwin", "win32"].includes(process.platform))(
-  "restores a cached version after restart and permits checking while offline without redownloading",
-  async () => {
-    const first = new UpdaterController(request, () => {}, dependencies);
-    await first.initialize();
-    await first.check();
-    vi.mocked(dependencies.find)
-      .mockClear()
-      .mockRejectedValue(new Error("offline"));
-    const restarted = new UpdaterController(request, () => {}, dependencies);
-    await restarted.initialize();
-    expect(restarted.state).toMatchObject({
-      phase: "ready",
-      availableVersion: "0.2.0",
-      progress: 1,
-    });
-    await restarted.check();
-    expect(restarted.state.phase).toBe("ready");
-    expect(dependencies.find).not.toHaveBeenCalled();
-    expect(dependencies.download).not.toHaveBeenCalled();
-    expect(dependencies.install).not.toHaveBeenCalled();
-  },
-);
-
-it("does not persist failed verification or allow installation of a changed cache", async () => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-  vi.mocked(dependencies.verify).mockResolvedValue(false);
-  const controller = new UpdaterController(request, () => {}, dependencies);
-  await controller.initialize();
-  await controller.check();
-  await controller.download();
-  expect(controller.state.phase).toBe("error");
-  const metadata = path.join(
-    desktopReleaseDirectory(controller.directory, release.manifest),
-    "release.json",
-  );
-  await expect(fs.access(metadata)).rejects.toThrow();
-  await controller.install();
-  expect(dependencies.install).not.toHaveBeenCalled();
-  vi.mocked(dependencies.verify).mockResolvedValue(true);
-  await controller.check();
-  expect(controller.state.phase).toBe("ready");
-  vi.mocked(dependencies.verify).mockResolvedValue(false);
-  await controller.install();
-  expect(controller.state).toMatchObject({
-    phase: "error",
-    message: "安装包校验失败，请重新下载。",
+it("uses framework checks and transfers, and waits for verified bytes before readiness", async () => {
+  const value = controller(); await value.initialize(); await value.check();
+  expect(value.state).toMatchObject({ phase: "available", availableVersion: "0.2.0", notes: "Release notes" });
+  updater.downloadUpdate.mockImplementation(async () => {
+    updater.emit("download-progress", { percent: 100, transferred: bytes.length, total: bytes.length });
+    expect(value.state.phase).toBe("downloading");
+    return [file];
   });
-  expect(dependencies.install).not.toHaveBeenCalled();
-  await expect(fs.access(metadata)).rejects.toThrow();
+  await value.download();
+  expect(value.state).toMatchObject({ phase: "ready", progress: 1, transfer: { mode: "full" } });
+  await value.install();
+  expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  expect(value.state.phase).toBe("installing");
+  expect(value.state.history).toEqual([]);
+  expect(JSON.parse(await fs.readFile(pending(), "utf8"))).toMatchObject({ version: "0.2.0", fromVersion: "0.1.2" });
 });
-it("restores a verified cached download and requires an explicit install action", async () => {
-  const controller = new UpdaterController(request, () => {}, dependencies);
-  await controller.initialize();
-  await controller.check();
-  expect(controller.state.phase).toBe("ready");
-  expect(dependencies.install).not.toHaveBeenCalled();
-  await controller.install();
-  expect(controller.state.phase).toBe("complete");
-  expect(controller.state.currentVersion).toBe("0.2.0");
-  expect(controller.state.uiVersion).toBeNull();
-  const reopened = new UpdaterController(request, () => {}, dependencies);
-  await reopened.initialize();
-  expect(reopened.state.history[0]).toMatchObject({
-    version: "0.2.0",
-    fromVersion: "0.1.2",
-    outcome: "installed",
-  });
+it("records installation only when the new application confirms startup, once", async () => {
+  const value = await ready(); await value.install();
+  const restarted = controller({ ...request, currentVersion: "0.2.0" });
+  await restarted.initialize(); await restarted.markHealthy(); await restarted.markHealthy();
+  expect(restarted.state.history).toHaveLength(1);
+  expect(restarted.state.history[0]).toMatchObject({ version: "0.2.0", outcome: "installed" });
+  expect(restarted.state.phase).toBe("complete");
+  const reopened = controller({ ...request, currentVersion: "0.2.0" });
+  await reopened.initialize(); expect(reopened.state.history).toEqual(restarted.state.history);
 });
-it("records an install failure without marking the new version active", async () => {
-  const log = vi.spyOn(console, "error").mockImplementation(() => {});
-  vi.mocked(dependencies.install).mockRejectedValue(
-    new Error("replacement failed"),
-  );
-  const controller = new UpdaterController(request, () => {}, dependencies);
-  await controller.initialize();
-  await controller.check();
-  await controller.install();
-  expect(controller.state).toMatchObject({
-    phase: "error",
-    currentVersion: "0.1.2",
-    message: "replacement failed",
-  });
-  expect(controller.state.history[0].outcome).toBe("failed");
-  log.mockRestore();
+it("records failure if the old application returns, and never confirms another installation path", async () => {
+  const value = await ready(); await value.install();
+  const unrelated = controller({ ...request, executable: request.executable + ".other" });
+  await unrelated.initialize(); await unrelated.markHealthy();
+  expect(unrelated.state.history).toEqual([]); await fs.access(pending());
+  const old = controller(); await old.initialize(); await old.markHealthy();
+  expect(old.state.history[0].outcome).toBe("failed");
 });
-it("does not run overlapping checks or allow installation before download", async () => {
-  let complete!: (value: DesktopRelease) => void;
-  vi.mocked(dependencies.find).mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        complete = resolve;
-      }),
-  );
-  vi.mocked(dependencies.verify).mockResolvedValue(false);
-  const controller = new UpdaterController(request, () => {}, dependencies);
-  await controller.initialize();
-  const pending = controller.check();
-  await controller.check();
-  await vi.waitFor(() => expect(dependencies.find).toHaveBeenCalledOnce());
-  complete(release);
-  await pending;
-  await controller.install();
-  expect(dependencies.install).not.toHaveBeenCalled();
+it("retries failed checks and downloads without duplicating listeners", async () => {
+  const value = controller(); await value.initialize();
+  updater.checkForUpdates.mockRejectedValueOnce(new Error("offline"));
+  await value.check(); expect(value.state.phase).toBe("error");
+  await value.check();
+  updater.downloadUpdate.mockRejectedValueOnce(new Error("interrupted"));
+  await value.download(); expect(value.state.phase).toBe("error");
+  await value.download(); expect(value.state.phase).toBe("ready");
+  expect(updater.listenerCount("error")).toBe(1);
+});
+it("coalesces concurrent checks and keeps a ready download", async () => {
+  let finish!: () => void;
+  updater.checkForUpdates.mockImplementation(async () => { await new Promise<void>((resolve) => { finish = resolve; }); return { isUpdateAvailable: true, updateInfo: info }; });
+  const value = controller(); await value.initialize();
+  const first = value.check(); const second = value.check();
+  await vi.waitFor(() => expect(updater.checkForUpdates).toHaveBeenCalledOnce());
+  finish(); await Promise.all([first, second]);
+  await value.download(); await value.check();
+  expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+});
+it.each(["download", "install"])("refuses changed bytes during %s", async (stage) => {
+  const value = controller(); await value.initialize(); await value.check();
+  if (stage === "install") await value.download();
+  await fs.writeFile(file, Buffer.alloc(bytes.length, 42));
+  if (stage === "download") await value.download(); else await value.install();
+  expect(value.state.phase).toBe("error"); expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("does not download or quit unsupported installations", async () => {
+  dependencies.eligible = vi.fn(async () => { throw new Error("Install NSIS first"); });
+  const value = controller(); await value.initialize(); await value.check();
+  expect(value.state.message).toContain("NSIS");
+  expect(dependencies.create).not.toHaveBeenCalled(); expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("uses the latest proxy setting at each check", async () => {
+  const value = controller(); await value.initialize(); await value.check();
+  configureUpdateNetwork({ mode: "custom", customProxyUrl: "https://proxy.example/" });
+  await value.check();
+  expect(dependencies.configure).toHaveBeenLastCalledWith(updater, "https://proxy.example/");
+});
+it("surfaces native installation errors and persists a failed transaction", async () => {
+  const value = await ready();
+  updater.quitAndInstall.mockImplementation(() => updater.emit("error", new Error("native failure")));
+  await value.install();
+  await vi.waitFor(() => expect(value.state.history[0]?.outcome).toBe("failed"));
+  expect(value.state).toMatchObject({ phase: "error", message: "native failure" });
+});
+it("leaves the app running if the installation journal cannot be persisted", async () => {
+  const value = await ready();
+  await fs.mkdir(pending(), { recursive: true });
+  await value.install();
+  expect(value.state.phase).toBe("error"); expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("reports disabled framework checks without fabricating an available release", async () => {
+  updater.checkForUpdates.mockResolvedValue(null);
+  const value = controller(); await value.initialize(); await value.check();
+  expect(value.state.phase).toBe("error"); expect(value.state.availableVersion).toBeNull();
 });

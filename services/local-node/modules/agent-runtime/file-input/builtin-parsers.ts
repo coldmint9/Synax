@@ -351,8 +351,13 @@ async function office(
         context: `文档嵌入图片 ${name}。${references.join("；") || "文档内的位置未能确认"}。请结合文档文字分析；这是独立图片，不是完整页面，未保留裁剪、布局或叠加图形。`,
       });
       totalBytes += bytes.length;
-    } catch {
-      omitted.push(name);
+    } catch (error) {
+      // Keep the cause: a missing native binding and a corrupt image both used
+      // to surface as a generic "could not decode" note.
+      const reason = (error instanceof Error ? error.message : String(error))
+        .split("\n")[0]
+        .slice(0, 200);
+      omitted.push(`${name}（${reason}）`);
     }
   }
   const warnings = [

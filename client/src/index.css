@@ -3822,6 +3822,26 @@ input[type="radio"] {
   padding-bottom: 4.5rem;
 }
 
+/* Position the transcript before paint, then reveal the complete bottom view. */
+.session-transcript-content {
+  animation: session-transcript-enter 240ms ease-out both;
+}
+@keyframes session-transcript-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-transcript-content {
+    animation: none;
+  }
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
    Session file-change island
    A small floating summary that sits directly above the composer while this
@@ -3829,15 +3849,18 @@ input[type="radio"] {
    pill geometry so it reads as a single object.
    ─────────────────────────────────────────────────────────────────────────── */
 .session-file-island {
-  position: relative;
+  /* Keep async file summaries out of the measured command rail height. */
+  position: absolute;
+  bottom: 100%;
+  inset-inline: 0;
   display: flex;
   justify-content: center;
   padding-bottom: 0.5rem;
-  /* The composer footer disables pointer events so the transcript behind it
-     stays scrollable; the island has to opt back in to be clickable. */
-  pointer-events: auto;
+  /* Only the pill intercepts input; the surrounding transcript stays usable. */
+  pointer-events: none;
 }
 .session-file-island-pill {
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4357,6 +4380,22 @@ input[type="radio"] {
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
+  /* The selected row is an accent-tinted surface. The neutral gray it used to
+     paint was indistinguishable from the near-white light sidebar, so
+     selection has to come from the theme accent. Mixing against the panel
+     surface keeps the same relative lift in both modes. */
+  --session-row-active-surface: color-mix(
+    in srgb,
+    var(--theme-accent) 30%,
+    var(--theme-surface-secondary)
+  );
+  /* A slightly stronger accent ring keeps the selected row legible against the
+     tinted fill without competing with the title text. */
+  --session-row-active-border: color-mix(
+    in srgb,
+    var(--theme-accent) 40%,
+    var(--theme-surface-secondary)
+  );
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 /* Hover is a flat ink wash; only selection owns the elevated card surface. */
@@ -4367,13 +4406,13 @@ input[type="radio"] {
   box-shadow: none;
 }
 .session-list-item--active {
-  background: hsl(var(--cx-gray-150-hsl));
+  background: var(--session-row-active-surface);
+  border-color: var(--session-row-active-border);
 }
-.dark .session-list-item {
-  background: transparent;
-}
-.dark .session-list-item--active {
-  background: hsl(var(--secondary) / 0.9);
+/* The tinted fill lowers the muted preview contrast, so the selected row
+   restores it from the primary text color instead of a fixed gray. */
+.session-list-item--active .session-list-preview {
+  color: color-mix(in srgb, var(--ui-text) 92%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
   .session-list-item {
@@ -4552,6 +4591,11 @@ input[type="radio"] {
 }
 .session-list-display-mode-button:hover {
   color: var(--foreground);
+}
+.dark .session-list-display-mode-button[aria-pressed="true"] {
+  color: var(--theme-accent);
+  background: color-mix(in srgb, var(--theme-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent) 32%, transparent);
 }
 .session-list-display-mode-button:focus-visible {
   outline: 2px solid hsl(var(--ring));

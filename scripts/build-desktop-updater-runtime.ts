@@ -9,6 +9,7 @@ await build({
   entry: [
     "electron/lib/desktop-differential-engine.ts",
     "electron/lib/desktop-zip-engine.ts",
+    "electron/lib/desktop-updater-engine.ts",
   ],
   outDir: "dist-electron/lib",
   format: ["esm"],
@@ -16,6 +17,7 @@ await build({
   target: "node22",
   config: false,
   noExternal: [/.*/],
+  external: ["electron", "original-fs"],
   clean: false,
   dts: false,
   splitting: false,

@@ -77,6 +77,17 @@ function toggle() {
 }
 
 describe("SessionProfilePanel mini/detail", () => {
+  it.each([ [3.56, "3.6"], [0, "0.0"], [null, "—"], [undefined, "—"] ] as const)(
+    "shows average completed-run steps %s as %s",
+    (averageStepsPerCompletedRun, expected) => {
+      setup({ sessionStats: stats({ averageStepsPerCompletedRun }) });
+      fireEvent.click(toggle());
+      const label = screen.getByText("平均每轮完成步数");
+      expect(label.nextElementSibling).toHaveTextContent(expected);
+      expect(label).toHaveAttribute("title", "已完成轮次的总步数 ÷ 已完成轮次数");
+    },
+  );
+
   beforeEach(() => {
     localStorage.clear();
     useShellStore.setState((s) => ({

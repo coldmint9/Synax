@@ -206,11 +206,14 @@ export function SessionTranscript({
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
   const showLiveBlock = Boolean(streamingStepId) && (detailReady || Boolean(pending));
+  // Live events can populate messages before the initial history request ends.
+  // Keep that partial snapshot behind the loader unless this is a local send.
+  const waitingForHistory = loading && !pending;
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
     onReadingHistoryChange,
-    active && (!loading || showLiveBlock || Boolean(pending)),
+    active && !waitingForHistory,
   );
   useLayoutEffect(() => {
     if (compacting) scrollToBottom(true);
@@ -285,10 +288,7 @@ export function SessionTranscript({
                 </button>
               </div>
             )}
-            {loading &&
-            projected.messages.length === 0 &&
-            !showLiveBlock &&
-            !showThinking ? (
+            {waitingForHistory ? (
               <div
                 role="status"
                 className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4"

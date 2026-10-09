@@ -329,6 +329,12 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
                         <dd>{stats.roundCount ?? steps.length}</dd>
                       </dl>
                       <dl className="runtime-profile-properties">
+                        <dt title={zh ? "已完成轮次的总步数 ÷ 已完成轮次数" : "Total steps in completed runs divided by completed runs"}>
+                          {zh ? "平均每轮完成步数" : "Average steps per completed run"}
+                        </dt>
+                        <dd>{stats.averageStepsPerCompletedRun?.toFixed(1) ?? "—"}</dd>
+                      </dl>
+                      <dl className="runtime-profile-properties">
                         <dt>{zh ? "工具调用" : "Tool calls"}</dt>
                         <dd>{calls ?? "—"}</dd>
                       </dl>

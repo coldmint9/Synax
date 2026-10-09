@@ -1,6 +1,13 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
+const { createReadStream } = require("node:fs");
+
+async function sha512(file) {
+  const hash = createHash("sha512");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("base64");
+}
 
 // A missing platform is allowed; a platform with only some of its files is not.
 module.exports = async function collectDesktopAssets(root) {
@@ -8,6 +15,8 @@ module.exports = async function collectDesktopAssets(root) {
     await fs.readFile(path.join(root, "package.json"), "utf8"),
   );
   const assets = new Map();
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
+    throw new Error("Invalid desktop release version");
   async function collect(directory) {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
@@ -39,11 +48,38 @@ module.exports = async function collectDesktopAssets(root) {
         "RELEASES",
       );
     if (!name.startsWith("linux")) {
+      const feedName = `stable-${name}${name.startsWith("darwin") ? "-mac" : ""}.yml`;
+      const frameworkName = name.startsWith("darwin")
+        ? `Synax-${version}-${name}.zip`
+        : `Synax-${version}-${name}-NSIS.exe`;
+      names.push(feedName);
+      if (name.startsWith("win32")) names.push(frameworkName);
+      const feedFile = assets.get(feedName);
+      if (feedFile) {
+        const feed = JSON.parse(await fs.readFile(feedFile, "utf8"));
+        const url = `https://github.com/coldmint9/Synax/releases/download/v${version}/${frameworkName}`;
+        const item = feed?.files?.[0];
+        if (
+          feed?.version !== version ||
+          !Array.isArray(feed.files) || feed.files.length !== 1 ||
+          item?.url !== url || feed.path !== url ||
+          typeof item?.sha512 !== "string" ||
+          !/^[A-Za-z0-9+/]{86}==$/.test(item.sha512) ||
+          feed.sha512 !== item.sha512 ||
+          !Number.isSafeInteger(item.size) || item.size <= 0 ||
+          typeof feed.releaseDate !== "string" || !Number.isFinite(Date.parse(feed.releaseDate)) ||
+          item.blockMapSize !== undefined || feed.packages !== undefined
+        ) throw new Error(`Invalid framework metadata: ${feedName}`);
+        const file = assets.get(frameworkName);
+        if (!file) throw new Error(`Missing desktop asset: ${frameworkName}`);
+        if ((await fs.stat(file)).size !== item.size || await sha512(file) !== item.sha512)
+          throw new Error(`Framework artifact does not match metadata: ${frameworkName}`);
+      }
       const manifestName = `desktop-${name}.json`;
       const blockMapName = name.startsWith("darwin")
         ? `Synax-${version}-${name}.zip.blockmap`
         : `Synax-${version}-full.nupkg.blockmap`;
-      names.push(manifestName);
+      names.push(manifestName, blockMapName);
       recognized.add(blockMapName);
       const manifestFile = assets.get(manifestName);
       if (manifestFile) {
@@ -71,10 +107,9 @@ module.exports = async function collectDesktopAssets(root) {
             throw new Error(
               `Desktop blockmap does not match manifest: ${blockMapName}`,
             );
-          names.push(blockMapName);
-        } else if (assets.has(blockMapName))
-          throw new Error(`Unreferenced desktop blockmap: ${blockMapName}`);
-      } else if (assets.has(blockMapName)) names.push(blockMapName);
+        } else
+          throw new Error(`Missing desktop blockmap metadata: ${manifestName}`);
+      }
     }
     for (const asset of names) recognized.add(asset);
     if (!names.some((asset) => assets.has(asset))) continue;

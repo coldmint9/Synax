@@ -60,12 +60,6 @@ export async function collectCommitMessageContext(
   } catch {
     throw new AgentNotFoundError(sessionId);
   }
-  if (session.activeRunId)
-    throw new AgentRuntimeError(
-      "The session is still running. Wait for it to finish before generating.",
-      "GIT_SESSION_BUSY",
-      409,
-    );
   const root = resolveSessionRepository(
     sessionId,
     session.projectId,

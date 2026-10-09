@@ -2228,6 +2228,7 @@ export class AgentRuntimeStore {
   ): {
     work: Pick<WorkRecord, "id" | "status" | "remaining" | "reason"> | null;
     roundCount: number;
+    averageStepsPerCompletedRun: number | null;
     contextComposition: ContextComposition | null;
     context: SessionUsageProjection["context"] & { compactedTokens?: number };
     contextCompaction?: ContextCompactionState;
@@ -2301,6 +2302,21 @@ export class AgentRuntimeStore {
     ).count;
     const contextComposition = projected.contextComposition;
 
+    // Include all recorded steps of completed runs, including zero-step runs.
+    // Filter runs rather than steps so unfinished runs never affect the mean.
+    const completedRunSteps = db
+      .prepare(
+        `SELECT AVG(step_count) AS average FROM (
+          SELECT COUNT(steps.id) AS step_count
+          FROM agent_runtime_runs AS runs
+          LEFT JOIN agent_runtime_run_steps AS steps
+            ON steps.run_id = runs.id AND steps.session_id = runs.session_id
+          WHERE runs.session_id = ? AND runs.status = 'completed'
+          GROUP BY runs.id
+        )`,
+      )
+      .get(sessionId) as { average: number | null };
+
     const toolCountRow = db
       .prepare(
         "SELECT COUNT(*) as cnt FROM agent_runtime_tool_calls WHERE session_id = ?",
@@ -2343,6 +2359,7 @@ export class AgentRuntimeStore {
           }
         : null,
       roundCount,
+      averageStepsPerCompletedRun: completedRunSteps.average,
       contextComposition,
       context: {
         ...projected.context,

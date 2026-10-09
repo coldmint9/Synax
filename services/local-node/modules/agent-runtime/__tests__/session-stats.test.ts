@@ -1,10 +1,63 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
+import type { AgentRunStatus } from "../contracts.js";
 import {
   explorerSessionInput,
   resetAgentRuntimeFixtures,
 } from "./agent-runtime-fixtures.js";
+
+describe("getSessionStats average steps per completed run", () => {
+  beforeEach(resetAgentRuntimeFixtures);
+
+  function addRun(sessionId: string, id: string, status: AgentRunStatus, steps: number) {
+    agentRuntimeStore.appendRun({
+      id, sessionId, status,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: status === "completed" ? "2026-01-01T00:05:00.000Z" : null,
+      triggerMessageId: null, currentStep: steps, stopReason: null,
+      model: null, metadata: {},
+    });
+    for (let index = 1; index <= steps; index++) {
+      agentRuntimeStore.appendRunStep({
+        id: `${id}-step-${index}`, runId: id, sessionId, index,
+        status: "completed", model: null,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:01:00.000Z",
+        finishReason: "stop", metadata: {},
+      });
+    }
+  }
+
+  it("returns null until a run completes", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBeNull();
+    addRun(session.id, "running", "running", 3);
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBeNull();
+  });
+
+  it("averages completed runs only and stays within the session", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    addRun(session.id, "completed-1", "completed", 2);
+    addRun(session.id, "completed-2", "completed", 5);
+    for (const status of ["queued", "running", "waiting_permission", "failed", "interrupted", "cancelled"] as const) {
+      addRun(session.id, status, status, 4);
+    }
+    const other = agentSessionRuntime.create(explorerSessionInput);
+    addRun(other.id, "other", "completed", 9);
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBe(3.5);
+    agentRuntimeStore.updateRun("running", { status: "completed" });
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBe(11 / 3);
+  });
+
+  it("includes completed runs with zero recorded steps", () => {
+    const session = agentSessionRuntime.create(explorerSessionInput);
+    addRun(session.id, "empty", "completed", 0);
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBe(0);
+    addRun(session.id, "nonempty", "completed", 3);
+    expect(agentRuntimeStore.getSessionStats(session.id).averageStepsPerCompletedRun).toBe(1.5);
+  });
+});
 
 describe("getSessionStats runningDuration", () => {
   beforeEach(resetAgentRuntimeFixtures);

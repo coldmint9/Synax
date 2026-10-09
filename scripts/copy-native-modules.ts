@@ -95,8 +95,17 @@ function copyRuntimePackage(
   });
   const manifest = JSON.parse(
     readFileSync(join(sourceDir, "package.json"), "utf8"),
-  ) as { dependencies?: Record<string, string> };
-  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+  ) as {
+    dependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  // Platform-native optional dependencies (for example the @napi-rs/canvas
+  // prebuilt bindings) install for the current platform only. They must ship
+  // too, otherwise the package resolves but cannot find its native binding.
+  for (const dependency of [
+    ...Object.keys(manifest.dependencies ?? {}),
+    ...Object.keys(manifest.optionalDependencies ?? {}),
+  ]) {
     const nested = join(sourceDir, "node_modules", dependency);
     if (existsSync(nested))
       copyRuntimePackage(
@@ -104,7 +113,8 @@ function copyRuntimePackage(
         join(sourceDir, "node_modules"),
         join(targetDir, "node_modules"),
       );
-    else copyRuntimePackage(dependency);
+    // Optional dependencies absent for this platform are legitimately skipped.
+    else if (existsSync(join(src, dependency))) copyRuntimePackage(dependency);
   }
 }
 copyRuntimePackage("trash");

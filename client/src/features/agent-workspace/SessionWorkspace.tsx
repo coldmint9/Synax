@@ -164,6 +164,14 @@ export function SessionStatusCard({
           {stats.roundCount ?? steps.length}
         </span>
       </div>
+      <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+        <span title={locale === "zh" ? "已完成轮次的总步数 ÷ 已完成轮次数" : "Total steps in completed runs divided by completed runs"}>
+          {locale === "zh" ? "平均每轮完成步数" : "Average steps per completed run"}
+        </span>
+        <span className="tabular-nums text-foreground/80">
+          {stats.averageStepsPerCompletedRun?.toFixed(1) ?? "—"}
+        </span>
+      </div>
       <ContextCompositionBar
         context={stats.context}
         contextLimit={stats.contextLimit}

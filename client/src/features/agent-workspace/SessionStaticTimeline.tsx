@@ -122,6 +122,15 @@ function renderTimelineRows({
   cacheVersion,
   liveEntryIds,
 }: RowsProps) {
+  // The initial scroll lands at the bottom before paint. Mount its surrounding
+  // rows in the same commit instead of revealing them one observer tick later.
+  const initialViewportHeight = scrollRootRef?.current?.clientHeight || 800;
+  let eagerStart = entries.length;
+  let eagerHeight = 0;
+  while (eagerStart > 0 && eagerHeight < initialViewportHeight + 1200) {
+    eagerStart -= 1;
+    eagerHeight += estimateEntryHeight(entries[eagerStart]);
+  }
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -153,7 +162,7 @@ function renderTimelineRows({
       sessionId={sessionId}
       onExpandChild={onExpandChild}
       scrollRootRef={scrollRootRef}
-      eager={eager}
+      eager={eager || index >= eagerStart}
       cacheVersion={entryCacheVersion}
       isWorking={Boolean(streaming && index === latestActivityIndex)}
       isStreaming={Boolean(

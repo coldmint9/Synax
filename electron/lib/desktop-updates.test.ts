@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
       history: [],
     },
     initialize: vi.fn().mockResolvedValue(undefined),
+    markHealthy: vi.fn().mockResolvedValue(undefined),
     check: vi.fn().mockResolvedValue(undefined),
     download: vi.fn().mockResolvedValue(undefined),
     install: vi.fn().mockResolvedValue(undefined),
@@ -179,9 +180,6 @@ describe("main-process desktop updates", () => {
     await updates.check(true);
 
     expect(mocks.controller.install).toHaveBeenCalledOnce();
-    const quitHost = mocks.controllerConstructor.mock
-      .calls[0][3] as () => Promise<void>;
-    quitHost();
-    expect(mocks.quit).toHaveBeenCalledOnce();
+    expect(mocks.quit).not.toHaveBeenCalled();
   });
 });

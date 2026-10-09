@@ -6,6 +6,15 @@ import postcss from "postcss";
 const base = readFileSync(resolve(import.meta.dirname, "../../../index.css"), "utf8");
 const work = readFileSync(resolve(import.meta.dirname, "../workPage.css"), "utf8");
 
+function declarationsIn(css: string, selector: string) {
+  const result: Record<string, string> = {};
+  postcss.parse(css).walkRules((rule) => {
+    if (!rule.selectors.includes(selector)) return;
+    rule.walkDecls((decl) => { result[decl.prop] = decl.value; });
+  });
+  return result;
+}
+
 describe("conversation row states", () => {
   it("never applies row hover backgrounds to the selected conversation", () => {
     const rules: string[] = [];
@@ -32,23 +41,42 @@ describe("conversation row states", () => {
     expect(work).toContain("box-shadow: var(--ui-shadow-control)");
   });
 
-  it("gives dark selected rows their own elevated surface instead of the sidebar fill", () => {
-    const root = postcss.parse(work);
-    const declarations = (selector: string) => {
-      const result: Record<string, string> = {};
-      root.walkRules((rule) => {
-        if (!rule.selectors.includes(selector)) return;
-        rule.walkDecls((decl) => { result[decl.prop] = decl.value; });
-      });
-      return result;
-    };
-    const active = declarations(".dark .work-page .session-list-item--active");
-    const hover = declarations(".dark .work-page .session-list-item:not(.session-list-item--active):hover");
+  it("paints the selected row with the theme accent in both modes", () => {
+    const baseActive = declarationsIn(base, ".session-list-item--active");
+    const workActive = declarationsIn(work, ".work-page .session-list-item--active");
+    const darkActive = declarationsIn(work, ".dark .work-page .session-list-item--active");
+
+    for (const active of [baseActive, workActive, darkActive]) {
+      expect(active.background).toBe("var(--session-row-active-surface)");
+    }
+    // The old light-mode fill was a neutral gray, which vanished against the
+    // near-white sidebar; the accent tint is now the only source of selection.
+    expect(baseActive.background).not.toContain("cx-gray");
+    expect(baseActive.background).not.toContain("ui-panel");
+    expect(baseActive["border-color"]).toBe("var(--session-row-active-border)");
+    expect(base).toContain("--session-row-active-surface: color-mix(");
+    expect(base).toContain("var(--theme-accent) 30%,");
+    expect(base).toContain("--session-row-active-border: color-mix(");
+  });
+
+  it("restores preview contrast on the tinted selected row", () => {
+    for (const [css, selector] of [
+      [base, ".session-list-item--active .session-list-preview"],
+      [work, ".work-page .session-list-item--active .session-list-preview"],
+    ]) {
+      expect(declarationsIn(css, selector).color).toBe(
+        "color-mix(in srgb, var(--ui-text) 92%, transparent)",
+      );
+    }
+  });
+
+  it("keeps dark selected rows elevated above the sidebar fill", () => {
+    const active = declarationsIn(work, ".dark .work-page .session-list-item--active");
+    const hover = declarationsIn(work, ".dark .work-page .session-list-item:not(.session-list-item--active):hover");
     expect(active.background).not.toBe("hsl(var(--secondary))");
-    expect(active.background).toContain("var(--ui-panel-soft)");
     expect(hover.background).toBeDefined();
     expect(active.background).not.toBe(hover.background);
-    expect(active["border-color"]).toBeDefined();
+    expect(active["border-color"]).toBe("var(--session-row-active-border)");
     expect(active["box-shadow"]).toContain("inset");
     expect(hover["box-shadow"]).toBe("none");
   });

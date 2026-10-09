@@ -11,9 +11,8 @@ import { UpdaterController } from "../updater/controller.js";
 import type { UpdaterRequest, UpdaterState } from "../updater/contract.js";
 
 /**
- * Runs desktop update checks and downloads in the main process. The only
- * detached process left in the flow is the tiny macOS shell swapper, which is
- * required because a running .app cannot replace itself.
+ * Adapts electron-updater to the existing renderer and confirmation dialogs.
+ * The framework owns download caching, native installation and quit handoff.
  */
 export class DesktopUpdates {
   private readonly controller: UpdaterController;
@@ -39,10 +38,6 @@ export class DesktopUpdates {
     this.controller = new UpdaterController(
       request,
       (state) => this.publish(state),
-      undefined,
-      async () => {
-        app.quit();
-      },
     );
     this.initialized = this.controller.initialize();
   }
@@ -100,6 +95,8 @@ export class DesktopUpdates {
   }
 
   async markHealthy(): Promise<void> {
+    await this.initialized;
+    await this.controller.markHealthy();
     const directory = path.join(app.getPath("userData"), "desktop-updates");
     if (process.platform === "darwin")
       await finishMacInstallation(

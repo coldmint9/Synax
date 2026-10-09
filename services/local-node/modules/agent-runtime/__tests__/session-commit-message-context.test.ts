@@ -70,7 +70,8 @@ afterEach(() => {
 });
 
 describe("read-only commit message context", () => {
-  it("samples only the selected branch and includes staged, unstaged and untracked changes without staging", async () => {
+  it.each([null, "running-run"])("samples only the selected branch and includes staged, unstaged and untracked changes without staging (activeRunId: %s)", async (activeRunId) => {
+    mocks.getSession.mockReturnValue({ id: "s1", projectId: "p1", activeRunId });
     const root = roots[0];
     fs.writeFileSync(path.join(root.path, "file.txt"), "staged\n");
     git(root, "add", "file.txt");

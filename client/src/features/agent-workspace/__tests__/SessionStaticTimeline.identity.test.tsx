@@ -142,6 +142,25 @@ it("preserves the live reply through snapshot, persistence and the next reasonin
   expect(screen.queryByTestId("first:content:0")).toBe(original);
 });
 
+it("mounts the initial bottom view without waiting for intersection callbacks", () => {
+  render(<SessionStaticTimeline {...props} />);
+  expect(screen.getByText("History")).toBeTruthy();
+});
+
+it("mounts the bottom of long histories immediately while keeping distant history lazy", () => {
+  const messages = Array.from({ length: 100 }, (_, index) => ({
+    ...history,
+    id: `history-${index}`,
+    content: `History message ${index}`,
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+  }));
+  render(<SessionStaticTimeline {...props} messages={messages} />);
+  expect(screen.getByText("History message 99")).toBeTruthy();
+  expect(screen.queryByText("History message 0")).toBeNull();
+  ViewportObserver.reveal();
+  expect(screen.getByText("History message 0")).toBeTruthy();
+});
+
 it("invalidates mounted history on an epoch rewrite and displays revised content", () => {
   const { rerender } = render(<SessionStaticTimeline {...props} />);
   ViewportObserver.reveal();

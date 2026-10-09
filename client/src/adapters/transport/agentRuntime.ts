@@ -499,6 +499,8 @@ export interface SessionStats {
   contextCompaction?: ContextCompactionState;
   cache?: SessionCacheUsage;
   roundCount?: number;
+  /** Recorded steps / completed runs in this session; null when none completed. */
+  averageStepsPerCompletedRun?: number | null;
   /** Legacy estimates, ignored by usage displays. New servers return null. */
   contextComposition?: ContextComposition | null;
   work?: {

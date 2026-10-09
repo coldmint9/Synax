@@ -68,7 +68,8 @@ module.exports = async function publishDesktopRelease(
   // Upload installers first, and expose their manifests only after they exist.
   const ordered = [...pending].sort(
     ([a], [b]) =>
-      Number(a.startsWith("desktop-")) - Number(b.startsWith("desktop-")),
+      Number(/^(desktop-.*\.json|stable-.*\.yml)$/.test(a)) -
+      Number(/^(desktop-.*\.json|stable-.*\.yml)$/.test(b)),
   );
   for (const [name, file] of ordered) {
     if (previous.has(name)) {
@@ -89,12 +90,22 @@ module.exports = async function publishDesktopRelease(
       },
     });
   }
-  if (release.draft) {
+  const publishedNames = new Set([...previous.keys(), ...assets.keys()]);
+  const frameworkChannels = [
+    "stable-darwin-x64-mac.yml",
+    "stable-darwin-arm64-mac.yml",
+    "stable-win32-x64.yml",
+  ];
+  const completeFrameworkRelease = frameworkChannels.every((name) => publishedNames.has(name));
+  const alreadyComplete = frameworkChannels.every((name) => previous.has(name));
+  // Keep partial releases available for manual installation. Moving latest
+  // before all channels exist would break generic feeds on missing platforms.
+  if (release.draft || (completeFrameworkRelease && !alreadyComplete)) {
     await github.rest.repos.updateRelease({
       ...repo,
       release_id: release.id,
       draft: false,
-      make_latest: "true",
+      make_latest: completeFrameworkRelease ? "true" : "false",
     });
   }
   core.notice(

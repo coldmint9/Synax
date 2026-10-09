@@ -6,6 +6,13 @@
   --work-muted: hsl(var(--muted-foreground));
   --work-surface: var(--surface);
   --work-panel-edge: hsl(var(--border-hsl) / 0.28);
+  --work-sidebar-shadow:
+    0 1px 2px rgb(20 28 40 / 0.08),
+    0 5px 12px -4px rgb(20 28 40 / 0.12),
+    0 16px 28px -12px rgb(20 28 40 / 0.16);
+  --work-sidebar-relief:
+    inset 0 1px 0 rgb(255 255 255 / 0.8),
+    inset 0 0 0 1px rgb(20 28 40 / 0.06);
 }
 :is(.work-page, .work-details-dialog) {
   font-size: 13px;
@@ -14,6 +21,13 @@
   --work-surface: var(--surface);
   --work-panel-edge: hsl(0 0% 100% / 0.08);
   --work-line: hsl(0 0% 100% / 0.1);
+  --work-sidebar-shadow:
+    0 1px 3px rgb(0 0 0 / 0.24),
+    0 6px 14px -4px rgb(0 0 0 / 0.32),
+    0 18px 30px -12px rgb(0 0 0 / 0.4);
+  --work-sidebar-relief:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    inset 0 0 0 1px rgb(255 255 255 / 0.045);
 }
 .work-page {
   --work-transcript-top-inset: 56px;
@@ -96,9 +110,22 @@
   padding: var(--work-panel-inset);
 }
 .work-page .session-panel-host--left {
+  /* Paint outside the host; its fixed-width canvas still clips during resize. */
+  overflow: visible;
   transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+.work-page .session-panel-host--left:not([data-collapsed="true"])::before {
+  content: "";
+  position: absolute;
+  inset: var(--work-panel-inset);
+  border-radius: var(--work-panel-radius);
+  box-shadow: var(--work-sidebar-shadow);
+  /* Decorative paint must never intercept resize, click, or native titlebar drag. */
+  pointer-events: none;
+}
 .work-page .session-panel-host--left > .h-full {
+  position: relative;
+  overflow: hidden;
   opacity: 1;
   transform: translateX(0);
   transition:
@@ -124,7 +151,7 @@
   background: var(--ui-panel-soft);
   border: 0;
   border-radius: var(--work-panel-radius);
-  box-shadow: none;
+  box-shadow: var(--work-sidebar-relief);
 }
 .work-page .session-list-card--sessions .session-list-header {
   padding: 10px 9px 8px;
@@ -183,7 +210,7 @@
   background: transparent;
 }
 .work-page .session-list-item--active {
-  background: var(--ui-panel);
+  background: var(--session-row-active-surface);
   box-shadow: var(--ui-shadow-control);
 }
 .work-page .session-list-select {
@@ -226,6 +253,9 @@
   font-size: 10.5px;
   line-height: 16px;
 }
+.work-page .session-list-item--active .session-list-preview {
+  color: color-mix(in srgb, var(--ui-text) 92%, transparent);
+}
 .work-page .session-list-delete {
   width: 22px;
   height: 22px;
@@ -242,6 +272,13 @@
   background: transparent;
   box-shadow: none;
   transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.work-page .session-workspace-sidebar--dock:not([data-collapsed="true"]) {
+  margin-top: var(--work-panel-inset);
+  margin-bottom: var(--work-panel-inset);
+  border-radius: var(--work-panel-radius);
+  background: var(--ui-panel-soft);
+  box-shadow: var(--work-sidebar-shadow), var(--work-sidebar-relief);
 }
 .work-page .work-widget-content {
   display: flex;
@@ -503,6 +540,37 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+}
+/* Resizable dashboard cards own the available height. Carry it through to the
+   list so the fade follows the card's lower inner edge, not an eight-row cap. */
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel-content > .ws-project-card > .ws-card-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace-dashboard--custom .ws-project-card :is(
+  .ws-project-section,
+  .ws-project-section-body,
+  .ws-changes-viewport
+) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.workspace-dashboard--custom .ws-project-card :is(
+  .ws-project-section-head,
+  .ws-project-section-summary
+) {
+  flex: 0 0 auto;
+}
+.workspace-dashboard--custom .ws-project-card .ws-changes-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Override the measured inline row cap only inside height-managed cards. */
+  max-height: none !important;
 }
 :is(.work-page, .work-details-dialog) .ws-changes-scroll:focus-visible {
   outline: 2px solid var(--focus);
@@ -1311,8 +1379,8 @@
   box-shadow: none;
 }
 .dark .work-page .session-list-item--active {
-  background: color-mix(in srgb, var(--ui-text) 16%, var(--ui-panel-soft));
-  border-color: color-mix(in srgb, var(--ui-text) 28%, var(--ui-panel-soft));
+  background: var(--session-row-active-surface);
+  border-color: var(--session-row-active-border);
   box-shadow: 0 2px 5px rgb(0 0 0 / 0.22), inset 0 1px rgb(255 255 255 / 0.08);
 }
 .dark .work-page .session-list-item--active .session-list-title {
