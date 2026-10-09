@@ -24,9 +24,8 @@ const config: ForgeConfig = {
       ensureDmgNative();
     },
     prePackage: async (_config, platform, arch) => {
-      if (platform === "darwin" && process.env.SYNAX_REQUIRE_SIGNED_UPDATES === "1" &&
-        !process.env.SYNAX_MAC_SIGN_IDENTITY)
-        throw new Error("Stable macOS updates require SYNAX_MAC_SIGN_IDENTITY and its installed Developer ID certificate.");
+      // macOS code signing is optional, including tag builds. When configured,
+      // packagerConfig.osxSign below still requires a valid installed identity.
       await fs.mkdir(path.dirname(updateConfig), { recursive: true });
       await fs.writeFile(updateConfig, JSON.stringify({
         provider: "generic",

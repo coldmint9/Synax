@@ -94,7 +94,7 @@ npm run make:desktop
 
 桌面整包更新使用 `electron-updater`：macOS 使用应用 ZIP，Windows 使用以 `-NSIS.exe` 结尾的安装包，`make:desktop` 在 Windows 上会同时生成 NSIS 产物。旧 Windows Squirrel 安装和便携版需要手动安装一次 NSIS 版。Synax 不对当前 macOS 应用进行 Developer ID 签名前置检查；实际安装仍受更新框架与系统的签名规则约束。迁移时保留 `~/.synax` 和用户配置；后续更新仍需确认下载和重启。旧 Squirrel 包、DMG 和更新清单继续发布，兼容界面更新保留独立流程。
 
-稳定 Tag 构建要求代码签名。macOS 使用 `SYNAX_MAC_SIGN_IDENTITY` 和已导入的 Developer ID 证书；CI 通过 `SYNAX_MAC_CERTIFICATE`（base64 P12）与 `SYNAX_MAC_CERTIFICATE_PASSWORD` 导入，公证使用 `SYNAX_APPLE_ID`、`SYNAX_APPLE_APP_PASSWORD` 和 `SYNAX_APPLE_TEAM_ID`。Windows CI 使用 `SYNAX_WINDOWS_PUBLISHER`、`SYNAX_WINDOWS_CSC_LINK` 与 `SYNAX_WINDOWS_CSC_KEY_PASSWORD`；本地 NSIS 构建使用对应的 `CSC_LINK` 和 `CSC_KEY_PASSWORD`。缺少必需签名配置时稳定构建失败，预览版可手动测试。更新清单按平台和架构隔离，只有 macOS x64/arm64 与 Windows x64 产物齐全时才推进 latest；旧完整版本重跑不会再次置顶。
+macOS 代码签名为可选配置，稳定 Tag 构建也允许未签名打包。未设置 `SYNAX_MAC_SIGN_IDENTITY` 时，CI 生成未签名安装包；macOS 可能显示安装提示或限制自动更新，需要手动安装。启用签名时，配置 `SYNAX_MAC_SIGN_IDENTITY` 和已导入的 Developer ID 证书；CI 通过 `SYNAX_MAC_CERTIFICATE`（base64 P12）与 `SYNAX_MAC_CERTIFICATE_PASSWORD` 导入，公证使用 `SYNAX_APPLE_ID`、`SYNAX_APPLE_APP_PASSWORD` 和 `SYNAX_APPLE_TEAM_ID`。Windows 稳定构建仍要求代码签名：CI 使用 `SYNAX_WINDOWS_PUBLISHER`、`SYNAX_WINDOWS_CSC_LINK` 与 `SYNAX_WINDOWS_CSC_KEY_PASSWORD`；本地 NSIS 构建使用对应的 `CSC_LINK` 和 `CSC_KEY_PASSWORD`。更新清单签名通过 `SYNAX_UPDATE_SIGNING_KEY` 与 `SYNAX_UPDATE_PUBLIC_KEY` 单独配置。更新清单按平台和架构隔离，只有 macOS x64/arm64 与 Windows x64 产物齐全时才推进 latest；旧完整版本重跑不会再次置顶。
 
 Electron 桌面版通过应用托管的 Cua Driver 提供电脑操作能力。桌面打包时会下载固定版本的 Cua Driver 0.30.2，并校验 SHA-256 后放入安装包；也可以设置 `SYNAX_CUA_DRIVER_PATH` 指向已安装的**相同版本**可执行文件。开发模式使用该路径，或从 `PATH` 查找 `cua-driver`（同样要求 0.30.2）。macOS 需在系统设置中为 **Synax** 授予「辅助功能」和「屏幕录制」权限，然后重启 Synax。项目设置页提供驱动状态及权限设置入口。Cua 在界面加载后异步启动，权限缺失或版本不匹配不会阻塞应用其他功能。
 

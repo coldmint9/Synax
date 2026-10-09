@@ -519,8 +519,6 @@ describe("desktop platform contract", () => {
   });
 
   it("rejects cross-platform packages containing the host native modules", async () => {
-    // Tag builds require signing; this test isolates native platform validation.
-    vi.stubEnv("SYNAX_REQUIRE_SIGNED_UPDATES", "0");
     const prePackage = forgeConfig.hooks!.prePackage as (
       ...args: any[]
     ) => Promise<void>;
@@ -551,18 +549,34 @@ describe("desktop platform contract", () => {
     expect(validateCuaArtifact).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects stable macOS packages without a signing identity before staging", async () => {
+  it("allows stable macOS packages without a signing identity", async () => {
     vi.stubEnv("SYNAX_REQUIRE_SIGNED_UPDATES", "1");
     vi.stubEnv("SYNAX_MAC_SIGN_IDENTITY", undefined);
+    Object.defineProperty(process, "platform", { value: "darwin" });
     const prePackage = forgeConfig.hooks!.prePackage as (
       ...args: any[]
     ) => Promise<void>;
-    await expect(prePackage({}, "darwin", "arm64")).rejects.toThrow(
-      "Stable macOS updates require SYNAX_MAC_SIGN_IDENTITY",
-    );
-    expect(stageCuaDriver).not.toHaveBeenCalled();
-    expect(validateCuaArtifact).not.toHaveBeenCalled();
+    await expect(prePackage({}, "darwin", process.arch)).resolves.toBeUndefined();
+    expect(stageCuaDriver).toHaveBeenCalledExactlyOnceWith("darwin", process.arch);
+    expect(validateCuaArtifact).toHaveBeenCalledExactlyOnceWith({
+      helperRoot: expect.stringMatching(/cua-helper-dist$/),
+      driverPath: expect.stringMatching(/cua-driver[/\\]cua-driver$/),
+      platform: "darwin",
+      arch: process.arch,
+    });
   });
+
+  it.each([undefined, "Developer ID Application: Synax (TESTTEAM)"])(
+    "configures macOS code signing only when an identity is provided: %s",
+    async (identity) => {
+      vi.stubEnv("SYNAX_MAC_SIGN_IDENTITY", identity);
+      vi.resetModules();
+      const { default: config } = await import("../forge.config.js");
+      expect(config.packagerConfig?.osxSign).toEqual(
+        identity ? { identity } : undefined,
+      );
+    },
+  );
 });
 
 it("keeps desktop commands contextual and uses the import dialog instead of a fake project route", () => {
