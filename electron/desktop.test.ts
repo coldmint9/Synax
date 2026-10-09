@@ -79,6 +79,7 @@ afterEach(() => {
   else Reflect.deleteProperty(process, "resourcesPath");
   process.argv = argv;
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("native dialog options", () => {
@@ -518,6 +519,8 @@ describe("desktop platform contract", () => {
   });
 
   it("rejects cross-platform packages containing the host native modules", async () => {
+    // Tag builds require signing; this test isolates native platform validation.
+    vi.stubEnv("SYNAX_REQUIRE_SIGNED_UPDATES", "0");
     const prePackage = forgeConfig.hooks!.prePackage as (
       ...args: any[]
     ) => Promise<void>;
@@ -546,6 +549,19 @@ describe("desktop platform contract", () => {
       ),
     ).rejects.toThrow("Native dependencies");
     expect(validateCuaArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects stable macOS packages without a signing identity before staging", async () => {
+    vi.stubEnv("SYNAX_REQUIRE_SIGNED_UPDATES", "1");
+    vi.stubEnv("SYNAX_MAC_SIGN_IDENTITY", undefined);
+    const prePackage = forgeConfig.hooks!.prePackage as (
+      ...args: any[]
+    ) => Promise<void>;
+    await expect(prePackage({}, "darwin", "arm64")).rejects.toThrow(
+      "Stable macOS updates require SYNAX_MAC_SIGN_IDENTITY",
+    );
+    expect(stageCuaDriver).not.toHaveBeenCalled();
+    expect(validateCuaArtifact).not.toHaveBeenCalled();
   });
 });
 
