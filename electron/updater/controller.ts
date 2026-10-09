@@ -2,14 +2,12 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AppUpdater, UpdateInfo } from "electron-updater";
 import type { UpdaterRequest, UpdaterState, UpdateHistory } from "./contract.js";
 import { getUpdateProxyUrl } from "../lib/update-network.js";
 import { frameworkChannel, DESKTOP_RELEASE_URL } from "./framework-feed.js";
+import { updateFailureMessage } from "./update-errors.js";
 
-const run = promisify(execFile);
 export interface ControllerDependencies {
   create: () => Promise<AppUpdater>;
   configure: (updater: AppUpdater, proxy: string | null) => Promise<void>;
@@ -28,11 +26,7 @@ async function eligibility(request: UpdaterRequest): Promise<void> {
     }
   } else {
     const { checkMacInstallLocation } = await import("../lib/mac-desktop-update.js");
-    const bundle = await checkMacInstallLocation(request.executable);
-    const details = await run("/usr/bin/codesign", ["-dv", "--verbose=4", bundle]);
-    if (!/^Authority=Developer ID Application:/m.test(details.stderr))
-      throw new Error(`当前应用未使用 Developer ID 签名，请从 ${DESKTOP_RELEASE_URL} 手动安装签名版后再使用自动更新。`);
-    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundle]);
+    await checkMacInstallLocation(request.executable);
   }
 }
 
@@ -82,7 +76,7 @@ export class UpdaterController {
   }
   private fail(error: unknown): void {
     console.error("[desktop-update]", error);
-    this.update({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+    this.update({ phase: "error", message: updateFailureMessage(error) });
   }
   private async atomic(name: string, value: unknown): Promise<void> {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });

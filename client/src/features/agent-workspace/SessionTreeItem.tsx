@@ -200,18 +200,28 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             </span>
           ) : undefined}
         />
-        {depth > 0 ? null : node.searchSnippet !== undefined ? (
+        {depth === 0 ? (
           <span
-            className="session-list-preview session-list-preview--search"
-            title={node.searchSnippet}
+            className="session-list-preview-reveal"
+            data-expanded={node.searchSnippet !== undefined || displayMode === "preview"}
+            aria-hidden={node.searchSnippet === undefined && displayMode !== "preview"}
           >
-            <SearchHighlight
-              text={node.searchSnippet}
-              query={node.searchQuery}
-            />
+            <span className="session-list-preview-reveal-content">
+              {node.searchSnippet !== undefined ? (
+                <span
+                  className="session-list-preview session-list-preview--search"
+                  title={node.searchSnippet}
+                >
+                  <SearchHighlight
+                    text={node.searchSnippet}
+                    query={node.searchQuery}
+                  />
+                </span>
+              ) : (
+                <SessionPreview session={session} />
+              )}
+            </span>
           </span>
-        ) : displayMode === "preview" ? (
-          <SessionPreview session={session} />
         ) : null}
       </button>
       <button

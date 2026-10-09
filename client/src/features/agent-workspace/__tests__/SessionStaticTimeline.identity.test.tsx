@@ -10,7 +10,7 @@ import type { AgentRun, AgentRuntimeMessage, AgentRunStep, AgentSession } from "
 // next IntersectionObserver delivery, which mocked wrappers cannot detect.
 vi.mock("../TimelineEntryView", () => ({
   TimelineEntryView: ({ entry }: { entry: ConversationTimelineEntry }) => (
-    <details data-testid={entry.id}>
+    <details data-testid={entry.id} data-completed-at={entry.kind === "agent" ? entry.turn.completedAt : undefined}>
       <summary>{entry.kind === "user" ? entry.content : entry.id}</summary>
       <span>{entry.kind === "agent" ? JSON.stringify(entry.turn.blocks) : "body"}</span>
     </details>
@@ -140,6 +140,58 @@ it("preserves the live reply through snapshot, persistence and the next reasonin
   }));
   rerender(<SessionStaticTimeline {...props} steps={[step]} messages={messages} excludeStepId="second" />);
   expect(screen.queryByTestId("first:content:0")).toBe(original);
+});
+
+it.each([false, true])("preserves reply nodes when persisted reasoning changes the block offset (live reasoning: %s)", (hadReasoning) => {
+  store.setState({
+    streamingStepId: "first",
+    streamingLive: {
+      ...EMPTY_STREAMING_BUFFERS,
+      blocks: hadReasoning ? [{ type: "thinking", content: "Live reasoning" }] : [],
+      pendingText: "Answer",
+    },
+  });
+  const { rerender } = render(<SessionStaticTimeline {...props} excludeStepId="first" />);
+  const original = screen.getByText(/"content":"Answer"/).closest("details")!;
+  original.open = true;
+  const step = {
+    id: "first", sessionId: "s", runId: "r", index: 1, status: "completed",
+    startedAt: "2026-01-01T00:00:01Z", completedAt: "2026-01-01T00:00:02Z",
+    thinkingText: hadReasoning ? null : "Persisted reasoning", textOutput: "Answer",
+  } as AgentRunStep;
+  const reply = {
+    id: "reply", sessionId: "s", runId: "r", stepId: "first", role: "assistant",
+    content: "Answer", metadata: {}, createdAt: step.completedAt,
+  } as AgentRuntimeMessage;
+  const reasoning = {
+    ...reply, id: "thought", content: "Persisted reasoning",
+    createdAt: step.startedAt, metadata: { type: "thinking" },
+  } as AgentRuntimeMessage;
+  // Match the store's atomic snapshot-to-history handoff.
+  act(() => {
+    store.setState({ streamingStepId: null, streamingLive: EMPTY_STREAMING_BUFFERS });
+    rerender(<SessionStaticTimeline {...props} steps={[step]} messages={hadReasoning ? [history, reply] : [history, reasoning, reply]} />);
+  });
+  expect(screen.getByText(/"content":"Answer"/).closest("details")).toBe(original);
+  expect(original.open).toBe(true);
+});
+
+it("updates a completion stamp without remounting an unchanged reply", () => {
+  const step = {
+    id: "first", sessionId: "s", runId: "r", index: 1, status: "completed",
+    startedAt: "2026-01-01T00:00:01Z", completedAt: null,
+    thinkingText: null, textOutput: "Answer",
+  } as AgentRunStep;
+  const messages = [history, {
+    id: "reply", sessionId: "s", runId: "r", stepId: "first", role: "assistant",
+    content: "Answer", metadata: {}, createdAt: step.startedAt,
+  } as AgentRuntimeMessage];
+  const { rerender } = render(<SessionStaticTimeline {...props} steps={[step]} messages={messages} />);
+  const original = screen.getByText(/"content":"Answer"/).closest("details")!;
+  const completedAt = "2026-01-01T00:00:02Z";
+  rerender(<SessionStaticTimeline {...props} steps={[{ ...step, completedAt }]} messages={messages} />);
+  expect(screen.getByText(/"content":"Answer"/).closest("details")).toBe(original);
+  expect(original).toHaveAttribute("data-completed-at", completedAt);
 });
 
 it("mounts the initial bottom view without waiting for intersection callbacks", () => {

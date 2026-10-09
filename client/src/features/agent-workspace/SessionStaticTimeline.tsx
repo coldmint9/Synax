@@ -104,6 +104,9 @@ const TimelineRow = memo(
     // Grouping creates new arrays, but completed blocks retain their references.
     // Compare the rendered content so token deltas do not rebuild older answers.
     return (
+      a.turn.stepId === b.turn.stepId &&
+      a.turn.status === b.turn.status &&
+      a.turn.completedAt === b.turn.completedAt &&
       a.turn.blocks.length === b.turn.blocks.length &&
       a.turn.blocks.every((block, index) =>
         shallow(block, b.turn.blocks[index]),

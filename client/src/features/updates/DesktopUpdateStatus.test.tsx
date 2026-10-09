@@ -24,6 +24,15 @@ const api = {
   installDesktopUpdate: vi.fn(),
 };
 const offState = vi.fn();
+it("offers retry and a fixed release download link after failure", async () => {
+  render(<DesktopUpdateProvider><DesktopUpdateStatus /></DesktopUpdateProvider>);
+  await act(async () => {});
+  act(() => emitState({ ...initial, phase: "error", message: "下载中断，请重试。" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("下载中断");
+  expect(screen.getByRole("link")).toHaveAttribute("href", "https://github.com/coldmint9/Synax/releases/latest");
+  await userEvent.click(screen.getByRole("button", { name: /重试|Retry/ }));
+  expect(api.checkDesktopUpdate).toHaveBeenCalledOnce();
+});
 const offShow = vi.fn();
 let emitState: (state: UpdaterState) => void;
 let show: () => void;

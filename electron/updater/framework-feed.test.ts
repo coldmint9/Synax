@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { frameworkChannel, frameworkUpdateInfo } from "./framework-feed.js";
+import { frameworkChannel, frameworkUpdateInfo, missingFrameworkChannel } from "./framework-feed.js";
 import type { UpdateInfo } from "electron-updater";
 
 function info(platform = "darwin", arch = "arm64"): UpdateInfo {
@@ -35,4 +35,20 @@ it.each(["version", "platform", "arch", "host", "hash", "size", "traversal", "mu
 it("does not activate unsupported platform or architecture", () => {
   expect(() => frameworkChannel("linux", "x64")).toThrow();
   expect(() => frameworkChannel("win32", "ia32")).toThrow();
+});
+
+it.each(["v1.6.6", "v1.12.1"])("treats missing legacy feed at %s as no upgrade after verifying stable metadata", (tag_name) => {
+  expect(missingFrameworkChannel({ tag_name, draft: false, prerelease: false }, "1.12.1"))
+    .toMatchObject({ version: "1.12.1", files: [] });
+});
+it("does not hide a missing feed for a newer stable release", () => {
+  expect(() => missingFrameworkChannel({ tag_name: "v1.13.0", draft: false, prerelease: false }, "1.12.1"))
+    .toThrow("更新清单尚未就绪");
+});
+it.each([
+  null, {}, { tag_name: "preview", draft: false, prerelease: true },
+  { tag_name: "v1.6.6", draft: true, prerelease: false },
+  { tag_name: "v1.6.6", draft: false, prerelease: true },
+])("does not report current from unverified release metadata %j", (release) => {
+  expect(() => missingFrameworkChannel(release, "1.12.1")).toThrow("无法确认");
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, render as testingRender } from "@testing-library/react";
+import { act, fireEvent, screen, render as testingRender } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenuProvider";
 
@@ -332,7 +332,31 @@ describe("SessionTreeItem", () => {
         onToggleExpand={noop}
       />,
     );
-    expect(container.querySelector(".session-list-preview")).toBeNull();
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "aria-hidden", "true",
+    );
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "data-expanded", "false",
+    );
+
+    const preview = container.querySelector(".session-list-preview");
+    act(() => useShellStore.getState().setSessionListDisplayMode("preview"));
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "data-expanded", "true",
+    );
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "aria-hidden", "false",
+    );
+    expect(container.querySelector(".session-list-preview")).toBe(preview);
+
+    act(() => useShellStore.getState().setSessionListDisplayMode("title"));
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "data-expanded", "false",
+    );
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "aria-hidden", "true",
+    );
+    expect(container.querySelector(".session-list-preview")).toBe(preview);
 
     rerender(
       <SessionTreeItem
@@ -348,6 +372,12 @@ describe("SessionTreeItem", () => {
     );
     expect(container.querySelector(".session-list-preview")?.textContent).toBe(
       "匹配的摘要",
+    );
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "data-expanded", "true",
+    );
+    expect(container.querySelector(".session-list-preview-reveal")).toHaveAttribute(
+      "aria-hidden", "false",
     );
   });
 });

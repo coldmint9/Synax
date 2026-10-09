@@ -18,6 +18,10 @@ export function groupActivityEntries(
       result.push(entry);
       continue;
     }
+    // Persisted reasoning may be merged, omitted or arrive after the reply.
+    // Count rendered replies independently so that handoff does not remount
+    // an existing answer merely because its offset among activity blocks changed.
+    let contentIndex = 0;
     entry.turn.blocks.forEach((block, index) => {
       const activity =
         block.type === "thinking" ||
@@ -53,7 +57,7 @@ export function groupActivityEntries(
         }
         result.push({
           ...entry,
-          id: `${entry.id}:content:${index}`,
+          id: `${entry.id}:content:${contentIndex++}`,
           turn: { ...entry.turn, blocks: [block] },
         });
       }

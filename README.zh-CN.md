@@ -92,7 +92,7 @@ npm run make:desktop
 
 产物保存在 `out/make/`。需要在目标**操作系统和 CPU 架构**上构建，libSQL 和 node-pty 包含原生二进制。打包后的应用自带运行时，使用者无需另外安装 Node.js。
 
-桌面整包更新使用 `electron-updater`：macOS 使用 Developer ID 签名的应用 ZIP，Windows 使用以 `-NSIS.exe` 结尾的安装包，`make:desktop` 在 Windows 上会同时生成 NSIS 产物。旧 Windows Squirrel 安装和便携版需要手动安装一次 NSIS 版；旧 macOS 未签名安装需要手动安装签名版。迁移时保留 `~/.synax` 和用户配置；后续更新仍需确认下载和重启。旧 Squirrel 包、DMG 和更新清单继续发布，兼容界面更新保留独立流程。
+桌面整包更新使用 `electron-updater`：macOS 使用应用 ZIP，Windows 使用以 `-NSIS.exe` 结尾的安装包，`make:desktop` 在 Windows 上会同时生成 NSIS 产物。旧 Windows Squirrel 安装和便携版需要手动安装一次 NSIS 版。Synax 不对当前 macOS 应用进行 Developer ID 签名前置检查；实际安装仍受更新框架与系统的签名规则约束。迁移时保留 `~/.synax` 和用户配置；后续更新仍需确认下载和重启。旧 Squirrel 包、DMG 和更新清单继续发布，兼容界面更新保留独立流程。
 
 稳定 Tag 构建要求代码签名。macOS 使用 `SYNAX_MAC_SIGN_IDENTITY` 和已导入的 Developer ID 证书；CI 通过 `SYNAX_MAC_CERTIFICATE`（base64 P12）与 `SYNAX_MAC_CERTIFICATE_PASSWORD` 导入，公证使用 `SYNAX_APPLE_ID`、`SYNAX_APPLE_APP_PASSWORD` 和 `SYNAX_APPLE_TEAM_ID`。Windows CI 使用 `SYNAX_WINDOWS_PUBLISHER`、`SYNAX_WINDOWS_CSC_LINK` 与 `SYNAX_WINDOWS_CSC_KEY_PASSWORD`；本地 NSIS 构建使用对应的 `CSC_LINK` 和 `CSC_KEY_PASSWORD`。缺少必需签名配置时稳定构建失败，预览版可手动测试。更新清单按平台和架构隔离，只有 macOS x64/arm64 与 Windows x64 产物齐全时才推进 latest；旧完整版本重跑不会再次置顶。
 

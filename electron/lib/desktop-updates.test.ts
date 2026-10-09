@@ -65,6 +65,24 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("main-process desktop updates", () => {
+  it("reveals failures once per failed attempt, including native install errors", () => {
+    vi.useFakeTimers();
+    const window = {
+      isDestroyed: () => false, setProgressBar: vi.fn(),
+      webContents: { isDestroyed: () => false, send: vi.fn() },
+    };
+    const updates = new DesktopUpdates(() => null);
+    updates.start(window as any);
+    const changed = mocks.controllerConstructor.mock.calls[0][1] as (state: any) => void;
+    const failed = { ...mocks.controller.state, phase: "error", message: "更新未完成" };
+    changed(failed);
+    changed(failed);
+    expect(window.webContents.send.mock.calls.filter(([channel]) => channel === "updates:show")).toHaveLength(1);
+    changed({ ...failed, phase: "installing" });
+    changed(failed);
+    expect(window.webContents.send.mock.calls.filter(([channel]) => channel === "updates:show")).toHaveLength(2);
+    updates.stop();
+  });
   it("does not prompt during download or verification, even when all bytes have arrived", async () => {
     let finish!: () => void;
     mocks.controller.check.mockImplementation(async () => {

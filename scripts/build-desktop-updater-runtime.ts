@@ -16,7 +16,9 @@ await build({
   platform: "node",
   target: "node22",
   config: false,
-  noExternal: [/.*/],
+  // tsup's noExternal takes precedence over external. Never inline the npm
+  // Electron launcher: its export is an executable path, not the host API.
+  noExternal: [/^(?!(?:electron|original-fs)$).*/],
   external: ["electron", "original-fs"],
   clean: false,
   dts: false,

@@ -106,7 +106,7 @@ it.each(["download", "install"])("refuses changed bytes during %s", async (stage
   expect(value.state.phase).toBe("error"); expect(updater.quitAndInstall).not.toHaveBeenCalled();
 });
 it("does not download or quit unsupported installations", async () => {
-  dependencies.eligible = vi.fn(async () => { throw new Error("Install NSIS first"); });
+  dependencies.eligible = vi.fn(async () => { throw new Error("请先安装 NSIS 版本。"); });
   const value = controller(); await value.initialize(); await value.check();
   expect(value.state.message).toContain("NSIS");
   expect(dependencies.create).not.toHaveBeenCalled(); expect(updater.quitAndInstall).not.toHaveBeenCalled();
@@ -122,7 +122,8 @@ it("surfaces native installation errors and persists a failed transaction", asyn
   updater.quitAndInstall.mockImplementation(() => updater.emit("error", new Error("native failure")));
   await value.install();
   await vi.waitFor(() => expect(value.state.history[0]?.outcome).toBe("failed"));
-  expect(value.state).toMatchObject({ phase: "error", message: "native failure" });
+  expect(value.state.phase).toBe("error");
+  expect(value.state.message).toContain("更新未完成");
 });
 it("leaves the app running if the installation journal cannot be persisted", async () => {
   const value = await ready();

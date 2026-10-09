@@ -9,6 +9,7 @@ import path from "node:path";
 import { finishMacInstallation } from "./mac-desktop-update.js";
 import { UpdaterController } from "../updater/controller.js";
 import type { UpdaterRequest, UpdaterState } from "../updater/contract.js";
+import { updateFailureMessage } from "../updater/update-errors.js";
 
 /**
  * Adapts electron-updater to the existing renderer and confirmation dialogs.
@@ -73,6 +74,8 @@ export class DesktopUpdates {
   }
 
   private publish(state: UpdaterState): void {
+    if (state.phase === "error" && this.lastPhase !== "error")
+      this.send("updates:show");
     const now = Date.now();
     if (
       state.phase === "downloading" &&
@@ -140,7 +143,7 @@ export class DesktopUpdates {
             type: "error",
             title: "检查更新失败",
             message: "无法完成 Synax 更新检查。",
-            detail: error instanceof Error ? error.message : String(error),
+            detail: updateFailureMessage(error),
             buttons: ["确定"],
           });
       })

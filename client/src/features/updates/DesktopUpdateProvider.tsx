@@ -19,6 +19,7 @@ interface DesktopUpdateContextValue {
   visible: boolean;
   minimized: boolean;
   setMinimized(value: boolean): void;
+  dismiss(): void;
   check(): Promise<void>;
   install(): Promise<void>;
 }
@@ -104,6 +105,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
         visible,
         minimized,
         setMinimized,
+        dismiss: () => setVisible(false),
         check: () => run("check"),
         install: () => run("install"),
       }}

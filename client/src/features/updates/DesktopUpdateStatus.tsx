@@ -2,7 +2,7 @@ import { useId } from "react";
 import { createPortal } from "react-dom";
 import { Spinner } from "@/shared/ui/ui/Display";
 import { Button } from "@/shared/ui/ui/Button";
-import { ChevronDown, ChevronUp, Download, RotateCw } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, RotateCw, X } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useDesktopUpdate } from "./DesktopUpdateProvider";
 import type { UpdaterState } from "../../adapters/electron/desktop-updates";
@@ -126,6 +126,16 @@ export function DesktopUpdateStatus({
         </p>
       )}
       <div className="flex flex-wrap gap-2">
+        {failure && (
+          <a
+            href="https://github.com/coldmint9/Synax/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-accent underline self-center"
+          >
+            {zh ? "打开发布页手动下载" : "Download from releases"}
+          </a>
+        )}
         {phase === "ready" ? (
           <Button
             type="button"
@@ -171,7 +181,9 @@ export function DesktopUpdatePanel() {
     ["idle", "current", "complete"].includes(update.state.phase)
   )
     return null;
-  const { minimized, setMinimized, state } = update;
+  const { minimized, setMinimized, state, error, dismiss } = update;
+  const canDismiss = state.phase === "error" || Boolean(error);
+  const closeLabel = zh ? "关闭更新窗口" : "Close update panel";
   const label = minimized
     ? zh
       ? "展开更新进度"
@@ -202,17 +214,30 @@ export function DesktopUpdatePanel() {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          title={label}
-          aria-label={label}
-          aria-expanded={!minimized}
-          aria-controls={bodyId}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-default"
-          onClick={() => setMinimized(!minimized)}
-        >
-          {minimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            title={label}
+            aria-label={label}
+            aria-expanded={!minimized}
+            aria-controls={bodyId}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-default"
+            onClick={() => setMinimized(!minimized)}
+          >
+            {minimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {canDismiss && (
+            <button
+              type="button"
+              title={closeLabel}
+              aria-label={closeLabel}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-default"
+              onClick={dismiss}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
       </header>
       {!minimized && (
         <div id={bodyId} className="mt-3">
