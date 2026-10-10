@@ -1171,19 +1171,14 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .map((session) => {
                   const live = current.get(session.id);
                   // A response snapshot must not overwrite a newer title/live patch.
-                  // Preserve a newer live patch, including same-timestamp
-                  // status updates. The previous JSON.stringify deep compare
-                  // made every refresh proportional to the full session
-                  // payload and became a major main-thread cost with many
-                  // concurrent sessions. Equal snapshots can safely use the
-                  // response object; the next refresh will repeat this cheap
-                  // timestamp check instead of serializing the payload.
                   return live &&
                     (live.updatedAt > session.updatedAt ||
                       (live !== before.get(session.id) &&
                         live.updatedAt === session.updatedAt))
                     ? live
-                    : session;
+                    : live && JSON.stringify(live) === JSON.stringify(session)
+                      ? live
+                      : session;
                 });
               const sessions = [...rows, ...added];
               return {
