@@ -630,6 +630,8 @@ export interface RegisteredTool {
   resumeBehavior: ToolResumeBehavior;
   patterns?: string[];
   progressiveDetails?: string;
+  /** Stable discovery namespace supplied by adapters; never used for authorization. */
+  discoveryGroup?: string;
   inputSchema?: z.ZodTypeAny;
   outputSchema?: z.ZodTypeAny;
   getPattern?: (args: unknown) => string | undefined;

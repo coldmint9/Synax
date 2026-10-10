@@ -5,10 +5,20 @@ import type { AgentProfileKind } from "../agent-runtime/contracts.js";
 import { permissionPolicy } from "../agent-runtime/permission-policy.js";
 import { AgentPermissionError } from "../agent-runtime/runtime-errors.js";
 import { agentSessionRuntime } from "../agent-runtime/session-runtime.js";
-import { skillRegistry } from "./skill-registry.js";
+import { profileService } from "../agent-runtime/profile-service.js";
+import { matchesProfile, skillRegistry } from "./skill-registry.js";
 import type { SkillDetail, SkillSummary } from "./types.js";
 
 export const skillAgentBridge = {
+  canRetainForContext(sessionId: string, skillId: string): boolean {
+    try {
+      const session = agentSessionRuntime.get(sessionId);
+      const profile = profileService.getForSession(session);
+      if (!profile.allowedCapabilities.includes("skill.load")) return false;
+      this.loadForTool({ sessionId, skillId, profileKind: profile.kind });
+      return true;
+    } catch { return false; }
+  },
   listForPrompt(input: {
     profileId: string;
     projectId: string;
@@ -47,12 +57,9 @@ export const skillAgentBridge = {
       return loadGitSkill(input.skillId);
     }
     const summary = skillRegistry.getSummary(input.skillId, session.projectId);
-    if (
-      summary.appliesTo.length > 0 &&
-      !summary.appliesTo.includes(input.profileKind)
-    ) {
+    if (!matchesProfile(summary, session.profileId)) {
       throw new AgentPermissionError(
-        `Skill ${summary.id} does not apply to ${input.profileKind}.`,
+        `Skill ${summary.id} does not apply to ${session.profileId}.`,
       );
     }
 

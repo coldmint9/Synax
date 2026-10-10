@@ -34,17 +34,18 @@ function truncate(value: string): string {
   return value.length <= SUMMARY_LIMIT ? value : `${value.slice(0, SUMMARY_LIMIT)}…`
 }
 
-function buildTool(serverId: string, tool: McpRuntimeToolDef): RegisteredTool {
+function buildTool(serverId: string, tool: McpRuntimeToolDef, serverName = serverId): RegisteredTool {
   const id = `${TOOL_PREFIX}${serverId}.${sanitizeName(tool.name)}`
   return {
     id,
-    label: `${tool.title || tool.name} (MCP ${serverId})`,
+    label: `${tool.title || tool.name} (MCP ${serverName})`,
     description: tool.description ?? `Call MCP tool ${tool.name} on server ${serverId}.`,
     category: 'mcp',
+    discoveryGroup: `mcp.${serverId}`,
     codeModeReadOnly: tool.readOnlyHint === true,
     mutability: tool.readOnlyHint ? 'read' : 'task',
     resumeBehavior: 'wait_permission',
-    progressiveDetails: `Executes MCP tool ${tool.name} on configured server ${serverId}.`,
+    progressiveDetails: `Executes MCP tool ${tool.name} on configured server ${serverName} (${serverId}).`,
     inputSchema: (() => {
       try { return tool.inputSchema ? z.fromJSONSchema(tool.inputSchema) : z.object({}).catchall(z.unknown()); }
       catch { return z.object({}).catchall(z.unknown()); }
@@ -106,7 +107,7 @@ class McpSessionToolProvider implements SessionToolProvider {
       if (exposure === 'disabled') continue;
       for (const def of mcpClientManager.getCachedTools(serverId, session.projectId, sessionId)) {
         if (exposure === 'observation' && !JEV_OBSERVATION_TOOLS.has(def.name)) continue;
-        tools.push(buildTool(serverId, def))
+        tools.push(buildTool(serverId, def, config.name))
       }
     }
     return tools

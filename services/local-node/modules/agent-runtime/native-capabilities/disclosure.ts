@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import { countTokens } from "../context-tokenizer.js";
 import { CORE_TOOL_IDS } from "./policy.js";
+import { capabilityGroup } from "./search.js";
 
 export type CapabilityTool = Omit<RegisteredTool, "execute">;
 export interface CapabilityContract {
@@ -23,7 +24,7 @@ export const DISCLOSURE_LIMITS = { page: 4 } as const;
 const contracts = new WeakMap<object, { signature: string; contract: Omit<CapabilityContract, "compose"> }>();
 export function capabilityContract(tool: CapabilityTool, compose: boolean): CapabilityContract {
   const key = tool.inputSchema ?? tool;
-  const signature = JSON.stringify([tool.id, tool.description, tool.progressiveDetails, tool.category]);
+  const signature = JSON.stringify([tool.id, tool.description, tool.progressiveDetails, tool.category, tool.discoveryGroup]);
   const cached = contracts.get(key);
   if (cached?.signature === signature) return { ...cached.contract, compose };
   const inputSchema = tool.inputSchema
@@ -33,7 +34,7 @@ export function capabilityContract(tool: CapabilityTool, compose: boolean): Capa
   const serialized = JSON.stringify({ id: tool.id, description, inputSchema });
   const contract = {
     id: tool.id, description, inputSchema,
-    group: tool.category === "mcp" ? `mcp.${tool.id.split(".")[1]}` : tool.category,
+    group: capabilityGroup(tool),
     version: createHash("sha256").update(serialized).digest("hex").slice(0, 20),
     tokens: countTokens(serialized),
   };

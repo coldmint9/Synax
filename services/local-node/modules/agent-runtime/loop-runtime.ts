@@ -2810,6 +2810,7 @@ export class AgentLoopRuntime {
       .slice(0, 16);
     const { projection } = await maybeLlmCompactContext({
       sessionId: input.sessionId,
+      canRetainSkill: (skillId) => skillAgentBridge.canRetainForContext(input.sessionId, skillId),
       projectId: session.projectId,
       runId: input.stepId ? this.store.getRunStep(input.stepId).runId : null,
       toolSet,

@@ -47,6 +47,41 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); clearSessionWorkspaceRoot(id); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("native capability lifecycle", () => {
+  it("loads exact IDs even when query, group and cursor are stale", async () => {
+    const result = (await registry.execute(id, "agent.discover", {
+      ids: [tool(0).id], query: "unrelated", group: "read", cursor: 100,
+    })).toolResult?.result as { contracts: Array<{ id: string }>; missing: string[] };
+    expect(result.contracts.map((item) => item.id)).toEqual([tool(0).id]);
+    expect(result.missing).toEqual([]);
+    expect(project().tools.map((item) => item.id)).toContain(tool(0).id);
+  });
+
+  it("browses summaries without mounting tools and reports loaded state", async () => {
+    const browse = async () => (await registry.execute(id, "agent.discover", {
+      mode: "list", group: "mcp.fixture", ids: [],
+    })).toolResult?.result as { results: Array<{ id: string; loaded: boolean }>; contracts: unknown[] };
+    expect(await browse()).toMatchObject({ results: [{ id: tool(0).id, loaded: false }], contracts: [] });
+    expect(project().tools.map((item) => item.id)).not.toContain(tool(0).id);
+    await discover([tool(0).id]);
+    expect(await browse()).toMatchObject({ results: [{ id: tool(0).id, loaded: true }] });
+  });
+
+  it("finds out-of-order keywords and returns useful groups for empty results", async () => {
+    const result = (await registry.execute(id, "agent.discover", { query: "records fixture", group: "mcp" })).toolResult?.result as { contracts: Array<{ id: string }> };
+    expect(result.contracts.map((item) => item.id)).toContain(tool(0).id);
+    const missing = (await registry.execute(id, "agent.discover", { query: "zzzzunknown" })).toolResult?.result as { groups: Array<{ group: string }>; nextAction: string };
+    expect(missing.groups).toEqual(expect.arrayContaining([expect.objectContaining({ group: "mcp.fixture" })]));
+    expect(missing.nextAction).toContain("No callable match");
+  });
+
+  it("advertises MCP purposes and uses full dotted server IDs", async () => {
+    const dotted = { ...tool(1), id: "mcp.docs.internal.read", discoveryGroup: "mcp.docs.internal", label: "Search product manuals" };
+    registry.register(dotted);
+    expect(project().prompt).toContain("Search product manuals");
+    const result = (await registry.execute(id, "agent.discover", { group: "mcp.docs.internal" })).toolResult?.result as { contracts: Array<{ id: string; group: string }> };
+    expect(result.contracts).toEqual([expect.objectContaining({ id: dotted.id, group: "mcp.docs.internal" })]);
+  });
+
   it("initializes only new projects and preserves existing composition policy", () => {
     const fresh = initializeProjectSettings("native-new-project");
     expect(fresh.schemaVersion).toBe(3);

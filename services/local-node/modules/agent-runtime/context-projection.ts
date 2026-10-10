@@ -50,6 +50,7 @@ export interface ContextProjectionInput {
   clearing?: ClearingOptions;
   /** Explicit user request; retains integrity checks and recent/pinned steps. */
   forceCompact?: boolean;
+  canRetainSkill?: (skillId: string) => boolean;
 }
 
 /** Shared empty result so the hot projection path never allocates one. */
@@ -84,6 +85,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
   const initialUserMessage = initialSessionMessageProjection(session);
   // One read-only snapshot per request; the candidate loop only reads history.
   const history = createLoopHistoryReader(store, input.sessionId);
+  const canRetainSkill = (skillId: string) => history.memo(`retainSkill:${skillId}`, () => input.canRetainSkill?.(skillId) ?? false);
   const historicalStepCount = history
     .listRuns()
     .reduce((count, run) => count + history.listRunSteps(run.id).length, 0);
@@ -231,6 +233,7 @@ export function projectWorkContext(input: ContextProjectionInput): {
         : includeHistoricalRuntimeReminders,
       toolOutputBudgetTokens: Math.floor(input.contextLimit * 0.15),
       excludedStepIds: excludedThrough(through),
+      canRetainSkill,
       compactionSummary: summary,
       summarizedInputIds: summarizedInputIds(memory),
       initialUserMessage,

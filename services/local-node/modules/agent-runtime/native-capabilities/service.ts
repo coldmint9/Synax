@@ -10,6 +10,7 @@ import { canComposeTool, CODE_TOOL_IDS } from "../code-mode/policy.js";
 import { createCompositionExecutor, response } from "../code-mode/composition-service.js";
 import { CODE_LIMITS } from "../code-mode/contracts.js";
 import { CORE_TOOL_IDS, nativeCapabilitiesEnabled } from "./policy.js";
+import { capabilityDirectory, capabilityGroup, searchCapabilities } from "./search.js";
 import {
   capabilityContract, disclose, readDisclosure, reconcileDisclosure, DISCLOSURE_LIMITS,
   type CapabilityContract, type CapabilityTool, type DisclosureState,
@@ -87,8 +88,7 @@ export class NativeCapabilities {
     };
     if (JSON.stringify(this.store.getSession(sessionId).sessionMetadata?.advertisedCapabilities) !== JSON.stringify(advertised))
       this.store.updateSessionMetadata(sessionId, { advertisedCapabilities: advertised });
-    const groups = new Map<string, number>();
-    for (const tool of business) groups.set(tool.category, (groups.get(tool.category) ?? 0) + 1);
+    const directory = capabilityDirectory(business.filter((tool) => !CORE_TOOL_IDS.has(tool.id)));
     const composable = tools.filter((tool) => catalog.get(tool.id)?.compose).map((tool) => tool.id).sort();
     return {
       tools,
@@ -96,7 +96,9 @@ export class NativeCapabilities {
         "## Native capabilities",
         "Core tools and all capabilities discovered in this session are exposed. Use agent.discover only for capabilities missing from the current tool list. An empty query pages through the directory; hidden tools are not unavailable tools.",
         "Discovered capabilities stay loaded across turns and context compaction in this session while available and permitted; updated definitions are refreshed automatically. Call exposed tools directly. Do not search again to confirm availability or reload a known tool.",
-        `Capability groups (counts): ${JSON.stringify(Object.fromEntries([...groups].sort()))}.`,
+        `Deferred capability directory (group, count, example IDs and labels): ${JSON.stringify(directory.slice(0, 24))}.`,
+        "Use mode:list to browse compact tool summaries without loading schemas; use query keywords to search by purpose or MCP server name; use ids to load exact runtime IDs. Exact IDs override query/group. Search uses ranked terms, not an exact phrase. If no match, inspect returned groups and browse instead of repeating the same query.",
+        ...(directory.length > 24 ? ["More groups exist; mode:list with cursor browses all tools."] : []),
         "Code Mode is the automatic execution mechanism. Submit normal tool operations; the loop compiles and schedules them. Do not call code.run or agent.execute to opt into composition.",
         `Sandbox-composable IDs: ${JSON.stringify(composable)}.`,
         "Reads may run with bounded concurrency. Writes and patches execute in submission order as barriers; use the result of a preceding model step when constructing dependent arguments. The loop pauses at approval and resumes only unfinished operations. Never resubmit completed writes.",
@@ -129,26 +131,26 @@ export class NativeCapabilities {
   tools(): RegisteredTool[] {
     return [{
       id: "agent.discover", label: "Discover capabilities", category: "read", mutability: "read", resumeBehavior: "none",
-      description: "Discover capabilities missing from the current tool list. Search with query/group or load up to four exact runtime IDs. Omit filters to browse all capabilities; cursor pages results. Discovered tools are exposed on the NEXT step and stay loaded for this session while available and permitted, including after context compaction. Call already exposed tools directly; do not rediscover them. Discovery is not authorization. Do not execute dependent code in the same step.",
+      description: "Find missing capabilities by purpose, tool name or MCP server name. query uses ranked keywords. mode:list returns compact summaries without loading; cursor pages results. ids loads up to four exact runtime IDs and overrides query/group/cursor. With no filters, returns the directory. Search/load exposes tools on the NEXT step and keeps them loaded across turns and compaction. Call exposed tools directly. For skills, use the available-skills catalog and skill.load with its exact skillId. Discovery is not authorization.",
       inputSchema: z.object({
+        mode: z.enum(["search", "list"]).optional(),
         query: z.string().max(120).optional(), group: z.string().max(256).optional(),
-        ids: z.array(z.string().min(1).max(256)).min(1).max(4).optional(),
+        ids: z.array(z.string().min(1).max(256)).max(4).optional().describe("Exact runtime IDs to load; use [] or omit for keyword search or browsing."),
         cursor: z.number().int().min(0).max(100000).optional(),
       }).strict(),
       execute: (input) => {
         if (!nativeCapabilitiesEnabled(this.store.getSession(input.sessionId))) return response({ status: "denied" }, "Native capability discovery is disabled.");
-        const args = input.args as { query?: string; group?: string; ids?: string[]; cursor?: number };
+        const args = input.args as { mode?: "search" | "list"; query?: string; group?: string; ids?: string[]; cursor?: number };
         const available = this.available(input.sessionId).sort((a, b) => a.id.localeCompare(b.id));
         const catalog = this.catalog(input.sessionId, available);
-        const query = args.query?.toLowerCase();
-        const matching = available.filter((tool) => (!args.ids || args.ids.includes(tool.id)) &&
-          (!args.group || tool.category === args.group || catalog.get(tool.id)?.group === args.group) &&
-          (!query || `${tool.id} ${tool.label} ${tool.description}`.toLowerCase().includes(query)));
-        const offset = args.cursor ?? 0;
-        const page = matching.slice(offset, offset + DISCLOSURE_LIMITS.page);
+        const matching = searchCapabilities(available, args.query?.trim(), args.group?.trim(), args.ids);
+        const listing = !args.ids?.length && (args.mode === "list" || (!args.mode && !args.query?.trim() && !args.group?.trim()));
+        const offset = args.ids?.length ? 0 : args.cursor ?? 0;
+        const page = matching.slice(offset, offset + (listing ? 20 : DISCLOSURE_LIMITS.page));
         const selected: CapabilityContract[] = [];
         const unavailable: Array<{ id: string; reason: string }> = [];
         for (const tool of page) {
+          if (listing) continue;
           const contract = catalog.get(tool.id);
           if (!contract) {
             unavailable.push({ id: tool.id, reason: "Schema cannot be serialized." });
@@ -159,14 +161,21 @@ export class NativeCapabilities {
         const state = disclose(this.state(input.sessionId, catalog), selected, catalog);
         this.save(input.sessionId, state);
         return response({
+          mode: listing ? "list" : "search",
+          results: page.map((tool) => ({ id: tool.id, label: tool.label, description: tool.description.slice(0, 240), group: capabilityGroup(tool), loaded: CORE_TOOL_IDS.has(tool.id) || state.entries.some((entry) => entry.id === tool.id) })),
+          ...((listing || matching.length === 0) ? { groups: capabilityDirectory(available).map(({ group, count }) => ({ group, count })) } : {}),
           contracts: selected.map(({ tokens: _tokens, ...contract }) => contract),
           unavailable,
           missing: args.ids?.filter((id) => !matching.some((tool) => tool.id === id)),
           total: matching.length,
           nextCursor: offset + page.length < matching.length ? offset + page.length : null,
           active: state.entries.map((entry) => entry.id),
-          nextAction: "Call the discovered tools directly from the next model step. They remain loaded in this session; no repeat discovery is needed while available and permitted.",
-        }, `Discovered ${selected.length} capability contracts.`);
+          nextAction: listing
+            ? "Choose an unloaded result and load its exact id with ids. Loaded results are already callable; do not load them again. Use nextCursor to browse more summaries."
+            : selected.length
+              ? "Call the discovered tools directly from the next model step. They remain loaded in this session; no repeat discovery is needed while available and permitted."
+              : "No callable match. Check missing/unavailable and returned groups; use mode:list to browse or try fewer keywords. Do not repeat the same search. Skills are in the available-skills catalog, loaded via skill.load.",
+        }, listing ? `Listed ${page.length} capabilities without loading.` : `Discovered ${selected.length} capability contracts.`);
       },
     }, {
       id: "agent.execute", label: "Legacy composition adapter", category: "read", mutability: "read", resumeBehavior: "none",

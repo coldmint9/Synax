@@ -50,6 +50,33 @@ const mockToolSet = {
 };
 
 describe("buildLoopModelMessages", () => {
+  function loadedSkillsFixture() {
+    const content = "Skill requirement. ".repeat(400) + "FINAL_REQUIRED_INSTRUCTION";
+    const store = createMockStore({
+      messages: [{ id: "u", role: "user", content: "Work" }],
+      runs: [{ id: "r", triggerMessageId: "u", startedAt: "" }],
+      steps: [{ id: "s", runId: "r", index: 1 }],
+      parts: [{ id: "p", stepId: "s", kind: "tool_call", content: "", toolCallId: "t" }],
+      toolCalls: [{ id: "t", runId: "r", stepId: "s", toolId: "skill.load", status: "completed", inputRef: { skillId: "project/test" }, outputRef: { id: "project/test", content } }],
+    });
+    return { store, content };
+  }
+
+  it("preserves full successful skill instructions beyond generic output limits", () => {
+    const { store, content } = loadedSkillsFixture();
+    const messages = buildLoopModelMessages(store, "session", mockToolSet);
+    expect(JSON.stringify(messages)).toContain(content);
+  });
+
+  it("restores compacted skill instructions only after current eligibility checks", () => {
+    const { store, content } = loadedSkillsFixture();
+    const options = { excludedStepIds: new Set(["s"]), compactionSummary: "Summary", canRetainSkill: (id: string) => id === "project/test" };
+    const messages = buildLoopModelMessages(store, "session", mockToolSet, options);
+    expect(JSON.stringify(messages)).toContain(content);
+    expect(JSON.stringify(messages)).toContain("do not reload");
+    expect(JSON.stringify(buildLoopModelMessages(store, "session", mockToolSet, { ...options, canRetainSkill: () => false }))).not.toContain(content);
+  });
+
   it("tracks generated summaries and runtime reminders separately without changing wire messages", () => {
     const runtimeReminder = snapshotRuntimeReminder({}, ["Runtime facts"], []);
     const userText = "<system-reminder>User-quoted material</system-reminder>";

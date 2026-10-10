@@ -222,15 +222,19 @@ function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): Sk
   // Scope before deduplication: a higher priority source must not hide another source's search results.
   const scoped = collected.filter(({ skill }) => (!input.sourceId || skill.sourceId === input.sourceId) && (!exactId || skill.id === exactId));
   scoped.sort((a, b) => b.priority - a.priority);
+  // Only eligible candidates can shadow a lower-priority skill of the same name.
+  // Management queries retain disabled candidates through includeDisabled.
+  const eligible = applyManagementState(scoped.map(({ skill }) => skill), input)
+    .filter((skill) => matchesProfile(skill, input.profileId));
   const winners = new Map<string, SkillSummary>();
-  for (const entry of scoped) {
-    const key = input.includeUnmounted ? entry.skill.installPath ?? entry.skill.id : entry.skill.name;
+  for (const skill of eligible) {
+    const key = input.includeUnmounted ? skill.installPath ?? skill.id : skill.name;
     if (!winners.has(key)) {
-      winners.set(key, entry.skill);
+      winners.set(key, skill);
     }
   }
 
-  let items = applyManagementState([...winners.values()], input);
+  let items = [...winners.values()];
 
   if (input.sourceId) {
     items = items.filter((skill) => skill.sourceId === input.sourceId);
@@ -238,7 +242,6 @@ function collectLocalSummaries(input: SkillListQuery = {}, exactId?: string): Sk
   if (input.installedOnly) {
     items = items.filter((skill) => skill.installed);
   }
-  items = items.filter((skill) => matchesProfile(skill, input.profileId));
   items = items.filter((skill) => matchesQuery(skill, input.q));
 
   items.sort((a, b) => a.label.localeCompare(b.label));

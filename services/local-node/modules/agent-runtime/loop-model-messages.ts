@@ -109,6 +109,8 @@ export interface BuildMessagesOptions {
   initialUserMessage?: { original: string; content: string };
   workId?: string;
   excludedStepIds?: Set<string>;
+  /** Revalidate previously loaded skills before retaining their full content across compaction. */
+  canRetainSkill?: (skillId: string) => boolean;
   /** Exact current text already represented in a structured memory checkpoint. */
   summarizedInputIds?: Set<string>;
   /** Do not replay the in-flight request twice when resuming its snapshot. */
@@ -159,6 +161,23 @@ export function buildLoopModelMessages(
   );
 
   const messages: ModelMessage[] = [];
+
+  if (options.excludedStepIds?.size && options.canRetainSkill) {
+    const latest = new Map<string, ToolCallRecord>();
+    for (const call of history.listToolCalls()) {
+      if (call.toolId !== "skill.load" || call.status !== "completed") continue;
+      const result = call.outputRef as { id?: unknown; content?: unknown } | null;
+      if (typeof result?.id === "string" && typeof result.content === "string") latest.set(result.id, call);
+    }
+    for (const [skillId, call] of latest) {
+      if (!call.stepId || !options.excludedStepIds.has(call.stepId) || !options.canRetainSkill(skillId)) continue;
+      const result = call.outputRef as { content: string };
+      messages.push(systemMessage(
+        `Previously loaded skill ${JSON.stringify(skillId)}. Full instructions retained across context compaction; do not reload while this content is present.\n${result.content}`,
+        options.systemMessageContents,
+      ));
+    }
+  }
 
   if (options.compactionSummary) {
     messages.push(
@@ -600,6 +619,11 @@ function toToolResultOutput(
   record: ToolCallRecord,
   savedReceipt?: unknown,
 ): ToolResultOutput {
+  // Skills are instructions, not disposable read output. Truncating a successful
+  // load silently loses requirements and forces the model to load it again.
+  if (record.toolId === "skill.load" && record.status === "completed" && record.outputRef != null) {
+    return { type: "json", value: record.outputRef as never };
+  }
   const receipt = savedReceipt as
     | { version?: unknown; text?: unknown; outputType?: unknown }
     | undefined;

@@ -101,6 +101,31 @@ function fixture(reasoningLength = 2000) {
   return session.id;
 }
 describe("persistent work context projection", () => {
+  it("counts and restores skill instructions after durable compaction", () => {
+    const sessionId = fixture();
+    const content = "Retained skill instruction. ".repeat(240) + "SKILL_END";
+    store.appendToolCall({
+      id: "loaded-skill", sessionId, runId: "run", stepId: "step-1", modelToolCallId: "skill-call",
+      toolId: "skill.load", category: "skill", mutability: "read", argsHash: "skill-hash",
+      inputRef: { skillId: "project/test" }, inputSummary: "Load skill",
+      outputRef: { id: "project/test", content }, outputSummary: "Loaded skill", status: "completed",
+      permissionDecisionId: null, startedAt: "2026-09-13T00:00:01Z", endedAt: "2026-09-13T00:00:01Z", error: null,
+    });
+    store.appendRunPart({
+      id: "skill-part", sessionId, runId: "run", stepId: "step-1", kind: "tool_call", sequence: 3,
+      content: "", toolCallId: "loaded-skill", metadata: {}, createdAt: "2026-09-13T00:00:01Z",
+    });
+    const input = { sessionId, toolSet, contextLimit: 200000, outputReserve: 8192, systemTokens: 0, canRetainSkill: () => true };
+    const compacted = projectWorkContext({ ...input, forceCompact: true });
+    expect(compacted.compacted).toBe(true);
+    expect(JSON.stringify(compacted.messages)).toContain(content);
+    const restored = projectWorkContext(input);
+    expect(JSON.stringify(restored.messages)).toContain(content);
+    const revoked = projectWorkContext({ ...input, canRetainSkill: () => false });
+    expect(JSON.stringify(revoked.messages)).not.toContain(content);
+    expect(restored.tokens - revoked.tokens).toBeGreaterThanOrEqual(content.length);
+  });
+
   it("manually compacts below the hard window while preserving recent steps and source history", () => {
     const sessionId = fixture();
     const input = {
