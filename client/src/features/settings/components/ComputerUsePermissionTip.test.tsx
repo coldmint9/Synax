@@ -13,7 +13,7 @@ describe('ComputerUsePermissionTip', () => {
     expect(screen.getByText('Find Synax in the list and enable the requested permission.')).toBeInTheDocument()
     expect(screen.getByText('After granting access, quit and reopen Synax, then check that the status is “Ready”.')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Open Accessibility' }))
+    await user.click(screen.getByRole('button', { name: 'Device Control & Data Access (Accessibility)' }))
     await user.click(screen.getByRole('button', { name: 'Open Screen Recording' }))
     expect(onOpenPermission).toHaveBeenNthCalledWith(1, 'accessibility')
     expect(onOpenPermission).toHaveBeenNthCalledWith(2, 'screen-recording')
@@ -24,7 +24,7 @@ describe('ComputerUsePermissionTip', () => {
     expect(screen.getByText('点击下方按钮打开 macOS 系统设置。')).toBeInTheDocument()
     expect(screen.getByText('在列表中找到 Synax，并开启对应的系统权限。')).toBeInTheDocument()
     expect(screen.getByText('授权后退出并重新打开 Synax，再确认状态为“已就绪”。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '打开辅助功能' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '设备控制和数据访问（辅助功能）' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '打开屏幕录制' })).toBeInTheDocument()
   })
 })

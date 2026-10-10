@@ -280,6 +280,22 @@
   line-height: 1.7;
   color: hsl(var(--muted-foreground));
 }
+.mcp-config-tabs {
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: hsl(var(--muted-foreground) / 0.08);
+}
+.mcp-config-panel { padding-top: 16px; }
+.extension-form .mcp-config-json {
+  min-height: 224px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+.mcp-config-description { margin-top: 16px; }
 .extension-form details {
   border-top: 1px solid var(--border);
   padding-top: 14px;

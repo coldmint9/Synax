@@ -55,6 +55,12 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef, serverName = serve
         throw new Error(`Invalid MCP tool id: ${input.toolId}`)
       }
       const session = agentRuntimeStore.getSession(input.sessionId)
+      if (serverId === CUA_SERVER_ID) {
+        const exposure = cuaExposure(input.sessionId, session.projectId);
+        if (exposure === 'disabled' || (exposure === 'observation' && !JEV_OBSERVATION_TOOLS.has(tool.name))) {
+          throw new Error('Computer Use is unavailable');
+        }
+      }
       // Runtime IDs are display aliases; sanitization and dotted server IDs
       // cannot be reversed to recover the original MCP protocol target.
       const result = await mcpClientManager.callTool(serverId, tool.name, input.args, session.projectId, input.sessionId, input.abortSignal)

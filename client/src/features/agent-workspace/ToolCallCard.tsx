@@ -1,10 +1,7 @@
 import { useState } from "react";
+import { useLocale } from "../../shared/hooks/useLocale";
+import { toolCallPresentation } from "./toolCallPresentation";
 import {
-  Terminal,
-  FileEdit,
-  FileSearch,
-  Search,
-  Wrench,
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
@@ -14,22 +11,11 @@ interface Props {
   call: ToolCallView;
 }
 
-const TOOL_ICONS: Record<string, typeof Terminal> = {
-  external_execution: Terminal,
-  shell: Terminal,
-  write: FileEdit,
-  read: FileSearch,
-  search: Search,
-  context: Search,
-};
-
-function getToolIcon(category: string) {
-  return TOOL_ICONS[category] ?? Wrench;
-}
-
 export function ToolCallCard({ call }: Props) {
+  const { locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
-  const Icon = getToolIcon(call.category);
+  const presentation = toolCallPresentation(call, locale);
+  const Icon = presentation.icon;
   const hasOutput = Boolean(call.outputSummary);
 
   return (
@@ -46,12 +32,12 @@ export function ToolCallCard({ call }: Props) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
         <Icon size={13} className="shrink-0 text-primary" />
-        <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
-          {call.toolId}
+        <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={presentation.name}>
+          {presentation.name}
         </span>
-        {call.inputSummary && (
+        {presentation.target && (
           <span className="truncate text-xs text-muted-foreground">
-            {call.inputSummary}
+            {presentation.target}
           </span>
         )}
         <span className="ml-auto flex items-center gap-2">

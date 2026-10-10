@@ -15,7 +15,7 @@ describe("MarkdownRenderer", () => {
     expect(container.querySelector(".katex-display")).toBeInTheDocument();
   });
 
-  it("renders Markdown images responsively and opens a zoom preview", () => {
+  it("renders Markdown images responsively and opens a zoom preview", async () => {
     render(
       <MarkdownRenderer
         content={"![Screenshot](https://example.com/screenshot.png)"}
@@ -25,16 +25,39 @@ describe("MarkdownRenderer", () => {
     expect(image).toHaveAttribute("loading", "lazy");
     expect(image).toHaveClass("markdown-image");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "放大图片：Screenshot" }),
-    );
+    const trigger = screen.getByRole("button", { name: "放大图片：Screenshot" });
+    trigger.focus();
+    fireEvent.click(trigger);
     expect(
       screen.getByRole("dialog", { name: "Screenshot" }),
     ).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(
+    fireEvent.keyDown(screen.getByRole("button", { name: "关闭图片预览" }), { key: "Escape" });
+    await waitFor(() => expect(
       screen.queryByRole("dialog", { name: "Screenshot" }),
-    ).not.toBeInTheDocument();
+    ).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("keeps multiple thumbnails inside the text flow and previews the selected image", async () => {
+    const { container } = render(<MarkdownRenderer content={"正文 ![第一张](https://example.com/one.png) ![第二张](https://example.com/two.png) 后文"} />);
+    expect(container.querySelectorAll("p .markdown-image-trigger")).toHaveLength(2);
+    const trigger = screen.getByRole("button", { name: "放大图片：第二张" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "第二张" }).querySelector("img")).toHaveAttribute("src", "https://example.com/two.png");
+    fireEvent.click(screen.getByRole("button", { name: "关闭图片预览" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("shows a failed thumbnail without opening a broken preview and recovers for a new source", () => {
+    const { rerender } = render(<MarkdownRenderer content={"![截图](https://example.com/missing.png)"} />);
+    fireEvent.error(screen.getByRole("img", { name: "截图" }));
+    expect(screen.getByRole("status")).toHaveTextContent("图片加载失败：截图");
+    expect(screen.getByRole("button", { name: "图片加载失败：截图" })).toBeDisabled();
+    rerender(<MarkdownRenderer content={"![截图](https://example.com/available.png)"} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "放大图片：截图" })).toBeEnabled();
   });
 
   it("highlights fenced source code through the shared Shiki component", async () => {

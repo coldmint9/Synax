@@ -174,6 +174,35 @@ describe("WorkspaceDashboard", () => {
     expect(screen.queryByText("result.md")).toBeNull();
   });
 
+  it.each([false, true])("deduplicates assets while preserving distinct same-name inputs (repositories: %s)", (withRepositories) => {
+    const attachment = { kind: "attachment" as const, label: "image.png", assetId: "asset-one" };
+    const inputSources = [
+      attachment,
+      { ...attachment, toolCallId: "read-asset" },
+      { ...attachment, assetId: "asset-two" },
+      { kind: "file" as const, label: "README.md", path: "README.md" },
+      { kind: "attachment" as const, label: "legacy.png" },
+    ];
+    const repositories = withRepositories ? ["primary", "reference"].map((rootId) => ({
+      ...environment,
+      rootId,
+      name: rootId,
+      role: rootId as "primary" | "reference",
+      status: "ready" as const,
+      inputSources,
+    })) : undefined;
+    renderDashboard({ inputSources, repositories });
+
+    expect(screen.getByRole("tab", { name: `输入源 ${withRepositories ? 6 : 4}` })).toBeInTheDocument();
+    expect(screen.getAllByText("image.png")).toHaveLength(2);
+    expect(screen.getAllByText("README.md")).toHaveLength(withRepositories ? 2 : 1);
+    expect(screen.getAllByText("legacy.png")).toHaveLength(withRepositories ? 2 : 1);
+    fireEvent.click(screen.getAllByText("image.png")[0]);
+    expect(useSessionWorkspaceStore.getState().sessions["session-1"].tabs).toEqual([
+      expect.objectContaining({ inputSource: expect.objectContaining({ assetId: "asset-two" }) }),
+    ]);
+  });
+
   it("defaults to outputs when no inputs exist and shows empty views explicitly", () => {
     renderDashboard({ inputSources: [], outputFiles: ["result.md"] });
     expect(screen.getByRole("tab", { name: "产出文件 1" })).toHaveAttribute(

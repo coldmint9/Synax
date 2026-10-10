@@ -1,10 +1,7 @@
 import { useState } from "react";
+import { useLocale } from "../../shared/hooks/useLocale";
+import { toolCallPresentation } from "./toolCallPresentation";
 import {
-  Terminal,
-  FileEdit,
-  FileSearch,
-  Search,
-  Wrench,
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
@@ -14,30 +11,16 @@ interface Props {
   event: RuntimeEvent;
 }
 
-const TOOL_ICONS: Record<string, typeof Terminal> = {
-  external_execution: Terminal,
-  write: FileEdit,
-  read: FileSearch,
-  search: Search,
-};
-
-function getToolIcon(payload: Record<string, unknown>) {
-  const category = (payload.category as string) ?? "";
-  const mutability = (payload.mutability as string) ?? "";
-  if (category in TOOL_ICONS) return TOOL_ICONS[category];
-  if (mutability === "read") return FileSearch;
-  if (mutability === "write") return FileEdit;
-  return Wrench;
-}
-
 export function RunStepToolCallRow({ event }: Props) {
+  const { locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const payload = event.payload as Record<string, unknown>;
   const toolId = (payload.toolId as string) ?? "tool";
   const inputSummary = (payload.inputSummary as string) ?? "";
   const outputSummary = (payload.outputSummary as string) ?? "";
   const status = (payload.status as string) ?? "";
-  const Icon = getToolIcon(payload);
+  const presentation = toolCallPresentation({ toolId, inputSummary, category: String(payload.category ?? payload.mutability ?? "") }, locale);
+  const Icon = presentation.icon;
 
   return (
     <div className="group">
@@ -58,11 +41,11 @@ export function RunStepToolCallRow({ event }: Props) {
           />
         )}
         <Icon size={11} className="shrink-0 text-muted-foreground" />
-        <span className="font-mono font-medium text-foreground/80">
-          {toolId}
+        <span className="min-w-0 truncate font-medium text-foreground/80" title={presentation.name}>
+          {presentation.name}
         </span>
-        {inputSummary && (
-          <span className="truncate text-muted-foreground">{inputSummary}</span>
+        {presentation.target && (
+          <span className="truncate text-muted-foreground">{presentation.target}</span>
         )}
         {status === "failed" && (
           <span className="text-[10px] text-danger">failed</span>

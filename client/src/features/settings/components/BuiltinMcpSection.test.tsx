@@ -37,6 +37,7 @@ describe('built-in MCP settings', () => {
     status.value = null
     render(<McpServersSection servers={[]} onSaveBuiltinComputerUse={vi.fn()} />)
     expect(screen.getByRole('switch')).toBeEnabled()
+    expect(screen.getByRole('switch')).not.toBeChecked()
     expect(screen.getByText(/desktop app required/)).toBeInTheDocument()
   })
 })

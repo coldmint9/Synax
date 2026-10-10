@@ -8,7 +8,11 @@ const fixture = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.m
 let root: string;
 const previousRoot = process.env.DATA_ROOT;
 
-beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-cua-test-')); process.env.DATA_ROOT = root; });
+beforeEach(async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-cua-test-')); process.env.DATA_ROOT = root;
+  const { updateGlobalConfig } = await import('../../runtime/config/config-store.js');
+  updateGlobalConfig({ computerUse: { enabled: true } }, 'test');
+});
 afterEach(() => {
   process.env.DATA_ROOT = previousRoot;
   fs.rmSync(root, { recursive: true, force: true });

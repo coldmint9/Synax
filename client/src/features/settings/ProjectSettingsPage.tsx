@@ -126,7 +126,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
 
           <div className="space-y-8">
             <CodeModeSettings value={settings.codeMode} locale={useShellLocale} onSave={async data => { await patchSection("codeMode", data); }} />
-            <ComputerUseSettings value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
+            <ComputerUseSettings globalEnabled={globalConfig?.computerUse?.enabled === true} value={settings.computerUse} locale={useShellLocale} onSave={async (data) => { await patchSection("computerUse", data) }} />
             <ProjectToolGrantsSection projectId={projectId} />
             <ProviderTab
               settings={settings}

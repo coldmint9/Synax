@@ -2822,6 +2822,60 @@ describe("provider-bound session initialization prompt", () => {
     ensureSynaxAgentRegistered();
   });
 
+  it.each([
+    { name: "simulation", request: "用交互模拟解释梯度下降", invalid: false },
+    { name: "chart", request: "用交互图表展示销售趋势", invalid: false },
+    { name: "long request", request: `${"背景资料。".repeat(3000)}最后用可视化解释。`, invalid: false },
+    { name: "failed repair", request: "可视化一下", invalid: true },
+  ])("prepares a semantic preview through real skill execution and bounds repair ($name)", async ({ request, invalid }) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-presentation-"));
+    const skill = {
+      id: "fixture/visualize", name: "visualize", label: "Visualize", description: "Inline preview",
+      status: "available" as const, sourceId: "fixture", sourceKind: "local" as const,
+      version: "1", appliesTo: [], requiredCapabilities: [], permissionHints: [],
+      installPath: path.join(dir, "SKILL.md"),
+    };
+    fs.writeFileSync(skill.installPath, "PREVIEW_SKILL_BODY");
+    const spies = [
+      vi.spyOn(skillRegistry, "listSummaries").mockReturnValue([skill]),
+      vi.spyOn(skillRegistry, "getSummary").mockReturnValue(skill),
+      vi.spyOn(skillRegistry, "loadDetail").mockReturnValue({ ...skill, content: "PREVIEW_SKILL_BODY" }),
+    ];
+    try {
+      const session = agentSessionRuntime.create({ projectId: "prompt-fixture", profileId: "synax", prompt: request, permissionTier: "unrestricted", workDir: dir });
+      queueMockStep(makeToolStep({ toolName: "presentation.select", toolCallId: "select-preview", args: { mode: "inline_visualization", requirement: "required", source: "explicit", reason: "User requests a simulation." } }));
+      queueMockStep(makeTextStep("Here is the explanation without a preview."));
+      queueMockStep(makeTextStep(invalid ? "Still no preview." : 'Explanation\n```synax-visualize\n<div id="demo">Simulation</div>\n```'));
+      await collectChunks(agentLoopRuntime.streamRun(session.id, { message: request }));
+      const calls = agentRuntimeStore.listToolCalls(session.id);
+      expect(calls.filter(call => call.toolId === "skill.load")).toHaveLength(1);
+      expect(spies[2]).toHaveBeenCalledTimes(1);
+      expect(capturedRequests).toHaveLength(3);
+      expect(JSON.stringify(capturedRequests[1].messages)).toContain("PREVIEW_SKILL_BODY");
+      expect(JSON.stringify(capturedRequests[2].messages)).toContain("only automatic repair attempt");
+      const messages = agentRuntimeStore.listMessages(session.id);
+      const last = messages.filter(message => message.role === "assistant" && !message.metadata.partial).at(-1)!;
+      if (invalid) expect(last.content).toContain("交互预览未完成");
+      else expect(last.metadata.visualization).toMatchObject({ html: '<div id="demo">Simulation</div>' });
+      expect(agentRuntimeStore.listSessionSteps(session.id).filter(step => step.finishReason === "presentation_repair")).toHaveLength(1);
+    } finally {
+      spies.forEach(spy => spy.mockRestore());
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { request: "不要做可视化，只解释代码", requirement: "forbidden" },
+    { request: "修复可视化组件的预览功能", requirement: "required" },
+  ])("does not load a preview for a semantic text decision: $request", async ({ request, requirement }) => {
+    const session = agentSessionRuntime.create({ ...executorInput, profileId: "synax", prompt: request, permissionTier: "unrestricted" });
+    queueMockStep(makeToolStep({ toolName: "presentation.select", toolCallId: "select-text", args: { mode: "text", requirement, source: "explicit", reason: "The user does not request an inline preview." } }));
+    queueMockStep(makeTextStep("Explanation."));
+    await collectChunks(agentLoopRuntime.streamRun(session.id, { message: request }));
+    expect(agentRuntimeStore.listToolCalls(session.id).filter(call => call.toolId === "skill.load")).toEqual([]);
+    expect(capturedRequests).toHaveLength(2);
+  });
+
   it("mounts selected skills through skill.load, quotes file evidence, and counts skill output", async () => {
     const dir = fs.mkdtempSync(
       path.join(os.tmpdir(), "synax-prompt-references-"),

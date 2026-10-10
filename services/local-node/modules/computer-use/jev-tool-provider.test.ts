@@ -7,10 +7,12 @@ import type { ToolExecutionInput } from '../agent-runtime/contracts.js';
 const fixture = fileURLToPath(new URL('../../infrastructure/mcp/__tests__/fixtures/fake-mcp-server.mjs', import.meta.url));
 const saved = { root: process.env.DATA_ROOT, mock: process.env.SYNAX_JEV_MOCK, key: process.env.TYPESAFE_API_KEY };
 let root: string;
-beforeEach(() => {
+beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-jev-tool-'));
   process.env.DATA_ROOT = root; process.env.SYNAX_JEV_MOCK = '1'; delete process.env.TYPESAFE_API_KEY;
   vi.resetModules();
+  const { updateGlobalConfig } = await import('../../infrastructure/runtime/config/config-store.js');
+  updateGlobalConfig({ computerUse: { enabled: true } }, 'test');
 });
 afterEach(() => {
   process.env.DATA_ROOT = saved.root; process.env.SYNAX_JEV_MOCK = saved.mock; process.env.TYPESAFE_API_KEY = saved.key;

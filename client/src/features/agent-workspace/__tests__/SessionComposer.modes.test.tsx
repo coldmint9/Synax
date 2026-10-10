@@ -55,6 +55,7 @@ vi.mock("../composer/AgentComposer", () => ({
     onContentChange: (value: string) => void;
     onSubmit: () => void;
     disabled: boolean;
+    submitting: boolean;
   }) => (
     <form
       onSubmit={(event) => {
@@ -79,7 +80,7 @@ vi.mock("../composer/AgentComposer", () => ({
           );
         }}
       />
-      <button type="submit" disabled={props.disabled}>
+      <button type="submit" disabled={props.disabled} aria-busy={props.submitting}>
         Send
       </button>
     </form>
@@ -214,7 +215,7 @@ it("keeps the direct mode selector and plus-menu mode controls synchronized", as
   }
 });
 
-it("shows an optimistic draft immediately and restores its text if creation fails", async () => {
+it("keeps the draft and send loading state without a temporary message, and recovers on failure", async () => {
   let reject!: (error: Error) => void;
   vi.spyOn(agentRuntimeApi, "createSession").mockImplementation(
     () =>
@@ -227,14 +228,50 @@ it("shows an optimistic draft immediately and restores its text if creation fail
   fireEvent.change(input, { target: { value: "Keep my message" } });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(screen.getByText("Keep my message")).toBeVisible();
-  expect(input).toHaveValue("");
-  expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
+  expect(input).toHaveValue("Keep my message");
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Conversation history")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-busy", "true");
   expect(input).toBeDisabled();
   await act(async () => reject(new Error("Creation failed")));
   expect(input).toHaveValue("Keep my message");
   expect(input).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-busy", "false");
   expect(await screen.findByRole("alert")).toHaveTextContent("Creation failed");
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
+});
+
+it("keeps loading until the first send succeeds, then enters the conversation", async () => {
+  let finish!: () => void;
+  const send = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+  vi.spyOn(agentRuntimeApi, "createSession").mockResolvedValue({
+    session,
+    context: null,
+    profile: {} as never,
+  });
+  useAgentSessionStore.setState({ sendSessionMessage: send });
+  function Harness() {
+    const location = useLocation();
+    return (
+      <>
+        <output data-testid="route">{location.pathname}{location.search}</output>
+        <output data-testid="entry">{String(location.state?.fromNewSession ?? false)}</output>
+        <SessionComposer projectId="p1" />
+      </>
+    );
+  }
+  render(<MemoryRouter initialEntries={["/projects/p1/sessions/new"]}><Harness /></MemoryRouter>);
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
+    target: { value: "First message" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+  expect(screen.getByTestId("route")).toHaveTextContent("/sessions/new");
+  expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByLabelText("Conversation history")).not.toBeInTheDocument();
+  await act(async () => finish());
+  await waitFor(() => expect(screen.getByTestId("route")).toHaveTextContent("session=s1"));
+  expect(screen.getByTestId("entry")).toHaveTextContent("true");
 });
 
 async function selectMode(mode: "goal", prefix = "") {
@@ -699,8 +736,9 @@ it("finishes an old draft in the background without navigating away or clearing 
     expect(agentRuntimeApi.createSession).toHaveBeenCalledTimes(1),
   );
   expect(screen.getByText("First request")).toBeVisible();
-  expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
-  expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("First request");
   await userEvent.click(
     screen.getByRole("button", { name: "Open other conversation" }),
   );

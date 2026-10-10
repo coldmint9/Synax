@@ -113,7 +113,8 @@ export function createDefaultProjectSettings(projectId: string, updatedBy = 'sys
     provider: {},
     mcpServers: [],
     codeMode: { mcpTools: [] },
-    computerUse: DEFAULT_COMPUTER_USE_SETTINGS,
+    // Projects inherit the global hard switch unless explicitly disabled.
+    computerUse: { ...DEFAULT_COMPUTER_USE_SETTINGS, enabled: true },
     collaboration: {
       agentsAllowDirectCommit: false,
       reviewPolicy: {

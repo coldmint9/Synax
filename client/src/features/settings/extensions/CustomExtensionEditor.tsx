@@ -11,6 +11,8 @@ import {
 import { configApi } from '../../../adapters/transport/config'
 import type { ExtensionDetail } from './ExtensionDetails'
 import { useExtensionCopy } from './extension-copy'
+import { McpConfigFields } from './McpConfigFields'
+import { createMcpDraft, readMcpDraft } from './mcp-draft'
 
 const emptySchema =
   '{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}'
@@ -69,9 +71,6 @@ export function CustomExtensionEditor({
       2,
     ),
   )
-  const [env, setEnv] = useState(
-    JSON.stringify(definition?.mcp?.env ?? {}, null, 2),
-  )
   const [schema, setSchema] = useState(
     definition?.tool?.inputSchema
       ? JSON.stringify(definition.tool.inputSchema, null, 2)
@@ -81,7 +80,7 @@ export function CustomExtensionEditor({
     String((definition?.tool?.timeoutMs ?? 30000) / 1000),
   )
   const [content, setContent] = useState(detail?.content ?? '')
-  const [importJson, setImportJson] = useState('')
+  const [mcpDraft, setMcpDraft] = useState(() => createMcpDraft(definition?.mcp, detail?.item.name, detail?.item.description))
   const [error, setError] = useState('')
   const [testMessage, setTestMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -89,6 +88,7 @@ export function CustomExtensionEditor({
   const submitting = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
   function input(): CustomExtensionInput {
+    if (kind === 'mcp') return { id: detail?.item.id, kind, ...readMcpDraft(mcpDraft, definition?.mcp?.id) }
     const common = {
       id: detail?.item.id,
       kind,
@@ -110,23 +110,6 @@ export function CustomExtensionEditor({
       .map((value) => value.trim())
       .filter(Boolean)
     if (kind === 'skill') return { ...common, content }
-    if (kind === 'mcp')
-      return {
-        ...common,
-        mcp: {
-          id: common.id ?? 'custom-preview',
-          name: common.name,
-          transport: mode === 'http' ? 'http' : 'stdio',
-          command: mode === 'command' ? command.trim() : '',
-          ...(mode === 'http'
-            ? { url: url.trim(), headers: mapJson(headers) }
-            : {
-                args: argsList,
-                env: mapJson(env),
-                ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-              }),
-        },
-      }
     return {
       ...common,
       tool: {
@@ -158,34 +141,6 @@ export function CustomExtensionEditor({
       setBusy(false)
     }
   }
-  function applyImport() {
-    try {
-      let parsed = JSON.parse(importJson)
-      if (parsed.mcpServers) {
-        const entries = Object.entries(parsed.mcpServers)
-        if (entries.length !== 1) throw new Error(copy.configImportHint)
-        setName(entries[0][0])
-        parsed = entries[0][1]
-      }
-      if (
-        !parsed ||
-        typeof parsed !== 'object' ||
-        (!parsed.command && !parsed.url)
-      )
-        throw new Error(copy.configImportHint)
-      setMode(parsed.url ? 'http' : 'command')
-      setCommand(parsed.command ?? '')
-      setArgs((parsed.args ?? []).join('\n'))
-      setUrl(parsed.url ?? '')
-      setCwd(parsed.cwd ?? '')
-      setEnv(JSON.stringify(parsed.env ?? {}, null, 2))
-      setHeaders(JSON.stringify(parsed.headers ?? {}, null, 2))
-      setImportJson('')
-      setError('')
-    } catch (error) {
-      setError(error instanceof Error ? error.message : copy.invalidJson)
-    }
-  }
   return (
     <Dialog
       open
@@ -203,13 +158,16 @@ export function CustomExtensionEditor({
                   <AppSelect
                     label={copy.type}
                     value={kind}
-                    onChange={(value) => setKind(value as ExtensionKind)}
+                    onChange={(value) => { setKind(value as ExtensionKind); setError(''); setTestMessage('') }}
                     options={(['tool', 'skill', 'mcp'] as const).map((key) => ({
                       key,
                       label: copy[key],
                     }))}
                   />
                 )}
+                {kind === 'mcp' ? (
+                  <McpConfigFields draft={mcpDraft} onChange={value => { setMcpDraft(value); setError(''); setTestMessage('') }} />
+                ) : <>
                 <Field>
                   <Label>{copy.name}</Label>
                   <Input autoFocus maxLength={128} required value={name} onChange={(event) => (setName)(event.currentTarget.value)} />
@@ -260,7 +218,7 @@ export function CustomExtensionEditor({
                         { key: 'command', label: copy.localCommand },
                         {
                           key: 'http',
-                          label: kind === 'mcp' ? copy.remoteMcp : copy.http,
+                          label: copy.http,
                         },
                       ]}
                     />
@@ -295,12 +253,7 @@ export function CustomExtensionEditor({
                             <Input value={cwd} onChange={(event) => (setCwd)(event.currentTarget.value)} />
                           </Field>
                         )}
-                        {kind === 'mcp' && mode === 'command' && (
-                          <Field>
-                            <Label>{copy.env}</Label>
-                            <TextArea className="font-mono text-xs" value={env} onChange={(event) => (setEnv)(event.currentTarget.value)} />
-                          </Field>
-                        )}
+
                         {mode === 'http' && (
                           <Field>
                             <Label>{copy.headers}</Label>
@@ -324,29 +277,10 @@ export function CustomExtensionEditor({
                         )}
                       </div>
                     </details>
-                    {kind === 'mcp' && (
-                      <details>
-                        <summary>{copy.importConfig}</summary>
-                        <div className="extension-form">
-                          <p className="extension-form-note">
-                            {copy.configImportHint}
-                          </p>
-                          <Field>
-                            <TextArea rows={5} className="font-mono text-xs" value={importJson} onChange={(event) => (setImportJson)(event.currentTarget.value)} aria-label={copy.importConfig} />
-                          </Field>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={applyImport}
-                            disabled={!importJson.trim()}
-                          >
-                            {copy.applyConfig}
-                          </Button>
-                        </div>
-                      </details>
-                    )}
+
                   </>
                 )}
+                </>}
                 {error && (
                   <p role="alert" className="extension-error">
                     {error}

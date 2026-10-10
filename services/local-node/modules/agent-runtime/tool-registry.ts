@@ -34,6 +34,7 @@ import {
 import { controlTools } from "./control-tools.js";
 import { subagentLifecycleTools } from "./subagent-tools.js";
 import { controlToolError } from "./control-policy.js";
+import { presentationTool } from "./presentation-runtime.js";
 import { interactionService } from "./interaction-service.js";
 import type {
   PermissionDecision,
@@ -439,6 +440,7 @@ export class ToolRegistry {
         };
       },
     });
+    this.register(presentationTool);
     this.register({
       id: "skill.load",
       label: "Load Skill",

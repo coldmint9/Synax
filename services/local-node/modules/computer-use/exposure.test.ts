@@ -3,10 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { ToolExecutionInput } from '../agent-runtime/contracts.js';
 const fixture = fileURLToPath(new URL('../../infrastructure/mcp/__tests__/fixtures/fake-mcp-server.mjs', import.meta.url));
 const original = process.env.DATA_ROOT;
 let root: string;
-beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-cua-exposure-')); process.env.DATA_ROOT = root; vi.resetModules(); });
+beforeEach(async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-cua-exposure-')); process.env.DATA_ROOT = root; vi.resetModules();
+  const { updateGlobalConfig } = await import('../../infrastructure/runtime/config/config-store.js');
+  updateGlobalConfig({ computerUse: { enabled: true } }, 'test');
+});
 afterEach(() => { process.env.DATA_ROOT = original; fs.rmSync(root, { recursive: true, force: true }); vi.resetModules(); });
 
 it('Jev mode exposes observations but not actions until configured fallback actually activates', async () => {
@@ -76,8 +81,13 @@ it('hides Cua and Jev tools when globally disabled and restores them when enable
   try {
     await warmupMcpForSession(session.id);
     expect(ids()).toEqual(expect.arrayContaining(['mcp.builtin-cua-driver.list_windows', 'computer.use']));
+    const cachedCua = mcpSessionToolProvider.getTools(session.id).find(tool => tool.id.endsWith('.list_windows'))!;
+    const cachedJev = jevSessionToolProvider.getTools(session.id)[0];
     updateGlobalConfig({ computerUse: { enabled: false } }, 'test');
+    updateProjectSettings(session.projectId, { computerUse: { enabled: true } }, 'test');
     expect(ids()).toEqual([]);
+    await expect(cachedCua.execute({ sessionId: session.id, toolId: cachedCua.id, args: {} } as ToolExecutionInput)).rejects.toThrow(/unavailable/);
+    await expect(cachedJev.execute({ sessionId: session.id, toolId: cachedJev.id, args: { goal: 'Observe', pid: 42, windowId: 123 } } as ToolExecutionInput)).rejects.toThrow(/unavailable/);
     updateGlobalConfig({ computerUse: { enabled: true } }, 'test');
     await warmupMcpForSession(session.id);
     expect(ids()).toEqual(expect.arrayContaining(['mcp.builtin-cua-driver.list_windows', 'computer.use']));

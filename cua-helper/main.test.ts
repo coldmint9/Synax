@@ -10,7 +10,7 @@ vi.mock('@trycua/cua-driver', () => ({
     uniffiDestroy = mocks.destroy;
     waitForExit = mocks.monitor;
   },
-  requestMacOsPermissions: () => ({ accessibility: true, screenRecording: true }),
+  currentMacOsPermissionStatus: () => ({ accessibility: true, screenRecording: true }),
 }));
 vi.mock('./driver-path.js', () => ({ resolveDriverExecutable: async () => '/fake/driver' }));
 vi.mock('./mcp-bridge.js', () => ({
@@ -18,7 +18,7 @@ vi.mock('./mcp-bridge.js', () => ({
   generationEnvironment: (generation: string) => ({ SYNAX_CUA_GENERATION: generation }),
 }));
 
-import { main } from './main.js';
+import { assertHelperPermissions, main } from './main.js';
 import { CUA_EXIT_CODES } from './contracts.js';
 
 const started = { generation: 'test', mcp: { command: '/fake/driver', args: [], environment: [] } };
@@ -59,6 +59,18 @@ function deferred<T>() {
 }
 
 describe('Cua helper process lifecycle', () => {
+  it('only probes permissions, including repeated startup attempts', () => {
+    const sdk = {
+      currentMacOsPermissionStatus: vi.fn(() => ({ accessibility: false, screenRecording: false })),
+      requestMacOsPermissions: vi.fn(),
+    };
+    expect(() => assertHelperPermissions(sdk, 'darwin')).toThrow(/System Settings/);
+    expect(() => assertHelperPermissions(sdk, 'darwin')).toThrow(/System Settings/);
+    expect(sdk.requestMacOsPermissions).not.toHaveBeenCalled();
+    expect(sdk.currentMacOsPermissionStatus).toHaveBeenCalledTimes(2);
+    expect(() => assertHelperPermissions({}, 'darwin')).toThrow(/permission/);
+    expect(() => assertHelperPermissions(sdk, 'linux')).not.toThrow();
+  });
   it.each(['host', 'bridge'] as const)('releases the native host after %s startup fails', async (side) => {
     (side === 'host' ? mocks.start : mocks.bridge).mockRejectedValue(new Error('startup failed'));
     await main();

@@ -264,10 +264,11 @@ it("keeps mode rules identical when only saved plan and goal status change", () 
   expect(buildSynaxRuntimeState(later)).toContain("Saved, not executing");
 });
 
-it("advertises the real visualization protocol even when Synax clears all profile hints", () => {
+it("advertises the real visualization protocol after selecting a preview", () => {
   const prompt = buildLoopSystemPrompt({
     ...base,
     loopHintsOverride: [],
+    visualizationIntent: true,
     skillsSection: '{"id":"project/visualize","name":"visualize"}',
     availableToolIds: ["skill.load"],
   });
@@ -295,6 +296,14 @@ it("injects the auto-preview protocol only when visual intent is detected", () =
     availableToolIds: ["skill.load"],
     skillsSection: '{"id":"project/visualize","name":"visualize"}',
   });
-  expect(implementation).toContain("visualize");
+  expect(implementation).not.toContain("visualize");
   expect(implementation).not.toContain("Visual preview intent detected");
+});
+
+it("offers semantic presentation selection without imposing the preview protocol", () => {
+  const prompt = buildLoopSystemPrompt({ ...base, availableToolIds: ["presentation.select", "skill.load"] });
+  expect(prompt).toContain("## Response presentation");
+  expect(prompt).toContain("Latest explicit instructions win");
+  expect(prompt).toContain("修复可视化组件的预览功能");
+  expect(prompt).not.toContain("visualize");
 });

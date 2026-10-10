@@ -1,15 +1,11 @@
-import { WebSearchResults, webSearchQuery } from "./WebSearchResults";
+import { WebSearchResults } from "./WebSearchResults";
+import { useLocale } from "../../shared/hooks/useLocale";
+import { toolCallPresentation } from "./toolCallPresentation";
 import { MediaParts } from "../media/MediaParts";
 import { useState } from "react";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 import { Card, Badge } from "@/shared/ui/ui/Display";
 import {
-  Terminal,
-  FileEdit,
-  FileSearch,
-  Search,
-  Wrench,
-  GitBranch,
   ChevronRight,
   ChevronDown,
   Clock,
@@ -18,20 +14,6 @@ import type { ToolCallView } from "./buildInterleavedTurns";
 
 interface Props {
   call: ToolCallView;
-}
-
-const TOOL_ICONS: Record<string, typeof Terminal> = {
-  external_execution: Terminal,
-  shell: Terminal,
-  write: FileEdit,
-  read: FileSearch,
-  search: Search,
-  context: Search,
-  task: GitBranch,
-};
-
-function getToolIcon(category: string) {
-  return TOOL_ICONS[category] ?? Wrench;
 }
 
 const STATUS_COLOR: Record<
@@ -47,14 +29,12 @@ const STATUS_COLOR: Record<
 };
 
 export function EnhancedToolCallCard({ call }: Props) {
+  const { locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const [showFull, setShowFull] = useState(false);
-  const Icon =
-    call.toolId === "webSearch" ? Search : getToolIcon(call.category);
-  const inputLabel =
-    call.toolId === "webSearch"
-      ? webSearchQuery(call.inputSummary)
-      : call.inputSummary;
+  const presentation = toolCallPresentation(call, locale);
+  const Icon = presentation.icon;
+  const inputLabel = presentation.target;
   const hasOutput = Boolean(call.outputSummary);
   const outputText = call.outputSummary ?? "";
   const isLong = outputText.length > 800;
@@ -82,10 +62,10 @@ export function EnhancedToolCallCard({ call }: Props) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
         <Icon size={13} className="shrink-0 text-primary" />
-        <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
-          {call.toolId}
+        <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={presentation.name}>
+          {presentation.name}
         </span>
-        {call.inputSummary && (
+        {inputLabel && (
           <span className="truncate text-xs text-muted-foreground">
             {inputLabel}
           </span>

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import './computer-use-settings.css'
+import { openComputerUsePermission } from '../useComputerUseStatus'
 import { AlertTriangle, MonitorCog, ShieldCheck } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { ComputerUsePermissionTip } from './ComputerUsePermissionTip'
@@ -20,8 +22,9 @@ function driverStatus(state: string | undefined, zh: boolean): { label: string; 
   }
 }
 
-export function ComputerUseSettings({ value, onSave, locale }: {
+export function ComputerUseSettings({ value, onSave, locale, globalEnabled = false }: {
   value?: Config
+  globalEnabled?: boolean
   onSave: (value: Config) => Promise<unknown>
   locale: string
 }) {
@@ -30,8 +33,8 @@ export function ComputerUseSettings({ value, onSave, locale }: {
   const [status, setStatus] = useState<Status | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const statusView = driverStatus(status?.state, zh)
-  const permissionIssue = status?.error?.includes('Accessibility and Screen Recording')
+  const statusView = globalEnabled && current.enabled ? driverStatus(status?.state, zh) : { label: zh ? '已关闭' : 'Off', tone: 'muted' }
+  const permissionIssue = globalEnabled && current.enabled && /Accessibility|Screen Recording|permission/i.test(status?.error ?? '')
 
   useEffect(() => {
     let mounted = true
@@ -52,8 +55,8 @@ export function ComputerUseSettings({ value, onSave, locale }: {
   }
 
   return (
-    <SettingsCard title={zh ? '电脑操作' : 'Computer Use'} description={zh ? 'Cua Driver 由桌面应用异步托管；Jev 可选。' : 'Cua Driver runs asynchronously under the desktop app; Jev is optional.'}>
-      <div className="computer-use-settings">
+    <SettingsCard title={zh ? '电脑操作' : 'Computer Use'} description={zh ? '项目许可受全局总开关控制。' : 'Project access requires the global switch to be enabled.'}>
+      <div className="computer-use-settings computer-use-settings--compact">
         <div className="computer-use-overview" role="status" aria-live="polite">
           <div className="computer-use-overview__icon" aria-hidden="true"><MonitorCog size={20} strokeWidth={1.8} /></div>
           <div className="computer-use-overview__copy">
@@ -61,19 +64,21 @@ export function ComputerUseSettings({ value, onSave, locale }: {
               <span className="computer-use-overview__eyebrow">{zh ? '项目覆盖' : 'Project override'}</span>
               <span className={`computer-use-status computer-use-status--${statusView.tone}`}><span className="computer-use-status__dot" aria-hidden="true" />{statusView.label}</span>
             </div>
-            <p>{status?.error ?? (zh ? '本项目的配置会覆盖全局默认值。' : 'This project overrides the global defaults.')}</p>
+            <p>{!globalEnabled ? (zh ? '全局总开关已关闭，此项目不可使用电脑操作。' : 'The global switch is off. Computer Use is unavailable to this project.') : (zh ? '此项目可单独禁用电脑操作或调整操作偏好。' : 'Disable access or customize preferences for this project.')}</p>
           </div>
         </div>
+
+        {!globalEnabled ? <a className="computer-use-link" href="/settings?section=computerUse">{zh ? '前往全局电脑操作设置 ↗' : 'Open global Computer Use settings ↗'}</a> : null}
 
         {permissionIssue ? (
           <div className="computer-use-alert" role="alert">
             <div className="computer-use-alert__icon" aria-hidden="true"><AlertTriangle size={17} /></div>
             <div className="computer-use-alert__copy">
               <strong>{zh ? '需要桌面权限' : 'Desktop permissions required'}</strong>
-              <p>{zh ? '开启辅助功能和屏幕录制权限后，电脑操作才能控制当前桌面。' : 'Computer Use needs Accessibility and Screen Recording access to control the desktop.'}</p>
+              <p>{zh ? '请通过链接设置设备控制和数据访问（旧版称辅助功能）及屏幕录制权限。' : 'Computer Use needs Accessibility and Screen Recording access to control the desktop.'}</p>
               <ComputerUsePermissionTip
                 zh={zh}
-                onOpenPermission={target => void (window as any).electronAPI?.openComputerUsePermissions?.(target)}
+                onOpenPermission={target => { void openComputerUsePermission(target).catch(err => setError(String(err))) }}
               />
             </div>
           </div>
@@ -89,12 +94,12 @@ export function ComputerUseSettings({ value, onSave, locale }: {
           </div>
           <div className="computer-use-rows">
             <label className="computer-use-row computer-use-row--toggle">
-              <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '启用电脑操作' : 'Enable Computer Use'}</span><span className="computer-use-field-description">{zh ? '允许代理在此项目中观察并操作桌面。' : 'Allow agents to observe and operate the desktop in this project.'}</span></span>
-              <span className="computer-use-control"><input className="computer-use-switch" type="checkbox" checked={current.enabled} disabled={saving} onChange={e => void save({ ...current, enabled: e.target.checked })} /></span>
+              <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '允许此项目使用电脑操作' : 'Allow Computer Use in this project'}</span><span className="computer-use-field-description">{zh ? '允许代理在此项目中观察并操作桌面。' : 'Allow agents to observe and operate the desktop in this project.'}</span></span>
+              <span className="computer-use-control"><input className="computer-use-switch" type="checkbox" checked={globalEnabled && current.enabled} disabled={saving || !globalEnabled} onChange={e => void save({ ...current, enabled: e.target.checked })} /></span>
             </label>
             <label className="computer-use-row">
               <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '策略' : 'Strategy'}</span><span className="computer-use-field-description">{zh ? '自动模式默认直接使用 Cua。' : 'Auto mode uses Direct Cua by default.'}</span></span>
-              <span className="computer-use-control"><select className="computer-use-select" aria-label={zh ? '电脑操作策略' : 'Computer Use strategy'} value={current.strategy} disabled={saving || !current.enabled} onChange={e => void save({ ...current, strategy: e.target.value as Config['strategy'] })}><option value="auto">{zh ? '自动' : 'Auto'}</option><option value="direct">Direct Cua</option><option value="jev" disabled={!current.jev?.enabled}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option></select></span>
+              <span className="computer-use-control"><select className="computer-use-select" aria-label={zh ? '电脑操作策略' : 'Computer Use strategy'} value={current.strategy} disabled={saving || !globalEnabled || !current.enabled} onChange={e => void save({ ...current, strategy: e.target.value as Config['strategy'] })}><option value="auto">{zh ? '自动' : 'Auto'}</option><option value="direct">Direct Cua</option><option value="jev" disabled={!current.jev?.enabled}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option></select></span>
             </label>
           </div>
         </section>

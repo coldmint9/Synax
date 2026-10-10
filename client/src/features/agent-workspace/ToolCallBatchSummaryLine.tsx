@@ -14,11 +14,11 @@ interface Props {
 }
 
 export function ToolCallBatchSummaryLine({ batch }: Props) {
-  const { t } = useLocale();
+  const { locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
-  const { calls, toolId } = batch;
-  const presentation = useMemo(() => toolCallPresentation(calls[0]), [calls]);
+  const { calls } = batch;
+  const presentation = useMemo(() => toolCallPresentation(calls[0], locale), [calls, locale]);
   const Icon = presentation.icon;
   const status = aggregateToolStatus(calls);
 
@@ -36,8 +36,8 @@ export function ToolCallBatchSummaryLine({ batch }: Props) {
         <span className="bui-tool-symbol">
           <Icon size={13} aria-hidden="true" />
         </span>
-        <span className="bui-tool-label" title={toolId}>
-          {presentation.label ? t(presentation.label) : toolId}
+        <span className="bui-tool-label" title={presentation.name}>
+          {presentation.name}
         </span>
         <span className="bui-tool-count">×{calls.length}</span>
         {presentation.target && (

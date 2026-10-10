@@ -68,7 +68,7 @@ describe("ToolCallRoundPanel placeholder reasoning", () => {
         ]}
       />,
     );
-    expect(container).toHaveTextContent("file.read · app.ts");
+    expect(container).toHaveTextContent("读取 · app.ts");
     expect(container).not.toHaveTextContent("...");
   });
 

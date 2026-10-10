@@ -11,7 +11,7 @@ function globalComputerUseSettings(): ComputerUseSettings | undefined {
   if (!settings) return undefined;
   const jev = settings.jev;
   return {
-    enabled: settings.enabled !== false,
+    enabled: settings.enabled === true,
     strategy: settings.strategy ?? "auto",
     perception: settings.perception ?? "disabled",
     ...(jev

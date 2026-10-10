@@ -10,12 +10,12 @@ interface Props {
 }
 
 export function ToolCallSummaryLine({ call }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
   const presentation = useMemo(
-    () => toolCallPresentation(call),
-    [call.toolId, call.category, call.inputSummary],
+    () => toolCallPresentation(call, locale),
+    [call.toolId, call.category, call.inputSummary, locale],
   );
   const Icon = presentation.icon;
   const hasDetails = Boolean(call.inputSummary || call.outputSummary);
@@ -24,8 +24,8 @@ export function ToolCallSummaryLine({ call }: Props) {
       <span className="bui-tool-symbol">
         <Icon size={13} aria-hidden="true" />
       </span>
-      <span className="bui-tool-label" title={call.toolId}>
-        {presentation.label ? t(presentation.label) : call.toolId}
+      <span className="bui-tool-label" title={presentation.name}>
+        {presentation.name}
       </span>
       {presentation.target && (
         <span className="bui-tool-target" title={presentation.target}>
@@ -69,7 +69,7 @@ export function ToolCallSummaryLine({ call }: Props) {
       )}
       {expanded && hasDetails && (
         <div id={detailsId} className="bui-tool-details">
-          <div className="bui-tool-detail-label">{call.toolId}</div>
+          <div className="bui-tool-detail-label">{presentation.name}</div>
           {call.inputSummary && (
             <div>
               <div className="bui-tool-detail-label">

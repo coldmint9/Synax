@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { extensionStore } from '../extension-store.js';
 import { customExtensionSchema } from '../schemas.js';
 describe('project extensions', () => {
+  it('allows MCP descriptions to be omitted while keeping descriptions required for skills and tools', () => {
+    const mcp = { id: 'example', name: 'Example', command: 'node' };
+    expect(customExtensionSchema.parse({ kind: 'mcp', name: 'Example', mcp }).description).toBe('');
+    expect(customExtensionSchema.safeParse({ kind: 'skill', name: 'Example', content: 'Instructions' }).success).toBe(false);
+    expect(customExtensionSchema.safeParse({ kind: 'tool', name: 'Example', tool: { mode: 'command', command: 'node', inputSchema: { type: 'object' } } }).success).toBe(false);
+  });
   it('preserves legacy capabilities until explicitly changed and isolates projects', () => {
     expect(extensionStore.active('ext-a', 'tool', 'file.read')).toBe(true);
     extensionStore.setState('ext-a', 'tool', 'file.read', {

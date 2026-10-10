@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
+import { useState } from "react";
 
 interface Props {
   src?: string;
@@ -9,15 +9,8 @@ interface Props {
 
 export function MarkdownImage({ src, alt = "", title }: Props) {
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  const [failedSrc, setFailedSrc] = useState<string>();
+  const failed = failedSrc === src;
 
   if (!src) return null;
 
@@ -25,9 +18,10 @@ export function MarkdownImage({ src, alt = "", title }: Props) {
     <>
       <button
         type="button"
-        className="markdown-image-trigger"
-        aria-label={alt ? `放大图片：${alt}` : "放大图片"}
-        title={title ?? alt}
+        className={`markdown-image-trigger${failed ? " markdown-image-trigger--error" : ""}`}
+        aria-label={failed ? `图片加载失败${alt ? `：${alt}` : ""}` : alt ? `放大图片：${alt}` : "放大图片"}
+        title={title ?? (alt || "点击放大图片")}
+        disabled={failed}
         onClick={() => setOpen(true)}
       >
         <img
@@ -36,42 +30,32 @@ export function MarkdownImage({ src, alt = "", title }: Props) {
           loading="lazy"
           decoding="async"
           className="markdown-image"
-          onError={(event) => {
-            event.currentTarget
-              .closest(".markdown-image-trigger")
-              ?.classList.add("markdown-image-trigger--error");
-          }}
+          onLoad={() => setFailedSrc(undefined)}
+          onError={() => setFailedSrc(src)}
         />
+        {failed && <span className="markdown-image-error" role="status">图片加载失败{alt ? `：${alt}` : ""}</span>}
       </button>
-      {open &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            className="markdown-image-lightbox"
-            role="dialog"
-            aria-modal="true"
-            aria-label={alt || "图片预览"}
-            onClick={() => setOpen(false)}
-          >
-            <div className="markdown-image-lightbox-frame">
-              <img
-                src={src}
-                alt={alt}
-                className="markdown-image-lightbox-image"
-                onClick={(event) => event.stopPropagation()}
-              />
-              <button
-                type="button"
-                className="markdown-image-lightbox-close"
-                aria-label="关闭图片预览"
-                onClick={() => setOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-          </div>,
-          document.body,
-        )}
+      <Dialog open={open} onClose={() => setOpen(false)} className="relative z-[1000]">
+        <DialogBackdrop className="fixed inset-0 bg-black/80" />
+        <div className="markdown-image-lightbox">
+          <DialogPanel className="markdown-image-lightbox-frame">
+            <DialogTitle className="sr-only">{alt || "图片预览"}</DialogTitle>
+            <img
+              src={src}
+              alt={alt}
+              className="markdown-image-lightbox-image"
+            />
+            <button
+              type="button"
+              className="markdown-image-lightbox-close"
+              aria-label="关闭图片预览"
+              onClick={() => setOpen(false)}
+            >
+              ×
+            </button>
+          </DialogPanel>
+        </div>
+      </Dialog>
     </>
   );
 }

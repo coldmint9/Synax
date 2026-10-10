@@ -32,6 +32,7 @@ it("falls back to global Computer Use defaults for untouched projects", async ()
   const { resolveEffectiveComputerUseSettings } =
     await import("./effective-settings.js");
   const effective = resolveEffectiveComputerUseSettings("proj-untouched");
+  expect(effective.enabled).toBe(true);
   expect(effective.strategy).toBe("jev");
   expect(effective.perception).toBe("auto");
   expect(effective.jev?.enabled).toBe(true);
@@ -79,4 +80,34 @@ it("merges global values into partially configured projects", async () => {
   const effective = resolveEffectiveComputerUseSettings("proj-partial");
   expect(effective.strategy).toBe("jev");
   expect(effective.perception).toBe("auto");
+});
+
+it("defaults to disabled and requires global opt-in even for explicitly enabled projects", async () => {
+  const { createDefaultGlobalConfig, createDefaultUserGlobalConfig } = await import("../../infrastructure/runtime/config/config-defaults.js");
+  expect(createDefaultGlobalConfig().computerUse?.enabled).toBe(false);
+  expect(createDefaultUserGlobalConfig().computerUse?.enabled).toBe(false);
+  const { getGlobalConfig, updateGlobalConfig } = await import("../../infrastructure/runtime/config/config-store.js");
+  const { updateProjectSettings, getProjectSettings } = await import("../../infrastructure/runtime/config/project-settings-store.js");
+  const { resolveEffectiveComputerUseSettings } = await import("./effective-settings.js");
+  expect(getGlobalConfig().computerUse?.enabled).toBe(false);
+  updateProjectSettings("project-gate", { computerUse: { enabled: true } }, "test");
+  expect(resolveEffectiveComputerUseSettings("project-gate").enabled).toBe(false);
+  updateGlobalConfig({ computerUse: { enabled: true } }, "test");
+  expect(resolveEffectiveComputerUseSettings("project-gate").enabled).toBe(true);
+  updateProjectSettings("project-gate", { computerUse: { enabled: false } }, "test");
+  expect(resolveEffectiveComputerUseSettings("project-gate").enabled).toBe(false);
+  updateProjectSettings("project-gate", { computerUse: { enabled: true } }, "test");
+  updateGlobalConfig({ computerUse: { enabled: false } }, "test");
+  expect(resolveEffectiveComputerUseSettings("project-gate").enabled).toBe(false);
+  expect(getProjectSettings("project-gate").computerUse.enabled).toBe(true);
+});
+
+it.each([undefined, {}, { enabled: false }, { enabled: true }])("normalizes stored global settings %j without overriding explicit opt-in", async (computerUse) => {
+  const { getGlobalConfigFilePath, getGlobalConfig } = await import("../../infrastructure/runtime/config/config-store.js");
+  const file = getGlobalConfigFilePath();
+  const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+  stored.computerUse = computerUse;
+  fs.writeFileSync(file, JSON.stringify(stored));
+  expect(getGlobalConfig().computerUse?.enabled).toBe(computerUse?.enabled === true);
+  expect(JSON.parse(fs.readFileSync(file, "utf8")).computerUse).toEqual(computerUse);
 });

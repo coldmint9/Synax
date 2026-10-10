@@ -325,6 +325,14 @@ describe("CodeViewer", () => {
     expect(screen.queryByRole("button", { name: "源码" })).toBeNull();
   });
 
+  it("loads Markdown images through the authenticated media API relative to the document", async () => {
+    getSessionEnvironmentFile.mockResolvedValue(fileView("![配置](../images/my%20screen.png)"));
+    getSessionEnvironmentFileMedia.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+    render(<CodeViewer sessionId="sess-1" path="docs/guide.md" rootId="reference" />);
+    expect(await screen.findByRole("img", { name: "配置" })).toHaveAttribute("src", "blob:https://synax.test/preview");
+    expect(getSessionEnvironmentFileMedia).toHaveBeenCalledWith("sess-1", "images/my screen.png", "reference");
+  });
+
   it("previews SVG as an inert image while retaining editable source", async () => {
     getSessionEnvironmentFile.mockResolvedValue(
       fileView(

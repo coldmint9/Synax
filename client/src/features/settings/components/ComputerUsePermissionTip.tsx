@@ -28,10 +28,10 @@ export function ComputerUsePermissionTip({ zh, onOpenPermission }: {
         ))}
       </ol>
       <div className="computer-use-alert__actions">
-        <Button size="sm" className="computer-use-button computer-use-button--secondary" onClick={() => onOpenPermission('accessibility')}>
-          {zh ? '打开辅助功能' : 'Open Accessibility'}
+        <Button size="sm" className="computer-use-link" onClick={() => onOpenPermission('accessibility')}>
+          {zh ? '设备控制和数据访问（辅助功能）' : 'Device Control & Data Access (Accessibility)'}
         </Button>
-        <Button size="sm" className="computer-use-button computer-use-button--secondary" onClick={() => onOpenPermission('screen-recording')}>
+        <Button size="sm" className="computer-use-link" onClick={() => onOpenPermission('screen-recording')}>
           {zh ? '打开屏幕录制' : 'Open Screen Recording'}
         </Button>
       </div>

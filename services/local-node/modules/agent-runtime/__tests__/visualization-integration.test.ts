@@ -124,7 +124,10 @@ it("discovers the new skill and does not mount retired platform APIs", async () 
     profileId: "executor",
     projectId: "project-alpha",
   });
-  expect(skills.some((s) => s.id === "synax-builtin/visualize")).toBe(true);
+  // A project-local skill may legitimately shadow the bundled skill by name.
+  expect(skills.some((s) => s.name === "visualize")).toBe(true);
+  expect(skillRegistry.listSummaries({ profileId: "executor", sourceId: "synax-builtin" })
+    .some((s) => s.id === "synax-builtin/visualize")).toBe(true);
   expect(skills.some((s) => s.id.includes("interactive-artifacts"))).toBe(
     false,
   );

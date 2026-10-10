@@ -44,7 +44,7 @@ export function BuiltinMcpSection({ value, onSave }: {
           Cua Driver
           <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{zh ? '内置' : 'Built-in'}</span>
         </div>
-        <Switch aria-label={zh ? '启用 Cua Driver' : 'Enable Cua Driver'} checked={value?.enabled !== false} disabled={saving} onChange={enabled => void toggle(enabled)} />
+        <Switch aria-label={zh ? '启用 Cua Driver' : 'Enable Cua Driver'} checked={value?.enabled === true} disabled={saving} onChange={enabled => void toggle(enabled)} />
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         {zh ? '桌面观察与操作。此开关与“电脑操作”共用全局设置，项目仍可单独禁用。' : 'Desktop observation and actions. Shares the global Computer Use setting; projects can disable it separately.'}

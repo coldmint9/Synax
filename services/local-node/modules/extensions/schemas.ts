@@ -58,7 +58,7 @@ export const customExtensionSchema = z
     id: z.string().min(1).max(256).optional(),
     kind: extensionKindSchema,
     name: z.string().trim().min(1).max(128),
-    description: z.string().trim().min(1).max(4000),
+    description: z.string().trim().max(4000).default(''),
     tool: customToolSchema.optional(),
     content: z
       .string()
@@ -67,6 +67,9 @@ export const customExtensionSchema = z
     mcp: mcpExtensionSchema.optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.kind !== 'mcp' && !value.description) {
+      ctx.addIssue({ code: 'custom', path: ['description'], message: 'A description is required' });
+    }
     if (
       (value.kind === 'tool' && !value.tool) ||
       (value.kind === 'skill' && !value.content?.trim()) ||

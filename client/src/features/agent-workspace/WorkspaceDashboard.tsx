@@ -362,16 +362,23 @@ function WorkspaceFilesDashboardPanel({
     })),
   }));
   const inputs = files.flatMap((item) => item.inputs);
+  const seenAssetIds = new Set<string>();
+  const uniqueInputs = inputs.filter(({ source }) => {
+    if (!source.assetId) return true;
+    if (seenAssetIds.has(source.assetId)) return false;
+    seenAssetIds.add(source.assetId);
+    return true;
+  });
   const outputs = files.flatMap((item) => item.outputs);
 
-  if (inputs.length === 0 && outputs.length === 0) return null;
+  if (uniqueInputs.length === 0 && outputs.length === 0) return null;
 
   return (
     <WorkspaceFilesCard
       storageKey={`${sessionId}:files`}
-      inputCount={inputs.length}
+      inputCount={uniqueInputs.length}
       outputCount={outputs.length}
-      inputs={inputs.map(({ source, rootId, rootName, workspacePath }) => (
+      inputs={uniqueInputs.map(({ source, rootId, rootName, workspacePath }) => (
         <InputSourceRow
           key={`${rootId}:${source.kind}:${source.toolCallId ?? source.assetId ?? source.label}`}
           source={source}

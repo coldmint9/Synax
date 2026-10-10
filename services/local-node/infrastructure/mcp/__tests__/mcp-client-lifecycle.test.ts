@@ -4,6 +4,9 @@ const mocks = vi.hoisted(() => ({
   clients: [] as Array<{ connect: ReturnType<typeof vi.fn>; listTools: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }>,
   transports: [] as Array<{ close: ReturnType<typeof vi.fn>; stderr: { resume: ReturnType<typeof vi.fn> } }>,
   listTools: undefined as (() => Promise<{ tools: Array<{ name: string }> }>) | undefined,
+  globalEnabled: true as boolean | undefined,
+  projectEnabled: true,
+  callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -11,6 +14,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     connect = vi.fn(async () => undefined);
     listTools = vi.fn(() => mocks.listTools?.() ?? Promise.resolve({ tools: [{ name: 'echo' }] }));
     close = vi.fn(async () => undefined);
+    callTool = mocks.callTool;
     constructor() { mocks.clients.push(this); }
   },
 }));
@@ -25,7 +29,8 @@ vi.mock('../runtime-cua-config.js', () => ({
   CUA_SERVER_ID: 'builtin-cua-driver',
   getRuntimeCuaConfig: () => ({ id: 'builtin-cua-driver', command: 'fixture', enabled: true }),
 }));
-vi.mock('../../runtime/config/project-settings-store.js', () => ({ getProjectSettings: () => ({ mcpServers: [] }) }));
+vi.mock('../../runtime/config/project-settings-store.js', () => ({ getProjectSettings: () => ({ mcpServers: [], computerUse: { enabled: mocks.projectEnabled } }) }));
+vi.mock('../../runtime/config/config-store.js', () => ({ getGlobalConfigForRuntime: () => ({ computerUse: { enabled: mocks.globalEnabled } }) }));
 vi.mock('../../../modules/project-workspace.js', () => ({ readWorkspaceProject: () => undefined }));
 
 import { McpClientManager } from '../mcp-client-manager.js';
@@ -46,11 +51,45 @@ beforeEach(() => {
   mocks.clients.length = 0;
   mocks.transports.length = 0;
   mocks.listTools = undefined;
+  mocks.globalEnabled = true;
+  mocks.projectEnabled = true;
+  mocks.callTool.mockClear();
   manager = new McpClientManager();
 });
 afterEach(() => { manager.closeAll(); });
 
 describe('MCP startup resource ownership', () => {
+  it.each([undefined, false])('blocks direct CUA calls with global enabled=%s despite project opt-in', async (enabled) => {
+    mocks.globalEnabled = enabled;
+    await warmup();
+    const result = await manager.callTool(cua, 'echo', {}, 'project-a', 'session-a');
+    expect(result.ok).toBe(false);
+    expect(mocks.clients).toHaveLength(0);
+    expect(mocks.callTool).not.toHaveBeenCalled();
+  });
+
+  it('allows projects to disable globally enabled CUA', async () => {
+    mocks.projectEnabled = false;
+    await warmup();
+    expect((await manager.callTool(cua, 'echo', {}, 'project-a', 'session-a')).ok).toBe(false);
+    expect(mocks.clients).toHaveLength(0);
+  });
+
+  it('blocks cached and queued calls after the global switch is turned off', async () => {
+    await warmup();
+    const pending = deferred<{ content: Array<{ type: string; text: string }> }>();
+    mocks.callTool.mockImplementationOnce(() => pending.promise);
+    const first = manager.callTool(cua, 'echo', {}, 'project-a', 'session-a');
+    await vi.waitFor(() => expect(mocks.callTool).toHaveBeenCalledOnce());
+    const queued = manager.callTool(cua, 'echo', {}, 'project-a', 'session-a');
+    mocks.globalEnabled = false;
+    pending.resolve({ content: [{ type: 'text', text: 'ok' }] });
+    expect((await first).ok).toBe(true);
+    expect((await queued).ok).toBe(false);
+    expect((await manager.callTool(cua, 'echo', {}, 'project-a', 'session-a')).ok).toBe(false);
+    expect(mocks.callTool).toHaveBeenCalledOnce();
+  });
+
   it('shares one connection across concurrent warmups', async () => {
     await Promise.all(Array.from({ length: 12 }, warmup));
     expect(mocks.clients).toHaveLength(1);

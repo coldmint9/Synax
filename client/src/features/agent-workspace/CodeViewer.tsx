@@ -10,6 +10,7 @@ import { highlightCode, languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { FileViewer } from "../../shared/ui/file-viewer/FileViewer";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
+import { useWorkspaceMarkdownImages } from "./WorkspaceMarkdownImage";
 import {
   getWorkspaceDraft,
   registerWorkspaceSaveHandler,
@@ -78,16 +79,7 @@ export const CodeViewer = memo(function CodeViewer({
       ? previewKindForPath(inputSource.label)
       : "text"
     : previewKindForPath(path);
-  const markdownImageResolver = useCallback((src: string) => {
-    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(src) || !src) return src;
-    const base = path.split(/[\\/]/).slice(0, -1).join("/");
-    const resolved = `${base ? `${base}/` : ""}${src}`.split("/").reduce<string[]>((parts, part) => {
-      if (!part || part === ".") return parts;
-      if (part === "..") parts.pop(); else parts.push(part);
-      return parts;
-    }, []).join("/");
-    return `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/environment/file/media?path=${encodeURIComponent(resolved)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`;
-  }, [path, rootId, sessionId]);
+  const markdownImages = useWorkspaceMarkdownImages({ sessionId, path, rootId });
 
   useEffect(() => {
     contentRef.current = content;
@@ -425,7 +417,8 @@ export const CodeViewer = memo(function CodeViewer({
                 content={content}
                 className="feed-prose"
                 conversationClass={false}
-                imageResolver={markdownImageResolver}
+                components={markdownImages.components}
+                urlTransform={markdownImages.urlTransform}
               />
             </article>
           )

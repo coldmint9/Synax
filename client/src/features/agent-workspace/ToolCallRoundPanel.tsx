@@ -11,6 +11,7 @@ import {
   latestActivityPreview,
 } from "./activityText";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
+import { toolCallPresentation } from "./toolCallPresentation";
 
 interface Props {
   toolBlocks: TurnContentBlock[];
@@ -23,7 +24,7 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   maxHeight = "160px",
   isStreaming = false,
 }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const toolBlocks = rawToolBlocks.filter(
     (block) =>
       block.type !== "thinking" || hasDisplayableReasoning(block.content),
@@ -58,10 +59,13 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
           : block.type === "tool_call_group"
             ? block.calls
             : [];
-      return calls.map((call) => ({
-        id: call.id,
-        text: `${call.toolId} · ${latestActivityPreview(call.inputSummary || call.outputSummary, 140)}`,
-      }));
+      return calls.map((call) => {
+        const { name, target } = toolCallPresentation(call, locale);
+        return {
+          id: call.id,
+          text: target ? `${name} · ${latestActivityPreview(target, 140)}` : name,
+        };
+      });
     })
     .filter((item) => item.text)
     .slice(-4);

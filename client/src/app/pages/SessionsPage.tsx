@@ -249,7 +249,7 @@ export default memo(function SessionsPage() {
       : 0;
 
   return (
-    <div className="agent-page-shell work-page relative flex h-full min-h-0" data-subagent={showTranscript && selectedSubagent ? "true" : undefined}>
+    <div className="agent-page-shell work-page relative flex h-full min-h-0" data-subagent={showTranscript && selectedSubagent ? "true" : undefined} data-new-session-entry={location.state?.fromNewSession ? "true" : undefined}>
       <>
         <aside
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? "overflow-visible" : "overflow-hidden"}`}

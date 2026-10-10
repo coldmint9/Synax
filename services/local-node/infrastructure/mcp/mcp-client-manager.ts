@@ -142,16 +142,17 @@ export class McpClientManager {
     // MCP is project-scoped. Keep the global list only for backward-compatible
     // probe/config reads; never make global servers available to Agent runs.
     if (projectId) {
-      const cua = getRuntimeCuaConfig();
+      const cua = getGlobalConfigForRuntime().computerUse?.enabled === true
+        ? getRuntimeCuaConfig() : null;
       const project = getProjectSettings(projectId, true);
       return new Map([
-        ...(project.mcpServers ?? []).map((server) => [server.id, server] as const),
-        ...(cua ? [[CUA_SERVER_ID, cua] as const] : []),
+        ...(project.mcpServers ?? []).filter((server) => server.id !== CUA_SERVER_ID).map((server) => [server.id, server] as const),
+        ...(cua && project.computerUse?.enabled !== false ? [[CUA_SERVER_ID, cua] as const] : []),
       ]);
     }
     const config = getGlobalConfigForRuntime();
     return new Map(
-      (config?.mcpServers ?? []).map((server) => [server.id, server]),
+      (config?.mcpServers ?? []).filter((server) => server.id !== CUA_SERVER_ID).map((server) => [server.id, server]),
     );
   }
 
@@ -180,7 +181,7 @@ export class McpClientManager {
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         starting.transport = transport;
         client = new Client(
-          { name: "synax-host", version: "1.21.4" },
+          { name: "synax-host", version: "1.21.5" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -389,7 +390,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "1.21.4" },
+      { name: "synax-host-probe", version: "1.21.5" },
       { capabilities: {} },
     );
     try {

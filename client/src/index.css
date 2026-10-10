@@ -2417,8 +2417,9 @@
 
 .feed-prose .markdown-image-trigger {
   display: inline-flex;
-  max-width: 100%;
-  margin: 0.35rem 0;
+  max-width: min(100%, 20rem);
+  margin: 0.35em 0.5em 0.35em 0;
+  vertical-align: middle;
   padding: 0;
   border: 0;
   border-radius: 0.65rem;
@@ -2433,14 +2434,19 @@
 .feed-prose .markdown-image {
   display: block;
   width: auto;
-  max-width: min(100%, 52rem);
-  max-height: min(32rem, 70vh);
+  max-width: 100%;
+  max-height: 12rem;
   object-fit: contain;
   border-radius: 0.65rem;
   box-shadow: 0 8px 24px hsl(var(--foreground-hsl) / 0.12);
 }
-.feed-prose .markdown-image-trigger--error::after {
-  content: "图片加载失败 / Image unavailable";
+.feed-prose .markdown-image-trigger--error {
+  cursor: default;
+}
+.feed-prose .markdown-image-trigger--error .markdown-image {
+  display: none;
+}
+.feed-prose .markdown-image-error {
   display: block;
   padding: 0.75rem 1rem;
   color: hsl(var(--muted-foreground));
@@ -2454,7 +2460,6 @@
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background: hsl(0 0% 0% / 0.78);
   cursor: zoom-out;
 }
 .markdown-image-lightbox-frame {
@@ -3682,7 +3687,7 @@ input[type="radio"] {
 }
 .session-answer-region > .agent-conversation-copy {
   font-weight: 450;
-  line-height: 1.68;
+  line-height: 1.75;
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
@@ -3699,17 +3704,68 @@ input[type="radio"] {
   margin-top: -16px;
 }
 
+/* Scale transcript spacing with its text. More space above a heading keeps
+   it grouped with the following paragraph, including at larger UI scales. */
+.agent-conversation-copy.feed-prose {
+  line-height: 1.75;
+  letter-spacing: 0;
+}
+.agent-conversation-copy.feed-prose :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1.5em 0.5em;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-wrap: pretty;
+}
 .agent-conversation-copy.feed-prose h1 {
-  font-size: calc(var(--agent-chat-font-size, 15px) * 1.35) !important;
+  font-size: 1.4em;
 }
 .agent-conversation-copy.feed-prose h2 {
-  font-size: calc(var(--agent-chat-font-size, 15px) * 1.2) !important;
+  font-size: 1.25em;
 }
-.agent-conversation-copy.feed-prose h3,
-.agent-conversation-copy.feed-prose h4,
-.agent-conversation-copy.feed-prose h5,
-.agent-conversation-copy.feed-prose h6 {
-  font-size: var(--agent-chat-font-size, 15px) !important;
+.agent-conversation-copy.feed-prose h3 {
+  font-size: 1.125em;
+}
+.agent-conversation-copy.feed-prose :is(h4, h5, h6) {
+  font-size: 1em;
+}
+.agent-conversation-copy.feed-prose p {
+  margin-block: 0.8em;
+}
+.agent-conversation-copy.feed-prose :is(ul, ol) {
+  margin-block: 0.8em;
+  margin-inline-start: 1.5em;
+}
+.agent-conversation-copy.feed-prose li {
+  margin-block: 0.35em;
+}
+.agent-conversation-copy.feed-prose li > p {
+  margin-block: 0.45em;
+}
+.agent-conversation-copy.feed-prose li > :is(ul, ol) {
+  margin-block: 0.35em;
+}
+.agent-conversation-copy.feed-prose :is(h1, h2, h3, h4, h5, h6) + :is(p, ul, ol) {
+  margin-top: 0;
+}
+.agent-conversation-copy.feed-prose :is(table, blockquote, .markdown-code-block) {
+  margin-block: 1em;
+}
+.agent-conversation-copy.feed-prose table {
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+.agent-conversation-copy.feed-prose :is(th, td) {
+  padding: 0.65em 0.85em;
+}
+.agent-conversation-copy.feed-prose .markdown-code-block__header {
+  font-size: 0.8em;
+}
+.agent-conversation-copy.feed-prose > :first-child {
+  margin-top: 0;
+}
+.agent-conversation-copy.feed-prose > :last-child {
+  margin-bottom: 0;
 }
 
 /* Keep supporting transcript chrome quieter than the answer body while using
@@ -3723,6 +3779,7 @@ input[type="radio"] {
   text-rendering: optimizeLegibility;
 }
 .session-user-message {
+  overflow-wrap: anywhere;
   font-weight: 450;
   letter-spacing: -0.012em;
   line-height: 1.58;

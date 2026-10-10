@@ -1,5 +1,5 @@
 import type { Components } from "react-markdown";
-import { defaultUrlTransform } from "react-markdown";
+import { useWorkspaceMarkdownImages } from "./WorkspaceMarkdownImage";
 import { memo, useCallback, useMemo } from "react";
 import { parseFileLink, type FileLinkTarget } from "./fileLink";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -73,16 +73,18 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   className = "feed-prose",
 }: Props) {
   const components = useMarkdownComponents();
-  const { workspacePath, roots } = useTranscriptSession();
+  const scope = useTranscriptSession();
+  const { workspacePath, roots } = scope;
+  const images = useWorkspaceMarkdownImages(scope);
   return (
     <MarkdownRenderer
       content={content}
       className={className}
-      components={components}
-      urlTransform={(url, key) =>
+      components={{ ...components, ...images.components }}
+      urlTransform={(url, key, node) =>
         key === "href" && parseFileLink(url, undefined, workspacePath, roots)
           ? url
-          : defaultUrlTransform(url)
+          : images.urlTransform(url, key, node)
       }
     />
   );

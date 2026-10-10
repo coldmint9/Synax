@@ -69,8 +69,7 @@ import {
   isSessionResumable,
 } from "./sessionComposerState";
 import { InputQueueStrip } from "./InputQueueStrip";
-import { UserMessageBlock } from "./UserMessageBlock";
-import { ThinkingIndicator } from "./ThinkingIndicator";
+import { reducedMotion } from "../../shared/design/motion";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import type {
   AgentSession,
@@ -159,11 +158,7 @@ export function SessionComposer({
   const [submitting, setSubmitting, readSubmitting] =
     sessionComposerSubmitting.useDraft(viewKey, () => false);
   const submitLock = useRef<object | null>(null);
-  const [draftPreview, setDraftPreview] = useState<{
-    scope: string;
-    message: string;
-    contentParts?: RuntimeContentPart[];
-  } | null>(null);
+  const composerRoot = useRef<HTMLDivElement>(null);
   const [changingMode, setChangingMode] = sessionComposerChangingMode.useDraft(
     viewKey,
     () => false,
@@ -453,7 +448,7 @@ export function SessionComposer({
     setError(null);
     setSubmitting(true);
     submitLock.current = submittedScope;
-    setContent("");
+    if (!isDraft) setContent("");
     const model =
       backendId === "native"
         ? formatModelReference(providerId, modelId)
@@ -474,12 +469,6 @@ export function SessionComposer({
       reasoningEffort,
       references,
     };
-    if (isDraft)
-      setDraftPreview({
-        scope: viewKey,
-        message,
-        contentParts: body.contentParts,
-      });
     try {
       if (isDraft) {
         const created =
@@ -496,8 +485,19 @@ export function SessionComposer({
         await sendSessionMessage(created.id, body);
         markSubmitted(created.id);
         if (isCurrent()) {
-          createdDraftRef.current = null;
-          navigate(sessionPath(projectId, created.id));
+          const root = composerRoot.current;
+          if (root?.animate && !reducedMotion()) {
+            await root.animate(
+              [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(-6px)" }],
+              { duration: 160, easing: "ease-in", fill: "forwards" },
+            ).finished.catch(() => undefined);
+          }
+          if (isCurrent()) {
+            createdDraftRef.current = null;
+            navigate(sessionPath(projectId, created.id), {
+              state: { fromNewSession: true },
+            });
+          }
         }
       } else {
         await submitOrEnqueueSessionInput(session.id, body);
@@ -522,7 +522,6 @@ export function SessionComposer({
     } finally {
       if (submitLock.current === submittedScope) submitLock.current = null;
       setSubmitting(false);
-      if (isCurrent()) setDraftPreview(null);
     }
   }, [
     capability,
@@ -810,6 +809,7 @@ export function SessionComposer({
         changingMode ||
         (isGenerating && !queueWhileGenerating)
       }
+      submitting={submitting}
       queueWhileGenerating={
         queueWhileGenerating && !submitting && !editingQueue && !changingMode
       }
@@ -851,18 +851,6 @@ export function SessionComposer({
         />
       )}
       {commands.menu}
-      {isDraft && draftPreview?.scope === viewKey && (
-        <div
-          className="mx-auto max-h-[50vh] w-full max-w-3xl overflow-y-auto px-4 py-3"
-          aria-label={zh ? "对话记录" : "Conversation history"}
-        >
-          <UserMessageBlock
-            content={draftPreview.message}
-            contentParts={draftPreview.contentParts}
-          />
-          <ThinkingIndicator />
-        </div>
-      )}
       {sessionId && (
         <InputQueueStrip
           key={`input-queue-${sessionId}`}
@@ -943,6 +931,7 @@ export function SessionComposer({
 
   return (
     <div
+      ref={composerRoot}
       className={
         isCentered
           ? "agent-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10"
@@ -953,7 +942,7 @@ export function SessionComposer({
     >
       {isCentered ? (
         <NewSessionScene key={viewKey} paused={Boolean(content) || overlayOpen || commands.overlayOpen || submitting || changingMode}>
-          {draftPreview?.scope !== viewKey && <NewSessionWelcome finish={Boolean(content)} />}
+          <NewSessionWelcome finish={Boolean(content)} />
           <div className="w-full min-w-0" data-welcome-layer="composer">
             <div data-welcome-enter="">{composerShell}</div>
           </div>

@@ -16,7 +16,7 @@ import { generationEnvironment, startCuaHelperBridge } from './mcp-bridge.js';
  *
  * Synax spawns this process and speaks MCP stdio to it. Everything that needs a
  * desktop permission operation lives here: the CUA embedded host, the native
- * driver daemon, and the macOS Accessibility / Screen Recording requests. Synax
+ * driver daemon, and the macOS Accessibility / Screen Recording checks. Synax
  * itself never loads the CUA SDK in its API sidecar, so helper failures stay
  * isolated from the backend.
  *
@@ -61,7 +61,6 @@ type HostLike = {
 
 type SdkModule = {
   EmbeddedCuaDriverHost: new (binaryPath: string, hostBundleId: string) => HostLike;
-  requestMacOsPermissions: () => { accessibility: boolean; screenRecording: boolean };
   currentMacOsPermissionStatus?: () => { accessibility: boolean; screenRecording: boolean };
 };
 
@@ -83,28 +82,26 @@ export function readHelperPermissionStatus(
   }
 }
 
-function describePermissions(status: { accessibility: boolean; screenRecording: boolean }): string {
+function describePermissions(status: HelperPermissionStatus): string {
   const missing = [
     !status.accessibility ? 'Accessibility' : null,
     !status.screenRecording ? 'Screen Recording' : null,
   ].filter((value): value is string => value !== null);
   return (
     `Grant Synax ${missing.join(' and ')} permission in ` +
-    'macOS System Settings > Privacy & Security, then retry Computer Use. ' +
-    'Synax itself does not need these permissions.'
+    'macOS System Settings > Privacy & Security, then retry Computer Use.'
   );
 }
 
 /**
- * macOS attributes desktop permissions to the host application. Requesting from this
- * process makes the packaged Synax identity visible in the System Settings lists.
+ * Probe only. Missing or unknown permissions must never open a system prompt.
  */
-export function requestHelperPermissions(
-  sdk: Pick<SdkModule, 'requestMacOsPermissions'>,
+export function assertHelperPermissions(
+  sdk: Pick<SdkModule, 'currentMacOsPermissionStatus'>,
   platform: NodeJS.Platform,
 ): void {
   if (platform !== 'darwin') return;
-  const status = sdk.requestMacOsPermissions();
+  const status = readHelperPermissionStatus(sdk, platform);
   if (!status.accessibility || !status.screenRecording)
     throw new Error(describePermissions(status));
 }
@@ -139,7 +136,7 @@ export async function main(): Promise<void> {
   log(`driver ready: ${driver}`);
 
   const sdk = await loadSdk();
-  requestHelperPermissions(sdk, process.platform);
+  assertHelperPermissions(sdk, process.platform);
 
   const host = new sdk.EmbeddedCuaDriverHost(driver, bundleId);
   let bridge: Awaited<ReturnType<typeof startCuaHelperBridge>> | null = null;

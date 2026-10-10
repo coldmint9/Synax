@@ -32,9 +32,10 @@ export function useComputerUseStatus(intervalMs = 5_000): ComputerUseStatus | nu
   return status
 }
 
-export function openComputerUsePermission(target: ComputerUsePermissionTarget): void {
+export async function openComputerUsePermission(target: ComputerUsePermissionTarget): Promise<void> {
   const api = (window as Window & { electronAPI?: { openComputerUsePermissions?: (value: ComputerUsePermissionTarget) => Promise<unknown> } }).electronAPI
-  void api?.openComputerUsePermissions?.(target)
+  if (!api?.openComputerUsePermissions) throw new Error('System Settings are only available in the desktop app.')
+  await api.openComputerUsePermissions(target)
 }
 
 export function useComputerUsePermissions(intervalMs = 5_000): {

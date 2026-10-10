@@ -9,7 +9,7 @@ import {
   persistedVisualizationAppendix,
   withoutVisualizationDeclarations,
 } from "./visualization-integration.js";
-import { isVisualizationIntent } from "./visualization-intent.js";
+import { presentationDecision, pendingPresentationSkillLoads, checkPresentationCompletion } from "./presentation-runtime.js";
 import { filterHistoryFileReads } from "./checkpoints/state.js";
 import {
   captureCheckpoint,
@@ -1158,6 +1158,11 @@ export class AgentLoopRuntime {
             }
           }
 
+          const presentationCheck = modelResult.step.toolCalls.length === 0 &&
+            pendingPermission?.userReply !== "reject" && !inputQueueService.getForceInjectId(sessionId)
+            ? checkPresentationCompletion(sessionId, modelResult.step.message ?? "")
+            : undefined;
+          if (presentationCheck) modelResult.step.message = presentationCheck.content;
           const willEmitFinalAssistantMessage =
             pendingPermission?.userReply === "reject" ||
             modelResult.step.toolCalls.length === 0 ||
@@ -1291,6 +1296,15 @@ export class AgentLoopRuntime {
               if (injected.model) input = { ...input, model: injected.model };
               continue;
             }
+          }
+          if (presentationCheck?.retry) {
+              this.store.updateRunStep(step.id, {
+                status: "completed", completedAt: nowIso(), finishReason: "presentation_repair",
+              });
+              await captureCompletedReply(sessionId, step.id);
+              void sessionHooks.emit({ type: "step:after", sessionId, runId: run.id, stepIndex: step.index });
+              currentPrompt = presentationCheck.retry;
+              continue;
           }
           if (
             modelResult.step.toolCalls.length === 0 &&
@@ -2549,6 +2563,10 @@ export class AgentLoopRuntime {
     // The existing execution path owns permissions, hooks, persistence, events,
     // resume and history projection; no skill body is injected into the prompt.
     const referenceLoads = pendingTurnReferenceSkillLoads(input.sessionId);
+    const presentationLoads = pendingPresentationSkillLoads(input.sessionId);
+    for (const call of presentationLoads) {
+      if (!referenceLoads.some(existing => existing.args.skillId === call.args.skillId)) referenceLoads.push(call);
+    }
     if (referenceLoads.length) {
       const step = this.store.getRunStep(input.stepId);
       this.store.updateRunStep(step.id, {
@@ -2637,7 +2655,7 @@ export class AgentLoopRuntime {
     }
 
     const selectedReferences = activeTurnReferences(input.sessionId);
-    const visualizationIntent = isVisualizationIntent(userRequest);
+    const visualizationIntent = presentationDecision(input.sessionId)?.mode === "inline_visualization";
     const turnSkillIds = [
       ...new Set([
         ...session.skillIds,
@@ -2666,7 +2684,7 @@ export class AgentLoopRuntime {
             "Skills selected for this turn must be loaded with skill.load before authoring. Check the tool result for success or failure. Other skills may be loaded when their descriptions match the task. Full instructions arrive as tool results. Do not reload instructions still present in context. Report loading failures; never claim to have followed unavailable content.",
             ...(visualizationIntent
               ? [
-                  `Visual preview intent detected. Load ${autoVisualizeSkill?.id ?? "the visualize skill"} now, then produce one conversation preview instead of only describing it. Do not implement production files unless the user separately asks for that.`,
+                  "Inline visualization selected. Follow the prepared skill and check its load result. Preserve the user's task scope, including any requested implementation work.",
                 ]
               : []),
             ...skillCandidates.map((skill) => {
@@ -2692,6 +2710,7 @@ export class AgentLoopRuntime {
     const contextForPrompt = input.context;
 
     const systemPromptContent = [
+      presentationDecision(input.sessionId)?.repairMessage ?? "",
       buildLoopSystemPrompt({
       profile: input.profile,
       context: contextForPrompt,

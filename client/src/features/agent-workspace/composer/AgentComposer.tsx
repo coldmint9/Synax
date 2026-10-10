@@ -108,6 +108,7 @@ interface Props {
   permissionTier: SynaxPermissionTier;
   onPermissionTierChange: (tier: SynaxPermissionTier) => void | Promise<void>;
   disabled?: boolean;
+  submitting?: boolean;
   onOverlayOpenChange?: (open: boolean) => void;
   /** Allow enqueue submit while the session is actively running. */
   queueWhileGenerating?: boolean;
@@ -150,6 +151,7 @@ export function AgentComposer({
   permissionTier,
   onPermissionTierChange,
   disabled,
+  submitting = false,
   onOverlayOpenChange,
   queueWhileGenerating = false,
   defaultExpanded = false,
@@ -523,12 +525,15 @@ export function AgentComposer({
               : "agentSend",
       )}
       title={queueMode ? t("inputQueueSend") : undefined}
+      aria-busy={submitting || submittingMedia}
       data-queue-ready={queueMode && !sendDisabled ? "true" : undefined}
       className={`agent-dock-composer-chip agent-dock-composer-action ${stopMode ? "agent-dock-composer-stop" : "agent-dock-composer-send"} ms-auto inline-flex size-8 shrink-0 items-center justify-center !rounded-full transition-colors disabled:cursor-not-allowed`}
-      disabled={stopMode ? !onStop : resumeMode ? disabled : sendDisabled}
+      disabled={submitting || submittingMedia || (stopMode ? !onStop : resumeMode ? disabled : sendDisabled)}
       onClick={stopMode ? onStop : resumeMode ? onResume : mediaMode === "chat" ? submitFromComposer : () => { void submitMedia(); }}
     >
-      {stopMode ? (
+      {submitting || submittingMedia ? (
+        <LoaderCircle size={15} className="animate-spin" />
+      ) : stopMode ? (
         <Square size={12} fill="currentColor" />
       ) : resumeMode ? (
         <Play size={13} fill="currentColor" />

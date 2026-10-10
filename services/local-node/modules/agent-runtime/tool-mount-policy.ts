@@ -14,6 +14,7 @@ import { getStoredPlan } from './plan-execution.js';
  * progressive disclosure.
  */
 export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): boolean {
+  if (tool.id === 'presentation.select') return profile.id !== 'git-manager' && profile.allowedCapabilities.includes('skill.load');
   if (NATIVE_PROTOCOL_IDS.has(tool.id) && profile.id !== 'git-manager') return true;
   if (profile.allowedCapabilities.includes(tool.id)) return true;
   if (!profile.mountAllTools) return false;
@@ -39,7 +40,7 @@ const PLAN_TOOLS = new Set([
   'agent.discover', 'agent.execute',
   'code.run', 'code.tools', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
   'webSearch',
-  'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'agent.adapt',
+  'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'presentation.select', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
   'design.read', 'design.write', 'design.preview', 'design.transition', 'design.implement',
