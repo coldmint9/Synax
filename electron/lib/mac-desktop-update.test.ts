@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPackage } from "@electron/asar";
 import {
   finishMacInstallation,
   macApplicationPath,
@@ -51,6 +52,12 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
       }
       await signFixture(target);
+      const asarSource = path.join(root, "asar-source");
+      await fs.mkdir(asarSource);
+      await fs.writeFile(path.join(asarSource, "main.js"), "module.exports = {};\n");
+      await fs.mkdir(path.join(source, "Contents/Resources"));
+      const asar = path.join(source, "Contents/Resources/app.asar");
+      await createPackage(asarSource, asar);
       await signFixture(source);
       const directory = path.join(root, "cache");
       await fs.mkdir(directory);
@@ -91,6 +98,9 @@ describe.skipIf(process.platform !== "darwin")(
         await fs.readFile(path.join(target, "Contents/Info.plist"), "utf8"),
       ).toContain("0.1.2");
       expect(await fs.readdir(directory)).toEqual([name]);
+      const preparedAsar = path.join(prepared.workspace, "next.app/Contents/Resources/app.asar");
+      expect((await fs.stat(preparedAsar)).isFile()).toBe(true);
+      expect(await fs.readFile(preparedAsar)).toEqual(await fs.readFile(asar));
     }, 30_000);
     it("continues after transient extracted-app cleanup failure", async () => {
       const arch = process.arch as "arm64" | "x64";

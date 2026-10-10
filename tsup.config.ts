@@ -7,6 +7,7 @@ export default defineConfig({
     cli: "cli/index.ts",
     "workers/code-mode": "services/local-node/modules/agent-runtime/code-mode/worker.mjs",
     "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
+    "workers/journal-writer": "services/worker/jobs/journal-writer.ts",
   },
   format: ["cjs"],
   outDir: "server-dist",

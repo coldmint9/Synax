@@ -78,6 +78,32 @@ const create = () =>
   agentSessionRuntime.create({ ...plannerSessionInput, workDir: os.tmpdir() });
 
 describe("headless Run coordinator", () => {
+  it("does not close a replacement lease acquired during the final acknowledgement", async () => {
+    const session = create();
+    const settled = RuntimeStreamWriter.prototype.settled;
+    let barriers = 0;
+    let runId = "";
+    const spy = vi.spyOn(RuntimeStreamWriter.prototype, "settled").mockImplementation(async function (this: RuntimeStreamWriter) {
+      await settled.call(this);
+      // Four stream chunks, the normal flush, then the final drain.
+      if (++barriers === 6) {
+        const run = agentRuntimeStore.getRun(runId);
+        agentRuntimeStore.updateRun(runId, { metadata: {
+          ...run.metadata,
+          executionLease: { ...(run.metadata?.executionLease as object), epoch: "replacement", closed: false },
+        } });
+      }
+    });
+    try {
+      const accepted = coordinator.submit(session.id, { message: "Lease race" }, "lease-race");
+      runId = accepted.run.id;
+      release();
+      await coordinator.waitForIdle();
+      expect(barriers).toBe(6);
+      expect(agentRuntimeStore.getRun(runId).metadata?.executionLease).toMatchObject({ epoch: "replacement", closed: false });
+    } finally { spy.mockRestore(); }
+  });
+
   it("waits for completion, then starts queued messages as separate FIFO runs without an observer", async () => {
     const session = create();
     const first = coordinator.submit(

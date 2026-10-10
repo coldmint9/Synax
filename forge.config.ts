@@ -53,7 +53,7 @@ const config: ForgeConfig = {
       }
       validateCuaArtifact({
         helperRoot: path.resolve("cua-helper-dist"),
-        driverPath: path.resolve("dist/cua-driver/cua-driver"),
+        driverPath: path.resolve("dist/cua-driver", platform === "win32" ? "cua-driver.exe" : "cua-driver"),
         platform,
         arch,
       });

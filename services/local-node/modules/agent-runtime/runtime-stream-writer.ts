@@ -14,7 +14,17 @@ export class RuntimeStreamWriter {
   private delta?: Extract<AgentRunStreamChunk, { type: 'message_delta' | 'thought_delta' }>;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly revision: number;
-  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) { this.revision = historyEpoch(sessionId); }
+  private writes = new Set<Promise<void>>();
+  private writeFailure?: Error;
+  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true,
+    private readonly persist?: (sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) => Promise<void>,
+  ) { this.revision = historyEpoch(sessionId); }
+
+  /** Acknowledgement barrier, including failures from a timer-driven delta flush. */
+  async settled(): Promise<void> {
+    await Promise.all(this.writes);
+    if (this.writeFailure) throw this.writeFailure;
+  }
 
   private isCurrent(): boolean { return this.current() && historyEpoch(this.sessionId) === this.revision; }
 
@@ -33,7 +43,10 @@ export class RuntimeStreamWriter {
       if (this.delta && (this.delta.type !== chunk.type || this.delta.stepId !== chunk.stepId)) this.drainDelta(commit);
       this.delta = this.delta ? { ...this.delta, delta: this.delta.delta + chunk.delta } : { ...chunk, event: undefined };
       if (this.delta.delta.length >= 8192) this.drainDelta(commit);
-      else if (!this.timer) this.timer = setTimeout(() => this.flush(), 40);
+      else if (!this.timer) this.timer = setTimeout(() => {
+        try { this.flush(); }
+        catch (error) { this.writeFailure = error instanceof Error ? error : new Error(String(error)); }
+      }, 40);
     } else {
       this.drainDelta(commit);
       commit.push(chunk);
@@ -58,6 +71,14 @@ export class RuntimeStreamWriter {
   private commit(chunks: AgentRunStreamChunk[]): void {
     const runId = this.runId;
     if (!runId || chunks.length === 0) return;
+    if (this.writeFailure) throw this.writeFailure;
+    if (this.persist) {
+      const write = this.persist(this.sessionId, runId, chunks, this.revision)
+        .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
+        .finally(() => this.writes.delete(write));
+      this.writes.add(write);
+      return;
+    }
     if (chunks.length === 1) runtimeJournal.append(this.sessionId, runId, chunks[0]);
     else runtimeJournal.appendBatch(this.sessionId, runId, chunks);
   }
@@ -96,7 +117,7 @@ export class RuntimeStreamWriter {
     if (!this.isCurrent()) { this.abandon(); return; }
     if (this.timer) clearTimeout(this.timer); this.timer = undefined;
     if (this.delta && this.runId) {
-      runtimeJournal.append(this.sessionId, this.runId, this.delta);
+      this.commit([this.delta]);
       this.delta = undefined;
     }
   }

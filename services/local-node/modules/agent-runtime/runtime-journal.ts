@@ -118,8 +118,13 @@ class RuntimeJournal {
       if (cutoff) db.prepare("DELETE FROM agent_runtime_stream_records WHERE sequence IN (SELECT sequence FROM agent_runtime_stream_records WHERE session_id=? AND sequence<=? ORDER BY sequence LIMIT 256)").run(sessionId, cutoff.sequence);
       return records;
     })();
-    for (const wake of [...(this.waiters.get(sessionId) ?? [])]) wake();
+    this.notifyCommitted(sessionId);
     return records;
+  }
+
+  /** Called only after the local or remote writer has committed. */
+  notifyCommitted(sessionId: string): void {
+    for (const wake of [...(this.waiters.get(sessionId) ?? [])]) wake();
   }
 
   cursor(sessionId: string): number {

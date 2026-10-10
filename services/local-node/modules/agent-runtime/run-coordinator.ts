@@ -9,6 +9,7 @@ import {
   type RuntimeExecutionContext,
 } from "../../infrastructure/runtime/execution-context.js";
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
+import { journalWriter } from "./journal-writer.js";
 import { agentEventService } from "./event-service.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
@@ -379,9 +380,10 @@ export class RunCoordinator {
   ): Promise<void> {
     const writer = new RuntimeStreamWriter(sessionId, owner.runId, () =>
       this.ownsLease(owner),
+      (id, runId, chunks, revision) => journalWriter.append(id, runId, chunks, revision, owner.context),
     );
-    const record = (chunk: AgentRunStreamChunk) => writer.write(chunk);
-    const flush = () => writer.flush();
+    const record = async (chunk: AgentRunStreamChunk) => { writer.write(chunk); await writer.settled(); };
+    const flush = async () => { writer.flush(); await writer.settled(); };
     let settledNormally = false;
     try {
       if (owner.controller.signal.aborted)
@@ -390,8 +392,8 @@ export class RunCoordinator {
         owner.context,
         this.driver.execute(sessionId, mode, input, owner.controller.signal),
       ))
-        record(chunk);
-      flush();
+        await record(chunk);
+      await flush();
       const run = agentRuntimeStore.getRun(owner.runId);
       if (run.status === "queued" || run.status === "running") {
         throw new Error("Backend ended without settling its Run.");
@@ -420,21 +422,29 @@ export class RunCoordinator {
             blockedReason: message,
             updatedAt: nowIso(),
           });
-        record({ type: "run_failed", run: failed, error: message });
+        await record({ type: "run_failed", run: failed, error: message });
       }
-      record({ type: "done", sessionId, runId: run.id });
+      await record({ type: "done", sessionId, runId: run.id });
     } finally {
-      const ownsLease = this.ownsLease(owner);
+      let ownsLease = this.ownsLease(owner);
       if (!ownsLease) writer.abandon();
       if (ownsLease) {
-        writer.finish();
-        const run = agentRuntimeStore.getRun(owner.runId);
-        agentRuntimeStore.updateRun(run.id, {
-          metadata: {
-            ...run.metadata,
-            executionLease: { ...owner.context, closed: true },
-          },
-        });
+        await flush();
+        // A replacement execution may have acquired the lease while the
+        // persistence acknowledgement was in flight. Fence finalization too.
+        ownsLease = getRawSqlite().transaction(() => {
+          if (!this.ownsLease(owner)) return false;
+          writer.finish();
+          const run = agentRuntimeStore.getRun(owner.runId);
+          agentRuntimeStore.updateRun(run.id, {
+            metadata: {
+              ...run.metadata,
+              executionLease: { ...owner.context, closed: true },
+            },
+          });
+          return true;
+        })();
+        if (!ownsLease) writer.abandon();
       }
       if (!owner.stopping && this.owners.get(sessionId) === owner)
         this.owners.delete(sessionId);

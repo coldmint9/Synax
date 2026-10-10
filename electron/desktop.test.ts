@@ -518,7 +518,12 @@ describe("desktop platform contract", () => {
     );
   });
 
-  it("rejects cross-platform packages containing the host native modules", async () => {
+  it.each([
+    ["win32", /cua-driver[/\\]cua-driver\.exe$/],
+    ["darwin", /cua-driver[/\\]cua-driver$/],
+    ["linux", /cua-driver[/\\]cua-driver$/],
+  ] as const)("validates %s driver paths and rejects mismatched native modules", async (hostPlatform, driverPath) => {
+    Object.defineProperty(process, "platform", { value: hostPlatform });
     const prePackage = forgeConfig.hooks!.prePackage as (
       ...args: any[]
     ) => Promise<void>;
@@ -531,7 +536,7 @@ describe("desktop platform contract", () => {
     );
     expect(validateCuaArtifact).toHaveBeenCalledExactlyOnceWith({
       helperRoot: expect.stringMatching(/cua-helper-dist$/),
-      driverPath: expect.stringMatching(/cua-driver[/\\]cua-driver$/),
+      driverPath: expect.stringMatching(driverPath),
       platform: process.platform,
       arch: process.arch,
     });

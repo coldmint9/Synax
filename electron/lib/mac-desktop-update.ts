@@ -1,5 +1,5 @@
-import fs from "node:fs/promises";
-import { constants } from "node:fs";
+import nodeFs, { constants } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -11,6 +11,12 @@ import {
 import { validateMacUpdateArchive } from "./mac-update-archive.js";
 
 const run = promisify(execFile);
+// Bundle maintenance must treat app.asar as a file. Electron's patched fs can
+// traverse it as a directory and leave recursive cleanup waiting indefinitely.
+// The standalone update smoke test also imports this module in plain Node.
+const fs: typeof nodeFs.promises = process.versions.electron
+  ? createRequire(import.meta.url)("original-fs").promises
+  : nodeFs.promises;
 const TEMPORARY_CLEANUP_OPTIONS = {
   recursive: true,
   force: true,

@@ -8,6 +8,7 @@ import { runtimeAssetRoutes } from "../transport/http/runtime-assets.js";
 import { sweepAssets } from "../modules/agent-runtime/media-assets.js";
 import type { Server } from "node:http";
 import { closeDb } from "../infrastructure/database/index.js";
+import { journalWriter } from "../modules/agent-runtime/journal-writer.js";
 import { stopHostProcesses } from "../modules/agent-runtime/process-ownership.js";
 import { acquireRuntimeHost } from "../modules/agent-runtime/runtime-host.js";
 import {
@@ -240,6 +241,8 @@ async function shutdownRuntime(): Promise<void> {
   }
   await closeAllBrowserSessions("Runtime host is shutting down.");
   mcpClientManager.closeAll();
+  try { await journalWriter.close(); }
+  catch (error) { failed = true; pinoLogger.error({ error }, "journal writer shutdown failed"); }
   runtimeHost.release();
   closeDb();
   process.exit(failed ? 1 : 0);
