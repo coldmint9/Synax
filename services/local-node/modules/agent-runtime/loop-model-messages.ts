@@ -628,6 +628,7 @@ function toToolResultOutput(
     | { version?: unknown; text?: unknown; outputType?: unknown }
     | undefined;
   if (
+    !["code.run", "agent.execute"].includes(record.toolId) &&
     receipt?.version === 1 &&
     typeof receipt.text === "string" &&
     (receipt.outputType === "text" || receipt.outputType === "error-text")
@@ -661,7 +662,6 @@ function toToolResultOutput(
     const projected = {
       status: raw.status, value: raw.value, error: raw.error,
       truncated: raw.truncated, nextAction: raw.nextAction,
-      ...(typeof raw.stdout === "string" && raw.stdout ? { stdout: raw.stdout.slice(0, 1000), stdoutTruncated: raw.stdout.length > 1000 } : {}),
     };
     const serialized = JSON.stringify(projected);
     return serialized.length <= MAX_TOOL_OUTPUT_JSON

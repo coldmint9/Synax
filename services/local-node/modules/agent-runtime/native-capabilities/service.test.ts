@@ -12,6 +12,8 @@ import { resetAgentRuntimeFixtures } from "../__tests__/agent-runtime-fixtures.j
 import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from "../tools/workspace.js";
 import { updateProjectSettings, initializeProjectSettings, getProjectSettings } from "../../../infrastructure/runtime/config/project-settings-store.js";
 import { buildLoopToolSet } from "../loop-ai-tools.js";
+import { buildLoopModelMessages, createLoopHistoryReader } from "../loop-model-messages.js";
+import { codeParentId } from "../code-mode/history.js";
 import { countTokens } from "../context-tokenizer.js";
 import { capabilityContract, disclose, readDisclosure, reconcileDisclosure } from "./disclosure.js";
 import type { RegisteredTool } from "../contracts.js";
@@ -47,6 +49,38 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); clearSessionWorkspaceRoot(id); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("native capability lifecycle", () => {
+  it("processes dependent reads in a program and exposes only the selected return value to the model", async () => {
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ path: "rows.json", internal: "index-audit-only" }));
+    fs.writeFileSync(path.join(dir, "rows.json"), JSON.stringify([
+      { id: "a", amount: 3, internal: "row-audit-only" },
+      { id: "b", amount: 8, internal: "row-audit-only" },
+    ]));
+    const projection = project();
+    store.appendMessage({ id: "program-request", sessionId: id, runId: null, stepId: null, role: "user", content: "Compute selected total", metadata: { source: "turn_request" }, createdAt: "2026-01-01" });
+    store.appendRun({ id: "program-run", sessionId: id, triggerMessageId: "program-request", status: "running", startedAt: "2026-01-01", completedAt: null, currentStep: 0, stopReason: null, model: null, metadata: {} });
+    store.appendRunStep({ id: "program-step", sessionId: id, runId: "program-run", index: 0, status: "completed", model: null, startedAt: "2026-01-01", completedAt: "2026-01-01", finishReason: "tool-calls", metadata: {} });
+    const executed = await registry.execute(id, "agent.execute", { code: `
+      const index = JSON.parse((await tools.call("file.read", {path:"index.json"})).content);
+      const rows = JSON.parse((await tools.call("file.read", {path:index.path})).content);
+      console.log(index, rows);
+      return {total: rows.filter(row => row.amount > 5).reduce((sum, row) => sum + row.amount, 0)};
+    ` }, { runId: "program-run", stepId: "program-step", modelToolCallId: "program-call" });
+    const result = executed.toolResult?.result;
+    expect(result).toMatchObject({ status: "completed", value: { total: 8 } });
+    const audit = store.listToolCalls(id);
+    expect(audit.filter(record => codeParentId(record))).toHaveLength(2);
+    expect(JSON.stringify(audit)).toContain("row-audit-only");
+    expect(JSON.stringify(audit)).toContain("index-audit-only");
+    expect(createLoopHistoryReader(store, id).listToolCalls().map(record => record.toolId)).toEqual(["agent.execute"]);
+    store.appendRunPart({ id: "program-part", sessionId: id, runId: "program-run", stepId: "program-step", kind: "tool_call", sequence: 0, content: "execute program", toolCallId: executed.record.id, metadata: {}, createdAt: "2026-01-01" });
+    store.updateRunStep("program-step", { metadata: { contextProjectionVersion: 2, toolContextReceipts: { [executed.record.id]: { version: 1, outputType: "text", text: "index-audit-only row-audit-only" } } } });
+    const messages = JSON.stringify(buildLoopModelMessages(store, id, buildLoopToolSet(projection.tools)));
+    expect(messages).toContain('"total":8');
+    expect(messages).not.toContain("row-audit-only");
+    expect(messages).not.toContain("index-audit-only");
+    expect(messages).not.toContain("nestedCalls");
+  });
+
   it("loads exact IDs even when query, group and cursor are stale", async () => {
     const result = (await registry.execute(id, "agent.discover", {
       ids: [tool(0).id], query: "unrelated", group: "read", cursor: 100,
@@ -96,7 +130,7 @@ describe("native capability lifecycle", () => {
     const ids = project().tools.map((item) => item.id);
     expect(ids).toContain("file.read");
     expect(ids).toContain("agent.discover");
-    expect(ids).not.toContain("agent.execute");
+    expect(ids).toContain("agent.execute");
     expect(ids).not.toContain("code.run");
     expect(ids).not.toContain("code.tools");
     expect(ids).toContain("file.write");
@@ -154,25 +188,26 @@ describe("native capability lifecycle", () => {
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("denied");
   });
 
-  it("keeps discovery independent of composition permission and supports rollback", async () => {
+  it("keeps native execution available with deprecated composition flags", async () => {
     updateProjectSettings(projectId, { codeMode: { enabled: false } }, "test");
     const projected = project();
     expect(projected.tools.map((item) => item.id)).toContain("agent.discover");
-    expect(projected.tools.map((item) => item.id)).not.toContain("agent.execute");
-    expect(projected.prompt).toContain("automatic execution mechanism");
+    expect(projected.tools.map((item) => item.id)).toContain("agent.execute");
+    expect(projected.prompt).toContain("Use agent.execute");
     await discover(["file.write"]);
     expect(project().tools.map((item) => item.id)).toContain("file.write");
     expect((await discover(["file.write"])).contracts[0].compose).toBe(true);
     vi.stubEnv("SYNAX_NATIVE_CAPABILITIES", "0");
-    expect(project().prompt).toContain("automatic execution mechanism");
+    expect(project().prompt).toContain("Use agent.execute");
     expect(project().tools.map((item) => item.id)).toContain("file.write");
   });
 
-  it("honors the global kill switch and excludes external backends", () => {
+  it("ignores deprecated environment flags and excludes external backends", () => {
     vi.stubEnv("SYNAX_CODE_MODE", "0");
-    expect(project().tools.map((item) => item.id)).not.toContain("agent.execute");
+    expect(project().tools.map((item) => item.id)).toContain("agent.execute");
     store.updateSessionMetadata(id, { backend: { id: "acp" } });
     expect(project().tools.map((item) => item.id)).not.toContain("agent.discover");
+    expect(project().tools.map((item) => item.id)).not.toContain("agent.execute");
     expect(project().prompt).toBe("");
   });
 

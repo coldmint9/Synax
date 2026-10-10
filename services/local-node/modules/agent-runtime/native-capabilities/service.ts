@@ -27,7 +27,7 @@ export class NativeCapabilities {
     const profile = this.profiles.getForSession(session);
     const webDisabled = getGlobalConfigForRuntime().webSearch.routing === "disabled";
     return this.registry.listForSession(sessionId).filter((tool) =>
-      modelCanUseTool(profile, tool) && !CODE_TOOL_IDS.has(tool.id) && tool.id !== "agent.execute" && !(webDisabled && tool.id === "webSearch"));
+      modelCanUseTool(profile, tool) && !CODE_TOOL_IDS.has(tool.id) && !(webDisabled && tool.id === "webSearch"));
   }
 
   private catalog(sessionId: string, tools = this.available(sessionId)) {
@@ -71,7 +71,7 @@ export class NativeCapabilities {
    * Current definitions rehydrate session discoveries; no stale history is needed. */
   project(sessionId: string, allowed: CapabilityTool[]): { tools: CapabilityTool[]; prompt: string } {
     if (!nativeCapabilitiesEnabled(this.store.getSession(sessionId)))
-      return { tools: allowed.filter((tool) => tool.id !== "agent.discover"), prompt: "" };
+      return { tools: allowed.filter((tool) => !["agent.discover", "agent.execute"].includes(tool.id)), prompt: "" };
     const business = allowed.filter((tool) => !CODE_TOOL_IDS.has(tool.id));
     const catalog = this.catalog(sessionId, business);
     const state = this.state(sessionId, catalog);
@@ -99,9 +99,9 @@ export class NativeCapabilities {
         `Deferred capability directory (group, count, example IDs and labels): ${JSON.stringify(directory.slice(0, 24))}.`,
         "Use mode:list to browse compact tool summaries without loading schemas; use query keywords to search by purpose or MCP server name; use ids to load exact runtime IDs. Exact IDs override query/group. Search uses ranked terms, not an exact phrase. If no match, inspect returned groups and browse instead of repeating the same query.",
         ...(directory.length > 24 ? ["More groups exist; mode:list with cursor browses all tools."] : []),
-        "Code Mode is the automatic execution mechanism. Submit normal tool operations; the loop compiles and schedules them. Do not call code.run or agent.execute to opt into composition.",
+        "Use agent.execute (Code Mode) when several tool reads or intermediate results can be filtered, joined or aggregated before returning to you. Submit a JavaScript async function body: await tools.call(runtimeToolId, args), process the returned JSON, then return only the selected evidence or compact result needed for your answer. Intermediate tool results and console logs remain in the audit journal, outside model context. Include source paths or record IDs in your return value when needed to support conclusions. Use direct tools for simple operations whose full output you need.",
         `Sandbox-composable IDs: ${JSON.stringify(composable)}.`,
-        "Reads may run with bounded concurrency. Writes and patches execute in submission order as barriers; use the result of a preceding model step when constructing dependent arguments. The loop pauses at approval and resumes only unfinished operations. Never resubmit completed writes.",
+        "Inside agent.execute, later calls can use earlier results without another model turn. Example: const a = await tools.call('file.read', {path: 'data.json'}); const rows = JSON.parse(a.content); return {count: rows.length, flagged: rows.filter(r => r.flagged).map(r => r.id)}; Only use known result shapes. Await all calls. Programs are stateless, bounded, and never automatically replayed. For approval use direct tools; after a program failure inspect its audit receipts before retrying writes. Ordinary direct operations still use the loop's ordered scheduling and approval/resume lifecycle.",
         "Discover missing contracts first; disclosure takes effect on the next model step. Shell, browser and workflow controls use their host lifecycle within the same ordered program. Existing permissions and file-change checks still apply.",
       ].join("\n"),
     };
@@ -178,8 +178,8 @@ export class NativeCapabilities {
         }, listing ? `Listed ${page.length} capabilities without loading.` : `Discovered ${selected.length} capability contracts.`);
       },
     }, {
-      id: "agent.execute", label: "Legacy composition adapter", category: "read", mutability: "read", resumeBehavior: "none",
-      description: "Legacy compatibility execution channel. Native loops compose operations automatically. Supports approved reads, file.write and file.patch. Submit an async function body using await tools.call(runtimeToolId,args), then return a compact JSON result. Use currently supplied contracts; discover others first. Up to 4 parallel calls, 32 total calls and 15 seconds. No imports, Node, direct filesystem/network, Shell or nested execution. Await all calls. Failure never automatically replays code or asks for approval.",
+      id: "agent.execute", label: "Code Mode", category: "read", mutability: "read", resumeBehavior: "none",
+      description: "Run an isolated JavaScript async function body to call tools and filter, join or aggregate intermediate results. Use await tools.call(runtimeToolId,args), process the JSON results locally, then return only selected evidence or a compact JSON answer. Only your return value and execution status enter model context; intermediate results and console logs stay in the audit journal. Supports approved reads, file.write and file.patch with their existing permissions. Use currently supplied composable contracts; discover others first. Up to 32 calls and 15 seconds; await all calls (calls are ordered). No imports, Node, direct filesystem/network, Shell or nested execution. Stateless; failure never automatically replays code or asks for approval. Use direct tools when approval is needed.",
       inputSchema: z.object({ code: z.string().min(1).max(CODE_LIMITS.maxCodeBytes) }).strict(),
       execute: createCompositionExecutor(this.registry, this.store, this.profiles, (sessionId, id) => this.assertContract(sessionId, id)),
     }];

@@ -81,19 +81,16 @@ export const MAX_AGENT_SESSION_PROCESSES = Number(
 );
 
 /**
- * Agent sessions run inside the host process by default, so context.db keeps a
- * single writer and concurrent sessions cannot raise SQLITE_BUSY against each
- * other. Set SYNAX_AGENT_SESSION_IN_PROCESS=0 to restore forked
- * agent-session-runner workers: per-session process isolation, at the cost of
- * N+1 processes writing the same database file.
+ * Agent sessions run in forked workers by default so agent loops cannot block
+ * the API host event loop. Set SYNAX_AGENT_SESSION_IN_PROCESS=1 to opt into
+ * in-process execution for constrained environments. Workers still share the
+ * runtime database, so SQLite write contention is handled by its busy timeout.
  */
 export function agentSessionsRunInProcess(): boolean {
   const explicit = process.env.SYNAX_AGENT_SESSION_IN_PROCESS;
   if (explicit === "1") return true;
   if (explicit === "0") return false;
-  return (
-    process.env.SYNAX_AGENT_SESSION_CHILD !== "1"
-  );
+  return process.env.SYNAX_AGENT_SESSION_CHILD === "1";
 }
 
 /** Max concurrent long-lived ACP (local agent runtime) session connections. */

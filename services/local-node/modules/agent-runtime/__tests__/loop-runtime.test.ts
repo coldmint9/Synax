@@ -547,18 +547,23 @@ describe("agentLoopRuntime", () => {
     const start = capturedRequests.length;
     try {
       queueMockStep(makeToolStep({ toolName: "agent_discover", toolCallId: "native-discover", args: { ids: ["media.list"] } }));
-      queueMockStep(makeToolStep({ toolName: "file_read", toolCallId: "native-execute", args: { path: "input.txt" } }));
+      queueMockStep(makeToolStep({ toolName: "agent_execute", toolCallId: "native-execute", args: { code: 'const data = await tools.call("file.read", {path:"input.txt"}); console.log(data); return {length:data.content.length};' } }));
       queueMockStep(makeTextStep("Done."));
       await collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Summarize input" }));
       const requests = capturedRequests.slice(start);
       expect(requests).toHaveLength(3);
       expect(requests[0].tools).toContain("agent_discover");
-      expect(requests[0].tools).not.toContain("agent_execute");
+      expect(requests[0].tools).toContain("agent_execute");
       expect(requests[0].tools).toContain("file_read");
       expect(requests[0].tools).not.toContain("media_list");
       expect(requests[1].tools).toContain("media_list");
       expect(requests[0].tools).not.toContain("code_run");
       expect(agentRuntimeStore.listToolCalls(session.id).find((call) => call.toolId === "file.read")?.status).toBe("completed");
+      expect(agentRuntimeStore.listToolCalls(session.id).find((call) => call.toolId === "agent.execute")?.status).toBe("completed");
+      const context = JSON.stringify(requests[2].messages);
+      expect(context).toContain('"length":28');
+      expect(context).not.toContain("private-intermediate-payload");
+      expect(context).not.toContain("nestedCalls");
       const run = agentRuntimeStore.listRuns(session.id).at(-1)!;
       expect(agentRuntimeStore.listRunSteps(run.id).some((step) => Boolean(step.metadata?.composition))).toBe(true);
     } finally {

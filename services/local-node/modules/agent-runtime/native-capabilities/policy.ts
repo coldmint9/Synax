@@ -1,6 +1,6 @@
 import type { AgentSession } from "../contracts.js";
 
-export const NATIVE_PROTOCOL_IDS = new Set(["agent.discover"]);
+export const NATIVE_PROTOCOL_IDS = new Set(["agent.discover", "agent.execute"]);
 
 /** Native execution is intrinsic; backend boundaries are not feature flags. */
 export function nativeCapabilitiesEnabled(session: AgentSession): boolean {
@@ -14,6 +14,7 @@ export function nativeCapabilitiesEnabled(session: AgentSession): boolean {
 // tools remain discoverable; this list never grants permission to use them.
 export const CORE_TOOL_IDS = new Set([
   "agent.discover",
+  "agent.execute",
   "file.read", "file.list", "rg", "context.read", "diff.read",
   "file.write", "file.patch", "bash", "subagent.delegate",
   "task.create", "task.update", "task.get", "task.list",

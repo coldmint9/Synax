@@ -2618,7 +2618,7 @@ export class AgentLoopRuntime {
     );
     const capabilityProjection = this.tools.capabilities.project(input.sessionId, allowedTools);
     const modelTools = capabilityProjection.tools.filter((tool) =>
-      !["code.run", "code.tools", "agent.execute"].includes(tool.id),
+      !["code.run", "code.tools"].includes(tool.id),
     );
     const toolSet = buildLoopToolSet(modelTools, undefined, { stableNames: Boolean(capabilityProjection.prompt) });
     const contextLimit =
