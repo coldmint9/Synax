@@ -1004,6 +1004,11 @@ export class ToolRegistry {
       abortSignal?.throwIfAborted();
       assertRuntimeExecutionCurrent();
       assertHistoryUnlocked(sessionId);
+      const checkpointMutation =
+        tool.mutability === "write" ||
+        tool.id === "bash" ||
+        tool.id === "verification.run" ||
+        (tool.category === "mcp" && !codeParentId(record));
       const executeTool = () => {
         // Recording a large before-image may yield. Recheck cancellation and
         // ownership immediately before the native tool is allowed to write.
@@ -1013,13 +1018,12 @@ export class ToolRegistry {
         assertHistoryUnlocked(sessionId);
         assertGrantCurrent();
         const result = inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
-        return codeParentId(record) ? waitForCodeRead(result, abortSignal) : result;
+        // Only reads may abandon their local wait. A writer retains its claim
+        // until the underlying operation settles, even after cancellation.
+        return codeParentId(record) && !checkpointMutation
+          ? waitForCodeRead(result, abortSignal)
+          : result;
       };
-      const checkpointMutation =
-        tool.mutability === "write" ||
-        tool.id === "bash" ||
-        tool.id === "verification.run" ||
-        (tool.category === "mcp" && !codeParentId(record));
       let undoPaths: string[] | undefined;
       if (
         ["file.write", "file.delete"].includes(tool.id) &&

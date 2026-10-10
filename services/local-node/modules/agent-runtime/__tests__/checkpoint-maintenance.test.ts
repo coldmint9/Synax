@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runWithExecutionContext } from "../../../infrastructure/runtime/execution-context.js";
 import {
   resetAgentRuntimeFixtures,
   plannerSessionInput,
@@ -11,7 +12,7 @@ import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import { captureCheckpoint } from "../checkpoints/store.js";
-import { withCheckpointMutation } from "../checkpoints/mutations.js";
+import { recoverOrphanedCheckpointWriters, withCheckpointMutation } from "../checkpoints/mutations.js";
 import {
   applyHistory,
   previewHistory,
@@ -289,18 +290,18 @@ describe("file undo cleanup boundaries", () => {
 describe("checkpoint mutation write conflicts", () => {
   const target = () => path.join(root, "file");
   /** Holds an open mutation on `file` until the returned release is called. */
-  async function hold() {
+  async function hold(paths: string[] | null = [target()], sessionId = id) {
     let entered!: () => void, release!: () => void;
     const started = new Promise<void>((r) => (entered = r));
     const gate = new Promise<void>((r) => (release = r));
     const operation = withCheckpointMutation(
-      id,
+      sessionId,
       async () => {
         entered();
         await gate;
       },
       false,
-      [target()],
+      paths ?? undefined,
     );
     await started;
     return { operation, release };
@@ -316,6 +317,95 @@ describe("checkpoint mutation write conflicts", () => {
       else process.env.SYNAX_CHECKPOINT_MUTATION_WAIT_MS = previous;
     }
   };
+
+  it.each([false, true])("allows a file edit during an untracked operation (other session: %s)", async (otherSession) => {
+    const cp = await checkpoint();
+    const holderId = otherSession
+      ? agentSessionRuntime.create({ ...plannerSessionInput, workDir: root }).id
+      : id;
+    store.updateSession(holderId, { status: "completed" });
+    const { operation, release } = await hold(null, holderId);
+    try {
+      await withBudget("0", () => write("edited while command is running"));
+      expect(await fs.readFile(target(), "utf8")).toBe("edited while command is running");
+      const row = getRawSqlite().prepare(
+        "SELECT uncertain,changes_json,paths_json FROM conversation_mutations WHERE session_id=? AND state='closed' ORDER BY sequence DESC LIMIT 1",
+      ).get(id) as { uncertain: number; changes_json: string; paths_json: string };
+      expect(row.uncertain).toBe(1);
+      expect(JSON.parse(row.changes_json)).toEqual([]);
+      expect(JSON.parse(row.paths_json)).toHaveLength(1);
+    } finally {
+      release();
+      await operation;
+    }
+    await applyHistory(id, { action: "rollback", checkpointId: cp.id, revision: 0, requestId: "overlap" });
+    expect(await fs.readFile(target(), "utf8")).toBe("edited while command is running");
+  });
+
+  it("remembers an untracked operation which starts and finishes inside a native write", async () => {
+    const { operation, release } = await hold();
+    try {
+      await withBudget("0", () => withCheckpointMutation(id, () => fs.writeFile(target(), "external")));
+    } finally {
+      release();
+      await operation;
+    }
+    const row = getRawSqlite().prepare(
+      "SELECT uncertain,changes_json FROM conversation_mutations WHERE session_id=? ORDER BY sequence LIMIT 1",
+    ).get(id) as { uncertain: number; changes_json: string };
+    expect(row).toMatchObject({ uncertain: 1, changes_json: "[]" });
+    expect(await fs.readFile(target(), "utf8")).toBe("external");
+  });
+
+  it("allows different native files without discarding their undo attribution", async () => {
+    const { operation, release } = await hold([path.join(root, "other")]);
+    try {
+      await withBudget("0", () => write("independent"));
+      const row = getRawSqlite().prepare(
+        "SELECT uncertain,changes_json FROM conversation_mutations WHERE session_id=? AND state='closed' ORDER BY sequence DESC LIMIT 1",
+      ).get(id) as { uncertain: number; changes_json: string };
+      expect(row.uncertain).toBe(0);
+      expect(JSON.parse(row.changes_json)).toHaveLength(1);
+    } finally {
+      release();
+      await operation;
+    }
+  });
+
+  it("releases mutation and snapshot leases after its execution is fenced", async () => {
+    const context = { sessionId: id, runId: "fenced-run", epoch: "lease", hostId: "test" };
+    store.appendRun({
+      id: context.runId, sessionId: id, status: "running", startedAt: new Date().toISOString(),
+      completedAt: null, triggerMessageId: null, currentStep: 0, stopReason: null, model: null,
+      metadata: { executionLease: { epoch: context.epoch, closed: false } },
+    });
+    await expect(runWithExecutionContext(context, () => withCheckpointMutation(id, async () => {
+      await fs.writeFile(target(), "before cancellation");
+      getRawSqlite().prepare(
+        "UPDATE agent_runtime_runs SET metadata_json=json_set(metadata_json,'$.executionLease.closed',json('true')) WHERE id=?",
+      ).run(context.runId);
+    }, false, [target()]))).rejects.toMatchObject({ code: "EXECUTION_SUPERSEDED" });
+    expect(getRawSqlite().prepare("SELECT id FROM conversation_mutations WHERE state='open'").all()).toEqual([]);
+    expect(getRawSqlite().prepare("SELECT id FROM conversation_snapshot_leases").all()).toEqual([]);
+    expect(getRawSqlite().prepare("SELECT uncertain FROM conversation_mutations WHERE session_id=?").get(id)).toMatchObject({ uncertain: 1 });
+    await withBudget("0", () => write("after cancellation"));
+  });
+
+  it("reaps a settled same-process claim but preserves an active claim", async () => {
+    const { operation, release } = await hold();
+    try {
+      const canonicalRoot = await fs.realpath(root);
+      getRawSqlite().prepare(
+        "INSERT INTO conversation_mutations(id,session_id,owner_session_id,roots_json,paths_json,state,uncertain,created_at,owner_pid) VALUES(?,?,?,?,?,'open',0,?,?)",
+      ).run("settled-claim", id, id, JSON.stringify([canonicalRoot]), JSON.stringify([{ root: canonicalRoot, path: "other" }]), new Date().toISOString(), process.pid);
+      recoverOrphanedCheckpointWriters();
+      expect(getRawSqlite().prepare("SELECT state,uncertain FROM conversation_mutations WHERE id='settled-claim'").get()).toMatchObject({ state: "closed", uncertain: 1 });
+      expect(getRawSqlite().prepare("SELECT id FROM conversation_mutations WHERE state='open'").all()).toHaveLength(1);
+    } finally {
+      release();
+      await operation;
+    }
+  });
 
   it("waits out a short-lived competing writer instead of failing", async () => {
     const { operation, release } = await hold();

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { visualizationDocument, VISUALIZATION_CSP } from "./document";
 import { VisualizationLoading } from "./VisualizationLoading";
 import "./visualizations.css";
+import type { AgentRuntimeMessage } from "../../adapters/transport/agentRuntime";
 
 export interface InlineVisualizationReference {
   id: string;
@@ -9,6 +10,8 @@ export interface InlineVisualizationReference {
   title?: string;
   mode?: "wide";
   error?: string;
+  /** A bounded history projection whose saved preview must be loaded on demand. */
+  historyMessage?: AgentRuntimeMessage;
 }
 
 const MAX_HEIGHT = 8192;
@@ -58,10 +61,9 @@ function VisualizationInstance({
     element.loading = "eager";
     element.referrerPolicy = "no-referrer";
     element.setAttribute("sandbox", "allow-scripts");
-    element.setAttribute(
-      "allow",
-      "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'",
-    );
+    // Do not delegate device or clipboard permissions. Their default `self`
+    // allowlists exclude this opaque sandbox origin. Explicit `none` entries
+    // trigger Chromium's potential Permissions Policy violation diagnostics.
     element.style.height = "240px";
     let loadCount = 0;
     const token = randomToken();

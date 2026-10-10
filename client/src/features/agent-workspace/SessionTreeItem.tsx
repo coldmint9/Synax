@@ -1,7 +1,7 @@
 import { SearchHighlight } from "./SearchHighlight";
 import { SessionListTitle } from "./SessionListTitle";
 import { PixelLoader } from "./LoadingState";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import { copyTextToClipboard } from "../../adapters/electron/clipboard";
 import { useNotificationStore } from "../../shared/state/notificationStore";
@@ -43,19 +43,22 @@ interface Props {
 }
 
 function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
-  // Reuse already loaded messages; list rows must not fetch session transcripts.
-  const latestMessage = useAgentSessionStore((state) => {
-    const messages =
-      state.selectedSessionId === session.id
-        ? state.messages
-        : state.sessionDetailCache[session.id]?.messages;
+  // Subscribe to the message array only. Computing the preview inside the
+  // selector made every live delta scan every cached transcript, even when
+  // that row could not change.
+  const messages = useAgentSessionStore((state) =>
+    state.selectedSessionId === session.id
+      ? state.messages
+      : state.sessionDetailCache[session.id]?.messages,
+  );
+  const latestMessage = useMemo(() => {
     for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
       const message = messages![i];
       if (message.sessionId !== session.id || !message.content.trim()) continue;
       if (message.role === "assistant") return message.content;
     }
     return "";
-  });
+  }, [messages, session.id]);
   const preview = (
     latestMessage ||
     session.resultSummary?.trim() ||

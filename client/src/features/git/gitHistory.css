@@ -90,11 +90,16 @@
   background: var(--ui-panel);
 }
 .history-tree-rail {
+  overflow: hidden;
   position: absolute;
   top: 40px;
   left: 0;
   pointer-events: none;
   z-index: 1;
+}
+.history-tree-omission {
+  fill: var(--ui-subtle);
+  font-size: 14px;
 }
 .history-tree-rail path {
   fill: none;

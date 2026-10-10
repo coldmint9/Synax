@@ -11,6 +11,8 @@ import {
   PopoverPanel,
 } from "@/shared/ui/ui/Popover";
 import { Check, GitBranch, LoaderCircle, Plus, Search, X } from "lucide-react";
+import { AlertDialog, DialogContainer, DialogPanel, DialogTitle, DialogBody, DialogFooter } from "@/shared/ui/ui/Dialog";
+import { Button } from "@/shared/ui/ui/Button";
 import {
   agentRuntimeApi,
   type SessionGitBranches,
@@ -59,6 +61,7 @@ function BranchPickerContent({
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const generation = useRef(0);
   const mutating = useRef(false);
 
@@ -108,6 +111,10 @@ function BranchPickerContent({
     if (!name || disabled || mutating.current) return;
     const option = data?.branches.find((item) => item.name === name);
     if (!option || option.occupied) return;
+    if (name === data?.current) {
+      close();
+      return;
+    }
     const transferChanges = Boolean(data?.dirtyFileCount);
     if (
       transferChanges &&
@@ -119,11 +126,10 @@ function BranchPickerContent({
     )
       return;
     close();
-    if (name === data?.current) return;
     const request = ++generation.current;
     mutating.current = true;
     setSwitching(true);
-    setError(null);
+    setSwitchError(null);
     try {
       const result = transferChanges
         ? await agentRuntimeApi.switchSessionBranch(sessionId, name, rootId, true)
@@ -134,8 +140,12 @@ function BranchPickerContent({
         onSwitched();
       }
     } catch (err) {
-      if (request === generation.current)
-        setError(err instanceof Error ? err.message : String(err));
+      if (request === generation.current) {
+        setSwitchError(err instanceof Error ? err.message : String(err));
+        // A failed stash restore can leave HEAD on the requested branch.
+        refreshWorkspace(sessionId, rootId);
+        onSwitched();
+      }
     } finally {
       mutating.current = false;
       if (request === generation.current) setSwitching(false);
@@ -395,11 +405,21 @@ function BranchPickerContent({
           )}
         </div>
       </PopoverPanel>
-      {error && !open && (
-        <p role="alert" className="ws-branch-error">
-          {error}
-        </p>
-      )}
+      <AlertDialog open={switchError !== null} onClose={() => setSwitchError(null)}>
+        <DialogContainer size="md">
+          <DialogPanel>
+            <DialogTitle>{zh ? "分支切换未完成" : "Branch switch incomplete"}</DialogTitle>
+            <DialogBody>
+              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{switchError}</p>
+            </DialogBody>
+            <DialogFooter>
+              <Button autoFocus onClick={() => setSwitchError(null)}>
+                {zh ? "知道了" : "OK"}
+              </Button>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogContainer>
+      </AlertDialog>
     </>
   );
 }

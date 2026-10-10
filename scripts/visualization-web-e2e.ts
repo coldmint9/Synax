@@ -19,17 +19,18 @@ const output = path.resolve(
 await fs.mkdir(output, { recursive: true });
 process.env.DATA_ROOT = path.join(temp, "data");
 process.env.LOG_LEVEL = "error";
+process.env.SYNAX_VERSION_HISTORY = "boundary";
 await fs.mkdir(process.env.DATA_ROOT, { recursive: true });
 const workspace = path.join(temp, "workspace");
 await fs.mkdir(workspace);
-const source = await fs.readFile(
+const source = (await fs.readFile(
   path.resolve(
     reported
       ? "client/src/features/visualizations/__tests__/fixtures/reported-navbar.html"
       : "client/src/features/visualizations/__tests__/fixtures/approved-demo.html",
   ),
   "utf8",
-);
+)) + `<!--${"history snapshot ".repeat(3000)}-->`;
 await fs.writeFile(
   path.join(process.env.DATA_ROOT, "projects.json"),
   JSON.stringify({
@@ -199,6 +200,17 @@ try {
     headless: true,
   });
   page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  const policyViolations: string[] = [];
+  let snapshotRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith(`/messages/${message.id}/visualization`)) snapshotRequests++;
+  });
+  const devtools = await page.context().newCDPSession(page);
+  await devtools.send("Log.enable");
+  devtools.on("Log.entryAdded", ({ entry }) => {
+    if (/permissions policy violation/i.test(entry.text))
+      policyViolations.push(entry.text);
+  });
   await page.addInitScript(() =>
     window.addEventListener("error", (event) =>
       console.error("PREVIEW_ERROR", event.message),
@@ -265,6 +277,16 @@ try {
   await page.getByText("确认后再继续调整。", { exact: true }).waitFor();
   const iframe = await card.locator("iframe").elementHandle();
   const inner = (await iframe!.contentFrame())!;
+  assert.deepEqual(
+    await inner.evaluate(() => {
+      const policy = (document as Document & {
+        featurePolicy: { allowsFeature(name: string): boolean };
+      }).featurePolicy;
+      return ["camera", "geolocation", "microphone", "clipboard-read", "clipboard-write"]
+        .map((name) => policy.allowsFeature(name));
+    }),
+    [false, false, false, false, false],
+  );
   assert.equal(
     await inner.evaluate(() => typeof (window as any).electronAPI),
     "undefined",
@@ -357,7 +379,21 @@ try {
       0,
     );
   }
+  // Exercise client-side route unmount/remount, as well as a full reload.
+  await page.evaluate(() => {
+    history.pushState(null, "", "/projects/visualization-app/sessions/new");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await card.waitFor({ state: "detached" });
+  await page.goBack();
+  await card.waitFor();
+  if (!reported) {
+    await frame.getByRole("button", { name: "Explore workspace" }).click();
+    await frame.locator("[data-progress-value]").filter({ hasText: "78%" }).waitFor();
+    assert.ok(snapshotRequests >= 2, "large previews must restore their saved snapshot on reload");
+  }
   assert.equal((await fs.readdir(workspace)).length, 0);
+  assert.deepEqual(policyViolations, []);
   await fs.writeFile(
     path.join(output, "acceptance.json"),
     JSON.stringify(
@@ -373,6 +409,8 @@ try {
           "reply ordering, no outer artifact UI, light/dark, automatic height and 320px layout",
           "opaque sandbox blocks parent DOM, Node, fetch and self navigation before network",
           "reload preserves fragment and resets local interactions",
+          "large saved preview restores after client-side route navigation and stays interactive",
+          "no Permissions Policy violations; camera, location, microphone and clipboard remain denied",
         ],
       },
       null,

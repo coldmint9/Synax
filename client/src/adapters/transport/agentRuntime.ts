@@ -1010,6 +1010,10 @@ export const agentRuntimeApi = {
       `/session-archives/${encodeURIComponent(batchId)}`,
       { method: "DELETE" },
     ),
+  messageVisualization: (sessionId: string, messageId: string) =>
+    request<{ message: AgentRuntimeMessage | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/visualization`,
+    ),
   messageContentPage: (
     sessionId: string,
     messageId: string,

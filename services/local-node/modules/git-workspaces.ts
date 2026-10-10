@@ -1112,10 +1112,17 @@ export async function switchGitBranch(
       if (stashRef) {
         try {
           await git(context.location, context.root, ["stash", "apply", "--index", stashRef]);
+        } catch (error) {
+          throw new GitWorkspaceError(
+            `已切换到分支“${branch}”，但未能完整恢复未提交改动或暂存状态。改动备份仍保留在 ${stashRef}。请先检查 git status 并解决已有冲突；确认工作区状态前，请勿重复应用该 stash。 / Switched to branch "${branch}", but restoring local changes or the index failed. The backup remains in ${stashRef}. Inspect git status and resolve any existing conflicts before attempting recovery; do not reapply the stash without checking the working tree. ${error instanceof Error ? error.message : String(error)}`,
+            409,
+          );
+        }
+        try {
           await git(context.location, context.root, ["stash", "drop", stashRef]);
         } catch (error) {
           throw new GitWorkspaceError(
-            `The branch changed, but applying transferred changes conflicted. The temporary stash is ${stashRef}. Resolve the conflicts or run git stash apply ${stashRef}. ${error instanceof Error ? error.message : String(error)}`,
+            `已切换分支并恢复改动，但未能删除临时备份 ${stashRef}，请勿重复应用。 / The branch changed and local changes were restored, but temporary backup ${stashRef} could not be removed. Do not reapply it. ${error instanceof Error ? error.message : String(error)}`,
             409,
           );
         }

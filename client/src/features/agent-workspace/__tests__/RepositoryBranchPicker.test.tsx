@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RepositoryBranchPicker } from "../RepositoryBranchPicker";
 import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
 vi.mock("../../../adapters/transport/agentRuntime", () => ({
@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(agentRuntimeApi.listSessionBranches).mockResolvedValue(branches);
 });
+afterEach(() => vi.unstubAllGlobals());
 it.each(["main", "codex/streaming-commit-message"])(
   "keeps the Git icon outside the truncated label for %s",
   (branch) => {
@@ -83,7 +84,8 @@ it("confirms and transfers dirty files before switching", async () => {
     current: "feature",
     dirtyFileCount: 0,
   });
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const confirm = vi.fn().mockReturnValue(true);
+  vi.stubGlobal("confirm", confirm);
   render(
     <RepositoryBranchPicker
       sessionId="s"
@@ -98,28 +100,33 @@ it("confirms and transfers dirty files before switching", async () => {
     expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith("s", "feature", "r", true),
   );
   expect(confirm).toHaveBeenCalledOnce();
-  confirm.mockRestore();
 });
-it("keeps a failed switch visible without duplicating its alert in a closing menu", async () => {
+it("shows switch failures in a dismissible dialog and refreshes the actual branch", async () => {
   vi.mocked(agentRuntimeApi.switchSessionBranch).mockRejectedValue(
     new Error("uncommitted changes"),
   );
+  const changed = vi.fn();
   render(
     <RepositoryBranchPicker
       sessionId="s"
       rootId="r"
       branch="main"
-      onSwitched={vi.fn()}
+      onSwitched={changed}
     />,
   );
   await userEvent.click(
     screen.getByRole("button", { name: /Switch Git branch/ }),
   );
   await userEvent.click(await screen.findByRole("option", { name: "feature" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
+  expect(await screen.findByRole("alertdialog", { name: "Branch switch incomplete" })).toHaveTextContent(
     "uncommitted changes",
   );
-  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(changed).toHaveBeenCalledOnce();
+  await userEvent.click(screen.getByRole("button", { name: "OK" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /Switch Git branch/ }));
+  expect(await screen.findByRole("option", { name: "feature" })).toBeInTheDocument();
 });
 it("ignores a switch response after the repository component unmounts", async () => {
   let finish!: (value: typeof branches) => void;

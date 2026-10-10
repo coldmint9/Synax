@@ -53,6 +53,30 @@ describe("tool call display names", () => {
     expect(container.innerHTML).not.toContain(call.toolId);
   });
 
+  it("shows edited files in the collapsed row while preserving the raw patch", () => {
+    const edit = { ...call, toolId: "file.patch", inputSummary: JSON.stringify({
+      patch: "*** Begin Patch\n*** Update File: client/src/Button.tsx\n@@\n-old\n+new\n*** End Patch",
+    }) };
+    const { container, getByRole } = render(<ToolCallSummaryLine call={edit} />);
+    expect(container.querySelector(".bui-tool-target")).toHaveTextContent("client/src/Button.tsx");
+    fireEvent.click(getByRole("button"));
+    expect(container.querySelector("pre")?.textContent).toBe(edit.inputSummary);
+  });
+
+  it("includes unique targets for additions, deletions, updates and moves", () => {
+    const patch = "*** Begin Patch\n*** Add File: new file.ts\n+x\n*** Delete File: old.ts\n*** Update File: a.ts\n*** Move to: b.ts\n@@\n-x\n+y\n*** Update File: a.ts\n@@\n-y\n+z\n*** End Patch";
+    expect(toolCallPresentation({ ...call, toolId: "file.patch", inputSummary: JSON.stringify({ patch }) }).target)
+      .toBe("new file.ts, old.ts, a.ts, b.ts");
+  });
+
+  it("recovers complete patch paths from truncated JSON without inventing partial paths", () => {
+    const input = JSON.stringify({ patch: "*** Begin Patch\n*** Update File: client/组件.tsx\n@@\n-old\n+new\n*** Update File: incomplete.ts\n" });
+    for (const suffix of ["", "\\", "\\u12"]) {
+      expect(toolCallPresentation({ ...call, toolId: "file.patch", inputSummary: input.slice(0, input.indexOf("incomplete")) + suffix }).target)
+        .toBe("client/组件.tsx");
+    }
+  });
+
   it("uses the same alias in the outer preview and grouped calls", () => {
     const { container, getByRole } = render(<ToolCallRoundPanel toolBlocks={[{
       type: "tool_call_group", calls: [call, { ...call, id: "call-2" }],

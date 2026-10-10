@@ -41,6 +41,22 @@ const step: AgentRunStep = {
   metadata: {},
 };
 
+it("loads saved visual replies when bounded history omitted their metadata", () => {
+  for (const projectedContent of [content, "Before\n[交互预览]\nAfter"]) {
+    const projected = { ...message, content: projectedContent, metadata: {},
+      historyProjection: { omittedFields: ["metadata"] } };
+    expect(visualizationReplyParts(projected)).toEqual([{
+      type: "visualization", messageId: message.id,
+      reference: { id: "history:s:m", historyMessage: projected },
+    }]);
+  }
+  const truncated = { ...message, content: "Truncated introduction", metadata: {},
+    historyProjection: { omittedFields: ["content", "metadata"] } };
+  expect(visualizationReplyParts(truncated)[0].type).toBe("visualization");
+  expect(visualizationReplyParts({ ...truncated, role: "user" })[0].type).toBe("text");
+  expect(visualizationReplyParts({ ...truncated, metadata: { partial: true } })[0].type).toBe("text");
+});
+
 it("keeps text → preview → text together outside a folded work log, without duplicate cards", () => {
   const entries = buildConversationTimeline(
     [],

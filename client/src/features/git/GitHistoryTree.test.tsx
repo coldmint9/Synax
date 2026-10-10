@@ -34,6 +34,37 @@ const workspace: GitWorkspaceSummary = {
 };
 
 describe("Git history table", () => {
+  it("caps wide merge graphs and omits hidden geometry while preserving every commit", () => {
+    const commits = Array.from({ length: 100 }, (_, index) => ({
+      ...workspace.commits![0],
+      id: `merge-${index}`,
+      subject: `Merge ${index}`,
+      parents: [`merge-${index + 1}`, `branch-${index}`],
+    }));
+    // This final commit is on an overflow lane, so its node must be omitted too.
+    commits.push({ ...commits[0], id: "branch-0", subject: "Hidden lane commit", parents: [] });
+    const { container } = render(
+      <MemoryRouter>
+        <ContextMenuProvider>
+          <GitHistoryTree workspace={{ ...workspace, commits }} />
+        </ContextMenuProvider>
+      </MemoryRouter>,
+    );
+    const rail = container.querySelector(".history-tree-rail")!;
+    expect(rail).toHaveAttribute("width", "170");
+    expect(rail).toHaveAttribute("viewBox", "0 0 170 6060");
+    expect(container.querySelector(".history-tree-table-wrap")).toHaveStyle({
+      "--history-rail-width": "170px",
+    });
+    expect(rail.querySelectorAll("circle")).toHaveLength(100);
+    expect(rail.querySelectorAll("path").length).toBeLessThan(800);
+    expect(rail.querySelectorAll(".history-tree-omission").length).toBeGreaterThan(0);
+    expect(screen.getByText(/分支图最多显示 6 条轨道/)).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Git 提交历史" });
+    expect(within(table).getAllByRole("row", { hidden: true })).toHaveLength(102);
+    expect(within(table).getByText("Hidden lane commit")).toBeInTheDocument();
+  });
+
   it("renders a compact table including commit ID and opens commit details by keyboard", async () => {
     const user = userEvent.setup();
     const { container } = render(
@@ -64,6 +95,7 @@ describe("Git history table", () => {
       "height",
       "120",
     );
+    expect(container.querySelector(".history-tree-omission")).toBeNull();
   });
 
   it("preserves merge filtering and search without a component-library table", async () => {

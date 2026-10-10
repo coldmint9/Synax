@@ -147,7 +147,8 @@ export function switchSessionGitBranch(
       true,
     );
     let checkoutPath = root.path;
-    await switchGitBranch(
+    try {
+      await switchGitBranch(
       workspaceRootLocation(root),
       branch,
       (physicalRoot) => {
@@ -155,11 +156,14 @@ export function switchSessionGitBranch(
         checkoutPath = physicalRoot;
       },
       { transferChanges },
-    );
-    // Several sessions can share one physical checkout; invalidate every snapshot.
-    for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
-      if (sharesRepository(item.id, item.projectId, checkoutPath))
-        invalidateSessionEnvironment(item.id);
+      );
+    } finally {
+      // Stash restoration may fail after HEAD changes. Refresh shared snapshots
+      // on failure too, so the UI reports the actual checkout.
+      for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
+        if (sharesRepository(item.id, item.projectId, checkoutPath))
+          invalidateSessionEnvironment(item.id);
+      }
     }
     return listSessionGitBranches(sessionId, root.id);
   });

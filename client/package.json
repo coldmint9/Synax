@@ -1,7 +1,7 @@
 {
   "name": "synax-client",
   "private": true,
-  "version": "1.21.5",
+  "version": "1.21.7",
   "type": "module",
   "scripts": {
     "dev": "vite --force",

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
+import { withoutExecutionContext } from "../../../infrastructure/runtime/execution-context.js";
 
 function reap(): void {
   const db = getRawSqlite(),
@@ -54,7 +55,10 @@ export async function withSnapshotLease<T>(
   try {
     return await action();
   } finally {
-    db.prepare("DELETE FROM conversation_snapshot_leases WHERE id=?").run(id);
+    // Releasing this settled capture must survive execution-epoch fencing.
+    withoutExecutionContext(() =>
+      db.prepare("DELETE FROM conversation_snapshot_leases WHERE id=?").run(id),
+    );
   }
 }
 export function beginSnapshotPrune(): string | null {

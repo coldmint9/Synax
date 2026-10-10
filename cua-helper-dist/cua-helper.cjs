@@ -7391,11 +7391,11 @@ var require_cross_spawn = __commonJS({
 // cua-helper/main.ts
 var main_exports = {};
 __export(main_exports, {
+  assertHelperPermissions: () => assertHelperPermissions,
   loadSdk: () => loadSdk,
   main: () => main,
   parseGeneration: () => parseGeneration,
-  readHelperPermissionStatus: () => readHelperPermissionStatus,
-  requestHelperPermissions: () => requestHelperPermissions
+  readHelperPermissionStatus: () => readHelperPermissionStatus
 });
 module.exports = __toCommonJS(main_exports);
 var import_node_process3 = __toESM(require("node:process"), 1);
@@ -16972,11 +16972,11 @@ function describePermissions(status) {
     !status.accessibility ? "Accessibility" : null,
     !status.screenRecording ? "Screen Recording" : null
   ].filter((value) => value !== null);
-  return `Grant Synax ${missing.join(" and ")} permission in macOS System Settings > Privacy & Security, then retry Computer Use. Synax itself does not need these permissions.`;
+  return `Grant Synax ${missing.join(" and ")} permission in macOS System Settings > Privacy & Security, then retry Computer Use.`;
 }
-function requestHelperPermissions(sdk, platform) {
+function assertHelperPermissions(sdk, platform) {
   if (platform !== "darwin") return;
-  const status = sdk.requestMacOsPermissions();
+  const status = readHelperPermissionStatus(sdk, platform);
   if (!status.accessibility || !status.screenRecording)
     throw new Error(describePermissions(status));
 }
@@ -17006,7 +17006,7 @@ async function main() {
   });
   log(`driver ready: ${driver}`);
   const sdk = await loadSdk();
-  requestHelperPermissions(sdk, import_node_process3.default.platform);
+  assertHelperPermissions(sdk, import_node_process3.default.platform);
   const host = new sdk.EmbeddedCuaDriverHost(driver, bundleId);
   let bridge = null;
   let stopping = false;
@@ -17075,9 +17075,9 @@ if (invokedDirectly) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  assertHelperPermissions,
   loadSdk,
   main,
   parseGeneration,
-  readHelperPermissionStatus,
-  requestHelperPermissions
+  readHelperPermissionStatus
 });

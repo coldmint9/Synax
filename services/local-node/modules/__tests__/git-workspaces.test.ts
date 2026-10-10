@@ -54,6 +54,23 @@ afterEach(() => {
 });
 
 describe("git workspace maintenance", () => {
+  it.each([false, true])("preserves the backup and reports partial switching when restore fails (staged: %s)", async (staged) => {
+    git(["switch", "-c", "feature/conflict"]);
+    fs.writeFileSync(path.join(repository, "README.md"), "target branch\n");
+    git(["commit", "-am", "target change"]);
+    git(["switch", "main"]);
+    fs.writeFileSync(path.join(repository, "README.md"), "local edits\n");
+    if (staged) git(["add", "README.md"]);
+
+    await expect(switchGitBranch(repository, "feature/conflict", undefined, { transferChanges: true }))
+      .rejects.toThrow(/restoring local changes or the index failed/);
+
+    expect(git(["branch", "--show-current"])).toBe("feature/conflict");
+    expect(git(["stash", "list"])).toContain("synax-branch-transfer-");
+    expect(git(["show", "stash@{0}:README.md"])).toBe("local edits");
+    if (!staged) expect(git(["diff", "--name-only", "--diff-filter=U"])).toContain("README.md");
+  }, gitTestTimeoutMs);
+
   it(
     "lists branches and reports dirty state and session usage",
     async () => {

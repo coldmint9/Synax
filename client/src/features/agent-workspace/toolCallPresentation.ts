@@ -84,6 +84,15 @@ const ALIASES: Record<string, [string, string, typeof Wrench]> = {
   "get_api_by_path": ["查看接口信息", "Inspect API", Search],
 };
 
+function patchTargets(patch: string, truncated = false): string {
+  const paths = Array.from(
+    patch.matchAll(/^\*\*\* (?:Update File|Add File|Delete File|Move to): ([^\r\n]+)(?:\r?\n|$)/gm),
+  ).filter((match) => !truncated || match[0].endsWith("\n"))
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  return [...new Set(paths)].join(", ");
+}
+
 export function toolCallPresentation(
   call: Pick<ToolCallView, "toolId" | "inputSummary"> & { category?: string },
   locale: Locale = "zh",
@@ -109,6 +118,9 @@ export function toolCallPresentation(
     const input: unknown = JSON.parse(call.inputSummary);
     if (input && typeof input === "object" && !Array.isArray(input)) {
       const values = input as Record<string, unknown>;
+      if (call.toolId === "file.patch" && typeof values.patch === "string") {
+        target = patchTargets(values.patch);
+      }
       for (const key of [
         "command",
         "query",
@@ -120,20 +132,27 @@ export function toolCallPresentation(
         "skillId",
         "subject",
       ]) {
-        if (typeof values[key] === "string" && values[key].trim()) {
+        if (!target && typeof values[key] === "string" && values[key].trim()) {
           target = values[key];
           break;
         }
       }
     }
   } catch {
+    if (call.toolId === "file.patch") {
+      // Decode only complete JSON escapes when the serialized patch is cut off.
+      const patch = /"patch"\s*:\s*"((?:[^"\\]|\\(?:["\\/bfnrt]|u[\da-fA-F]{4}))*)/.exec(call.inputSummary);
+      if (patch) {
+        target = patchTargets(JSON.parse(`"${patch[1]}"`) as string, true);
+      }
+    }
     // Runtime summaries truncate JSON after serialization. Keep a complete
     // leading target string when the later file content has been cut off.
     const match =
       /(?:^|[,{])\s*"(?:command|query|pattern|url|path|file_path|name|skillId|subject)"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(
         call.inputSummary,
       );
-    if (match) {
+    if (!target && match) {
       try {
         target = JSON.parse(match[1]) as string;
       } catch {

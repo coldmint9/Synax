@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
     default: module.InlineVisualization,
@@ -33,7 +34,9 @@ function TranscriptVisualization({
         </div>
       }
     >
-      <InlineVisualization visualization={reference} />
+      {reference.historyMessage
+        ? <HistoricalVisualizationReply key={reference.id} message={reference.historyMessage} />
+        : <InlineVisualization visualization={reference} />}
     </Suspense>
   );
 }

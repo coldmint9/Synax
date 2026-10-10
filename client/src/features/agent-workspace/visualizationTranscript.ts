@@ -37,6 +37,21 @@ export function visualizationReplyParts(
   const text = (content: string): ReplyPart[] =>
     content.trim() ? [{ type: "text", content, messageId: message.id }] : [];
   if (message.role !== "assistant") return text(message.content);
+  const omitted = message.historyProjection?.omittedFields ?? [];
+  const missingMetadata = omitted.includes("metadata") && (
+    hasVisualization(message.content) || message.content.includes("[交互预览]") ||
+    omitted.includes("content")
+  );
+  const missingContent = omitted.includes("content") && (
+    message.metadata.source === "inline_visualization" ||
+    Array.isArray(message.metadata.visualizations)
+  );
+  if (!message.metadata.partial && (missingMetadata || missingContent)) {
+    return [{ type: "visualization", messageId: message.id, reference: {
+      id: `history:${message.sessionId}:${message.id}`,
+      historyMessage: message,
+    } }];
+  }
   const fallback = () => text(hideVisualizationSource(message.content));
   if (message.metadata.purpose === "work_result" &&
       Array.isArray(message.metadata.visualizations) &&
@@ -59,6 +74,7 @@ export function visualizationReplyParts(
       result.push({ type: "visualization", messageId: message.id, reference: {
         id: item.id,
         html,
+        ...(typeof item.error === "string" ? { error: item.error } : {}),
         ...(typeof item.title === "string" ? { title: item.title.slice(0, 250) } : {}),
         ...(item.mode === "wide" ? { mode: "wide" as const } : {}),
       } });

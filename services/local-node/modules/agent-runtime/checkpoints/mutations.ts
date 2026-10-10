@@ -4,6 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
+import { withoutExecutionContext } from "../../../infrastructure/runtime/execution-context.js";
 import {
   checkpointFiles,
   excludedSnapshotPath,
@@ -57,6 +58,10 @@ const MUTATION_POLL_MAX_MS = 250;
 /** How long a caller that lost a claim should wait before retrying. Bounded by
  * the poll ceiling, so retrying sooner than this is unlikely to succeed. */
 export const MUTATION_RETRY_AFTER_MS = MUTATION_POLL_MAX_MS;
+// Process liveness is not operation liveness: a failed tool can leave its host alive.
+const activeMutations = new Set<string>();
+const CONCURRENT_SIDE_EFFECT_WARNING =
+  "An untracked operation overlapped this write; file ownership could not be verified.";
 /** How long a writer may wait for a competing writer. 0 restores the previous
  * fail-fast behaviour; the ceiling keeps a wedged holder bounded. */
 export function mutationWaitBudgetMs(): number {
@@ -68,8 +73,7 @@ export function mutationWaitBudgetMs(): number {
 /** The live writer a claim lost to. Reported so the caller can decide whether to
  * wait, retry or surface the conflict instead of guessing. */
 export interface MutationConflict {
-  /** `path` when the overlap was proven per file, `root` when either side could
-   * not name its files and the whole workspace root had to be reserved. */
+  /** `root` is retained for compatibility with previously recorded conflicts. */
   kind: "path" | "root";
   holderSessionId: string;
   holderOwner: string;
@@ -158,22 +162,15 @@ function claimMutation(
     }[];
     for (const writer of writers) {
       const other = JSON.parse(writer.paths_json) as Target[];
-      const overlap =
-        !prepared.targets.length && !other.length
-          ? false
-          : !prepared.targets.length || !other.length
-            ? (JSON.parse(writer.roots_json) as string[]).some((a) =>
-                prepared.roots.some((b) => rootsOverlap(a, b)),
-              )
-            : other.some((t) =>
-                prepared.absoluteTargets.includes(path.join(t.root, t.path)),
-              );
+      // Unknown side effects are history barriers, not exclusive ownership of
+      // every file in a workspace. Only explicit native targets contend.
+      const overlap = other.some((t) =>
+        prepared.absoluteTargets.includes(path.join(t.root, t.path)),
+      );
       if (!overlap) continue;
       const createdAt = Date.parse(writer.created_at);
       return {
-        kind: (!prepared.targets.length || !other.length
-          ? "root"
-          : "path") as MutationConflict["kind"],
+        kind: "path" as const,
         holderSessionId: writer.session_id,
         holderOwner: writer.owner_session_id,
         holderSequence: writer.sequence,
@@ -195,6 +192,22 @@ function claimMutation(
       process.pid,
       prepared.warning,
     );
+    for (const writer of writers) {
+      const other = JSON.parse(writer.paths_json) as Target[];
+      if (Boolean(prepared.targets.length) === Boolean(other.length)) continue;
+      if (!(JSON.parse(writer.roots_json) as string[]).some((a) =>
+        prepared.roots.some((b) => rootsOverlap(a, b)),
+      )) continue;
+      // Persist this at admission, so even an untracked operation which ends
+      // before the native write finishes cannot disappear from attribution.
+      if (prepared.targets.length) {
+        db.prepare("UPDATE conversation_mutations SET uncertain=1,warning=? WHERE id=?")
+          .run(CONCURRENT_SIDE_EFFECT_WARNING, id);
+      } else {
+        db.prepare("UPDATE conversation_mutations SET uncertain=1,warning=? WHERE sequence=?")
+          .run(CONCURRENT_SIDE_EFFECT_WARNING, writer.sequence);
+      }
+    }
     return { id };
   })();
 }
@@ -257,17 +270,33 @@ export async function withCheckpointMutation<T>(
     // while no capture lease exists, so sleeping under it would stall GC.
     const outcome = await withSnapshotLease(async () => {
       const claim = claimMutation(sessionId, prepared);
-      if ("id" in claim)
-        return {
-          won: true as const,
-          value: await recordClaimedMutation(claim.id, action, prepared),
-        };
+      if ("id" in claim) {
+        activeMutations.add(claim.id);
+        try {
+          return {
+            won: true as const,
+            value: await recordClaimedMutation(claim.id, action, prepared),
+          };
+        } finally {
+          // The action has settled. Releasing our own claim is lifecycle
+          // bookkeeping and must survive cancellation/execution-epoch fencing.
+          // Never release merely because the caller's abort signal fired: the
+          // underlying native operation may still be writing.
+          try {
+            withoutExecutionContext(() => getRawSqlite().prepare(
+              "UPDATE conversation_mutations SET state='closed',uncertain=1,changes_json='[]',warning='Interrupted writer: file ownership could not be verified.' WHERE id=? AND state='open'",
+            ).run(claim.id));
+          } finally {
+            activeMutations.delete(claim.id);
+          }
+        }
+      }
       return { won: false as const, conflict: claim };
     });
     if (outcome.won) return outcome.value;
     lastConflict = outcome.conflict;
-    // A holder whose process is gone can never finish. Reaping it here keeps one
-    // dead writer from wedging the root until unrelated maintenance happens to run.
+    // Reap abandoned claims before waiting out the budget. A live process can
+    // also contain a settled operation whose cleanup failed.
     if (!recovered) {
       recovered = true;
       recoverOrphanedCheckpointWriters();
@@ -372,27 +401,34 @@ async function recordClaimedMutation<T>(
   } catch {
     uncertain = true;
   }
-  db.prepare(
-    "UPDATE conversation_mutations SET state='closed',changes_json=?,paths_json=?,uncertain=?,warning=COALESCE(?,warning) WHERE id=?",
-  ).run(
-    JSON.stringify(uncertain ? [] : recorded),
-    JSON.stringify(
+  db.transaction(() => {
+    // Admission may mark this writer uncertain from another process. Reading
+    // that flag and closing the claim must be atomic with competing admissions.
+    uncertain ||= Boolean((db.prepare(
+      "SELECT uncertain FROM conversation_mutations WHERE id=?",
+    ).get(id) as { uncertain: number } | undefined)?.uncertain);
+    db.prepare(
+      "UPDATE conversation_mutations SET state='closed',changes_json=?,paths_json=?,uncertain=?,warning=COALESCE(?,warning) WHERE id=?",
+    ).run(
+      JSON.stringify(uncertain ? [] : recorded),
+      JSON.stringify(
+        uncertain
+          ? targets
+          : external
+            ? targets.filter(
+                (t) =>
+                  beforeStamps.get(path.join(t.root, t.path)) !==
+                  afterStamps.get(path.join(t.root, t.path)),
+              )
+            : recorded.map((c) => ({ root: c.root, path: c.path })),
+      ),
+      uncertain ? 1 : 0,
       uncertain
-        ? targets
-        : external
-          ? targets.filter(
-              (t) =>
-                beforeStamps.get(path.join(t.root, t.path)) !==
-                afterStamps.get(path.join(t.root, t.path)),
-            )
-          : recorded.map((c) => ({ root: c.root, path: c.path })),
-    ),
-    uncertain ? 1 : 0,
-    uncertain
-      ? "A concurrent file change could not be attributed; it will be preserved."
-      : null,
-    id,
-  );
+        ? "A concurrent file change could not be attributed; it will be preserved."
+        : null,
+      id,
+    );
+  })();
   if (failed) throw error;
   return result as T;
 }
@@ -421,6 +457,10 @@ export function recoverOrphanedCheckpointWriters(): void {
     if (!rows.length) return;
     for (const row of rows) {
       after = row.sequence;
+      if (row.owner_pid === process.pid) {
+        if (!activeMutations.has(row.id)) close.run(row.id);
+        continue;
+      }
       if (!row.owner_pid || row.owner_pid < 1) continue;
       try {
         process.kill(row.owner_pid, 0);

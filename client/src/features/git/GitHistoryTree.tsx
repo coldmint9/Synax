@@ -39,6 +39,8 @@ type HistoryFilter = "all" | "merge" | "workspace";
 const LANE_WIDTH = 22;
 const ROW_HEIGHT = 60;
 const MIN_RAIL_WIDTH = 54;
+const MAX_VISIBLE_LANES = 6;
+const MAX_RAIL_WIDTH = 16 + MAX_VISIBLE_LANES * LANE_WIDTH + 22;
 
 type TopologyConnection = { from: number; to: number; merge: boolean };
 type TopologyRow = { nodeLane: number; connections: TopologyConnection[] };
@@ -79,8 +81,8 @@ function laneX(lane: number) {
 }
 
 function topologyPath(from: number, to: number, row: number) {
-  const fromX = laneX(from);
-  const toX = laneX(to);
+  const fromX = laneX(Math.min(from, MAX_VISIBLE_LANES));
+  const toX = laneX(Math.min(to, MAX_VISIBLE_LANES));
   const fromY = row * ROW_HEIGHT + ROW_HEIGHT / 2;
   const toY = (row + 1) * ROW_HEIGHT + ROW_HEIGHT / 2;
   if (fromX === toX) return `M ${fromX} ${fromY} L ${toX} ${toY}`;
@@ -334,13 +336,13 @@ export default function GitHistoryTree({
   }, [filteredCommits, query, filter]);
   const railWidth = topology.reduce(
     (width, row) =>
-      Math.max(
+      Math.min(MAX_RAIL_WIDTH, Math.max(
         width,
         laneX(row.nodeLane) + 22,
         ...row.connections.map(
           (edge) => laneX(Math.max(edge.from, edge.to)) + 22,
         ),
-      ),
+      )),
     MIN_RAIL_WIDTH,
   );
   const selected = commits.find((commit) => commit.id === selectedId) ?? (detail?.id === selectedId ? detail : undefined);
@@ -561,7 +563,9 @@ export default function GitHistoryTree({
                   preserveAspectRatio="none"
                 >
                   {topology.flatMap((row, index) =>
-                    row.connections.map((connection, connectionIndex) => (
+                    row.connections.filter((connection) =>
+                      connection.from < MAX_VISIBLE_LANES || connection.to < MAX_VISIBLE_LANES,
+                    ).map((connection, connectionIndex) => (
                       <path
                         key={`${index}-${connectionIndex}`}
                         d={topologyPath(connection.from, connection.to, index)}
@@ -575,7 +579,7 @@ export default function GitHistoryTree({
                       />
                     )),
                   )}
-                  {filteredCommits.map((commit, index) => (
+                  {filteredCommits.map((commit, index) => topology[index].nodeLane < MAX_VISIBLE_LANES && (
                     <circle
                       key={commit.id}
                       cx={laneX(topology[index]?.nodeLane ?? 0)}
@@ -590,7 +594,24 @@ export default function GitHistoryTree({
                       }
                     />
                   ))}
+                  {topology.map((row, index) => (
+                    row.nodeLane >= MAX_VISIBLE_LANES || row.connections.some(
+                      (connection) => connection.from >= MAX_VISIBLE_LANES || connection.to >= MAX_VISIBLE_LANES,
+                    )
+                  ) && (
+                    <text
+                      key={`overflow-${index}`}
+                      className="history-tree-omission"
+                      x={MAX_RAIL_WIDTH - 12}
+                      y={index * ROW_HEIGHT + ROW_HEIGHT / 2}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                    >…</text>
+                  ))}
                 </svg>
+              )}
+              {railWidth === MAX_RAIL_WIDTH && (
+                <span className="sr-only">分支图最多显示 6 条轨道，超出部分已省略，提交列表保留完整。</span>
               )}
               <table
                 aria-label="Git 提交历史"

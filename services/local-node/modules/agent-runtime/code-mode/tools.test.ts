@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { mcpClientManager } from "../../../infrastructure/mcp/mcp-client-manager.js";
 import { warmupMcpForSession } from "../../../infrastructure/mcp/mcp-session-tool-provider.js";
 import { permissionPolicy } from "../permission-policy.js";
+import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { revokeProjectToolGrant } from "../project-tool-grants.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -34,6 +35,7 @@ import {
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 import { extensionStore } from "../../extensions/extension-store.js";
 import { withSandboxApproval } from "../sandbox/sandbox-policy.js";
+import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import type { RegisteredTool } from "../contracts.js";
 
 let dir: string, id: string, registry: ToolRegistry;
@@ -381,4 +383,36 @@ it("closes nested audit records when a read ignores cancellation", async () => {
       .filter((r) => codeParentId(r))
       .every((r) => r.status !== "running"),
   ).toBe(true);
+});
+
+it("keeps a cancelled nested writer locked until its native operation settles", async () => {
+  applySessionPermissionUpdate(id, { permissionTier: "unrestricted" });
+  const controller = new AbortController();
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const native = registry.get("file.write");
+  registry.register({ ...native, execute: async (input) => {
+    entered();
+    await gate;
+    return native.execute(input);
+  } });
+  const writing = registry.execute(id, "file.write", { path: "new.txt", content: "written" }, {
+    codeModeParentId: "parent-write", abortSignal: controller.signal,
+  });
+  await started;
+  try {
+    controller.abort();
+    // Drain the cancellation/rejection chain without finishing the writer.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(getRawSqlite().prepare(
+      "SELECT id FROM conversation_mutations WHERE session_id=? AND state='open'",
+    ).all(id)).toHaveLength(1);
+  } finally {
+    release();
+    await writing;
+  }
+  expect(getRawSqlite().prepare(
+    "SELECT id FROM conversation_mutations WHERE session_id=? AND state='open'",
+  ).all(id)).toEqual([]);
 });

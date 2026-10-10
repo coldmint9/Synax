@@ -2,6 +2,8 @@ import { observationLifetime } from "../../infrastructure/runtime/observation-li
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { upgradeHistory } from "../../modules/agent-runtime/checkpoints/version-runtime/migrate.js";
 import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
+import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
+import type { AgentRuntimeMessage } from "../../modules/agent-runtime/contracts.js";
 import {
   boundaryOnlySession,
   versionRepository,
@@ -865,6 +867,31 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
         409,
       );
     return c.json(readHistoryWindow(id, c.req.query("cursor")));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+// History windows intentionally omit large JSON fields. Fetch the saved preview
+// only when its reply is mounted, without expanding every history page.
+agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/visualization", (c) => {
+  try {
+    const sessionId = c.req.param("sessionId");
+    agentRuntimeStore.getSession(sessionId);
+    const messageId = c.req.param("messageId");
+    const message = versionedSession(sessionId)
+      ? versionRepository().get(sessionId, "messages", messageId, 8 * 1024 * 1024) as unknown as AgentRuntimeMessage | undefined
+      : agentRuntimeStore.getMessage(sessionId, messageId);
+    if (!message) return c.json({ error: "Message not found." }, 404);
+    if (message.role !== "assistant" || message.metadata.partial)
+      return c.json({ message: null });
+    hydrateCompletedVisualizations([message]);
+    if (message.metadata.source !== "inline_visualization" &&
+        !(message.metadata.purpose === "work_result" && Array.isArray(message.metadata.visualizations)))
+      return c.json({ message: null });
+    if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
+      return c.json({ error: "Preview exceeds the response size limit." }, 413);
+    return c.json({ message });
   } catch (error) {
     return runtimeError(c, error);
   }

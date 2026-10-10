@@ -29,6 +29,7 @@ describe("InlineVisualization", () => {
     render(<InlineVisualization visualization={visualization} />);
     const frame = screen.getByTitle("交互预览") as HTMLIFrameElement;
     expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+    expect(frame).not.toHaveAttribute("allow");
     expect(frame.loading).toBe("eager");
     expect(frame).toHaveAttribute("csp", VISUALIZATION_CSP);
     expect(frame.srcdoc).toContain(visualization.html);
