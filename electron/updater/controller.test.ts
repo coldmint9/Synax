@@ -78,6 +78,22 @@ it("records failure if the old application returns, and never confirms another i
   const old = controller(); await old.initialize(); await old.markHealthy();
   expect(old.state.history[0].outcome).toBe("failed");
 });
+it("restores the cached installer after an installation failure so retry can install again", async () => {
+  const value = await ready();
+  updater.quitAndInstall.mockRejectedValueOnce(new Error("native failure"));
+
+  await value.install();
+  expect(value.state.phase).toBe("error");
+  expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+
+  await value.check();
+  expect(value.state.phase).toBe("ready");
+  expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+  expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+
+  await value.install();
+  expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
+});
 it("retries failed checks and downloads without duplicating listeners", async () => {
   const value = controller(); await value.initialize();
   updater.checkForUpdates.mockRejectedValueOnce(new Error("offline"));

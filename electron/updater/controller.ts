@@ -154,6 +154,20 @@ export class UpdaterController {
   check(): Promise<void> {
     if (["downloading", "verifying", "ready", "installing"].includes(this.state.phase)) return this.active ?? Promise.resolve();
     return this.operation(async () => {
+      // Keep a verified installer available after a native installation failure.
+      // Retrying should be able to use it without depending on electron-updater's
+      // internal cache state or downloading the same package again.
+      if (this.state.phase === "error" && this.info && this.file) {
+        this.update({ phase: "verifying", progress: 1, message: "正在重新校验安装包…" });
+        try {
+          await this.dependencies.eligible();
+          await this.verify();
+          this.update({ phase: "ready", message: "安装包已下载并校验，可以重启安装" });
+          return;
+        } catch {
+          this.file = null;
+        }
+      }
       this.update({ phase: "checking", progress: 0, message: "正在检查更新…", transfer: undefined });
       await this.dependencies.eligible();
       const updater = await this.engine();
