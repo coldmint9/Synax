@@ -941,9 +941,9 @@ export function SessionComposer({
       }
     >
       {isCentered ? (
-        <NewSessionScene key={viewKey} paused={Boolean(content) || overlayOpen || commands.overlayOpen || submitting || changingMode}>
+        <NewSessionScene key={viewKey}>
           <NewSessionWelcome finish={Boolean(content)} />
-          <div className="w-full min-w-0" data-welcome-layer="composer">
+          <div className="w-full min-w-0">
             <div data-welcome-enter="">{composerShell}</div>
           </div>
         </NewSessionScene>

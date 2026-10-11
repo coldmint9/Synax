@@ -55,7 +55,7 @@ it("uses framework checks and transfers, and waits for verified bytes before rea
   await value.download();
   expect(value.state).toMatchObject({ phase: "ready", progress: 1, transfer: { mode: "full" } });
   await value.install();
-  expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
   expect(value.state.phase).toBe("installing");
   expect(value.state.history).toEqual([]);
   expect(JSON.parse(await fs.readFile(pending(), "utf8"))).toMatchObject({ version: "0.2.0", fromVersion: "0.1.2" });
@@ -93,6 +93,15 @@ it("restores the cached installer after an installation failure so retry can ins
 
   await value.install();
   expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
+});
+it("restores a verified package after reopening the controller", async () => {
+  await ready();
+  const reopened = controller();
+  await reopened.initialize();
+  expect(reopened.state.phase).toBe("ready");
+  await reopened.install();
+  expect(updater.downloadUpdate).toHaveBeenCalledTimes(2);
+  expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
 });
 it("retries failed checks and downloads without duplicating listeners", async () => {
   const value = controller(); await value.initialize();
@@ -145,7 +154,7 @@ it("records an asynchronous quitAndInstall rejection as failed without leaving a
   const value = await ready();
   updater.quitAndInstall.mockRejectedValue(new Error("native failure"));
   await expect(value.install()).resolves.toBeUndefined();
-  expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
   expect(value.state.history).toHaveLength(1);
   expect(value.state.history[0]).toMatchObject({ version: "0.2.0", outcome: "failed" });
   expect(value.state.phase).toBe("error");

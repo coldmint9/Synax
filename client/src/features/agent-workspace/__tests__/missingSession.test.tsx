@@ -11,6 +11,7 @@ import { loadSessionLastVisit, saveSessionLastVisit } from "../sessionLastVisit"
 import { useSessionRouteSync } from "../useSessionRouteSync";
 import { useSessionDetailPolling, ACTIVE_SESSION_POLL_MS } from "../useSessionDetailPolling";
 import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
+import { useNotificationStore } from "../../../shared/state/notificationStore";
 
 vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
@@ -23,6 +24,7 @@ const missing = (id = session.id) => new AppError(`Agent runtime resource not fo
 });
 
 beforeEach(() => {
+  useNotificationStore.getState().clearAll();
   resetRuntimeResourceRegistryForTests();
   localStorage.clear();
   store.setState({ ...store.getInitialState(), projectId: "p", sessions: [session], selectedSessionId: session.id, panelOpen: true });
@@ -50,6 +52,46 @@ afterEach(() => {
 });
 
 describe("missing session cleanup", () => {
+  it("offers undo for eight seconds and restores the archived tree and its resource state", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "deleteSession").mockResolvedValue({
+      ok: true, archiveBatchId: "batch", archivedAt: new Date().toISOString(),
+      archivedSessionIds: [session.id, "child"], parentId: null,
+    });
+    vi.spyOn(api, "restoreSessionArchive").mockResolvedValue({ ok: true, restoredSessionIds: [session.id, "child"] });
+    vi.mocked(api.listSessions).mockResolvedValue({ items: [session], totalCount: 1 });
+    const view = vi.fn();
+    await store.getState().deleteSession(session.id, view);
+    expect(store.getState().sessions).toEqual([]);
+    const notice = useNotificationStore.getState().notifications[0];
+    expect(notice).toMatchObject({ layout: "archive", duration: 8000, visible: true });
+    notice.actions![0].onClick();
+    expect(view).toHaveBeenCalledOnce();
+    notice.actions![1].onClick();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.restoreSessionArchive).toHaveBeenCalledWith("batch");
+    expect(isRuntimeResourceRemoved(session.id)).toBe(false);
+    expect(isRuntimeResourceRemoved("child")).toBe(false);
+    expect(store.getState().sessions).toEqual([session]);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(useNotificationStore.getState().notifications[0].visible).toBe(false);
+  });
+
+  it("does not allow undo after the short recovery window expires", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(api, "deleteSession").mockResolvedValue({
+      ok: true, archiveBatchId: "expired-batch", archivedAt: new Date().toISOString(),
+      archivedSessionIds: [session.id], parentId: null,
+    });
+    const restore = vi.spyOn(api, "restoreSessionArchive");
+    await store.getState().deleteSession(session.id);
+    const notice = useNotificationStore.getState().notifications[0];
+    await vi.advanceTimersByTimeAsync(8000);
+    notice.actions![0].onClick();
+    expect(restore).not.toHaveBeenCalled();
+    expect(isRuntimeResourceRemoved(session.id)).toBe(true);
+  });
+
   it("clears only the missing session's state and stops opening or refreshing it", async () => {
     saveSessionLastVisit("p", { kind: "session", sessionId: session.id });
     useSessionWorkspaceStore.getState().openTab(session.id, { kind: "file", title: "old", path: "old.ts" });

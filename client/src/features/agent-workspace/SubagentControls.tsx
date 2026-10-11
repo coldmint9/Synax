@@ -3,7 +3,7 @@ import { Archive, Square } from "lucide-react";
 import type { AgentSessionStatus } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
-import { SessionDeleteDialog } from "./SessionDeleteDialog";
+import { useNavigate } from "react-router-dom";
 import { refreshWorkspace } from "./workspaceRefresh";
 
 interface Props {
@@ -19,13 +19,12 @@ export function SubagentControls({
   sessionId,
   parentSessionId,
   status,
-  title,
   onStopped,
   onDestroyed,
 }: Props) {
   const { t } = useLocale();
+  const navigate = useNavigate();
   const [pending, setPending] = useState<"stop" | "destroy" | null>(null);
-  const [confirmDestroy, setConfirmDestroy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
   const [destroyed, setDestroyed] = useState(false);
@@ -46,9 +45,8 @@ export function SubagentControls({
         setStopped(true);
         onStopped?.();
       } else {
-        await store.deleteSession(sessionId);
+        await store.deleteSession(sessionId, () => navigate("/settings?section=archive"));
         setDestroyed(true);
-        setConfirmDestroy(false);
         onDestroyed?.();
       }
       if (parentSessionId) {
@@ -83,7 +81,7 @@ export function SubagentControls({
           disabled={pending !== null || status === "stopping"}
           aria-label={t("subSessionDestroy")}
           title={t("subSessionDestroy")}
-          onClick={() => setConfirmDestroy(true)}
+          onClick={() => void execute("destroy")}
         >
           <Archive size={11} aria-hidden="true" />
         </button>
@@ -93,15 +91,6 @@ export function SubagentControls({
           {error}
         </span>
       )}
-      <SessionDeleteDialog
-        isOpen={confirmDestroy}
-        sessionTitle={title}
-        isDeleting={pending === "destroy"}
-        onConfirm={() => void execute("destroy")}
-        onClose={() => {
-          if (!pending) setConfirmDestroy(false);
-        }}
-      />
     </div>
   );
 }

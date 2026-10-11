@@ -12,7 +12,7 @@ import type { UpdaterRequest, UpdaterState } from "../updater/contract.js";
 import { updateFailureMessage } from "../updater/update-errors.js";
 
 /**
- * Adapts electron-updater to the existing renderer and confirmation dialogs.
+ * Adapts electron-updater to the renderer's silent background update flow.
  * The framework owns download caching, native installation and quit handoff.
  */
 export class DesktopUpdates {
@@ -22,8 +22,6 @@ export class DesktopUpdates {
   private opening: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private startTimer: NodeJS.Timeout | null = null;
-  private promptedVersion: string | null = null;
-  private confirming: Promise<void> | null = null;
   private lastPhase: UpdaterState["phase"] | null = null;
   private lastPublished = 0;
 
@@ -170,50 +168,17 @@ export class DesktopUpdates {
 
     if (this.controller.state.phase === "available")
       await this.controller.download();
-    if (this.controller.state.phase !== "ready") {
-      if (manual && this.controller.state.phase === "error")
-        throw new Error(this.controller.state.message);
-      return;
-    }
-
-    await this.confirmInstallation(manual);
+    if (
+      this.controller.state.phase !== "ready" &&
+      manual &&
+      this.controller.state.phase === "error"
+    )
+      throw new Error(this.controller.state.message);
   }
 
   async install(): Promise<void> {
     await this.initialized;
-    await this.confirmInstallation(true);
-  }
-
-  private confirmInstallation(force: boolean): Promise<void> {
-    if (this.confirming) return this.confirming;
-    const version = this.controller.state.availableVersion;
-    if (
-      this.controller.state.phase !== "ready" ||
-      !version ||
-      (!force && version === this.promptedVersion)
-    )
-      return Promise.resolve();
-    this.confirming = this.promptInstallation(version).finally(() => {
-      this.confirming = null;
-    });
-    return this.confirming;
-  }
-
-  private async promptInstallation(version: string): Promise<void> {
-    this.promptedVersion = version;
-    const answer = await this.showDialog({
-      type: "question",
-      title: "发现 Synax 更新",
-      message: `Synax ${version} 已准备好安装。现在重启更新吗？`,
-      detail:
-        "安装包已完整下载、校验并缓存。确认后 Synax 会退出，关闭正在运行的任务和终端，并在完成后自动重新启动。选择稍后会保留安装包。",
-      buttons: ["稍后", "安装并重启"],
-      defaultId: 0,
-      cancelId: 0,
-    });
-    if (answer.response === 1) {
-      await this.controller.install();
-      return;
-    }
+    if (this.controller.state.phase !== "ready") return;
+    await this.controller.install();
   }
 }

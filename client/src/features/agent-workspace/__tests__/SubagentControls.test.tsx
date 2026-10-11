@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { SubagentControls } from "../SubagentControls";
 
@@ -16,17 +17,6 @@ const actions = vi.hoisted(() => ({
 }));
 vi.mock("../state/agentSessionStore", () => ({
   useAgentSessionStore: { getState: () => actions },
-}));
-vi.mock("../SessionDeleteDialog", () => ({
-  SessionDeleteDialog: ({ isOpen, onConfirm, onClose, isDeleting }: any) =>
-    isOpen ? (
-      <div role="dialog">
-        <button onClick={onConfirm} disabled={isDeleting}>
-          Confirm archive
-        </button>
-        <button onClick={onClose}>Cancel</button>
-      </div>
-    ) : null,
 }));
 const props = {
   sessionId: "child",
@@ -43,7 +33,7 @@ describe("SubagentControls", () => {
     }));
   });
   it("renders an icon-only archive button with an accessible name and tooltip", () => {
-    render(<SubagentControls {...props} />);
+    render(<MemoryRouter><SubagentControls {...props} /></MemoryRouter>);
     const button = screen.getByRole("button", { name: "Archive subagent" });
     expect(button.textContent).toBe("");
     expect(button.getAttribute("title")).toBe("Archive subagent");
@@ -56,7 +46,7 @@ describe("SubagentControls", () => {
         finish = resolve;
       }),
     );
-    render(<SubagentControls {...props} />);
+    render(<MemoryRouter><SubagentControls {...props} /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Stop subagent" }));
     expect(actions.cancelSessionRun).toHaveBeenCalledWith("child");
     expect(
@@ -69,31 +59,20 @@ describe("SubagentControls", () => {
     expect(screen.queryByRole("button", { name: "Stop subagent" })).toBeNull();
     expect(actions.fetchChildSessions).toHaveBeenCalledWith("parent");
   });
-  it("requires the archive dialog before deleting, and cancellation keeps the subagent", async () => {
-    render(<SubagentControls {...props} />);
+  it("archives immediately without a confirmation dialog", async () => {
+    actions.deleteSession.mockResolvedValue(["child"]);
+    render(<MemoryRouter><SubagentControls {...props} /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Archive subagent" }));
-    expect(actions.deleteSession).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Archive subagent" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm archive" }));
-    await waitFor(() =>
-      expect(actions.deleteSession).toHaveBeenCalledWith("child"),
-    );
-    // Calling the API is synchronous; removing the controls happens only after
-    // the awaited deletion finishes and React commits the resulting state.
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Archive subagent" }),
-      ).toBeNull(),
-    );
+    expect(actions.deleteSession).toHaveBeenCalledWith("child", expect.any(Function));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Archive subagent" })).toBeNull());
     expect(actions.cancelSessionRun).not.toHaveBeenCalled();
   });
   it("keeps stop available and reports an unconfirmed shutdown error", async () => {
     actions.cancelSessionRun.mockRejectedValue(
       new Error("Shutdown unconfirmed"),
     );
-    render(<SubagentControls {...props} />);
+    render(<MemoryRouter><SubagentControls {...props} /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Stop subagent" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Shutdown unconfirmed",
@@ -104,14 +83,14 @@ describe("SubagentControls", () => {
   it.each(["queued", "waiting_input", "waiting_permission"] as const)(
     "allows stopping a %s child",
     (status) => {
-      render(<SubagentControls {...props} status={status} />);
+      render(<MemoryRouter><SubagentControls {...props} status={status} /></MemoryRouter>);
       expect(
         screen.getByRole("button", { name: "Stop subagent" }),
       ).toBeEnabled();
     },
   );
   it("only offers archive for a completed child", () => {
-    render(<SubagentControls {...props} status="completed" />);
+    render(<MemoryRouter><SubagentControls {...props} status="completed" /></MemoryRouter>);
     expect(screen.queryByRole("button", { name: "Stop subagent" })).toBeNull();
     expect(
       screen.getByRole("button", { name: "Archive subagent" }),

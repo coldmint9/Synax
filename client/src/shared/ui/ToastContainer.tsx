@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { X, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
+import { X, Archive, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 import { useNotificationStore, type Notification, type NotificationType } from '../state/notificationStore'
 
 const ICONS: Record<NotificationType, typeof Info> = {
@@ -30,7 +30,7 @@ export function ToastContainer() {
 
   return (
     <div
-      className="fixed left-1/2 top-14 z-[100] w-[280px] max-w-[calc(100vw-24px)] -translate-x-1/2"
+      className={`fixed left-1/2 top-14 z-[100] max-w-[calc(100vw-24px)] -translate-x-1/2 ${visibleToasts.some(n => n.layout === 'archive') ? 'w-max min-w-[280px]' : 'w-[280px]'}`}
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
@@ -56,7 +56,8 @@ function ToastItem({ notification, index, total, expanded }: {
   expanded: boolean
 }) {
   const dismiss = useNotificationStore(s => s.dismiss)
-  const Icon = ICONS[notification.type]
+  const archive = notification.layout === 'archive'
+  const Icon = archive ? Archive : ICONS[notification.type]
 
   const VARIANT_STYLES: Record<string, string> = {
     default: 'text-primary hover:text-primary/80',
@@ -66,7 +67,7 @@ function ToastItem({ notification, index, total, expanded }: {
 
   const hidden = !expanded && index >= MAX_VISIBLE_STACK
   const scale = expanded ? 1 : 1 - index * 0.05
-  const translateY = expanded ? index * 44 : index * 7
+  const translateY = expanded ? index * (archive ? 76 : 44) : index * 7
   const opacity = hidden ? 0 : 1
 
   return (
@@ -83,8 +84,27 @@ function ToastItem({ notification, index, total, expanded }: {
       }}
       className="motion-safe:transition-[transform,opacity] motion-safe:duration-300 motion-safe:ease-out"
     >
-      <div className="flex items-start gap-2 rounded-xl border border-black/10 bg-white/90 px-3 py-2 text-zinc-900 shadow-overlay backdrop-blur-xl dark:border-white/15 dark:bg-black/80 dark:text-zinc-50 motion-safe:animate-toast-enter">
-        <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
+      <div role={archive ? 'status' : undefined} className={archive
+        ? 'flex items-center gap-3 rounded-2xl border border-black/10 bg-white px-5 py-3 text-zinc-900 shadow-overlay dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-50 motion-safe:animate-toast-enter'
+        : 'flex items-start gap-2 rounded-xl border border-black/10 bg-white/90 px-3 py-2 text-zinc-900 shadow-overlay backdrop-blur-xl dark:border-white/15 dark:bg-black/80 dark:text-zinc-50 motion-safe:animate-toast-enter'}>
+        <Icon size={archive ? 20 : 14} className={archive ? 'shrink-0' : `mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
+        {archive ? (
+          <>
+            <p className="min-w-0 flex-1 text-base font-medium leading-6">{notification.message}</p>
+            {notification.actions?.map((action, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => { action.onClick(); dismiss(notification.id) }}
+                className={action.variant === 'primary'
+                  ? 'shrink-0 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-white'
+                  : 'shrink-0 rounded-xl bg-zinc-100 px-4 py-2 text-sm font-medium transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'}
+              >
+                {action.label}
+              </button>
+            ))}
+          </>
+        ) : (
         <div className="flex-1 min-w-0">
           <p className="text-xs leading-5 text-inherit">
             {notification.message}
@@ -113,13 +133,14 @@ function ToastItem({ notification, index, total, expanded }: {
             </button>
           )}
         </div>
+        )}
         <button
           type="button"
           onClick={() => dismiss(notification.id)}
           aria-label="关闭通知"
           className="shrink-0 rounded-md p-0.5 text-muted-foreground/70 hover:text-foreground transition-colors"
         >
-          <X size={12} />
+          <X size={archive ? 18 : 12} />
         </button>
       </div>
     </div>

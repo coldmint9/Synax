@@ -39,6 +39,9 @@ bun.lockb
 
 # OS
 .DS_Store
+/.signing/
+*.pfx
+*.p12
 Thumbs.db
 
 # IDE

@@ -46,7 +46,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       setState(next);
       setError(null);
-      if (next && !["idle", "current", "complete"].includes(next.phase))
+      if (next && ["ready", "error"].includes(next.phase))
         setVisible(true);
     };
     // Subscribe first: a slow initial snapshot must not overwrite newer progress.

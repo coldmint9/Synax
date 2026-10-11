@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, Platform, Arch, type Configuration } from "electron-builder";
+import { ensureWindowsSigning, installerIncludePath, prepareWindowsSigning } from "./prepare-windows-signing.js";
 
 export function nsisConfiguration(version: string, arch: string): Configuration {
   if (!/^\d+\.\d+\.\d+$/.test(version) || !["x64", "arm64"].includes(arch))
@@ -12,12 +14,13 @@ export function nsisConfiguration(version: string, arch: string): Configuration 
     directories: { output: "out/make/nsis" },
     artifactName: `Synax-${version}-win32-${arch}-NSIS.exe`,
     publish: null,
+    forceCodeSigning: Boolean(process.env.CSC_LINK) || process.env.SYNAX_REQUIRE_SIGNED_UPDATES === "1",
     win: {
       target: ["nsis"],
       icon: "electron/resources/synax-icon.ico",
-      ...(process.env.SYNAX_WINDOWS_PUBLISHER
-        ? { publisherName: process.env.SYNAX_WINDOWS_PUBLISHER }
-        : {}),
+      verifyUpdateCodeSignature: true,
+      publisherName: process.env.SYNAX_WINDOWS_PUBLISHER || undefined,
+      signtoolOptions: { signingHashAlgorithms: ["sha256"] },
     },
     nsis: {
       oneClick: false,
@@ -28,12 +31,15 @@ export function nsisConfiguration(version: string, arch: string): Configuration 
       runAfterFinish: true,
       // Keep Electron's existing Synax userData/data root across the transition.
       shortcutName: "Synax",
+      ...(existsSync(installerIncludePath) ? { include: installerIncludePath } : {}),
     },
   };
 }
 
 export async function buildNsisInstaller(): Promise<void> {
   if (process.platform !== "win32") throw new Error("Build NSIS on the Windows native runner.");
+  prepareWindowsSigning();
+  ensureWindowsSigning();
   if (process.env.SYNAX_REQUIRE_SIGNED_UPDATES === "1" &&
     (!process.env.SYNAX_WINDOWS_PUBLISHER || !process.env.CSC_LINK || !process.env.CSC_KEY_PASSWORD))
     throw new Error("Stable Windows updates require the configured publisher and code signing certificate.");

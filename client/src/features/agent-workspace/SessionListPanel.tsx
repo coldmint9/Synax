@@ -1,13 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSessionList } from "./useSessionList";
 import { SessionListHeader } from "./SessionListHeader";
 import { SessionTimeGroups } from "./SessionTimeGroups";
-import { SessionDeleteDialog } from "./SessionDeleteDialog";
+import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import type { SessionListView } from "./sessionBuckets";
-import { getSessionDisplayTitle } from "./useSessionDisplayTitle";
 import { sessionsPath, workflowSessionsPath } from "./sessionRoutes";
 import {
   clearSessionLastVisit,
@@ -30,22 +29,34 @@ export function SessionListPanel({
   const [searchParams] = useSearchParams();
   const list = useSessionList(locale, listView, projectId);
   const { refresh } = list;
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const pendingArchives = useRef(new Set<string>());
   const [archiving, setArchiving] = useState(false);
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return;
     void refresh({ joinPending: true });
   }, [projectId, listView, list.isProjectReady, refresh]);
 
-  const deleteSession = deleteId
-    ? list.groups
-        .flatMap((g) => g.sessions)
-        .find((n) => n.session.id === deleteId)?.session
-    : undefined;
-  const deleteTitle = deleteSession
-    ? getSessionDisplayTitle(deleteSession, "", locale)
-    : "";
+  const handleArchive = async (id: string) => {
+    if (pendingArchives.current.has(id)) return;
+    pendingArchives.current.add(id);
+    try {
+      const archivedIds = await list.deleteSession(id, () => navigate("/settings?section=archive"));
+      const last = loadSessionLastVisit(projectId);
+      if (last?.kind === "session" && archivedIds.includes(last.sessionId)) {
+        clearSessionLastVisit(projectId);
+      }
+      const selected = searchParams.get("session");
+      if (selected && archivedIds.includes(selected)) {
+        navigate(listView === "workflow" ? workflowSessionsPath(projectId) : sessionsPath(projectId));
+      }
+      void list.refresh();
+    } catch (err) {
+      useNotificationStore.getState().push({ type: "error", message: t("sessionDeleteFailed") });
+      console.error("[ArchiveSession]", err);
+    } finally {
+      pendingArchives.current.delete(id);
+    }
+  };
 
   const handleNewSession = () => {
     list.openNewDraft();
@@ -106,43 +117,11 @@ export function SessionListPanel({
             onToggleGroup={list.toggleGroup}
             onToggleExpand={list.toggleExpand}
             onLoadMore={list.loadMore}
-            onDelete={setDeleteId}
+            onDelete={(id) => void handleArchive(id)}
           />
         </div>
       </div>
-      <SessionDeleteDialog
-        isOpen={deleteId !== null}
-        sessionTitle={deleteTitle}
-        isDeleting={deleting}
-        onConfirm={async () => {
-          const id = deleteId;
-          if (!id) return;
-          setDeleting(true);
-          try {
-            await list.deleteSession(id);
-            const last = loadSessionLastVisit(projectId);
-            if (last?.kind === "session" && last.sessionId === id) {
-              clearSessionLastVisit(projectId);
-            }
-            if (searchParams.get("session") === id) {
-              navigate(
-                listView === "workflow"
-                  ? workflowSessionsPath(projectId)
-                  : sessionsPath(projectId),
-              );
-            }
-            setDeleteId(null);
-            void list.refresh();
-          } catch (err) {
-            console.error("[DeleteSession]", err);
-          } finally {
-            setDeleting(false);
-          }
-        }}
-        onClose={() => {
-          if (!deleting) setDeleteId(null);
-        }}
-      />
+
 
     </div>
   );

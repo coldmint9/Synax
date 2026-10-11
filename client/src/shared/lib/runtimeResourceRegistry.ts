@@ -51,6 +51,13 @@ export function isRuntimeResourceRemoved(id: string): boolean {
   return removedResources.has(id)
 }
 
+export function markRuntimeResourcesRestored(ids: Iterable<string>): void {
+  for (const id of ids) {
+    pendingRemovals.delete(id)
+    removedResources.delete(id)
+  }
+}
+
 /** True when the id must not be reported as an unexpected failure. */
 export function isRuntimeResourceGone(id: string): boolean {
   return removedResources.has(id) || pendingRemovals.has(id)

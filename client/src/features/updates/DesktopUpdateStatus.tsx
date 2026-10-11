@@ -181,7 +181,29 @@ export function DesktopUpdatePanel() {
     ["idle", "current", "complete"].includes(update.state.phase)
   )
     return null;
-  const { minimized, setMinimized, state, error, dismiss } = update;
+  const {
+    minimized,
+    setMinimized,
+    state,
+    error,
+    dismiss,
+    requesting,
+    install,
+  } = update;
+  if (state.phase === "ready")
+    return createPortal(
+      <button
+        type="button"
+        title={zh ? "安装更新并重启 Synax" : "Install update and restart Synax"}
+        aria-label={zh ? "安装更新并重启 Synax" : "Install update and restart Synax"}
+        disabled={requesting}
+        className="fixed bottom-4 right-4 z-[90] flex h-11 w-11 items-center justify-center rounded-full bg-info text-info-foreground shadow-lg transition-transform hover:scale-105 hover:bg-info/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+        onClick={() => void install()}
+      >
+        <Download size={19} aria-hidden="true" />
+      </button>,
+      document.body,
+    );
   const canDismiss = state.phase === "error" || Boolean(error);
   const closeLabel = zh ? "关闭更新窗口" : "Close update panel";
   const label = minimized

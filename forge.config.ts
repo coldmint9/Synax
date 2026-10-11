@@ -5,6 +5,7 @@ import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
 import { validateCuaArtifact } from "./scripts/validate-cua-artifact.js";
+import { ensureWindowsSigning } from "./scripts/prepare-windows-signing.js";
 import {
   desktopProduct,
   desktopIcon,
@@ -12,6 +13,9 @@ import {
   normalizeDesktopArtifacts,
   windowsMetadata,
 } from "./scripts/desktop-branding.js";
+
+const windowsSigning = ensureWindowsSigning();
+const windowsSign = windowsSigning ? { certificateFile: windowsSigning.pfxPath } : undefined;
 
 const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
@@ -70,6 +74,7 @@ const config: ForgeConfig = {
     appCopyright: "Copyright (c) 2026 Synax contributors",
     appCategoryType: "public.app-category.developer-tools",
     win32metadata: windowsMetadata(),
+    windowsSign,
     appBundleId: "com.Synax.desktop",
     osxSign: process.env.SYNAX_MAC_SIGN_IDENTITY ? {
       identity: process.env.SYNAX_MAC_SIGN_IDENTITY,
@@ -151,6 +156,7 @@ const config: ForgeConfig = {
           "https://raw.githubusercontent.com/coldmint9/Synax/main/electron/resources/synax-icon.ico",
         authors: desktopProduct.author,
         description: desktopProduct.description,
+        windowsSign,
       }),
     },
   ],

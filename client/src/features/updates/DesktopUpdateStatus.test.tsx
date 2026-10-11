@@ -114,6 +114,8 @@ it("shows live progress in both settings and a minimizable panel, without an ins
   renderUpdates();
   await screen.findByText("尚未检查更新");
   update({ phase: "downloading", progress: 0.25 });
+  expect(screen.queryByRole("region", { name: "软件更新进度" })).not.toBeInTheDocument();
+  act(() => show());
   const settings = within(screen.getByTestId("settings"));
   const panel = within(screen.getByRole("region", { name: "软件更新进度" }));
   expect(settings.getByRole("progressbar")).toHaveAttribute(
@@ -155,6 +157,19 @@ it("shows live progress in both settings and a minimizable panel, without an ins
   update({ phase: "ready", progress: 1 });
   expect(settings.getByText("安装包已缓存并校验")).toBeVisible();
   await userEvent.click(settings.getByRole("button", { name: "安装并重启" }));
+  expect(api.installDesktopUpdate).toHaveBeenCalledOnce();
+});
+
+it("shows a blue install icon when the package is ready and installs on click", async () => {
+  renderUpdates();
+  await screen.findByText("尚未检查更新");
+  update({ phase: "ready", progress: 1 });
+
+  const installIcon = screen.getByRole("button", {
+    name: "安装更新并重启 Synax",
+  });
+  expect(installIcon).toHaveClass("bg-info");
+  await userEvent.click(installIcon);
   expect(api.installDesktopUpdate).toHaveBeenCalledOnce();
 });
 

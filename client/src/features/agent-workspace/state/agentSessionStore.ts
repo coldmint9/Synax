@@ -50,6 +50,7 @@ import {
   isRuntimeResourceRemoved,
   markRuntimeResourcePendingRemoval,
   markRuntimeResourcesRemoved,
+  markRuntimeResourcesRestored,
 } from "../../../shared/lib/runtimeResourceRegistry";
 import {
   SYNAX_PROFILE_ID,
@@ -816,7 +817,7 @@ export interface AgentSessionStoreState {
     projectId: string,
     body: SessionInputBody,
   ) => Promise<AgentSession>;
-  deleteSession: (sessionId: string) => Promise<string[]>;
+  deleteSession: (sessionId: string, onViewArchive?: () => void) => Promise<string[]>;
   discardRemovedSessions: (
     sessionIds: string[],
     projectId: string | null,
@@ -1341,15 +1342,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       return payload.session;
     },
 
-    deleteSession: async (sessionId) => {
+    deleteSession: async (sessionId, onViewArchive) => {
       const projectId = get().projectId;
       // Suppress this session's in-flight detail requests before the delete
       // lands. They cannot be cancelled once dispatched, so without this the
       // responses arrive as a burst of "resource not found" notifications.
       markRuntimeResourcePendingRemoval(sessionId);
       let deletedSessionIds: string[];
+      let archiveBatchId: string | undefined;
+      let parentId: string | null = null;
       try {
-        ({ archivedSessionIds: deletedSessionIds } =
+        ({ archivedSessionIds: deletedSessionIds, archiveBatchId, parentId } =
           await agentRuntimeApi.deleteSession(sessionId));
       } catch (err) {
         clearRuntimeResourcePendingRemoval(sessionId);
@@ -1357,6 +1360,44 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         deletedSessionIds = [sessionId];
       }
       get().discardRemovedSessions(deletedSessionIds, projectId);
+      if (archiveBatchId) {
+        const batchId = archiveBatchId;
+        const zh = useShellStore.getState().preferences.locale === "zh";
+        const expiresAt = Date.now() + 8000;
+        let restoring = false;
+        useNotificationStore.getState().push({
+          type: "success",
+          layout: "archive",
+          message: zh ? "已归档会话" : "Archived chat",
+          duration: 8000,
+          actions: [
+            ...(onViewArchive ? [{ label: zh ? "查看" : "View", onClick: onViewArchive }] : []),
+            {
+              label: zh ? "撤销" : "Undo",
+              variant: "primary",
+              onClick: () => {
+                if (restoring || Date.now() >= expiresAt) return;
+                restoring = true;
+                void (async () => {
+                  try {
+                    const result = await agentRuntimeApi.restoreSessionArchive(batchId);
+                    markRuntimeResourcesRestored(result.restoredSessionIds);
+                    await get().refreshSessions();
+                    if (parentId && get().projectId === projectId) {
+                      await get().fetchChildSessions(parentId);
+                    }
+                  } catch (err) {
+                    useNotificationStore.getState().push({
+                      type: "error",
+                      message: zh ? "恢复会话失败，请前往会话归档重试" : "Failed to restore session. Please retry in Session Archive.",
+                    });
+                  }
+                })();
+              },
+            },
+          ],
+        });
+      }
       return deletedSessionIds;
     },
 

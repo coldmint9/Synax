@@ -87,27 +87,35 @@ jobs:
         shell: bash
         run: bash scripts/prepare-macos-signing.sh
 
+      - name: Prepare self-signed Windows code signing certificate
+        if: runner.os == 'Windows'
+        env:
+          SYNAX_WINDOWS_PUBLISHER: ${{ vars.SYNAX_WINDOWS_PUBLISHER }}
+          CSC_LINK: ${{ secrets.SYNAX_WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.SYNAX_WINDOWS_CSC_KEY_PASSWORD }}
+        run: npm run prepare:windows-signing
+
       - name: Package desktop app
         env:
           SYNAX_MAC_SIGN_IDENTITY: ${{ vars.SYNAX_MAC_SIGN_IDENTITY }}
           SYNAX_APPLE_ID: ${{ secrets.SYNAX_APPLE_ID }}
           SYNAX_APPLE_APP_PASSWORD: ${{ secrets.SYNAX_APPLE_APP_PASSWORD }}
           SYNAX_APPLE_TEAM_ID: ${{ vars.SYNAX_APPLE_TEAM_ID }}
-          SYNAX_WINDOWS_PUBLISHER: ${{ vars.SYNAX_WINDOWS_PUBLISHER }}
         run: npx electron-forge make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
       - name: Build framework Windows installer
         if: runner.os == 'Windows'
-        env:
-          SYNAX_WINDOWS_PUBLISHER: ${{ vars.SYNAX_WINDOWS_PUBLISHER }}
-          CSC_LINK: ${{ secrets.SYNAX_WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.SYNAX_WINDOWS_CSC_KEY_PASSWORD }}
         run: npx tsx scripts/build-nsis-installer.ts
 
       - name: Verify Windows executable and installer branding
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/verify-windows-branding.ps1
+
+      - name: Verify Windows Authenticode signatures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-signing.ps1
 
       - name: Build desktop update manifest
         if: runner.os != 'Linux'
@@ -150,6 +158,14 @@ jobs:
           if [ -f "$RUNNER_TEMP/synax-signing.keychain-db" ]; then
             security delete-keychain "$RUNNER_TEMP/synax-signing.keychain-db"
           fi
+
+      - name: Remove Windows signing secrets from runner
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath '.signing/windows') {
+            Remove-Item -LiteralPath '.signing/windows' -Recurse -Force
+          }
 
   publish-preview:
     needs: build

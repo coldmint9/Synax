@@ -41,6 +41,8 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-reality: hsl(var(--reality));
   --color-reality-foreground: hsl(var(--reality-foreground));
   --color-run: hsl(var(--run));

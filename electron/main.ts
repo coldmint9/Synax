@@ -331,12 +331,12 @@ function registerIPC(): void {
       throw new Error("Untrusted update sender");
     return desktopUpdates?.snapshot() ?? null;
   });
-  ipcMain.handle("updates:check", (event) => {
+  ipcMain.handle("updates:check", async (event) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update sender");
     if (!desktopUpdates)
       throw new Error("Desktop updates are unavailable in this build");
-    void desktopUpdates.check(true);
+    await desktopUpdates.check(true);
   });
   ipcMain.handle("updates:install", async (event) => {
     if (!trustedNotificationSender(event))

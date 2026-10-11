@@ -138,20 +138,19 @@ describe("main-process desktop updates", () => {
     updates.stop();
   });
 
-  it("keeps a deferred cached version ready without another check or repeated automatic prompts", async () => {
+  it("keeps a deferred cached version ready without repeated automatic prompts", async () => {
     mocks.controller.state.phase = "ready";
     mocks.controller.state.availableVersion = "0.2.0";
     const updates = new DesktopUpdates(() => null);
     await updates.check(false);
     await updates.check(false);
-    expect(mocks.dialog).toHaveBeenCalledOnce();
+    expect(mocks.dialog).not.toHaveBeenCalled();
     expect(mocks.controller.check).not.toHaveBeenCalled();
     expect(mocks.controller.download).not.toHaveBeenCalled();
-    mocks.dialog.mockResolvedValue({ response: 1 });
     await updates.install();
     expect(mocks.controller.install).toHaveBeenCalledOnce();
   });
-  it("checks and downloads silently before asking with a native dialog", async () => {
+  it("checks and downloads silently until the update icon is ready", async () => {
     mocks.controller.check.mockImplementation(async () => {
       mocks.controller.state.phase = "available";
       mocks.controller.state.availableVersion = "0.2.0";
@@ -165,12 +164,8 @@ describe("main-process desktop updates", () => {
 
     expect(mocks.controller.initialize).toHaveBeenCalledOnce();
     expect(mocks.controller.download).toHaveBeenCalledOnce();
-    expect(mocks.dialog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "question",
-        message: expect.stringContaining("0.2.0"),
-      }),
-    );
+    expect(mocks.dialog).not.toHaveBeenCalled();
+    expect(mocks.controller.state.phase).toBe("ready");
   });
 
   it("reports that a manual check is current without launching another app", async () => {
@@ -187,16 +182,17 @@ describe("main-process desktop updates", () => {
     expect(mocks.controller.install).not.toHaveBeenCalled();
   });
 
-  it("installs only after the user confirms the native prompt", async () => {
+  it("installs only after the renderer update icon is clicked", async () => {
     mocks.controller.check.mockImplementation(async () => {
       mocks.controller.state.phase = "ready";
       mocks.controller.state.availableVersion = "0.2.0";
     });
-    mocks.dialog.mockResolvedValue({ response: 1 });
     const updates = new DesktopUpdates(() => null);
 
     await updates.check(true);
+    expect(mocks.controller.install).not.toHaveBeenCalled();
 
+    await updates.install();
     expect(mocks.controller.install).toHaveBeenCalledOnce();
     expect(mocks.quit).not.toHaveBeenCalled();
   });

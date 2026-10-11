@@ -14,6 +14,7 @@ export interface Notification {
   message: string
   action?: NotificationAction
   actions?: NotificationAction[]
+  layout?: 'archive'
   timestamp: number
   read: boolean
   /** toast 是否仍在屏幕上展示 */
@@ -29,6 +30,7 @@ export interface PushOptions {
   message: string
   action?: NotificationAction
   actions?: NotificationAction[]
+  layout?: 'archive'
   /** 自动消失时间(ms)，0 表示不自动消失，默认 5000 */
   duration?: number
   /** 是否静默（不弹 toast，仅记录到通知中心） */
@@ -93,6 +95,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       message: opts.message,
       action: opts.action,
       actions: opts.actions,
+      layout: opts.layout,
       duration: opts.duration,
       timestamp: Date.now(),
       read: false,
