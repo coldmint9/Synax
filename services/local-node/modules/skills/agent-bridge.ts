@@ -4,7 +4,9 @@ import fs from "node:fs";
 import type { AgentProfileKind } from "../agent-runtime/contracts.js";
 import { permissionPolicy } from "../agent-runtime/permission-policy.js";
 import { AgentPermissionError } from "../agent-runtime/runtime-errors.js";
-import { agentSessionRuntime } from "../agent-runtime/session-runtime.js";
+// Skill lookup only needs stored session data. Importing the session runtime
+// here cycles through presentation tools and the worker's tool registry.
+import { agentRuntimeStore } from "../agent-runtime/session-store.js";
 import { profileService } from "../agent-runtime/profile-service.js";
 import { matchesProfile, skillRegistry } from "./skill-registry.js";
 import type { SkillDetail, SkillSummary } from "./types.js";
@@ -12,7 +14,7 @@ import type { SkillDetail, SkillSummary } from "./types.js";
 export const skillAgentBridge = {
   canRetainForContext(sessionId: string, skillId: string): boolean {
     try {
-      const session = agentSessionRuntime.get(sessionId);
+      const session = agentRuntimeStore.getSession(sessionId);
       const profile = profileService.getForSession(session);
       if (!profile.allowedCapabilities.includes("skill.load")) return false;
       this.loadForTool({ sessionId, skillId, profileKind: profile.kind });
@@ -51,7 +53,7 @@ export const skillAgentBridge = {
     skillId: string;
     profileKind: AgentProfileKind;
   }): SkillDetail {
-    const session = agentSessionRuntime.get(input.sessionId);
+    const session = agentRuntimeStore.getSession(input.sessionId);
     if (session.profileId === 'git-manager') {
       assertGitMrBinding(session.id);
       return loadGitSkill(input.skillId);

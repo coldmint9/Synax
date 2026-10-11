@@ -194,7 +194,7 @@ export function DesktopUpdatePanel() {
   return createPortal(
     <section
       aria-label={zh ? "软件更新进度" : "Software update progress"}
-      className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[calc(100vw-32px)] rounded-lg border border-border bg-surface p-4 text-foreground shadow-lg"
+      className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[calc(100vw-32px)] rounded-lg border border-border bg-card p-4 text-foreground shadow-lg"
     >
       <header className="flex min-h-7 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
