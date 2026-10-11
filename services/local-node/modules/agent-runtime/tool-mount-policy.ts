@@ -38,7 +38,7 @@ export function modelCanUseTool(profile: AgentProfile, tool: { id: string; categ
  */
 const PLAN_TOOLS = new Set([
   'agent.discover', 'agent.execute',
-  'code.run', 'code.tools', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
+  'code.run', 'code.tools', 'code.result', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
   'webSearch',
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'presentation.select', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',

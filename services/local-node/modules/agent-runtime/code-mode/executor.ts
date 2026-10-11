@@ -71,8 +71,14 @@ export async function executeCode(
   let done = false;
   let calls = 0;
   let inFlight = 0;
+  const queue: Array<() => void> = [];
   const seen = new Set<number>();
   return new Promise<CodeResult>((resolve) => {
+    const pump = () => {
+      while (!done && inFlight < limits.maxConcurrentCalls && queue.length) {
+        queue.shift()!();
+      }
+    };
     const finish = (result: Omit<CodeResult, "durationMs">) => {
       if (done) return;
       done = true;
@@ -115,19 +121,24 @@ export async function executeCode(
         if (
           typeof message.json !== "string" ||
           Buffer.byteLength(message.json) >
-            limits.maxOutputBytes + limits.maxLogBytes + 2048
+            // JSON escapes may expand each log byte into six bytes (\u0000).
+            // The value already counts serialized bytes; logs count raw UTF-8.
+            limits.maxOutputBytes + limits.maxLogBytes * 6 + 2048
         )
           return fail(
             "Execution result exceeds the byte limit. Return a smaller summary.",
           );
         try {
           const result = JSON.parse(message.json);
-          if (inFlight)
+          if (inFlight || queue.length)
             return fail(
               "Unawaited tool calls are not supported. Await every tools.call.",
             );
           if (result.status !== "completed" && result.status !== "failed")
             return fail("Invalid worker result.");
+          if (result.status === "completed" &&
+              Buffer.byteLength(JSON.stringify(result.value ?? null)) > limits.maxOutputBytes)
+            return fail("Final return exceeds the storage byte limit. Do not replay completed writes.");
           finish({ ...base, ...result });
         } catch {
           fail("Invalid worker result.");
@@ -142,8 +153,6 @@ export async function executeCode(
         return fail("Invalid tool bridge message.");
       if (++calls > limits.maxCalls)
         return fail("Nested tool call limit exceeded.");
-      if (inFlight >= limits.maxConcurrentCalls)
-        return fail("Nested tool concurrency limit exceeded.");
       if (
         typeof message.toolId !== "string" ||
         message.toolId.length > 256 ||
@@ -160,34 +169,38 @@ export async function executeCode(
         return fail("Tool arguments must be a JSON object.");
       }
       seen.add(message.id);
-      inFlight++;
-      void Promise.resolve()
-        .then(() => {
-          controller.signal.throwIfAborted();
-          return input.callTool(message.toolId, args, controller.signal);
-        })
-        .then((value) => {
-          if (done) return;
-          const json = JSON.stringify(value ?? null);
-          if (Buffer.byteLength(json) > limits.maxToolResultBytes)
-            throw new Error(
-              "Tool result exceeds the Code Mode byte limit. Narrow the query or use direct tools.",
-            );
-          worker.postMessage({ type: "reply", id: message.id, json });
-        })
-        .catch((error) => {
-          if (!done)
-            worker.postMessage({
-              type: "reply",
-              id: message.id,
-              error: String(
-                error instanceof Error ? error.message : error,
-              ).slice(0, 1000),
-            });
-        })
-        .finally(() => {
-          inFlight--;
-        });
+      queue.push(() => {
+        inFlight++;
+        void Promise.resolve()
+          .then(() => {
+            controller.signal.throwIfAborted();
+            return input.callTool(message.toolId, args, controller.signal);
+          })
+          .then((value) => {
+            if (done) return;
+            const json = JSON.stringify(value ?? null);
+            if (Buffer.byteLength(json) > limits.maxToolResultBytes)
+              throw new Error(
+                "Tool result exceeds the Code Mode byte limit. Narrow the query or use direct tools.",
+              );
+            worker.postMessage({ type: "reply", id: message.id, json });
+          })
+          .catch((error) => {
+            if (!done)
+              worker.postMessage({
+                type: "reply",
+                id: message.id,
+                error: String(
+                  error instanceof Error ? error.message : error,
+                ).slice(0, 1000),
+              });
+          })
+          .finally(() => {
+            inFlight--;
+            pump();
+          });
+      });
+      pump();
     });
   });
 }

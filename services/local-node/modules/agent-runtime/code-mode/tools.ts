@@ -6,6 +6,7 @@ import type { AgentRuntimeStore } from "../session-store.js";
 import type { ProfileService } from "../profile-service.js";
 import { profileCanUseTool } from "../tool-mount-policy.js";
 import { CODE_LIMITS } from "./contracts.js";
+import { createCodeResultTool } from "./results.js";
 import { canComposeTool, codeModeEnabled } from "./policy.js";
 import { createCompositionExecutor, response } from "./composition-service.js";
 
@@ -27,6 +28,7 @@ export function createCodeTools(
       );
   };
   return [
+    createCodeResultTool(store),
     {
       id: "code.tools",
       label: "Code Mode Tools",
@@ -118,7 +120,7 @@ export function createCodeTools(
       mutability: "read",
       resumeBehavior: "none",
       description:
-        "Run an isolated JavaScript async function body for tool composition with approved reads, file.write and file.patch and data processing. Discover IDs/schemas with code.tools, then await tools.call(id, args). Return a small JSON summary. Promise.all is supported up to 4 concurrent calls; 32 calls and 15 seconds total. No Node, direct filesystem, network, imports or Shell. File writes and patches go through tools.call and retain their permissions. Await ALL calls. Stateless: no automatic replay or approval inside code; use direct tools for approval or after an error.",
+        "Run an isolated JavaScript async function body for tool composition with approved reads, file.write and file.patch and data processing. Discover IDs/schemas with code.tools, then await tools.call(id, args). Return the exact evidence needed for reasoning. Only the explicit return enters context; above 16 KB it is stored (up to 1 MB) and retrieved by code.result without replay. Promise.all requests queue; tool operations run in order; 32 calls and 15 seconds total. No Node, direct filesystem, network, imports or Shell. File writes and patches go through tools.call and retain their permissions. Await ALL calls. Stateless: no automatic replay or approval inside code; use direct tools for approval or after an error.",
       inputSchema: z
         .object({ code: z.string().min(1).max(CODE_LIMITS.maxCodeBytes) })
         .strict(),

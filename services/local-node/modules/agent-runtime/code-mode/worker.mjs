@@ -72,7 +72,8 @@ async function main() {
     try {
       const value = await fn(tools, console);
       const json = stringify(value === undefined ? null : value);
-      if (typeof json !== 'string' || json.length > ${limits.maxOutputBytes}) throw new Error('Result exceeds the limit or is not JSON. Return a smaller summary.');
+      if (typeof json !== 'string') throw new Error('Final return must be JSON serializable.');
+      if (json.length > ${limits.maxOutputBytes}) throw new Error('Final return exceeds the ${limits.maxOutputBytes}-byte storage ceiling. Select fewer fields or split the output. Completed tool operations are not rolled back; do not replay writes.');
       return stringify({status:'completed', value: parse(json), stdout, truncated});
     } catch (error) {
       return stringify({status:'failed', error: String(error?.message || error).slice(0,1000), stdout, truncated});
@@ -126,7 +127,7 @@ async function main() {
         Buffer.byteLength(JSON.stringify(result.value ?? null)) >
         limits.maxOutputBytes
       ) {
-        sendFailure("Result exceeds the byte limit.");
+        sendFailure(`Final return exceeds the ${limits.maxOutputBytes}-byte storage ceiling. Completed tool operations are not rolled back; do not replay writes.`);
         return;
       }
       if (Buffer.byteLength(result.stdout) > limits.maxLogBytes) {

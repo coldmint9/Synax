@@ -5,6 +5,7 @@ import type { AgentSession, RegisteredTool } from "../contracts.js";
 
 export const CODE_TOOL_IDS = new Set(["code.tools", "code.run"]);
 const LOCAL_COMPOSITION_TOOLS = new Set([
+  "code.result",
   "file.read",
   "file.list",
   "rg",

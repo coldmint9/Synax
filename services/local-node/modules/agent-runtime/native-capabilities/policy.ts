@@ -15,6 +15,7 @@ export function nativeCapabilitiesEnabled(session: AgentSession): boolean {
 export const CORE_TOOL_IDS = new Set([
   "agent.discover",
   "agent.execute",
+  "code.result",
   "file.read", "file.list", "rg", "context.read", "diff.read",
   "file.write", "file.patch", "bash", "subagent.delegate",
   "task.create", "task.update", "task.get", "task.list",

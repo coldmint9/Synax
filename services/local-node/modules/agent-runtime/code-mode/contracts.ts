@@ -6,9 +6,11 @@ export const CODE_LIMITS = Object.freeze({
   maxConcurrentCalls: 4,
   maxInputBytes: 32_000,
   maxToolResultBytes: 256_000,
-  maxOutputBytes: 16_000,
+  // Storage/transport ceiling, independent of the model-context inline budget.
+  maxOutputBytes: 1_000_000,
   maxLogBytes: 4_000,
 });
+export const CODE_INLINE_BYTES = 16_000;
 export type CodeLimits = { [K in keyof typeof CODE_LIMITS]: number };
 export type CodeStatus =
   | "completed"

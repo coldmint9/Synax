@@ -1,4 +1,5 @@
 import { isCodeNestedCall } from "./code-mode/history.js";
+import { projectCodeResult } from "./code-mode/results.js";
 import { resolveContextInputOwners } from "./context-input-boundaries.js";
 import {
   readRuntimeReminder,
@@ -628,7 +629,7 @@ function toToolResultOutput(
     | { version?: unknown; text?: unknown; outputType?: unknown }
     | undefined;
   if (
-    !["code.run", "agent.execute"].includes(record.toolId) &&
+    !["code.run", "agent.execute", "code.result"].includes(record.toolId) &&
     receipt?.version === 1 &&
     typeof receipt.text === "string" &&
     (receipt.outputType === "text" || receipt.outputType === "error-text")
@@ -659,14 +660,13 @@ function toToolResultOutput(
     // The raw journal/UI retains the complete trace. Model context needs the
     // aggregate first, not dozens of nested call receipts or diagnostic logs.
     const raw = record.outputRef as Record<string, unknown>;
-    const projected = {
-      status: raw.status, value: raw.value, error: raw.error,
-      truncated: raw.truncated, nextAction: raw.nextAction,
-    };
-    const serialized = JSON.stringify(projected);
-    return serialized.length <= MAX_TOOL_OUTPUT_JSON
-      ? { type: "json", value: projected as never }
-      : { type: "text", value: trimToolText(serialized) };
+    return { type: "json", value: projectCodeResult(raw, record.id) as never };
+  }
+
+  // Pages are bounded by code.result itself. Re-truncation would corrupt JSON
+  // escapes, drop nextOffset, and make exact reconstruction impossible.
+  if (record.toolId === "code.result" && record.outputRef != null) {
+    return { type: "json", value: record.outputRef as never };
   }
 
   if (typeof record.outputRef === "string") {

@@ -49,6 +49,80 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); clearSessionWorkspaceRoot(id); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("native capability lifecycle", () => {
+  it.each([1200, 9000])("delivers five complete file reads (%i chars each) and recovers exact evidence without replay", async (size) => {
+    const paths = Array.from({ length: 5 }, (_, i) => `source-${i}.ts`);
+    const contents = paths.map((_, i) => `export const item${i} = '${"中😀\\\"".repeat(size).slice(0, size)}';\n// tail-${i}`);
+    paths.forEach((name, i) => fs.writeFileSync(path.join(dir, name), contents[i]));
+    const projection = project();
+    expect(projection.tools.some(t => t.id === "code.result")).toBe(true);
+    store.appendMessage({ id: "delivery-request", sessionId: id, runId: null, stepId: null, role: "user", content: "Read five files", metadata: { source: "turn_request" }, createdAt: "2026-01-01" });
+    store.appendRun({ id: "delivery-run", sessionId: id, triggerMessageId: "delivery-request", status: "completed", startedAt: "2026-01-01", completedAt: null, currentStep: 0, stopReason: null, model: null, metadata: {} });
+    store.appendRunStep({ id: "delivery-step", sessionId: id, runId: "delivery-run", index: 0, status: "completed", model: null, startedAt: "2026-01-01", completedAt: "2026-01-01", finishReason: "tool-calls", metadata: {} });
+    const executed = await registry.execute(id, "agent.execute", {
+      code: `return await Promise.all(${JSON.stringify(paths)}.map(async path => ({path,result:await tools.call('file.read',{path})})));`,
+    }, { runId: "delivery-run", stepId: "delivery-step", modelToolCallId: "delivery-call" });
+    expect(executed.record.status).toBe("completed");
+    const raw = executed.toolResult?.result as { value: Array<{ result: { content: string } }> };
+    expect(raw.value.map(row => row.result.content)).toEqual(contents);
+    store.appendRunPart({ id: "delivery-part", sessionId: id, runId: "delivery-run", stepId: "delivery-step", kind: "tool_call", sequence: 0, content: "execute", toolCallId: executed.record.id, metadata: {}, createdAt: "2026-01-01" });
+    const messages = JSON.stringify(buildLoopModelMessages(store, id, buildLoopToolSet(projection.tools)));
+    expect(messages).not.toContain("nestedCalls");
+    expect(messages).not.toContain("Tool text truncated");
+    if (size === 9000) {
+      expect(messages).toContain('"delivery":"stored"');
+      expect(messages).toContain(executed.record.id);
+      expect(messages).not.toContain("tail-4");
+    } else {
+      expect(messages).toContain("tail-4");
+      expect(messages).not.toContain('"delivery":"stored"');
+    }
+    // Changing the source proves recovery reads the saved execution, not files.
+    fs.writeFileSync(path.join(dir, paths[4]), "changed after execution");
+    let recovered = "", offset: number | null = 0;
+    while (offset !== null) {
+      const page = await registry.execute(id, "code.result", { executionId: executed.record.id, path: ["4", "result", "content"], offset });
+      expect(page.record.status).toBe("completed");
+      const result = page.toolResult?.result as { content: string; nextOffset: number | null };
+      recovered += result.content;
+      offset = result.nextOffset;
+    }
+    expect(recovered).toBe(contents[4]);
+    const tail = await registry.execute(id, "code.result", { executionId: executed.record.id, path: ["4", "result", "content"], offset: Math.max(0, contents[4].length - 2000) }, { runId: "delivery-run", stepId: "delivery-step", modelToolCallId: "tail-call" });
+    store.appendRunPart({ id: "tail-part", sessionId: id, runId: "delivery-run", stepId: "delivery-step", kind: "tool_call", sequence: 1, content: "read saved tail", toolCallId: tail.record.id, metadata: {}, createdAt: "2026-01-01" });
+    store.updateRunStep("delivery-step", { metadata: { contextProjectionVersion: 2, toolContextReceipts: { [tail.record.id]: { version: 1, outputType: "text", text: "STALE-TRUNCATED-RECEIPT" } } } });
+    const withPage = JSON.stringify(buildLoopModelMessages(store, id, buildLoopToolSet(projection.tools)));
+    expect(withPage).toContain("tail-4");
+    expect(withPage).toContain('"nextOffset":null');
+    expect(withPage).not.toContain("STALE-TRUNCATED-RECEIPT");
+    expect(store.listToolCalls(id).filter(t => t.toolId === "file.read")).toHaveLength(5);
+    // The same result reader is available inside a new program for processing.
+    expect(await run(`return (await tools.call('code.result',{executionId:${JSON.stringify(executed.record.id)},path:['4','path']})).content;`))
+      .toMatchObject({ status: "completed", value: paths[4] });
+  });
+
+  it("scopes saved returns to their session and rejects missing paths and non-Code-Mode records", async () => {
+    project();
+    const execution = await registry.execute(id, "agent.execute", { code: 'return {items:[{text:"saved"}]};' });
+    const executionId = execution.record.id;
+    for (const args of [{ executionId, path: ["items", "9"] }, { executionId, path: ["toString"] }, { executionId, offset: 9999 }, { executionId: "missing" }]) {
+      expect((await registry.execute(id, "code.result", args)).record.status).toBe("failed");
+    }
+    const direct = await registry.execute(id, "file.read", { path: "a.txt" });
+    expect((await registry.execute(id, "code.result", { executionId: direct.record.id })).record.status).toBe("failed");
+    const other = agentSessionRuntime.create({ projectId, profileId: "synax", prompt: "Other", permissionTier: "unrestricted" }).id;
+    expect((await registry.execute(other, "code.result", { executionId })).record.status).toBe("failed");
+  });
+
+  it("does not replay a write when retrieving a large return", async () => {
+    project();
+    const execution = await registry.execute(id, "agent.execute", { code: 'await tools.call("file.write",{path:"once.txt",content:"first"}); return "x".repeat(40000);' });
+    expect(execution.record.status).toBe("completed");
+    fs.writeFileSync(path.join(dir, "once.txt"), "second");
+    expect((await registry.execute(id, "code.result", { executionId: execution.record.id })).record.status).toBe("completed");
+    expect(fs.readFileSync(path.join(dir, "once.txt"), "utf8")).toBe("second");
+    expect(store.listToolCalls(id).filter(t => t.toolId === "file.write")).toHaveLength(1);
+  });
+
   it("processes dependent reads in a program and exposes only the selected return value to the model", async () => {
     fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ path: "rows.json", internal: "index-audit-only" }));
     fs.writeFileSync(path.join(dir, "rows.json"), JSON.stringify([

@@ -3,6 +3,50 @@ import { executeCode } from "./executor.js";
 
 const callTool = vi.fn(async (id: string, args: unknown) => ({ id, args }));
 describe("Code Mode isolated executor", () => {
+  it("preserves near-ceiling returns when diagnostic logs require JSON escaping", async () => {
+    const result = await executeCode({
+      code: 'console.log(String.fromCharCode(0).repeat(3999)); return "x".repeat(999000);',
+      callTool,
+    });
+    expect(result.status).toBe("completed");
+    expect(result.value).toBe("x".repeat(999000));
+    expect(Buffer.byteLength(result.stdout)).toBe(4000);
+  });
+  it("queues a full batch behind bounded host concurrency", async () => {
+    let active = 0, peak = 0;
+    const invoked: number[] = [];
+    const result = await executeCode({
+      code: 'return await Promise.all(Array.from({length:32}, (_,n) => tools.call("read",{n})));',
+      limits: { maxConcurrentCalls: 2 },
+      callTool: async (_, args) => {
+        active++; peak = Math.max(peak, active);
+        invoked.push(args.n as number);
+        await new Promise(resolve => setTimeout(resolve, 2));
+        active--;
+        return args.n;
+      },
+    });
+    expect(result.status).toBe("completed");
+    expect(result.value).toEqual(Array.from({ length: 32 }, (_, n) => n));
+    expect(invoked).toHaveLength(32);
+    expect(peak).toBe(2);
+  });
+
+  it("cancels queued calls without starting or replaying them", async () => {
+    const controller = new AbortController();
+    const host = vi.fn(async () => {
+      controller.abort();
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return 1;
+    });
+    const result = await executeCode({
+      code: 'return await Promise.all(Array.from({length:8}, () => tools.call("read",{})));',
+      signal: controller.signal, limits: { maxConcurrentCalls: 1 }, callTool: host,
+    });
+    expect(result.status).toBe("cancelled");
+    expect(host).toHaveBeenCalledTimes(1);
+  });
+
   it("evaluates an async body and awaits JSON-only host calls in parallel", async () => {
     const result = await executeCode({
       code: 'return await Promise.all([tools.call("a", {n:1}), tools.call("b", {n:2})]);',
@@ -95,10 +139,10 @@ describe("Code Mode isolated executor", () => {
     expect(host).toHaveBeenCalledTimes(2);
     const parallel = await executeCode({
       code: 'return await Promise.all(Array.from({length:10},()=>tools.call("x", {})));',
-      callTool: async () => new Promise(() => {}),
+      callTool: async () => new Promise(resolve => setTimeout(() => resolve(1), 2)),
       limits: { maxConcurrentCalls: 2 },
     });
-    expect(parallel.status).toBe("failed");
+    expect(parallel.status).toBe("completed");
   });
   it("rejects oversized tool args, tool results and catches normal tool errors", async () => {
     const host = vi.fn(async () => "x".repeat(2000));
