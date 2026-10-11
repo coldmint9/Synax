@@ -14,6 +14,10 @@ it("builds updater constructors against the host Electron API instead of the npm
     path.join(root, "node_modules/tsx/dist/cli.mjs"),
     "scripts/build-desktop-updater-runtime.ts",
   ], { cwd: root });
+  for (const name of ["desktop-differential-engine", "desktop-zip-engine", "desktop-updater-engine"]) {
+    // All three entrypoints share the banner; reject duplicate ESM bindings.
+    await run(process.execPath, ["--check", path.join(root, `dist-electron/lib/${name}.js`)]);
+  }
   const bundle = path.join(root, "dist-electron/lib/desktop-updater-engine.js");
   expect(await readFile(bundle, "utf8")).not.toContain("node_modules/electron/index.js");
   const { stdout } = await run(process.execPath, ["--input-type=module", "-e", `

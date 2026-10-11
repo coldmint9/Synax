@@ -24,7 +24,9 @@ await build({
   dts: false,
   splitting: false,
   banner: {
-    js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+    // Banners are inserted verbatim, outside the bundler's symbol renaming.
+    // Keep this binding distinct from createRequire imports in bundled sources.
+    js: 'import { createRequire as __synaxCreateRequire } from "node:module"; const require = __synaxCreateRequire(import.meta.url);',
   },
 });
 await fs.mkdir("dist-electron", { recursive: true });
