@@ -1,10 +1,17 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { forkMock, getSessionMock, tryGetSessionMock } = vi.hoisted(() => ({
+const { forkMock, getSessionMock, tryGetSessionMock, listSessionTreeMock,
+  listRunsMock, listRunStepsMock, updateSessionMock, updateRunMock, updateRunStepMock } = vi.hoisted(() => ({
   forkMock: vi.fn(),
   getSessionMock: vi.fn(),
   tryGetSessionMock: vi.fn(),
+  listSessionTreeMock: vi.fn(),
+  listRunsMock: vi.fn(),
+  listRunStepsMock: vi.fn(),
+  updateSessionMock: vi.fn(),
+  updateRunMock: vi.fn(),
+  updateRunStepMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -19,6 +26,12 @@ vi.mock("../session-store.js", () => ({
   agentRuntimeStore: {
     getSession: getSessionMock,
     tryGetSession: tryGetSessionMock,
+    listSessionTree: listSessionTreeMock,
+    listRuns: listRunsMock,
+    listRunSteps: listRunStepsMock,
+    updateSession: updateSessionMock,
+    updateRun: updateRunMock,
+    updateRunStep: updateRunStepMock,
   },
 }));
 
@@ -94,6 +107,12 @@ describe("sessionProcessManager idle child release", () => {
     forkMock.mockReset();
     getSessionMock.mockReset();
     tryGetSessionMock.mockReset();
+    listSessionTreeMock.mockReset().mockImplementation((id: string) => [getSessionMock(id)]);
+    listRunsMock.mockReset().mockReturnValue([]);
+    listRunStepsMock.mockReset().mockReturnValue([]);
+    updateSessionMock.mockReset();
+    updateRunMock.mockReset();
+    updateRunStepMock.mockReset();
     getSessionMock.mockImplementation((sessionId: string) => ({
       id: sessionId,
       projectId: "proj-test",
@@ -171,6 +190,78 @@ describe("sessionProcessManager idle child release", () => {
     },
   );
 
+  it.each(["waiting_input", "waiting_permission", "running"])(
+    "preserves durable %s state only during idle release",
+    async (status) => {
+      const id = "sess-release-a";
+      const session = { id, projectId: "proj-test", status, activeRunId: "run-wait",
+        pendingResumeToken: "interaction:pending" };
+      getSessionMock.mockReturnValue(session);
+      tryGetSessionMock.mockReturnValue(session);
+      listRunsMock.mockReturnValue([{ id: "run-wait", status }]);
+      listRunStepsMock.mockReturnValue([{ id: "step-wait", status }]);
+      updateSessionMock.mockImplementation((_id, patch) => Object.assign(session, patch));
+      const child = createMockChild(id);
+      forkMock.mockImplementationOnce(() => {
+        queueMicrotask(() => child.emit("message", { type: "session:ready", sessionId: id }));
+        return child;
+      });
+      for await (const _chunk of sessionProcessManager.streamSession(id, "turn", {})) {
+        /* drain the paused turn */
+      }
+      await sessionProcessManager.waitForIdleSessions([id]);
+      expect(child.kill).toHaveBeenCalled();
+      expect(sessionProcessManager.canSpawnChild(id)).toBe(true);
+      if (status === "running") {
+        expect(session.status).toBe("interrupted");
+        expect(session.activeRunId).toBeNull();
+        expect(updateRunMock).toHaveBeenCalled();
+        expect(updateRunStepMock).toHaveBeenCalled();
+      } else {
+        expect(session).toMatchObject({ status, activeRunId: "run-wait", pendingResumeToken: "interaction:pending" });
+        expect(updateSessionMock).not.toHaveBeenCalled();
+        expect(updateRunMock).not.toHaveBeenCalled();
+        expect(updateRunStepMock).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(["stop", "crash", "stop-during-release"])(
+    "still interrupts waiting input on %s",
+    async (mode) => {
+      const id = "sess-release-a";
+      const session = { id, projectId: "proj-test", status: "waiting_input", activeRunId: "run-wait" };
+      getSessionMock.mockReturnValue(session);
+      tryGetSessionMock.mockReturnValue(session);
+      listRunsMock.mockReturnValue([{ id: "run-wait", status: "waiting_input" }]);
+      listRunStepsMock.mockReturnValue([{ id: "step-wait", status: "waiting_input" }]);
+      const child = createMockChild(id);
+      child.kill.mockImplementation(() => { child.killed = true; return true; });
+      child.send.mockImplementation((message) => {
+        if (message.type === "stream:start") queueMicrotask(() => child.emit("message", {
+          type: "stream:chunk", sessionId: id, streamId: message.streamId,
+          chunk: { type: "done", sessionId: id, runId: "run-wait" },
+        }));
+      });
+      forkMock.mockImplementationOnce(() => {
+        queueMicrotask(() => child.emit("message", { type: "session:ready", sessionId: id }));
+        return child;
+      });
+      const stream = sessionProcessManager.streamSession(id, "turn", {});
+      await stream.next();
+      if (mode === "stop-during-release") await stream.return(undefined);
+      if (mode !== "crash") sessionProcessManager.interruptSessions([id], "User stopped session.");
+      child.emit("exit", mode === "crash" ? 1 : 0, null);
+      await stream.return(undefined);
+      await sessionProcessManager.waitForIdleSessions([id]);
+      expect(updateSessionMock).toHaveBeenCalledWith(id, expect.objectContaining({
+        status: "interrupted", activeRunId: null, pendingResumeToken: null,
+      }));
+      expect(updateRunMock).toHaveBeenCalledWith("run-wait", expect.objectContaining({ status: "interrupted" }));
+      expect(updateRunStepMock).toHaveBeenCalledWith("step-wait", expect.objectContaining({ status: "interrupted" }));
+    },
+  );
+
   it("releases the child after stream finishes so capacity is freed", async () => {
     const childA = createMockChild("sess-release-a");
     forkMock.mockImplementationOnce(() => {
@@ -196,6 +287,35 @@ describe("sessionProcessManager idle child release", () => {
     expect(childA.kill).toHaveBeenCalled();
     expect(sessionProcessManager.canSpawnChild()).toBe(true);
     await sessionProcessManager.waitForIdleSessions(["sess-release-a"]);
+  });
+
+  it("still interrupts waiting sessions when the worker exits unexpectedly", async () => {
+    const id = "sess-release-a";
+    const session = { id, status: "waiting_input", activeRunId: "run-waiting" };
+    tryGetSessionMock.mockReturnValue(session);
+    listSessionTreeMock.mockReturnValue([session]);
+    listRunsMock.mockReturnValue([{ id: "run-waiting", status: "waiting_input" }]);
+    listRunStepsMock.mockReturnValue([{ id: "step-waiting", status: "waiting_input" }]);
+    const child = createMockChild(id);
+    child.send.mockImplementation((message) => {
+      if (message.type === "stream:start") {
+        queueMicrotask(() => child.emit("exit", 1, null));
+      }
+    });
+    forkMock.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit("message", { type: "session:ready", sessionId: id }));
+      return child;
+    });
+    await expect(async () => {
+      for await (const _chunk of sessionProcessManager.streamSession(id, "turn", {})) {
+        /* drain */
+      }
+    }).rejects.toThrow("Agent session child process exited.");
+    expect(updateSessionMock).toHaveBeenCalledWith(id, expect.objectContaining({
+      status: "interrupted", activeRunId: null, pendingResumeToken: null,
+    }));
+    expect(updateRunMock).toHaveBeenCalledWith("run-waiting", expect.objectContaining({ status: "interrupted" }));
+    expect(updateRunStepMock).toHaveBeenCalledWith("step-waiting", expect.objectContaining({ status: "interrupted" }));
   });
 
   it("keeps a service-owning worker alive after the turn, then releases it when the service stops", async () => {

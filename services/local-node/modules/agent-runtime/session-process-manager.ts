@@ -123,6 +123,7 @@ class SessionProcessManager {
   /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
   private readonly releasingChildren = new Set<string>();
   private readonly terminatingChildren = new Map<ChildProcess, string>();
+  private readonly idleChildren = new WeakSet<ChildProcess>();
   private readonly pendingCompactions = new Set<string>();
 
   isSessionStreaming(sessionId: string): boolean {
@@ -223,7 +224,7 @@ class SessionProcessManager {
         state.compactions.size === 0 &&
         !hasBackgroundProcesses(sessionId, true)
       ) {
-        this.releaseChild(sessionId, "Agent session stream finished.");
+        this.releaseChild(sessionId, "Agent session stream finished.", { idle: true });
       }
     }
   }
@@ -375,7 +376,7 @@ class SessionProcessManager {
         state.compactions.size === 0 &&
         !hasBackgroundProcesses(sessionId, true)
       ) {
-        this.releaseChild(sessionId, "Context compaction finished.");
+        this.releaseChild(sessionId, "Context compaction finished.", { idle: true });
       }
     }
   }
@@ -385,6 +386,9 @@ class SessionProcessManager {
     reason = "Agent runtime session deleted by user.",
   ): void {
     for (const sessionId of sessionIds) {
+      for (const [child, id] of this.terminatingChildren) {
+        if (id === sessionId) this.idleChildren.delete(child);
+      }
       this.releaseChild(sessionId, reason, { pushStreamError: true });
     }
   }
@@ -392,12 +396,13 @@ class SessionProcessManager {
   private releaseChild(
     sessionId: string,
     reason: string,
-    options?: { pushStreamError?: boolean },
+    options?: { pushStreamError?: boolean; idle?: boolean },
   ): void {
     const state = this.children.get(sessionId);
     if (!state) return;
 
     this.releasingChildren.add(sessionId);
+    if (options?.idle) this.idleChildren.add(state.child);
     if (state.child.exitCode == null && state.child.signalCode == null) {
       this.terminatingChildren.set(state.child, sessionId);
       const force = setTimeout(() => {
@@ -646,6 +651,14 @@ class SessionProcessManager {
             const reason = `Agent session worker exited (code ${code}, signal ${signal}).`;
             const ids = agentRuntimeStore
               .listSessionTree(sessionId)
+              // Waiting runs are durable continuations, not abandoned work.
+              // Reclaim their idle worker without invalidating pending input.
+              .filter(
+                (session) =>
+                  !this.idleChildren.has(child) ||
+                  (session.status !== "waiting_input" &&
+                    session.status !== "waiting_permission"),
+              )
               .map((session) => session.id);
             finalizeStoppedSessions(ids, reason);
           }
@@ -766,7 +779,7 @@ class SessionProcessManager {
         owner.compactions.size === 0 &&
         !hasBackgroundProcesses(sessionId, true)
       ) {
-        this.releaseChild(sessionId, "All background services have exited.");
+        this.releaseChild(sessionId, "All background services have exited.", { idle: true });
       }
       return;
     }
