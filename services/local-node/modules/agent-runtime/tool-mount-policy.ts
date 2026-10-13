@@ -5,6 +5,7 @@ import { GIT_MANAGER_TOOL_IDS } from './git/constants.js';
 import type { AgentProfile, AgentSession } from './contracts.js';
 import { controlRoot, workflowMode } from './workflow-mode.js';
 import { getStoredPlan } from './plan-execution.js';
+import { readSessionPermissionConfig } from './session-permissions.js';
 
 /**
  * Decide whether a profile may see/execute a tool.
@@ -50,6 +51,15 @@ export function isPlanningReadTool(toolId: string): boolean {
 }
 
 export function isToolMountedForSession(session: AgentSession, tool: { id: string }): boolean {
+  // A denied delegation capability should be undiscoverable. Keeping the tool
+  // out of the session tool set prevents the model from spending a turn on a
+  // delegation that the user has explicitly disabled.
+  if (
+    tool.id === 'subagent.delegate' &&
+    readSessionPermissionConfig(session.sessionMetadata).permissionOverrides?.task === 'deny'
+  ) {
+    return false;
+  }
   if (NATIVE_PROTOCOL_IDS.has(tool.id) && !nativeCapabilitiesEnabled(session)) return false;
   if (session.profileId === 'git-manager') {
     try { assertGitMrBinding(session.id); } catch { return false; }

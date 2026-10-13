@@ -362,6 +362,18 @@ export function SessionComposer({
   const permissionTier = session
     ? readSynaxPermissionTier(session.sessionMetadata)
     : draftPermissionTier;
+  const [draftSubagentsEnabled, setDraftSubagentsEnabled] = useState(() => {
+    try {
+      return localStorage.getItem("synax-subagents-enabled") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const subagentsEnabled = session
+    ? (session.sessionMetadata?.permissionOverrides as
+        | { task?: "allow" | "ask" | "deny" }
+        | undefined)?.task !== "deny"
+    : draftSubagentsEnabled;
   const updateSessionPermissions = useAgentSessionStore(
     (s) => s.updateSessionPermissions,
   );
@@ -421,6 +433,23 @@ export function SessionComposer({
     },
     [sessionId, setDraftPermissionTier, updateSessionPermissions],
   );
+  const handleSubagentsEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      if (sessionId) {
+        await updateSessionPermissions(sessionId, {
+          permissionOverrides: { task: enabled ? "allow" : "deny" },
+        });
+      } else {
+        setDraftSubagentsEnabled(enabled);
+        try {
+          localStorage.setItem("synax-subagents-enabled", String(enabled));
+        } catch {
+          // Storage is optional; the draft state still applies immediately.
+        }
+      }
+    },
+    [sessionId, updateSessionPermissions],
+  );
 
   useEffect(() => {
     if (!sessionId) return;
@@ -477,6 +506,7 @@ export function SessionComposer({
             ...body,
             backendId,
             permissionTier: cliBackend ? undefined : permissionTier,
+            permissionOverrides: { task: subagentsEnabled ? "allow" : "deny" },
             mode: acp ? "chat" : draftMode,
             prompt: message,
             gitWorkspace,
@@ -547,6 +577,7 @@ export function SessionComposer({
     reasoningEffort,
     cliBackend,
     permissionTier,
+    subagentsEnabled,
     references,
     isDraft,
     projectId,
@@ -756,6 +787,7 @@ export function SessionComposer({
             ? { providerId, modelId, capability }
             : undefined,
           permissionTier,
+          permissionOverrides: { task: subagentsEnabled ? "allow" : "deny" },
           gitWorkspace,
         });
         createdDraftRef.current = created;
@@ -798,6 +830,8 @@ export function SessionComposer({
       globalConfig={globalConfig}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
+      subagentsEnabled={subagentsEnabled}
+      onSubagentsEnabledChange={(enabled) => void handleSubagentsEnabledChange(enabled)}
       reasoningEffort={reasoningEffort}
       onReasoningEffortChange={setReasoningEffort}
       allowedReasoningEfforts={allowedReasoningEfforts}

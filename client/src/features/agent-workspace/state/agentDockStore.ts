@@ -63,6 +63,7 @@ export interface AgentDockStoreState {
   composerSkillIds: string[];
   composerReasoningEffort: ReasoningEffort;
   composerPermissionTier: SynaxPermissionTier;
+  composerSubagentsEnabled: boolean;
   session: DockSessionState;
   setDockState: (state: AgentDockState) => void;
   setComposerContent: (content: string) => void;
@@ -70,6 +71,7 @@ export interface AgentDockStoreState {
   setComposerModelId: (id: string | null) => void;
   setComposerSkillIds: (ids: string[]) => void;
   setComposerReasoningEffort: (effort: ReasoningEffort) => void;
+  setComposerSubagentsEnabled: (enabled: boolean) => void;
   setPermissionTier: (tier: SynaxPermissionTier) => Promise<void>;
   openComposer: (prefill?: {
     content?: string;
@@ -93,6 +95,7 @@ const initialState = {
   composerSkillIds: [] as string[],
   composerReasoningEffort: "high" as ReasoningEffort,
   composerPermissionTier: readLastPermissionTier(),
+  composerSubagentsEnabled: true,
   session: initialDockSessionState,
   composerContentParts: [] as RuntimeContentPart[],
 };
@@ -122,6 +125,8 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
   setComposerSkillIds: (ids) => set({ composerSkillIds: ids }),
   setComposerReasoningEffort: (effort: ReasoningEffort) =>
     set({ composerReasoningEffort: effort }),
+  setComposerSubagentsEnabled: (enabled) =>
+    set({ composerSubagentsEnabled: enabled }),
   setPermissionTier: async (tier) => {
     const sessionId = get().session.sessionId;
     const isCurrentContext = captureDockContext();
@@ -275,6 +280,7 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
           s.composerSkillIds.length > 0 ? s.composerSkillIds : undefined,
         reasoningEffort: s.composerReasoningEffort,
         permissionTier: s.composerPermissionTier,
+        permissionOverrides: { task: s.composerSubagentsEnabled ? "allow" : "deny" },
         sessionMetadata: createSynaxSessionMetadata("chat", {
           source: "agent-dock",
           userPrompt: content,

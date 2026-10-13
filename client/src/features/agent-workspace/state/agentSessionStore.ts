@@ -156,6 +156,7 @@ export type SessionInputBody = {
   mediaGeneration?: { providerId: string; modelId: string; capability?: "image_generation" | "video_generation" };
   reasoningEffort?: ReasoningEffort | null;
   permissionTier?: SynaxPermissionTier;
+  permissionOverrides?: Partial<Record<"read" | "write" | "delete" | "shell" | "task", "allow" | "ask" | "deny">>;
   skillIds?: string[];
   mcpServerIds?: string[];
   gitWorkspace?: GitWorkspaceSelection;
@@ -842,7 +843,10 @@ export interface AgentSessionStoreState {
   ) => Promise<void>;
   updateSessionPermissions: (
     sessionId: string,
-    body: { permissionTier?: SynaxPermissionTier },
+    body: {
+      permissionTier?: SynaxPermissionTier;
+      permissionOverrides?: Partial<Record<"read" | "write" | "delete" | "shell" | "task", "allow" | "ask" | "deny">>;
+    },
   ) => Promise<void>;
   sendSessionMessage: (
     sessionId: string,
@@ -1321,6 +1325,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         skillIds: body.skillIds?.length ? body.skillIds : undefined,
         mcpServerIds: body.mcpServerIds?.length ? body.mcpServerIds : undefined,
         permissionTier: body.permissionTier,
+        permissionOverrides: body.permissionOverrides,
         gitWorkspace: body.gitWorkspace,
         sessionMetadata: createSynaxSessionMetadata(mode, {
           source: "session-page",

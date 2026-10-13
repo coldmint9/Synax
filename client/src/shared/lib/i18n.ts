@@ -436,6 +436,7 @@ const messages = {
     agentAttachSkillsLoading: "加载中…",
     agentAttachSkillsEmpty: "暂无可用 Skill",
     agentAttachPermissions: "权限",
+    agentAttachSubagents: "允许委派 subagent",
     agentPermTierBoundary: "边界审批",
     agentPermTierBoundaryDesc:
       "工作区外文件和网络访问始终请求批准；危险或不确定操作也需确认",
@@ -1166,6 +1167,7 @@ const messages = {
     agentAttachSkillsLoading: "Loading…",
     agentAttachSkillsEmpty: "No skills available",
     agentAttachPermissions: "Permissions",
+    agentAttachSubagents: "Allow subagent delegation",
     agentPermTierBoundary: "Ask at boundaries",
     agentPermTierBoundaryDesc:
       "Always ask for external files and network access; confirm risky or uncertain operations",

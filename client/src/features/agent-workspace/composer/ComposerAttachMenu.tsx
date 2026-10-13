@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Sparkles } from "lucide-react";
+import { Check, Plus, Sparkles } from "lucide-react";
 import {
   Popover,
   PopoverButton,
@@ -19,6 +19,8 @@ interface Props {
   onSkillIdsChange: (ids: string[]) => void;
   disabled?: boolean;
   skillsDisabled?: boolean;
+  subagentsEnabled: boolean;
+  onSubagentsEnabledChange: (enabled: boolean) => void;
   onOverlayOpenChange?: (open: boolean) => void;
 }
 
@@ -106,6 +108,26 @@ function AttachPanel(props: Props & { open: boolean; close: () => void }) {
             </Field>
           ))
         )}
+        <button
+          type="button"
+          disabled={props.disabled}
+          className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={() =>
+            props.onSubagentsEnabledChange(!props.subagentsEnabled)
+          }
+        >
+          <span
+            aria-hidden="true"
+            className={`flex size-4 shrink-0 items-center justify-center rounded border ${
+              props.subagentsEnabled
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border"
+            }`}
+          >
+            {props.subagentsEnabled && <Check size={11} />}
+          </span>
+          <span>{t("agentAttachSubagents")}</span>
+        </button>
       </div>
     </PopoverPanel>
   );

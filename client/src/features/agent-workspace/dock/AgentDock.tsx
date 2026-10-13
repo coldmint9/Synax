@@ -73,6 +73,10 @@ export function AgentDock({ projectId }: Props) {
     : undefined;
   const permissionTier = useAgentDockStore((s) => s.composerPermissionTier);
   const setPermissionTier = useAgentDockStore((s) => s.setPermissionTier);
+  const subagentsEnabled = useAgentDockStore((s) => s.composerSubagentsEnabled);
+  const setSubagentsEnabled = useAgentDockStore(
+    (s) => s.setComposerSubagentsEnabled,
+  );
   const submitSession = useAgentDockStore((s) => s.submitSession);
   const stopSession = useAgentDockStore((s) => s.stopSession);
   const replyPermission = useAgentDockStore((s) => s.replyPermission);
@@ -306,6 +310,16 @@ export function AgentDock({ projectId }: Props) {
       globalConfig={globalConfig}
       skillIds={skillIds}
       onSkillIdsChange={setSkillIds}
+      subagentsEnabled={subagentsEnabled}
+      onSubagentsEnabledChange={async (enabled) => {
+        setSubagentsEnabled(enabled);
+        if (session.sessionId) {
+          await useAgentSessionStore.getState().updateSessionPermissions(
+            session.sessionId,
+            { permissionOverrides: { task: enabled ? "allow" : "deny" } },
+          );
+        }
+      }}
       reasoningEffort={reasoningEffort}
       onReasoningEffortChange={setReasoningEffort}
       allowedReasoningEfforts={allowedReasoningEfforts}

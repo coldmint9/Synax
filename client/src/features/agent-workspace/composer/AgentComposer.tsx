@@ -101,6 +101,8 @@ interface Props {
   globalConfig: GlobalConfig | null;
   skillIds: string[];
   onSkillIdsChange: (ids: string[]) => void;
+  subagentsEnabled: boolean;
+  onSubagentsEnabledChange: (enabled: boolean) => void;
   reasoningEffort: ComposerReasoningEffort;
   onReasoningEffortChange: (effort: ComposerReasoningEffort) => void;
   /** Effort levels the currently selected provider allows. */
@@ -145,6 +147,8 @@ export function AgentComposer({
   globalConfig,
   skillIds,
   onSkillIdsChange,
+  subagentsEnabled,
+  onSubagentsEnabledChange,
   reasoningEffort,
   onReasoningEffortChange,
   allowedReasoningEfforts,
@@ -606,6 +610,8 @@ export function AgentComposer({
             projectId={projectId}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
+            subagentsEnabled={subagentsEnabled}
+            onSubagentsEnabledChange={onSubagentsEnabledChange}
             disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
             onOverlayOpenChange={onOverlayOpenChange}
           />
@@ -785,6 +791,8 @@ export function AgentComposer({
             projectId={projectId}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
+            subagentsEnabled={subagentsEnabled}
+            onSubagentsEnabledChange={onSubagentsEnabledChange}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />

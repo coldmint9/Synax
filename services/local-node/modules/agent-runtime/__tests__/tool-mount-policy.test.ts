@@ -50,4 +50,16 @@ describe("tool mount policy", () => {
       isToolMountedForSession(sessionWithMode("goal", "approved"), webSearch),
     ).toBe(true);
   });
+
+  it("hides subagent delegation when the session task override is denied", () => {
+    const session = sessionWithMode("chat");
+    session.sessionMetadata = {
+      ...session.sessionMetadata,
+      permissionOverrides: { task: "deny" },
+    };
+    expect(
+      isToolMountedForSession(session, { id: "subagent.delegate" }),
+    ).toBe(false);
+    expect(isToolMountedForSession(session, { id: "task.create" })).toBe(true);
+  });
 });
