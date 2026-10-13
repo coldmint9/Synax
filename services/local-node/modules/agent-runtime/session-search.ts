@@ -1,5 +1,6 @@
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { agentRuntimeStore } from "./session-store.js";
+import { transcriptStorageEnabled } from "./transcript-repository.js";
 
 /** Search persisted history, without loading transcripts or the entire session list. */
 export function searchSessions(
@@ -10,6 +11,17 @@ export function searchSessions(
 ) {
   const q = query.trim();
   if (!q) return { items: [], hasMore: false };
+  if (transcriptStorageEnabled()) {
+    const sessions = agentRuntimeStore.listSessions({ limit: Number.MAX_SAFE_INTEGER })
+      .filter((session) => !session.parentSessionId)
+      .flatMap((session) => {
+        const message = agentRuntimeStore.listMessages(session.id).find((item) => item.content.toLocaleLowerCase().includes(q.toLocaleLowerCase()));
+        return message ? [{ session, snippet: message.content.slice(0, 160), updatedAt: session.updatedAt }] : [];
+      })
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.session.id.localeCompare(b.session.id));
+    const page = sessions.slice(offset, offset + limit + 1);
+    return { items: page.slice(0, limit).map(({ session, snippet }) => ({ session, snippet })), hasMore: page.length > limit };
+  }
   const indexed = Array.from(q).length >= 3;
   const parameter = indexed ? `"${q.replaceAll('"', '""')}"` : q;
   const hit = (table: string) =>

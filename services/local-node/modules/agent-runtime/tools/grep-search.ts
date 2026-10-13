@@ -4,6 +4,7 @@ import { runCommand } from "./exec-async.js";
 import { resolveRipgrep, RIPGREP_MISSING_HELP } from "./ripgrep.js";
 import * as z from "zod/v4";
 import type { RegisteredTool, ToolExecutionResult } from "../contracts.js";
+import { recordSessionFileDiscovery } from "../read-tracker.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
 
 export const grepSearchTool: RegisteredTool = {
@@ -246,6 +247,7 @@ async function runGrepSearch(
       }
       contextBefore.length = 0;
       hits.push(currentMatch);
+      recordSessionFileDiscovery(sessionId, currentMatch.path);
       if (hits.length >= limit) break;
       continue;
     }

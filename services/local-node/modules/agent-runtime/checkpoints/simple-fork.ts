@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { setImmediate as yieldNow } from "node:timers/promises";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
+import { transcriptRepository } from "../transcript-repository.js";
 import {
   agentRuntimeStore as store,
   mapLegacyHistoryRow,
@@ -97,13 +98,7 @@ function resolveSource(sessionId: string, checkpointId: string): CopySource {
       versionId: checkpoint.payload.versionId!,
       stopAtMessage: false,
     };
-  const message = getRawSqlite()
-    .prepare(
-      "SELECT sequence,rowid AS rowid FROM agent_runtime_messages WHERE session_id=? AND id=? AND role='assistant'",
-    )
-    .get(sessionId, checkpoint.messageId) as
-    | { sequence: number; rowid: number }
-    | undefined;
+  const message = transcriptRepository.legacyReplyPosition(sessionId, checkpoint.messageId);
   if (!message) throw historyError("The selected reply is no longer visible.");
   return {
     session,
@@ -514,21 +509,11 @@ export async function forkSimpleConversation(
         cursor = found ? undefined : page.next;
         if (!cursor) break;
       } else {
-        const rows = db
-          .prepare(
-            `SELECT rowid AS rowid,sequence,id,length(CAST(content AS BLOB))+COALESCE(length(CAST(metadata_json AS BLOB)),0)+COALESCE(length(CAST(content_parts_json AS BLOB)),0) AS bytes
-          FROM agent_runtime_messages WHERE session_id=? AND (sequence>? OR (sequence=? AND rowid>?))
-          AND (sequence<? OR (sequence=? AND rowid<=?)) ORDER BY sequence,rowid LIMIT 16`,
-          )
-          .all(
-            sessionId,
-            afterSequence,
-            afterSequence,
-            afterRow,
-            source.legacySequence!,
-            source.legacySequence!,
-            source.legacyRowid!,
-          ) as { rowid: number; sequence: number; id: string; bytes: number }[];
+        const rows = transcriptRepository.legacyCopyPage(
+          sessionId,
+          { sequence: afterSequence, rowid: afterRow },
+          { sequence: source.legacySequence!, rowid: source.legacyRowid! },
+        );
         if (!rows.length) break;
         let bytes = 0;
         db.transaction(() => {
@@ -540,11 +525,7 @@ export async function forkSimpleConversation(
               );
             if (bytes && bytes + row.bytes > 768 * 1024) break;
             bytes += row.bytes;
-            const raw = db
-              .prepare(
-                "SELECT id,session_id,run_id,step_id,role,content,content_parts_json,metadata_json,created_at FROM agent_runtime_messages WHERE session_id=? AND rowid=?",
-              )
-              .get(sessionId, row.rowid) as Record<string, unknown>;
+            const raw = transcriptRepository.legacyCopyRow(sessionId, row);
             const fields = mapLegacyHistoryRow("agent_runtime_messages", raw),
               metadata = fields.metadata as Record<string, unknown>;
             const id = `msg_${randomUUID()}`;

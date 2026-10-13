@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
+import { recordSessionFileDiscovery } from '../read-tracker.js';
 import { isWorkspaceEntryVisible, resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
 
 export const fileListTool: RegisteredTool = {
@@ -32,6 +33,9 @@ export const fileListTool: RegisteredTool = {
         path: toWorkspaceRelative(path.join(dir, entry.name), input.sessionId),
         kind: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other',
       }));
+    for (const item of items) {
+      if (item.kind === 'file') recordSessionFileDiscovery(input.sessionId, item.path);
+    }
     return {
       result: { items },
       displaySummary: `Listed ${items.length} entries under ${toWorkspaceRelative(dir, input.sessionId)}.`,

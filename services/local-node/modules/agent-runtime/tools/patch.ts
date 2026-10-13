@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import {
   clearSessionFileRead,
+  recordSessionFileDiscovery,
   recordSessionFileMutation,
 } from "../read-tracker.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
@@ -137,6 +138,7 @@ export const patchTool: RegisteredTool = {
       fs.mkdirSync(path.dirname(change.target), { recursive: true });
       fs.writeFileSync(change.target, change.contents ?? "", "utf8");
       bytes += Buffer.byteLength(change.contents ?? "", "utf8");
+      recordSessionFileDiscovery(input.sessionId, change.targetPath);
       // Keep the post-write snapshot current for other tools that use the read tracker.
       recordSessionFileMutation(
         input.sessionId,

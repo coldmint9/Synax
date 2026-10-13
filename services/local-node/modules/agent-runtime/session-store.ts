@@ -33,11 +33,6 @@ import {
 } from "./usage-projection.js";
 import { createHash } from "node:crypto";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import {
-  readUsageContextWindowSize,
-  readUsageInputTokens,
-  readUsageOutputTokens,
-} from "./acp-engine/acp-usage.js";
 import { nowIso } from "./runtime-ids.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { sessionLiveBus } from "./session-live-bus.js";
@@ -57,6 +52,8 @@ import type {
 } from "./contracts.js";
 import { AgentNotFoundError, AgentRuntimeError } from "./runtime-errors.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
+import { transcriptRepository } from "./transcript-repository.js";
+import { transcriptStorageEnabled } from "./transcript-repository.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -1283,6 +1280,8 @@ export class AgentRuntimeStore {
     }
     const session = this.getSession(message.sessionId);
     const nextSequence = this.nextMessageSequence(message.sessionId);
+    if (transcriptStorageEnabled() && !versionedSession(message.sessionId))
+      return transcriptRepository.appendJsonl({ ...message, sequence: nextSequence } as AgentRuntimeMessage & { sequence: number });
     if (message.contentParts)
       bindAssets(message.sessionId, message.contentParts);
     getRawSqlite()
@@ -1322,11 +1321,9 @@ export class AgentRuntimeStore {
         "messages",
         messageId,
       ) as unknown as AgentRuntimeMessage | undefined;
-    const row = getRawSqlite()
-      .prepare(
-        "SELECT * FROM agent_runtime_messages WHERE id = ? AND session_id = ?",
-      )
-      .get(messageId, sessionId) as MessageRow | undefined;
+    if (transcriptStorageEnabled() && transcriptRepository.ensureJsonl(sessionId))
+      return transcriptRepository.jsonlMessage(sessionId, messageId);
+    const row = transcriptRepository.legacyMessageRow(sessionId, messageId) as unknown as MessageRow | undefined;
     return row ? mapMessage(row) : undefined;
   }
 
@@ -1388,11 +1385,9 @@ export class AgentRuntimeStore {
     if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
-    const rows = getRawSqlite()
-      .prepare(
-        "SELECT * FROM agent_runtime_messages WHERE session_id = ? ORDER BY sequence, created_at, rowid",
-      )
-      .all(sessionId) as MessageRow[];
+    if (transcriptStorageEnabled() && transcriptRepository.ensureJsonl(sessionId))
+      return transcriptRepository.jsonlMessages(sessionId);
+    const rows = transcriptRepository.legacyMessageRows(sessionId) as unknown as MessageRow[];
     return rows.map(mapMessage);
   }
 

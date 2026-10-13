@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
-import { recordSessionFileRead } from "../read-tracker.js";
+import {
+  ensureSessionFileReadable,
+  recordSessionFileRead,
+} from "../read-tracker.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
 
 const MAX_READ_BYTES = 64_000;
@@ -71,7 +74,7 @@ export const fileReadTool: RegisteredTool = {
   id: "file.read",
   label: "Read File",
   description:
-    "Read an existing text file. Rejects directories and binary files. Large files are truncated with a notice. Use rg first when you do not know the exact path; use media.read for images, audio, video or documents.",
+    "Read an existing text file. Exact existing paths are accepted even when discovery state is cold; missing guessed paths return close workspace matches. Rejects directories and binary files. Large files are truncated with a notice. Use rg first when you do not know the exact path; use media.read for images, audio, video or documents.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
@@ -99,6 +102,7 @@ export const fileReadTool: RegisteredTool = {
   execute(input) {
     const args = input.args as { path?: string; maxBytes?: number };
     if (!args?.path) throw new Error("path is required.");
+    ensureSessionFileReadable(input.sessionId, args.path);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) throw new Error("path must point to a file.");

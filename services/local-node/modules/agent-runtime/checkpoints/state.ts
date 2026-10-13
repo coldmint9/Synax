@@ -1,5 +1,7 @@
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import { agentRuntimeStore } from "../session-store.js";
+import { transcriptRepository } from "../transcript-repository.js";
+import { versionedSession } from "./version-runtime/bridge.js";
 import { makeRuntimeId, nowIso } from "../runtime-ids.js";
 
 export type Row = Record<string, string | number | null>;
@@ -47,7 +49,7 @@ function readHistoryRows(sessionId: string, omitRunId?: string): HistoryState {
         table,
         ids.flatMap(
           (id) =>
-            db
+            table === "agent_runtime_messages" && !versionedSession(id) ? transcriptRepository.legacyRows(id) : db
               .prepare(
                 `SELECT * FROM ${table} WHERE session_id=? ORDER BY rowid`,
               )
@@ -66,6 +68,10 @@ function readHistoryRows(sessionId: string, omitRunId?: string): HistoryState {
 }
 
 function insert(table: string, row: Row): void {
+  if (table === "agent_runtime_messages") {
+    transcriptRepository.insertLegacyRow(row);
+    return;
+  }
   const columns = new Set(
     (
       getRawSqlite().prepare(`PRAGMA table_info(${table})`).all() as {
@@ -174,8 +180,10 @@ export function replaceHistory(
   );
   const retained = new Set(snapshot.sessions.map((row) => row.id));
   for (const id of currentIds) {
-    for (const table of HISTORY_TABLES)
-      db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(id);
+    for (const table of HISTORY_TABLES) {
+      if (table === "agent_runtime_messages") transcriptRepository.deleteLegacySession(id);
+      else db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(id);
+    }
     db.prepare(
       "DELETE FROM agent_runtime_stream_records WHERE session_id=?",
     ).run(id);
@@ -363,13 +371,7 @@ export function captureHistoryBoundary(
         )
         .get() as { cursor: number }
     ).cursor;
-    const messageCount = (
-      db
-        .prepare(
-          "SELECT count(*) AS count FROM agent_runtime_messages WHERE session_id=?",
-        )
-        .get(sessionId) as { count: number }
-    ).count;
+    const messageCount = transcriptRepository.count(sessionId);
     for (const id of sessionIds)
       db.prepare(
         "UPDATE conversation_history_tracking SET last_boundary=? WHERE session_id=?",
@@ -393,6 +395,10 @@ const recordKey = (table: string, row: Row) =>
     ? JSON.stringify([row.asset_id, row.session_id])
     : String(row.id);
 function deleteRecord(table: string, key: string): void {
+  if (table === "agent_runtime_messages") {
+    transcriptRepository.deleteLegacyRecord(key);
+    return;
+  }
   const db = getRawSqlite();
   if (table === "agent_runtime_asset_sessions")
     db.prepare(`DELETE FROM ${table} WHERE asset_id=? AND session_id=?`).run(
@@ -401,6 +407,10 @@ function deleteRecord(table: string, key: string): void {
   else db.prepare(`DELETE FROM ${table} WHERE id=?`).run(key);
 }
 function upsertRecord(table: string, row: Row): void {
+  if (table === "agent_runtime_messages") {
+    transcriptRepository.restoreLegacyRow(row);
+    return;
+  }
   const columns = (
     getRawSqlite().prepare(`PRAGMA table_info(${table})`).all() as {
       name: string;

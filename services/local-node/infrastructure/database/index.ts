@@ -192,7 +192,7 @@ function hasExecutableSql(sql: string): boolean {
 function configureSqlite(sqlite: NativeDatabase.Database): void {
   sqlite.exec(`
     PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    PRAGMA synchronous = FULL;
     PRAGMA foreign_keys = ON;
     PRAGMA busy_timeout = 1000;
     PRAGMA cache_size = -32768;

@@ -21,6 +21,7 @@ import { initializeGoal } from "../goal-control.js";
 import { createHash, randomUUID } from "node:crypto";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import { agentRuntimeStore } from "../session-store.js";
+import { transcriptRepository } from "../transcript-repository.js";
 import { acceptRuntimeRun } from "../run-admission.js";
 import type { StreamTurnRequest } from "../contracts.js";
 import { invalidateSessionEnvironment } from "../session-environment.js";
@@ -198,11 +199,7 @@ export function checkpointSummary(sessionId: string) {
     available: number;
     initialInput: number;
   }>;
-  const messages = db
-    .prepare(
-      "SELECT id FROM agent_runtime_messages WHERE session_id=? ORDER BY sequence,created_at,rowid",
-    )
-    .all(sessionId) as { id: string }[];
+  const messages = transcriptRepository.legacyIdentities(sessionId);
   const messageIds = new Set(messages.map((m) => m.id));
   const latestMutation = (
     db
@@ -274,13 +271,7 @@ export async function previewHistory(
   const checkpoint = getCheckpoint(sessionId, checkpointId);
   assertCheckpoint(checkpoint);
   const plan = await planFileUndo(checkpoint, includeFiles);
-  const count = (
-    getRawSqlite()
-      .prepare(
-        "SELECT count(*) AS count FROM agent_runtime_messages WHERE session_id=?",
-      )
-      .get(sessionId) as { count: number }
-  ).count;
+  const count = transcriptRepository.count(sessionId);
   return {
     checkpointId,
     revision: historyRevision(sessionId),

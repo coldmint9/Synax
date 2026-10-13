@@ -8,6 +8,7 @@ import { emitRuntimeBusEvent } from "../runtime-bus-bridge.js";
 import { randomUUID } from "node:crypto";
 import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import { agentRuntimeStore } from "../session-store.js";
+import { transcriptRepository } from "../transcript-repository.js";
 import { historyError } from "./guards.js";
 import { captureHistoryBoundary, type HistoryBoundary } from "./state.js";
 
@@ -192,18 +193,7 @@ export async function captureCompletedReply(
     return;
   }
   if (!nativeCheckpointSession(sessionId)) return;
-  const message = getRawSqlite()
-    .prepare(
-      `SELECT id,step_id AS stepId FROM agent_runtime_messages WHERE session_id=? AND role='assistant'
-    AND (trim(content)<>'' OR content_parts_json IS NOT NULL)
-    AND COALESCE(json_extract(metadata_json,'$.type'),'')<>'thinking'
-    AND COALESCE(json_extract(metadata_json,'$.kind'),'')<>'thought'
-    AND COALESCE(json_extract(metadata_json,'$.partial'),0)=0 ${stepId ? "AND step_id=?" : ""}
-    ORDER BY sequence DESC,created_at DESC LIMIT 1`,
-    )
-    .get(...(stepId ? [sessionId, stepId] : [sessionId])) as
-    | { id: string; stepId: string | null }
-    | undefined;
+  const message = transcriptRepository.latestLegacyReply(sessionId, stepId);
   if (!message) return;
   if (message.stepId) {
     const step = agentRuntimeStore.getRunStep(message.stepId);

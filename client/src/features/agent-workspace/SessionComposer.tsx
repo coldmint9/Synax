@@ -1,5 +1,5 @@
 import "./composerModes.css";
-import "./goalFlame.css";
+import { Target } from "lucide-react";
 import { NewSessionScene } from "./NewSessionScene";
 import { welcomePlaceholderDelay } from "./welcomeTyping";
 import { NewSessionWelcome } from "./NewSessionWelcome";
@@ -79,11 +79,6 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 import { AgentInteractionPanel } from "./AgentInteractionPanel";
 import { SessionModePicker } from "./SessionModePicker";
-import {
-  FlameWrap,
-  FLAME_PURPLE,
-  type FlameWrapOptions,
-} from "@/shared/ui/canvasui/FlameWrap";
 import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxPermissionTier,
@@ -91,33 +86,6 @@ import {
   isAcpSession,
   type SynaxPermissionTier,
 } from "./synaxSessionTypes";
-
-/* Goal mode is the only surface that burns. The values are the documented
-   Flame Wrap configuration with two deliberate changes: the fire is the project
-   electric purple, and the radius matches the pill's 1rem corners so the flames
-   hug the shape instead of floating around it. */
-const GOAL_FLAME_OPTIONS: FlameWrapOptions = {
-  color: FLAME_PURPLE,
-  intensity: 0.5,
-  height: 170,
-  spread: 8,
-  radius: 16,
-  speed: 0.25,
-  scale: 0.75,
-  turbulence: 0.5,
-  turbulenceScale: 0.5,
-  turbulenceReach: 25,
-  sparks: 1.5,
-  sparkSize: 0.35,
-  sparkDensity: 1,
-  sparkSpeed: 1,
-  rim: 2.5,
-  melt: 4.5,
-  distortion: 10,
-  smoke: 1.5,
-  ember: 2,
-  scorch: 0,
-};
 
 interface Props {
   projectId: string;
@@ -755,6 +723,16 @@ export function SessionComposer({
       }
       modeControl={
         <div className="flex items-center gap-1">
+          {backendId === "native" && mode === "goal" && (
+            <span
+              role="img"
+              aria-label={zh ? "目标模式" : "Goal mode"}
+              title={zh ? "目标模式" : "Goal mode"}
+              className="inline-flex shrink-0 items-center text-[hsl(var(--electric-purple))]"
+            >
+              <Target size={14} aria-hidden="true" />
+            </span>
+          )}
           {!acp && backendId !== "native" ? (
             <SessionModePicker
               mode={mode}
@@ -850,8 +828,6 @@ export function SessionComposer({
     />
   );
 
-  /* One source of truth for the goal state: the same flag drives the styling
-     hook, the flame wrap and the mode-specific placeholder. */
   const goalMode = backendId === "native" && mode === "goal";
 
   const composerShell = (
@@ -911,14 +887,7 @@ export function SessionComposer({
           onForce={(itemId) => forceQueuedInput(sessionId, itemId)}
         />
       )}
-      {/* Mounted in every mode so switching modes never remounts the input
-          subtree; only the flame itself turns on and off. */}
-      <FlameWrap
-        className="agent-session-goal-flame"
-        active={goalMode}
-        contentStyle={{ overflow: "visible" }}
-        {...GOAL_FLAME_OPTIONS}
-      >
+      <div className="relative w-full">
         {/* Keep the workspace trigger above the input's clipped content. */}
         <div className="agent-session-composer-rail">
           {isDraft && (
@@ -959,7 +928,7 @@ export function SessionComposer({
             </div>
           </div>
         </div>
-      </FlameWrap>
+      </div>
     </div>
   );
 

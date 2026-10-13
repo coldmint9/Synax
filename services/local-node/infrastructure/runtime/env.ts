@@ -33,6 +33,13 @@ function defaultDataRoot(): string {
 /** 数据根目录，统一存放于 ~/.synax */
 export const DATA_ROOT = env("DATA_ROOT", defaultDataRoot());
 
+/** Transcript payload backend. Production uses JSONL; tests retain the legacy
+ * adapter unless they explicitly opt into the JSONL integration suite. */
+export const TRANSCRIPT_STORAGE = env(
+  "SYNAX_TRANSCRIPT_STORAGE",
+  NODE_ENV === "test" || process.env.VITEST ? "legacy" : "jsonl",
+);
+
 /** 是否为开发环境 */
 export const isDev = NODE_ENV === "development";
 

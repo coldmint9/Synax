@@ -184,10 +184,9 @@ it("keeps the interaction panel mounted when its state refreshes beside the inpu
 it("keeps the direct mode selector and plus-menu mode controls synchronized", async () => {
   const { container } = renderComposer();
   const controls = container.querySelector(".agent-session-controls")!;
-  // The flame wrap stays mounted in every mode: only its effect turns on.
-  const flame = container.querySelector("[data-flame-wrap]")!;
   expect(controls).toHaveAttribute("data-composer-mode", "chat");
-  expect(flame).toHaveAttribute("data-flame-active", "false");
+  expect(container.querySelector("[data-flame-wrap]")).toBeNull();
+  expect(screen.queryByRole("img", { name: "Goal mode" })).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Session mode" }),
   ).not.toBeInTheDocument();
@@ -206,11 +205,12 @@ it("keeps the direct mode selector and plus-menu mode controls synchronized", as
     await waitFor(() =>
       expect(controls).toHaveAttribute("data-composer-mode", mode),
     );
-    expect(flame).toHaveAttribute(
-      "data-flame-active",
-      mode === "goal" ? "true" : "false",
-    );
-    expect(container.querySelector("[data-flame-wrap]")).toBe(flame);
+    expect(container.querySelector("[data-flame-wrap]")).toBeNull();
+    if (mode === "goal") {
+      expect(screen.getByRole("img", { name: "Goal mode" })).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("img", { name: "Goal mode" })).not.toBeInTheDocument();
+    }
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
   }
 });
@@ -331,13 +331,12 @@ describe("SessionComposer input queue", () => {
       )!;
       const input = screen.getByRole("textbox", { name: "Message" });
       const composer = input.closest(".agent-session-composer-shell")!;
-      const flame = container.querySelector("[data-flame-wrap]")!;
+      const rail = container.querySelector(".agent-session-composer-rail")!;
       expect(composer).toBeInTheDocument();
-      // The goal flame wrap owns the composer box; the queue still sits
-      // directly above that box and never inside the composer itself.
-      expect(queue.parentElement).toBe(flame.parentElement);
-      expect(queue.nextElementSibling).toBe(flame);
-      expect(composer.closest("[data-flame-wrap]")).toBe(flame);
+      // The queue stays directly above the composer and outside its input box.
+      expect(queue.parentElement).toBe(rail.parentElement?.parentElement);
+      expect(queue.nextElementSibling).toBe(rail.parentElement);
+      expect(rail).toContainElement(composer);
       expect(queue.closest(".agent-session-composer-shell")).toBeNull();
       expect(input.closest("form")).not.toContainElement(queue);
     },

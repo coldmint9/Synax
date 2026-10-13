@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { ToolCallRecord } from "./contracts.js";
 import { resolveWorkspacePath } from "./tools/workspace.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
@@ -9,6 +10,7 @@ interface ReadRecord {
 }
 
 const sessionReads = new Map<string, Map<string, ReadRecord>>();
+const sessionDiscoveredFiles = new Map<string, Set<string>>();
 
 // Process-wide LRU budget, shared across sessions. Metadata-only records remain
 // usable on the fast path; a missing snapshot never authorizes changed files.
@@ -99,6 +101,128 @@ function sessionMap(sessionId: string): Map<string, ReadRecord> {
   return reads;
 }
 
+function discoveredFiles(sessionId: string): Set<string> {
+  let files = sessionDiscoveredFiles.get(sessionId);
+  if (!files) {
+    files = new Set();
+    sessionDiscoveredFiles.set(sessionId, files);
+  }
+  return files;
+}
+
+/** Record a file path returned by a successful workspace discovery tool. */
+export function recordSessionFileDiscovery(
+  sessionId: string,
+  workspacePath: string,
+): void {
+  try {
+    const filePath = resolveTrackedPath(sessionId, workspacePath);
+    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile())
+      return;
+    discoveredFiles(sessionId).add(filePath);
+  } catch {
+    // Discovery is advisory bookkeeping; the originating tool owns the error.
+  }
+}
+
+/** Find likely workspace files for a path the model may have guessed. */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const saved = row[j]!;
+      row[j] = a[i - 1] === b[j - 1]
+        ? diagonal
+        : Math.min(row[j]! + 1, row[j - 1]! + 1, diagonal + 1);
+      diagonal = saved;
+    }
+  }
+  return row[b.length]!;
+}
+
+function suggestFilePaths(
+  sessionId: string,
+  resolvedPath: string,
+): string[] {
+  const requestedName = path.basename(resolvedPath).toLowerCase();
+  const candidates: Array<{ path: string; score: number }> = [];
+  const root = resolveWorkspacePath(".", sessionId);
+  const queue = [root];
+  let visited = 0;
+  const ignored = new Set([".git", "node_modules", "dist", "build", "server-dist", "dist-electron"]);
+
+  while (queue.length > 0 && visited < 5000) {
+    const current = queue.shift()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (visited++ >= 5000) break;
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name)) queue.push(path.join(current, entry.name));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const name = entry.name.toLowerCase();
+      const distance = editDistance(requestedName, name);
+      const sameExtension = path.extname(requestedName) === path.extname(name);
+      const containsStem = name.includes(path.basename(requestedName, path.extname(requestedName)));
+      if (distance <= Math.max(3, Math.floor(requestedName.length * 0.35)) || containsStem) {
+        const absolute = path.join(current, entry.name);
+        candidates.push({
+          path: toWorkspaceRelativeForSuggestion(absolute, sessionId),
+          score: distance + (sameExtension ? 0 : 4) + (containsStem ? -2 : 0),
+        });
+      }
+    }
+  }
+  return [...new Map(candidates.sort((a, b) => a.score - b.score).map((item) => [item.path, item])).values()]
+    .slice(0, 5)
+    .map((item) => item.path);
+}
+
+function toWorkspaceRelativeForSuggestion(absPath: string, sessionId: string): string {
+  const root = resolveWorkspacePath(".", sessionId);
+  const relative = path.relative(root, absPath).replace(/\\/g, "/");
+  return relative || ".";
+}
+
+/**
+ * Confirm a path when possible, but turn guessed paths into actionable search
+ * feedback instead of forcing the model through a second blind tool call.
+ */
+export function ensureSessionFileReadable(
+  sessionId: string,
+  workspacePath: string,
+): void {
+  const filePath = resolveTrackedPath(sessionId, workspacePath);
+  if (filePath && sessionDiscoveredFiles.get(sessionId)?.has(filePath)) return;
+  if (filePath) {
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isFile()) {
+        recordSessionFileDiscovery(sessionId, filePath);
+        return;
+      }
+    } catch {
+      // Fall through to the bounded suggestion scan below.
+    }
+    const suggestions = suggestFilePaths(sessionId, filePath);
+    const hint = suggestions.length
+      ? ` Possible matches: ${suggestions.join(", ")}.`
+      : " No close workspace matches were found.";
+    throw new Error(
+      `File not found: "${normalizePath(workspacePath)}".${hint} Use one of the suggested paths or search the workspace.`,
+    );
+  }
+  throw new Error(`File path "${normalizePath(workspacePath)}" is outside the session workspace.`);
+}
+
 function looksLikeFilePath(token: string): boolean {
   if (!token || token.startsWith("-")) return false;
   return token.includes("/") || token.includes(".") || /^[\w.-]+$/.test(token);
@@ -177,6 +301,7 @@ export function clearSessionFileRead(
     normalizePath(workspaceRelativePath);
   dropSnapshot(reads.get(filePath));
   reads.delete(filePath);
+  sessionDiscoveredFiles.get(sessionId)?.delete(filePath);
 }
 
 export function recordBashFileReads(
@@ -266,6 +391,28 @@ export function rebuildSessionFileReads(
   for (const call of toolCalls) {
     if (call.status !== "completed") continue;
 
+    if (call.toolId === "file.list") {
+      const items = (call.outputRef as {
+        items?: Array<{ path?: string; kind?: string }>;
+      } | null)?.items;
+      for (const item of items ?? []) {
+        if (item.kind === "file" && item.path) {
+          recordSessionFileDiscovery(sessionId, item.path);
+        }
+      }
+      continue;
+    }
+
+    if (call.toolId === "rg" || call.toolId === "grep.search") {
+      const hits = (call.outputRef as {
+        hits?: Array<{ path?: string }>;
+      } | null)?.hits;
+      for (const hit of hits ?? []) {
+        if (hit.path) recordSessionFileDiscovery(sessionId, hit.path);
+      }
+      continue;
+    }
+
     if (call.toolId === "file.read") {
       const path = (call.inputRef as { path?: string } | null)?.path;
       if (path) {
@@ -333,6 +480,7 @@ export function clearSessionFileReads(sessionId: string): void {
   for (const record of sessionReads.get(sessionId)?.values() ?? [])
     dropSnapshot(record);
   sessionReads.delete(sessionId);
+  sessionDiscoveredFiles.delete(sessionId);
 }
 
 /** @internal Test helper */

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fileReadTool } from '../tools/file-read.js';
+import { fileListTool } from '../tools/file-list.js';
 import {
   clearSessionWorkspaceRoot,
   resolveWorkspaceRoot,
@@ -48,6 +49,50 @@ describe('session workspace roots', () => {
       content: 'export const value = 42;\n',
       truncated: false,
     });
+  });
+
+  it('reads an existing file even when discovery bookkeeping is cold', async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-project-root-'));
+    tempDirs.push(projectDir);
+    fs.writeFileSync(path.join(projectDir, 'entry.ts'), 'export const value = 42;\n', 'utf8');
+
+    const sessionId = 'ars_workspace_undiscovered_test';
+    sessionIds.push(sessionId);
+    setSessionWorkspaceRoot(sessionId, projectDir);
+
+    const result = await fileReadTool.execute({
+      sessionId,
+      runId: null,
+      stepId: null,
+      toolCallId: 'tool_workspace_undiscovered_test',
+      toolId: 'file.read',
+      category: 'read',
+      mutability: 'read',
+      args: { path: 'entry.ts' },
+    });
+    expect(result.result).toMatchObject({ path: 'entry.ts', content: 'export const value = 42;\n' });
+  });
+
+  it('returns close file suggestions for a missing guessed path', () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-project-root-'));
+    tempDirs.push(projectDir);
+    fs.mkdirSync(path.join(projectDir, 'tests'));
+    fs.writeFileSync(path.join(projectDir, 'tests', 'transcript-jsonl.test.ts'), 'export {};\n', 'utf8');
+
+    const sessionId = 'ars_workspace_suggestion_test';
+    sessionIds.push(sessionId);
+    setSessionWorkspaceRoot(sessionId, projectDir);
+
+    expect(() => fileReadTool.execute({
+      sessionId,
+      runId: null,
+      stepId: null,
+      toolCallId: 'tool_workspace_suggestion_test',
+      toolId: 'file.read',
+      category: 'read',
+      mutability: 'read',
+      args: { path: 'missing/transcript-jsonl.test.ts' },
+    })).toThrow(/File not found:.*tests\/transcript-jsonl\.test\.ts/);
   });
 
   describe('project work dir resolution', () => {
