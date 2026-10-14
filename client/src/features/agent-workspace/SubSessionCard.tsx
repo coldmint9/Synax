@@ -3,9 +3,9 @@ import { useId, useState } from "react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
-import { activityPreview } from "./activityText";
+import { subagentTaskTitle } from "./subagentTaskTitle";
 import { SubagentControls } from "./SubagentControls";
-import { SubagentIdentity, SubagentProfileCard } from "./SubagentIdentity";
+import { SubagentIdentity } from "./SubagentIdentity";
 
 interface Props {
   session: AgentSession;
@@ -13,10 +13,10 @@ interface Props {
 }
 
 export function SubSessionCard({ session, onExpand }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const resultId = useId();
-  const title = activityPreview(session.title?.trim() || session.prompt);
+  const title = subagentTaskTitle(session, locale);
 
   return (
     <div className="bui-task subagent-task-card" data-task-status={session.status}>
@@ -64,13 +64,12 @@ export function SubSessionCard({ session, onExpand }: Props) {
       </div>
       {expanded && (
         <div id={resultId} className="bui-task-body subagent-task-result">
-          <SubagentProfileCard session={session} />
           {session.resultSummary ? (
-            <p className="whitespace-pre-wrap">{session.resultSummary}</p>
+            <p className="subagent-task-summary whitespace-pre-wrap">{session.resultSummary}</p>
           ) : session.status === "running" ? (
-            <p>{t("subSessionRunning")}</p>
+            <p className="subagent-task-summary subagent-task-summary--active">{t("subSessionRunning")}</p>
           ) : (
-            <p>{t("subSessionNoResult")}</p>
+            <p className="subagent-task-summary">{t("subSessionNoResult")}</p>
           )}
         </div>
       )}

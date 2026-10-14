@@ -27,6 +27,31 @@ import {
 } from '../../adapters/transport/context'
 
 const PREF_KEY = 'Synax.context.preferences'
+const CONTEXT_CACHE_TTL_MS = 30_000
+
+interface ProjectContextCache {
+  sessions?: ContextSession[]
+  memories?: ProjectMemory[]
+  sessionsAt?: number
+  memoriesAt?: number
+  entries: Map<string, { items: ContextEntry[]; fetchedAt: number }>
+  snapshots: Map<string, { items: ContextSnapshot[]; fetchedAt: number }>
+}
+
+const projectContextCache = new Map<string, ProjectContextCache>()
+
+function getProjectCache(projectId: string): ProjectContextCache {
+  let cache = projectContextCache.get(projectId)
+  if (!cache) {
+    cache = { entries: new Map(), snapshots: new Map() }
+    projectContextCache.set(projectId, cache)
+  }
+  return cache
+}
+
+function isFresh(fetchedAt: number | undefined): boolean {
+  return fetchedAt !== undefined && Date.now() - fetchedAt < CONTEXT_CACHE_TTL_MS
+}
 
 interface StoredPrefs {
   selectedSessionByProject: Record<string, string | null>
@@ -166,14 +191,17 @@ export const useContextStore = create<ContextState>((set, get) => ({
   bind(projectId, userId) {
     const prefs = readPrefs()
     const selected = prefs.selectedSessionByProject[projectId] ?? null
+    const cache = getProjectCache(projectId)
+    const cachedEntries = selected ? cache.entries.get(selected)?.items ?? [] : []
+    const cachedSnapshots = selected ? cache.snapshots.get(selected)?.items ?? [] : []
     set({
       projectId,
       userId,
       currentSessionId: selected,
-      sessions: [],
-      entries: [],
-      snapshots: [],
-      memories: [],
+      sessions: cache.sessions ?? [],
+      entries: cachedEntries,
+      snapshots: cachedSnapshots,
+      memories: cache.memories ?? [],
       searchResults: [],
       suggestions: [],
       tokenWarnings: {},
@@ -203,10 +231,18 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async refreshSessions() {
     const { projectId, loading } = get()
     if (!projectId) return
+    const cache = getProjectCache(projectId)
+    if (isFresh(cache.sessionsAt)) {
+      if (cache.sessions) set({ sessions: cache.sessions })
+      return
+    }
+    const requestProjectId = projectId
     set({ loading: { ...loading, sessions: true } })
     try {
       const resp = await contextApi.listSessions({ projectId, status: 'active', limit: 50 })
-      set({ sessions: resp.items })
+      cache.sessions = resp.items
+      cache.sessionsAt = Date.now()
+      if (get().projectId === requestProjectId) set({ sessions: resp.items })
     } catch (err) {
       set({ lastError: (err as Error).message })
     } finally {
@@ -238,6 +274,9 @@ export const useContextStore = create<ContextState>((set, get) => ({
         sessions: upsertSession(get().sessions, session),
         currentSessionId: session.id,
       })
+      const cache = getProjectCache(projectId)
+      cache.sessions = upsertSession(cache.sessions ?? [], session)
+      cache.sessionsAt = Date.now()
       const prefs = readPrefs()
       prefs.selectedSessionByProject[projectId] = session.id
       writePrefs(prefs)
@@ -252,6 +291,12 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async archiveSession(sessionId) {
     try {
       const updated = await contextApi.archiveSession(sessionId)
+      const projectId = get().projectId
+      if (projectId) {
+        const cache = getProjectCache(projectId)
+        cache.sessions = (cache.sessions ?? []).filter((s) => s.id !== sessionId)
+        cache.sessionsAt = 0
+      }
       set({
         sessions: get().sessions.filter((s) => s.id !== sessionId),
         currentSessionId: get().currentSessionId === sessionId ? null : get().currentSessionId,
@@ -267,6 +312,14 @@ export const useContextStore = create<ContextState>((set, get) => ({
     try {
       const wasCurrent = get().currentSessionId === sessionId
       await contextApi.deleteSession(sessionId)
+      const projectId = get().projectId
+      if (projectId) {
+        const cache = getProjectCache(projectId)
+        cache.sessions = (cache.sessions ?? []).filter((s) => s.id !== sessionId)
+        cache.sessionsAt = 0
+        cache.entries.delete(sessionId)
+        cache.snapshots.delete(sessionId)
+      }
       set({
         sessions: get().sessions.filter((s) => s.id !== sessionId),
         currentSessionId: wasCurrent ? null : get().currentSessionId,
@@ -278,12 +331,22 @@ export const useContextStore = create<ContextState>((set, get) => ({
   },
 
   async refreshEntries(sessionId) {
+    const { projectId } = get()
     const sid = sessionId ?? get().currentSessionId
-    if (!sid) return
+    if (!projectId || !sid) return
+    const cache = getProjectCache(projectId)
+    const cached = cache.entries.get(sid)
+    if (cached && isFresh(cached.fetchedAt)) {
+      if (get().currentSessionId === sid) set({ entries: cached.items })
+      return
+    }
+    const requestProjectId = projectId
     set({ loading: { ...get().loading, entries: true } })
     try {
       const resp = await contextApi.listEntries(sid, { limit: 200 })
-      set({ entries: resp.items })
+      cache.entries.set(sid, { items: resp.items, fetchedAt: Date.now() })
+      if (get().projectId === requestProjectId && get().currentSessionId === sid)
+        set({ entries: resp.items })
     } catch (err) {
       set({ lastError: (err as Error).message })
     } finally {
@@ -292,7 +355,7 @@ export const useContextStore = create<ContextState>((set, get) => ({
   },
 
   async appendMessage({ role, content, contentType, metadata, parentEntryId }) {
-    const { currentSessionId } = get()
+    const { currentSessionId, projectId } = get()
     if (!currentSessionId) return null
     try {
       const entry = await contextApi.appendEntry(currentSessionId, {
@@ -302,7 +365,12 @@ export const useContextStore = create<ContextState>((set, get) => ({
         metadata,
         parentEntryId,
       })
-      set({ entries: [...get().entries, entry] })
+      const entries = [...get().entries, entry]
+      if (projectId) getProjectCache(projectId).entries.set(currentSessionId, {
+        items: entries,
+        fetchedAt: Date.now(),
+      })
+      set({ entries })
       return entry
     } catch (err) {
       set({ lastError: (err as Error).message })
@@ -311,11 +379,16 @@ export const useContextStore = create<ContextState>((set, get) => ({
   },
 
   async recordSnapshot(label) {
-    const { currentSessionId } = get()
+    const { currentSessionId, projectId } = get()
     if (!currentSessionId) return null
     try {
       const snap = await contextApi.createSnapshot(currentSessionId, { label })
-      set({ snapshots: [snap, ...get().snapshots] })
+      const snapshots = [snap, ...get().snapshots]
+      if (projectId) getProjectCache(projectId).snapshots.set(currentSessionId, {
+        items: snapshots,
+        fetchedAt: Date.now(),
+      })
+      set({ snapshots })
       return snap
     } catch (err) {
       set({ lastError: (err as Error).message })
@@ -324,12 +397,21 @@ export const useContextStore = create<ContextState>((set, get) => ({
   },
 
   async refreshSnapshots() {
-    const sid = get().currentSessionId
-    if (!sid) return
+    const { currentSessionId: sid, projectId } = get()
+    if (!sid || !projectId) return
+    const cache = getProjectCache(projectId)
+    const cached = cache.snapshots.get(sid)
+    if (cached && isFresh(cached.fetchedAt)) {
+      set({ snapshots: cached.items })
+      return
+    }
+    const requestProjectId = projectId
     set({ loading: { ...get().loading, snapshots: true } })
     try {
       const resp = await contextApi.listSnapshots(sid)
-      set({ snapshots: resp.items })
+      cache.snapshots.set(sid, { items: resp.items, fetchedAt: Date.now() })
+      if (get().projectId === requestProjectId && get().currentSessionId === sid)
+        set({ snapshots: resp.items })
     } catch (err) {
       set({ lastError: (err as Error).message })
     } finally {
@@ -340,10 +422,18 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async refreshMemories() {
     const { projectId } = get()
     if (!projectId) return
+    const cache = getProjectCache(projectId)
+    if (isFresh(cache.memoriesAt)) {
+      if (cache.memories) set({ memories: cache.memories })
+      return
+    }
+    const requestProjectId = projectId
     set({ loading: { ...get().loading, memories: true } })
     try {
       const resp = await contextApi.listMemories({ projectId, status: 'active', limit: 200 })
-      set({ memories: resp.items })
+      cache.memories = resp.items
+      cache.memoriesAt = Date.now()
+      if (get().projectId === requestProjectId) set({ memories: resp.items })
     } catch (err) {
       set({ lastError: (err as Error).message })
     } finally {
@@ -354,7 +444,14 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async createMemory(input) {
     try {
       const mem = await contextApi.createMemory(input)
-      set({ memories: [mem, ...get().memories] })
+      const memories = [mem, ...get().memories]
+      const projectId = get().projectId
+      if (projectId) {
+        const cache = getProjectCache(projectId)
+        cache.memories = memories
+        cache.memoriesAt = Date.now()
+      }
+      set({ memories })
       return mem
     } catch (err) {
       set({ lastError: (err as Error).message })
@@ -365,7 +462,10 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async updateMemory(id, patch) {
     try {
       const mem = await contextApi.updateMemory(id, patch)
-      set({ memories: get().memories.map((m) => (m.id === id ? mem : m)) })
+      const memories = get().memories.map((m) => (m.id === id ? mem : m))
+      const projectId = get().projectId
+      if (projectId) getProjectCache(projectId).memories = memories
+      set({ memories })
       return mem
     } catch (err) {
       set({ lastError: (err as Error).message })
@@ -376,8 +476,11 @@ export const useContextStore = create<ContextState>((set, get) => ({
   async deleteMemory(id) {
     try {
       await contextApi.deleteMemory(id)
+      const memories = removeById(get().memories, id)
+      const projectId = get().projectId
+      if (projectId) getProjectCache(projectId).memories = memories
       set({
-        memories: removeById(get().memories, id),
+        memories,
         pinnedMemoryIds: get().pinnedMemoryIds.filter((x) => x !== id),
       })
     } catch (err) {
@@ -446,19 +549,38 @@ export const useContextStore = create<ContextState>((set, get) => ({
       case 'session_archived': {
         const s = event.payload as ContextSession
         if (!s?.id) return
+        const projectId = get().projectId
+        const cache = projectId ? getProjectCache(projectId) : undefined
         if (event.type === 'session_archived') {
+          if (cache) {
+            cache.sessions = (cache.sessions ?? []).filter((x) => x.id !== s.id)
+            cache.sessionsAt = Date.now()
+          }
           set({
             sessions: get().sessions.filter((x) => x.id !== s.id),
             currentSessionId:
               get().currentSessionId === s.id ? null : get().currentSessionId,
           })
         } else {
-          set({ sessions: upsertSession(get().sessions, s) })
+          const sessions = upsertSession(get().sessions, s)
+          if (cache) {
+            cache.sessions = upsertSession(cache.sessions ?? [], s)
+            cache.sessionsAt = Date.now()
+          }
+          set({ sessions })
         }
         return
       }
       case 'session_deleted': {
         const id = (event.payload as { id: string }).id
+        const projectId = get().projectId
+        if (projectId) {
+          const cache = getProjectCache(projectId)
+          cache.sessions = (cache.sessions ?? []).filter((x) => x.id !== id)
+          cache.sessionsAt = Date.now()
+          cache.entries.delete(id)
+          cache.snapshots.delete(id)
+        }
         set({
           sessions: removeById(get().sessions, id),
           currentSessionId: get().currentSessionId === id ? null : get().currentSessionId,
@@ -469,25 +591,48 @@ export const useContextStore = create<ContextState>((set, get) => ({
         const entry = event.payload as ContextEntry
         if (entry.sessionId !== get().currentSessionId) return
         if (get().entries.some((x) => x.id === entry.id)) return
-        set({ entries: [...get().entries, entry] })
+        const entries = [...get().entries, entry]
+        const projectId = get().projectId
+        if (projectId) getProjectCache(projectId).entries.set(entry.sessionId, {
+          items: entries,
+          fetchedAt: Date.now(),
+        })
+        set({ entries })
         return
       }
       case 'entry_updated': {
         const entry = event.payload as ContextEntry
-        set({
-          entries: get().entries.map((x) => (x.id === entry.id ? entry : x)),
+        const entries = get().entries.map((x) => (x.id === entry.id ? entry : x))
+        const projectId = get().projectId
+        if (projectId) getProjectCache(projectId).entries.set(entry.sessionId, {
+          items: entries,
+          fetchedAt: Date.now(),
         })
+        set({ entries })
         return
       }
       case 'entry_deleted': {
         const id = (event.payload as { id: string }).id
-        set({ entries: removeById(get().entries, id) })
+        const entries = removeById(get().entries, id)
+        const projectId = get().projectId
+        if (projectId && get().currentSessionId)
+          getProjectCache(projectId).entries.set(get().currentSessionId!, {
+            items: entries,
+            fetchedAt: Date.now(),
+          })
+        set({ entries })
         return
       }
       case 'snapshot_created': {
         const snap = event.payload as ContextSnapshot
         if (snap.sessionId !== get().currentSessionId) return
-        set({ snapshots: [snap, ...get().snapshots.filter((x) => x.id !== snap.id)] })
+        const snapshots = [snap, ...get().snapshots.filter((x) => x.id !== snap.id)]
+        const projectId = get().projectId
+        if (projectId) getProjectCache(projectId).snapshots.set(snap.sessionId, {
+          items: snapshots,
+          fetchedAt: Date.now(),
+        })
+        set({ snapshots })
         return
       }
       case 'memory_created':

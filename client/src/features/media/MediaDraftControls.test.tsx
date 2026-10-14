@@ -64,6 +64,24 @@ describe("MediaDraftPreview", () => {
     });
   });
 
+  it("keeps a loading status visible while the attachment body is pending", async () => {
+    vi.mocked(runtimeMedia.blob).mockReturnValueOnce(new Promise(() => {}));
+    render(<MediaDraftPreview media={createMedia()} />);
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+    await screen.findByText("image.png");
+    expect(screen.getByRole("status")).toHaveTextContent("正在读取内容");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("retries a failed attachment download", async () => {
+    vi.mocked(runtimeMedia.blob).mockRejectedValueOnce(new Error("Network error"));
+    render(<MediaDraftPreview media={createMedia()} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Network error");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("img", { name: "image.png" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("removes the ready row and deletes from the image card corner", async () => {
     const remove = vi.fn();
     const { container } = render(

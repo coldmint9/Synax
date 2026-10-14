@@ -11,7 +11,7 @@ import { AgentConversationView } from "./AgentConversationView";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { SubagentControls } from "./SubagentControls";
 import { useLocale } from "../../shared/hooks/useLocale";
-import { SubagentIdentity, SubagentProfileCard } from "./SubagentIdentity";
+import { SubagentIdentity, getSubagentRole } from "./SubagentIdentity";
 
 const REFRESH_MS = 4000;
 
@@ -107,9 +107,11 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
           onDestroyed={() => setDestroyed(true)}
         />
       </div>}
-      <SubagentProfileCard session={detail.session} showIdentity={false} />
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView
+          taskDescription={
+            detail.session.prompt?.trim() || getSubagentRole(detail.session).description
+          }
           session={detail.session}
           runs={detail.runs}
           steps={detail.steps}

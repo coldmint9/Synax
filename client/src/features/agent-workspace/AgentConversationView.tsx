@@ -16,6 +16,7 @@ import type { CompactionEvent } from "../../shared/state/agentRuntimeStore";
 import { getSessionCategory } from "./sessionGrouping";
 import { resolveSynaxRouteReason, isSynaxSession } from "./synaxDisplay";
 import { SessionStaticTimeline } from "./SessionStaticTimeline";
+import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 
 interface Props {
   session: AgentSession | undefined;
@@ -31,6 +32,7 @@ interface Props {
   unifiedLive?: boolean;
   submitting?: boolean;
   liveTurn?: React.ReactNode;
+  taskDescription?: string;
   /** Scroll container, forwarded so transcript entries can lazy-mount by viewport. */
   scrollRootRef?: React.RefObject<HTMLElement | null>;
 }
@@ -47,18 +49,23 @@ export const AgentConversationView = memo(function AgentConversationView({
   onExpandChild,
   excludeStepId = null,
   liveTurn,
+  taskDescription,
   unifiedLive = false,
   submitting = false,
   scrollRootRef,
 }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const historyWindow = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
   const historicalPage = historyWindow?.latest === false;
+  const failureInTimeline = runs.some(
+    run => run.sessionId === session?.id && run.status === "failed",
+  );
 
   const isRunning =
     session?.status === "running" && Boolean(session.activeRunId);
   const isResumable =
-    !submitting &&
+    !submitting && !historicalPage &&
+    !(session?.status === "failed" && failureInTimeline) &&
     (session?.status === "interrupted" || session?.status === "failed");
   const cat = session ? getSessionCategory(session.profileId) : null;
   const routeReason = session ? resolveSynaxRouteReason(session) : null;
@@ -68,6 +75,17 @@ export const AgentConversationView = memo(function AgentConversationView({
     <TranscriptSessionProvider sessionId={session?.id}>
       <SessionHistoryProvider session={session} messages={messages}>
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-[1.2rem] py-4">
+        {taskDescription?.trim() && (
+          <section aria-label={locale === "zh" ? "任务说明" : "Task instructions"}
+            className="subagent-task-instructions">
+            <div className="subagent-task-instructions-label">
+              {locale === "zh" ? "任务说明" : "Task instructions"}
+            </div>
+            <div className="min-w-0 break-words text-[13px] leading-relaxed">
+              <MarkdownRenderer content={taskDescription} />
+            </div>
+          </section>
+        )}
         {showHeader ? (
           <div className="flex items-center gap-2 border-b border-border/40 pb-3">
             {session && routeReason && isSynaxSession(session) ? (

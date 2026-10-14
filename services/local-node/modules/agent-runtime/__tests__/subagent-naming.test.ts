@@ -45,6 +45,18 @@ describe("LLM-provided subagent names", () => {
     expect(child.prompt).toContain("You are 路过的云 ☁️.");
   });
 
+  it.each(["林墨", "阿柚", "小土豆"])("persists the preferred short 2-3 character name %s verbatim", async (name) => {
+    const root = createParent();
+    const result = await toolRegistry.execute(root.id, "subagent.delegate", {
+      name, prompt: "Read files only", specialist,
+    });
+    expect(result.record.status).toBe("completed");
+    const { taskId } = result.toolResult!.result as { taskId: string };
+    const child = agentRuntimeStore.getSession(taskId);
+    expect(child.sessionMetadata?.subagentName).toBe(name);
+    expect(child.prompt).toContain(`You are ${name}.`);
+  });
+
   it("allows repeated names in simultaneous delegates without reserving them", async () => {
     const root = createParent();
     const results = await Promise.all([0, 1, 2].map(() =>

@@ -7,7 +7,7 @@ import {
 } from "react";
 import {
   GripVertical,
-  ListStart,
+  ArrowUpToLine,
   Paperclip,
   Pencil,
   X,
@@ -16,6 +16,7 @@ import type { QueuedInput } from "../../adapters/transport/agentRuntime";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import { runtimeMedia } from "../../adapters/transport/runtimeMedia";
 import { useLocale } from "../../shared/hooks/useLocale";
+import LoadingState from "./LoadingState";
 
 interface Props {
   items: QueuedInput[];
@@ -104,6 +105,7 @@ export function InputQueueStrip({
   const [moving, setMoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [forcingId, setForcingId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{
     id: string;
     position: "above" | "below";
@@ -121,6 +123,14 @@ export function InputQueueStrip({
     } finally {
       busy.current = false;
       setMoving(false);
+    }
+  };
+  const forceItem = async (itemId: string) => {
+    setForcingId(itemId);
+    try {
+      await runAction(() => onForce(itemId));
+    } finally {
+      setForcingId((current) => (current === itemId ? null : current));
     }
   };
   const canReorder = Boolean(onReorder) && items.length > 1;
@@ -184,13 +194,19 @@ export function InputQueueStrip({
       }
     };
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !forcingId) return null;
 
   return (
     <div className="input-queue-strip pointer-events-auto mb-1.5 w-full min-w-0">
       <div className="input-queue-strip-header mb-1 flex items-center justify-between px-1 text-[10px] text-muted-foreground/70">
         <span>{t("inputQueueTitle", { count: items.length })}</span>
       </div>
+      {forcingId && (
+        <LoadingState
+          variant="Thinking"
+          label={locale === "zh" ? "正在切换到插队消息…" : "Starting forced message…"}
+        />
+      )}
       <ul
         className="input-queue-strip-list flex max-h-32 flex-col gap-1 overflow-y-auto overscroll-contain"
         onDragOver={(e) => {
@@ -201,7 +217,7 @@ export function InputQueueStrip({
         {items.map((item, index) => (
           <li
             key={item.id}
-            className={`input-queue-strip-item relative flex shrink-0 items-center gap-1.5 rounded-full border border-border/50 bg-surface/80 px-2.5 py-1 text-[11px] text-foreground/85 backdrop-blur-sm transition-opacity${
+            className={`input-queue-strip-item relative flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] text-foreground transition-opacity${
               draggingId === item.id ? " opacity-40" : ""
             }`}
             onDragOver={canReorder ? handleItemDragOver(item.id) : undefined}
@@ -248,9 +264,9 @@ export function InputQueueStrip({
               aria-label={t("inputQueueForce")}
               title={t("inputQueueForce")}
               className="input-queue-strip-btn inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-              onClick={() => void runAction(() => onForce(item.id))}
+              onClick={() => void forceItem(item.id)}
             >
-              <ListStart size={12} aria-hidden />
+              <ArrowUpToLine size={13} aria-hidden />
             </button>
             {onEdit && (
               <button

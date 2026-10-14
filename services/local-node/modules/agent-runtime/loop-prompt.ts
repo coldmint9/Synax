@@ -85,7 +85,7 @@ function buildExecutionSection(availableToolIds: string[]): string {
     );
   if (tools.has("subagent.delegate"))
     lines.push(
-      "Delegate only independent, bounded work that can reduce elapsed time; keep immediate blockers local and do not repeat delegated work. When delegating, invent a spontaneous, free-form name and pass it in name; any naming style is welcome and names may repeat.",
+      "Delegate only independent, bounded work that can reduce elapsed time; keep immediate blockers local and do not repeat delegated work. When delegating, invent a short 2-3 character name and pass it in name; short names in any style are welcome and names may repeat.",
     );
   if (tools.has("subagent.lifecycle"))
     lines.push(

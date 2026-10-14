@@ -50,7 +50,7 @@ const lifecycleArgsSchema = z
       "start only: builtin child profile; explorer when omitted.",
     ),
     name: z.string().trim().min(1).max(200).optional().describe(
-      "start only: optional display name for the child session.",
+      "start only: optional display name for the child session; prefer a short 2-3 character name.",
     ),
     thinkingMode: z.enum(["fast", "standard", "deep"]).optional().describe(
       "start only: optional thinking mode for the child.",

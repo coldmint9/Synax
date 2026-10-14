@@ -1,13 +1,13 @@
 {
   "name": "synax-client",
   "private": true,
-  "version": "1.26.0",
+  "version": "1.26.1",
   "type": "module",
   "scripts": {
     "dev": "vite --force",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "cross-env NODE_ENV=test vitest run",
     "prebuild": "tsx ../scripts/generate-visualization-icons.ts"
   },
   "dependencies": {

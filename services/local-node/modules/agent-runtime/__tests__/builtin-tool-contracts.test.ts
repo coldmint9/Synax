@@ -49,6 +49,18 @@ describe('model-visible builtin tool contracts', () => {
     }
   });
 
+  it('documents the short 2-3 character subagent naming preference', async () => {
+    const delegate = await definition('subagent.delegate');
+    expect(delegate.description).toContain('short 2-3 character name');
+    expect(delegate.schema).toMatchObject({
+      properties: { name: { description: expect.stringContaining('short 2-3 character display name') } },
+    });
+    const lifecycle = await asSchema(toolRegistry.get('subagent.lifecycle').inputSchema!).jsonSchema;
+    expect(lifecycle).toMatchObject({
+      properties: { name: { description: expect.stringContaining('prefer a short 2-3 character name') } },
+    });
+  });
+
   it('documents non-exportable media and browser argument conditions', async () => {
     const media = await definition('media.read');
     expect(media.description).toContain('exactly one');

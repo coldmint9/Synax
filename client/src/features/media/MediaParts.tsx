@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Clipboard, Download, Paperclip, X } from "lucide-react";
+import { Clipboard, Download, LoaderCircle, Paperclip, X } from "lucide-react";
 import {
   runtimeMedia,
   type RuntimeAsset,
@@ -15,6 +15,7 @@ function MediaAsset({
   const [asset, setAsset] = useState<RuntimeAsset>();
   const [url, setUrl] = useState<string>();
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   const [opened, setOpened] = useState(false);
   const [textContent, setTextContent] = useState<string>();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -49,18 +50,27 @@ function MediaAsset({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [id]);
+  }, [id, retry]);
   if (error)
     return (
-      <span role="alert" className="text-xs text-danger">
-        {error} ({id})
-      </span>
+      <div role="alert" className="flex items-center gap-3 rounded-xl border border-danger/20 bg-surface/60 p-3 text-xs">
+        <span className="text-danger">{error}</span>
+        <button type="button" className="shrink-0 rounded-md px-2 py-1 text-foreground hover:bg-background focus-visible:outline focus-visible:outline-2" onClick={() => setRetry((value) => value + 1)}>重试</button>
+        {onRemove && <button type="button" aria-label="移除附件" onClick={() => onRemove(id)}><X size={14} /></button>}
+      </div>
     );
-  if (!asset)
+  if (!asset || !url)
     return (
-      <span data-transcript-pending="true" className="text-xs text-muted-foreground">
-        加载附件… / Loading attachment…
-      </span>
+      <div role="status" aria-live="polite" aria-busy="true" data-transcript-pending="true" className="relative flex min-h-24 w-56 max-w-full items-center gap-3 rounded-xl border border-border/50 bg-surface/60 p-4">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-foreground/5 text-muted-foreground">
+          <LoaderCircle size={20} aria-hidden="true" className="motion-safe:animate-spin" />
+        </div>
+        <div className="min-w-0 space-y-1.5 text-xs">
+          <p className="truncate font-medium text-foreground">{asset?.filename ?? "正在加载附件"}</p>
+          <p className="text-muted-foreground">{asset ? "正在读取内容…" : "正在获取附件信息…"}</p>
+        </div>
+        {onRemove && <button type="button" aria-label="移除附件" className="absolute right-1.5 top-1.5 rounded-full p-1 text-muted-foreground hover:text-foreground" onClick={() => onRemove(id)}><X size={13} /></button>}
+      </div>
     );
   const image = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(asset.mediaType);
   const text = asset.mediaType === "text/plain";

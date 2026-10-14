@@ -111,4 +111,13 @@ describe("execution guidance", () => {
     expect(section).toContain("file/search tools");
     expect(section).toContain("permission gate");
   });
+
+  it("guides delegation toward short 2-3 character child names", () => {
+    const section = buildLoopSystemPrompt({
+      profile: synaxAgentProfile,
+      context: null,
+    });
+    expect(section).toContain("invent a short 2-3 character name");
+    expect(section).not.toContain("free-form name");
+  });
 });

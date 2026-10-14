@@ -1,4 +1,5 @@
-import { apiFetch, apiRequest } from "./origin";
+import { apiFetch, apiRequest, getApiOrigin } from "./origin";
+import { MediaCache } from "./mediaCache";
 export type {
   RuntimeContentPart,
   RuntimeAsset,
@@ -10,12 +11,16 @@ import type {
   InputCapabilities,
 } from "../../../../services/local-node/modules/agent-runtime/content-parts";
 const BASE = "/api/agent-runtime/assets";
+const metadataCache = new MediaCache<{ asset: RuntimeAsset }>(256, () => 1);
+const blobCache = new MediaCache<Blob>(64 * 1024 * 1024, (blob) => blob.size);
+const cacheKey = (id: string) => `${getApiOrigin()}${BASE}/${encodeURIComponent(id)}`;
 export const runtimeMedia = {
   async upload(
     projectId: string,
     file: File,
     signal?: AbortSignal,
   ): Promise<RuntimeAsset> {
+    const origin = getApiOrigin();
     const body = new FormData();
     body.set("projectId", projectId);
     body.set("file", file);
@@ -41,23 +46,33 @@ export const runtimeMedia = {
     ) {
       throw new Error("附件上传接口返回了无效响应，请检查 Synax API 后重试。");
     }
+    const key = `${origin}${BASE}/${encodeURIComponent(data.asset.id)}`;
+    metadataCache.set(key, { asset: data.asset });
+    blobCache.set(key, file);
     return data.asset;
   },
   metadata: (id: string) =>
-    apiRequest<{ asset: RuntimeAsset }>(`${BASE}/${encodeURIComponent(id)}`),
+    metadataCache.get(cacheKey(id), () =>
+      apiRequest<{ asset: RuntimeAsset }>(`${BASE}/${encodeURIComponent(id)}`)),
   async blob(id: string, signal?: AbortSignal) {
-    const response = await apiFetch(
+    return blobCache.get(cacheKey(id), async () => {
+      const response = await apiFetch(
       `${BASE}/${encodeURIComponent(id)}/content`,
-      { signal },
     );
     if (!response.ok) throw new Error("附件不可用 / Attachment unavailable");
     return response.blob();
+    }, signal);
   },
-  remove: (id: string) =>
-    apiRequest(`${BASE}/${encodeURIComponent(id)}`, {
+  remove: async (id: string) => {
+    const key = cacheKey(id);
+    const result = await apiRequest(`${BASE}/${encodeURIComponent(id)}`, {
       method: "DELETE",
       silent: true,
-    }),
+    });
+    metadataCache.delete(key);
+    blobCache.delete(key);
+    return result;
+  },
   capabilities: (sessionId: string, model?: string) =>
     apiRequest<InputCapabilities>(
       `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/input-capabilities${model ? `?model=${encodeURIComponent(model)}` : ""}`,

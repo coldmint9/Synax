@@ -533,6 +533,23 @@ function applySessionStreamChunk(
 }
 
 function onSessionStreamChunk(sessionId: string, chunk: unknown): void {
+  // Interrupting a run and launching a forced queued input overlap briefly.
+  // The old run can finish publishing after the new run has already started;
+  // its terminal event must not put the session back into an interrupted or
+  // failed state.
+  if (
+    chunk &&
+    typeof chunk === "object" &&
+    ((chunk as { type?: string }).type === "run_completed" ||
+      (chunk as { type?: string }).type === "run_failed")
+  ) {
+    const runId = (chunk as AgentRunStreamChunk).run?.id ??
+      (chunk as AgentRunStreamChunk).runId;
+    const activeRunId = useAgentSessionStore
+      .getState()
+      .sessions.find((session) => session.id === sessionId)?.activeRunId;
+    if (runId && activeRunId && runId !== activeRunId) return;
+  }
   const patch = applySessionStreamChunk(sessionId, chunk);
   if (patch) {
     useAgentSessionStore.getState().patchSession(sessionId, patch);

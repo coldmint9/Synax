@@ -68,7 +68,7 @@ function WorkbenchLayoutContent() {
 
   const projects = useShellStore((s) => s.projects);
   const projectsLoaded = useShellStore((s) => s.projectsLoaded);
-  const fetchProjects = useShellStore((s) => s.fetchProjects);
+  const fetchProjects = useShellStore((s) => s.ensureProjects);
   const project = projects.find((p) => p.id === effectiveProjectId) ?? null;
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   useEffect(() => {

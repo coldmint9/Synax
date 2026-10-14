@@ -23,6 +23,42 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('project list cache', () => {
+  it.each([{ items: [] }, { items: [project] }])('reuses a loaded list across project switches: %j', async ({ items }) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(items)))
+    await useShellStore.getState().ensureProjects()
+    const cached = useShellStore.getState().projects
+    const requestCount = vi.mocked(fetch).mock.calls.length
+    useShellStore.getState().setCurrentProjectId('another-project')
+    await useShellStore.getState().ensureProjects()
+    expect(fetch).toHaveBeenCalledTimes(requestCount)
+    expect(useShellStore.getState().projects).toBe(cached)
+  })
+
+  it('shares an in-flight initial load between consumers', async () => {
+    let resolve!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(done => { resolve = done })))
+    const first = useShellStore.getState().ensureProjects()
+    const second = useShellStore.getState().ensureProjects()
+    expect(second).toBe(first)
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    resolve(response())
+    await Promise.all([first, second])
+    expect(useShellStore.getState().projects).toMatchObject([project])
+  })
+
+  it('allows retrying an unsuccessful initial load', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 400 }))
+      .mockResolvedValueOnce(response()))
+    await useShellStore.getState().ensureProjects()
+    expect(useShellStore.getState().projectsLoaded).toBe(false)
+    await useShellStore.getState().ensureProjects()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(useShellStore.getState().projects).toMatchObject([project])
+  })
+})
+
 describe('project list recovery', () => {
   it('backs off if projects keeps returning 500 while health remains reachable', async () => {
     vi.useFakeTimers()

@@ -93,6 +93,7 @@ interface ShellState {
   updateProject: (projectId: string, updates: Partial<ProjectSummary>) => void;
   setProjectFilter: (filter: Partial<ProjectSearchFilter>) => void;
   setCurrentProjectId: (projectId: string | null) => void;
+  ensureProjects: () => Promise<void>;
   fetchProjects: () => Promise<void>;
 }
 
@@ -105,6 +106,7 @@ const MIN_USER_MESSAGE_FONT_WEIGHT = 100;
 const MAX_USER_MESSAGE_FONT_WEIGHT = 900;
 let projectFetchVersion = 0;
 let projectMutationVersion = 0;
+let projectFetchPromise: Promise<void> | undefined;
 const PROJECT_RETRY_DELAY_MS = 10_000;
 let projectRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -260,34 +262,45 @@ export const useShellStore = create<ShellState>((set, get) => ({
   setCurrentProjectId: (projectId) => {
     set(() => ({ currentProjectId: projectId }));
   },
-  fetchProjects: async () => {
+  ensureProjects: () => {
+    if (get().projectsLoaded) return Promise.resolve();
+    return projectFetchPromise ?? get().fetchProjects();
+  },
+  fetchProjects: () => {
     const version = ++projectFetchVersion;
     const mutationVersion = projectMutationVersion;
-    try {
-      const { items } = await listProjects(undefined, {
-        throwOnError: true,
-      });
-      if (version !== projectFetchVersion) return;
-      if (mutationVersion !== projectMutationVersion) {
-        // A project was changed while this snapshot was in flight. Fetch a fresh
-        // snapshot without briefly restoring removed projects or losing new ones.
-        await get().fetchProjects();
-        return;
+    const request = (async () => {
+      try {
+        const { items } = await listProjects(undefined, {
+          throwOnError: true,
+        });
+        if (version !== projectFetchVersion) return;
+        if (mutationVersion !== projectMutationVersion) {
+          // A project was changed while this snapshot was in flight. Fetch a fresh
+          // snapshot without briefly restoring removed projects or losing new ones.
+          await get().fetchProjects();
+          return;
+        }
+        clearProjectRetry();
+        set({ projects: items, projectsLoaded: true });
+      } catch (error) {
+        // A failed request is not an empty project list. Endpoint-level 5xx
+        // failures retry locally; transport failures wait for health recovery.
+        if (
+          error instanceof AppError &&
+          error.statusCode !== undefined &&
+          error.statusCode >= 500 &&
+          !useApiConnectivityStore.getState().shouldSkipRequest()
+        ) {
+          scheduleProjectRetry();
+        }
       }
-      clearProjectRetry();
-      set({ projects: items, projectsLoaded: true });
-    } catch (error) {
-      // A failed request is not an empty project list. Endpoint-level 5xx
-      // failures retry locally; transport failures wait for health recovery.
-      if (
-        error instanceof AppError &&
-        error.statusCode !== undefined &&
-        error.statusCode >= 500 &&
-        !useApiConnectivityStore.getState().shouldSkipRequest()
-      ) {
-        scheduleProjectRetry();
-      }
-    }
+    })();
+    projectFetchPromise = request;
+    void request.finally(() => {
+      if (projectFetchPromise === request) projectFetchPromise = undefined;
+    });
+    return request;
   },
 }));
 

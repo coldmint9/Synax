@@ -23,14 +23,14 @@ export function ProjectsPanelContent({
   const navigate = useNavigate();
   const { t } = useLocale();
   const projects = useShellStore((s) => s.projects);
-  const fetchProjects = useShellStore((s) => s.fetchProjects);
+  const fetchProjects = useShellStore((s) => s.ensureProjects);
   const removeFromStore = useShellStore((s) => s.removeProject);
   const filter = useShellStore((s) => s.projectFilter);
   const setFilter = useShellStore((s) => s.setProjectFilter);
 
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !useShellStore.getState().projectsLoaded);
 
   useEffect(() => {
     let cancelled = false;

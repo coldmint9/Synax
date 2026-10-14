@@ -64,24 +64,21 @@ export async function hydrateHistoryMessageContent(
     }),
   );
 
-  const byId = new Map(
-    messages
-      .map((message) => {
-        const cached = cachedById.get(message.id);
-        if (!cached || !message.historyProjection?.omittedFields.includes("content"))
-          return null;
-        return [message.id, {
-          ...message,
-          content: cached.content,
-          historyProjection: {
-            omittedFields: message.historyProjection.omittedFields.filter(
-              (field) => field !== "content",
-            ),
-          },
-        }] as const;
-      })
-      .filter((entry): entry is readonly [string, AgentRuntimeMessage] => entry !== null),
-  );
+  const byId = new Map<string, AgentRuntimeMessage>();
+  for (const message of messages) {
+    const cached = cachedById.get(message.id);
+    if (!cached || !message.historyProjection?.omittedFields.includes("content"))
+      continue;
+    byId.set(message.id, {
+      ...message,
+      content: cached.content,
+      historyProjection: {
+        omittedFields: message.historyProjection.omittedFields.filter(
+          (field) => field !== "content",
+        ),
+      },
+    });
+  }
   for (const message of hydrated) byId.set(message.id, message);
   return messages.map((message) => byId.get(message.id) ?? message);
 }

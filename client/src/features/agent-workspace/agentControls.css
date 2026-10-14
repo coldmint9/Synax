@@ -16,18 +16,18 @@
 .subagent-task-card {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--ui-line) 85%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--ui-panel-soft) 92%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-canvas) 12%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-panel-soft) 72%, transparent);
 }
 .subagent-task-card[data-task-status="running"] {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--ui-line));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--ui-line));
 }
 .subagent-task-card .bui-task-header {
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  padding: 0.7rem 0.75rem;
+  min-height: 3.5rem;
+  padding: 0.55rem 0.65rem;
 }
 .subagent-task-card .bui-task-trigger {
   display: grid;
@@ -36,6 +36,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0.65rem;
+  border-radius: 8px;
   text-align: left;
 }
 .subagent-task-card .bui-task-copy { min-width: 0; }
@@ -50,11 +51,36 @@
 }
 .subagent-task-card .bui-task-open { flex-shrink: 0; }
 .subagent-task-result {
-  margin: 0 0.75rem 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--ui-canvas) 42%, transparent);
+  margin: 0 0.65rem 0.65rem;
+  border-top: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
+  padding: 0.65rem 0.25rem 0.1rem;
   color: var(--ui-subtle);
+}
+.subagent-task-summary {
+  margin: 0;
+  color: var(--ui-subtle);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.subagent-task-summary--active {
+  color: color-mix(in srgb, var(--accent) 78%, var(--ui-text));
+}
+.subagent-task-instructions {
+  margin: 0 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-panel-soft) 62%, transparent);
+  padding: 0.8rem 0.9rem;
+}
+.subagent-task-instructions-label {
+  margin-bottom: 0.4rem;
+  color: var(--ui-subtle);
+  font-size: 0.65rem;
+  font-weight: 650;
+}
+.subagent-task-instructions .agent-conversation-copy {
+  color: var(--ui-text);
+  font-size: 0.78rem;
 }
 .subagent-identity { display: flex; min-width: 0; align-items: center; gap: 0.5rem; }
 .subagent-avatar {
