@@ -139,7 +139,7 @@ export class VersionHeads {
     };
   }
 
-  create(sessionId: string, versionId: string): HeadState {
+  create(sessionId: string, versionId: string, options?: { appendOnly: boolean }): HeadState {
     assertIdentity(sessionId);
     return atomicVersionWrite(this.db, () => {
       readVersion(this.objects, versionId);
@@ -148,7 +148,8 @@ export class VersionHeads {
           "VERSION_SESSION_EXISTS",
           "Versioned session already exists.",
         );
-      this.insert.run(sessionId, hashBytes(versionId));
+      if (options?.appendOnly) this.db.prepare("INSERT INTO conversation_v3_heads(session_id,version_id,full_history,runtime_mode,rollback_enabled,boundary_only) VALUES(?,?,1,'native',0,1)").run(sessionId, hashBytes(versionId));
+      else this.insert.run(sessionId, hashBytes(versionId));
       this.own.run(sessionId, hashBytes(versionId));
       return { sessionId, versionId, revision: 0, epoch: 1 };
     });

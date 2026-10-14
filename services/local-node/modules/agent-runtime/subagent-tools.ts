@@ -14,25 +14,109 @@ import { interruptAgentSessionsAndWait } from "./agent-stream-proxy.js";
 const activeRuns = new Set<string>();
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
-const lifecycleArgsSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("start"),
-    prompt: z.string().trim().min(1).max(100_000),
-    profileId: z.enum(["explorer", "reviewer"]).default("explorer"),
-    name: z.string().trim().min(1).max(200).optional(),
-    thinkingMode: z.enum(["fast", "standard", "deep"]).optional(),
-  }),
-  z.object({ action: z.literal("list") }),
-  z.object({
-    action: z.enum(["inspect", "wait", "message", "pause", "resume", "cancel", "terminate", "close"]),
-    childSessionId: z.string().min(1).max(64),
-    timeoutMs: z.number().int().min(0).max(30_000).default(5_000).optional(),
-    message: z.string().trim().min(1).max(100_000).optional(),
-    reason: z.string().trim().min(1).max(4_000).optional(),
-  }),
-]);
+const lifecycleActions = [
+  "start",
+  "list",
+  "inspect",
+  "wait",
+  "message",
+  "pause",
+  "resume",
+  "cancel",
+  "terminate",
+  "close",
+] as const;
+
+const startOnlyFields = ["prompt", "profileId", "name", "thinkingMode"] as const;
+const childOnlyFields = ["childSessionId", "timeoutMs", "message", "reason"] as const;
+
+/**
+ * Keep a flat object schema instead of a discriminated union: a union
+ * serializes to a root `oneOf` with no `type`, and OpenAI-compatible providers
+ * reject such tool parameters ("schema must be a JSON Schema of 'type:
+ * \"object\"', got 'type: null'"). Per-action requirements are enforced by the
+ * refinement below and documented on the fields, so the model still sees one
+ * object schema with a required `action`.
+ */
+const lifecycleArgsSchema = z
+  .object({
+    action: z
+      .enum(lifecycleActions)
+      .describe("Lifecycle action to perform on a subagent."),
+    prompt: z.string().trim().min(1).max(100_000).optional().describe(
+      "start only, required there: task prompt for the new child session.",
+    ),
+    profileId: z.enum(["explorer", "reviewer"]).optional().describe(
+      "start only: builtin child profile; explorer when omitted.",
+    ),
+    name: z.string().trim().min(1).max(200).optional().describe(
+      "start only: optional display name for the child session.",
+    ),
+    thinkingMode: z.enum(["fast", "standard", "deep"]).optional().describe(
+      "start only: optional thinking mode for the child.",
+    ),
+    childSessionId: z.string().min(1).max(64).optional().describe(
+      "Required for every action except start and list; use the childSessionId returned by start or list.",
+    ),
+    timeoutMs: z.number().int().min(0).max(30_000).optional().describe(
+      "wait only: wait budget in milliseconds, 5000 when omitted.",
+    ),
+    message: z.string().trim().min(1).max(100_000).optional().describe(
+      "message only, required there: new instruction for a stopped or completed child.",
+    ),
+    reason: z.string().trim().min(1).max(4_000).optional().describe(
+      "Optional reason recorded with pause, cancel, terminate or close.",
+    ),
+  })
+  .superRefine((value, context) => {
+    const reject = (fields: readonly (keyof typeof value)[], action: string) => {
+      for (const field of fields)
+        if (value[field] !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `${field} is not accepted for action ${action}.`,
+          });
+    };
+    if (value.action === "start") {
+      if (!value.prompt)
+        context.addIssue({
+          code: "custom",
+          path: ["prompt"],
+          message: "prompt is required for action start.",
+        });
+      reject(childOnlyFields, "start");
+      return;
+    }
+    if (value.action === "list") {
+      reject(startOnlyFields, "list");
+      reject(childOnlyFields, "list");
+      return;
+    }
+    if (!value.childSessionId)
+      context.addIssue({
+        code: "custom",
+        path: ["childSessionId"],
+        message: `childSessionId is required for action ${value.action}.`,
+      });
+    reject(startOnlyFields, value.action);
+    if (value.action === "message" && !value.message)
+      context.addIssue({
+        code: "custom",
+        path: ["message"],
+        message: "message is required for action message.",
+      });
+  });
 
 type LifecycleArgs = z.infer<typeof lifecycleArgsSchema>;
+
+function requiredChildSessionId(args: LifecycleArgs): string {
+  if (!args.childSessionId)
+    throw new AgentValidationError(
+      "childSessionId is required for this lifecycle action.",
+    );
+  return args.childSessionId;
+}
 
 function assertOwnedChild(parentSessionId: string, childSessionId: string) {
   const child = agentRuntimeStore.tryGetSession(childSessionId);
@@ -80,7 +164,9 @@ async function waitForChild(
   return childView(childSessionId, parentSessionId);
 }
 
-function startChild(input: ToolExecutionInput, args: Extract<LifecycleArgs, { action: "start" }>) {
+function startChild(input: ToolExecutionInput, args: LifecycleArgs) {
+  if (!args.prompt) throw new AgentValidationError("prompt is required to start a subagent.");
+  const profileId = args.profileId ?? "explorer";
   const parent = agentRuntimeStore.getSession(input.sessionId);
   if (parent.parentSessionId)
     throw new AgentValidationError("Only a primary agent can control subagent lifecycles.");
@@ -98,13 +184,13 @@ function startChild(input: ToolExecutionInput, args: Extract<LifecycleArgs, { ac
     mcpServerIds: parent.mcpServerIds,
     skillIds: parent.skillIds,
     nodeId: parent.nodeId,
-    profileId: args.profileId,
+    profileId,
     parentSessionId: parent.id,
     prompt: args.prompt,
     thinkingMode: args.thinkingMode,
   });
   const spec: SubagentSpec = {
-    profileId: args.profileId,
+    profileId,
     prompt: args.prompt,
     nodeId: parent.nodeId,
     thinkingMode: args.thinkingMode,
@@ -122,9 +208,9 @@ export const subagentLifecycleTool: RegisteredTool = {
   id: "subagent.lifecycle",
   label: "Control Subagent",
   description:
-    "Control the full lifecycle of a subagent owned by the current primary agent: start, list, inspect, wait, message, pause, resume, cancel, close, or terminate. Lifecycle actions are limited to direct child sessions.",
+    "Control the full lifecycle of a subagent owned by the current primary agent: start, list, inspect, wait, message, pause, resume, cancel, close, or terminate. Lifecycle actions are limited to direct child sessions. start requires prompt; every action except start and list requires childSessionId; message requires message.",
   progressiveDetails:
-    "Use start for asynchronous work when the parent should continue. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input. Always use the returned childSessionId for later actions.",
+    "Use start for asynchronous work when the parent should continue; profileId, name and thinkingMode apply to start only. Use the childSessionId returned by start or list for every later action, and pass timeoutMs only for wait. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input.",
   category: "task",
   internalGate: "task",
   mutability: "task",
@@ -144,7 +230,7 @@ export const subagentLifecycleTool: RegisteredTool = {
       );
     }
 
-    const child = assertOwnedChild(input.sessionId, args.childSessionId);
+    const child = assertOwnedChild(input.sessionId, requiredChildSessionId(args));
     if (args.action === "inspect")
       return result(childView(child.id, input.sessionId), "Inspected subagent.");
     if (args.action === "wait")

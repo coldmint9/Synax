@@ -40,7 +40,7 @@ import { projectSettingsRoutes } from "../transport/http/project-settings.js";
 import { fsRoutes } from "../transport/http/fs.js";
 import { wslRoutes } from "../transport/http/wsl.js";
 import { webSearchOAuthRoutes } from "../transport/http/web-search-oauth.js";
-import { getDb } from "../infrastructure/database/index.js";
+import { getRawSqlite } from "../infrastructure/database/index.js";
 import { agentRuntimeStore } from "../modules/agent-runtime/session-store.js";
 import { recoverMediaJobs } from "../modules/media/jobs.js";
 import {
@@ -140,7 +140,7 @@ process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 
 // --- 初始化上下文数据库（提前触发 WAL 模式与迁移执行） ---
 try {
-  getDb();
+  getRawSqlite();
 } catch (err) {
   pinoLogger.error({ err }, "failed to initialize context db");
   throw err;

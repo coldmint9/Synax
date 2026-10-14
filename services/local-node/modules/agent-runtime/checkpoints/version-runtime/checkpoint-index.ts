@@ -18,6 +18,7 @@ export interface RuntimeCheckpoint {
     version: 3;
     versionId: string;
     lookupBefore?: string | null;
+    transcriptOnly?: boolean;
     boundary: {
       cursor: number;
       sessionIds: string[];
@@ -66,8 +67,10 @@ export class RuntimeCheckpointIndex {
   private readonly tree: VersionTree;
   private readonly stateQuery;
   private readonly update;
+  private readonly supportsFullHistory: boolean;
   constructor(private readonly objects: VersionObjects) {
     this.tree = new VersionTree(objects);
+    this.supportsFullHistory = (objects.db.prepare("PRAGMA table_info(conversation_v3_heads)").all() as { name: string }[]).some(column => column.name === "full_history");
     this.stateQuery = objects.db.prepare<[string]>(
       "SELECT CASE WHEN checkpoint_root IS NULL THEN NULL ELSE lower(hex(checkpoint_root)) END AS root,CASE WHEN checkpoint_identity_root IS NULL THEN NULL ELSE lower(hex(checkpoint_identity_root)) END AS lookup,next_checkpoint AS next,file_retention_floor AS floor FROM conversation_v3_heads WHERE session_id=?",
     );
@@ -76,6 +79,9 @@ export class RuntimeCheckpointIndex {
     >(
       "UPDATE conversation_v3_heads SET checkpoint_root=?,checkpoint_identity_root=?,next_checkpoint=?,file_retention_floor=? WHERE session_id=?",
     );
+  }
+  private full(sessionId: string): boolean {
+    return this.supportsFullHistory && Boolean((this.objects.db.prepare("SELECT full_history FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { full_history: number } | undefined)?.full_history);
   }
   private state(sessionId: string): CheckpointState {
     const state = this.stateQuery.get(sessionId) as CheckpointState | undefined;
@@ -121,6 +127,10 @@ export class RuntimeCheckpointIndex {
     }
   }
   get(sessionId: string, id: string): RuntimeCheckpoint {
+    if (this.supportsFullHistory) {
+      const alias = this.objects.db.prepare("SELECT new_id FROM jsonl_checkpoint_aliases WHERE session_id=? AND old_id=? AND published=1").get(sessionId, id) as { new_id: string } | undefined;
+      if (alias) id = alias.new_id;
+    }
     if (typeof id !== "string" || id.length > 160)
       throw new VersionStoreError(
         "CHECKPOINT_NOT_FOUND",
@@ -175,6 +185,18 @@ export class RuntimeCheckpointIndex {
       Buffer.from(JSON.stringify({ kind: "checkpoint-locator", id: cp.id })),
     );
   }
+  /** Build a new visible checkpoint index without publishing it to the source.
+   * Payload identities belong to the final session, not its private staging head. */
+  importBoundary(storageSessionId: string, input: Omit<RuntimeCheckpoint, "id" | "ordinal">): RuntimeCheckpoint {
+    const state = this.state(storageSessionId);
+    const cp: RuntimeCheckpoint = { ...input, id: `vcp_${state.next}_${randomUUID()}`, ordinal: state.next,
+      payload: { ...input.payload, lookupBefore: state.lookup } };
+    const ref = this.objects.put("record", Buffer.from(JSON.stringify(cp)), [cp.payload.versionId, ...(state.lookup ? [state.lookup] : [])]);
+    const root = this.tree.update(state.root, [{ key: orderKey(cp.ordinal), value: ref }]);
+    const lookup = this.tree.update(state.lookup, [{ key: anchor(cp.kind, cp.messageId), value: this.locator(cp) }]);
+    this.update.run(root ? hashBytes(root) : null, lookup ? hashBytes(lookup) : null, state.next + 1, Math.min(state.floor ?? cp.mutationCursor, cp.mutationCursor), storageSessionId);
+    return cp;
+  }
   capture(input: {
     sessionId: string;
     kind: "input" | "reply";
@@ -218,6 +240,7 @@ export class RuntimeCheckpointIndex {
       payload: {
         version: 3,
         versionId: input.versionId,
+        ...(this.full(input.sessionId) ? { lookupBefore: state.lookup } : {}),
         boundary: {
           cursor: 0,
           sessionIds: [input.sessionId],
@@ -227,7 +250,7 @@ export class RuntimeCheckpointIndex {
       },
     };
     const ref = this.objects.put("record", Buffer.from(JSON.stringify(cp)), [
-      input.versionId,
+      input.versionId, ...(cp.payload.lookupBefore ? [cp.payload.lookupBefore] : []),
     ]);
     const root = this.tree.update(state.root, [
       { key: orderKey(cp.ordinal), value: ref },
@@ -257,6 +280,13 @@ export class RuntimeCheckpointIndex {
         state.root,
         orderKey(cp.ordinal - (includeBoundary ? 0 : 1)),
       );
+    if (this.full(sessionId) && cp.payload.lookupBefore !== undefined) {
+      const lookup = includeBoundary
+        ? this.tree.update(cp.payload.lookupBefore, [{ key: anchor(cp.kind, cp.messageId), value: this.locator(cp) }])
+        : cp.payload.lookupBefore;
+      this.update.run(root ? hashBytes(root) : null, lookup ? hashBytes(lookup) : null, state.next, root ? (state.floor ?? 0) : null, sessionId);
+      return;
+    }
     // Rebuild at most the retained window. New checkpoints deliberately do not
     // pin historical identity roots, which otherwise retain locator history forever.
     const retained = this.tree.page(root, { reverse: true, limit: 128 }).entries;
@@ -275,6 +305,7 @@ export class RuntimeCheckpointIndex {
   }
   /** Retain 128 rollback boundaries, not an unbounded set of old branches. */
   trim(sessionId: string): void {
+    if (this.full(sessionId)) return;
     const state = this.state(sessionId);
     if (this.tree.size(state.root) <= 128) return;
     const retained = this.tree.page(state.root, { reverse: true, limit: 128 }).entries;

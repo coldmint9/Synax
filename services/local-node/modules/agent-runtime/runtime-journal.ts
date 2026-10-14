@@ -1,3 +1,9 @@
+import { randomUUID } from "node:crypto";
+import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
+import { historyEpoch } from "./checkpoints/guards.js";
+const FILE_REPLAY_BASE = 2 ** 40;
+const replayProducer = randomUUID();
+let replayRequestNumber = 0;
 import { projectReplayChunk } from "./runtime-stream-projection.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import { admitVersionGrowth } from "./checkpoints/resource-admission.js";
@@ -122,6 +128,76 @@ class RuntimeJournal {
     return records;
   }
 
+  /** File-backed replay is independent of SQLite commit/retention. Existing
+   * cursors remain readable below FILE_REPLAY_BASE during the cutover. */
+  async appendDurable(sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision = historyEpoch(sessionId), requestId = `replay:${replayProducer}:${++replayRequestNumber}`): Promise<void> {
+    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) { this.appendBatch(sessionId, runId, chunks); return; }
+    if (!chunks.length) return;
+    chunks = chunks.map(projectReplayChunk);
+    assertBatchInput(chunks);
+    const state = getRawSqlite().transaction(() => {
+      if (historyEpoch(sessionId) !== revision) throw new AgentValidationError("Obsolete conversation execution.");
+      const run = agentRuntimeStore.getRun(runId);
+      if (run.sessionId !== sessionId) throw new AgentValidationError("Stream Run belongs to another session.");
+      const session = projectSessionState(agentRuntimeStore.getSession(sessionId));
+      return { status: session.status, activeRunId: session.activeRunId, pendingResumeToken: session.pendingResumeToken, blockedReason: session.blockedReason, updatedAt: session.updatedAt };
+    })();
+    await sessionLogClient.append(sessionId, requestId, chunks.map(chunk => ({ type: "runtime.replay", payload: { sessionId, runId, chunk, state, epoch: revision } })));
+    this.notifyCommitted(sessionId);
+  }
+
+  async readDurable(sessionId: string, after = 0, limit = 256, runId?: string): Promise<RuntimeStreamRecord[]> {
+    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.read(sessionId, after, limit, runId);
+    if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256)
+      throw new AgentValidationError("Invalid stream cursor.");
+    const legacy = after < FILE_REPLAY_BASE ? this.read(sessionId, after, limit, runId) : [];
+    if (legacy.length) return legacy;
+    const epoch = historyEpoch(sessionId);
+    let position = Math.max(0, after - FILE_REPLAY_BASE);
+    for (;;) {
+      const events = await sessionLogClient.read(sessionId, position, limit);
+      if (!events.length) return [];
+      const records: RuntimeStreamRecord[] = [];
+      for (const event of events) {
+        position = event.sequence;
+        if (event.type !== "runtime.replay") continue;
+        const value = event.payload as RuntimeStreamRecord & { epoch: number };
+        if (value.epoch !== epoch || (runId && value.runId !== runId)) continue;
+        records.push({ sessionId, runId: value.runId, chunk: value.chunk, state: value.state, sequence: FILE_REPLAY_BASE + event.sequence });
+      }
+      if (records.length) return records;
+    }
+  }
+
+  async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal["snapshot"]>> {
+    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.snapshot(sessionId);
+    // Capture a cursor before the SQL snapshot: new events after it are replayed
+    // by observe(), including events committed during snapshot assembly.
+    const fileCursor = await sessionLogClient.cursor(sessionId);
+    const snapshot = this.snapshot(sessionId);
+    if (!fileCursor) return snapshot;
+    snapshot.cursor = FILE_REPLAY_BASE + fileCursor;
+    const current = snapshot.run ? agentRuntimeStore.listRunSteps(snapshot.run.id).at(-1) : undefined;
+    if (current && !current.completedAt) {
+      const replay: RuntimeStreamRecord[] = [];
+      let after = FILE_REPLAY_BASE + Math.max(0, fileCursor - 1024);
+      while (after < snapshot.cursor) {
+        const page = await this.readDurable(sessionId, after, 256, snapshot.run!.id);
+        if (!page.length) break;
+        after = page[page.length - 1].sequence;
+        replay.push(...page.filter(row => row.sequence <= snapshot.cursor));
+      }
+      snapshot.liveChunks = [{ type: "step_started", step: current }];
+      for (const record of replay) {
+        const chunk = record.chunk;
+        if (!("stepId" in chunk) || chunk.stepId !== current.id) continue;
+        if (chunk.type === "retry_status" && ["waiting", "group_wait"].includes(chunk.retry.phase)) snapshot.liveChunks.length = 1;
+        snapshot.liveChunks.push(chunk);
+      }
+    }
+    return snapshot;
+  }
+
   /** Called only after the local or remote writer has committed. */
   notifyCommitted(sessionId: string): void {
     for (const wake of [...(this.waiters.get(sessionId) ?? [])]) wake();
@@ -186,7 +262,7 @@ class RuntimeJournal {
   ): AsyncGenerator<RuntimeStreamRecord> {
     let cursor = after;
     while (!signal?.aborted) {
-      const records = this.read(sessionId, cursor);
+      const records = await this.readDurable(sessionId, cursor);
       for (const record of records) {
         if (signal?.aborted) return;
         cursor = record.sequence;

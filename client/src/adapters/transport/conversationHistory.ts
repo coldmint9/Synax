@@ -9,6 +9,7 @@ export interface MessageCheckpoint {
   available: boolean;
   reason: string | null;
   canRollback?: boolean;
+  transcriptOnly?: boolean;
   hasLaterHistory: boolean;
   initialInput: boolean;
 }
@@ -48,8 +49,8 @@ const post = <T>(sessionId: string, route: string, body: unknown) =>
     silent: true,
   });
 export const conversationHistoryApi = {
-  list: (sessionId: string, signal?: AbortSignal) =>
-    apiRequest<HistorySummary>(`${base(sessionId)}/checkpoints`, {
+  list: (sessionId: string, signal?: AbortSignal, messageIds?: readonly string[]) =>
+    apiRequest<HistorySummary>(`${base(sessionId)}/checkpoints${messageIds ? `?messageIds=${encodeURIComponent(JSON.stringify(messageIds))}` : ""}`, {
       signal,
       silent: true,
     }),

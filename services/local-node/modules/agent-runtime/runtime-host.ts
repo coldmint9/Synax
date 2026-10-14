@@ -1,3 +1,4 @@
+import { tryGetRawSqlite } from "../../infrastructure/database/index.js";
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -24,8 +25,10 @@ export function acquireRuntimeHost(dataRoot: string): { hostId: string; release(
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { db.close(); }
   return { hostId, release() {
-    const connection = new NativeDatabase(filename);
+    const candidate = tryGetRawSqlite();
+    const existing = candidate && path.resolve(candidate.name) === path.resolve(filename) ? candidate : null;
+    const connection = existing ?? new NativeDatabase(filename);
     try { connection.prepare('DELETE FROM runtime_host_lock WHERE id=1 AND host_id=? AND pid=?').run(hostId, process.pid); }
-    finally { connection.close(); }
+    finally { if (!existing) connection.close(); }
   } };
 }

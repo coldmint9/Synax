@@ -16,6 +16,22 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 let active = false;
+const waiters: (() => void)[] = [];
+
+async function acquireRenderSlot(): Promise<void> {
+  if (!active) {
+    active = true;
+    return;
+  }
+  await new Promise<void>((resolve) => waiters.push(resolve));
+  active = true;
+}
+
+function releaseRenderSlot(): void {
+  const next = waiters.shift();
+  if (next) next();
+  else active = false;
+}
 
 /** Optional full Office layout renderer. Never invoke a shell or open the source UI. */
 export async function renderOfficePdf(
@@ -53,8 +69,7 @@ export async function renderOfficePdf(
     }
   }
   if (!executable) throw new Error("未安装 LibreOffice 文档渲染器");
-  if (active) throw new Error("Office 文档渲染器忙碌，请稍后重试");
-  active = true;
+  await acquireRenderSlot();
   let directory: string | undefined;
   try {
     directory = await mkdtemp(path.join(os.tmpdir(), "synax-office-"));
@@ -82,7 +97,12 @@ export async function renderOfficePdf(
         directory,
         source,
       ],
-      { timeout: 60_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 },
+      {
+        timeout: 60_000,
+        killSignal: "SIGKILL",
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
     );
     const output = path.join(directory, "document.pdf");
     const size = (await stat(output)).size;
@@ -93,7 +113,7 @@ export async function renderOfficePdf(
     try {
       if (directory) await rm(directory, { recursive: true, force: true });
     } finally {
-      active = false;
+      releaseRenderSlot();
     }
   }
 }

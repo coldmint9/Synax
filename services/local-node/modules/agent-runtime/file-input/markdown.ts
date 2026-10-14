@@ -1,14 +1,25 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { RootContent, Definition } from "mdast";
-import { decodeCharacterFile, type FileParser, type ParsedDocument } from "./registry.js";
+import {
+  decodeCharacterFile,
+  MAX_PARSED_CHARACTERS,
+  type FileParser,
+  type ParsedDocument,
+} from "./registry.js";
 import { fetchRemoteImage } from "./remote-image.js";
 
 export const markdownImage: FileParser = {
   id: "markdown",
-  supports: (input) => input.mediaType === "text/markdown" || /\.(md|markdown|mdown)$/i.test(input.filename),
+  supports: (input) =>
+    input.mediaType === "text/markdown" ||
+    (input.mediaType.startsWith("text/") &&
+      /\.(md|markdown|mdown)$/i.test(input.filename)),
   async parse(input): Promise<ParsedDocument> {
     const text = decodeCharacterFile(input.bytes);
-    if (text === undefined || text.length > 100_000) throw new Error("Markdown 编码无效或超过 100000 字符。");
+    if (text === undefined || text.length > MAX_PARSED_CHARACTERS)
+      throw new Error(
+        `Markdown 编码无效或超过 ${MAX_PARSED_CHARACTERS} 字符。`,
+      );
     const tree = fromMarkdown(text);
     const definitions = new Map<string, Definition>();
     const nodes: RootContent[] = [];

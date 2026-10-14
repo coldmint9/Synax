@@ -142,11 +142,11 @@ function historyAvailability(sessionId: string) {
   return { reason, forkReason, stopRequired };
 }
 
-export function checkpointSummary(sessionId: string) {
+export function checkpointSummary(sessionId: string, requestedMessageIds?: readonly string[]) {
   if (versionedSession(sessionId)) {
     const repo = versionRepository(),
       head = repo.head(sessionId),
-      page = repo.checkpoints(sessionId, { limit: 128, reverse: true });
+      page = requestedMessageIds ? { items: repo.checkpointsForMessages(sessionId, requestedMessageIds), next: undefined } : repo.checkpoints(sessionId, { limit: 128, reverse: true });
     const availability = historyAvailability(sessionId);
     return {
       sessionId,
@@ -166,6 +166,7 @@ export function checkpointSummary(sessionId: string) {
         kind: cp.kind,
         messageId: cp.messageId,
         stepId: cp.stepId,
+        transcriptOnly: Boolean(cp.payload.transcriptOnly),
         available: true,
         reason: null,
         hasLaterHistory:
@@ -247,6 +248,9 @@ export async function previewHistory(
     assertVersionTranscriptOperation(sessionId, includeFiles);
     assertHistoryUnlocked(sessionId, []);
     assertHistoryIdle(sessionId);
+    const checkpoint = versionRepository().checkpoint(sessionId, checkpointId);
+    if (includeFiles && checkpoint.payload.transcriptOnly)
+      throw historyError("This imported boundary supports conversation history only; file snapshots were not available.", "HISTORY_FILES_UNAVAILABLE");
     const plan = includeFiles
       ? await planFileUndo(getCheckpoint(sessionId, checkpointId), true)
       : { changes: [], conflicts: [], warnings: [], preservedFiles: [] };
@@ -260,7 +264,7 @@ export async function previewHistory(
       })),
       conflicts: plan.conflicts,
       canApply: plan.conflicts.length === 0,
-      warnings: plan.warnings,
+      warnings: [...plan.warnings, ...(checkpoint.payload.transcriptOnly ? ["This boundary was reconstructed from messages; context is rebuilt and historical workspace files are not restored."] : [])],
       preservedFiles: plan.preservedFiles,
       exclusions: SNAPSHOT_EXCLUSIONS,
     };

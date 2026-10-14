@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { strToU8, zipSync } from "fflate";
-import { parseFileInput, registerFileParser } from "../file-input/index.js";
+import {
+  normalizeVisualInput,
+  parseFileInput,
+  registerFileParser,
+} from "../file-input/index.js";
 import * as officeRenderer from "../file-input/office-renderer.js";
 import {
   documentFixtures,
@@ -12,6 +16,21 @@ import {
 } from "./file-input-fixtures.js";
 const fixtures = documentFixtures();
 describe("file input parsers", () => {
+  it("normalizes visual budgets before a parser sees them", () => {
+    expect(
+      normalizeVisualInput({
+        maxPages: 100,
+        maxImageBytes: 100 * 1024 * 1024,
+        maxTotalBytes: 100 * 1024 * 1024,
+        renderAll: true,
+      }),
+    ).toEqual({
+      maxPages: 10,
+      maxImageBytes: 5 * 1024 * 1024,
+      maxTotalBytes: 20 * 1024 * 1024,
+      renderAll: true,
+    });
+  });
   it.each(["docx", "xlsx", "pptx"] as const)(
     "extracts %s embedded images with source context and warns about unrendered diagrams",
     async (kind) => {
@@ -309,6 +328,29 @@ describe("file input parsers", () => {
     });
     expect(result.text).toContain("文档段落 & 内容");
     expect(result.text).toContain("表格单元\t42");
+  });
+  it("extracts DOCX headers and footers together with the main body", async () => {
+    const bytes = Buffer.from(
+      zipSync({
+        "word/document.xml": strToU8(
+          '<w:document xmlns:w="urn:word"><w:body><w:p><w:r><w:t>正文</w:t></w:r></w:p></w:body></w:document>',
+        ),
+        "word/header1.xml": strToU8(
+          '<w:hdr xmlns:w="urn:word"><w:p><w:r><w:t>页眉</w:t></w:r></w:p></w:hdr>',
+        ),
+        "word/footer1.xml": strToU8(
+          '<w:ftr xmlns:w="urn:word"><w:p><w:r><w:t>页脚</w:t></w:r></w:p></w:ftr>',
+        ),
+      }),
+    );
+    const result = await parseFileInput({
+      filename: "report.docx",
+      mediaType: officeTypes.docx,
+      bytes,
+    });
+    expect(result.text).toContain("正文");
+    expect(result.text).toContain("页眉");
+    expect(result.text).toContain("页脚");
   });
   it("extracts XLSX sheets, cell addresses, values and cached formulas", async () => {
     const result = await parseFileInput({

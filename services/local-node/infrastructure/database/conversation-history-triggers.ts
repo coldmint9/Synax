@@ -25,6 +25,18 @@ export function installConversationHistoryTriggers(
 ): void {
   const enabled =
     "(SELECT suspended FROM conversation_history_control WHERE id=1)=0";
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='jsonl_history_migrations'").get()) {
+    for (const table of ["conversation_v3_heads", "conversation_checkpoints", "transcript_heads", "transcript_records"]) {
+      for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+        const alias = operation === "INSERT" ? "NEW" : "OLD";
+        const trigger = `jsonl_copy_${table}_${operation.toLowerCase()}`;
+        db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+        db.exec(`CREATE TRIGGER ${trigger} BEFORE ${operation} ON ${table}
+          WHEN EXISTS(SELECT 1 FROM jsonl_history_migrations WHERE session_id=${alias}.session_id AND state IN ('copying','verified'))
+          BEGIN SELECT RAISE(ABORT,'JSONL_HISTORY_MIGRATION_BUSY'); END;`);
+      }
+    }
+  }
   for (const table of CONVERSATION_HISTORY_TABLES) {
     const columns = (
       db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -44,6 +56,13 @@ export function installConversationHistoryTriggers(
       db.exec(`CREATE TRIGGER ${trigger} BEFORE ${operation} ON ${table}
         WHEN EXISTS(SELECT 1 FROM conversation_v3_migrations WHERE session_id=${session(alias)} AND state='copying')
         BEGIN SELECT RAISE(ABORT,'HISTORY_MIGRATION_BUSY'); END;`);
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='jsonl_history_migrations'").get()) {
+      const jsonlCopy = `jsonl_migration_${table}_${operation.toLowerCase()}`;
+      db.exec(`DROP TRIGGER IF EXISTS ${jsonlCopy}`);
+      db.exec(`CREATE TRIGGER ${jsonlCopy} BEFORE ${operation} ON ${table}
+        WHEN EXISTS(SELECT 1 FROM jsonl_history_migrations WHERE session_id=${session(alias)} AND state IN ('copying','verified'))
+        BEGIN SELECT RAISE(ABORT,'JSONL_HISTORY_MIGRATION_BUSY'); END;`);
+      }
       const forkCopy = `conversation_fork_copy_${table}_${operation.toLowerCase()}`;
       db.exec(`DROP TRIGGER IF EXISTS ${forkCopy}`);
       db.exec(`CREATE TRIGGER ${forkCopy} BEFORE ${operation} ON ${table}

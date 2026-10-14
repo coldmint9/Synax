@@ -42,8 +42,12 @@ const native: BackendAdapter = {
     const ids = agentRuntimeStore
       .listSessionTree(sessionId)
       .map((session) => session.id);
-    await sessionProcessManager.interruptAndWaitForSessions(ids, reason);
-    await agentLoopRuntime.interruptAndWaitForSessions(ids, reason);
+    const results = await Promise.allSettled([
+      sessionProcessManager.interruptAndWaitForSessions(ids, reason),
+      agentLoopRuntime.interruptAndWaitForSessions(ids, reason),
+    ]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   },
   async close(sessionId) {
     await native.interrupt(sessionId, "Session closed.");

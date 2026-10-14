@@ -13,7 +13,7 @@ export function searchSessions(
   if (!q) return { items: [], hasMore: false };
   if (transcriptStorageEnabled()) {
     const sessions = agentRuntimeStore.listSessions({ limit: Number.MAX_SAFE_INTEGER })
-      .filter((session) => !session.parentSessionId)
+      .filter((session) => session.projectId === projectId && !session.parentSessionId)
       .flatMap((session) => {
         const message = agentRuntimeStore.listMessages(session.id).find((item) => item.content.toLocaleLowerCase().includes(q.toLocaleLowerCase()));
         return message ? [{ session, snippet: message.content.slice(0, 160), updatedAt: session.updatedAt }] : [];

@@ -35,6 +35,17 @@ describe('history impact confirmation',()=>{
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
  });
+ it('restricts reconstructed checkpoints to conversation-only rollback',async()=>{
+   function Reconstructed(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,transcriptOnly:true})}>Restore imported</button>;}
+   render(<SessionHistoryProvider session={session} messages={[]}><Reconstructed/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'Restore imported'}));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
+   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).toBeDisabled();
+   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).not.toBeChecked();
+   expect(screen.getByText(/此边界由旧消息补建/)).toBeInTheDocument();
+   fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+ });
  it('submits edits without opening a confirmation modal',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));

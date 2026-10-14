@@ -67,4 +67,38 @@ describe("Office renderer lifecycle", () => {
     ).rejects.toThrow("conversion failed");
     expect(processMock.execute).toHaveBeenCalledTimes(2);
   });
+  it("queues concurrent conversions instead of failing the second request", async () => {
+    vi.stubEnv("SYNAX_LIBREOFFICE_PATH", process.execPath);
+    let calls = 0;
+    let running = 0;
+    let maximumRunning = 0;
+    let releaseFirst: (() => void) | undefined;
+    processMock.execute.mockImplementation(
+      (_executable, args, _options, callback) => {
+        calls++;
+        running++;
+        maximumRunning = Math.max(maximumRunning, running);
+        void (async () => {
+          const directory = args[args.indexOf("--outdir") + 1];
+          await readFile(path.join(directory, "document.docx"));
+          if (calls === 1)
+            await new Promise<void>((resolve) => {
+              releaseFirst = resolve;
+            });
+          await writeFile(path.join(directory, "document.pdf"), makePdf());
+          running--;
+          callback(null, "converted", "");
+        })().catch(callback);
+      },
+    );
+    const first = renderOfficePdf(Buffer.from("fixture"), "docx");
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const second = renderOfficePdf(Buffer.from("fixture"), "docx");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toBe(1);
+    releaseFirst?.();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(calls).toBe(2);
+    expect(maximumRunning).toBe(1);
+  });
 });

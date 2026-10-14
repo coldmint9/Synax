@@ -26,6 +26,15 @@ if (apply || compact) {
     assertRuntimeOffline(source);
     // VACUUM INTO is the consistent SQLite snapshot; it includes committed WAL state.
     source.exec(`VACUUM INTO '${sqlPath(backup)}'`);
+    // A database snapshot alone cannot restore file-backed history. Keep the
+    // companion directory with the .db backup when moving/restoring it.
+    const companion = `${backup}.files`;
+    fs.mkdirSync(companion, { recursive: false, mode: 0o700 });
+    for (const name of ["transcripts", "session-logs", "version-payloads", "version-jsonl", "runtime-media", "conversation-snapshots"]) {
+      const location = path.join(path.dirname(dbPath), name);
+      if (fs.existsSync(location)) fs.cpSync(location, path.join(companion, name), { recursive: true, errorOnExist: true, force: false, dereference: false });
+    }
+    fs.writeFileSync(path.join(companion, "manifest.json"), JSON.stringify({ format: 1, database: path.basename(backup), createdAt: new Date().toISOString() }, null, 2), { flag: "wx", mode: 0o600 });
     if (apply) console.log(JSON.stringify({ applied: applyMaintenance(source, planMaintenance(source)), backup }, null, 2));
     if (compact) {
       const result = String((source.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check);

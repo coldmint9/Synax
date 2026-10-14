@@ -17,8 +17,14 @@ export {
   registerFileParser,
   parseFileInput,
   decodeCharacterFile,
+  normalizeVisualInput,
 } from "./registry.js";
-export type { FileParser, FileParserInput, ParsedFile } from "./registry.js";
+export type {
+  FileParser,
+  FileParserInput,
+  ParsedFile,
+  VisualInputOptions,
+} from "./registry.js";
 export async function parseAssetInput(
   asset: RuntimeAsset,
   visual?: import("./registry.js").FileParserInput["visual"],

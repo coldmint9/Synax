@@ -95,6 +95,15 @@ export function collectDeletedHistory(): void {
   if (!job) return;
   const id = job.session_id;
   db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='session_history_storage'").get()) {
+      for (const table of ["jsonl_checkpoint_aliases", "session_history_storage", "jsonl_history_migrations", "transcript_records"]) {
+        const removed = db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE session_id=? LIMIT 64)`).run(id);
+        if (removed.changes) return;
+      }
+      db.prepare("DELETE FROM transcript_heads WHERE session_id=?").run(id);
+      db.prepare("UPDATE jsonl_payload_segments SET sealed=1 WHERE owner=?").run(id);
+      db.prepare("DELETE FROM jsonl_payload_heads WHERE owner=?").run(id);
+    }
     const locators = db
       .prepare(
         "SELECT kind,record_id FROM conversation_v3_runtime_records WHERE session_id=? LIMIT 64",

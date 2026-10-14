@@ -1,3 +1,5 @@
+import { createOwnerClient } from "./owner-libsql-client.js";
+import { connectStorageOwner, startStorageOwner, stopStorageOwner } from "./owner-client.js";
 import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
 import { installConversationHistoryTriggers } from "./conversation-history-triggers.js";
 import { assertDatabaseWriteAllowed } from "../runtime/execution-context.js";
@@ -29,6 +31,11 @@ export type RawSqlite = NativeDatabase.Database & {
 let _sqlite: RawSqlite | null = null;
 let _client: Client | null = null;
 let _db: ContextDb | null = null;
+
+/** Host connections keep a short busy timeout: any wait here also blocks the
+ * HTTP and IPC event loop. A process that owns no event loop (the journal
+ * writer child) raises it for itself instead. */
+export const HOST_BUSY_TIMEOUT_MS = 1_000;
 
 const transactionStates = new WeakMap<
   NativeDatabase.Database,
@@ -103,6 +110,7 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
 function installSqliteCompat(
   sqlite: NativeDatabase.Database,
   databasePath: string,
+  guardLocally = true,
 ): RawSqlite {
   const compat = sqlite as RawSqlite;
   const prepare = sqlite.prepare.bind(sqlite);
@@ -115,7 +123,7 @@ function installSqliteCompat(
     configurable: true,
     value: (sql: string) => {
       const statement = prepare(sql);
-      if (!mutates(sql)) return statement;
+      if (!guardLocally || !mutates(sql)) return statement;
       const wrapped = new Proxy(statement, {
         get(target, key) {
           const value = Reflect.get(target, key, target);
@@ -133,7 +141,7 @@ function installSqliteCompat(
   Object.defineProperty(compat, "exec", {
     configurable: true,
     value: (sql: string) => {
-      if (mutates(sql)) assertDatabaseWriteAllowed(compat, databasePath);
+      if (guardLocally && mutates(sql)) assertDatabaseWriteAllowed(compat, databasePath);
       return exec(sql);
     },
   });
@@ -194,7 +202,7 @@ function configureSqlite(sqlite: NativeDatabase.Database): void {
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 1000;
+    PRAGMA busy_timeout = ${HOST_BUSY_TIMEOUT_MS};
     PRAGMA cache_size = -32768;
     PRAGMA mmap_size = 0;
     PRAGMA temp_store = FILE;
@@ -511,6 +519,15 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
   if (_sqlite) return _sqlite;
+  const useOwner = process.env.SYNAX_STORAGE_OWNER_PROCESS !== "1" && (
+    Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) ||
+    (process.env.SYNAX_RUNTIME_HOST_ID && !process.env.VITEST && process.env.NODE_ENV !== "test")
+  );
+  if (useOwner) {
+    startStorageOwner(path.dirname(dbPath));
+    _sqlite = installSqliteCompat(connectStorageOwner(dbPath), dbPath, false);
+    return _sqlite;
+  }
   const sqlite = installSqliteCompat(new NativeDatabase(dbPath), dbPath);
   configureSqlite(sqlite);
 
@@ -530,6 +547,8 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
 
 function getOrCreateClient(dbPath = resolveDbPath()): Client {
   if (_client) return _client;
+  if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT && process.env.SYNAX_STORAGE_OWNER_PROCESS !== "1")
+    return _client = createOwnerClient(dbPath);
   _client = createClient({ url: pathToFileURL(dbPath).href });
   const client = _client;
   const execute = client.execute.bind(client);
@@ -612,6 +631,7 @@ export function closeDb(): void {
   _client = null;
   _sqlite = null;
   _db = null;
+  stopStorageOwner();
 }
 
 export { schema };

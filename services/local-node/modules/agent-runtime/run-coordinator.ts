@@ -1,3 +1,4 @@
+import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { withDeadline } from "./managed-process.js";
@@ -53,12 +54,16 @@ interface Driver {
 const defaultDriver: Driver = {
   execute: executeBackendSession,
   async interrupt(id, reason) {
-    for (const session of agentRuntimeStore.listSessionTree(id)) {
-      await getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(
-        session.id,
-        reason,
-      );
-    }
+    const results = await Promise.allSettled(
+      agentRuntimeStore.listSessionTree(id).map(async (session) =>
+        getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(
+          session.id,
+          reason,
+        ),
+      ),
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   },
 };
 
@@ -182,7 +187,7 @@ export class RunCoordinator {
   }
 
   /** Start one queued turn only after the previous conversation work has settled. */
-  dispatchQueuedInput(sessionId: string): boolean {
+  dispatchQueuedInput(sessionId: string, forced = false): boolean {
     if (this.isActive(sessionId)) return false;
     try {
       const accepted = getRawSqlite().transaction(() => {
@@ -190,23 +195,24 @@ export class RunCoordinator {
         const work = workStore.current(sessionId);
         const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
         if (
-          session.status !== "completed" ||
+          (!forced && session.status !== "completed") ||
           session.activeRunId ||
           session.parentSessionId ||
           session.sessionMetadata?.runtimeControl ||
-          latestRun?.status !== "completed" ||
+          (!forced && latestRun?.status !== "completed") ||
           // A settled round handoff stays reserved for the goal continuation;
           // once no continuation applies (e.g. the goal finished), drain the queue.
-          (latestRun.stopReason === "round_yielded" &&
+          (!forced &&
+            latestRun.stopReason === "round_yielded" &&
             goalContinuationInput(sessionId, latestRun.id) !== null) ||
           // Chat/plan handoffs end the turn while retaining unfinished TODOs.
           // Only goal work must finish before queued user turns can start.
-          (work &&
+          (!forced && work &&
             work.status !== "completed" &&
             !(work.status === "active" &&
               latestRun.stopReason === "round_yielded" &&
               !usesGoalWorkflow(session))) ||
-          interactionService.pending(sessionId)
+          (!forced && interactionService.pending(sessionId))
         )
           return null;
         const forcedId = inputQueueService.getForceInjectId(sessionId);
@@ -249,6 +255,20 @@ export class RunCoordinator {
       );
       return false;
     }
+  }
+
+  /**
+   * Stop the current turn, then start the selected queued input immediately.
+   * The queue item remains durable until the new run is admitted successfully.
+   */
+  async forceQueuedInput(sessionId: string, itemId: string): Promise<boolean> {
+    inputQueueService.markForceInject(sessionId, itemId);
+    if (this.isActive(sessionId))
+      await this.interrupt(
+        sessionId,
+        "A queued input was forced to the front of the conversation.",
+      );
+    return this.dispatchQueuedInput(sessionId, true);
   }
 
   private launch(
@@ -406,7 +426,7 @@ export class RunCoordinator {
         "[run-coordinator] execution ended with an error",
       );
       if (!this.ownsLease(owner)) return;
-      flush();
+      await flush();
       const run = agentRuntimeStore.getRun(owner.runId);
       if (!["completed", "cancelled", "interrupted"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
@@ -430,11 +450,12 @@ export class RunCoordinator {
       if (!ownsLease) writer.abandon();
       if (ownsLease) {
         await flush();
+        await writer.prepareFinish();
+        runWithExecutionContext(owner.context, () => writer.finish());
         // A replacement execution may have acquired the lease while the
         // persistence acknowledgement was in flight. Fence finalization too.
         ownsLease = getRawSqlite().transaction(() => {
           if (!this.ownsLease(owner)) return false;
-          writer.finish();
           const run = agentRuntimeStore.getRun(owner.runId);
           agentRuntimeStore.updateRun(run.id, {
             metadata: {
@@ -638,7 +659,10 @@ export class RunCoordinator {
       payload: { runId },
       visibility: "internal",
     });
-    runtimeJournal.append(sessionId, runId, { type: "event", event });
+    if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+      void runtimeJournal.appendDurable(sessionId, runId, [{ type: "event", event }]).catch(error =>
+        logger.warn({ error, sessionId }, "Progress replay could not be persisted"));
+    } else runtimeJournal.append(sessionId, runId, { type: "event", event });
   }
 
   activeSessionIds(): string[] {
@@ -688,7 +712,7 @@ export class RunCoordinator {
       );
     let cursor = after;
     while (!signal?.aborted) {
-      const records = runtimeJournal.read(sessionId, cursor, 256, runId);
+      const records = await runtimeJournal.readDurable(sessionId, cursor, 256, runId);
       for (const record of records) {
         if (signal?.aborted) return;
         cursor = record.sequence;

@@ -5,6 +5,7 @@
 ## 共享规则与模型可见链路
 
 - `loop-ai-tools.ts` 将 `description` 与 `progressiveDetails` 拼接；模型参数由 SDK `asSchema(...).jsonSchema` 导出。`refine`、`superRefine`、`execute` 的条件不能假定自动导出；新增测试经过这条真实链路验证。
+- 模型可见的工具参数根 schema 必须是 `type: "object"`：`z.discriminatedUnion` 只能序列化成根 `oneOf`（没有 `type`），OpenAI 兼容 provider（如 DeepSeek）会以 `Invalid schema for function '...': schema must be a JSON Schema of 'type: "object"', got 'type: null'` 拒绝整次请求。因此按动作区分的必填/禁用组合用扁平对象加 `superRefine` 表达，动作适用性写进字段 `describe()`。
 - 普通文件、搜索、命令工具相对路径以会话工作目录为基准，绝对路径交给 sandbox 授权，外部路径可能需要批准。specialist 写入的安全相对路径限制更加严格，不能套用到普通工具。
 - 已读文件变化会触发读写追踪校验。文件存在性、权限、网络、模型/provider 配置、窗口和页面状态属于动态条件；说明可以提示前置条件，但不能保证外部调用成功。
 - 模式、挂载、权限、计划批准和 Work 状态由 `control-policy.ts`、`tool-mount-policy.ts`、`permission-policy.ts`、`work-runtime.ts` 和 `specialist-profile.ts` 执行。工具内部的 run/step ID 由运行时传递，不要求 agent 猜测或填写。
@@ -84,6 +85,7 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 | 工具 | 实际约束/行为 | 处理 | 依据 |
 | --- | --- | --- | --- |
 | `subagent.delegate` | builtin profile 限 explorer/reviewer；specialist 优先；prompt 非空；specialist prompt 最多 20000；一层、最多 3 活跃 children；同时最多一个 specialist writer；Plan specialist 不写；权限继承 | 列出 profile、优先级、写入范围和串行 writer 要求；capabilities/writeScope 字段带完整约束及合法例子 | tool-registry.ts、specialist-profile.ts |
+| `subagent.lifecycle` | 单一严格参数对象；start 需 prompt，profileId/name/thinkingMode 仅 start 可用；除 start/list 外必须带 childSessionId；message 需 message 且 childSessionId 来自 start/list；timeoutMs 0–30000 仅影响 wait；pause 可恢复、cancel 终止、close/terminate 硬停；只作用于自己的直接子会话 | 保留各动作前置条件，改由字段 `describe()` 与 `superRefine` 表达；不回到 discriminated union，否则根 schema 无 `type: "object"` | subagent-tools.ts、subagent-orchestrator.ts |
 | `skill.load` | skillId 在目录中且当前 profile/权限/会话可用；specialist 受 skillIds 授权列表限制 | 补从可用目录取得精确 ID，检查成功结果后再采用内容 | tool-registry.ts、modules/skills/agent-bridge.ts、specialist-profile.ts |
 | `agent.adapt` | 仅 Synax 会话；variantId 为 planner/explorer/reviewer；reason trim 后非空 | 补非空白 reason 说明，保留持续工作使用要求 | synax/synax-adapt-tool.ts |
 | `human.ask` | 1–5 问且 ID 唯一；select 必须有唯一 options；recommended 只用于 select 且来自 options，single_select 最多一个；min≤max；主控会话/单工具步骤 | 在正文和字段补无法由普通 JSON Schema 表达的规则 | control-tools.ts、control-contracts.ts、control-policy.ts |
@@ -137,6 +139,8 @@ Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止�
 ## 回归验证
 
 新增 `__tests__/builtin-tool-contracts.test.ts` 验证全局注册覆盖、最终模型定义导出、writeScope 有效/无效例子、媒体/browser 组合、human/plan refine 规则及 rg 默认数量/前导连字符。修正旧 tool-registry 测试仍引用已撤下 edit 的断言，改为当前 file.patch。新增图像适配器与 webSearch 批量参数形状检查。
+
+后续修正：`subagent.lifecycle` 原用 `z.discriminatedUnion`，导出的根 schema 为 `oneOf`，DeepSeek 等 OpenAI 兼容 provider 直接拒绝该工具定义。改为扁平严格对象加 `superRefine`（保留 start 需要 prompt、start/list 不接受 childSessionId、其余动作需要 childSessionId、message 需要 message 等原有约束），并在 `builtin-tool-contracts.test.ts` 增加根 `type: "object"` 与逐动作参数形状断言。
 
 实际验证记录：
 

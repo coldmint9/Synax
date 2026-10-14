@@ -6,12 +6,13 @@ export interface FileParserInput {
   mediaType: string;
   bytes: Uint8Array;
   loadImage?: (source: string) => Promise<Uint8Array>;
-  visual?: {
-    maxPages: number;
-    maxImageBytes: number;
-    maxTotalBytes: number;
-    renderAll?: boolean;
-  };
+  visual?: VisualInputOptions;
+}
+export interface VisualInputOptions {
+  maxPages: number;
+  maxImageBytes: number;
+  maxTotalBytes: number;
+  renderAll?: boolean;
 }
 export interface ParsedDocument {
   text: string;
@@ -33,6 +34,9 @@ export interface FileParser {
   parse(input: FileParserInput): Promise<string | ParsedDocument>;
 }
 export const MAX_PARSED_CHARACTERS = 100_000;
+export const MAX_VISUAL_PAGES = 10;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 const parsers = new Map<string, FileParser>();
 export function registerFileParser(parser: FileParser): () => void {
   if (!parser.id || parsers.has(parser.id))
@@ -59,19 +63,43 @@ export function decodeCharacterFile(bytes: Uint8Array): string | undefined {
     return undefined;
   }
 }
+function finiteNonNegative(value: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+}
+export function normalizeVisualInput(
+  visual: VisualInputOptions | undefined,
+): VisualInputOptions | undefined {
+  if (!visual) return undefined;
+  return {
+    maxPages: Math.min(MAX_VISUAL_PAGES, finiteNonNegative(visual.maxPages, 0)),
+    maxImageBytes: Math.min(
+      MAX_IMAGE_BYTES,
+      finiteNonNegative(visual.maxImageBytes, 0),
+    ),
+    maxTotalBytes: Math.min(
+      MAX_TOTAL_IMAGE_BYTES,
+      finiteNonNegative(visual.maxTotalBytes, 0),
+    ),
+    renderAll: visual.renderAll === true,
+  };
+}
 export async function parseFileInput(
   input: FileParserInput,
 ): Promise<ParsedFile> {
+  const normalizedInput = {
+    ...input,
+    visual: normalizeVisualInput(input.visual),
+  };
   // Later registrations can replace a built-in format (for example PDF OCR).
   const parser = [...parsers.values()]
     .reverse()
-    .find((candidate) => candidate.supports(input));
+    .find((candidate) => candidate.supports(normalizedInput));
   let text: string | undefined;
   let document: ParsedDocument | undefined;
   try {
     const result = parser
-      ? await parser.parse(input)
-      : decodeCharacterFile(input.bytes);
+      ? await parser.parse(normalizedInput)
+      : decodeCharacterFile(normalizedInput.bytes);
     document = typeof result === "object" ? result : undefined;
     text = document ? document.text : (result as string | undefined);
   } catch (error) {

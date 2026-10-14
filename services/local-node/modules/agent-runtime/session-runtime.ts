@@ -1,5 +1,5 @@
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { initializeFreshVersionNative } from "./checkpoints/version-runtime/bridge.js";
+import { initializeFreshVersionNative, initializeFreshJsonlHistory } from "./checkpoints/version-runtime/bridge.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { normalizeSessionPromptMetadata } from "./session-metadata.js";
@@ -29,6 +29,7 @@ import { sessionHooks } from "./session-hooks.js";
 import { resolveInitialSessionTitle } from "./session-title-service.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { getProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
+import { TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
 
 export class AgentSessionRuntime {
   constructor(
@@ -205,7 +206,12 @@ export class AgentSessionRuntime {
     };
     const saved = getRawSqlite().transaction(() => {
       const saved = this.store.createSession(session);
-      if (!parent && (!input.backendId || input.backendId === "native") && process.env.SYNAX_VERSION_HISTORY !== "legacy")
+      if (TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
+      else if (
+        !parent &&
+        (!input.backendId || input.backendId === "native") &&
+        process.env.SYNAX_VERSION_HISTORY !== "legacy"
+      )
         initializeFreshVersionNative(saved);
       return saved;
     })();

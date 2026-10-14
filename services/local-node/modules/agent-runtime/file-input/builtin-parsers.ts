@@ -7,12 +7,21 @@ import { renderOfficePdf } from "./office-renderer.js";
 import { markdownImage } from "./markdown.js";
 import { OFFICE_DOCUMENT_TYPES as MIME } from "./document-types.js";
 import {
+  MAX_IMAGE_BYTES,
+  MAX_PARSED_CHARACTERS,
+  MAX_TOTAL_IMAGE_BYTES,
+  MAX_VISUAL_PAGES,
+  normalizeVisualInput,
   registerFileParser,
   type FileParserInput,
   type ParsedDocument,
 } from "./registry.js";
 
 type Node = Record<string, any>;
+type CanvasApi = Pick<
+  typeof import("@napi-rs/canvas"),
+  "createCanvas" | "loadImage"
+>;
 const xmlParser = new XMLParser({
   preserveOrder: true,
   ignoreAttributes: false,
@@ -59,10 +68,15 @@ function text(value: Node[]): string {
 function paragraphText(value: Node[], tag: string): string[] {
   return nodes(value, tag).map((node) => text(node[tag]));
 }
-function archive(input: FileParserInput): Record<string, Uint8Array> {
+interface OfficeArchive {
+  files: Record<string, Uint8Array>;
+  xml(name: string): Node[];
+  text(name: string): string;
+}
+function archive(input: FileParserInput): OfficeArchive {
   let size = 0,
     count = 0;
-  return unzipSync(input.bytes, {
+  const files = unzipSync(input.bytes, {
     filter: (file) => {
       size += file.originalSize;
       if (
@@ -77,6 +91,26 @@ function archive(input: FileParserInput): Record<string, Uint8Array> {
       );
     },
   });
+  const xmlCache = new Map<string, Node[]>();
+  const textCache = new Map<string, string>();
+  const parseXml = (name: string): Node[] => {
+    const cached = xmlCache.get(name);
+    if (cached) return cached;
+    const parsed = xml(files[name]);
+    xmlCache.set(name, parsed);
+    return parsed;
+  };
+  return {
+    files,
+    xml: parseXml,
+    text(name) {
+      const cached = textCache.get(name);
+      if (cached !== undefined) return cached;
+      const value = text(parseXml(name));
+      textCache.set(name, value);
+      return value;
+    },
+  };
 }
 function relationshipMap(value: Node[]): Map<string, string> {
   return new Map(
@@ -97,42 +131,61 @@ function relationshipPath(folder: string, target: string): string {
   return out.join("/");
 }
 async function officeText(
-  files: Record<string, Uint8Array>,
+  archive: OfficeArchive,
   kind: string,
 ): Promise<string> {
+  const { files } = archive;
   if (kind === "docx") {
-    const body = nodes(xml(files["word/document.xml"]), "w:body")[0]?.[
-      "w:body"
+    const wordPartText = (name: string): string => {
+      const value = archive.xml(name);
+      const body = nodes(value, "w:body")[0]?.["w:body"];
+      const blocks = body ?? value;
+      return blocks
+        .flatMap((node: Node) => {
+          if (node["w:p"]) return [text(node["w:p"])];
+          if (node["w:tbl"])
+            return nodes(node["w:tbl"], "w:tr").map((row) =>
+              nodes(row["w:tr"], "w:tc")
+                .map((cell) =>
+                  paragraphText(cell["w:tc"], "w:p").join(" / "),
+                )
+                .join("\t"),
+            );
+          return paragraphText([node], "w:p");
+        })
+        .join("\n");
+    };
+    if (!files["word/document.xml"]) throw new Error("DOCX 缺少正文。");
+    const parts = [
+      "word/document.xml",
+      ...Object.keys(files)
+        .filter((name) =>
+          /^word\/(?:header|footer|footnotes|endnotes|comments)\d+\.xml$/.test(
+            name,
+          ),
+        )
+        .sort(),
     ];
-    if (!body) throw new Error("DOCX 缺少正文。");
-    return body
-      .flatMap((node: Node) => {
-        if (node["w:p"]) return [text(node["w:p"])];
-        if (node["w:tbl"])
-          return nodes(node["w:tbl"], "w:tr").map((row) =>
-            nodes(row["w:tr"], "w:tc")
-              .map((cell) => paragraphText(cell["w:tc"], "w:p").join(" / "))
-              .join("\t"),
-          );
-        return paragraphText([node], "w:p");
-      })
-      .join("\n");
+    return parts
+      .map((name) => wordPartText(name))
+      .filter(Boolean)
+      .join("\n\n");
   }
   if (kind === "xlsx") {
     const shared = files["xl/sharedStrings.xml"]
-      ? nodes(xml(files["xl/sharedStrings.xml"]), "si").map((node) =>
+      ? nodes(archive.xml("xl/sharedStrings.xml"), "si").map((node) =>
           text(node.si),
         )
       : [];
     const relationships = relationshipMap(
-      xml(files["xl/_rels/workbook.xml.rels"]),
+      archive.xml("xl/_rels/workbook.xml.rels"),
     );
-    return nodes(xml(files["xl/workbook.xml"]), "sheet")
+    return nodes(archive.xml("xl/workbook.xml"), "sheet")
       .map((sheet) => {
         const attrs = sheet[":@"],
           target = relationships.get(attrs["r:id"]);
         if (!target) throw new Error("工作表关系缺失。");
-        const value = xml(files[relationshipPath("xl", target)]);
+        const value = archive.xml(relationshipPath("xl", target));
         const rows = nodes(value, "row")
           .map((row) =>
             nodes(row.row, "c")
@@ -170,14 +223,14 @@ async function officeText(
       .join("\n\n");
   }
   const relationships = relationshipMap(
-    xml(files["ppt/_rels/presentation.xml.rels"]),
+    archive.xml("ppt/_rels/presentation.xml.rels"),
   );
-  return nodes(xml(files["ppt/presentation.xml"]), "p:sldId")
+  return nodes(archive.xml("ppt/presentation.xml"), "p:sldId")
     .map((slide, index) => {
       const target = relationships.get(slide[":@"]["r:id"]);
       if (!target) throw new Error("幻灯片关系缺失。");
       const value = paragraphText(
-        xml(files[relationshipPath("ppt", target)]),
+        archive.xml(relationshipPath("ppt", target)),
         "a:p",
       ).join("\n");
       return value.trim() ? `幻灯片 ${index + 1}\n${value}` : "";
@@ -189,10 +242,14 @@ async function office(
   input: FileParserInput,
   kind: string,
 ): Promise<ParsedDocument> {
-  const files = archive(input);
-  const value = await officeText(files, kind);
-  if (value.length > 100_000)
-    throw new Error("Office 文档文字超过 100000 字符，请拆分读取。");
+  const document = archive(input);
+  const { files } = document;
+  const visual = normalizeVisualInput(input.visual);
+  const value = await officeText(document, kind);
+  if (value.length > MAX_PARSED_CHARACTERS)
+    throw new Error(
+      `Office 文档文字超过 ${MAX_PARSED_CHARACTERS} 字符，请拆分读取。`,
+    );
   const media = Object.keys(files).filter((name) =>
     /^(word|xl|ppt)\/media\//.test(name),
   );
@@ -204,14 +261,14 @@ async function office(
       ),
   );
   if (!media.length && !drawingSources.length) return { text: value };
-  if (!input.visual)
+  if (!visual)
     return {
       text: value,
       warnings: [
         "当前模型不支持或尚未确认图片输入；文档包含图片、图表或流程图，仅提取文字，图片、图表和流程图无法识别。",
       ],
     };
-  if (input.visual.maxPages <= 0 || input.visual.maxTotalBytes <= 0)
+  if (visual.maxPages <= 0 || visual.maxTotalBytes <= 0)
     return {
       text: value,
       images: [],
@@ -226,7 +283,7 @@ async function office(
       ...input,
       bytes,
       mediaType: "application/pdf",
-      visual: { ...input.visual, renderAll: true },
+      visual: { ...visual, renderAll: true },
     });
     return {
       ...rendered,
@@ -249,8 +306,10 @@ async function office(
     ["word/document.xml", "Word 正文"],
   ]);
   if (kind === "pptx") {
-    const rels = relationshipMap(xml(files["ppt/_rels/presentation.xml.rels"]));
-    nodes(xml(files["ppt/presentation.xml"]), "p:sldId").forEach(
+    const rels = relationshipMap(
+      document.xml("ppt/_rels/presentation.xml.rels"),
+    );
+    nodes(document.xml("ppt/presentation.xml"), "p:sldId").forEach(
       (node, index) => {
         const target = rels.get(node[":@"]?.["r:id"]);
         if (target)
@@ -262,8 +321,8 @@ async function office(
     );
   }
   if (kind === "xlsx") {
-    const rels = relationshipMap(xml(files["xl/_rels/workbook.xml.rels"]));
-    for (const node of nodes(xml(files["xl/workbook.xml"]), "sheet")) {
+    const rels = relationshipMap(document.xml("xl/_rels/workbook.xml.rels"));
+    for (const node of nodes(document.xml("xl/workbook.xml"), "sheet")) {
       const attrs = node[":@"] ?? {};
       const target = rels.get(attrs["r:id"]);
       if (target)
@@ -276,7 +335,7 @@ async function office(
       /^xl\/worksheets\/_rels\/.*\.rels$/.test(name),
     )) {
       const source = relFile.replace("/_rels/", "/").replace(/\.rels$/, "");
-      for (const node of nodes(xml(files[relFile]), "Relationship")) {
+      for (const node of nodes(document.xml(relFile), "Relationship")) {
         const attrs = node[":@"] ?? {};
         if (attrs.TargetMode !== "External" && typeof attrs.Target === "string")
           sourceLabels.set(
@@ -286,18 +345,49 @@ async function office(
       }
     }
   }
+  // Build the reverse image index once. The old implementation reparsed every
+  // relationship XML file for every media item, which made image heavy Office
+  // documents scale quadratically.
+  const imageReferences = new Map<string, string[]>();
+  for (const relPath of Object.keys(files).filter((file) =>
+    file.endsWith(".rels"),
+  )) {
+    const source = relPath.replace(/\/_rels\/([^/]+)\.rels$/, "/$1");
+    const folder = path.posix.dirname(source);
+    for (const relationship of nodes(document.xml(relPath), "Relationship")) {
+      const attrs = relationship[":@"] ?? {};
+      if (
+        attrs.TargetMode === "External" ||
+        typeof attrs.Target !== "string"
+      )
+        continue;
+      const target = relationshipPath(folder, attrs.Target);
+      if (!files[target]) continue;
+      const nearby = files[source] ? document.text(source).slice(0, 1000) : "";
+      const reference = `${sourceLabels.get(source) ?? "文档绘图"}：${source}（关系 ${attrs.Id ?? ""}）${nearby ? `；所在部分文字：${nearby}` : ""}`;
+      imageReferences.set(target, [
+        ...(imageReferences.get(target) ?? []),
+        reference,
+      ]);
+    }
+  }
+  let canvasModule:
+    | CanvasApi
+    | undefined;
   for (const name of media) {
     if (
-      images.length >= Math.min(10, input.visual.maxPages) ||
+      images.length >= Math.min(MAX_VISUAL_PAGES, visual.maxPages) ||
       !/\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
     ) {
       omitted.push(name);
       continue;
     }
     try {
-      const {
-        default: { createCanvas, loadImage },
-      } = await import("@napi-rs/canvas");
+      const loadedCanvas = (await import("@napi-rs/canvas")) as typeof import(
+        "@napi-rs/canvas"
+      ) & { default?: CanvasApi };
+      canvasModule ??= loadedCanvas.default ?? loadedCanvas;
+      const { createCanvas, loadImage } = canvasModule;
       const image = await loadImage(Buffer.from(files[name]));
       if (
         !image.width ||
@@ -310,49 +400,29 @@ async function office(
         Math.max(1, Math.round(image.width * scale)),
         Math.max(1, Math.round(image.height * scale)),
       );
-      canvas
-        .getContext("2d")
-        .drawImage(image, 0, 0, canvas.width, canvas.height);
-      const bytes = await canvas.encode("png");
-      canvas.width = canvas.height = 1;
-      if (
-        bytes.length > Math.min(5 * 1024 * 1024, input.visual.maxImageBytes) ||
-        totalBytes + bytes.length >
-          Math.min(20 * 1024 * 1024, input.visual.maxTotalBytes)
-      ) {
-        omitted.push(name);
-        continue;
-      }
-      const references: string[] = [];
-      for (const relPath of Object.keys(files).filter((file) =>
-        file.endsWith(".rels"),
-      )) {
-        const source = relPath.replace(/\/_rels\/([^/]+)\.rels$/, "/$1");
-        const folder = path.posix.dirname(source);
-        const relationships = nodes(xml(files[relPath]), "Relationship");
-        for (const relationship of relationships) {
-          const attrs = relationship[":@"] ?? {};
-          if (
-            attrs.TargetMode === "External" ||
-            !attrs.Target ||
-            relationshipPath(folder, attrs.Target) !== name
-          )
-            continue;
-          const nearby = files[source]
-            ? text(xml(files[source])).slice(0, 1000)
-            : "";
-          references.push(
-            `${sourceLabels.get(source) ?? "文档绘图"}：${source}（关系 ${attrs.Id ?? ""}）${nearby ? `；所在部分文字：${nearby}` : ""}`,
-          );
+      try {
+        canvas
+          .getContext("2d")
+          .drawImage(image, 0, 0, canvas.width, canvas.height);
+        const bytes = await canvas.encode("png");
+        if (
+          bytes.length > Math.min(MAX_IMAGE_BYTES, visual.maxImageBytes) ||
+          totalBytes + bytes.length >
+            Math.min(MAX_TOTAL_IMAGE_BYTES, visual.maxTotalBytes)
+        ) {
+          omitted.push(name);
+          continue;
         }
+        images.push({
+          page: images.length + 1,
+          bytes,
+          mediaType: "image/png",
+          context: `文档嵌入图片 ${name}。${imageReferences.get(name)?.join("；") || "文档内的位置未能确认"}。请结合文档文字分析；这是独立图片，不是完整页面，未保留裁剪、布局或叠加图形。`,
+        });
+        totalBytes += bytes.length;
+      } finally {
+        canvas.width = canvas.height = 1;
       }
-      images.push({
-        page: images.length + 1,
-        bytes,
-        mediaType: "image/png",
-        context: `文档嵌入图片 ${name}。${references.join("；") || "文档内的位置未能确认"}。请结合文档文字分析；这是独立图片，不是完整页面，未保留裁剪、布局或叠加图形。`,
-      });
-      totalBytes += bytes.length;
     } catch (error) {
       // Keep the cause: a missing native binding and a corrupt image both used
       // to surface as a generic "could not decode" note.
@@ -377,33 +447,55 @@ for (const kind of Object.keys(MIME))
     supports: (input) => input.mediaType === MIME[kind],
     parse: (input) => office(input, kind),
   });
-const pdfParser = {
-  id: "pdf",
-  supports: (input: FileParserInput) => input.mediaType === "application/pdf",
-  async parse(input: FileParserInput): Promise<ParsedDocument> {
-    const { getDocument, GlobalWorkerOptions, OPS } =
-      await import("pdfjs-dist/legacy/build/pdf.mjs");
+type PdfRuntime = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+let pdfRuntimePromise: Promise<PdfRuntime & { root: string }> | undefined;
+async function loadPdfRuntime(): Promise<PdfRuntime & { root: string }> {
+  pdfRuntimePromise ??= (async () => {
+    const runtime = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const require = createRequire(
       typeof __filename === "string" ? __filename : import.meta.url,
     );
     const root = path.dirname(require.resolve("pdfjs-dist/package.json"));
+    return { ...runtime, root };
+  })();
+  return pdfRuntimePromise;
+}
+let canvasModulePromise:
+  | Promise<CanvasApi>
+  | undefined;
+function loadCanvasModule(): Promise<CanvasApi> {
+  canvasModulePromise ??= import("@napi-rs/canvas").then((module) => {
+    const loaded = module as unknown as CanvasApi & { default?: CanvasApi };
+    return loaded.default ?? loaded;
+  });
+  return canvasModulePromise;
+}
+
+const pdfParser = {
+  id: "pdf",
+  supports: (input: FileParserInput) => input.mediaType === "application/pdf",
+  async parse(input: FileParserInput): Promise<ParsedDocument> {
+    const runtime = await loadPdfRuntime();
+    const { getDocument, GlobalWorkerOptions, OPS } = runtime;
     // Electron may skip PDF.js's Node defaults. Resolve the shipped worker
     // explicitly; a file URL also handles spaces and non-ASCII install paths.
     GlobalWorkerOptions.workerSrc = pathToFileURL(
-      path.join(root, "legacy/build/pdf.worker.mjs"),
+      path.join(runtime.root, "legacy/build/pdf.worker.mjs"),
     ).href;
+    const visual = normalizeVisualInput(input.visual);
     const task = getDocument({
       data: Uint8Array.from(input.bytes),
-      cMapUrl: `${path.join(root, "cmaps")}${path.sep}`,
+      cMapUrl: `${path.join(runtime.root, "cmaps")}${path.sep}`,
       cMapPacked: true,
-      standardFontDataUrl: `${path.join(root, "standard_fonts")}${path.sep}`,
+      standardFontDataUrl: `${path.join(runtime.root, "standard_fonts")}${path.sep}`,
       // Node renders shipped font outlines without a DOM font registry.
       useSystemFonts: false,
       isEvalSupported: false,
       useWorkerFetch: false,
     });
+    let document: Awaited<typeof task.promise> | undefined;
     try {
-      const document = await task.promise;
+      document = await task.promise;
       if (document.numPages > 1000)
         throw new Error("PDF 页数超过 1000 页，请拆分读取。");
       const pages: string[] = [];
@@ -427,69 +519,78 @@ const pdfParser = {
       let length = 0;
       for (let index = 1; index <= document.numPages; index++) {
         const page = await document.getPage(index);
-        const content = await page.getTextContent();
-        const value = content.items
-          .map((item) =>
-            "str" in item ? `${item.str}${item.hasEOL ? "\n" : " "}` : "",
-          )
-          .join("")
-          .trim();
-        length += value.length;
-        if (length > 100_000)
-          throw new Error("PDF 文字超过 100000 字符，请拆分读取。");
-        if (value) pages.push(`第 ${index} 页\n${value}`);
-        const operators = await page.getOperatorList();
-        if (
-          input.visual?.renderAll ||
-          operators.fnArray.some((op) => visualOps.has(op))
-        ) {
+        try {
+          const content = await page.getTextContent();
+          const value = content.items
+            .map((item) =>
+              "str" in item ? `${item.str}${item.hasEOL ? "\n" : " "}` : "",
+            )
+            .join("")
+            .trim();
+          length += value.length;
+          if (length > MAX_PARSED_CHARACTERS)
+            throw new Error(
+              `PDF 文字超过 ${MAX_PARSED_CHARACTERS} 字符，请拆分读取。`,
+            );
+          if (value) pages.push(`第 ${index} 页\n${value}`);
+
+          // Office conversion asks for every page explicitly. That avoids the
+          // expensive operator-list pass and preserves blank/chart-only pages.
+          const hasVisual = visual?.renderAll
+            ? true
+            : (await page.getOperatorList()).fnArray.some((op) =>
+                visualOps.has(op),
+              );
+          if (!hasVisual) continue;
           visualPages.push(index);
-          if (input.visual) {
-            if (images.length >= Math.min(10, input.visual.maxPages)) {
-              omittedPages.push(index);
-            } else {
-              try {
-                // Full pages preserve vector diagrams and their surrounding text.
-                const {
-                  default: { createCanvas },
-                } = await import("@napi-rs/canvas");
-                const base = page.getViewport({ scale: 1 });
-                const scale = Math.min(
-                  2,
-                  2000 / Math.max(base.width, base.height),
-                );
-                const viewport = page.getViewport({ scale });
-                const canvas = createCanvas(
-                  Math.max(1, Math.ceil(viewport.width)),
-                  Math.max(1, Math.ceil(viewport.height)),
-                );
-                await page.render({
-                  canvasContext: canvas.getContext("2d") as never,
-                  viewport,
-                }).promise;
-                const bytes = await canvas.encode("png");
-                if (
-                  bytes.length >
-                    Math.min(5 * 1024 * 1024, input.visual.maxImageBytes) ||
-                  imageBytes + bytes.length >
-                    Math.min(20 * 1024 * 1024, input.visual.maxTotalBytes)
-                ) {
-                  omittedPages.push(index);
-                } else {
-                  images.push({ page: index, bytes, mediaType: "image/png" });
-                  imageBytes += bytes.length;
-                }
-                canvas.width = canvas.height = 1;
-              } catch {
-                failedPages.push(index);
-              }
-            }
+          if (!visual) continue;
+          if (
+            images.length >= visual.maxPages ||
+            imageBytes >= visual.maxTotalBytes
+          ) {
+            omittedPages.push(index);
+            continue;
           }
+          try {
+            const { createCanvas } = await loadCanvasModule();
+            const base = page.getViewport({ scale: 1 });
+            const scale = Math.min(
+              2,
+              2000 / Math.max(1, base.width, base.height),
+            );
+            const viewport = page.getViewport({ scale });
+            const canvas = createCanvas(
+              Math.max(1, Math.ceil(viewport.width)),
+              Math.max(1, Math.ceil(viewport.height)),
+            );
+            try {
+              await page.render({
+                canvasContext: canvas.getContext("2d") as never,
+                viewport,
+              }).promise;
+              const bytes = await canvas.encode("png");
+              if (
+                bytes.length > Math.min(MAX_IMAGE_BYTES, visual.maxImageBytes) ||
+                imageBytes + bytes.length >
+                  Math.min(MAX_TOTAL_IMAGE_BYTES, visual.maxTotalBytes)
+              ) {
+                omittedPages.push(index);
+              } else {
+                images.push({ page: index, bytes, mediaType: "image/png" });
+                imageBytes += bytes.length;
+              }
+            } finally {
+              canvas.width = canvas.height = 1;
+            }
+          } catch {
+            failedPages.push(index);
+          }
+        } finally {
+          page.cleanup();
         }
-        page.cleanup();
       }
       const warnings: string[] = [];
-      if (visualPages.length && !input.visual)
+      if (visualPages.length && !visual)
         warnings.push(
           `当前模型不支持或尚未确认图片输入；PDF 第 ${visualPages.join("、")} 页包含图片或流程图，仅提取文字，图片和流程图无法识别。`,
         );
@@ -503,6 +604,9 @@ const pdfParser = {
         );
       return { text: pages.join("\n\n"), images, warnings };
     } finally {
+      // `destroy()` tears down the worker and document resources. Page-level
+      // cleanup above keeps the hot loop bounded without an extra full-document
+      // cleanup pass after every multi-page render.
       await task.destroy();
     }
   },

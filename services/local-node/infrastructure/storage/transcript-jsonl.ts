@@ -62,7 +62,7 @@ function syncDirectory(dir: string): void {
   const fd = fs.openSync(dir, fs.constants.O_RDONLY);
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-function ensureDirectory(root: string): string {
+function ensureDirectory(root: string, durable = true): string {
   const dir = directoryPath(root);
   // Caller supplies an existing trusted data root, never a user message path.
   checkDirectory(root);
@@ -71,7 +71,7 @@ function ensureDirectory(root: string): string {
   }
   checkDirectory(dir);
   // Also covers a previous failed/crashed first creation.
-  syncDirectory(root);
+  if (durable) syncDirectory(root);
   return dir;
 }
 function openSafe(file: string, flags: number): number {
@@ -93,6 +93,7 @@ function openSafe(file: string, flags: number): number {
  */
 export function appendTranscriptBatch(
   root: string, segment: string, committedBytes: number, records: readonly TranscriptRecord[],
+  deferSync?: (file: string, directory: string) => void,
 ): TranscriptLocation[] {
   validateSegment(segment);
   if (!Number.isSafeInteger(committedBytes) || committedBytes < 0) fail("OFFSET");
@@ -105,7 +106,7 @@ export function appendTranscriptBatch(
     return line;
   });
   if (!Number.isSafeInteger(committedBytes + bytes)) fail("OFFSET");
-  const dir = ensureDirectory(root);
+  const dir = ensureDirectory(root, !deferSync);
   const file = path.join(dir, `${segment}.jsonl`);
   if (committedBytes > 0 && !fs.existsSync(file)) fail("MISSING_TAIL");
   // Never create a missing file when the durable index expects existing bytes.
@@ -126,8 +127,8 @@ export function appendTranscriptBatch(
       offset += line.length;
       return location;
     });
-    fs.fsyncSync(fd);
-    syncDirectory(dir);
+    if (deferSync) deferSync(file, dir);
+    else { fs.fsyncSync(fd); syncDirectory(dir); }
     return locations;
   } finally { fs.closeSync(fd); }
 }

@@ -1,7 +1,9 @@
+import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { runtimeAsset } from "../../infrastructure/runtime/runtime-paths.js";
 import type { RuntimeExecutionContext } from "../../infrastructure/runtime/execution-context.js";
+import { JOURNAL_COMMIT_DEADLINE_MS, MAX_PENDING_JOURNAL_COMMITS } from "../../infrastructure/database/write-contention.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import { projectReplayChunk } from "./runtime-stream-projection.js";
 import type { AgentRunStreamChunk } from "./contracts.js";
@@ -19,6 +21,8 @@ export interface JournalWrite {
 /** One writer per host, with bounded admission and commit acknowledgements. */
 export class JournalWriter {
   private child?: ChildProcess;
+  private fileWrites = new Set<Promise<void>>();
+  private fileBytes = 0;
   private sequence = 0;
   private bytes = 0;
   private closed = false;
@@ -38,12 +42,25 @@ export class JournalWriter {
     if (chunks.length > 256) throw new Error("Replay burst limit exceeded.");
     chunks = chunks.map(projectReplayChunk);
     const bytes = assertBatchInput(chunks);
-    if (this.pending.size >= 64 || this.bytes + bytes > 4 * 1024 * 1024)
+    if (this.pending.size >= MAX_PENDING_JOURNAL_COMMITS || this.bytes + bytes > 4 * 1024 * 1024)
       throw new Error("Journal writer is busy; bounded queue is full.");
+    if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+      while (this.fileWrites.size >= MAX_PENDING_JOURNAL_COMMITS || this.fileBytes + bytes > 4 * 1024 * 1024) {
+        // Propagate disk backpressure to the producer instead of failing a run
+        // simply because another session currently occupies the bounded queue.
+        await Promise.race(this.fileWrites).catch(() => {});
+        if (this.closed) throw new Error("Journal writer closed while waiting for storage capacity.");
+      }
+      this.fileBytes += bytes;
+      const write = runWithExecutionContext(context, () => runtimeJournal.appendDurable(sessionId, runId, chunks, revision));
+      this.fileWrites.add(write);
+      try { await write; } finally { this.fileWrites.delete(write); this.fileBytes -= bytes; }
+      return;
+    }
     const child = this.ensureChild();
     const id = ++this.sequence;
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => this.fail(child, new Error("Journal commit acknowledgement timed out.")), 30_000);
+      const timer = setTimeout(() => this.fail(child, new Error("Journal commit acknowledgement timed out.")), JOURNAL_COMMIT_DEADLINE_MS);
       this.pending.set(id, { bytes, sessionId, resolve, reject, timer });
       this.bytes += bytes;
       child.channel?.ref();
@@ -112,6 +129,7 @@ export class JournalWriter {
 
   async close(): Promise<void> {
     this.closed = true;
+    await Promise.allSettled([...this.fileWrites]);
     if (this.pending.size) await new Promise<void>(resolve => this.idleWaiters.add(resolve));
     await Promise.all(this.retiring);
     const child = this.child;

@@ -82,11 +82,14 @@ export class RuntimeVersionRepository {
     this.heads = new VersionHeads(objects.db, objects);
     this.checkpointIndex = new RuntimeCheckpointIndex(objects);
   }
+  private atomic<T>(sessionId: string, action: () => T): T {
+    return this.objects.withOwner(sessionId, () => atomicVersionWrite(this.objects.db, action));
+  }
   head(sessionId: string): HeadState {
     return this.heads.read(sessionId);
   }
   create(sessionId: string, session: Record<string, unknown>): HeadState {
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const record = this.records.write(
         "session",
         sessionId,
@@ -97,10 +100,10 @@ export class RuntimeVersionRepository {
       const stateRoot = this.tree.update(null, [
         { key: "session", value: record },
       ]);
-      return this.heads.create(
-        sessionId,
-        createVersion(this.objects, { stateRoot }),
-      );
+      const child = this.objects.jsonl && Boolean(this.objects.db.prepare("SELECT 1 FROM agent_runtime_sessions WHERE id=? AND parent_session_id IS NOT NULL").get(sessionId));
+      const head = this.heads.create(sessionId, createVersion(this.objects, { stateRoot }), child ? { appendOnly: true } : undefined);
+      if (this.objects.jsonl) this.objects.db.prepare("UPDATE conversation_v3_heads SET full_history=1 WHERE session_id=?").run(sessionId);
+      return head;
     });
   }
   private roots(sessionId: string): { head: HeadState; roots: VersionRoots } {
@@ -181,7 +184,7 @@ export class RuntimeVersionRepository {
   ): HeadState {
     for (const write of writes) tableName(write.table);
     if (!writes.length) return this.head(sessionId);
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const { head, roots } = this.roots(sessionId);
       writeRuntimeBatch(
         this.objects,
@@ -196,7 +199,7 @@ export class RuntimeVersionRepository {
     });
   }
   remove(sessionId: string, table: string, id: string): HeadState {
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const { head, roots } = this.roots(sessionId),
         state = this.table(roots, table),
         ref = this.tree.get(state.ids, id);
@@ -238,7 +241,7 @@ export class RuntimeVersionRepository {
     });
   }
   session(sessionId: string, fields: Record<string, unknown>): HeadState {
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const { head, roots } = this.roots(sessionId),
         record = this.records.write("session", sessionId, sessionId, 0, fields);
       roots.stateRoot = this.tree.update(roots.stateRoot, [
@@ -588,7 +591,7 @@ export class RuntimeVersionRepository {
     omitRunId?: string,
   ): RuntimeCheckpoint {
     this.assertRollbackEnabled(sessionId);
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const previous = this.checkpointIndex.findExisting(sessionId, kind, messageId);
       if (previous) return previous;
       let { head, roots } = this.roots(sessionId);
@@ -614,6 +617,19 @@ export class RuntimeVersionRepository {
     return readVersionSnapshot(this.objects.db, () =>
       this.checkpointIndex.get(sessionId, id),
     );
+  }
+  importBoundary(storageSessionId: string, input: Omit<RuntimeCheckpoint, "id" | "ordinal">): RuntimeCheckpoint {
+    return this.atomic(storageSessionId, () => this.checkpointIndex.importBoundary(storageSessionId, input));
+  }
+  checkpointsForMessages(sessionId: string, messageIds: readonly string[]): RuntimeCheckpoint[] {
+    return readVersionSnapshot(this.objects.db, () => messageIds.flatMap(messageId =>
+      (["input", "reply"] as const).flatMap(kind => {
+        const checkpoint = this.checkpointIndex.findExisting(sessionId, kind, messageId);
+        return checkpoint ? [checkpoint] : [];
+      })).sort((a, b) => b.ordinal - a.ordinal));
+  }
+  checkpointForMessage(sessionId: string, kind: "input" | "reply", messageId: string): RuntimeCheckpoint | undefined {
+    return readVersionSnapshot(this.objects.db, () => this.checkpointIndex.findExisting(sessionId, kind, messageId));
   }
   checkpoints(
     sessionId: string,
@@ -666,7 +682,7 @@ export class RuntimeVersionRepository {
         }),
       )
       .digest("hex");
-    return atomicVersionWrite(this.objects.db, () => {
+    return this.atomic(sessionId, () => {
       const common = {
         sessionId,
         requestId: request.requestId,

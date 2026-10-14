@@ -1,6 +1,6 @@
 import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { upgradeHistory } from "../../modules/agent-runtime/checkpoints/version-runtime/migrate.js";
+import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
 import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
 import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
 import type { AgentRuntimeMessage } from "../../modules/agent-runtime/contracts.js";
@@ -843,14 +843,8 @@ agentRuntimeRoutes.post(
 
 agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
-    const body = await c.req.json();
-    if (body?.acknowledgeCheckpointReset !== true)
-      throw new AgentRuntimeError(
-        "Explicit acknowledgement of legacy checkpoint retirement is required.",
-        "VALIDATION_ERROR",
-        400,
-      );
-    return c.json(await upgradeHistory(c.req.param("sessionId")));
+    const result = await migrateJsonlSession(c.req.param("sessionId"));
+    return c.json({ upgraded: true, ...result });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1117,9 +1111,9 @@ agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
   try {
-    return c.json(runtimeJournal.snapshot(c.req.param("sessionId")));
+    return c.json(await runtimeJournal.snapshotDurable(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1165,7 +1159,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", (c) => {
       },
     );
     try {
-      const snapshot = runtimeJournal.snapshot(sessionId);
+      const snapshot = await runtimeJournal.snapshotDurable(sessionId);
       await stream.writeSSE({
         event: "snapshot",
         id: String(snapshot.cursor),
@@ -2006,11 +2000,13 @@ agentRuntimeRoutes.delete("/sessions/:sessionId/input-queue/:itemId", (c) => {
 
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/input-queue/:itemId/force",
-  (c) => {
+  async (c) => {
     try {
       const sessionId = c.req.param("sessionId");
-      inputQueueService.markForceInject(sessionId, c.req.param("itemId"));
-      runCoordinator.dispatchQueuedInput(sessionId);
+      await runCoordinator.forceQueuedInput(
+        sessionId,
+        c.req.param("itemId"),
+      );
       return c.json({
         items: inputQueueService.list(sessionId),
         forceInjectItemId: inputQueueService.getForceInjectId(sessionId),
@@ -2293,7 +2289,9 @@ const forkActionSchema = historyActionSchema.extend({
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
   try {
-    return c.json(checkpointSummary(c.req.param("sessionId")));
+    const encoded = c.req.query("messageIds");
+    const messageIds = encoded === undefined ? undefined : z.array(z.string().min(1).max(256)).max(64).parse(JSON.parse(encoded));
+    return c.json(checkpointSummary(c.req.param("sessionId"), messageIds));
   } catch (error) {
     return runtimeError(c, error);
   }

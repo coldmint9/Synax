@@ -1,3 +1,7 @@
+import { JsonlVersionPayloads } from "../../../../infrastructure/storage/jsonl-version-payloads.js";
+import path from "node:path";
+import { DATA_ROOT, TRANSCRIPT_STORAGE } from "../../../../infrastructure/runtime/env.js";
+import { ImmutablePayloads } from "../../../../infrastructure/storage/immutable-payloads.js";
 import { admitVersionGrowth } from "../resource-admission.js";
 import type Database from "libsql";
 import { getRawSqlite } from "../../../../infrastructure/database/index.js";
@@ -32,11 +36,16 @@ export function versionRepository(): RuntimeVersionRepository {
   const db = getRawSqlite();
   let repo = repositories.get(db);
   if (!repo) {
+    const supportsExternal = (db.prepare("PRAGMA table_info(conversation_v3_objects)").all() as { name: string }[]).some(column => column.name === "payload_ref");
+    const supportsJsonl = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jsonl_payload_records'").get());
+    const payloads = supportsJsonl
+      ? new JsonlVersionPayloads(db, path.join(path.resolve(DATA_ROOT), "version-jsonl"), path.join(path.resolve(DATA_ROOT), "version-payloads"))
+      : supportsExternal ? new ImmutablePayloads(path.join(path.resolve(DATA_ROOT), "version-payloads")) : undefined;
     repo = new RuntimeVersionRepository(
       new VersionObjects(db, {
         maxBytes: 1024 * 1024 * 1024,
         maxObjects: 2000000,
-      }, bytes => admitVersionGrowth(db, bytes)),
+      }, bytes => admitVersionGrowth(db, bytes), payloads, Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) || TRANSCRIPT_STORAGE === "jsonl"),
     );
     repositories.set(db, repo);
   }
@@ -78,6 +87,20 @@ export function initializeFreshVersionNative(session: AgentSession): void {
     throw new AgentRuntimeError("Fresh root initialization requires its creation transaction.", "HISTORY_SESSION_BUSY", 409);
   versionRepository().create(session.id, historySessionFields(session));
   db.prepare("UPDATE conversation_v3_heads SET runtime_mode='native',boundary_only=1 WHERE session_id=?").run(session.id);
+}
+
+/** JSONL is the physical history backend for every new session. Capability
+ * restrictions remain separate: only supported native roots expose rollback. */
+export function initializeFreshJsonlHistory(session: AgentSession): void {
+  const db = getRawSqlite();
+  if (!db.inTransaction || session.activeRunId || session.contextSnapshotId)
+    throw new AgentRuntimeError("JSONL history requires the session creation transaction.", "HISTORY_SESSION_BUSY", 409);
+  versionRepository().create(session.id, historySessionFields(session));
+  const backend = (session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? "native";
+  db.prepare("UPDATE conversation_v3_heads SET runtime_mode='native',boundary_only=1,full_history=1,rollback_enabled=? WHERE session_id=?")
+    .run(!session.parentSessionId && backend === "native" && session.sessionMetadata?.historyRollbackEnabled !== false ? 1 : 0, session.id);
+  db.prepare("INSERT INTO session_history_storage(session_id,backend,migrated_at,source_backend) VALUES(?,'jsonl-v3',?,'new')")
+    .run(session.id, new Date().toISOString());
 }
 
 export function initializeVersionNative(
@@ -137,7 +160,7 @@ export function versionSessionView(current: AgentSession): AgentSession {
     prompt: history.prompt as string,
     resultSummary: history.resultSummary as string | null,
     contextSnapshotId: history.contextSnapshotId as string | null,
-    sessionMetadata: { ...metadata, historyStorage: 3, historyRollbackEnabled: !appendOnlySession(current.id) },
+    sessionMetadata: { ...metadata, historyStorage: 3, historyPayloadStorage: versionRepository().objects.jsonl ? "jsonl" : "sqlite", historyRollbackEnabled: !appendOnlySession(current.id) },
   };
 }
 export function assertVersionTranscriptOperation(

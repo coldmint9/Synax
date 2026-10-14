@@ -305,8 +305,12 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   // measurements, never row identity. Remounting visible lazy rows hides their
   // contents until the next IntersectionObserver delivery (a transcript flash).
   // Epoch changes below still reset mounted state after a history rewrite.
+  // Revision changes on ordinary runtime writes. It must not enter row keys or
+  // lazy measurement keys, otherwise every persisted delta remounts the visible
+  // transcript and IntersectionObserver briefly replaces it with a spacer.
+  // Epoch changes represent a history rewrite and are safe to invalidate.
   const cacheVersion = historyWindow
-    ? `${historyWindow.epoch ?? 0}:${historyWindow.revision ?? 0}`
+    ? `epoch:${historyWindow.epoch ?? 0}`
     : "initial";
   const timeline = useMemo(() => {
     // A completed step can arrive before its assistant message. The store

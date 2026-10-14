@@ -75,6 +75,8 @@ export function assertHistoryUnlocked(
   rootsOverride?: string[],
 ): void {
   const db = getRawSqlite();
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='jsonl_history_migrations'").get() && db.prepare("SELECT 1 FROM jsonl_history_migrations WHERE session_id=? AND state IN ('copying','verified')").get(sessionId))
+    throw historyError("JSONL history migration is in progress; resume it before starting execution.", "HISTORY_MIGRATION_BUSY");
   if (db.prepare("SELECT 1 FROM conversation_v3_migrations WHERE session_id=? AND state='copying'").get(sessionId))
     throw historyError("History upgrade is in progress. Resume the upgrade before running or editing.", "HISTORY_MIGRATION_BUSY");
 

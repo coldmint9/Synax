@@ -120,4 +120,36 @@ describe('model-visible builtin tool contracts', () => {
     expect(schema.safeParse({ queries: [{ query: 'first', limit: 2 }] }).success).toBe(false);
     expect(schema.safeParse({ query: 'first', domains: ['https://example.com'] }).success).toBe(false);
   });
+
+  it('keeps subagent lifecycle arguments an object schema with per-action rules', async () => {
+    const lifecycle = await definition('subagent.lifecycle');
+    expect(lifecycle.description).toContain('start requires prompt');
+    expect(lifecycle.schema).toMatchObject({
+      type: 'object',
+      properties: { childSessionId: { type: 'string' }, timeoutMs: { type: 'integer' } },
+    });
+    const schema = toolRegistry.get('subagent.lifecycle').inputSchema!;
+    for (const input of [
+      { action: 'start', prompt: 'Investigate the failing test' },
+      { action: 'start', prompt: 'Investigate', profileId: 'reviewer', name: 'Scout', thinkingMode: 'deep' },
+      { action: 'list' },
+      { action: 'inspect', childSessionId: 'child' },
+      { action: 'wait', childSessionId: 'child', timeoutMs: 1_000 },
+      { action: 'message', childSessionId: 'child', message: 'Continue' },
+      { action: 'pause', childSessionId: 'child', reason: 'User asked to pause' },
+    ])
+      expect(schema.safeParse(input).success, JSON.stringify(input)).toBe(true);
+    for (const input of [
+      {},
+      { action: 'start' },
+      { action: 'start', prompt: 'Investigate', childSessionId: 'child' },
+      { action: 'list', childSessionId: 'child' },
+      { action: 'inspect' },
+      { action: 'inspect', childSessionId: 'child', prompt: 'Investigate' },
+      { action: 'message', childSessionId: 'child' },
+      { action: 'wait', childSessionId: 'child', timeoutMs: 30_001 },
+      { action: 'nope', childSessionId: 'child' },
+    ])
+      expect(schema.safeParse(input).success, JSON.stringify(input)).toBe(false);
+  });
 });

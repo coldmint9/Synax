@@ -10,6 +10,9 @@ import { versionRepository } from "./bridge.js";
 export function maintainVersionHistory(): void {
   const db = getRawSqlite(),
     repo = versionRepository();
+  repo.objects.externalize(8);
+  repo.objects.collectPayloads(8);
+  repo.objects.collectPayloadSegments();
   const migration = db
     .prepare(
       "SELECT session_id,staging_id,state FROM conversation_v3_migrations WHERE state<>'copying' ORDER BY session_id LIMIT 1",
@@ -127,10 +130,10 @@ export function startVersionHistoryMaintenance(): () => void {
         lastWarning = Date.now();
       }
     }
-    timer = setTimeout(tick, 50);
+    timer = setTimeout(tick, process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
     timer.unref();
   };
-  timer = setTimeout(tick, 50);
+  timer = setTimeout(tick, process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
   timer.unref();
   return () => {
     stopped = true;

@@ -3,10 +3,11 @@ import { once } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { JournalWriter } from '../journal-writer.js';
-import { getRawSqlite } from '../../../infrastructure/database/index.js';
+import { HOST_BUSY_TIMEOUT_MS, getRawSqlite } from '../../../infrastructure/database/index.js';
+import { MAX_PENDING_JOURNAL_COMMITS, journalWriteLockBudgetMs } from '../../../infrastructure/database/write-contention.js';
 import { historyEpoch } from '../checkpoints/guards.js';
 import { runtimeJournal } from '../runtime-journal.js';
-import { RuntimeStreamWriter } from '../runtime-stream-writer.js';
+import { DELTA_FLUSH_MS, RuntimeStreamWriter } from '../runtime-stream-writer.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { plannerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
@@ -14,6 +15,19 @@ import { plannerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime-
 let writer: JournalWriter;
 beforeEach(() => { resetAgentRuntimeFixtures(); writer = new JournalWriter(); });
 afterEach(async () => { await writer.close(); });
+
+/** Pin the journal child's write-lock budget. These tests exercise lock waits in
+ * milliseconds while the shipped default is seconds. */
+async function withLockWait<T>(waitMs: number, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.SYNAX_JOURNAL_WRITE_LOCK_WAIT_MS;
+  process.env.SYNAX_JOURNAL_WRITE_LOCK_WAIT_MS = String(waitMs);
+  try { return await run(); }
+  finally {
+    if (previous === undefined) delete process.env.SYNAX_JOURNAL_WRITE_LOCK_WAIT_MS;
+    else process.env.SYNAX_JOURNAL_WRITE_LOCK_WAIT_MS = previous;
+  }
+}
+
 function fixture() {
   const session = agentSessionRuntime.create(plannerSessionInput);
   const run = agentRuntimeStore.appendRun({ id: `run-${session.id}`, sessionId: session.id, status: 'running',
@@ -38,7 +52,8 @@ it('bounds pending IPC writes while the writer is blocked', async () => {
   await writer.append(session.id, run.id, chunks, revision);
   const db = getRawSqlite();
   db.exec('BEGIN IMMEDIATE');
-  const pending = Array.from({ length: 64 }, () => writer.append(session.id, run.id, chunks, revision));
+  const pending = Array.from({ length: MAX_PENDING_JOURNAL_COMMITS },
+    () => writer.append(session.id, run.id, chunks, revision));
   const all = Promise.all(pending);
   try {
     await expect(writer.append(session.id, run.id, chunks, revision)).rejects.toThrow('bounded queue');
@@ -46,6 +61,16 @@ it('bounds pending IPC writes while the writer is blocked', async () => {
     db.exec('ROLLBACK');
     await all;
   }
+});
+
+it('admits enough commits to cover a full write-lock wait budget', () => {
+  delete process.env.SYNAX_JOURNAL_WRITE_LOCK_WAIT_MS;
+  // The stream writer emits at most one coalesced delta per flush, so the
+  // admission limit must outlast the child's whole wait budget. Otherwise a
+  // contended commit would be replaced by a full queue: the same failed Run.
+  expect(MAX_PENDING_JOURNAL_COMMITS * DELTA_FLUSH_MS).toBeGreaterThanOrEqual(
+    journalWriteLockBudgetMs(),
+  );
 });
 
 it('surfaces a timer-flush failure at the acknowledgement barrier', async () => {
@@ -134,15 +159,35 @@ it('rejects stale history and invalid execution leases without recording rows', 
 });
 
 it('propagates database lock failure and recovers without retrying uncertain writes', async () => {
+  await withLockWait(200, async () => {
+    const { session, run, revision } = fixture();
+    await writer.append(session.id, run.id, [{ type: 'run_started', run }], revision);
+    const db = getRawSqlite();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      await expect(writer.append(session.id, run.id, [{ type: 'done', sessionId: session.id, runId: run.id }], revision))
+        .rejects.toThrow(/locked|busy/i);
+    } finally { db.exec('ROLLBACK'); }
+    expect(runtimeJournal.read(session.id)).toHaveLength(1);
+    await writer.append(session.id, run.id, [{ type: 'done', sessionId: session.id, runId: run.id }], revision);
+    expect(runtimeJournal.read(session.id)).toHaveLength(2);
+  });
+}, 20_000);
+
+it('waits out a write lock that outlives the host busy timeout', async () => {
   const { session, run, revision } = fixture();
   await writer.append(session.id, run.id, [{ type: 'run_started', run }], revision);
   const db = getRawSqlite();
+  // The host connection would already report SQLITE_BUSY here; the journal child
+  // keeps waiting, so a contended commit must not fail the Run.
+  const lockMs = HOST_BUSY_TIMEOUT_MS + 500;
   db.exec('BEGIN IMMEDIATE');
+  const watchdog = setTimeout(() => { if (db.inTransaction) db.exec('ROLLBACK'); }, lockMs);
   try {
-    await expect(writer.append(session.id, run.id, [{ type: 'done', sessionId: session.id, runId: run.id }], revision))
-      .rejects.toThrow(/locked|busy/i);
-  } finally { db.exec('ROLLBACK'); }
-  expect(runtimeJournal.read(session.id)).toHaveLength(1);
-  await writer.append(session.id, run.id, [{ type: 'done', sessionId: session.id, runId: run.id }], revision);
-  expect(runtimeJournal.read(session.id)).toHaveLength(2);
-});
+    await writer.append(session.id, run.id, [{ type: 'done', sessionId: session.id, runId: run.id }], revision);
+  } finally {
+    clearTimeout(watchdog);
+    if (db.inTransaction) db.exec('ROLLBACK');
+  }
+  expect(runtimeJournal.read(session.id).map(row => row.chunk.type)).toEqual(['run_started', 'done']);
+}, 20_000);

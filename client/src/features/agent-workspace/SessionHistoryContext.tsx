@@ -93,6 +93,7 @@ export function SessionHistoryProvider({
   const resolver = useRef<((ok: boolean) => void) | null>(null);
   const requestEpoch = useRef(0);
   const sessionId = session?.id;
+  const messageIdsKey = JSON.stringify(messages.map(message => message.id));
   useConversationHistoryVisit(sessionId);
   const [includeFiles, setIncludeFiles] = useState(true);
   const forkInFlight = useRef(false);
@@ -102,7 +103,7 @@ export function SessionHistoryProvider({
       // fetch instead of surfacing a NOT_FOUND the user never caused.
       if (!sessionId || isRuntimeResourceGone(sessionId)) return;
       try {
-        const result = await conversationHistoryApi.list(sessionId, signal);
+        const result = await conversationHistoryApi.list(sessionId, signal, JSON.parse(messageIdsKey) as string[]);
         if (!signal?.aborted) {
           setSummary(result);
           setLoadError(null);
@@ -111,7 +112,7 @@ export function SessionHistoryProvider({
         if (!signal?.aborted) setLoadError((e as Error).message);
       }
     },
-    [sessionId],
+    [sessionId, messageIdsKey],
   );
   useEffect(() => {
     const controller = new AbortController();
@@ -176,7 +177,7 @@ export function SessionHistoryProvider({
       }
       const epoch = ++requestEpoch.current;
       const requestId = crypto.randomUUID();
-      setIncludeFiles(action !== "fork");
+      setIncludeFiles(action !== "fork" && !checkpoint.transcriptOnly);
       if (action === "fork") {
         forkInFlight.current = true;
         setExecuting(true);
@@ -304,6 +305,7 @@ export function SessionHistoryProvider({
             sessionId,
             checkpoint.id,
             action,
+            !checkpoint.transcriptOnly,
           );
           if (epoch === requestEpoch.current) setPreview(value);
         } catch (e) {
@@ -317,7 +319,7 @@ export function SessionHistoryProvider({
     [sessionId, session, executing, zh, close, refresh],
   );
   const changeFilePolicy = (value: boolean) => {
-    if (!pending || executing) return;
+    if (!pending || executing || pending.checkpoint.transcriptOnly) return;
     setIncludeFiles(value);
     setPreview(null);
     setError(null);
@@ -501,10 +503,13 @@ export function SessionHistoryProvider({
             </DialogHeader>
             <DialogBody className="flex flex-col gap-3 text-sm">
               <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" checked={includeFiles} disabled={executing}
+                <input type="checkbox" checked={includeFiles} disabled={executing || pending?.checkpoint.transcriptOnly}
                   onChange={(event) => changeFilePolicy(event.target.checked)} className="mt-1 accent-[var(--accent)]" />
                 <span>{zh ? "同时撤销本会话记录的未提交文件变更" : "Also undo this session’s recorded uncommitted file changes"}</span>
               </label>
+              {pending?.checkpoint.transcriptOnly && <p className="text-xs text-muted-foreground">
+                {zh ? "此边界由旧消息补建：仅恢复会话历史并重建上下文，不恢复当时的工作状态或文件。" : "This boundary was reconstructed from older messages. It restores conversation history and rebuilds context, without historical work state or file restoration."}
+              </p>}
               {!includeFiles && <p className="text-xs text-muted-foreground">
                 {zh ? "仅裁剪会话历史，已有工作目录中的文件保持不变。" : "Trim conversation only; files in the existing workspace remain unchanged."}
               </p>}

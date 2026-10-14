@@ -28,8 +28,10 @@ export class VersionCollector {
   private readonly remaining;
   constructor(private readonly objects: VersionObjects) {
     const db = objects.db;
+    const external = (db.prepare("PRAGMA table_info(conversation_v3_objects)").all() as { name: string }[]).some(column => column.name === "payload_ref");
+    const payloadBytes = external ? `CASE WHEN payload_ref IS NOT NULL THEN logical_bytes-${objectStorageBytes(0, 0)}-length(refs) ELSE length(payload) END` : "length(payload)";
     this.candidates = db.prepare<[number]>(
-      "SELECT CASE WHEN length(hash)=32 THEN lower(hex(hash)) ELSE NULL END AS id,kind,logical_bytes AS bytes,length(payload) AS payloadBytes,length(refs) AS refBytes,length(refs)/32 AS edges FROM conversation_v3_objects WHERE ref_count=0 ORDER BY hash LIMIT ?",
+      `SELECT CASE WHEN length(hash)=32 THEN lower(hex(hash)) ELSE NULL END AS id,kind,logical_bytes AS bytes,${payloadBytes} AS payloadBytes,length(refs) AS refBytes,length(refs)/32 AS edges FROM conversation_v3_objects WHERE ref_count=0 ORDER BY hash LIMIT ?`,
     );
     this.hasProof = db.prepare<{ hash: Uint8Array }>("SELECT 1 AS present FROM conversation_v3_owned_versions WHERE version_id=:hash LIMIT 1");
     this.proofs = db.prepare<[Uint8Array, number]>("SELECT session_id FROM conversation_v3_owned_versions WHERE version_id=? ORDER BY session_id LIMIT ?");
@@ -54,7 +56,7 @@ export class VersionCollector {
       for (const candidate of candidates) {
         if (performance.now() >= deadline) { result.exhausted = "time"; break; }
         const binary = hashBytes(candidate.id);
-        if (!Number.isSafeInteger(candidate.bytes) || candidate.payloadBytes > objectByteLimit(candidate.kind) || candidate.refBytes > REFERENCE_BYTES || candidate.refBytes % HASH_BYTES ||
+        if (!Number.isSafeInteger(candidate.bytes) || candidate.payloadBytes < 0 || candidate.payloadBytes > objectByteLimit(candidate.kind) || candidate.refBytes > REFERENCE_BYTES || candidate.refBytes % HASH_BYTES ||
             candidate.bytes !== objectStorageBytes(candidate.payloadBytes, candidate.edges))
           throw new VersionStoreError("VERSION_OBJECT_CORRUPT", "Object size/accounting integrity check failed during GC.");
         if (result.bytes + candidate.bytes > maxBytes) { result.exhausted = "bytes"; break; }

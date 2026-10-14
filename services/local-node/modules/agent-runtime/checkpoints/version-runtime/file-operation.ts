@@ -37,6 +37,8 @@ export async function applyVersionFileHistory(
     hash,
   );
   if (previous) return { result: previous, applied: false };
+  if (repo.checkpoint(sessionId, request.checkpointId).payload.transcriptOnly)
+    throw historyError("This imported boundary does not contain a historical file snapshot.", "HISTORY_FILES_UNAVAILABLE");
   const id = `history_${createHash("sha256").update(`${sessionId}:${request.requestId}`).digest("hex")}`;
   const prior = db
     .prepare(

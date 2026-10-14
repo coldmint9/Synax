@@ -1,3 +1,5 @@
+import { transcriptStorageEnabled } from "./transcript-repository.js";
+import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
 import { versionedSession, versionRepository } from "./checkpoints/version-runtime/bridge.js";
 import { historyEpoch } from "./checkpoints/guards.js";
 import { getRawSqlite } from '../../infrastructure/database/index.js';
@@ -8,6 +10,10 @@ import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 
+/** Coalescing ceiling for streamed deltas: the journal admission limit is sized
+ * against this rate, so both must move together. */
+export const DELTA_FLUSH_MS = 40;
+
 /** Shared by background runs and embedded hosts; it never moves a host or takes ownership of its tools. */
 export class RuntimeStreamWriter {
   private pending: AgentRunStreamChunk[] = [];
@@ -16,6 +22,8 @@ export class RuntimeStreamWriter {
   private readonly revision: number;
   private writes = new Set<Promise<void>>();
   private writeFailure?: Error;
+  private partialContent?: string;
+  private partialStepId?: string;
   constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true,
     private readonly persist?: (sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) => Promise<void>,
   ) { this.revision = historyEpoch(sessionId); }
@@ -46,7 +54,7 @@ export class RuntimeStreamWriter {
       else if (!this.timer) this.timer = setTimeout(() => {
         try { this.flush(); }
         catch (error) { this.writeFailure = error instanceof Error ? error : new Error(String(error)); }
-      }, 40);
+      }, DELTA_FLUSH_MS);
     } else {
       this.drainDelta(commit);
       commit.push(chunk);
@@ -72,8 +80,11 @@ export class RuntimeStreamWriter {
     const runId = this.runId;
     if (!runId || chunks.length === 0) return;
     if (this.writeFailure) throw this.writeFailure;
-    if (this.persist) {
-      const write = this.persist(this.sessionId, runId, chunks, this.revision)
+    const persist = this.persist ?? (process.env.SYNAX_STORAGE_OWNER_ENDPOINT
+      ? (sessionId: string, id: string, values: AgentRunStreamChunk[], revision: number) => runtimeJournal.appendDurable(sessionId, id, values, revision)
+      : undefined);
+    if (persist) {
+      const write = persist(this.sessionId, runId, chunks, this.revision)
         .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
         .finally(() => this.writes.delete(write));
       this.writes.add(write);
@@ -83,29 +94,51 @@ export class RuntimeStreamWriter {
     else runtimeJournal.appendBatch(this.sessionId, runId, chunks);
   }
 
+  async prepareFinish(): Promise<void> {
+    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT || !this.runId || !this.isCurrent()) return;
+    const step = agentRuntimeStore.listRunSteps(this.runId).at(-1);
+    if (!step) return;
+    const cursor = await sessionLogClient.cursor(this.sessionId);
+    let after = 2 ** 40 + Math.max(0, cursor - 1024);
+    const deltas: string[] = [];
+    while (after < 2 ** 40 + cursor) {
+      const page = await runtimeJournal.readDurable(this.sessionId, after, 256, this.runId);
+      if (!page.length) break;
+      after = page[page.length - 1].sequence;
+      for (const { chunk } of page) {
+        if (!("stepId" in chunk) || chunk.stepId !== step.id) continue;
+        if (chunk.type === "retry_status" && ["waiting", "group_wait"].includes(chunk.retry.phase)) deltas.length = 0;
+        if (chunk.type === "message_delta") { deltas.push(chunk.delta); if (deltas.length > 128) deltas.shift(); }
+      }
+    }
+    this.partialContent = deltas.join('');
+    this.partialStepId = step.id;
+  }
+
   finish(): void {
     if(!this.isCurrent()){this.abandon();return;}
     this.flush();
     if (!this.runId) return;
-    runtimeTransaction(() => {
+    const partial = runtimeTransaction(() => {
       const run = agentRuntimeStore.getRun(this.runId!);
       if (!['interrupted', 'cancelled', 'failed'].includes(run.status)) return;
       const step = agentRuntimeStore.listRunSteps(run.id).at(-1);
       if (!step) return;
       const db = getRawSqlite();
-      const existing = versionedSession(this.sessionId) ? versionRepository().last(this.sessionId, "messages", ["id"], { field: "stepId", value: step.id }) : db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
+      const existing = versionedSession(this.sessionId) ? versionRepository().last(this.sessionId, "messages", ["id"], { field: "stepId", value: step.id }) : transcriptStorageEnabled() ? agentRuntimeStore.listMessages(this.sessionId).find(message => message.role === "assistant" && message.runId === run.id && message.stepId === step.id) : db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
       if (existing) return;
-      const records = db.prepare(`SELECT chunk_json FROM agent_runtime_stream_records WHERE run_id = ? AND kind = 'message_delta'
+      const records = this.partialStepId === step.id ? [] : db.prepare(`SELECT chunk_json FROM agent_runtime_stream_records WHERE run_id = ? AND kind = 'message_delta'
         AND json_extract(chunk_json, '$.chunk.stepId') = ?
         AND sequence > COALESCE((SELECT MAX(sequence) FROM agent_runtime_stream_records
           WHERE run_id = ? AND kind = 'retry_status' AND json_extract(chunk_json, '$.chunk.stepId') = ?
           AND json_extract(chunk_json, '$.chunk.retry.phase') IN ('waiting', 'group_wait')), 0)
         AND length(CAST(chunk_json AS BLOB))<=65536 ORDER BY sequence DESC LIMIT 128`).all(run.id, step.id, run.id, step.id) as Array<{ chunk_json: string }>;
-      const content = records.reverse().map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
+      const content = this.partialStepId === step.id ? this.partialContent : records.reverse().map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
       if (!content) return;
-      agentRuntimeStore.appendMessage({ id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
-        role: 'assistant', content, createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: run.id, stepId: step.id } });
+      return { id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
+        role: 'assistant' as const, content, createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: run.id, stepId: step.id } };
     });
+    if (partial && this.isCurrent()) agentRuntimeStore.appendMessage(partial);
   }
 
   abandon(): void {
@@ -125,6 +158,6 @@ export class RuntimeStreamWriter {
 
 export async function* recordRuntimeStream(sessionId: string, source: AsyncGenerator<AgentRunStreamChunk>): AsyncGenerator<AgentRunStreamChunk> {
   const writer = new RuntimeStreamWriter(sessionId);
-  try { for await (const chunk of source) { writer.write(chunk); yield chunk; } }
-  finally { writer.finish(); }
+  try { for await (const chunk of source) { writer.write(chunk); yield chunk; await writer.settled(); } }
+  finally { writer.flush(); await writer.settled(); await writer.prepareFinish(); writer.finish(); }
 }

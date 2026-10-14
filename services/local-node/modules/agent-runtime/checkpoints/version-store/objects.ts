@@ -1,3 +1,4 @@
+import type { VersionPayloadStore } from "../../../../infrastructure/storage/version-payload-store.js";
 import { createHash } from "node:crypto";
 import type Database from "libsql";
 import {
@@ -38,7 +39,7 @@ export class VersionObjects {
   private readonly remove;
   private readonly release;
 
-  constructor(readonly db: Database.Database, budget: ObjectBudget, private readonly beforeGrow?: (bytes: number) => void) {
+  constructor(readonly db: Database.Database, budget: ObjectBudget, private readonly beforeGrow?: (bytes: number) => void, private readonly payloads?: VersionPayloadStore, private readonly externalWrites = true) {
     for (const value of [budget.maxBytes, budget.maxObjects]) {
       if (!Number.isSafeInteger(value) || value < 1)
         throw new VersionStoreError("VERSION_BUDGET_INVALID", "Object budget must be a positive safe integer.");
@@ -51,14 +52,14 @@ export class VersionObjects {
       throw new VersionStoreError("VERSION_SCHEMA_REQUIRED", "Compact version storage migration is required.");
     }
     this.exists = db.prepare<{ hash: Uint8Array }>("SELECT 1 AS present FROM conversation_v3_objects WHERE hash=:hash");
-    this.insert = db.prepare<[Uint8Array, ObjectKind, Uint8Array, Uint8Array, number]>(
-      "INSERT INTO conversation_v3_objects(hash,kind,payload,refs,logical_bytes) VALUES(?,?,?,?,?)",
+    this.insert = db.prepare(
+      this.payloads?.jsonl && this.externalWrites ? "INSERT INTO conversation_v3_objects(hash,kind,payload,refs,logical_bytes,payload_ref,jsonl_payload) VALUES(?,?,?,?,?,?,1)" : this.payloads && this.externalWrites ? "INSERT INTO conversation_v3_objects(hash,kind,payload,refs,logical_bytes,payload_ref) VALUES(?,?,?,?,?,?)" : "INSERT INTO conversation_v3_objects(hash,kind,payload,refs,logical_bytes) VALUES(?,?,?,?,?)",
     );
     this.retain = db.prepare<{ hash: Uint8Array }>(
       "UPDATE conversation_v3_objects SET ref_count=ref_count+1 WHERE hash=:hash",
     );
     this.read = db.prepare<[number, number, Uint8Array]>(
-      "SELECT kind,CASE WHEN length(payload)<=? THEN payload ELSE NULL END AS payload,CASE WHEN length(refs)<=? THEN refs ELSE NULL END AS refs FROM conversation_v3_objects WHERE hash=?",
+      `SELECT kind,CASE WHEN length(payload)<=? THEN payload ELSE NULL END AS payload,CASE WHEN length(refs)<=? THEN refs ELSE NULL END AS refs${this.payloads ? ",payload_ref" : ""} FROM conversation_v3_objects WHERE hash=?`,
     );
     this.readStats = db.prepare("SELECT objects,bytes FROM conversation_v3_storage WHERE id=1");
     this.reserve = db.prepare<[number, number, number]>(
@@ -95,7 +96,13 @@ export class VersionObjects {
         if (!this.retain.run({ hash: hashBytes(ref) }).changes)
           throw new VersionStoreError("VERSION_REFERENCE_MISSING", "Object reference is missing; publish children first.");
       }
-      this.insert.run(binary, kind, payload, packReferences(refs), cost);
+      if (this.payloads && this.externalWrites) {
+        // Keep compact DAG nodes inline: syncing one file for every tree node
+        // multiplies fsync latency. Large text/body chunks carry the write load.
+        const reference = this.payloads.jsonl || kind === "chunk" ? this.payloads.put(payload) : null;
+        this.insert.run(binary, kind, reference ? Buffer.alloc(0) : payload, packReferences(refs), cost, reference);
+      }
+      else this.insert.run(binary, kind, payload, packReferences(refs), cost);
       return hash;
     });
   }
@@ -103,10 +110,11 @@ export class VersionObjects {
   get(hash: string, expectedKind?: ObjectKind): StoredObject {
     assertObjectId(hash);
     const row = this.read.get(expectedKind ? objectByteLimit(expectedKind) : CHUNK_BYTES, REFERENCE_BYTES, hashBytes(hash)) as
-      { kind: ObjectKind; payload: Uint8Array | null; refs: Uint8Array | null } | undefined;
+      { kind: ObjectKind; payload: Uint8Array | null; refs: Uint8Array | null; payload_ref?: string | null } | undefined;
     if (!row) throw new VersionStoreError("VERSION_OBJECT_MISSING", "Version object is missing.");
     if (expectedKind && row.kind !== expectedKind)
       throw new VersionStoreError("VERSION_OBJECT_KIND", "Unexpected version object kind.");
+    if (row.payload_ref) row.payload = this.payloads!.get(row.payload_ref, objectByteLimit(row.kind));
     if (!(row.payload instanceof Uint8Array) || row.payload.byteLength > objectByteLimit(row.kind))
       throw new VersionStoreError("VERSION_OBJECT_CORRUPT", "Object integrity check failed: invalid payload size.");
     if (!(row.refs instanceof Uint8Array))
@@ -133,6 +141,48 @@ export class VersionObjects {
           throw new VersionStoreError("VERSION_OBJECT_CORRUPT", "Object reference-count integrity check failed.");
       }
       return { bytes: row.bytes, edges: stored.references.length };
+    });
+  }
+
+  /** One-way physical migration; object identities and every pinned root stay
+   * unchanged. Publish file bytes before the short metadata transaction. */
+  withOwner<T>(sessionId: string, action: () => T): T {
+    return this.payloads?.withOwner ? this.payloads.withOwner(sessionId, action) : action();
+  }
+  get jsonl(): boolean { return Boolean(this.payloads?.jsonl && this.externalWrites); }
+  externalize(limit = 8): number {
+    if (!this.payloads || !this.externalWrites || this.db.inTransaction) return 0;
+    return this.withOwner('__migration__', () => atomicVersionWrite(this.db, () => {
+      const predicate = this.payloads!.jsonl ? 'jsonl_payload=0' : "payload_ref IS NULL AND kind='chunk'";
+      const rows = this.db.prepare(`SELECT hash,payload,payload_ref FROM conversation_v3_objects WHERE ${predicate} ORDER BY hash LIMIT ?`).all(limit) as { hash: Uint8Array; payload: Uint8Array; payload_ref: string | null }[];
+      let count = 0;
+      for (const row of rows) {
+        const payload = row.payload_ref ? this.payloads!.get(row.payload_ref) : Buffer.from(row.payload as unknown as ArrayBuffer);
+        const objectHash = Buffer.from(row.hash as unknown as ArrayBuffer);
+        const reference = this.payloads!.put(payload);
+        if (row.payload_ref) {
+          if (reference !== row.payload_ref) throw new Error('Physical payload migration changed its identity.');
+          count += this.db.prepare('UPDATE conversation_v3_objects SET jsonl_payload=1 WHERE hash=? AND payload_ref=?').run(objectHash, reference).changes;
+        } else {
+          count += this.db.prepare(`UPDATE conversation_v3_objects SET payload=x'',payload_ref=?${this.payloads!.jsonl ? ',jsonl_payload=1' : ''} WHERE hash=? AND payload_ref IS NULL`).run(reference, objectHash).changes;
+        }
+      }
+      return count;
+    }));
+  }
+
+  collectPayloadSegments(): number { return this.payloads?.collectSealed?.(2) ?? 0; }
+
+  collectPayloads(limit = 8): number {
+    if (!this.payloads || this.db.inTransaction) return 0;
+    return atomicVersionWrite(this.db, () => {
+      const rows = this.db.prepare("SELECT payload_ref FROM conversation_v3_payload_gc LIMIT ?").all(limit) as { payload_ref: string }[];
+      for (const row of rows) {
+        const referenced = this.db.prepare("SELECT 1 FROM conversation_v3_objects WHERE payload_ref=? LIMIT 1").get(row.payload_ref);
+        if (!referenced) this.payloads!.remove(row.payload_ref);
+        this.db.prepare("DELETE FROM conversation_v3_payload_gc WHERE payload_ref=?").run(row.payload_ref);
+      }
+      return rows.length;
     });
   }
 
