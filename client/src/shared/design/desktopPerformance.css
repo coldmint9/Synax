@@ -36,7 +36,8 @@ html.electron {
 
 html.electron :is(
   .agent-session-composer-shell.agent-dock-shell,
-  .agent-dock-composer-chip, .button--tertiary,
+  .agent-dock-composer-chip:not(.agent-dock-composer-action),
+  .button--tertiary:not(.agent-dock-composer-action),
   .session-file-island-pill, .ws-branch-popover, .git-workspace-popover
 ) {
   background: var(--surface) !important;

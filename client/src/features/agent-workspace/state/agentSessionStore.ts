@@ -8,6 +8,7 @@ import type { TurnReference } from "../../../adapters/transport/agentRuntime";
 import type { BackendId } from "../../../adapters/transport/agentRuntime";
 import { create } from "zustand";
 import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
+import { hydrateHistoryMessageContent } from "./hydrateHistoryMessageContent";
 import {
   extendTimelineIndex,
   previewTimelineMessage,
@@ -1640,6 +1641,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           }
         }
         if (get().selectedSessionId !== sessionId) return;
+        pages = await Promise.all(
+          pages.map(async (page) => ({
+            ...page,
+            messages: await hydrateHistoryMessageContent(
+              sessionId,
+              page.messages,
+              page.historyWindow.revision,
+            ),
+          })),
+        );
+        if (get().selectedSessionId !== sessionId) return;
         set((state) => {
           const current = state.sessionDetailCache[sessionId];
           if (
@@ -2107,7 +2119,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 ]);
             const transcriptTask = transcriptSource
               .then(
-                ([
+                async ([
                   stepsRes,
                   runsRes,
                   eventsRes,
@@ -2115,6 +2127,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   toolCallsRes,
                   permissionsRes,
                 ]) => {
+                  if (!isCurrent()) return;
+                  const hydratedMessages =
+                    windowed && "historyWindow" in messagesRes
+                      ? await hydrateHistoryMessageContent(
+                          targetSessionId,
+                          messagesRes.items,
+                          messagesRes.historyWindow.revision,
+                          cachedEntry?.messages,
+                        )
+                      : messagesRes.items;
                   if (!isCurrent()) return;
                   const events =
                     knownEventId && cachedEntry
@@ -2124,7 +2146,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     runs: runsRes.items,
                     steps: stepsRes.items,
                     events,
-                    messages: messagesRes.items,
+                    messages: hydratedMessages,
                     toolCalls: toolCallsRes.items,
                     permissions: permissionsRes.items,
                     sessionStats: get().sessionStats,
@@ -2139,7 +2161,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     ...(windowed && "historyWindow" in messagesRes
                       ? {
                           ...seedTimelineIndex({
-                            messages: messagesRes.items,
+                            messages: hydratedMessages,
                             runs: runsRes.items,
                             steps: stepsRes.items,
                             toolCalls: toolCallsRes.items,

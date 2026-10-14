@@ -95,7 +95,6 @@ function GitWorkspacePickerContent({
     let active = true;
     setLoading(true);
     setUnavailable(false);
-    setSummary(null);
     void projectApi
       .listGitWorkspaces(projectId, rootId)
       .then((result) => {
@@ -116,7 +115,14 @@ function GitWorkspacePickerContent({
   }, [open, projectId, rootId]);
 
   const options = useMemo<WorkspaceOption[]>(() => {
-    if (!summary) return [];
+    const defaultOption: WorkspaceOption = {
+      id: "default",
+      label: zh ? "项目默认工作区" : "Project default",
+      detail: summary?.defaultPath ?? (zh ? "正在刷新工作区信息…" : "Refreshing workspace information…"),
+      meta: zh ? "项目配置的默认目录" : "Project configured default",
+      group: "default",
+    };
+    if (!summary) return [defaultOption];
     const worktrees: WorkspaceOption[] = summary.worktrees
       .filter((item) => !item.prunable)
       .map((item) => ({
@@ -150,13 +156,7 @@ function GitWorkspacePickerContent({
         meta: "",
         group: "new",
       },
-      {
-        id: "default",
-        label: zh ? "项目默认工作区" : "Project default",
-        detail: summary.defaultPath,
-        meta: zh ? "项目配置的默认目录" : "Project configured default",
-        group: "default",
-      },
+      defaultOption,
       ...worktrees,
       ...branches,
     ];
@@ -185,7 +185,7 @@ function GitWorkspacePickerContent({
         content={<>{zh ? "选择新会话的工作区" : "Choose a workspace for this session"}</>}
       >
         <PopoverButton
-          disabled={disabled || loading}
+          disabled={disabled}
           aria-label={zh ? "Git 工作区" : "Git workspace"}
           className={
             isHill
@@ -233,7 +233,7 @@ function GitWorkspacePickerContent({
             onChange(rootId ? { ...next, rootId } : next);
           }}
           immediate
-          disabled={disabled || loading}
+          disabled={disabled}
         >
           <div className="git-workspace-search">
             <Search size={15} aria-hidden />
@@ -288,6 +288,11 @@ function GitWorkspacePickerContent({
               );
             })}
           </ComboboxOptions>
+          {loading && (
+            <p role="status" className="git-workspace-empty">
+              {zh ? "正在刷新工作区信息…" : "Refreshing workspace information…"}
+            </p>
+          )}
           {!filtered.length && !loading && (
             <p role="status" className="git-workspace-empty">
               {zh ? "没有匹配的工作区" : "No matching workspaces"}
