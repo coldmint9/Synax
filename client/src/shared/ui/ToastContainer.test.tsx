@@ -6,16 +6,26 @@ import { ToastContainer } from './ToastContainer'
 
 beforeEach(() => useNotificationStore.setState({ notifications: [], unreadCount: 0 }))
 
-it('renders the archive notice with inline View and Undo buttons and dismisses after undo', async () => {
+it('renders the archive notice with the normal toast surface and inline actions, and dismisses after undo', async () => {
   const undo = vi.fn()
   useNotificationStore.getState().push({
     type: 'success', layout: 'archive', message: 'Archived chat', duration: 8000,
     actions: [{ label: 'View', onClick: vi.fn() }, { label: 'Undo', variant: 'primary', onClick: undo }],
   })
   render(<ToastContainer />)
-  expect(screen.getByRole('status')).toHaveTextContent('Archived chat')
+  const surface = screen.getByRole('status')
+  expect(surface).toHaveTextContent('Archived chat')
+  // 归档通知复用普通通知的容器、图标尺寸、排版与关闭按钮。
+  expect(surface).toHaveClass(
+    'flex', 'items-start', 'gap-2', 'rounded-xl', 'px-3', 'py-2',
+    'bg-white/90', 'backdrop-blur-xl', 'dark:bg-black/80',
+    'border-black/10', 'dark:border-white/15', 'motion-safe:animate-toast-enter',
+  )
+  expect(surface.querySelector('svg')).toHaveAttribute('width', '14')
+  expect(surface.querySelector('.rounded-md svg')).toHaveAttribute('width', '12')
+  expect(surface.parentElement?.parentElement?.parentElement).toHaveClass('w-[280px]')
   expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Undo' })).toHaveClass('bg-zinc-900', 'text-white')
+  expect(screen.getByRole('button', { name: 'Undo' })).toHaveClass('text-[11px]', 'font-medium', 'text-success')
   await userEvent.setup().click(screen.getByRole('button', { name: 'Undo' }))
   expect(undo).toHaveBeenCalledOnce()
   expect(screen.queryByRole('status')).not.toBeInTheDocument()

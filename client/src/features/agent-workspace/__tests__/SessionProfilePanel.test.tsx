@@ -1,3 +1,4 @@
+import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -77,6 +78,15 @@ function toggle() {
 }
 
 describe("SessionProfilePanel mini/detail", () => {
+  it("marks cached running state as unconfirmed during a disconnect and recovers", () => {
+    setup();
+    act(() => useApiConnectivityStore.setState({ apiReachable: "unreachable" }));
+    expect(screen.getByText("连接中断，状态待确认")).toBeInTheDocument();
+    expect(screen.queryByText("运行中")).toBeNull();
+    expect(useAgentSessionStore.getState().sessions[0].status).toBe("running");
+    act(() => useApiConnectivityStore.setState({ apiReachable: "reachable" }));
+    expect(screen.getByText("运行中")).toBeInTheDocument();
+  });
   it.each([ [3.56, "3.6"], [0, "0.0"], [null, "—"], [undefined, "—"] ] as const)(
     "shows average completed-run steps %s as %s",
     (averageStepsPerCompletedRun, expected) => {
@@ -89,6 +99,7 @@ describe("SessionProfilePanel mini/detail", () => {
   );
 
   beforeEach(() => {
+    useApiConnectivityStore.setState({ browserOnline: true, apiReachable: "reachable" });
     localStorage.clear();
     useShellStore.setState((s) => ({
       preferences: { ...s.preferences, locale: "zh" },

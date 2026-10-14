@@ -82,6 +82,45 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe("sidecar recovery", () => {
+  afterEach(() => vi.useRealTimers());
+  it("recovers an unexpected exit on the same port and cancels recovery on quit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const old = child();
+      spawn.mockImplementationOnce(() => { queueMicrotask(() => old.stdout.write("SYNAX_DESKTOP_READY:49152\n")); return old; });
+      await startSidecar();
+      old.emit("exit", 1);
+      expect(getSidecarPort()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(spawn.mock.calls[1][2].env.PORT).toBe("49152");
+      expect(getSidecarPort()).toBe(49152);
+      const replacement = spawn.mock.results[1].value;
+      replacement.emit("exit", 1);
+      stopSidecar();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    } finally { log.mockRestore(); }
+  });
+  it("bounds repeated crashes instead of creating an endless process storm", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await startSidecar();
+      for (const delay of [1_000, 2_000, 4_000]) {
+        spawn.mock.results.at(-1)!.value.emit("exit", 1);
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+      spawn.mock.results.at(-1)!.value.emit("exit", 1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(spawn).toHaveBeenCalledTimes(4);
+      expect(getSidecarPort()).toBe(0);
+    } finally { log.mockRestore(); }
+  });
+});
+
 describe("native dialog options", () => {
   function registerDialogs(parent: unknown, trusted = true) {
     const handlers = new Map<string, (event: unknown, options: unknown) => unknown>();

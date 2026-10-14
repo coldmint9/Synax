@@ -34,11 +34,13 @@
 }
 .workbench-header > .synax-island { min-width: 0; max-width: 100%; }
 .synax-island-material.liquid-glass-surface[data-glass-state] {
-  /* Untinted glass: blur the real backdrop, never paint a light/dark panel.
-     The shared glass-solid token remains available for accessibility fallback. */
-  --glass-base: transparent;
-  --glass-transparent: transparent;
-  --glass-blur: 8px;
+  /* One solid pill envelope for every island: an opaque soft surface instead of
+     a blurred backdrop. The selected pill stays one step lighter (--ui-panel),
+     so the controls still read against the envelope in both themes. */
+  --glass-base: var(--island-material-background);
+  --glass-transparent: var(--island-material-background);
+  --glass-solid: var(--island-material-background);
+  --glass-blur: 0px;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -46,9 +48,19 @@
   padding: 5px;
   border-radius: inherit;
 }
-/* Flat means no raised edge, optical shoulder, gradient rim or outer shadow. */
+/* Keep the solid envelope readable on the title bar with a hairline edge and
+   one soft shadow; the optical shoulder, rim and GPU host stay off. */
 .synax-island-material.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--island-material-border), var(--island-material-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* Accessibility modes own the envelope edge: never add our hairline or shadow
+   on top of the forced Canvas/CanvasText treatment. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .synax-island-material.liquid-glass-surface[data-glass-state] > .liquid-glass-backdrop {
+    box-shadow: none;
+  }
 }
 .synax-island-material.liquid-glass-surface[data-glass-state] > :is(.liquid-glass-svg, .liquid-glass-gpu-host) {
   display: none;
@@ -188,12 +200,18 @@
 .synax-island {
   --island-ink: var(--theme-text);
   --island-ink-halo: rgb(var(--theme-highlight-rgb) / .85);
+  --island-material-background: var(--ui-panel-soft);
+  --island-material-border: color-mix(in srgb, var(--theme-border-strong) 55%, transparent);
+  --island-material-shadow: 0 2px 6px color-mix(in srgb, var(--theme-text) 8%, transparent);
   --island-pill-background: var(--ui-panel);
   --island-pill-shadow: 0 3px 9px color-mix(in srgb, var(--theme-text) 13%, transparent);
 }
 .dark .synax-island {
   --island-ink: var(--theme-text);
   --island-ink-halo: rgb(var(--theme-shadow-rgb) / .9);
+  --island-material-background: var(--ui-panel-soft);
+  --island-material-border: color-mix(in srgb, var(--theme-border-strong) 60%, transparent);
+  --island-material-shadow: 0 2px 6px rgb(var(--theme-shadow-rgb) / .22);
   --island-pill-shadow: 0 3px 9px rgb(var(--theme-shadow-rgb) / .28);
 }
 @media (prefers-contrast: more), (forced-colors: active) {

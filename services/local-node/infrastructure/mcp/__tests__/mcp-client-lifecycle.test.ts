@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   transports: [] as Array<{ close: ReturnType<typeof vi.fn>; stderr: { resume: ReturnType<typeof vi.fn> } }>,
   listTools: undefined as (() => Promise<{ tools: Array<{ name: string }> }>) | undefined,
   globalEnabled: true as boolean | undefined,
+  servers: [] as Array<{ id: string; command: string }>,
   projectEnabled: true,
   callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
 }));
@@ -30,7 +31,8 @@ vi.mock('../runtime-cua-config.js', () => ({
   getRuntimeCuaConfig: () => ({ id: 'builtin-cua-driver', command: 'fixture', enabled: true }),
 }));
 vi.mock('../../runtime/config/project-settings-store.js', () => ({ getProjectSettings: () => ({ mcpServers: [], computerUse: { enabled: mocks.projectEnabled } }) }));
-vi.mock('../../runtime/config/config-store.js', () => ({ getGlobalConfigForRuntime: () => ({ computerUse: { enabled: mocks.globalEnabled } }) }));
+vi.mock('../../runtime/config/config-store.js', () => ({ getGlobalConfigForRuntime: () => ({ computerUse: { enabled: mocks.globalEnabled }, mcpServers: mocks.servers }) }));
+vi.mock('../../../modules/extensions/extension-store.js', () => ({ extensionStore: { active: () => true } }));
 vi.mock('../../../modules/project-workspace.js', () => ({ readWorkspaceProject: () => undefined }));
 
 import { McpClientManager } from '../mcp-client-manager.js';
@@ -52,6 +54,7 @@ beforeEach(() => {
   mocks.transports.length = 0;
   mocks.listTools = undefined;
   mocks.globalEnabled = true;
+  mocks.servers = [];
   mocks.projectEnabled = true;
   mocks.callTool.mockClear();
   manager = new McpClientManager();
@@ -148,4 +151,21 @@ describe('MCP startup resource ownership', () => {
     expect(mocks.clients).toHaveLength(2);
     expect(cached()).toHaveLength(1);
   });
+});
+
+it('starts independent MCP servers concurrently even when one discovery is stalled', async () => {
+  mocks.servers = [{ id: 'slow', command: 'fixture' }, { id: 'fast', command: 'fixture' }];
+  const pending = deferred<{ tools: Array<{ name: string }> }>();
+  let calls = 0;
+  mocks.listTools = () => ++calls === 1 ? pending.promise : Promise.resolve({ tools: [{ name: 'fast_tool' }] });
+  let completed = false;
+  const warming = manager.warmup(['slow', 'fast']).then(() => { completed = true; });
+  try {
+    await vi.waitFor(() => expect(manager.getCachedTools('fast')).toEqual([expect.objectContaining({ name: 'fast_tool' })]));
+    expect(completed).toBe(false);
+  } finally {
+    pending.resolve({ tools: [{ name: 'slow_tool' }] });
+    await warming;
+  }
+  expect(manager.getCachedTools('slow')).toEqual([expect.objectContaining({ name: 'slow_tool' })]);
 });

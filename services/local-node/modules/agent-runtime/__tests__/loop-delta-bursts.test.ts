@@ -64,12 +64,12 @@ describe("bounded native delta bursts", () => {
       yield { type: "text_delta", delta: "last" };
     });
     const first = stream.next();
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(40);
     expect(await first).toMatchObject({ value: { delta: "first" } });
     expect(pulls).toBe(2);
     release();
     const second = stream.next();
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(40);
     expect(await second).toMatchObject({ value: { delta: "last" } });
     expect((await stream.next()).done).toBe(true);
   });
@@ -103,7 +103,7 @@ describe("bounded native delta bursts", () => {
       }
     });
     const first = stream.next();
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(40);
     expect(await first).toMatchObject({ value: { delta: "ready" } });
     await stream.return();
     expect(aborted).toBe(true);

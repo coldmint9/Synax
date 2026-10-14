@@ -16,7 +16,7 @@ import type { CompressionResult, ContextEntry } from '../contracts/context.js'
 const DEFAULT_RECENT_WINDOW = 20
 
 export class CompressionService {
-  private db = getRawSqlite()
+  private get db() { return getRawSqlite(); }
 
   async summarizeEntries(entries: ContextEntry[]): Promise<string> {
     if (entries.length === 0) return ''

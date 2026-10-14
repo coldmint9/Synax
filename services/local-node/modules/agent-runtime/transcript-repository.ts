@@ -6,14 +6,17 @@ import path from "node:path";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { appendTranscript, appendTranscriptBatch, readTranscript } from "../../infrastructure/storage/transcript-jsonl.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
-import { TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
+import { SIMPLE_HISTORY_STORAGE, TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
 
 export interface TranscriptPosition { sequence: number; rowid: number }
 export interface TranscriptIdentity { id: string }
 export interface TranscriptCopyEntry extends TranscriptPosition { id: string; bytes: number }
 export type TranscriptRow = Record<string, string | number | null>;
 
-export const transcriptStorageEnabled = () => TRANSCRIPT_STORAGE === "jsonl";
+export const transcriptStorageEnabled = (sessionId?: string) => {
+  if (sessionId && getRawSqlite().prepare("SELECT 1 FROM conversation_flat_heads WHERE session_id=?").get(sessionId)) return false;
+  return (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl") || Boolean(sessionId && getRawSqlite().prepare("SELECT 1 FROM transcript_heads WHERE session_id=?").get(sessionId));
+};
 
 /** Metadata-only queries. These must never load message/tool bodies just to
  * render checkpoint controls or count history. Raw legacy rows are confined to
@@ -23,7 +26,7 @@ export class TranscriptRepository {
   /** Lazy migration is attempted only for an inactive session. A live session
    * keeps reading the legacy source until its next safe boundary. */
   ensureJsonl(sessionId: string): boolean {
-    if (!transcriptStorageEnabled() || versionedSession(sessionId)) return false;
+    if (!transcriptStorageEnabled(sessionId) || versionedSession(sessionId)) return false;
     if (this.hasJsonl(sessionId)) return true;
     const db = getRawSqlite();
     if (db.inTransaction) return false;

@@ -1,3 +1,6 @@
+import { simpleHistorySession, simpleHistoryBoundary, initializeSimpleHistory } from "../simple-history.js";
+import { migrateFlatHistory } from "../flat-history-migration.js";
+import { SIMPLE_HISTORY_STORAGE } from "../../../infrastructure/runtime/env.js";
 import type { RuntimeWrite } from "./version-runtime/batch-input.js";
 import fs from "node:fs/promises";
 import {
@@ -87,6 +90,12 @@ function resolveSource(sessionId: string, checkpointId: string): CopySource {
       versionId: repo.head(sessionId).versionId,
       stopAtMessage: true,
     };
+  }
+  if (simpleHistorySession(sessionId)) {
+    const point = simpleHistoryBoundary(sessionId, checkpointId.startsWith("message:") ? `flat:${checkpointId.slice(8)}` : checkpointId);
+    if (point.kind !== "reply") throw historyError("A completed reply is required.");
+    const row = transcriptRepository.legacyReplyPosition(sessionId, point.messageId)!;
+    return { session, messageId: point.messageId, stopAtMessage: true, legacySequence: row.sequence, legacyRowid: row.rowid };
   }
   const checkpoint = getCheckpoint(sessionId, checkpointId);
   if (checkpoint.kind !== "reply" || !checkpoint.messageId)
@@ -340,6 +349,7 @@ export async function forkSimpleConversation(
   workspaceMode: ForkWorkspaceMode;
   rollbackEnabled: false;
 }> {
+  if (simpleHistorySession(sessionId)) return forkFlatConversation(sessionId, checkpointId, revision, requestId, mode);
   const db = getRawSqlite(),
     repo = versionRepository();
   const operationId = `fork_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
@@ -610,6 +620,7 @@ export async function forkSimpleConversation(
     })();
     published = true;
     await dropHead(readerId);
+    if (SIMPLE_HISTORY_STORAGE) migrateFlatHistory(targetId);
     emitRuntimeBusEvent({ type: "session_created", sessionId: targetId });
     return result;
   } catch (error) {
@@ -676,4 +687,57 @@ export async function recoverSimpleFork(
       ).run(operationId);
     throw error;
   }
+}
+
+/** A flat fork is an indexed SQL prefix copy; it creates no version DAG. */
+async function forkFlatConversation(sessionId: string, checkpointId: string, revision: number, requestId: string, mode: ForkWorkspaceMode) {
+  const db = getRawSqlite();
+  const operationId = `fork_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
+  const requestHash = createHash("sha256").update(JSON.stringify({ checkpointId, revision, mode })).digest("hex");
+  const previous = db.prepare("SELECT request_hash,state,result_json FROM conversation_history_operations WHERE id=?").get(operationId) as { request_hash: string; state: string; result_json: string } | undefined;
+  if (previous) {
+    if (previous.request_hash !== requestHash) throw historyError("Fork request ID has different input.");
+    if (previous.state === 'committed') return JSON.parse(previous.result_json) as { sessionId: string; workspaceMode: ForkWorkspaceMode; rollbackEnabled: false };
+    throw historyError("Recover the unfinished fork first.", "HISTORY_RECOVERY_REQUIRED");
+  }
+  assertHistoryUnlocked(sessionId, []);
+  if (historyEpoch(sessionId) !== revision) throw historyError("Conversation changed.", "HISTORY_STALE");
+  const source = resolveSource(sessionId, checkpointId), targetId = `ars_${randomUUID()}`;
+  const job: ForkJob = { kind: 'simple-fork', ownerPid: process.pid, targetId, readerId: `forkview_${operationId}` };
+  db.prepare("INSERT INTO conversation_history_operations(id,session_id,request_hash,state,payload_json,created_at) VALUES(?,?,?,'fork_preparing',?,?)")
+    .run(operationId, sessionId, requestHash, JSON.stringify(job), new Date().toISOString());
+  activeHistoryOperations.add(operationId);
+  try {
+    if (mode === 'new_worktree') {
+      const info = await inspectForkWorkspace(sessionId, workDir(source.session));
+      job.workspace = await createForkWorkspace(info, targetId, workspace => {
+        job.workspace = workspace;
+        db.prepare("UPDATE conversation_history_operations SET payload_json=? WHERE id=?").run(JSON.stringify(job), operationId);
+      });
+    }
+    const target = await cloneSession(source.session, historySessionFields(source.session), targetId, checkpointId, mode, job.workspace);
+    target.resultSummary = null;
+    target.sessionMetadata = { ...target.sessionMetadata, historyStorage: 'sqlite-flat', historyPayloadStorage: 'sqlite', historyRollbackEnabled: false };
+    delete target.sessionMetadata.goal;
+    const result = { sessionId: targetId, workspaceMode: mode, rollbackEnabled: false as const };
+    db.transaction(() => {
+      if (historyEpoch(sessionId) !== revision) throw historyError("Conversation changed.", "HISTORY_STALE");
+      store.createSession(target); initializeSimpleHistory(targetId);
+      db.prepare(`INSERT INTO agent_runtime_messages(id,session_id,project_id,sequence,role,content,content_parts_json,metadata_json,created_at)
+        SELECT 'msg_'||lower(hex(randomblob(16))),?,project_id,sequence,role,content,content_parts_json,
+          json_object('source',json_extract(metadata_json,'$.source'),'purpose',json_extract(metadata_json,'$.purpose'),'forkedFromMessageId',id),created_at
+        FROM agent_runtime_messages WHERE session_id=? AND sequence<=? ORDER BY sequence,id`)
+        .run(targetId, sessionId, source.legacySequence!);
+      db.prepare(`INSERT OR IGNORE INTO agent_runtime_asset_sessions(asset_id,session_id)
+        SELECT a.asset_id,? FROM agent_runtime_asset_sessions a WHERE a.session_id=? AND EXISTS(
+          SELECT 1 FROM agent_runtime_messages m,json_tree(COALESCE(m.content_parts_json,'[]')) j
+          WHERE m.session_id=? AND j.key='assetId' AND j.value=a.asset_id)`)
+        .run(targetId, sessionId, targetId);
+      db.prepare("UPDATE conversation_history_operations SET state='committed',result_json=? WHERE id=?").run(JSON.stringify(result), operationId);
+    })();
+    emitRuntimeBusEvent({ type: 'session_created', sessionId: targetId });
+    return result;
+  } catch (error) {
+    await recoverSimpleFork(operationId, true); throw error;
+  } finally { activeHistoryOperations.delete(operationId); }
 }

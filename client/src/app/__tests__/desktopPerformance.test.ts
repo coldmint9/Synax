@@ -1,11 +1,7 @@
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 import css from "../../shared/design/desktopPerformance.css?raw";
-import commandDeckCss from "../../shared/design/command-deck.css?raw";
-import glassCss from "../../shared/ui/ui/glass/glass.css?raw";
-import agentControlsCss from "../../features/agent-workspace/agentControls.css?raw";
 import appearanceCss from "../../features/settings/components/appearance.css?raw";
-import indexCss from "../../index.css?raw";
 
 const normalize = (selector: string) => selector.replace(/\s+/g, " ").trim();
 
@@ -31,8 +27,6 @@ function indexRules(source: string): RuleInfo[] {
 }
 
 const desktop = indexRules(css);
-const web = indexRules(agentControlsCss);
-const global = indexRules(indexCss);
 const appearance = indexRules(appearanceCss);
 
 /** First rule whose selector contains every fragment, mirroring how the
@@ -47,11 +41,7 @@ function desktopValue(fragments: string[], property: string) {
   return findRule(desktop, fragments)?.declarations.get(property);
 }
 
-function webValue(fragments: string[], property: string) {
-  return findRule(web, fragments)?.declarations.get(property);
-}
-
-describe("desktop backdrop material parity", () => {
+describe("desktop rendering budget", () => {
   it("reveals the native macOS surface when window material is enabled", () => {
     const transparent = findRule(appearance, [
       'html.electron-macos[data-mac-window-enabled="true"]',
@@ -108,121 +98,21 @@ describe("desktop backdrop material parity", () => {
     );
   });
 
-  it("restores the composer input shell material the Web build declares", () => {
-    const fragments = [
-      "html.electron",
-      ".agent-session-controls",
-      ".agent-session-composer-shell",
-      ".agent-dock-shell",
-    ];
-    expect(
-      webValue(
-        [".agent-session-controls", ".agent-session-composer-shell"],
-        "backdrop-filter",
-      ),
-    ).toBe("blur(5px)");
-    expect(
-      webValue(
-        [".agent-session-controls", ".agent-session-composer-shell"],
-        "background",
-      ),
-    ).toBe("hsl(0deg 0% 100% / 60%)");
-    expect(desktopValue(fragments, "backdrop-filter")).toBe(
-      "blur(5px) !important",
-    );
-    expect(desktopValue(fragments, "-webkit-backdrop-filter")).toBe(
-      "blur(5px) !important",
-    );
-    // No opaque fill is forced here: agentControls.css keeps owning the Web
-    // values hsl(0deg 0% 100% / 60%) (light) and hsl(0 0% 17% / 0.17) (dark).
-    expect(desktopValue(fragments, "background")).toBeUndefined();
-  });
-
-  it("keeps the composer workspace / branch chips frosted", () => {
-    // The Web chip material lives in index.css, not agentControls.css.
-    expect(
-      findRule(global, [".agent-dock-composer .agent-dock-composer-chip"])
-        ?.declarations.get("backdrop-filter"),
-    ).toBe("blur(8px)");
-    for (const selector of [
-      "html.electron .agent-dock-composer .agent-dock-composer-chip",
-      "html.electron .agent-dock-composer .button--tertiary",
-    ])
-      expect(
-        desktopValue([selector], "backdrop-filter"),
-      ).toBe("blur(8px) !important");
-  });
-
-  it("mirrors the session file island pill declarations", () => {
-    expect(indexCss).toContain("-webkit-backdrop-filter: blur(5px);");
-    expect(desktopValue(
-      ["html.electron", ".session-file-island-pill"],
-      "-webkit-backdrop-filter",
-    )).toBe("blur(5px) !important");
-    // Chromium computes and paints the standard property, which the Web
-    // stylesheet declares as blur(14px) in both themes.
-    expect(indexCss).toContain("backdrop-filter: blur(14px);");
-    expect(desktopValue(
-      ["html.electron", ".session-file-island-pill"],
-      "backdrop-filter",
-    )).toBe("blur(14px) !important");
-  });
-
-  it("frosts the Work page branch and workspace pickers with the 5px glass", () => {
-    const light = [
-      "html.electron",
-      ":is(.ws-branch-popover, .git-workspace-popover)",
-    ];
-    expect(desktopValue(light, "-webkit-backdrop-filter")).toBe(
-      "blur(5px) !important",
-    );
-    expect(desktopValue(light, "backdrop-filter")).toBe("blur(5px) !important");
-    expect(desktopValue(light, "background")).toBe(
-      "hsl(0deg 0% 100% / 60%) !important",
-    );
-    expect(desktopValue(light, "background-image")).toBe("none !important");
-    expect(
-      desktopValue(
-        [
-          "html.electron.dark",
-          ":is(.ws-branch-popover, .git-workspace-popover)",
-        ],
-        "background",
-      ),
-    ).toBe("hsl(0 0% 17% / 0.17) !important");
-  });
-
-  it("keeps the command island glass lens on desktop", () => {
-    // Web sets the island blur radius in command-deck.css and paints it from
-    // glass.css on the decorative backdrop layer.
-    expect(commandDeckCss).toContain("--glass-blur: 8px;");
-    expect(glassCss).toContain(
-      "backdrop-filter: blur(var(--glass-blur)) saturate(1.15);",
-    );
-    const fragments = [
-      "html.electron",
-      ".synax-island-material.liquid-glass-surface[data-glass-state]",
-      ".liquid-glass-backdrop",
-    ];
-    for (const property of ["backdrop-filter", "-webkit-backdrop-filter"])
-      expect(desktopValue(fragments, property)).toBe(
-        "blur(var(--glass-blur, 8px)) saturate(1.15) !important",
-      );
-  });
-
-  it("scopes every blur declaration in the file to the electron shell", () => {
-    const blurs: string[] = [];
+  it("keeps persistent desktop surfaces opaque without forcing compositor hints off", () => {
+    expect(desktopValue(["html.electron", ".agent-session-composer-shell", ".session-file-island-pill"], "background"))
+      .toBe("var(--surface) !important");
     for (const rule of desktop) {
-      for (const property of [
-        "backdrop-filter",
-        "-webkit-backdrop-filter",
-      ]) {
+      expect(rule.declarations.get("will-change")).not.toBe("auto !important");
+      for (const property of ["backdrop-filter", "-webkit-backdrop-filter"]) {
         const value = rule.declarations.get(property);
-        if (!value || value.startsWith("none")) continue;
-        blurs.push(`${rule.selector} => ${value}`);
-        expect(rule.selector).toContain("electron");
+        if (value) expect(value).toBe("none !important");
       }
     }
-    expect(blurs.length).toBeGreaterThan(0);
+  });
+  it("pauses motion on invisible or disconnected pages while keeping text readable", () => {
+    expect(desktopValue(['html[data-runtime-motion="paused"]'], "animation-play-state")).toBe("paused !important");
+    const text = findRule(desktop, [".bui-thinking-label", ".bui-activity-brief"]);
+    expect(text?.declarations.get("animation")).toBe("none !important");
+    expect(text?.declarations.get("color")).toBe("var(--foreground) !important");
   });
 });

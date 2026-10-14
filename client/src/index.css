@@ -212,11 +212,19 @@
 @keyframes pixel-on {
   0%,
   100% {
-    opacity: 0.15;
+    opacity: 0.22;
   }
   50% {
     opacity: 1;
   }
+}
+.loading-state-cell {
+  animation: pixel-on var(--loading-duration, 420ms) steps(2, end) infinite;
+  animation-delay: calc(var(--loading-delay, 0ms) * -1);
+}
+.loading-state-cell--static {
+  opacity: 0.07;
+  animation: none;
 }
 @keyframes shimmer-text {
   0% {
@@ -3354,22 +3362,20 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
 
 /* One opaque action face tinted by the theme accent: no extra glass surface,
    rim, blur or inset ring. */
-.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action,
-.dark .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action {
+.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-send {
   border: 0;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  background: var(--ui-accent);
+  color: var(--theme-accent-foreground);
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:not(:disabled):hover,
-.dark .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:not(:disabled):hover {
-  background: hsl(var(--primary) / 0.86);
+.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-send:not(:disabled):hover {
+  background: color-mix(in srgb, var(--ui-accent) 86%, white);
 }
-.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:disabled {
-  background: hsl(var(--primary) / 0.22);
-  color: hsl(var(--muted-foreground) / 0.65);
+.agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-send:disabled {
+  background: color-mix(in srgb, var(--ui-accent) 22%, transparent);
+  color: var(--ui-subtle);
 }
 
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:focus-visible {

@@ -43,6 +43,14 @@ function child(code: string): Promise<string> {
 }
 const databasePath = fileURLToPath(new URL('../index.ts', import.meta.url));
 describe('single database owner', () => {
+  it('finishes discarded RETURNING rows on the owner connection', async () => {
+    const db = await setup();
+    db.exec('CREATE TABLE owner_returning(id INTEGER PRIMARY KEY, value TEXT)');
+    const result = db.transaction(() => db.prepare('INSERT INTO owner_returning(value) VALUES (?), (?) RETURNING id').run('a', 'b'))();
+    expect(result).toMatchObject({ changes: 2, lastInsertRowid: 2 });
+    expect(db.prepare('SELECT count(*) AS n FROM owner_returning').get()).toMatchObject({ n: 2 });
+  }, 60_000);
+
   it('preserves nested savepoints, binary values, rollback and paged iterators', async () => {
     const db = await setup();
     db.exec('CREATE TABLE owner_test(id INTEGER PRIMARY KEY,value BLOB)');

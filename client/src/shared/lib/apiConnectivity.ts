@@ -133,6 +133,14 @@ export function startApiConnectivityMonitor(): () => void {
   if (monitorStarted || typeof window === 'undefined') return () => {}
   monitorStarted = true
 
+  const updateMotion = () => {
+    const state = useApiConnectivityStore.getState()
+    document.documentElement.dataset.runtimeMotion =
+      document.hidden || !state.browserOnline || state.apiReachable === 'unreachable' ? 'paused' : 'active'
+  }
+  const stopMotion = useApiConnectivityStore.subscribe(updateMotion)
+  document.addEventListener('visibilitychange', updateMotion)
+  updateMotion()
   const store = useApiConnectivityStore.getState()
   let lastTickAt = Date.now()
   let lastResumeAt = -Infinity
@@ -177,6 +185,9 @@ export function startApiConnectivityMonitor(): () => void {
 
   return () => {
     stopDegradedProbe()
+    stopMotion()
+    document.removeEventListener('visibilitychange', updateMotion)
+    delete document.documentElement.dataset.runtimeMotion
     window.removeEventListener('online', onResume)
     window.removeEventListener('offline', onOffline)
     window.removeEventListener('focus', onResume)

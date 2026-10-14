@@ -11,6 +11,7 @@ import { agentRuntimeStore } from "../session-store.js";
 import { transcriptRepository } from "../transcript-repository.js";
 import { historyError } from "./guards.js";
 import { captureHistoryBoundary, type HistoryBoundary } from "./state.js";
+import { simpleHistorySession } from "../simple-history.js";
 
 export interface CheckpointPayload {
   version: 2 | 3;
@@ -98,6 +99,7 @@ export function mutationCursor(): number {
   ).cursor;
 }
 export function nativeCheckpointSession(sessionId: string): boolean {
+  if (simpleHistorySession(sessionId)) return false;
   const session = agentRuntimeStore.getSession(sessionId);
   if (appendOnlySession(sessionId)) return false;
   const backend = session.sessionMetadata?.backend as

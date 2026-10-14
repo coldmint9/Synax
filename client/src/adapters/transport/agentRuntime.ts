@@ -796,6 +796,7 @@ export interface SessionSearchResponse {
 }
 
 export interface HistoryWindowState {
+  storage?: "sqlite-flat";
   revision: number;
   epoch: number;
   cursor?: string;
@@ -1022,6 +1023,10 @@ export const agentRuntimeApi = {
   ) =>
     request<{ text: string; next?: number; revision: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`,
+    ),
+  historyTimeline: (sessionId: string, before?: number) =>
+    request<{ items: AgentRuntimeMessage[]; next?: number; epoch: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/history-timeline${before === undefined ? "" : `?before=${before}`}`, { silent: true },
     ),
   historyWindow: (sessionId: string, cursor?: string) =>
     request<HistoryWindowResponse>(

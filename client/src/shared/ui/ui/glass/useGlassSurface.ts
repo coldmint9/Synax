@@ -1,3 +1,4 @@
+import { useApiConnectivityStore } from "../../../lib/apiConnectivity";
 import { useEffect, useRef, useState } from "react";
 import { getGlassRuntime } from "./runtime";
 import type { GlassFallbackReason, GlassPointer, GlassRenderer, GlassSize, GlassSurfaceState, RendererFailure } from "./types";
@@ -65,7 +66,8 @@ export function useGlassSurface(interactive: boolean, intensity: "subtle" | "str
       if (queries.transparency.matches) return "reduced-transparency";
       if (queries.contrast.matches || queries.forcedColors.matches) return "high-contrast";
       if (!optical) return "static";
-      if (document.visibilityState === "hidden") return "hidden";
+      const connection = useApiConnectivityStore.getState();
+      if (document.visibilityState === "hidden" || !connection.browserOnline || connection.apiReachable === "unreachable") return "hidden";
       if (!intersecting || size.width <= 0 || size.height <= 0) return "offscreen";
       if (failure) return failure;
       if (control && (!interactive || (!hovered && !focused))) return "static";

@@ -3,7 +3,7 @@ import { agentRuntimeApi, type HistoryWindowResponse } from "../../../../adapter
 import { useAgentSessionStore as store } from "../agentSessionStore";
 
 vi.mock("../../../../adapters/transport/agentRuntime", () => ({
-  agentRuntimeApi: { historyWindow: vi.fn() },
+  agentRuntimeApi: { historyWindow: vi.fn(), historyTimeline: vi.fn() },
 }));
 
 function page(ids: string[], olderCursor?: string, cursor?: string, epoch = 1): HistoryWindowResponse {
@@ -124,4 +124,15 @@ it("loads just the pages needed when jumping to an indexed older point", async (
   expect(vi.mocked(agentRuntimeApi.historyWindow).mock.calls).toEqual([["session", "older"]]);
   expect(await store.getState().loadHistoryUntil("m1")).toBe(true);
   expect(store.getState().messages.map((message) => message.id)).toEqual(["m1", "m2", "m3", "m4"]);
+});
+
+it("uses the lightweight index for flat history without fetching full older windows", async () => {
+  loaded();
+  store.setState({ sessions: [{ id: "session", sessionMetadata: { historyStorage: "sqlite-flat" } } as import("../../../../adapters/transport/agentRuntime").AgentSession] });
+  vi.mocked(agentRuntimeApi.historyTimeline).mockResolvedValueOnce({ items: page(["m2","m3","m4"]).messages, next: 2, epoch: 1 })
+    .mockResolvedValueOnce({ items: page(["m1"]).messages, epoch: 1 });
+  await store.getState().loadTimelineIndex();
+  expect(agentRuntimeApi.historyWindow).not.toHaveBeenCalled();
+  expect(store.getState().sessionDetailCache.session.timelineMessages?.map(message => message.id)).toEqual(["m1","m2","m3","m4"]);
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m3","m4"]);
 });

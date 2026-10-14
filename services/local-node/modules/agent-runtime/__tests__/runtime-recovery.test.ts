@@ -21,6 +21,16 @@ beforeEach(() => {
 });
 
 describe("restart recovery decisions", () => {
+  it.each(["running", "stopping", "queued"] as const)("pauses a stale %s session without a run after restart", async (status) => {
+    const stale = agentSessionRuntime.create(plannerSessionInput);
+    const completed = agentSessionRuntime.create(plannerSessionInput);
+    agentRuntimeStore.updateSession(stale.id, { status, activeRunId: null });
+    agentRuntimeStore.updateSession(completed.id, { status: "completed", resultSummary: "Keep saved work" });
+    expect(await recoverRuntime("new-host")).toEqual({ reviewed: 1, resumable: [] });
+    expect(agentRuntimeStore.getSession(stale.id)).toMatchObject({ status: "paused", activeRunId: null, blockedReason: expect.stringContaining("without a confirmed active run") });
+    expect(agentRuntimeStore.getSession(completed.id)).toMatchObject({ status: "completed", resultSummary: "Keep saved work" });
+  });
+
   it.each(["waiting_permission", "waiting_input"])(
     "preserves %s as a durable checkpoint during shutdown",
     (status) => {

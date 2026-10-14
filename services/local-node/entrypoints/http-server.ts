@@ -127,14 +127,6 @@ const electronParentPort = (process as typeof process & { parentPort?: { on(even
 electronParentPort?.on('message', event => acceptParentMessage(event.data));
 
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
-void sweepAssets().catch((error) =>
-  pinoLogger.warn({ error }, "Media cleanup failed"),
-);
-setInterval(() => {
-  void sweepAssets().catch((error) =>
-    pinoLogger.warn({ error }, "Media cleanup failed"),
-  );
-}, 3_600_000).unref();
 process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 
@@ -253,6 +245,15 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void shutdownRuntime();
 });
+
+void sweepAssets().catch((error) =>
+  pinoLogger.warn({ error }, "Media cleanup failed"),
+);
+setInterval(() => {
+  void sweepAssets().catch((error) =>
+    pinoLogger.warn({ error }, "Media cleanup failed"),
+  );
+}, 3_600_000).unref();
 
 // --- 启动服务 ---
 void startRuntime().catch((error) => {

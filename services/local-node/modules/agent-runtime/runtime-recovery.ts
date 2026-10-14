@@ -99,6 +99,7 @@ export async function recoverRuntime(
       if (
         !run &&
         !session.sessionMetadata?.runtimeControl &&
+        !["running", "stopping", "queued"].includes(session.status) &&
         !unknownProcesses.length
       )
         continue;
@@ -187,7 +188,9 @@ export async function recoverRuntime(
       }
       const phase = run?.status ?? "shutdown";
       const shutdownUnconfirmed = unknownProcesses.length > 0;
-      const reason = shutdownUnconfirmed
+      const reason = !run && !shutdownUnconfirmed
+        ? "The runtime restarted without a confirmed active run. Continue the session explicitly."
+        : shutdownUnconfirmed
         ? "Process shutdown remains unconfirmed. Retry stopping the recorded process in this session."
         : phase === "queued"
           ? "The runtime restarted before this request was launched."

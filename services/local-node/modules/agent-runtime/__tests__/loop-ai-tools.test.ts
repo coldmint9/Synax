@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod/v4';
+import { asSchema } from '@ai-sdk/provider-utils';
 import { buildLoopToolSet } from '../loop-ai-tools.js';
 
 describe('loop AI tool adapter', () => {
@@ -32,4 +33,21 @@ describe('loop AI tool adapter', () => {
     expect(toolSet.resolveModelToolName('file.read')).toBe('file_read');
     expect(toolSet.tools).toHaveProperty('file_read');
   });
+});
+
+it('shares converted schemas across accounting and steps while preserving validation and updates', async () => {
+  const definition = {
+    id: 'file.read', label: 'Read', description: 'Read a file', category: 'read' as const,
+    mutability: 'read' as const, resumeBehavior: 'auto' as const,
+    inputSchema: z.object({ path: z.string() }),
+  };
+  const first = asSchema(buildLoopToolSet([definition]).tools.file_read.inputSchema);
+  const next = asSchema(buildLoopToolSet([{ ...definition, description: 'Updated description' }]).tools.file_read.inputSchema);
+  expect(next).toBe(first);
+  expect(await next.jsonSchema).toBe(await first.jsonSchema);
+  expect(await next.validate?.({ path: 'test.txt' })).toEqual({ success: true, value: { path: 'test.txt' } });
+  expect(await next.validate?.({ path: 1 })).toMatchObject({ success: false });
+  const updated = asSchema(buildLoopToolSet([{ ...definition, inputSchema: z.object({ path: z.string(), limit: z.number() }) }]).tools.file_read.inputSchema);
+  expect(updated).not.toBe(first);
+  expect(await updated.jsonSchema).toMatchObject({ required: ['path', 'limit'] });
 });

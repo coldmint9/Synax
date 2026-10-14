@@ -1,3 +1,4 @@
+import { createWorkerShutdown, startExitWatchdog } from "./worker-shutdown.js";
 import { withinExecutionContext } from "../../local-node/infrastructure/runtime/execution-context.js";
 import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
 import { closeAllBrowserSessions } from "../../local-node/modules/agent-runtime/tools/browser/browser-manager.js";
@@ -125,16 +126,21 @@ function main(): void {
   };
 
   let stopping = false;
-  const shutdown = async (reason: string) => {
-    if (stopping) return;
-    stopping = true;
-    for (const controller of activeStreams.values())
-      if (!controller.signal.aborted) controller.abort(new Error(reason));
-    await terminateOwnedCommands();
-    await closeAllBrowserSessions(reason);
-    await Promise.allSettled([...runningTasks]);
-    process.exit(0);
-  };
+  const shutdown = createWorkerShutdown({
+    startWatchdog: () => startExitWatchdog(),
+    abort(reason) {
+      stopping = true;
+      for (const controller of activeStreams.values())
+        if (!controller.signal.aborted) controller.abort(new Error(reason));
+    },
+    cleanup: (reason) => [
+      Promise.resolve().then(() => terminateOwnedCommands()),
+      Promise.resolve().then(() => closeAllBrowserSessions(reason)),
+      Promise.allSettled([...runningTasks]),
+    ],
+    report: (error) => logger.error({ error }, "[agent-session-runner] shutdown failed"),
+    exit: (code) => process.exit(code),
+  });
   process.on("SIGTERM", () => {
     void shutdown("Worker terminated by parent.");
   });

@@ -339,7 +339,7 @@ export class RuntimeRecordCodec {
       if (projection && !projection.includes(name)) continue;
       const bytes = "inline" in field ? Buffer.byteLength(JSON.stringify(field.inline)) : field.jsonBytes;
       if (bytes <= remaining) {
-        result[name] = this.read(id, 32 * 1024, [name])[name];
+        result[name] = this.readHeader(header, 32 * 1024, [name])[name];
         remaining -= bytes;
       } else {
         omitted.push(name);
@@ -372,8 +372,11 @@ export class RuntimeRecordCodec {
         "VERSION_RECORD_BUDGET",
         "Invalid record materialization budget.",
       );
-    const header = this.header(id),
-      selected = projection ? new Set(projection) : null;
+    return this.readHeader(this.header(id), maxBytes, projection);
+  }
+
+  private readHeader(header: RecordHeader, maxBytes: number, projection?: readonly string[]): Record<string, unknown> {
+    const selected = projection ? new Set(projection) : null;
     if (projection && projection.length > 64)
       throw new VersionStoreError(
         "VERSION_RECORD_BUDGET",

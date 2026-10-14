@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getEncoding as createEncoding, getEncodingNameForModel, type TiktokenEncoding, type TiktokenModel } from "js-tiktoken";
 import type { LlmGatewayMessage } from "../../infrastructure/llm-runtime/types.js";
 
@@ -12,6 +13,7 @@ const TOOL_CALL_OVERHEAD_TOKENS = 8;
 const TOKEN_CACHE_MAX_ENTRIES = 4096;
 const TOKEN_CACHE_MAX_CHARS = 4 * 1024 * 1024;
 const TOKEN_CACHE_MAX_TEXT_CHARS = 8192;
+const LARGE_TOKEN_CACHE_MAX_ENTRIES = 1024;
 
 interface TokenCacheEntry {
   tokens: number;
@@ -26,6 +28,7 @@ let encodingCreations = 0;
 let cacheHits = 0;
 let cacheMisses = 0;
 const tokenCache = new Map<string, TokenCacheEntry>();
+const largeTokenCache = new Map<string, number>();
 let tokenCacheChars = 0;
 
 function getEncoding(modelKey: string) {
@@ -52,6 +55,50 @@ function encode(modelKey: string, text: string): number {
   return getEncoding(modelKey).encode(text).length;
 }
 
+function largeTextKey(modelKey: string, text: string): string {
+  // Keep long outputs out of the text cache itself. Hashing is linear in the
+  // input size, but it is substantially cheaper than re-running tiktoken and
+  // avoids retaining large tool results in a long-lived worker.
+  return `${modelKey}:${text.length}:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+function countWithModelKey(modelKey: string, text: string): number {
+  if (!text) return 0;
+  if (text.length > TOKEN_CACHE_MAX_TEXT_CHARS) {
+    const key = largeTextKey(modelKey, text);
+    const cached = largeTokenCache.get(key);
+    if (cached !== undefined) {
+      largeTokenCache.delete(key);
+      largeTokenCache.set(key, cached);
+      cacheHits++;
+      return cached;
+    }
+    cacheMisses++;
+    const tokens = encode(modelKey, text);
+    largeTokenCache.set(key, tokens);
+    while (largeTokenCache.size > LARGE_TOKEN_CACHE_MAX_ENTRIES) {
+      const oldest = largeTokenCache.keys().next();
+      if (oldest.done) break;
+      largeTokenCache.delete(oldest.value);
+    }
+    return tokens;
+  }
+  const key = cacheKey(modelKey, text);
+  const cached = tokenCache.get(key);
+  if (cached) {
+    cacheHits++;
+    tokenCache.delete(key);
+    tokenCache.set(key, cached);
+    return cached.tokens;
+  }
+  cacheMisses++;
+  const tokens = encode(modelKey, text);
+  tokenCache.set(key, { tokens, chars: key.length });
+  tokenCacheChars += key.length;
+  evictTokenCache();
+  return tokens;
+}
+
 function cacheKey(modelKey: string, text: string): string {
   return `${modelKey}\u0000${text}`;
 }
@@ -71,66 +118,49 @@ function evictTokenCache(): void {
 }
 
 export function countTokens(text: string, model?: string): number {
-  if (!text) return 0;
-  if (text.length > TOKEN_CACHE_MAX_TEXT_CHARS)
-    return encode(resolveEncodingModel(model), text);
-  const modelKey = resolveEncodingModel(model);
-  const key = cacheKey(modelKey, text);
-  const cached = tokenCache.get(key);
-  if (cached) {
-    cacheHits++;
-    // Refresh recency so reused history prefixes survive eviction.
-    tokenCache.delete(key);
-    tokenCache.set(key, cached);
-    return cached.tokens;
-  }
-  cacheMisses++;
-  const tokens = encode(modelKey, text);
-  tokenCache.set(key, { tokens, chars: key.length });
-  tokenCacheChars += key.length;
-  evictTokenCache();
-  return tokens;
+  return countWithModelKey(resolveEncodingModel(model), text);
 }
 
 export function countMessagesTokens(
   messages: LlmGatewayMessage[],
   model?: string,
 ): number {
+  const modelKey = resolveEncodingModel(model);
   let total = 0;
   for (const message of messages) {
     total += MESSAGE_OVERHEAD_TOKENS;
-    total += countMessageContentTokens(message, model);
+    total += countMessageContentTokens(message, modelKey);
   }
   return total;
 }
 
 function countMessageContentTokens(
   message: LlmGatewayMessage,
-  model?: string,
+  modelKey: string,
 ): number {
   if (message.role === "system") {
-    return countTokens(message.content, model);
+    return countWithModelKey(modelKey, message.content);
   }
 
   const content = message.content;
   if (typeof content === "string") {
-    return countTokens(content, model);
+    return countWithModelKey(modelKey, content);
   }
   if (!Array.isArray(content)) return 0;
 
   let tokens = 0;
   for (const part of content) {
     if ("text" in part && typeof part.text === "string") {
-      tokens += countTokens(part.text, model);
+      tokens += countWithModelKey(modelKey, part.text);
     }
     if (part.type === "tool-call") {
       tokens += TOOL_CALL_OVERHEAD_TOKENS;
-      tokens += countTokens(part.toolName, model);
-      tokens += countTokens(JSON.stringify(part.input ?? {}), model);
+      tokens += countWithModelKey(modelKey, part.toolName);
+      tokens += countWithModelKey(modelKey, JSON.stringify(part.input ?? {}));
     }
     if (part.type === "tool-result") {
       tokens += TOOL_CALL_OVERHEAD_TOKENS;
-      tokens += countTokens(part.toolName, model);
+      tokens += countWithModelKey(modelKey, part.toolName);
       const output = part.output;
       const text =
         output.type === "json" || output.type === "error-json"
@@ -144,7 +174,7 @@ function countMessageContentTokens(
               : "reason" in output
                 ? (output.reason ?? "")
                 : "";
-      tokens += countTokens(text, model);
+      tokens += countWithModelKey(modelKey, text);
     }
     // Text/reasoning was already counted above; signatures and media are not text tokens.
   }
@@ -155,6 +185,7 @@ export function estimateToolDefinitionsTokens(
   toolCount: number,
   model?: string,
 ): number {
+  void model;
   return toolCount * 120;
 }
 
@@ -173,7 +204,7 @@ export interface TokenCacheStats {
 /** Diagnostics only; callers must not depend on cache state for correctness. */
 export function tokenCacheStats(): TokenCacheStats {
   return {
-    entries: tokenCache.size,
+    entries: tokenCache.size + largeTokenCache.size,
     chars: tokenCacheChars,
     maxEntries: TOKEN_CACHE_MAX_ENTRIES,
     maxChars: TOKEN_CACHE_MAX_CHARS,
@@ -188,6 +219,7 @@ export function tokenCacheStats(): TokenCacheStats {
 /** Drop retained text and counters. Used by tests and long-lived processes. */
 export function clearTokenCache(): void {
   tokenCache.clear();
+  largeTokenCache.clear();
   tokenCacheChars = 0;
   encodeCount = 0;
   encodingCreations = 0;

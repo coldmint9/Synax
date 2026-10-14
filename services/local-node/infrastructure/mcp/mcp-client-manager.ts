@@ -181,7 +181,7 @@ export class McpClientManager {
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         starting.transport = transport;
         client = new Client(
-          { name: "synax-host", version: "1.25.0" },
+          { name: "synax-host", version: "1.25.2" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -240,15 +240,15 @@ export class McpClientManager {
   /** Warm up (start + list tools) for the given server ids. Missing/unconfigured servers are skipped. */
   async warmup(serverIds: string[], projectId?: string, sessionId?: string): Promise<void> {
     const byId = this.configById(projectId);
-    for (const id of serverIds) {
+    await Promise.all(serverIds.map(async (id) => {
       const config = byId.get(id);
-      if (!config || config.enabled === false || (id !== CUA_SERVER_ID && !extensionStore.active(projectId, "mcp", id))) continue;
+      if (!config || config.enabled === false || (id !== CUA_SERVER_ID && !extensionStore.active(projectId, "mcp", id))) return;
       try {
         await this.startServer(config, projectId, sessionId);
       } catch {
-        /* warm-up best effort */
+        /* warm-up best effort; one failed server must not delay others */
       }
-    }
+    }));
   }
 
   getCachedTools(serverId: string, projectId?: string, sessionId?: string): McpRuntimeToolDef[] {
@@ -390,7 +390,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "1.25.0" },
+      { name: "synax-host-probe", version: "1.25.2" },
       { capabilities: {} },
     );
     try {

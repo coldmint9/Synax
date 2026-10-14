@@ -62,7 +62,6 @@ import { interactionService } from "./interaction-service.js";
 import {
   CONTROL_TOOLS,
   validateControlBatch,
-  controlToolError,
 } from "./control-policy.js";
 import {
   rootGoal,
@@ -944,6 +943,7 @@ export class AgentLoopRuntime {
                 maxSteps: convergenceThreshold,
                 converging: shouldConverge(step.index, convergenceThreshold),
                 blockedByPermission: pendingPermission?.userReply === "reject",
+                previousStepCompletedAt: previousStep?.completedAt,
                 previousStepUsage: previousStep?.metadata?.usage as
                   | Record<string, unknown>
                   | undefined,
@@ -2528,6 +2528,7 @@ export class AgentLoopRuntime {
     maxSteps: number;
     converging: boolean;
     blockedByPermission: boolean;
+    previousStepCompletedAt?: string | null;
     previousStepUsage?: Record<string, unknown> | null;
     abortSignal?: AbortSignal;
     clearingActivated?: boolean;
@@ -2598,29 +2599,42 @@ export class AgentLoopRuntime {
       "[agent-runtime] generating step",
     );
     const requestPreparationStartedAt = performance.now();
-    // Cua may connect or restart after the run's initial MCP warm-up.
-    // Refresh before reading schemas; ready MCP clients are reused.
-    await warmupMcpForSession(input.sessionId);
+    const preparationTimings: Record<string, number> = {};
+    let preparationPhaseStartedAt = requestPreparationStartedAt;
+    let preparationRecorded = false;
+    const markPreparation = (phase: string) => {
+      const now = performance.now();
+      preparationTimings[phase] = Math.round(now - preparationPhaseStartedAt);
+      preparationPhaseStartedAt = now;
+    };
+    // Initial admission and newly injected input already await discovery. A
+    // reconnect (including CUA) must not hold every subsequent model request
+    // behind a dead server. Ready tools are available now; refreshed tools are
+    // picked up on the next step. Execution still awaits its own connection.
+    void warmupMcpForSession(input.sessionId);
     const availableTools = this.tools
       .listForSession(input.sessionId)
       .filter(
         (tool) =>
           modelCanUseTool(input.profile, tool),
       );
+    markPreparation("toolListing");
     const session = this.store.getSession(input.sessionId);
     const userRequest = resolveSessionUserRequest(session, input.prompt);
     const webSearchDisabled =
       getGlobalConfigForRuntime().webSearch.routing === "disabled";
+    // listForSession already evaluates workflow/plan/Work gates. Repeating
+    // those checks here re-reads the same session and plan for every tool.
     const allowedTools = availableTools.filter(
-      (tool) =>
-        !controlToolError(session, tool) &&
-        !(webSearchDisabled && tool.id === "webSearch"),
+      (tool) => !(webSearchDisabled && tool.id === "webSearch"),
     );
+    markPreparation("toolPolicy");
     const capabilityProjection = this.tools.capabilities.project(input.sessionId, allowedTools);
     const modelTools = capabilityProjection.tools.filter((tool) =>
       !["code.run", "code.tools"].includes(tool.id),
     );
     const toolSet = buildLoopToolSet(modelTools, undefined, { stableNames: Boolean(capabilityProjection.prompt) });
+    markPreparation("tools");
     const contextLimit =
       (input as { contextLimit?: number }).contextLimit ??
       DEFAULT_CONTEXT_LIMIT;
@@ -2654,6 +2668,7 @@ export class AgentLoopRuntime {
       projectRulesSection = null;
     }
 
+    markPreparation("projectInstructions");
     const selectedReferences = activeTurnReferences(input.sessionId);
     const visualizationIntent = presentationDecision(input.sessionId)?.mode === "inline_visualization";
     const turnSkillIds = [
@@ -2667,6 +2682,7 @@ export class AgentLoopRuntime {
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
     });
+    markPreparation("skillCatalog");
     const autoVisualizeSkill = visualizationIntent
       ? skillCandidates.find(
           (skill) =>
@@ -2801,6 +2817,7 @@ export class AgentLoopRuntime {
         )
         .map((message) => message.id),
     );
+    markPreparation("instructions");
     const reminderTokens = reminder.content
       ? countMessagesTokens(
           [runtimeReminderMessage(reminder)],
@@ -2827,6 +2844,7 @@ export class AgentLoopRuntime {
       .update(stableContextFingerprint)
       .digest("hex")
       .slice(0, 16);
+    markPreparation("schemas");
     const { projection } = await maybeLlmCompactContext({
       sessionId: input.sessionId,
       canRetainSkill: (skillId) => skillAgentBridge.canRetainForContext(input.sessionId, skillId),
@@ -2861,6 +2879,7 @@ export class AgentLoopRuntime {
           type: "context_compaction_started",
         }),
     });
+    markPreparation("historyProjection");
     conversationMessages = projection.messages;
     if (reminder.content) projection.systemMessageContents.add(reminder.content);
     const compositionSources = {
@@ -2935,9 +2954,30 @@ export class AgentLoopRuntime {
           !previousReminder?.historyAnchor && previousReminder
             ? "unknown"
             : prepared.historyAnchorStatus;
+        // Record the first prepared request, including gateway model/media
+        // preparation and final admission. Retries must not count prior network
+        // time or retry backoff as internal computation.
+        let preparationMetadata: Record<string, unknown> = {};
+        if (!preparationRecorded) {
+          markPreparation("gatewayPreparation");
+          const readyAt = Date.now();
+          const previousCompletedAt = Date.parse(input.previousStepCompletedAt ?? "");
+          preparationMetadata = {
+            requestPreparationMs: Math.round(performance.now() - requestPreparationStartedAt),
+            requestPreparationTimingsMs: { ...preparationTimings },
+            requestReadyAt: new Date(readyAt).toISOString(),
+            ...(Number.isFinite(previousCompletedAt)
+              ? { stepTransitionMs: Math.max(0, readyAt - previousCompletedAt) }
+              : {}),
+          };
+          preparationRecorded = true;
+          logger.info({ sessionId: input.sessionId, stepId: input.stepId, ...preparationMetadata },
+            "[agent-runtime] model request prepared");
+        }
         this.store.updateRunStep(input.stepId, {
           metadata: {
             ...latest.metadata,
+            ...preparationMetadata,
             runtimeReminder: saved.historyAnchor
               ? saved
               : { ...saved, historyAnchor: prepared.historyAnchor },
@@ -3028,6 +3068,7 @@ export class AgentLoopRuntime {
         runtimeReminderTokens: reminderTokens,
       };
     }
+    markPreparation("requestComposition");
     // Save before network dispatch. Metadata failure is fatal: an unsaved request cannot be replayed reliably.
     this.store.updateRunStep(input.stepId, {
       metadata: {
@@ -3044,6 +3085,7 @@ export class AgentLoopRuntime {
         requestPreparationMs: Math.round(
           performance.now() - requestPreparationStartedAt,
         ),
+        requestPreparationTimingsMs: { ...preparationTimings },
         requestComposition: {
           version: 1,
           systemMeaning: "static-instructions-and-references",
@@ -3051,6 +3093,7 @@ export class AgentLoopRuntime {
         },
       },
     });
+    markPreparation("persistence");
     yield* streamLoopModelStep({
       request,
       tools: toolSet,

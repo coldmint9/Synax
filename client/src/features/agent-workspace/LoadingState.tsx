@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 
 /* ─────────────────────────────────────────────────────────
  * LOADING STATE — pixel-grid loader for long-running work
@@ -12,7 +13,7 @@ import { useEffect, useState } from "react";
  *
  * Paired with a shimmering label and a live elapsed timer
  * in mono tabular figures. Reduced motion freezes the grid
- * to its dim state; the timer still ticks (see index.css).
+ * in place; the clock is shared and stops when hidden or disconnected.
  * ───────────────────────────────────────────────────────── */
 
 const chevron = Array.from({ length: 9 }, (_, i) => {
@@ -31,10 +32,10 @@ const PATTERNS: Record<
   string,
   { delays: (number | null)[]; dur: number; round: boolean }
 > = {
-  Drive: { delays: chevron, dur: 650, round: false },
-  Dots: { delays: chevron, dur: 650, round: true },
-  Orbit: { delays: orbit, dur: 950, round: false },
-  Thinking: { delays: chevron, dur: 1200, round: false },
+  Drive: { delays: chevron, dur: 420, round: false },
+  Dots: { delays: chevron, dur: 420, round: true },
+  Orbit: { delays: orbit, dur: 620, round: false },
+  Thinking: { delays: chevron, dur: 720, round: false },
 };
 
 function LoaderGrid({
@@ -55,15 +56,16 @@ function LoaderGrid({
         <span
           key={index}
           className={`loading-state-cell h-[4px] w-[4px] bg-foreground ${
+            delay === null ? "loading-state-cell--static" : ""
+          } ${
             round ? "rounded-full" : "rounded-[1px]"
           }`}
-          style={{
-            opacity: delay === null ? 0.07 : 0.15,
-            animation:
-              delay === null
-                ? "none"
-                : `pixel-on ${dur}ms ease-in-out ${delay}ms infinite`,
-          }}
+          style={
+            {
+              "--loading-delay": `${delay ?? 0}ms`,
+              "--loading-duration": `${dur}ms`,
+            } as CSSProperties
+          }
         />
       ))}
     </span>
@@ -109,13 +111,8 @@ export default function LoadingState({
       </span>
       {label && (
         <span
-          className="loading-state-label bg-clip-text text-[13px] font-medium text-transparent"
-          style={{
-            backgroundImage:
-              "linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%)",
-            backgroundSize: "200% 100%",
-            animation: "shimmer-text 1.4s linear infinite",
-          }}
+          className="loading-state-label text-[13px] font-medium text-muted-foreground"
+
         >
           {label}
         </span>

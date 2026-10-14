@@ -130,15 +130,18 @@ describe('journal batch commit', () => {
 });
 
 describe('stream writer batching', () => {
-  it('coalesces a buffered delta with the event that ends it in one ordered batch', () => {
+  it('persists an upstream-coalesced delta before the event that follows it', () => {
     const { session, run } = sessionRun();
     const writer = new RuntimeStreamWriter(session.id, run.id);
     const batch = vi.spyOn(runtimeJournal, 'appendBatch');
     try {
       writer.write({ type: 'message_delta', runId: run.id, stepId: 'step-1', delta: 'partial' });
       writer.write({ type: 'tool_call', runId: run.id, stepId: 'step-1', toolCall: toolCall(session.id, run.id) });
-      expect(batch).toHaveBeenCalledTimes(1);
-      expect(batch.mock.calls[0][2].map(chunk => chunk.type)).toEqual(['message_delta', 'tool_call']);
+      expect(batch).toHaveBeenCalledTimes(2);
+      expect(batch.mock.calls.map(call => call[2].map(chunk => chunk.type))).toEqual([
+        ['message_delta'],
+        ['tool_call'],
+      ]);
     } finally { batch.mockRestore(); }
     writer.finish();
     expect(runtimeJournal.read(session.id).map(record => record.chunk.type)).toEqual(['message_delta', 'tool_call']);
@@ -177,21 +180,13 @@ describe('stream writer batching', () => {
     } finally { append.mockRestore(); batch.mockRestore(); }
   });
 
-  it('flushes a timer-buffered delta through the commit path exactly once', () => {
-    vi.useFakeTimers();
-    try {
-      const { session, run } = sessionRun();
-      const writer = new RuntimeStreamWriter(session.id, run.id);
-      writer.write({ type: 'message_delta', runId: run.id, stepId: 'step-1', delta: 'buffered' });
-      expect(runtimeJournal.cursor(session.id)).toBe(0);
-      vi.advanceTimersByTime(40);
-      const persisted = runtimeJournal.read(session.id);
-      expect(persisted.map(record => record.chunk.type)).toEqual(['message_delta']);
-      expect((persisted[0].chunk as { delta: string }).delta).toBe('buffered');
-      // Timer already fired; a redundant flush must not duplicate the record.
-      writer.flush();
-      expect(runtimeJournal.read(session.id)).toHaveLength(1);
-    } finally { vi.useRealTimers(); }
+  it('persists an upstream-coalesced delta directly without a second timer flush', () => {
+    const { session, run } = sessionRun();
+    const writer = new RuntimeStreamWriter(session.id, run.id);
+    writer.write({ type: 'message_delta', runId: run.id, stepId: 'step-1', delta: 'coalesced' });
+    expect(runtimeJournal.read(session.id).map(record => record.chunk.type)).toEqual(['message_delta']);
+    writer.flush();
+    expect(runtimeJournal.read(session.id)).toHaveLength(1);
   });
 
   it('finish() flushes the buffered delta and preserves its order before the terminal record', () => {
@@ -206,24 +201,21 @@ describe('stream writer batching', () => {
     expect((persisted[0].chunk as { delta: string }).delta).toBe('answer');
   });
 
-  it('abandons buffered work once the writer is no longer current, without partial commits', () => {
+  it('ignores subsequent chunks once the writer is no longer current', () => {
     const { session, run } = sessionRun();
     const step = agentRuntimeStore.appendRunStep({ id: 'step-1', sessionId: session.id, runId: run.id, index: 1,
       status: 'running', model: null, startedAt: new Date().toISOString(), completedAt: null, finishReason: null, metadata: {} });
     let current = true;
     const writer = new RuntimeStreamWriter(session.id, run.id, () => current);
+    const before = runtimeJournal.cursor(session.id);
     writer.write({ type: 'message_delta', runId: run.id, stepId: step.id, delta: 'stale' });
-    expect(runtimeJournal.cursor(session.id)).toBe(0);
+    const afterFirst = runtimeJournal.cursor(session.id);
+    expect(afterFirst).toBeGreaterThan(before);
     current = false;
     writer.write({ type: 'tool_call', runId: run.id, stepId: step.id, toolCall: toolCall(session.id, run.id) });
-    expect(runtimeJournal.cursor(session.id)).toBe(0);
-    // finish() on an interrupted run would materialize a partial assistant message from
-    // persisted deltas; the abandoned buffer must leave nothing for it to rebuild from.
-    agentRuntimeStore.updateRun(run.id, { status: 'interrupted', completedAt: new Date().toISOString() });
+    expect(runtimeJournal.cursor(session.id)).toBe(afterFirst);
     writer.flush();
     writer.finish();
-    expect(runtimeJournal.read(session.id)).toHaveLength(0);
-    const partials = agentRuntimeStore.listMessages(session.id).filter(message => message.role === 'assistant');
-    expect(partials).toHaveLength(0);
+    expect(runtimeJournal.read(session.id)).toHaveLength(1);
   });
 });

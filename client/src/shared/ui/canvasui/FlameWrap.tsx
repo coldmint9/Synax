@@ -1,3 +1,4 @@
+import { useApiConnectivityStore } from "../../lib/apiConnectivity";
 import {
   useEffect,
   useRef,
@@ -646,7 +647,9 @@ export function createFlameWrap(
   let lastTime = performance.now();
   let destroyed = false;
   let running = false;
-  let visible = true;
+  let intersecting = true;
+  let visible = !document.hidden;
+  let lastPaint = -Infinity;
 
   const motionQuery =
     typeof window.matchMedia === "function"
@@ -660,7 +663,12 @@ export function createFlameWrap(
       running = false;
       return;
     }
-    const delta = Math.min((now - lastTime) / 1000, 1 / 30);
+    if (now - lastPaint < 50 && !contentDirty) {
+      raf = requestAnimationFrame(frame);
+      return;
+    }
+    lastPaint = now;
+    const delta = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     if (!reducedMotion) time += delta * config.speed;
     render();
@@ -678,8 +686,16 @@ export function createFlameWrap(
     raf = requestAnimationFrame(frame);
   }
 
+  function syncVisibility() {
+    const state = useApiConnectivityStore.getState();
+    visible = intersecting && !document.hidden && state.browserOnline && state.apiReachable !== "unreachable";
+    if (!visible) { cancelAnimationFrame(raf); running = false; }
+    else start();
+  }
+  const stopConnectivity = useApiConnectivityStore.subscribe(syncVisibility);
+  document.addEventListener("visibilitychange", syncVisibility);
   wake = start;
-  start();
+  syncVisibility();
 
   function onMotionChange() {
     reducedMotion = motionQuery ? motionQuery.matches : false;
@@ -702,8 +718,8 @@ export function createFlameWrap(
   const intersection =
     typeof IntersectionObserver === "function"
       ? new IntersectionObserver((entries) => {
-          visible = entries[entries.length - 1]?.isIntersecting ?? true;
-          if (visible) start();
+          intersecting = entries[entries.length - 1]?.isIntersecting ?? true;
+          syncVisibility();
         })
       : null;
   intersection?.observe(output);
@@ -737,6 +753,8 @@ export function createFlameWrap(
     },
     destroy() {
       destroyed = true;
+      stopConnectivity();
+      document.removeEventListener("visibilitychange", syncVisibility);
       cancelAnimationFrame(raf);
       observer?.disconnect();
       intersection?.disconnect();

@@ -55,12 +55,14 @@ const defaultDriver: Driver = {
   execute: executeBackendSession,
   async interrupt(id, reason) {
     const results = await Promise.allSettled(
-      agentRuntimeStore.listSessionTree(id).map(async (session) =>
-        getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(
-          session.id,
-          reason,
+      agentRuntimeStore
+        .listSessionTree(id)
+        .map(async (session) =>
+          getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(
+            session.id,
+            reason,
+          ),
         ),
-      ),
     );
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -207,11 +209,14 @@ export class RunCoordinator {
             goalContinuationInput(sessionId, latestRun.id) !== null) ||
           // Chat/plan handoffs end the turn while retaining unfinished TODOs.
           // Only goal work must finish before queued user turns can start.
-          (!forced && work &&
+          (!forced &&
+            work &&
             work.status !== "completed" &&
-            !(work.status === "active" &&
+            !(
+              work.status === "active" &&
               latestRun.stopReason === "round_yielded" &&
-              !usesGoalWorkflow(session))) ||
+              !usesGoalWorkflow(session)
+            )) ||
           (!forced && interactionService.pending(sessionId))
         )
           return null;
@@ -340,6 +345,16 @@ export class RunCoordinator {
         10_000,
         "Execution shutdown could not be confirmed.",
       );
+      // A persistence acknowledgement can time out after the backend has
+      // already unwound. Do not leave a stale recovery block in that case.
+      if (this.owners.get(sessionId) === owner) {
+        owner.stopFailed = false;
+        agentRuntimeStore.updateSessionMetadata(sessionId, {
+          runtimeControl: null,
+          lastRecoveryAcknowledgedAt: nowIso(),
+        });
+        this.owners.delete(sessionId);
+      }
     } catch (stopError) {
       reason += ` ${stopError instanceof Error ? stopError.message : String(stopError)}`;
       markUnconfirmed();
@@ -398,12 +413,21 @@ export class RunCoordinator {
     mode: AgentSessionStreamMode,
     input: StreamTurnRequest,
   ): Promise<void> {
-    const writer = new RuntimeStreamWriter(sessionId, owner.runId, () =>
-      this.ownsLease(owner),
-      (id, runId, chunks, revision) => journalWriter.append(id, runId, chunks, revision, owner.context),
+    const writer = new RuntimeStreamWriter(
+      sessionId,
+      owner.runId,
+      () => this.ownsLease(owner),
+      (id, runId, chunks, revision) =>
+        journalWriter.append(id, runId, chunks, revision, owner.context),
     );
-    const record = async (chunk: AgentRunStreamChunk) => { writer.write(chunk); await writer.settled(); };
-    const flush = async () => { writer.flush(); await writer.settled(); };
+    const record = async (chunk: AgentRunStreamChunk) => {
+      writer.write(chunk);
+      await writer.settled();
+    };
+    const flush = async () => {
+      writer.flush();
+      await writer.settled();
+    };
     let settledNormally = false;
     try {
       if (owner.controller.signal.aborted)
@@ -660,8 +684,14 @@ export class RunCoordinator {
       visibility: "internal",
     });
     if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
-      void runtimeJournal.appendDurable(sessionId, runId, [{ type: "event", event }]).catch(error =>
-        logger.warn({ error, sessionId }, "Progress replay could not be persisted"));
+      void runtimeJournal
+        .appendDurable(sessionId, runId, [{ type: "event", event }])
+        .catch((error) =>
+          logger.warn(
+            { error, sessionId },
+            "Progress replay could not be persisted",
+          ),
+        );
     } else runtimeJournal.append(sessionId, runId, { type: "event", event });
   }
 
@@ -712,7 +742,12 @@ export class RunCoordinator {
       );
     let cursor = after;
     while (!signal?.aborted) {
-      const records = await runtimeJournal.readDurable(sessionId, cursor, 256, runId);
+      const records = await runtimeJournal.readDurable(
+        sessionId,
+        cursor,
+        256,
+        runId,
+      );
       for (const record of records) {
         if (signal?.aborted) return;
         cursor = record.sequence;

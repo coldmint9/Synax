@@ -1,9 +1,5 @@
-/* Desktop keeps solid surfaces and disables expensive backdrop filters,
-   including portals and pseudo-elements. CSS motion is intentionally NOT
-   disabled: activity and thinking chips keep their shimmer sweeps, reveal
-   transitions and spinner feedback, matching the web build. Users who ask
-   for reduced motion still get static surfaces via the prefers-reduced-motion
-   rules shipped with each component stylesheet. */
+/* Persistent desktop surfaces are opaque. Continuous backdrop sampling and
+   per-frame decorative paint must not scale with transcript or window size. */
 html.electron,
 html.electron *,
 html.electron *::before,
@@ -12,7 +8,6 @@ html.electron *::backdrop {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   scroll-behavior: auto !important;
-  will-change: auto !important;
 }
 
 html.electron {
@@ -39,56 +34,27 @@ html.electron {
   background-image: none !important;
 }
 
-/* Web parity for the surfaces the Web build frosts. The global opt-out above
-   still covers every other surface (portals, pseudo-elements, the dock mini
-   shell, dialogs), but these keep the Web build's exact material on desktop:
-   the composer input shell, its workspace / branch chips, the session file
-   island pill and the Work page branch + workspace pickers. Values mirror
-   agentControls.css, index.css and workPage.css so desktop matches Web. */
-
-/* Composer input shell (Web: blur(5px) over hsl(0 0% 100% / 60%)). */
-html.electron
-  .agent-session-controls
-  .agent-session-composer-shell.agent-dock-shell {
-  -webkit-backdrop-filter: blur(5px) !important;
-  backdrop-filter: blur(5px) !important;
+html.electron :is(
+  .agent-session-composer-shell.agent-dock-shell,
+  .agent-dock-composer-chip, .button--tertiary,
+  .session-file-island-pill, .ws-branch-popover, .git-workspace-popover
+) {
+  background: var(--surface) !important;
 }
 
-/* Composer chips, including the workspace / branch picker trigger. */
-html.electron .agent-dock-composer .agent-dock-composer-chip,
-html.electron .agent-dock-composer .button--tertiary {
-  -webkit-backdrop-filter: blur(8px) !important;
-  backdrop-filter: blur(8px) !important;
+/* Retain status text, but do not animate a disconnected or invisible page. */
+html[data-runtime-motion="paused"] *,
+html[data-runtime-motion="paused"] *::before,
+html[data-runtime-motion="paused"] *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
 }
 
-/* Command island: command-deck.css sets --glass-blur: 8px and glass.css paints
-   blur(--glass-blur) saturate(1.15) on the decorative backdrop layer, so the
-   island reads as a lens over the transcript on Web. Keep that lens on desktop
-   instead of the flat, unblurred island the global opt-out produced. */
-html.electron
-  .synax-island-material.liquid-glass-surface[data-glass-state]
-  > .liquid-glass-backdrop {
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px)) saturate(1.15) !important;
-  backdrop-filter: blur(var(--glass-blur, 8px)) saturate(1.15) !important;
-}
-
-/* Session file island pill. Mirrors index.css verbatim: the -webkit fallback is
-   5px, the standard property (the one Chromium computes and paints) is 14px in
-   both themes, so desktop keeps the Web value here too. */
-html.electron .session-file-island-pill {
-  -webkit-backdrop-filter: blur(5px) !important;
-  backdrop-filter: blur(14px) !important;
-}
-
-/* Work page branch / workspace pickers and their search filters. These panels
-   own an opaque token fill on Web, so desktop spells out the same blur(5px)
-   glass the Web composer uses instead of the desktop's forced solid card. */
-html.electron :is(.ws-branch-popover, .git-workspace-popover) {
-  -webkit-backdrop-filter: blur(5px) !important;
-  backdrop-filter: blur(5px) !important;
-  background: hsl(0deg 0% 100% / 60%) !important;
+/* Text sweeps animate background-position and repaint on every frame. A stable
+   foreground preserves the same activity information without that paint loop. */
+:is(.bui-activity-brief, .bui-thinking-banner-text, .bui-thinking-label,
+    .bui-thinking[data-live="true"][data-variant="coding"] > .bui-thinking-trigger) {
+  animation: none !important;
   background-image: none !important;
-}
-html.electron.dark :is(.ws-branch-popover, .git-workspace-popover) {
-  background: hsl(0 0% 17% / 0.17) !important;
+  color: var(--foreground) !important;
 }

@@ -594,7 +594,7 @@ function isMechanicalRunNoise(text: string): boolean {
 // ============================== 服务实现 ==============================
 
 export class ContextService {
-  private db = getRawSqlite();
+  private get db() { return getRawSqlite(); }
 
   // ---------- Session ----------
 

@@ -1,4 +1,5 @@
 import { jsonSchema, tool, type ToolCallRepairFunction, type ToolSet } from 'ai';
+import { asSchema } from '@ai-sdk/provider-utils';
 import { createHash } from 'node:crypto';
 import type { RegisteredTool } from './contracts.js';
 import { INVALID_TOOL_ID } from './tool-invalid.js';
@@ -19,6 +20,20 @@ const genericInputSchema = jsonSchema<Record<string, unknown>>({
   additionalProperties: true,
 });
 
+// asSchema creates a new lazy Zod adapter on every call. Reuse that adapter so
+// accounting, fingerprints and provider dispatch share one JSON conversion,
+// including across steps. Weak keys release schemas when tools are replaced.
+const inputSchemas = new WeakMap<NonNullable<LoopToolDefinition['inputSchema']>, ReturnType<typeof asSchema>>();
+function modelInputSchema(schema: LoopToolDefinition['inputSchema']) {
+  if (!schema) return genericInputSchema;
+  let adapted = inputSchemas.get(schema);
+  if (!adapted) {
+    adapted = asSchema(schema);
+    inputSchemas.set(schema, adapted);
+  }
+  return adapted;
+}
+
 export function buildLoopToolSet(
   definitions: LoopToolDefinition[],
   activeDefinitions?: LoopToolDefinition[],
@@ -38,7 +53,7 @@ export function buildLoopToolSet(
     tools[modelName] = tool({
       title: definition.label,
       description: [definition.description, definition.progressiveDetails].filter(Boolean).join(' '),
-      inputSchema: definition.inputSchema ?? genericInputSchema,
+      inputSchema: modelInputSchema(definition.inputSchema),
       metadata: {
         runtimeToolId: definition.id,
         category: definition.category,

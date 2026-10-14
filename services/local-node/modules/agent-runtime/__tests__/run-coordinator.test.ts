@@ -329,7 +329,7 @@ describe("headless Run coordinator", () => {
     expect(inputQueueService.list(session.id)).toHaveLength(1);
   });
 
-  it("quarantines an unpersisted terminal outcome instead of rejecting an unobserved background promise", async () => {
+  it("clears recovery after a persistence failure whose owned execution stops successfully", async () => {
     const session = create();
     const interrupt = vi.fn(async () => {
       release();
@@ -343,20 +343,17 @@ describe("headless Run coordinator", () => {
     coordinator.submit(session.id, { message: "Run" }, "persistence-failure");
     release();
     try {
+      await vi.waitFor(() => expect(interrupt).toHaveBeenCalledTimes(1));
       await vi.waitFor(() =>
         expect(
           agentRuntimeStore.getSession(session.id).sessionMetadata
             ?.runtimeControl,
-        ).toMatchObject({ state: "unconfirmed" }),
+        ).toBeNull(),
       );
-      await vi.waitFor(() => expect(interrupt).toHaveBeenCalledTimes(1));
-      expect(() =>
-        coordinator.submit(session.id, { message: "Next" }, "unsafe-next"),
-      ).toThrow(/release/i);
-      await expect(coordinator.waitForIdle()).rejects.toThrow(/recovery/i);
+      await expect(coordinator.waitForIdle()).resolves.toBeUndefined();
+      expect(coordinator.isActive(session.id)).toBe(false);
     } finally {
       finish.mockRestore();
-      await coordinator.reconcileFailedStop(session.id);
     }
   });
 

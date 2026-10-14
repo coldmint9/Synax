@@ -1,3 +1,7 @@
+import { readFlatHistoryWindow, readFlatTimeline } from "../../modules/agent-runtime/flat-history-reader.js";
+import { simpleHistorySession, simpleHistoryRevision } from "../../modules/agent-runtime/simple-history.js";
+import { migrateFlatHistory, prepareFlatHistory } from "../../modules/agent-runtime/flat-history-migration.js";
+import { SIMPLE_HISTORY_STORAGE } from "../../infrastructure/runtime/env.js";
 import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
@@ -345,6 +349,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs/:jobId/cancel", async (
 });
 
 function withSessionPayload(sessionId: string) {
+  prepareFlatHistory(sessionId);
   const session = projectSessionState(agentSessionRuntime.get(sessionId));
   const profile = profileService.getForSession(session);
   return {
@@ -843,7 +848,7 @@ agentRuntimeRoutes.post(
 
 agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
-    const result = await migrateJsonlSession(c.req.param("sessionId"));
+    const result = SIMPLE_HISTORY_STORAGE ? migrateFlatHistory(c.req.param("sessionId")) : await migrateJsonlSession(c.req.param("sessionId"));
     return c.json({ upgraded: true, ...result });
   } catch (error) {
     return runtimeError(c, error);
@@ -854,6 +859,8 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
   try {
     const id = c.req.param("sessionId");
     agentRuntimeStore.getSession(id);
+    prepareFlatHistory(id);
+    if (simpleHistorySession(id)) return c.json(readFlatHistoryWindow(id, c.req.query("cursor")));
     if (!versionedSession(id))
       throw new AgentRuntimeError(
         "Upgrade history before using version windows.",
@@ -864,6 +871,16 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", (c) => {
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+agentRuntimeRoutes.get("/sessions/:sessionId/history-timeline", (c) => {
+  try {
+    const id = c.req.param("sessionId"); agentRuntimeStore.getSession(id);
+    const before = Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER);
+    if (!simpleHistorySession(id)) throw new AgentRuntimeError("Flat timeline unavailable", "HISTORY_UNSUPPORTED", 409);
+    if (!Number.isSafeInteger(before) || before < 1) throw new AgentRuntimeError("Invalid timeline cursor", "INVALID_INPUT", 400);
+    return c.json(readFlatTimeline(id, before));
+  } catch (error) { return runtimeError(c, error); }
 });
 
 // History windows intentionally omit large JSON fields. Fetch the saved preview
@@ -920,6 +937,18 @@ agentRuntimeRoutes.get(
   (c) => {
     try {
       const sessionId = c.req.param("sessionId");
+      agentRuntimeStore.getSession(sessionId);
+      if (simpleHistorySession(sessionId)) {
+        const revision = simpleHistoryRevision(sessionId);
+        const offset = Number(c.req.query("cursor") ?? 0);
+        if (!Number.isSafeInteger(offset) || offset < 0) throw new AgentRuntimeError("Invalid content cursor", "INVALID_INPUT", 400);
+        if ((offset > 0 || c.req.query("revision") !== undefined) && Number(c.req.query("revision")) !== revision)
+          throw new AgentRuntimeError("Conversation changed", "HISTORY_STALE", 409);
+        const row = getRawSqlite().prepare("SELECT substr(content,?,8192) AS text,length(content) AS size FROM agent_runtime_messages WHERE session_id=? AND id=?")
+          .get(offset + 1, sessionId, c.req.param("messageId")) as { text: string; size: number } | undefined;
+        if (!row) throw new AgentRuntimeError("Message missing", "NOT_FOUND", 404);
+        return c.json({ text: row.text, next: offset + 8192 < row.size ? offset + 8192 : undefined, revision });
+      }
       if (!versionedSession(sessionId))
         return c.json(
           { error: "Content paging requires a versioned session." },

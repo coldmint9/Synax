@@ -1,3 +1,4 @@
+import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { memo, useId } from "react";
 import { ChevronDown, CircleAlert, Gauge } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -162,13 +163,18 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
   );
   const compacting =
     sessionCompaction(session)?.status === "running" || liveCompaction;
-  const summary = compacting
+  const connected = useApiConnectivityStore(s => s.browserOnline && s.apiReachable !== "unreachable");
+  const liveSummary = compacting
     ? {
         ...runtimeProfileSummary(stats, session?.status, zh),
         label: zh ? "压缩中" : "Compacting",
         tone: "running",
       }
     : runtimeProfileSummary(stats, session?.status, zh);
+  const summary = connected ? liveSummary : {
+    ...liveSummary, label: zh ? "连接中断，状态待确认" : "Disconnected; status unconfirmed",
+    tone: "warning", stale: true,
+  };
   const composition = readContextComposition(stats, steps);
   const compositionLabel = zh ? "上下文类型占比" : "Context composition";
   const title = zh ? "运行详情" : "Runtime details";

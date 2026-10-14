@@ -3,7 +3,7 @@ import { AgentRuntimeError } from "./runtime-errors.js";
 
 const BURST_BYTES = 8192,
   BURST_EVENTS = 64,
-  BURST_MS = 20,
+  BURST_MS = 40,
   INPUT_BYTES = 65536,
   PROCESS_BYTES = 8 * 1024 * 1024;
 let reservedBytes = 0;

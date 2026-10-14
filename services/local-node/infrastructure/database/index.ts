@@ -1,3 +1,4 @@
+import { runToCompletion } from "./statement-lifecycle.js";
 import { createOwnerClient } from "./owner-libsql-client.js";
 import { connectStorageOwner, startStorageOwner, stopStorageOwner } from "./owner-client.js";
 import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
@@ -123,14 +124,17 @@ function installSqliteCompat(
     configurable: true,
     value: (sql: string) => {
       const statement = prepare(sql);
-      if (!guardLocally || !mutates(sql)) return statement;
+      if (!guardLocally) return statement;
+      const guarded = mutates(sql);
       const wrapped = new Proxy(statement, {
         get(target, key) {
           const value = Reflect.get(target, key, target);
           if (typeof value !== "function") return value;
           return (...args: unknown[]) => {
-            assertDatabaseWriteAllowed(compat, databasePath);
-            const result = value.apply(target, args);
+            if (guarded) assertDatabaseWriteAllowed(compat, databasePath);
+            const result = key === "run"
+              ? runToCompletion(compat, target, args)
+              : value.apply(target, args);
             return result === target ? wrapped : result;
           };
         },
@@ -514,6 +518,9 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
     "evidence_used_json",
     "evidence_used_json TEXT NOT NULL DEFAULT '[]'",
   );
+  // These compatibility columns are repaired after the SQL migration ledger.
+  if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE name='agent_runtime_tool_calls'").get())
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_flat_tool_step ON agent_runtime_tool_calls(session_id,step_id,started_at,id)");
 
 }
 

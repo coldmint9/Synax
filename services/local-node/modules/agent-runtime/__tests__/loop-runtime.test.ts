@@ -6,6 +6,7 @@ import { goalContinuationInput } from "../goal-continuation.js";
 import os from "node:os";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { inspectHistoryCacheAnchor } from "../../../infrastructure/llm-runtime/cache-policy.js";
+import * as mcpSessionTools from "../../../infrastructure/mcp/mcp-session-tool-provider.js";
 import { asSchema } from "@ai-sdk/provider-utils";
 import { resolveGatewaySelection } from "../../../infrastructure/llm-runtime/gateway.js";
 import { buildSessionPrompt } from "../session-prompt.js";
@@ -1242,6 +1243,60 @@ describe("agentLoopRuntime", () => {
     expect(chunks.find((chunk) => chunk.type === "run_started")).toMatchObject({
       run: { id: accepted.run.id },
     });
+  });
+
+  it("waits for initial MCP discovery before preparing the first model request", async () => {
+    let finishDiscovery!: () => void;
+    const discovery = new Promise<void>((resolve) => { finishDiscovery = resolve; });
+    const warmup = vi.spyOn(mcpSessionTools, "warmupMcpForSession").mockImplementation(() => discovery);
+    queueMockStep(makeTextStep("Ready."));
+    const session = agentSessionRuntime.create(executorInput);
+    const requestCount = capturedRequests.length;
+    const running = collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Start." }));
+    try {
+      await vi.waitFor(() => expect(warmup.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect(capturedRequests.length).toBe(requestCount);
+      finishDiscovery();
+      await running;
+      expect(capturedRequests.length).toBe(requestCount + 1);
+    } finally {
+      finishDiscovery();
+      await running;
+      warmup.mockRestore();
+    }
+  });
+
+  it("dispatches the next step while MCP reconnect is pending and records transition stages", async () => {
+    const readPath = "tmp/agent-loop-runtime-read.txt";
+    fs.mkdirSync(path.dirname(path.resolve(readPath)), { recursive: true });
+    fs.writeFileSync(path.resolve(readPath), "step fixture", "utf8");
+    let finishReconnect!: () => void;
+    const reconnect = new Promise<void>((resolve) => { finishReconnect = resolve; });
+    const warmup = vi.spyOn(mcpSessionTools, "warmupMcpForSession").mockResolvedValue(undefined);
+    mockStepResults.push({
+      ...makeToolStep({ toolName: "file_read", toolCallId: "call-read", args: { path: readPath } }),
+      onStart: () => { warmup.mockImplementation(() => reconnect); },
+    });
+    queueMockStep(makeTextStep("Done."));
+    const session = agentSessionRuntime.create(executorInput);
+    const requestCount = capturedRequests.length;
+    const running = collectChunks(agentLoopRuntime.streamRun(session.id, { message: "Read the file." }));
+    try {
+      await vi.waitFor(() => expect(capturedRequests.length).toBe(requestCount + 2), { timeout: 5000 });
+      await running;
+      const [run] = agentLoopRuntime.listRuns(session.id);
+      const steps = agentLoopRuntime.listRunSteps(session.id, run.id);
+      expect(steps[1].metadata).toMatchObject({
+        requestPreparationMs: expect.any(Number), stepTransitionMs: expect.any(Number),
+        requestReadyAt: expect.any(String),
+        requestPreparationTimingsMs: { schemas: expect.any(Number), historyProjection: expect.any(Number), gatewayPreparation: expect.any(Number) },
+      });
+      expect(steps[0].metadata.stepTransitionMs).toBeUndefined();
+    } finally {
+      finishReconnect();
+      await running;
+      warmup.mockRestore();
+    }
   });
 
   it("persists a multi-step read tool loop with run-step transcript parts", async () => {

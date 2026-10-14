@@ -306,8 +306,8 @@ describe("bounded token count cache", () => {
     expect(huge.length).toBeGreaterThan(MAX_TEXT_CHARS);
     expect(countTokens(huge)).toBe(countTokens(huge));
     const stats = tokenCacheStats();
-    expect(stats.encodes).toBe(2);
-    expect(stats.entries).toBe(0);
+    expect(stats.encodes).toBe(1);
+    expect(stats.entries).toBe(1);
     expect(stats.chars).toBe(0);
   });
 

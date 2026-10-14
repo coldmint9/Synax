@@ -1,3 +1,4 @@
+import { simpleHistorySession } from "../simple-history.js";
 import { appendOnlySession } from "./version-runtime/bridge.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -253,6 +254,7 @@ export async function withCheckpointMutation<T>(
   paths?: string[],
   signal?: AbortSignal,
 ): Promise<T> {
+  if (simpleHistorySession(sessionId)) { signal?.throwIfAborted(); assertHistoryUnlocked(sessionId); return action(); }
   const prepared = prepareMutation(
     sessionId,
     external || appendOnlySession(sessionId),

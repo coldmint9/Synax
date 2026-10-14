@@ -20,7 +20,7 @@ import { SyncEventType } from '../contracts/context.js';
 import type { ContextSession } from '../contracts/context.js';
 
 export class SessionManager {
-  private db = getRawSqlite();
+  private get db() { return getRawSqlite(); }
 
   /**
    * 查找同项目/同用户/同来源的活跃会话；如存在且尚未过期则复用，否则新建。

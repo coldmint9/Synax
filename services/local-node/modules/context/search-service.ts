@@ -45,7 +45,7 @@ function sanitizeFtsQuery(q: string): string {
 }
 
 export class SearchService {
-  private db = getRawSqlite();
+  private get db() { return getRawSqlite(); }
 
   searchEntries(
     projectId: string,

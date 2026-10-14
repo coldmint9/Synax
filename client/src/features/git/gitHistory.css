@@ -38,10 +38,6 @@
 .git-workbench-modern .mr-root-tabs [role="tab"] {
   color: var(--ui-subtle);
 }
-.workbench-shell[data-active-panel="git"] .wh-pill {
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
-}
 .git-control {
   cursor: pointer;
 }

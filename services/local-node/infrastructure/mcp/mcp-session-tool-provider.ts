@@ -34,9 +34,17 @@ function truncate(value: string): string {
   return value.length <= SUMMARY_LIMIT ? value : `${value.slice(0, SUMMARY_LIMIT)}…`
 }
 
+// MCP schemas are immutable for the lifetime of a discovered tool. Keep their
+// Zod identity stable across reads; replacing discovery results invalidates the
+// cache naturally, without retaining old sessions or disconnected servers.
+const registeredTools = new WeakMap<McpRuntimeToolDef, Map<string, RegisteredTool>>()
+
 function buildTool(serverId: string, tool: McpRuntimeToolDef, serverName = serverId): RegisteredTool {
+  const cacheKey = JSON.stringify([serverId, serverName])
+  const cached = registeredTools.get(tool)?.get(cacheKey)
+  if (cached) return cached
   const id = `${TOOL_PREFIX}${serverId}.${sanitizeName(tool.name)}`
-  return {
+  const registered: RegisteredTool = {
     id,
     label: `${tool.title || tool.name} (MCP ${serverName})`,
     description: tool.description ?? `Call MCP tool ${tool.name} on server ${serverId}.`,
@@ -80,6 +88,10 @@ function buildTool(serverId: string, tool: McpRuntimeToolDef, serverName = serve
       }
     },
   }
+  let entries = registeredTools.get(tool)
+  if (!entries) registeredTools.set(tool, entries = new Map())
+  entries.set(cacheKey, registered)
+  return registered
 }
 
 class McpSessionToolProvider implements SessionToolProvider {

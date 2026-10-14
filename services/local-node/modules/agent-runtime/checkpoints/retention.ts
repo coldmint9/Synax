@@ -1,3 +1,4 @@
+import { simpleHistorySession } from "../simple-history.js";
 import { startVersionHistoryMaintenance } from "./version-runtime/maintenance.js";
 import { setImmediate as yieldNow } from "node:timers/promises";
 import { recoverOrphanedCheckpointWriters } from "./mutations.js";
@@ -105,6 +106,7 @@ export async function expireFileUndoCooperatively(
 }
 export function visitConversation(sessionId: string, now = Date.now()): void {
   agentRuntimeStore.getSession(sessionId);
+  if (simpleHistorySession(sessionId)) return;
   // Returning after expiration cannot extend the life of already-expired data.
   expireFileUndo(now, sessionId);
   getRawSqlite()

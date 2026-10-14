@@ -1,3 +1,4 @@
+import { initializeSimpleHistory } from "./simple-history.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { initializeFreshVersionNative, initializeFreshJsonlHistory } from "./checkpoints/version-runtime/bridge.js";
 import { assertHistoryUnlocked } from "./checkpoints/guards.js";
@@ -29,7 +30,7 @@ import { sessionHooks } from "./session-hooks.js";
 import { resolveInitialSessionTitle } from "./session-title-service.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { getProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
-import { TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
+import { SIMPLE_HISTORY_STORAGE, TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
 
 export class AgentSessionRuntime {
   constructor(
@@ -155,6 +156,7 @@ export class AgentSessionRuntime {
       }));
     }
     sessionMetadata.backend = backend;
+    if (SIMPLE_HISTORY_STORAGE) sessionMetadata.historyStorage = "sqlite-flat";
     if (
       !parent &&
       (input.profileId === "synax" || input.profileId === "goal")
@@ -206,9 +208,10 @@ export class AgentSessionRuntime {
     };
     const saved = getRawSqlite().transaction(() => {
       const saved = this.store.createSession(session);
-      if (TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
+      if (SIMPLE_HISTORY_STORAGE) initializeSimpleHistory(saved.id);
+      else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
       else if (
-        !parent &&
+        !SIMPLE_HISTORY_STORAGE && !parent &&
         (!input.backendId || input.backendId === "native") &&
         process.env.SYNAX_VERSION_HISTORY !== "legacy"
       )

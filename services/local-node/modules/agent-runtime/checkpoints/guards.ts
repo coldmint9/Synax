@@ -1,3 +1,4 @@
+import { simpleHistorySession } from "../simple-history.js";
 import { activeWorkspaceSessions, openWriterRoots } from "./lock-pages.js";
 import {
   boundaryOnlySession,
@@ -29,6 +30,7 @@ export function historyRevision(sessionId: string): number {
   );
 }
 export function historyEpoch(sessionId: string): number {
+  if (simpleHistorySession(sessionId)) return (getRawSqlite().prepare("SELECT epoch FROM conversation_flat_heads WHERE session_id=?").get(sessionId) as { epoch: number }).epoch;
   return versionedSession(sessionId)
     ? versionRepository().head(sessionId).epoch
     : historyRevision(sessionId);

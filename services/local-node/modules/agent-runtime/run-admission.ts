@@ -1,3 +1,4 @@
+import { prepareFlatHistory } from "./flat-history-migration.js";
 import { versionRuntimeMode } from "./checkpoints/version-runtime/bridge.js";
 import {
   assertHistoryUnlocked,
@@ -56,6 +57,7 @@ export function acceptRuntimeRun(
   requestId: string,
   mode: AgentSessionStreamMode = "turn",
 ): { run: AgentRun; reused: boolean } {
+  prepareFlatHistory(sessionId);
   if (versionRuntimeMode(sessionId) === "transcript")
     throw new AgentRuntimeError(
       "Version transcript rollout is not yet ready for execution.",

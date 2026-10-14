@@ -82,6 +82,7 @@ const tables = [
   "agent_runtime_messages",
   "agent_runtime_aux_usage",
   "agent_runtime_runs",
+  "conversation_flat_heads",
 ];
 /** User-visible deletion is one tombstone write. Every physical cleanup step is
  * resumable and limited to 64 identities; it is never a cascade over all history. */

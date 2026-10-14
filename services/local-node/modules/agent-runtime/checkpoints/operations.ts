@@ -1,3 +1,4 @@
+import { applyFlatHistory } from "../flat-history-truncate.js";
 import {
   writeFileJournal as writeJournal,
   FILE_JOURNAL_BYTES,
@@ -47,6 +48,7 @@ import {
   sessionRoots,
 } from "./guards.js";
 import { restoreHistoryBoundary } from "./state.js";
+import { simpleHistoryCheckpoints, simpleHistorySession, simpleHistoryRevision, simpleHistoryBoundary, removedMessageCount } from "../simple-history.js";
 
 export interface HistoryRequest {
   checkpointId: string;
@@ -143,6 +145,29 @@ function historyAvailability(sessionId: string) {
 }
 
 export function checkpointSummary(sessionId: string, requestedMessageIds?: readonly string[]) {
+  if (simpleHistorySession(sessionId)) {
+    const messages = simpleHistoryCheckpoints(sessionId, requestedMessageIds);
+    const requested = requestedMessageIds ? new Set(requestedMessageIds) : null;
+    const availability = historyAvailability(sessionId);
+    const session = agentRuntimeStore.getSession(sessionId);
+    const enabled = !session.parentSessionId && session.sessionMetadata?.historyRollbackEnabled !== false && ((session.sessionMetadata?.backend as { id?: string })?.id ?? "native") === "native";
+    const latest = Number((getRawSqlite().prepare("SELECT MAX(sequence) AS n FROM agent_runtime_messages WHERE session_id=?").get(sessionId) as { n: number }).n ?? 0);
+    return {
+      sessionId,
+      revision: simpleHistoryRevision(sessionId),
+      recoveryRequired: false,
+      ...availability,
+      rollbackEnabled: enabled,
+      checkpoints: (enabled ? messages : [])
+        .filter((checkpoint) => !requested || requested.has(checkpoint.messageId))
+        .map((checkpoint) => ({
+          id: checkpoint.id, kind: checkpoint.kind, messageId: checkpoint.messageId,
+          stepId: checkpoint.stepId, available: true, reason: null,
+          transcriptOnly: false, destructive: true, hasLaterHistory: checkpoint.kind === "input" || checkpoint.sequence < latest,
+          initialInput: checkpoint.kind === "input" && checkpoint.sequence === 1,
+        })),
+    };
+  }
   if (versionedSession(sessionId)) {
     const repo = versionRepository(),
       head = repo.head(sessionId),
@@ -243,6 +268,20 @@ export async function previewHistory(
   checkpointId: string,
   includeFiles = true,
 ): Promise<HistoryPreview> {
+  if (simpleHistorySession(sessionId)) {
+    supported(sessionId);
+    assertHistoryUnlocked(sessionId, []);
+    assertHistoryIdle(sessionId);
+    const checkpoint = simpleHistoryBoundary(sessionId, checkpointId);
+    return {
+      checkpointId, revision: simpleHistoryRevision(sessionId),
+      removedMessages: removedMessageCount(sessionId, checkpoint),
+      files: [], conflicts: [], canApply: true, warnings: [
+        "This action permanently removes later conversation messages and execution records.",
+        ...(includeFiles ? ["Workspace files are left unchanged."] : []),
+      ], preservedFiles: [], exclusions: "Conversation history only; workspace files are not changed.",
+    };
+  }
   if (versionedSession(sessionId)) {
     supported(sessionId);
     assertVersionTranscriptOperation(sessionId, includeFiles);
@@ -393,6 +432,7 @@ export async function applyHistory(
   sessionId: string,
   request: HistoryRequest,
 ): Promise<HistoryResult> {
+  if (simpleHistorySession(sessionId)) return applyFlatHistory(sessionId, request);
   if (versionedSession(sessionId)) {
     supported(sessionId);
     assertVersionTranscriptOperation(

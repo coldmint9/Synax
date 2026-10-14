@@ -537,8 +537,11 @@ export class ToolRegistry {
     return [...sessionTools, ...globalTools].filter(
       (t) =>
         extensionStore.active(session.projectId, "tool", t.id) &&
-        isToolMountedForSession(session, t) &&
-        (options.includeGated || !controlToolError(session, t)) &&
+        // controlToolError includes mounting checks; inspect mounting alone
+        // only when a caller explicitly asks to include gated tools.
+        (options.includeGated
+          ? isToolMountedForSession(session, t)
+          : !controlToolError(session, t)) &&
         (session.profileId !== "specialist" ||
           profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),

@@ -1,3 +1,4 @@
+import { SIMPLE_HISTORY_STORAGE } from "../../../../infrastructure/runtime/env.js";
 import { collectDeletedHistory } from "./deletion.js";
 import { getRawSqlite } from "../../../../infrastructure/database/index.js";
 import { logger } from "../../../../infrastructure/runtime/logger.js";
@@ -8,9 +9,12 @@ import { versionRepository } from "./bridge.js";
 /** One bounded step, including abandoned/resumable migration staging cleanup.
  * Never VACUUM or scan a session's complete history on the API event loop. */
 export function maintainVersionHistory(): void {
-  const db = getRawSqlite(),
-    repo = versionRepository();
-  repo.objects.externalize(8);
+  const db = getRawSqlite();
+  if (SIMPLE_HISTORY_STORAGE && !db.prepare("SELECT 1 FROM conversation_v3_objects LIMIT 1").get()
+    && !db.prepare("SELECT 1 FROM conversation_v3_payload_gc LIMIT 1").get()
+    && !db.prepare("SELECT 1 FROM conversation_v3_deletions LIMIT 1").get()) return;
+  const repo = versionRepository();
+  if (!SIMPLE_HISTORY_STORAGE) repo.objects.externalize(8);
   repo.objects.collectPayloads(8);
   repo.objects.collectPayloadSegments();
   const migration = db
@@ -34,7 +38,7 @@ export function maintainVersionHistory(): void {
         db.prepare("DELETE FROM conversation_v3_heads WHERE session_id=?").run(
           stage,
         );
-        if (migration.state === "cleanup") {
+        if (migration.state === "cleanup" && !db.prepare("SELECT 1 FROM conversation_flat_heads WHERE session_id=?").get(id)) {
           // Preserve file recovery records and before-images. Only retire the undo
           // machinery the user explicitly acknowledged; never duplicate it in v3.
           for (const table of [
@@ -130,10 +134,10 @@ export function startVersionHistoryMaintenance(): () => void {
         lastWarning = Date.now();
       }
     }
-    timer = setTimeout(tick, process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
+    timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
     timer.unref();
   };
-  timer = setTimeout(tick, process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
+  timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
   timer.unref();
   return () => {
     stopped = true;

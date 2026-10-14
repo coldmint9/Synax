@@ -10,6 +10,7 @@ export interface MessageCheckpoint {
   reason: string | null;
   canRollback?: boolean;
   transcriptOnly?: boolean;
+  destructive?: boolean;
   hasLaterHistory: boolean;
   initialInput: boolean;
 }

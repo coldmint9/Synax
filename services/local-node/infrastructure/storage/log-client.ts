@@ -19,7 +19,7 @@ function connect(): Socket {
     pending.clear();
   };
   active.on('error', fail);
-  active.on('close', () => fail(Object.assign(new Error('Log connection closed; query the request ID before retrying.'), { code: 'LOG_COMMIT_UNKNOWN' })));
+  active.on('close', () => fail(Object.assign(new Error('Log connection closed before acknowledgement.'), { code: 'LOG_COMMIT_UNKNOWN' })));
   receiveFrames(active, value => {
     const reply = value as OwnerReply;
     const entry = reply.id && pending.get(reply.id);
@@ -31,15 +31,15 @@ function connect(): Socket {
   });
   return active;
 }
-async function request<T>(input: Omit<OwnerRequest, 'token'>): Promise<T> {
+async function request<T>(input: Omit<OwnerRequest, 'token'>, timeoutMs = 30_000): Promise<T> {
   const active = connect();
   const id = randomUUID();
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
       if (!pending.size) active.unref();
-      reject(Object.assign(new Error('Log acknowledgement timed out; query the request ID before retrying.'), { code: 'LOG_COMMIT_UNKNOWN' }));
-    }, 30_000);
+      reject(Object.assign(new Error('Log acknowledgement timed out after automatic confirmation.'), { code: 'LOG_COMMIT_UNKNOWN' }));
+    }, timeoutMs);
     pending.set(id, { resolve: value => resolve(value as T), reject, timer });
     active.ref();
     try {
@@ -47,8 +47,33 @@ async function request<T>(input: Omit<OwnerRequest, 'token'>): Promise<T> {
     } catch (error) { pending.delete(id); clearTimeout(timer); if (!pending.size) active.unref(); reject(error); }
   });
 }
+async function appendWithConfirmation(sessionId: string, requestId: string, events: LogEvent[]): Promise<LogReceipt> {
+  const input = { operation: 'logAppend' as const, sessionId, requestId, events };
+  try {
+    return await request<LogReceipt>(input);
+  } catch (error) {
+    if (!(error instanceof Error) || (error as Error & { code?: string }).code !== 'LOG_COMMIT_UNKNOWN') throw error;
+    // The storage owner may have committed after the transport acknowledgement timed out.
+    // Check the idempotency receipt before retrying so a slow commit stays invisible to users.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const receipt = await request<LogReceipt | undefined>({ operation: 'logStatus', sessionId, requestId }, 5_000);
+        if (receipt) return receipt;
+      } catch (statusError) {
+        if (!(statusError instanceof Error) || (statusError as Error & { code?: string }).code !== 'LOG_COMMIT_UNKNOWN') throw statusError;
+      }
+      try {
+        return await request<LogReceipt>(input, 5_000);
+      } catch (retryError) {
+        if (!(retryError instanceof Error) || (retryError as Error & { code?: string }).code !== 'LOG_COMMIT_UNKNOWN') throw retryError;
+      }
+    }
+    throw error;
+  }
+}
+
 export const sessionLogClient = {
-  append: (sessionId: string, requestId: string, events: LogEvent[]) => request<LogReceipt>({ operation: 'logAppend', sessionId, requestId, events }),
+  append: appendWithConfirmation,
   read: (sessionId: string, after = 0, limit = 256) => request<CommittedEvent[]>({ operation: 'logRead', sessionId, after, limit }),
   cursor: (sessionId: string) => request<number>({ operation: 'logCursor', sessionId }),
   status: (sessionId: string, requestId: string) => request<LogReceipt | undefined>({ operation: 'logStatus', sessionId, requestId }),

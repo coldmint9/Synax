@@ -10,15 +10,15 @@ import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 
-/** Coalescing ceiling for streamed deltas: the journal admission limit is sized
- * against this rate, so both must move together. */
+/**
+ * The journal admission budget uses this conservative upper bound for the
+ * coalesced stream cadence. The writer itself no longer schedules a delta timer.
+ */
 export const DELTA_FLUSH_MS = 40;
 
 /** Shared by background runs and embedded hosts; it never moves a host or takes ownership of its tools. */
 export class RuntimeStreamWriter {
   private pending: AgentRunStreamChunk[] = [];
-  private delta?: Extract<AgentRunStreamChunk, { type: 'message_delta' | 'thought_delta' }>;
-  private timer?: ReturnType<typeof setTimeout>;
   private readonly revision: number;
   private writes = new Set<Promise<void>>();
   private writeFailure?: Error;
@@ -47,32 +47,16 @@ export class RuntimeStreamWriter {
       commit.push(...this.pending);
       this.pending = [];
     }
-    if (chunk.type === 'message_delta' || chunk.type === 'thought_delta') {
-      if (this.delta && (this.delta.type !== chunk.type || this.delta.stepId !== chunk.stepId)) this.drainDelta(commit);
-      this.delta = this.delta ? { ...this.delta, delta: this.delta.delta + chunk.delta } : { ...chunk, event: undefined };
-      if (this.delta.delta.length >= 8192) this.drainDelta(commit);
-      else if (!this.timer) this.timer = setTimeout(() => {
-        try { this.flush(); }
-        catch (error) { this.writeFailure = error instanceof Error ? error : new Error(String(error)); }
-      }, DELTA_FLUSH_MS);
-    } else {
-      this.drainDelta(commit);
-      commit.push(chunk);
-    }
+    // loop-delta-bursts already coalesces model deltas before they reach the
+    // runtime writer. Persist each coalesced event directly so this layer does
+    // not concatenate the same stream a second time or schedule another timer.
+    commit.push(chunk);
     this.commit(commit);
     // A completed write-class tool call invalidates the cached workspace
     // snapshot so the next environment poll reflects the edit immediately.
     if (chunk.type === 'tool_result' && chunk.toolCall && (chunk.toolCall as { mutability?: string }).mutability === 'write') {
       invalidateSessionEnvironment(this.sessionId);
     }
-  }
-
-  /** Move the buffered delta into the pending burst, clearing its pending timer. */
-  private drainDelta(sink: AgentRunStreamChunk[]): void {
-    if (!this.delta) return;
-    sink.push(this.delta);
-    this.delta = undefined;
-    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
   }
 
   /** Append the burst in one transaction; a lone chunk keeps the plain append path. */
@@ -142,17 +126,11 @@ export class RuntimeStreamWriter {
   }
 
   abandon(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined; this.delta = undefined; this.pending = [];
+    this.pending = [];
   }
 
   flush(): void {
     if (!this.isCurrent()) { this.abandon(); return; }
-    if (this.timer) clearTimeout(this.timer); this.timer = undefined;
-    if (this.delta && this.runId) {
-      this.commit([this.delta]);
-      this.delta = undefined;
-    }
   }
 }
 

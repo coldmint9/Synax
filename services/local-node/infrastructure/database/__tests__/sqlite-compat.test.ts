@@ -31,6 +31,18 @@ afterEach(async () => {
 });
 
 describe('libsql raw helpers', () => {
+  it('drains discarded RETURNING rows before committing and preserves rollback', async () => {
+    const { getRawSqlite } = await import('../index.js');
+    const db = getRawSqlite();
+    db.exec('CREATE TABLE returning_test(id INTEGER PRIMARY KEY, name TEXT)');
+    const insert = db.prepare('INSERT INTO returning_test(name) VALUES (?), (?) RETURNING id');
+    const result = db.transaction(() => insert.run('a', 'b'))();
+    expect(result).toMatchObject({ changes: 2, lastInsertRowid: 2 });
+    expect(() => db.transaction(() => { insert.run('c', 'd'); throw Error('undo'); })()).toThrow('undo');
+    expect(db.prepare('SELECT count(*) AS n FROM returning_test').get()).toMatchObject({ n: 2 });
+    expect(() => db.transaction(() => db.prepare('PRAGMA journal_mode').run())()).not.toThrow();
+  });
+
   it('provides libsql raw transaction helpers', async () => {
     const { getRawSqlite } = await import('../index.js');
     const db = getRawSqlite();

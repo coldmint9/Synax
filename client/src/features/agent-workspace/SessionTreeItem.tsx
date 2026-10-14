@@ -1,8 +1,9 @@
+import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { SearchHighlight } from "./SearchHighlight";
 import { SessionListTitle } from "./SessionListTitle";
 import { PixelLoader } from "./LoadingState";
 import { memo, useMemo } from "react";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal, WifiOff } from "lucide-react";
 import { copyTextToClipboard } from "../../adapters/electron/clipboard";
 import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useContextMenu } from "../../shared/ui/context-menu/ContextMenuProvider";
@@ -92,6 +93,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const title = depth > 0 ? getSubagentName(session) : useSessionDisplayTitle(session);
   const pinned = session.sessionMetadata?.pinned === true;
   const hasKids = children.length > 0;
+  const connected = useApiConnectivityStore(s => s.browserOnline && s.apiReachable !== "unreachable");
   const isRunning =
     session.status === "running" || session.status === "stopping";
   const unread = useAgentSessionStore((state) =>
@@ -186,7 +188,9 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         aria-current={isSelected ? "true" : undefined}
       >
         <span className="session-list-indicator" aria-hidden="true">
-          {isRunning ? (
+          {isRunning && !connected ? (
+            <WifiOff size={14} aria-label={locale === "zh" ? "连接中断，状态待确认" : "Disconnected; status unconfirmed"} />
+          ) : isRunning ? (
             <PixelLoader />
           ) : showStatusDot ? (
             <span

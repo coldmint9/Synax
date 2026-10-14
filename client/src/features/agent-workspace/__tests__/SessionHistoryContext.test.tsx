@@ -25,6 +25,16 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.restoreAllMocks());
 describe('history impact confirmation',()=>{
+ it('confirms irreversible trimming without exposing file restoration',async()=>{
+   function Trim(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,destructive:true})}>Trim</button>;}
+   render(<SessionHistoryProvider session={session} messages={[]}><Trim/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'Trim'}));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
+   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+   expect(screen.getByText(/后续消息和执行记录将被永久删除/)).toBeInTheDocument();
+   fireEvent.click(screen.getByRole('button',{name:'永久截取到此处'}));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+ });
  it('shows committed-file preservation and allows conversation-only trimming through a conflict',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));

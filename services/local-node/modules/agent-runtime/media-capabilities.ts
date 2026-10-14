@@ -18,7 +18,7 @@ import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveMediaProfile } from "../../infrastructure/llm-runtime/providers/media-profile.js";
 import { parseAssetInput, resolveFileParts } from "./file-input/index.js";
-import { isNativeVisual } from "./file-input/registry.js";
+import { isNativeVisual, MAX_PARSED_CHARACTERS } from "./file-input/registry.js";
 /**
  * Media input stays blocked while no layer declares the model's modalities, so
  * the message must name the action that works for every adapter.
@@ -291,6 +291,7 @@ export async function resolveMediaMessages(
   let remainingFiles = Math.max(0, capability.maxFiles - existingVisuals.length);
   let remainingBytes = Math.max(0, capability.maxTotalBytes - existingVisuals.reduce((sum, a) => sum + a.size, 0));
   const parsedAssets = new Map<string, ReturnType<typeof modelContentParts>>();
+  let hasRenderedPages = false;
   const resolvedMessages: LlmGatewayMessage[] = [];
   for (const message of messages) {
     if (!Array.isArray(message.content)) {
@@ -310,14 +311,48 @@ export async function resolveMediaMessages(
       let parsed = parsedAssets.get(id);
       if (!parsed) {
         try {
-          const parts = await resolveFileParts([{ type: "file", assetId: id }], projectId, {
-            ...capability, maxFiles: remainingFiles, maxTotalBytes: remainingBytes,
-          });
-          for (const p of parts) if (p.type !== "text") {
-            remainingFiles--;
-            remainingBytes -= getAsset(p.assetId, projectId).size;
+          const supportsImages = capability.verified &&
+            capability.modalities.includes("image") &&
+            (!capability.mediaTypes?.length || capability.mediaTypes.some(
+              type => type === "image/png" || type === "image/*",
+            ));
+          const document = await parseAssetInput(asset, supportsImages ? {
+            maxPages: remainingFiles,
+            maxImageBytes: capability.maxFileBytes,
+            maxTotalBytes: remainingBytes,
+          } : undefined);
+          const images = document.images ?? [];
+          assertMediaCapabilities(images.map(image => ({
+            ...asset,
+            filename: `${asset.filename}.page-${image.page}.png`,
+            mediaType: image.mediaType,
+            size: image.bytes.length,
+          })), { ...capability, maxFiles: remainingFiles, maxTotalBytes: remainingBytes });
+          // Request-only page renders have no durable asset identity. Materializing
+          // them minted fresh IDs on every retry; modelContentParts embedded those
+          // IDs in text, making identical PDF bytes fail snapshot validation.
+          // Keep source asset references intact and send derived pages inline.
+          parsed = [{ type: "text", text: document.text }];
+          for (const image of images) {
+            parsed.push({
+              type: "text",
+              text: image.context ?? `文件：${asset.filename}，第 ${image.page} 页完整页面图像。请结合该页文字和前后文分析图片、流程图及其关系。`,
+            }, {
+              type: "file",
+              data: Buffer.from(image.bytes),
+              mediaType: image.mediaType,
+              filename: `${asset.filename}.page-${image.page}.png`,
+              providerOptions: { openai: { imageDetail: "high" } },
+            });
           }
-          parsed = modelContentParts(parts).map(part => part.type === "text" ? { type: "text", text: part.text } : part);
+          if (parsed.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : 0), 0) > MAX_PARSED_CHARACTERS)
+            throw new AgentRuntimeError(
+              "输入及文件解析文字合计超过 100000 字符，请拆分后发送。",
+              "FILE_TEXT_TOO_LARGE", 413,
+            );
+          hasRenderedPages ||= images.length > 0;
+          remainingFiles -= images.length;
+          remainingBytes -= images.reduce((sum, image) => sum + image.bytes.length, 0);
         } catch (error) {
           if (!(error instanceof AgentRuntimeError) ||
             !(message.role === "assistant" || message.providerOptions?.synax?.toolCallId || message.providerOptions?.synax?.generatedMedia)) throw error;
@@ -385,8 +420,8 @@ export async function resolveMediaMessages(
     };
   });
   const assets = referencedAssets(messages, projectId);
-  if (!assets.length) return messages;
-  if (!projectId)
+  if (!assets.length && !hasRenderedPages) return messages;
+  if (assets.length && !projectId)
     throw new AgentRuntimeError(
       "Media requires a project context.",
       "MEDIA_PROJECT_REQUIRED",

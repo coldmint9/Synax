@@ -54,6 +54,7 @@ import { AgentNotFoundError, AgentRuntimeError } from "./runtime-errors.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { transcriptRepository } from "./transcript-repository.js";
 import { transcriptStorageEnabled } from "./transcript-repository.js";
+import { bumpSimpleHistoryRevision, simpleHistorySession } from "./simple-history.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -246,6 +247,7 @@ interface RunPartRow {
 }
 
 const RUNTIME_TABLES = [
+  "conversation_flat_heads",
   "agent_project_tool_grants",
   "conversation_history_access",
   "conversation_history_tracking",
@@ -1105,6 +1107,7 @@ export class AgentRuntimeStore {
     const db = getRawSqlite();
     const tx = db.transaction(() => {
       for (const id of deleteIds) {
+        db.prepare("DELETE FROM conversation_flat_heads WHERE session_id=?").run(id);
         db.prepare(
           "DELETE FROM conversation_history_tracking WHERE session_id=?",
         ).run(id);
@@ -1258,6 +1261,8 @@ export class AgentRuntimeStore {
   }
 
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
+    const db = getRawSqlite();
+    if (!db.inTransaction) return db.transaction(() => this.appendMessage(message))();
     if (versionedSession(message.sessionId)) {
       return getRawSqlite().transaction(() => {
         if (message.contentParts)
@@ -1279,8 +1284,9 @@ export class AgentRuntimeStore {
       })();
     }
     const session = this.getSession(message.sessionId);
-    const nextSequence = this.nextMessageSequence(message.sessionId);
-    if (transcriptStorageEnabled() && !versionedSession(message.sessionId))
+    const prior = getRawSqlite().prepare("SELECT sequence FROM agent_runtime_messages WHERE id=? AND session_id=?").get(message.id, message.sessionId) as { sequence: number } | undefined;
+    const nextSequence = prior?.sequence ?? this.nextMessageSequence(message.sessionId);
+    if (transcriptStorageEnabled(message.sessionId) && !versionedSession(message.sessionId))
       return transcriptRepository.appendJsonl({ ...message, sequence: nextSequence } as AgentRuntimeMessage & { sequence: number });
     if (message.contentParts)
       bindAssets(message.sessionId, message.contentParts);
@@ -1308,6 +1314,7 @@ export class AgentRuntimeStore {
         message.createdAt,
         message.contentParts ? stringify(message.contentParts) : null,
       );
+    if (simpleHistorySession(message.sessionId)) bumpSimpleHistoryRevision(message.sessionId);
     return message;
   }
 
@@ -1321,7 +1328,7 @@ export class AgentRuntimeStore {
         "messages",
         messageId,
       ) as unknown as AgentRuntimeMessage | undefined;
-    if (transcriptStorageEnabled() && transcriptRepository.ensureJsonl(sessionId))
+    if (transcriptStorageEnabled(sessionId) && transcriptRepository.ensureJsonl(sessionId))
       return transcriptRepository.jsonlMessage(sessionId, messageId);
     const row = transcriptRepository.legacyMessageRow(sessionId, messageId) as unknown as MessageRow | undefined;
     return row ? mapMessage(row) : undefined;
@@ -1385,7 +1392,7 @@ export class AgentRuntimeStore {
     if (this.collectionSessionState(sessionId) === "missing") return [];
     if (versionedSession(sessionId))
       return versionedList<AgentRuntimeMessage>(sessionId, "messages");
-    if (transcriptStorageEnabled() && transcriptRepository.ensureJsonl(sessionId))
+    if (transcriptStorageEnabled(sessionId) && transcriptRepository.ensureJsonl(sessionId))
       return transcriptRepository.jsonlMessages(sessionId);
     const rows = transcriptRepository.legacyMessageRows(sessionId) as unknown as MessageRow[];
     return rows.map(mapMessage);

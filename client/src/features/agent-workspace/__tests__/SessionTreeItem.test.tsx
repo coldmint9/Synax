@@ -78,7 +78,8 @@ describe("SessionTreeItem", () => {
     const title = container.querySelector(".session-list-title");
 
     expect(cells).toHaveLength(9);
-    expect(cells?.[0].getAttribute("style")).toContain("pixel-on");
+    expect(indicator?.getAttribute("data-activity-frame")).toBeDefined();
+    expect(cells?.[0].style.animation).toBe("");
     expect(indicator?.classList.contains("shrink-0")).toBe(true);
     expect(expandControl).toBeNull();
     expect(title).toBeTruthy();

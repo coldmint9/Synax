@@ -687,6 +687,11 @@ function legacyPrefix(
  * committed files) cannot authorize a blind write in the new history branch. */
 export function filterHistoryFileReads<T extends {id:string}>(sessionId:string,calls:T[]):T[] {
   const db=getRawSqlite();
+  const flat = db.prepare("SELECT json_extract(session_metadata_json,'$.fileReadAfterRowid') AS cursor FROM agent_runtime_sessions WHERE id=?").get(sessionId) as { cursor: number | null } | undefined;
+  if (flat?.cursor != null) {
+    const ids = new Set((db.prepare("SELECT id FROM agent_runtime_tool_calls WHERE session_id=? AND rowid>?").all(sessionId, flat.cursor) as { id: string }[]).map(row => row.id));
+    return calls.filter(call => ids.has(call.id));
+  }
   const row=db.prepare("SELECT json_extract(session_metadata_json,'$.fileReadHistoryBoundary') AS cursor FROM agent_runtime_sessions WHERE id=?").get(sessionId) as {cursor:number|null}|undefined;
   if(row?.cursor==null)return calls;
   const ids=new Set((db.prepare("SELECT record_key FROM conversation_history_journal WHERE session_id=? AND table_name='agent_runtime_tool_calls' AND before_json IS NULL AND sequence>?").all(sessionId,row.cursor) as {record_key:string}[]).map(record=>record.record_key));

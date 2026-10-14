@@ -39,7 +39,7 @@ const RULE_PATTERNS: Array<{ type: MemoryType; regex: RegExp }> = [
 ]
 
 export class MemoryManager {
-  private db = getRawSqlite()
+  private get db() { return getRawSqlite(); }
 
   /**
    * \u4ece\u6307\u5b9a\u4f1a\u8bdd\u63d0\u53d6\u53ef\u590d\u7528\u77e5\u8bc6\u3002\u8fd4\u56de\u5df2\u5199\u5165\u7684\u8bb0\u5fc6\u5217\u8868\u3002

@@ -59,17 +59,26 @@ describe('canonical command deck', () => {
     expect(headerSource).toContain('<IslandSurface kind="primary">');
     expect(headerSource).not.toContain('<Dropdown');
   });
-  it('keeps the island untinted in both themes without changing other glass surfaces', () => {
+  it('paints one solid island material in both themes without changing other glass surfaces', () => {
     const material = '.synax-island-material.liquid-glass-surface[data-glass-state]';
-    expect(declaration(material, '--glass-base')).toBe('transparent');
-    expect(declaration(material, '--glass-transparent')).toBe('transparent');
+    expect(declaration(material, '--glass-base')).toBe('var(--island-material-background)');
+    expect(declaration(material, '--glass-transparent')).toBe('var(--island-material-background)');
+    expect(declaration(material, '--glass-solid')).toBe('var(--island-material-background)');
+    // The envelope must stay opaque: no backdrop blur re-enters through this rule.
+    expect(declaration(material, '--glass-blur')).toBe('0px');
+    expect(declaration(material + ' > .liquid-glass-backdrop', 'backdrop-filter')).toBe('none');
+    expect(declaration('.synax-island', '--island-material-background')).toBe('var(--ui-panel-soft)');
+    expect(declaration('.dark .synax-island', '--island-material-background')).toBe('var(--ui-panel-soft)');
     expect(declaration('.synax-island', '--island-pill-background')).toBe('var(--ui-panel)');
     expect(declaration('.dark .synax-island', '--island-pill-background')).toBeUndefined();
   });
-  it('removes optical outlines and uses a flat selected pill with only a soft shadow', () => {
+  it('keeps the optical layers off and separates the envelope with a hairline and one soft shadow', () => {
     const material = '.synax-island-material.liquid-glass-surface[data-glass-state]';
-    expect(declaration(material + ' > .liquid-glass-backdrop', 'box-shadow')).toBe('none');
+    expect(declaration(material + ' > .liquid-glass-backdrop', 'box-shadow')).toBe(
+      'inset 0 0 0 1px var(--island-material-border), var(--island-material-shadow)');
     expect(declaration(material + ' > :is(.liquid-glass-svg, .liquid-glass-gpu-host)', 'display')).toBe('none');
+    expect(declaration('.synax-island', '--island-material-border')).toContain('--theme-border-strong');
+    expect(declaration('.dark .synax-island', '--island-material-shadow')).not.toContain('inset');
     expect(declaration('.synax-island', '--island-pill-shadow')).not.toContain('inset');
     expect(declaration('.dark .synax-island', '--island-pill-shadow')).not.toContain('inset');
     expect(declaration('.synax-island', '--island-pill-background')).not.toContain('gradient');

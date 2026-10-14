@@ -177,7 +177,7 @@ export function SessionHistoryProvider({
       }
       const epoch = ++requestEpoch.current;
       const requestId = crypto.randomUUID();
-      setIncludeFiles(action !== "fork" && !checkpoint.transcriptOnly);
+      setIncludeFiles(action !== "fork" && !checkpoint.transcriptOnly && !checkpoint.destructive);
       if (action === "fork") {
         forkInFlight.current = true;
         setExecuting(true);
@@ -305,7 +305,7 @@ export function SessionHistoryProvider({
             sessionId,
             checkpoint.id,
             action,
-            !checkpoint.transcriptOnly,
+            !checkpoint.transcriptOnly && !checkpoint.destructive,
           );
           if (epoch === requestEpoch.current) setPreview(value);
         } catch (e) {
@@ -439,7 +439,9 @@ export function SessionHistoryProvider({
       messages,
     ],
   );
-  const title = zh ? "回滚到此处" : "Roll back to here";
+  const title = pending?.checkpoint.destructive
+    ? (zh ? "永久截取到此处" : "Permanently trim to here")
+    : (zh ? "回滚到此处" : "Roll back to here");
   const outOfScope = (preview?.preservedFiles ?? []).map(
     (file) => `${file.path} · ${zh ? PRESERVED_KIND_ZH[file.kind] : file.reason}`,
   );
@@ -502,13 +504,16 @@ export function SessionHistoryProvider({
               <DialogTitle>{title}</DialogTitle>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-3 text-sm">
-              <label className="flex items-start gap-2 text-sm">
+              {!pending?.checkpoint.destructive && <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" checked={includeFiles} disabled={executing || pending?.checkpoint.transcriptOnly}
                   onChange={(event) => changeFilePolicy(event.target.checked)} className="mt-1 accent-[var(--accent)]" />
                 <span>{zh ? "同时撤销本会话记录的未提交文件变更" : "Also undo this session’s recorded uncommitted file changes"}</span>
-              </label>
+              </label>}
               {pending?.checkpoint.transcriptOnly && <p className="text-xs text-muted-foreground">
                 {zh ? "此边界由旧消息补建：仅恢复会话历史并重建上下文，不恢复当时的工作状态或文件。" : "This boundary was reconstructed from older messages. It restores conversation history and rebuilds context, without historical work state or file restoration."}
+              </p>}
+              {pending?.checkpoint.destructive && <p className="text-xs text-danger">
+                {zh ? "后续消息和执行记录将被永久删除，工作区文件保持不变。" : "Later messages and execution records will be permanently deleted. Workspace files remain unchanged."}
               </p>}
               {!includeFiles && <p className="text-xs text-muted-foreground">
                 {zh ? "仅裁剪会话历史，已有工作目录中的文件保持不变。" : "Trim conversation only; files in the existing workspace remain unchanged."}
@@ -523,8 +528,8 @@ export function SessionHistoryProvider({
                 <>
                   <p className="text-muted-foreground">
                     {zh
-                      ? `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
-                      : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
+                      ? pending?.checkpoint.destructive ? `永久删除 ${preview.removedMessages} 条后续消息` : `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
+                      : pending?.checkpoint.destructive ? `Permanently remove ${preview.removedMessages} later messages` : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
                   </p>
                   {includeFiles && preview.files.length > 0 && (
                     <ul className="message-history-files">
