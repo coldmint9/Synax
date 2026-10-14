@@ -166,7 +166,7 @@ it("shows one real message when it arrives before the run-start linkage and HTTP
     runs: [],
   }));
   expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
-  expect(screen.getByRole("status")).toHaveTextContent("正在思考");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("正在思考"));
   await act(async () => {
     finish({ run, reused: false });
     await sending;
@@ -174,7 +174,7 @@ it("shows one real message when it arrives before the run-start linkage and HTTP
   expect(screen.getAllByText("我上一轮说了啥")).toHaveLength(1);
 });
 
-it("holds partial history until the initial snapshot is ready, then preserves it during refresh", () => {
+it("holds partial history until the initial snapshot is ready, then preserves it during refresh", async () => {
   const message = {
     id: "history-reply", sessionId: "s1", runId: "old-run", stepId: null,
     role: "assistant" as const, content: "Complete history answer",
@@ -186,7 +186,8 @@ it("holds partial history until the initial snapshot is ready, then preserves it
   expect(container.querySelector(".session-transcript-skeleton")).not.toBeNull();
   act(() => useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: false }));
   const answer = screen.getByText(message.content);
-  expect(container.querySelector(".session-transcript-skeleton")).toBeNull();
+  expect(container.querySelector(".session-transcript-skeleton")).not.toBeNull();
+  await waitFor(() => expect(container.querySelector(".session-transcript-skeleton")).toBeNull());
   act(() => useAgentSessionStore.setState({ detailRefreshing: true }));
   expect(screen.getByText(message.content)).toBe(answer);
 });

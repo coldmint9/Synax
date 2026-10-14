@@ -143,6 +143,20 @@ describe('session workspace Git roots', () => {
     }
   })
 
+  it('resolves an unscoped file reference from the repository that contains it', async () => {
+    const referenceOnlyPath = 'sql/reference-only.sql'
+    fs.mkdirSync(path.dirname(path.join(reference.path, referenceOnlyPath)), { recursive: true })
+    fs.writeFileSync(path.join(reference.path, referenceOnlyPath), 'reference-only\n')
+
+    await expect(getSessionEnvironmentFile(sessionId, referenceOnlyPath, 'input')).resolves.toEqual({
+      sessionId,
+      path: referenceOnlyPath,
+      kind: 'input',
+      content: 'reference-only\n',
+      truncated: false,
+    })
+  })
+
   it('reads validated image bytes without UTF-8 conversion', async () => {
     const imagePath = 'assets/pixel.png'
     const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])

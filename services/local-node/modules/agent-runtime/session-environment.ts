@@ -142,6 +142,41 @@ export function resolveSessionRepository(
   }
 }
 
+/**
+ * Resolve a relative file reference to the repository that actually owns it.
+ * Transcript links do not always carry a root id, while a session may contain
+ * several repositories with the same relative path.
+ */
+function resolveSessionFileRepository(
+  sessionId: string,
+  projectId: string,
+  relativePath: string,
+  rootId?: string,
+): ProjectWorkspaceRoot {
+  if (rootId) return resolveSessionRepository(sessionId, projectId, rootId);
+
+  const cleanPath = assertRelativePath(relativePath);
+  const roots = resolveSessionWorkspaceRoots(sessionId, projectId);
+  const orderedRoots = [...roots].sort(
+    (a, b) => Number(b.role === "primary") - Number(a.role === "primary"),
+  );
+
+  for (const root of orderedRoots) {
+    try {
+      const workspacePath = canonicalWorkspaceDirectory(workspaceRootHostPath(root));
+      const absolutePath = resolveSafeFile(workspacePath, cleanPath);
+      if (fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile()) {
+        return { ...root, path: workspacePath, status: "available" };
+      }
+    } catch {
+      // An unavailable or invalid candidate should not prevent another root
+      // from resolving the same relative transcript reference.
+    }
+  }
+
+  return resolveSessionRepository(sessionId, projectId);
+}
+
 export interface SessionEnvironmentFileView {
   sessionId: string;
   path: string;
@@ -845,12 +880,13 @@ export async function getSessionEnvironmentFileMedia(
   rootId?: string,
 ): Promise<SessionEnvironmentFileMedia> {
   const session = getSession(sessionId);
-  const workspacePath = resolveSessionRepository(
+  const cleanPath = assertRelativePath(relativePath);
+  const workspacePath = resolveSessionFileRepository(
     sessionId,
     session.projectId,
+    cleanPath,
     rootId,
   ).path;
-  const cleanPath = assertRelativePath(relativePath);
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   if (!fs.existsSync(absolutePath))
     throw new AgentValidationError(`File not found: ${cleanPath}`);
@@ -873,12 +909,13 @@ export async function getSessionEnvironmentFile(
   rootId?: string,
 ): Promise<SessionEnvironmentFileView> {
   const session = getSession(sessionId);
-  const workspacePath = resolveSessionRepository(
+  const cleanPath = assertRelativePath(relativePath);
+  const workspacePath = resolveSessionFileRepository(
     sessionId,
     session.projectId,
+    cleanPath,
     rootId,
   ).path;
-  const cleanPath = assertRelativePath(relativePath);
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   let content = "";
 

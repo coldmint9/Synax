@@ -23,9 +23,11 @@ it("preserves default, worktree and managed-branch detail and selects with Headl
   const user = userEvent.setup(), change = vi.fn();
   const { container } = render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled={false} onChange={change} />);
   const trigger = screen.getByRole("button", { name: "Git workspace" });
-  await waitFor(() => expect(trigger).toBeEnabled());
+  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
+  expect(trigger).toBeEnabled();
   await user.tab();
   await user.keyboard(" ");
+  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", undefined));
   const list = await screen.findByRole("listbox", { name: "Workspace options" });
   expect(container).not.toContainElement(list);
   expect(screen.getAllByRole("option")).toHaveLength(4);
@@ -45,12 +47,13 @@ it("preserves default, worktree and managed-branch detail and selects with Headl
 it("does not allow selecting a workspace while disabled and hides unavailable repositories", async () => {
   const change = vi.fn();
   const view = render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled onChange={change} />);
-  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p"));
+  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Git workspace" }));
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
   vi.mocked(projectApi.listGitWorkspaces).mockRejectedValue(new Error("Not a Git repository"));
   view.rerender(<GitWorkspacePicker projectId="other" value={{ kind: "default" }} disabled={false} onChange={change} />);
+  await userEvent.click(screen.getByRole("button", { name: "Git workspace" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Git workspace" })).not.toBeInTheDocument());
 });
 
@@ -58,8 +61,10 @@ it('offers a fresh detached worktree first and filters workspaces without changi
   const user = userEvent.setup(), change = vi.fn();
   render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled={false} onChange={change} />);
   const trigger = screen.getByRole('button', { name: 'Git workspace' });
-  await waitFor(() => expect(trigger).toBeEnabled());
+  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
+  expect(trigger).toBeEnabled();
   await user.click(trigger);
+  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith('p', undefined));
   const search = screen.getByRole('combobox', { name: 'Search workspaces' });
   const options = await screen.findAllByRole('option');
   expect(options[0]).toHaveTextContent('Start in a new worktree');

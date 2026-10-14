@@ -16,6 +16,9 @@ import { getApiOrigin } from "./originConfig";
 export { getApiOrigin, initApiOrigin } from "./originConfig";
 export { isOfflineError };
 
+type FetchPriority = "high" | "low" | "auto";
+export type ApiFetchInit = RequestInit & { priority?: FetchPriority };
+
 /** Endpoint-level 5xx failures stay local to that request. Only transport
  * failures and the dedicated health probe are allowed to mark the API offline. */
 export function applyConnectivityFromResponse(resp: Response): void {
@@ -26,7 +29,7 @@ export function applyConnectivityFromResponse(resp: Response): void {
 
 export async function apiFetch(
   input: string,
-  init?: RequestInit,
+  init?: ApiFetchInit,
 ): Promise<Response> {
   if (useApiConnectivityStore.getState().shouldSkipRequest())
     throw createOfflineError();

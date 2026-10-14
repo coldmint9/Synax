@@ -1,5 +1,6 @@
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
+import { useTranscriptReveal } from "./useTranscriptReveal";
 import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -209,6 +210,8 @@ export function SessionTranscript({
   // Live events can populate messages before the initial history request ends.
   // Keep that partial snapshot behind the loader unless this is a local send.
   const waitingForHistory = loading && !pending;
+  const revealed = useTranscriptReveal(scrollRef, sessionId, detailReady || Boolean(pending), active);
+  const preparing = !revealed && !error;
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
@@ -253,12 +256,27 @@ export function SessionTranscript({
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">
       <div className="session-transcript-viewport relative min-h-0 flex-1">
+        {preparing && (
+          <div role="status" className="session-transcript-loading absolute inset-0 z-20 overflow-hidden">
+            <div className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4">
+              <span className="sr-only">{locale === "zh" ? "正在加载对话" : "Loading conversation"}</span>
+              <Skeleton className="ml-auto h-16 w-2/3 rounded-xl" />
+              <Skeleton className="h-4 w-3/4 rounded-lg" />
+              <Skeleton className="h-4 w-full rounded-lg" />
+              <Skeleton className="h-4 w-1/2 rounded-lg" />
+              <Skeleton className="mt-8 h-24 w-3/4 rounded-xl" />
+            </div>
+          </div>
+        )}
         <div
           ref={scrollRef}
+          data-preparing={preparing ? "true" : "false"}
+          inert={preparing}
+          aria-hidden={preparing}
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
           className="session-chat-scroll scrollbar-none h-full overflow-y-auto"
-          aria-busy={loading || refreshing || olderHistory.loading}
+          aria-busy={preparing || loading || refreshing || olderHistory.loading}
         >
           <div className="session-transcript-body">
             {olderHistory.loading && (
@@ -288,21 +306,7 @@ export function SessionTranscript({
                 </button>
               </div>
             )}
-            {waitingForHistory ? (
-              <div
-                role="status"
-                className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4"
-              >
-                <span className="sr-only">
-                  {locale === "zh" ? "正在加载对话" : "Loading conversation"}
-                </span>
-                <Skeleton className="ml-auto h-16 w-2/3 rounded-xl" />
-                <Skeleton className="h-4 w-3/4 rounded-lg" />
-                <Skeleton className="h-4 w-full rounded-lg" />
-                <Skeleton className="h-4 w-1/2 rounded-lg" />
-                <Skeleton className="mt-8 h-24 w-3/4 rounded-xl" />
-              </div>
-            ) : error && projected.messages.length === 0 && !showLiveBlock ? (
+            {waitingForHistory ? null : error && projected.messages.length === 0 && !showLiveBlock ? (
               <div
                 role="alert"
                 className="p-6 text-center text-sm text-muted-foreground"
@@ -360,7 +364,7 @@ export function SessionTranscript({
             )}
           </div>
         </div>
-        {active && <SessionNavigationPanel scrollRootRef={scrollRef} />}
+        {active && !preparing && <SessionNavigationPanel scrollRootRef={scrollRef} />}
       </div>
     </div>
   );

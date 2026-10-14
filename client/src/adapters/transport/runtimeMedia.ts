@@ -19,7 +19,12 @@ export const runtimeMedia = {
     const body = new FormData();
     body.set("projectId", projectId);
     body.set("file", file);
-    const response = await apiFetch(BASE, { method: "POST", body, signal });
+    const response = await apiFetch(BASE, {
+      method: "POST",
+      body,
+      signal,
+      priority: "high",
+    });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = typeof data?.error === "string" ? data.error : undefined;

@@ -24,6 +24,10 @@ function MediaAsset({
   }, [opened]);
   useEffect(() => {
     const controller = new AbortController();
+    setAsset(undefined);
+    setUrl(undefined);
+    setError("");
+    setTextContent(undefined);
     let objectUrl: string | undefined;
     void runtimeMedia
       .metadata(id)
@@ -32,7 +36,9 @@ function MediaAsset({
         setAsset(asset);
         const blob = await runtimeMedia.blob(id, controller.signal);
         if (controller.signal.aborted) return;
-        if (asset.mediaType === "text/plain") setTextContent(await blob.text());
+        const text = asset.mediaType === "text/plain" ? await blob.text() : undefined;
+        if (controller.signal.aborted) return;
+        setTextContent(text);
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
       })
@@ -52,7 +58,7 @@ function MediaAsset({
     );
   if (!asset)
     return (
-      <span className="text-xs text-muted-foreground">
+      <span data-transcript-pending="true" className="text-xs text-muted-foreground">
         加载附件… / Loading attachment…
       </span>
     );
@@ -62,7 +68,7 @@ function MediaAsset({
     if (textContent !== undefined) await navigator.clipboard.writeText(textContent);
   };
   return (
-    <div className="relative max-w-full rounded-xl border border-border/50 bg-surface/60 p-2 text-xs">
+    <div data-transcript-pending={!url ? "true" : undefined} className="relative max-w-full rounded-xl border border-border/50 bg-surface/60 p-2 text-xs">
       {onRemove && (
         <button
           type="button"

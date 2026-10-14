@@ -1,8 +1,8 @@
-import { useId } from "react";
 import { createPortal } from "react-dom";
 import { Spinner } from "@/shared/ui/ui/Display";
 import { Button } from "@/shared/ui/ui/Button";
-import { ChevronDown, ChevronUp, Download, RotateCw, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, RotateCw } from "lucide-react";
+import { Dialog, DialogContainer, DialogPanel, DialogTitle, DialogDescription } from "@/shared/ui/ui/Dialog";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useDesktopUpdate } from "./DesktopUpdateProvider";
 import type { UpdaterState } from "../../adapters/electron/desktop-updates";
@@ -173,100 +173,91 @@ export function DesktopUpdateStatus({
 export function DesktopUpdatePanel() {
   const update = useDesktopUpdate();
   const { locale } = useLocale();
-  const bodyId = useId();
   const zh = locale === "zh";
-  if (
-    !update?.visible ||
-    !update.state ||
-    ["idle", "current", "complete"].includes(update.state.phase)
-  )
-    return null;
-  const {
-    minimized,
-    setMinimized,
-    state,
-    error,
-    dismiss,
-    requesting,
-    install,
-  } = update;
-  if (state.phase === "ready")
-    return createPortal(
-      <button
-        type="button"
-        title={zh ? "安装更新并重启 Synax" : "Install update and restart Synax"}
-        aria-label={zh ? "安装更新并重启 Synax" : "Install update and restart Synax"}
-        disabled={requesting}
-        className="fixed bottom-4 right-4 z-[90] flex h-11 w-11 items-center justify-center rounded-full bg-info text-info-foreground shadow-lg transition-transform hover:scale-105 hover:bg-info/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
-        onClick={() => void install()}
-      >
-        <Download size={19} aria-hidden="true" />
-      </button>,
-      document.body,
-    );
-  const canDismiss = state.phase === "error" || Boolean(error);
-  const closeLabel = zh ? "关闭更新窗口" : "Close update panel";
-  const label = minimized
-    ? zh
-      ? "展开更新进度"
-      : "Expand update progress"
-    : zh
-      ? "收起更新进度"
-      : "Minimize update progress";
-  return createPortal(
-    <section
-      aria-label={zh ? "软件更新进度" : "Software update progress"}
-      className="fixed bottom-4 right-4 z-[90] w-[360px] max-w-[calc(100vw-32px)] rounded-lg border border-border bg-card p-4 text-foreground shadow-lg"
-    >
-      <header className="flex min-h-7 items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
-          <Download size={14} className="shrink-0" />
-          <span className="truncate">
-            {minimized
-              ? `Synax ${state.availableVersion ?? state.currentVersion}`
-              : zh
-                ? "在线更新"
-                : "Online updates"}
-          </span>
-          {minimized && (
-            <span className="text-muted-foreground">
-              {state.phase === "downloading"
-                ? `${Math.floor(state.progress * 100)}%`
-                : phaseLabel(state.phase, zh)}
-            </span>
-          )}
+  if (!update?.visible || (!update.state && !update.error)) return null;
+  const { minimized, setMinimized, state, error, requesting, install, check } = update;
+  const failure = error || (state?.phase === "error" ? state.message : null);
+  const phase = failure ? "error" : state?.phase ?? "error";
+  if (["idle", "current", "complete"].includes(phase)) return null;
+  const ready = phase === "ready";
+  const installing = phase === "installing";
+  const busy = ["checking", "available", "downloading", "verifying", "installing"].includes(phase);
+  const percent = ready ? 100 : Math.floor(Math.max(0, Math.min(1, state?.progress ?? 0)) * 100);
+  const indeterminate = ["checking", "available", "verifying", "installing"].includes(phase);
+  const title = ready ? (zh ? "更新已就绪" : "Update ready")
+    : phase === "downloading" ? (zh ? "正在更新 Synax" : "Updating Synax")
+    : phaseLabel(phase, zh);
+  const version = state?.availableVersion ?? state?.currentVersion;
+
+  if (minimized) return createPortal(
+    <section aria-label={zh ? "软件更新进度" : "Software update progress"}
+      className="fixed bottom-4 right-4 z-[90] flex w-[360px] max-w-[calc(100vw-32px)] items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-foreground shadow-lg">
+      <div className="flex min-w-0 items-center gap-3 text-xs">
+        <Download size={18} className="shrink-0 text-info" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="truncate font-medium">Synax {version}</p>
+          <p role="status" className="mt-1 text-muted-foreground">
+            {phase === "downloading" ? percent + "%" : title}
+          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            title={label}
-            aria-label={label}
-            aria-expanded={!minimized}
-            aria-controls={bodyId}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-default"
-            onClick={() => setMinimized(!minimized)}
-          >
-            {minimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-          {canDismiss && (
-            <button
-              type="button"
-              title={closeLabel}
-              aria-label={closeLabel}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-default"
-              onClick={dismiss}
-            >
-              <X size={16} />
-            </button>
-          )}
-        </div>
-      </header>
-      {!minimized && (
-        <div id={bodyId} className="mt-3">
-          <DesktopUpdateStatus />
-        </div>
-      )}
-    </section>,
-    document.body,
+      </div>
+      <Button size="sm" variant="ghost" aria-label={zh ? "展开更新进度" : "Expand update progress"}
+        onClick={() => setMinimized(false)}><ChevronUp size={16} /></Button>
+    </section>, document.body,
+  );
+
+  return (
+    <Dialog open onClose={() => setMinimized(true)} dismissible={!installing} className="z-[90]">
+      <DialogContainer size="lg">
+        <DialogPanel
+          role="region"
+          aria-label={zh ? "软件更新进度" : "Software update progress"}
+          className="!gap-0 !border-white/10 !bg-[#090909] !p-0 !text-white"
+        >
+          <header className="flex shrink-0 items-center justify-between px-6 py-4">
+            <span className="text-xs text-white/50">Synax · {zh ? "在线更新" : "Online updates"}</span>
+            <Button size="sm" variant="ghost" disabled={installing}
+              className="!text-white/70 hover:!bg-white/10"
+              aria-label={zh ? "收起更新进度" : "Minimize update progress"}
+              onClick={() => setMinimized(true)}><ChevronDown size={16} />{zh ? "稍后继续" : "Continue later"}</Button>
+          </header>
+          <div className="flex min-h-0 flex-col items-center overflow-y-auto px-6 pb-12 pt-8 text-center sm:px-16 sm:pb-16 sm:pt-14">
+            <div aria-hidden="true" className="relative mb-9 flex h-20 w-20 shrink-0 items-center justify-center">
+              <div className={busy ? "absolute inset-0 rounded-full border-2 border-white/15 border-t-white motion-safe:animate-spin" : "absolute inset-0 rounded-full border border-white/20"} />
+              <span className="text-3xl font-semibold">S</span>
+            </div>
+            <DialogTitle className="!text-xl">{title}</DialogTitle>
+            <DialogDescription className="mt-3 !text-white/55">
+              {ready ? (zh ? "重启以完成更新。重启会停止当前任务，请在任务完成后操作。" : "Restart to finish updating. Restarting stops current tasks; wait until they finish.")
+                : failure ? (zh ? "无法完成更新，请重试或手动下载最新版本。" : "Could not finish updating. Retry or download the latest version.")
+                : installing ? (zh ? "正在安装更新并重启 Synax…" : "Installing the update and restarting Synax…")
+                : (zh ? "下载期间任务继续运行，你可以收起此窗口继续工作。" : "Your tasks keep running while downloading. Minimize to keep working.")}
+            </DialogDescription>
+            {!failure && (
+              <div className="mt-9 w-full max-w-sm">
+                <div role="progressbar" aria-label={zh ? "更新下载进度" : "Update download progress"}
+                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate ? undefined : percent}
+                  aria-valuetext={indeterminate ? title : percent + "%"}
+                  className="h-2 overflow-hidden rounded-full bg-white/15">
+                  <div className={"h-full rounded-full bg-[#1686ff] transition-[width] motion-reduce:transition-none " + (indeterminate ? "motion-safe:animate-pulse" : "")}
+                    style={{ width: (indeterminate ? 100 : percent) + "%" }} />
+                </div>
+                <p role="status" className="mt-5 text-sm tabular-nums text-white/70">
+                  {ready ? "Synax " + version : indeterminate ? title : percent + "%"}
+                </p>
+              </div>
+            )}
+            {failure && <p role="alert" className="mt-6 max-w-sm break-words text-sm text-red-300">{failure}</p>}
+            {ready && <Button className="mt-8 !rounded-full !bg-white !px-6 !text-black hover:!bg-white/90"
+              disabled={requesting} onClick={() => void install()}>{zh ? "更新并重启" : "Update and restart"}</Button>}
+            {failure && <Button className="mt-8" disabled={requesting} onClick={() => void check()}>{zh ? "重试" : "Retry"}</Button>}
+            {!installing && <a className="mt-7 text-sm text-white/50 underline underline-offset-4 hover:text-white focus-visible:outline focus-visible:outline-2"
+              href="https://github.com/coldmint9/Synax/releases/latest" target="_blank" rel="noopener noreferrer">
+              {zh ? "下载最新版本" : "Download latest version"}
+            </a>}
+          </div>
+        </DialogPanel>
+      </DialogContainer>
+    </Dialog>
   );
 }

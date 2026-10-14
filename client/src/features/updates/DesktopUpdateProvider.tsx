@@ -46,7 +46,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       setState(next);
       setError(null);
-      if (next && ["ready", "error"].includes(next.phase))
+      if (next && ["available", "downloading", "verifying", "ready", "error"].includes(next.phase))
         setVisible(true);
     };
     // Subscribe first: a slow initial snapshot must not overwrite newer progress.
@@ -88,6 +88,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
           : api.installDesktopUpdate());
       } catch (error) {
         setError(error instanceof Error ? error.message : String(error));
+        setVisible(true);
       } finally {
         pending.current = false;
         setRequesting(false);

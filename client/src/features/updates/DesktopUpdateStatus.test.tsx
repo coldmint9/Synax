@@ -114,8 +114,7 @@ it("shows live progress in both settings and a minimizable panel, without an ins
   renderUpdates();
   await screen.findByText("尚未检查更新");
   update({ phase: "downloading", progress: 0.25 });
-  expect(screen.queryByRole("region", { name: "软件更新进度" })).not.toBeInTheDocument();
-  act(() => show());
+  expect(screen.getByRole("region", { name: "软件更新进度" })).toBeInTheDocument();
   const settings = within(screen.getByTestId("settings"));
   const panel = within(screen.getByRole("region", { name: "软件更新进度" }));
   expect(settings.getByRole("progressbar")).toHaveAttribute(
@@ -130,14 +129,15 @@ it("shows live progress in both settings and a minimizable panel, without an ins
   expect(settings.getByRole("button", { name: "检查更新" })).toBeDisabled();
   await userEvent.click(panel.getByRole("button", { name: "收起更新进度" }));
   update({ phase: "downloading", progress: 0.5 });
-  expect(panel.getByText("50%")).toBeVisible();
-  expect(panel.queryByRole("progressbar")).not.toBeInTheDocument();
+  const minimizedPanel = within(screen.getByRole("region", { name: "软件更新进度" }));
+  expect(minimizedPanel.getByText("50%")).toBeVisible();
+  expect(minimizedPanel.queryByRole("progressbar")).not.toBeInTheDocument();
   expect(settings.getByRole("progressbar")).toHaveAttribute(
     "aria-valuenow",
     "50",
   );
-  act(() => show());
-  expect(panel.getByRole("progressbar")).toBeVisible();
+  await userEvent.click(minimizedPanel.getByRole("button", { name: "展开更新进度" }));
+  expect(screen.getByRole("region", { name: "软件更新进度" }).querySelector('[role="progressbar"]')).toBeTruthy();
   update({ phase: "downloading", progress: 1 });
   expect(settings.getByRole("progressbar")).toHaveAttribute(
     "aria-valuenow",
@@ -160,16 +160,13 @@ it("shows live progress in both settings and a minimizable panel, without an ins
   expect(api.installDesktopUpdate).toHaveBeenCalledOnce();
 });
 
-it("shows a blue install icon when the package is ready and installs on click", async () => {
+it("shows the centered install action when the package is ready and installs on click", async () => {
   renderUpdates();
   await screen.findByText("尚未检查更新");
   update({ phase: "ready", progress: 1 });
 
-  const installIcon = screen.getByRole("button", {
-    name: "安装更新并重启 Synax",
-  });
-  expect(installIcon).toHaveClass("bg-info");
-  await userEvent.click(installIcon);
+  const installButton = screen.getByRole("button", { name: "更新并重启" });
+  await userEvent.click(installButton);
   expect(api.installDesktopUpdate).toHaveBeenCalledOnce();
 });
 

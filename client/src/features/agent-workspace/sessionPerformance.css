@@ -16,6 +16,18 @@
 .session-transcript-body {
   min-height: 100%;
 }
+.session-transcript-loading {
+  padding-top: var(--work-transcript-top-inset, 0px);
+  background: var(--work-transcript-surface, var(--background));
+}
+.session-chat-scroll[data-preparing] {
+  transition: opacity 160ms ease-out;
+}
+.session-chat-scroll[data-preparing="true"] {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
 .session-transcript-skeleton,
 .session-transcript-content,
 .session-workspace-panel--content .workspace-viewer-body {

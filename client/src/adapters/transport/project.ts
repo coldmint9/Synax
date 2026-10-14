@@ -4,7 +4,7 @@ import type {
   CreateProjectFromRepoRequest,
   CreateProjectFromScratchRequest,
 } from "../../shared/contracts/project";
-import { apiFetch } from "./origin";
+import { apiFetch, type ApiFetchInit } from "./origin";
 import {
   listProjects,
   mapToProjectSummary,
@@ -102,7 +102,7 @@ export interface GitWorkspaceSummary {
 }
 export type { GitHistoryPage, GitHistoryRef, GitCommitDetail } from "../../../../services/local-node/modules/git-history-contracts";
 
-async function projectRequest<T>(url: string, init?: RequestInit): Promise<T> {
+async function projectRequest<T>(url: string, init?: ApiFetchInit): Promise<T> {
   const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const body = (await resp
@@ -179,6 +179,7 @@ export const projectApi = {
   listGitWorkspaces(id: string, rootId?: string): Promise<GitWorkspaceSummary> {
     return projectRequest(
       `${API_BASE}/${encodeURIComponent(id)}/git/workspaces${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
+      { priority: "low" },
     );
   },
   gitHistory(id: string, input: { rootId?: string; offset?: number; limit?: number; snapshot?: string } = {}): Promise<import("../../../../services/local-node/modules/git-history-contracts").GitHistoryPage> {

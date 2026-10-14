@@ -3374,8 +3374,11 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
   background: color-mix(in srgb, var(--ui-accent) 86%, white);
 }
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-send:disabled {
-  background: color-mix(in srgb, var(--ui-accent) 22%, transparent);
-  color: var(--ui-subtle);
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 58%, transparent);
+  background: color-mix(in srgb, var(--ui-accent) 20%, transparent);
+  color: color-mix(in srgb, var(--ui-accent) 82%, var(--ui-text));
+  opacity: 1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 12%, transparent) inset;
 }
 
 .agent-dock-composer .agent-dock-composer-chip.agent-dock-composer-action:focus-visible {

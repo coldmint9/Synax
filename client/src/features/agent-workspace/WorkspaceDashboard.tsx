@@ -500,7 +500,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
 
-  if (sessionId && environment && repositories.length > 0) {
+  if (sessionId && environment && repositories.length <= 2) {
     return (
       <WorkspaceDashboardLayout
         key={environment.projectId}
@@ -590,7 +590,19 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                   <Layers2 size={12} />
                   {c.members}
                 </span>
-                <span className="workspace-count">{repositories.length}</span>
+                <span className="ws-project-switcher-actions">
+                  <span className="workspace-count">{repositories.length}</span>
+                  <button
+                    type="button"
+                    className="ws-project-refresh-all"
+                    aria-label={locale === "zh" ? "刷新全部项目" : "Refresh all projects"}
+                    title={locale === "zh" ? "刷新全部项目" : "Refresh all projects"}
+                    disabled={loading}
+                    onClick={() => void reload()}
+                  >
+                    <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+                  </button>
+                </span>
               </div>
               <div
                 className="ws-project-options"

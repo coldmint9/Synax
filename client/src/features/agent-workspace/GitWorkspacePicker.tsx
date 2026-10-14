@@ -80,6 +80,7 @@ function GitWorkspacePickerContent({
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<GitWorkspaceSummary | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     if (open) setQuery("");
@@ -89,8 +90,11 @@ function GitWorkspacePickerContent({
   }, [disabled, open, close]);
 
   useEffect(() => {
+    if (!open) return;
+
     let active = true;
     setLoading(true);
+    setUnavailable(false);
     setSummary(null);
     void projectApi
       .listGitWorkspaces(projectId, rootId)
@@ -98,7 +102,10 @@ function GitWorkspacePickerContent({
         if (active) setSummary(result);
       })
       .catch(() => {
-        if (active) setSummary(null);
+        if (active) {
+          setSummary(null);
+          setUnavailable(true);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -106,7 +113,7 @@ function GitWorkspacePickerContent({
     return () => {
       active = false;
     };
-  }, [projectId, rootId]);
+  }, [open, projectId, rootId]);
 
   const options = useMemo<WorkspaceOption[]>(() => {
     if (!summary) return [];
@@ -155,7 +162,7 @@ function GitWorkspacePickerContent({
     ];
   }, [summary, zh]);
 
-  if (!loading && !summary) return null;
+  if (unavailable) return null;
   const selectedId = selectionId(value);
   const selected = options.find((option) => option.id === selectedId);
   const label = selected?.label ?? (zh ? "项目默认工作区" : "Project default");
