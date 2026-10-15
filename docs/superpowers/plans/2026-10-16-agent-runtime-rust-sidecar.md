@@ -179,7 +179,8 @@ runtime-sidecar/
 验收：
 
 - [x] 新增 sidecar protobuf codec 和 Unix-socket request client；
-- [ ] 新增 `RuntimeFacade`，HTTP route 不再直接访问 runtime SQLite；
+- [x] 新增 `RuntimeFacade` shadow admission 验证边界；
+- [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - `runtime-stream-writer.ts` 使用 sidecar append；
 - Node worker 可以直接向 sidecar 写 stream batch；

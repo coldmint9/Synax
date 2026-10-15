@@ -36,6 +36,7 @@ import { interactionService } from "./interaction-service.js";
 import { workStore } from "./work-store.js";
 import { usesGoalWorkflow } from "./workflow-mode.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 interface Owner {
   context?: RuntimeExecutionContext;
@@ -129,6 +130,14 @@ export class RunCoordinator {
   ) {
     const accepted = this.acceptRun(sessionId, input, requestId, mode);
     this.launchAccepted(sessionId, accepted, mode);
+    if (!accepted.reused) {
+      const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
+      void runtimeFacade.shadowAdmit({
+        sessionId,
+        run: accepted.run,
+        runtime,
+      });
+    }
     return accepted;
   }
 
