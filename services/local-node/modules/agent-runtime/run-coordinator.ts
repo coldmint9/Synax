@@ -36,6 +36,7 @@ import { interactionService } from "./interaction-service.js";
 import { workStore } from "./work-store.js";
 import { usesGoalWorkflow } from "./workflow-mode.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { fileBackedReplayEnabled } from "./replay-storage.js";
 
 interface Owner {
   context?: RuntimeExecutionContext;
@@ -683,7 +684,7 @@ export class RunCoordinator {
       payload: { runId },
       visibility: "internal",
     });
-    if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+    if (fileBackedReplayEnabled()) {
       void runtimeJournal
         .appendDurable(sessionId, runId, [{ type: "event", event }])
         .catch((error) =>
