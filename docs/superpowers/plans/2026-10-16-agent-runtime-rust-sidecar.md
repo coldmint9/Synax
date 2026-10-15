@@ -192,7 +192,8 @@ runtime-sidecar/
 - [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
 - [x] `runtime-journal.ts` 增加可配置 sidecar replay/snapshot projection；
-- [ ] 在完整 Node runtime 中验证 authoritative stream adapter；
+- [x] 通过真实 Node↔Rust authoritative stream smoke 验证 append/replay/payload/sequence；
+- [ ] 在真实 agent worker 运行中验证 authoritative stream adapter；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；
