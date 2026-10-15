@@ -127,7 +127,7 @@ export class RuntimeSidecarClient {
     sessionId: string,
     epoch: number,
     revision: number,
-    requestId = randomUUID(),
+    requestId: string = randomUUID(),
   ): Promise<SidecarEnvelope> {
     await this.connect();
     return new Promise((resolve, reject) => {

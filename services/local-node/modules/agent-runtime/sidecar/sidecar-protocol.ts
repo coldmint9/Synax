@@ -256,6 +256,25 @@ function firstBool(bytes: Uint8Array, field: number): boolean {
 
 function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
   switch (field) {
+    case 10: return { type: 'hello', token: firstString(bytes, 1) ?? '' };
+    case 11: return { type: 'health' };
+    case 12: return { type: 'shutdown' };
+    case 13: return { type: 'ping' };
+    case 14: return { type: 'admit_run', bodyHash: firstString(bytes, 1) ?? '', runId: firstString(bytes, 2) ?? '' };
+    case 15: return {
+      type: 'append_stream',
+      runId: firstString(bytes, 1) ?? '',
+      producerId: firstString(bytes, 2) ?? '',
+      producerSequence: firstNumber(bytes, 3),
+      durability: decodeDurability(firstNumber(bytes, 5)),
+      events: fieldsOf(bytes, 4).map((item) => {
+        const event = item.value as Uint8Array;
+        return { kind: firstString(event, 1) ?? '', payload: firstBytes(event, 2) ?? new Uint8Array() };
+      }),
+    };
+    case 16: return { type: 'snapshot' };
+    case 17: return { type: 'replay', after: firstNumber(bytes, 1) };
+    case 18: return { type: 'subscribe', after: firstNumber(bytes, 1) };
     case 19: return { type: 'ready', protocol: firstString(bytes, 1) ?? '', transport: firstString(bytes, 2) ?? '', capabilities: fieldsOf(bytes, 3).map((item) => decodeUtf8(item.value as Uint8Array)) };
     case 20: return { type: 'health_response', ok: firstBool(bytes, 1), protocol: firstString(bytes, 2) ?? '' };
     case 21: return { type: 'pong' };
@@ -269,6 +288,10 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     }) };
     default: throw new Error(`Unsupported sidecar response body field ${field}.`);
   }
+}
+
+function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' {
+  return value === 1 ? 'group_commit' : value === 2 ? 'ephemeral' : 'sync';
 }
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
