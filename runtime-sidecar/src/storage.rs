@@ -268,6 +268,28 @@ impl HotStore {
         Ok(admission)
     }
 
+    pub fn compact_stream(&self, session_id: &str) -> Result<(), StorageError> {
+        let cf = self.cf(CF_STREAMS)?;
+        let start = format!("e/{session_id}/");
+        let end = format!("e/{session_id}/\u{10ffff}");
+        self.db
+            .compact_range_cf(cf, Some(start.as_bytes()), Some(end.as_bytes()));
+        Ok(())
+    }
+
+    pub fn receipt(
+        &self,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Option<RunAdmission>, StorageError> {
+        let key = receipt_key(session_id, request_id);
+        let Some(bytes) = self.get(CF_RECEIPTS, key.as_bytes())? else {
+            return Ok(None);
+        };
+        let receipt: StoredReceipt = serde_json::from_slice(&bytes)?;
+        Ok(Some(receipt.admission))
+    }
+
     pub fn append_stream(
         &self,
         session_id: &str,
@@ -477,9 +499,16 @@ mod tests {
         let admission = store.admit_run("s", "req", "body", "r", 1, 0).unwrap();
         assert_eq!(admission.revision, 1);
         store
-            .append_stream("s", "r", "producer", 1, 1, vec![event("delta")])
+            .append_stream(
+                "s",
+                "r",
+                "producer",
+                1,
+                1,
+                vec![event("delta-1"), event("delta-2")],
+            )
             .unwrap();
-        assert_eq!(store.snapshot("s").unwrap().cursor, 1);
+        assert_eq!(store.snapshot("s").unwrap().cursor, 2);
         drop(store);
 
         let reopened = HotStore::open(&path).unwrap();
@@ -487,7 +516,23 @@ mod tests {
             reopened.snapshot("s").unwrap().active_run_id.as_deref(),
             Some("r")
         );
-        assert_eq!(reopened.replay("s", 0).unwrap()[0].kind, "delta");
+        let replay = reopened.replay("s", 0).unwrap();
+        reopened.compact_stream("s").unwrap();
+        let replay_after_compaction = reopened.replay("s", 0).unwrap();
+        assert_eq!(
+            replay
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            replay_after_compaction
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
         drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
@@ -497,6 +542,7 @@ mod tests {
         let path = temp_path("receipt");
         let store = HotStore::open(&path).unwrap();
         let first = store.admit_run("s", "req", "body", "r", 1, 0).unwrap();
+        assert_eq!(store.receipt("s", "req").unwrap().unwrap().run_id, "r");
         let reused = store.admit_run("s", "req", "body", "r2", 99, 99).unwrap();
         assert!(!first.reused);
         assert!(reused.reused);
