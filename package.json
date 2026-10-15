@@ -77,7 +77,8 @@
     "runtime-sidecar:smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-smoke.mjs",
     "runtime-sidecar:crash-smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-crash-smoke.mjs",
     "runtime-sidecar:node-authoritative-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-node-authoritative-smoke.ts",
-    "runtime-sidecar:worker-authoritative-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-worker-authoritative-smoke.ts"
+    "runtime-sidecar:worker-authoritative-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-worker-authoritative-smoke.ts",
+    "runtime-sidecar:supervisor-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-supervisor-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

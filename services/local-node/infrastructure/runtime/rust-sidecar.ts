@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { DATA_ROOT } from './env.js';
@@ -73,7 +74,8 @@ export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandl
   const binaryPath = resolveRustRuntimeSidecarBinary();
   const runtimeDir = path.join(DATA_ROOT, 'runtime-sidecar');
   mkdirSync(runtimeDir, { recursive: true });
-  const socketPath = path.join(runtimeDir, 'runtime.sock');
+  const socketKey = createHash('sha256').update(path.resolve(DATA_ROOT)).digest('hex').slice(0, 12);
+  const socketPath = path.join(os.tmpdir(), `synax-runtime-${socketKey}-${process.pid}.sock`);
   const token = randomBytes(32).toString('hex');
   const hotPath = path.join(runtimeDir, 'runtime-hot');
   const child = spawn(binaryPath, [], {
