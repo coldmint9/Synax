@@ -4,6 +4,13 @@ import type { AgentRun } from '../contracts.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
 
 export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
+export type RuntimeSidecarStreamMode = 'disabled' | 'shadow';
+
+function streamMode(): RuntimeSidecarStreamMode {
+  return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'shadow'
+    ? 'shadow'
+    : 'disabled';
+}
 
 function admissionMode(): RuntimeSidecarAdmissionMode {
   return process.env.SYNAX_RUNTIME_SIDECAR_ADMISSION === 'shadow'
@@ -22,6 +29,16 @@ export interface ShadowAdmissionInput {
   sessionId: string;
   run: AgentRun;
   runtime: AcceptedRuntimeInput;
+}
+
+export interface ShadowStreamInput {
+  sessionId: string;
+  runId: string;
+  producerId: string;
+  producerSequence: number;
+  epoch: number;
+  revision: number;
+  chunks: unknown[];
 }
 
 export class RuntimeFacade {
@@ -65,6 +82,38 @@ export class RuntimeFacade {
       logger.warn(
         { ...details, sessionId: input.sessionId, runId: input.run.id, requestId: input.runtime.requestId, error },
         '[runtime-sidecar] shadow admission failed',
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  async shadowAppendStream(input: ShadowStreamInput): Promise<void> {
+    if (streamMode() !== 'shadow') return;
+    const client = this.clientFactory();
+    if (!client) return;
+    try {
+      await client.appendStream({
+        sessionId: input.sessionId,
+        runId: input.runId,
+        producerId: input.producerId,
+        producerSequence: input.producerSequence,
+        epoch: input.epoch,
+        revision: input.revision,
+        events: input.chunks.map((chunk) => ({
+          kind: typeof chunk === 'object' && chunk && 'type' in chunk
+            ? String((chunk as { type: unknown }).type)
+            : 'runtime_chunk',
+          payload: Buffer.from(JSON.stringify(chunk)),
+        })),
+      });
+    } catch (error) {
+      const details = error instanceof RuntimeSidecarError
+        ? { code: error.code, expected: error.expected, actual: error.actual }
+        : {};
+      logger.warn(
+        { ...details, sessionId: input.sessionId, runId: input.runId, producerSequence: input.producerSequence, error },
+        '[runtime-sidecar] shadow stream append failed',
       );
     } finally {
       client.close();

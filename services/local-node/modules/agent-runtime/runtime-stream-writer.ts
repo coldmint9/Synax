@@ -9,6 +9,7 @@ import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
+import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 /**
  * The journal admission budget uses this conservative upper bound for the
@@ -24,6 +25,8 @@ export class RuntimeStreamWriter {
   private writeFailure?: Error;
   private partialContent?: string;
   private partialStepId?: string;
+  private sidecarProducerSequence = 0;
+  private readonly sidecarProducerId = `node:${process.pid}`;
   constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true,
     private readonly persist?: (sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) => Promise<void>,
   ) { this.revision = historyEpoch(sessionId); }
@@ -76,6 +79,15 @@ export class RuntimeStreamWriter {
     }
     if (chunks.length === 1) runtimeJournal.append(this.sessionId, runId, chunks[0]);
     else runtimeJournal.appendBatch(this.sessionId, runId, chunks);
+    void runtimeFacade.shadowAppendStream({
+      sessionId: this.sessionId,
+      runId,
+      producerId: `${this.sidecarProducerId}:${runId}`,
+      producerSequence: ++this.sidecarProducerSequence,
+      epoch: 1,
+      revision: this.revision,
+      chunks,
+    });
   }
 
   async prepareFinish(): Promise<void> {

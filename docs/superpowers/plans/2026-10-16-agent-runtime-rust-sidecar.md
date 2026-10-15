@@ -183,7 +183,8 @@ runtime-sidecar/
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
 - [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
-- `runtime-stream-writer.ts` 使用 sidecar append；
+- [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
+- [ ] `runtime-stream-writer.ts` 使用 sidecar 作为 authoritative append；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；
