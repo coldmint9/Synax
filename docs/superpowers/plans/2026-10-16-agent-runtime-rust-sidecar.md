@@ -168,7 +168,8 @@ runtime-sidecar/
 - [x] sidecar 重启后可恢复 session snapshot 和 cursor；
 - [x] Moka cache 命中不改变 revision/epoch 语义；
 - [x] 基础 compaction 后 canonical event 可 replay；
-- [ ] 高并发 compaction/ENOSPC 压测；
+- [x] 多线程 group-commit 写入后并行 compaction/replay 保持 cursor 和 sequence 完整；
+- [ ] ENOSPC 压测和磁盘满错误映射；
 - [x] 注入提交后 ack unknown 后，receipt 查询和幂等重试结果稳定；
 - [x] 真实进程在 commit 后 ack 前崩溃，重启后 request receipt/reused admission 收敛；
 - [ ] ENOSPC 和高并发 compaction 压测。

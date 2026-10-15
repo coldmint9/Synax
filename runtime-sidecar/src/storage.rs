@@ -640,6 +640,61 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_group_writes_and_compaction_preserve_replay() {
+        let path = temp_path("concurrent");
+        let store = HotStore::open(&path).unwrap();
+        let session_count = 8usize;
+        let batches_per_session = 24u64;
+        for index in 0..session_count {
+            let session = format!("s-{index}");
+            let run = format!("r-{index}");
+            store
+                .admit_run(&session, &format!("req-{index}"), "body", &run, 1, 0)
+                .unwrap();
+        }
+        let shared = Arc::new(store);
+        std::thread::scope(|scope| {
+            for index in 0..session_count {
+                let store = shared.clone();
+                scope.spawn(move || {
+                    let session = format!("s-{index}");
+                    let run = format!("r-{index}");
+                    let producer = format!("p-{index}");
+                    for sequence in 1..=batches_per_session {
+                        store
+                            .append_stream_with_durability(
+                                &session,
+                                &run,
+                                &producer,
+                                sequence,
+                                1,
+                                Durability::GroupCommit,
+                                vec![event("delta-1"), event("delta-2")],
+                            )
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        std::thread::scope(|scope| {
+            for index in 0..session_count {
+                let store = shared.clone();
+                scope.spawn(move || {
+                    store.compact_stream(&format!("s-{index}")).unwrap();
+                });
+            }
+        });
+        for index in 0..session_count {
+            let events = shared.replay(&format!("s-{index}"), 0).unwrap();
+            assert_eq!(events.len(), (batches_per_session * 2) as usize);
+            assert_eq!(events.first().unwrap().sequence, 1);
+            assert_eq!(events.last().unwrap().sequence, batches_per_session * 2);
+        }
+        drop(shared);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn stale_epoch_and_cursor_retention_are_enforced() {
         let path = temp_path("fence");
         let store = HotStore::open(&path).unwrap();
