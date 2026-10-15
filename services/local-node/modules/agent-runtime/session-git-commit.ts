@@ -51,6 +51,51 @@ export interface SessionGitCommitResult {
   committedFiles: number;
 }
 
+export interface SessionGitPushResult {
+  rootId: string;
+  branch: string;
+  pushed: true;
+  upstream: string;
+}
+
+export async function pushSessionWorkspace(
+  sessionId: string,
+  input: { rootId?: string } = {},
+): Promise<SessionGitPushResult> {
+  const session = getSession(sessionId);
+  const root = resolveSessionRepository(sessionId, session.projectId, input.rootId, true);
+  const workspacePath = root.path;
+  const branch = (await runGit(workspacePath, ["symbolic-ref", "--short", "HEAD"])).stdout.trim();
+  if (!branch || branch === "HEAD") {
+    throw new AgentValidationError("Push requires a named Git branch.");
+  }
+  const upstreamRef = (await runGit(
+    workspacePath,
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    true,
+  )).stdout.trim();
+  const push = await runGit(
+    workspacePath,
+    upstreamRef ? ["push"] : ["push", "--set-upstream", "origin", branch],
+    true,
+  );
+  if (!push.ok) {
+    const detail = formatGitFailure(push);
+    throw new AgentRuntimeError(
+      `Push failed${detail ? `: ${detail}` : ""}`,
+      "GIT_PUSH_FAILED",
+      502,
+    );
+  }
+  invalidateSessionEnvironment(sessionId);
+  return {
+    rootId: root.id,
+    branch,
+    pushed: true,
+    upstream: upstreamRef || `origin/${branch}`,
+  };
+}
+
 export interface GitResult {
   ok: boolean;
   stdout: string;

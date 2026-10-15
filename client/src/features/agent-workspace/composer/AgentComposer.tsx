@@ -877,9 +877,12 @@ export function AgentComposer({
         </p>
       )}
       {optimization.pending && (
-        <span role="status" className="sr-only">
-          {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
-        </span>
+        <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-sm text-muted-foreground">
+          <span role="status">
+            {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
+          </span>
+          {optimization.streamingText && <p>{optimization.streamingText}</p>}
+        </div>
       )}
     </div>
   );

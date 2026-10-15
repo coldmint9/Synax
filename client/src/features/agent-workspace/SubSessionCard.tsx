@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
@@ -18,33 +18,41 @@ export function SubSessionCard({ session, onExpand }: Props) {
   const resultId = useId();
   const title = subagentTaskTitle(session, locale);
 
+  // A reused card instance keeps its expansion and its `aria-controls` target
+  // across children, so session-derived state has to reset with the session.
+  useEffect(() => {
+    setExpanded(false);
+  }, [session.id]);
+
   return (
     <div className="bui-task subagent-task-card" data-task-status={session.status}>
       <div className="bui-task-header">
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="bui-task-trigger"
-          aria-expanded={expanded}
-          aria-controls={expanded ? resultId : undefined}
-        >
+        <div className="bui-task-trigger">
           <SubagentIdentity session={session} />
-          <span className="bui-task-copy">
-            <span className="bui-task-title" title={title}>
-              {title}
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="subagent-task-toggle"
+            aria-expanded={expanded}
+            aria-controls={expanded ? resultId : undefined}
+          >
+            <span className="bui-task-copy">
+              <span className="bui-task-title" title={title}>
+                {title}
+              </span>
             </span>
-          </span>
-          <ActivityStatus status={session.status} />
-          {expanded ? (
-            <ChevronDown size={12} className="bui-chevron" aria-hidden="true" />
-          ) : (
-            <ChevronRight
-              size={12}
-              className="bui-chevron"
-              aria-hidden="true"
-            />
-          )}
-        </button>
+            <ActivityStatus status={session.status} />
+            {expanded ? (
+              <ChevronDown size={12} className="bui-chevron" aria-hidden="true" />
+            ) : (
+              <ChevronRight
+                size={12}
+                className="bui-chevron"
+                aria-hidden="true"
+              />
+            )}
+          </button>
+        </div>
         {onExpand && (
           <button
             type="button"
@@ -67,7 +75,7 @@ export function SubSessionCard({ session, onExpand }: Props) {
           {session.resultSummary ? (
             <p className="subagent-task-summary whitespace-pre-wrap">{session.resultSummary}</p>
           ) : session.status === "running" ? (
-            <p className="subagent-task-summary subagent-task-summary--active">{t("subSessionRunning")}</p>
+            <p className="subagent-task-badge">{t("subSessionRunning")}</p>
           ) : (
             <p className="subagent-task-summary">{t("subSessionNoResult")}</p>
           )}

@@ -13,11 +13,12 @@
   white-space: nowrap;
 }
 
+/* The card container (border, radius, background) comes from `.bui-task` in
+   beautiful-ui/activities.css, which is imported after this file; declaring
+   those properties here would be dead code, so only what `.bui-task` omits
+   stays. */
 .subagent-task-card {
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--ui-line) 85%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--ui-panel-soft) 72%, transparent);
 }
 .subagent-task-card[data-task-status="running"] {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--ui-line));
@@ -30,13 +31,22 @@
   padding: 0.55rem 0.65rem;
 }
 .subagent-task-card .bui-task-trigger {
-  display: grid;
+  display: flex;
   min-width: 0;
   flex: 1;
-  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0.65rem;
   border-radius: 8px;
+  padding: 0;
+}
+/* Only the title row toggles the result; the avatar and the controls keep
+   their own targets instead of being swallowed by the disclosure button. */
+.subagent-task-toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.65rem;
   text-align: left;
 }
 .subagent-task-card .bui-task-copy { min-width: 0; }
@@ -51,10 +61,10 @@
 }
 .subagent-task-card .bui-task-open { flex-shrink: 0; }
 .subagent-task-result {
-  margin: 0 0.65rem 0.65rem;
+  margin: 0 0.65rem 0.55rem;
+  padding: 0.55rem 0 0.1rem;
   border-top: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
-  padding: 0.65rem 0.25rem 0.1rem;
-  color: var(--ui-subtle);
+  background: none;
 }
 .subagent-task-summary {
   margin: 0;
@@ -62,8 +72,39 @@
   font-size: 0.72rem;
   line-height: 1.5;
 }
-.subagent-task-summary--active {
-  color: color-mix(in srgb, var(--accent) 78%, var(--ui-text));
+/* In-flight placeholder: reads as a status chip with a live sweep, never as
+   the child's answer text. */
+.subagent-task-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 0.1rem 0.5rem;
+  color: color-mix(in srgb, var(--accent) 82%, var(--ui-text));
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+.subagent-task-badge::before {
+  content: "";
+  width: 0.3rem;
+  height: 0.3rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: currentColor;
+  animation: subagent-task-pulse 1.2s ease-in-out infinite;
+}
+@keyframes subagent-task-pulse {
+  0%,
+  100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subagent-task-badge::before {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 .subagent-task-instructions {
   margin: 0 0.75rem;

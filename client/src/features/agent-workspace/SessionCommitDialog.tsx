@@ -150,7 +150,7 @@ export function SessionCommitDialog({
     setGenerating(false);
   };
 
-  const generate = async () => {
+  const generate = async (): Promise<string | null> => {
     if (
       !sessionId ||
       !isOpen ||
@@ -159,7 +159,7 @@ export function SessionCommitDialog({
       streamController.current ||
       locked.current
     )
-      return;
+      return null;
     const controller = new AbortController();
     streamController.current = controller;
     const request = ++generation.current;
@@ -168,10 +168,16 @@ export function SessionCommitDialog({
     setError(null);
     setGenerating(true);
     let accumulated = "";
+    let generatedMessage: string | null = null;
     try {
       await agentRuntimeApi.streamCommitMessage(
         sessionId,
-        { ...(rootId ? { rootId } : {}), model: selectedModelRef, locale },
+        {
+          ...(rootId ? { rootId } : {}),
+          model: selectedModelRef,
+          locale,
+          ...(includeUntracked ? {} : { includeUntracked: false }),
+        },
         (event) => {
           if (request !== generation.current || controller.signal.aborted)
             return;
@@ -185,17 +191,19 @@ export function SessionCommitDialog({
           } else {
             if (frame.current !== null) cancelAnimationFrame(frame.current);
             frame.current = null;
+            generatedMessage = event.message;
             setMessage(event.message);
           }
         },
         controller.signal,
       );
     } catch (err) {
-      if (request !== generation.current || controller.signal.aborted) return;
+      if (request !== generation.current || controller.signal.aborted) return null;
       setMessage(priorMessage.current);
       setError(
         err instanceof Error ? err.message : t("workspaceCommitGenerateFailed"),
       );
+      return null;
     } finally {
       if (request === generation.current) {
         if (frame.current !== null) cancelAnimationFrame(frame.current);
@@ -204,16 +212,18 @@ export function SessionCommitDialog({
         setGenerating(false);
       }
     }
+    return generatedMessage;
   };
 
   const run = async (push: boolean) => {
     if (!sessionId || !isOpen || locked.current || generating) return;
-    if (!message.trim()) {
-      setError(t("workspaceCommitMessageRequired"));
-      return;
-    }
     if (detached && (!branchName.trim() || branchName !== branchName.trim())) {
       setError(t("workspaceCommitBranchRequired"));
+      return;
+    }
+    const commitMessage = message.trim();
+    if (!commitMessage) {
+      setError(t("workspaceCommitMessageRequired"));
       return;
     }
     locked.current = true;
@@ -221,12 +231,11 @@ export function SessionCommitDialog({
     setSubmitting(push ? "push" : "commit");
     setError(null);
     try {
-      const trimmed = message.trim();
       const committed = await agentRuntimeApi.commitSessionWorkspace(
         sessionId,
         {
           ...(rootId ? { rootId } : {}),
-          message: trimmed,
+          message: commitMessage,
           ...(detached ? { branchName } : {}),
           ...(push ? {} : { push: false }),
           ...(includeUntracked ? {} : { includeUntracked: false }),

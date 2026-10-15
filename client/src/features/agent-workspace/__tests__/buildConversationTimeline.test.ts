@@ -477,3 +477,72 @@ describe("inline interactions", () => {
     expect(entries[0].kind).toBe("interaction");
   });
 });
+
+describe("historical replies whose bounded window omitted their step", () => {
+  const assistant = (partial: Partial<AgentRuntimeMessage> = {}) =>
+    makeMessage({
+      id: "msg-answer",
+      role: "assistant",
+      stepId: STEP_ID,
+      content: "Saved historical answer",
+      createdAt: "2026-01-01T00:00:06.000Z",
+      ...partial,
+    });
+  const textOf = (entries: ReturnType<typeof buildConversationTimeline>) =>
+    entries.flatMap((entry) =>
+      entry.kind === "agent"
+        ? entry.turn.blocks.flatMap((block) =>
+            block.type === "text" ? [block.content] : [],
+          )
+        : [],
+    );
+
+  it("keeps an assistant reply whose step is missing from the loaded window", () => {
+    const entries = buildConversationTimeline(
+      [makeRun()],
+      [],
+      [assistant()],
+      [],
+      [],
+      { foldWorkRuns: false },
+    );
+    expect(textOf(entries)).toEqual(["Saved historical answer"]);
+  });
+
+  it("keeps a stepless assistant reply whose run has no loaded step", () => {
+    const entries = buildConversationTimeline(
+      [makeRun()],
+      [],
+      [assistant({ stepId: null })],
+      [],
+      [],
+      { foldWorkRuns: false },
+    );
+    expect(textOf(entries)).toEqual(["Saved historical answer"]);
+  });
+
+  it("still renders the reply through its step when the step is loaded", () => {
+    const entries = buildConversationTimeline(
+      [makeRun()],
+      [makeStep()],
+      [assistant()],
+      [],
+      [],
+      { foldWorkRuns: false },
+    );
+    expect(textOf(entries)).toEqual(["Saved historical answer"]);
+    expect(entries).toHaveLength(1);
+  });
+
+  it("does not duplicate a reply that is both step-backed and repeat-paged", () => {
+    const entries = buildConversationTimeline(
+      [makeRun()],
+      [makeStep()],
+      [assistant(), assistant()],
+      [],
+      [],
+      { foldWorkRuns: false },
+    );
+    expect(textOf(entries)).toEqual(["Saved historical answer"]);
+  });
+});

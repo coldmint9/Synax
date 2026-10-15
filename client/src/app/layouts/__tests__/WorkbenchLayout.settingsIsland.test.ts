@@ -9,7 +9,7 @@ import gitWorkbenchCss from '../../../features/git/gitWorkbench.css?raw';
 
 const stylesheet = postcss.parse(css + '\n' + deckCss);
 const workPageStylesheet = postcss.parse(workPageCss);
-const fullWidth = '.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"]) .workbench-header';
+const fullWidth = '.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"], :not([data-active-panel])) .workbench-header';
 function declaration(selector: string, property: string, root = stylesheet) {
   let value: string | undefined;
   root.walkRules(rule => {

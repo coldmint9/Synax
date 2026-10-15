@@ -6,6 +6,24 @@ const ITEM =
   ".ws-row, .ws-tree-folder, .bui-process-row, .work-todos > li, .ws-card-head, .accordion__trigger, .ws-empty, .runtime-status-details > div:first-child";
 const MIN_HEIGHT = "--dashboard-panel-min-height";
 
+/** Flex stretches the card body to the panel, so `scrollHeight` reports that
+ * stretched box rather than the content. Feeding such a self-referential
+ * height back into `flex-basis` makes every following layout shrink the panel
+ * by only a fraction, so a card whose list gets shorter crawls to its target
+ * over dozens of frames instead of settling in one. Measure the natural box
+ * instead: `flex: 0 0 auto` sizes it to its content for a single synchronous
+ * read, and the scroll position is restored because growing the box clamps it. */
+function contentHeight(body: HTMLElement | null) {
+  if (!body) return 0;
+  const flex = body.style.flex;
+  const scrollTop = body.scrollTop;
+  body.style.flex = "0 0 auto";
+  const height = body.offsetHeight;
+  body.style.flex = flex;
+  body.scrollTop = scrollTop;
+  return height;
+}
+
 /** Keep the first row visible when space permits; share a limited height
  * budget when expanded cards cannot all fit their preferred minimums. */
 export function useDashboardMinimumHeight(
@@ -36,7 +54,7 @@ export function useDashboardMinimumHeight(
         const headerHeight = (heading?.offsetHeight ?? 0) + 2;
         if (heading) next.add(heading);
         const body = panel.querySelector<HTMLElement>(BODY);
-        const preferred = `${Math.min(420, headerHeight + (body?.scrollHeight ?? 0))}px`;
+        const preferred = `${Math.min(420, headerHeight + contentHeight(body))}px`;
         if (
           panel.style.getPropertyValue("--dashboard-panel-preferred-height") !==
           preferred

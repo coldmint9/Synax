@@ -49,10 +49,47 @@ async function readGit(
   return result.stdout;
 }
 
+async function readUntrackedDiff(cwd: string, files: string[]): Promise<string> {
+  const patches = await Promise.all(
+    files.map(async (file) => {
+      const result = await runCommand(
+        "git",
+        ["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", file],
+        {
+          cwd,
+          maxBufferBytes: MAX_BUFFER,
+          timeoutMs: 30_000,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_OPTIONAL_LOCKS: "0",
+          },
+        },
+      );
+      // git diff --no-index returns 1 when the files differ, which is
+      // expected for an untracked file.
+      if (
+        result.error ||
+        result.timedOut ||
+        (result.status !== 0 && result.status !== 1)
+      ) {
+        throw new AgentRuntimeError(
+          `git diff failed: ${(result.stderr || result.error?.message || "Command timed out.").trim().slice(0, 400)}`,
+          "GIT_COMMAND_FAILED",
+          502,
+        );
+      }
+      return result.stdout;
+    }),
+  );
+  return patches.join("\n");
+}
+
 /** The collector never mutates the index or worktree. */
 export async function collectCommitMessageContext(
   sessionId: string,
   rootId?: string,
+  includeUntracked = true,
 ): Promise<CommitMessageContext> {
   let session: ReturnType<typeof agentRuntimeStore.getSession>;
   try {
@@ -95,12 +132,21 @@ export async function collectCommitMessageContext(
       "GIT_NOTHING_TO_COMMIT",
       409,
     );
-  const [stagedSummary, unstagedSummary, stagedPatch, unstagedPatch] =
+  const untrackedFiles = status
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("?? "))
+    .map((line) => line.slice(3));
+  const selectedUntrackedFiles = includeUntracked ? untrackedFiles : [];
+  const changedFileLines = status
+    .split(/\r?\n/)
+    .filter((line) => line && (includeUntracked || !line.startsWith("?? ")));
+  const [stagedSummary, unstagedSummary, stagedPatch, unstagedPatch, untrackedPatch] =
     await Promise.all([
       readGit(root.path, ["diff", "--cached", "--stat"]),
       readGit(root.path, ["diff", "--stat"]),
       readGit(root.path, ["diff", "--cached", "--no-ext-diff"]),
       readGit(root.path, ["diff", "--no-ext-diff"]),
+      readUntrackedDiff(root.path, selectedUntrackedFiles),
     ]);
   let history = "";
   try {
@@ -113,10 +159,13 @@ export async function collectCommitMessageContext(
   return {
     projectId: session.projectId,
     branch,
-    changedFiles: status.slice(0, MAX_STATUS_CHARS),
+    changedFiles: changedFileLines.join("\n").slice(0, MAX_STATUS_CHARS),
     stagedSummary: stagedSummary.slice(0, 2_000),
     unstagedSummary: unstagedSummary.slice(0, 2_000),
-    diffExcerpt: `${stagedPatch}\n${unstagedPatch}`.slice(0, MAX_DIFF_CHARS),
+    diffExcerpt: `${stagedPatch}\n${unstagedPatch}\n${untrackedPatch}`.slice(
+      0,
+      MAX_DIFF_CHARS,
+    ),
     subjects: history
       .split(/\r?\n/)
       .map((line) => line.trim().slice(0, MAX_HISTORY_SUBJECT_CHARS))

@@ -642,7 +642,23 @@ export function buildConversationTimeline(
     const isForkReply =
       typeof message.metadata?.forkedFromMessageId === "string";
     const blocks: TurnContentBlock[] = visualizationReplyParts(message);
-    if (!isForkReply && !blocks.some((block) => block.type === "visualization"))
+    // A bounded history window can carry an assistant reply while omitting the
+    // step (or the whole run) it was persisted with. The reply is still real
+    // conversation, so keep it as its own answer row instead of dropping it —
+    // otherwise switching sessions silently loses historical AI replies.
+    const orphanText = message.content.trim();
+    if (!isForkReply && orphanText && blocks.length === 0)
+      blocks.push({
+        type: "text",
+        content: orphanText,
+        messageId: message.id,
+      });
+    if (
+      !isForkReply &&
+      !blocks.some((block) => block.type === "visualization") &&
+      !message.content.trim() &&
+      !message.contentParts?.length
+    )
       continue;
     if (
       isForkReply &&

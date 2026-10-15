@@ -12,7 +12,7 @@
   max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
   white-space: nowrap;
 }
-.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"]) .workbench-header { --island-center-offset: 0px; }
+.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"], :not([data-active-panel])) .workbench-header { --island-center-offset: 0px; }
 .workbench-shell .workspace-island-slot .workbench-header {
   position: relative;
   inset: auto;

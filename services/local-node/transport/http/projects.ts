@@ -36,6 +36,7 @@ import { contextService } from "../../modules/context/context-service.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { revokeAllProjectToolGrants } from "../../modules/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../../modules/agent-runtime/session-store.js";
+import { invalidateSessionEnvironment } from "../../modules/agent-runtime/session-environment.js";
 import { gitEpicStore, indexBranchSessions } from "../../modules/git-epics.js";
 import {
   createGitWorktree,
@@ -451,6 +452,15 @@ function gitWorkspaceRouteError(c: Context, error: unknown) {
 // ---------------------------------------------------------------------------
 
 export const projectRoutes = new Hono();
+
+function invalidateWorkspaceSessionEnvironments(projectId: string): void {
+  for (const session of agentRuntimeStore.listSessions({
+    projectId,
+    limit: Number.MAX_SAFE_INTEGER,
+  })) {
+    invalidateSessionEnvironment(session.id);
+  }
+}
 projectRoutes.route('/:projectId/git/mr', createGitMrRoutes((projectId, rootId) => {
   const project = projects.get(projectId);
   if (!project) throw new GitWorkspaceError('Project not found.', 404);
@@ -679,6 +689,7 @@ projectRoutes.post("/:id/references", async (c) => {
       projects.set(latest.id, updated);
       return projectWorkspaceRoots(updated);
     });
+    invalidateWorkspaceSessionEnvironments(projectId);
     return c.json({ roots }, 201);
   } catch (error) {
     const status = (error as { status?: number }).status === 404 ? 404 : 400;
@@ -706,6 +717,7 @@ projectRoutes.delete("/:id/references/:referenceId", async (c) => {
       projects.set(projectId, updated);
       return projectWorkspaceRoots(updated);
     });
+    invalidateWorkspaceSessionEnvironments(projectId);
     return c.json({ roots });
   } catch (error) {
     if ((error as { status?: number }).status === 404)

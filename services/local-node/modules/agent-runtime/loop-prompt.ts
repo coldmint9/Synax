@@ -245,3 +245,13 @@ export function buildLoopStepNote(input: {
   }
   return parts.join(" ");
 }
+
+/**
+ * A soft nudge at the end of a long round. The model remains responsible for
+ * deciding whether a task changed and for updating it; the runtime never
+ * infers or writes task progress here.
+ */
+export function buildTaskProgressReminder(converging: boolean): string | null {
+  if (!converging) return null;
+  return "Before ending this round, inspect the task list with task_list and use task_update for any task whose status or progress changed. Keep the list aligned with the work actually completed; do not invent progress or mark unfinished work completed.";
+}

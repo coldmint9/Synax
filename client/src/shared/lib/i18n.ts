@@ -641,6 +641,7 @@ const messages = {
     workspaceCommitChangedFiles: "{count} 个文件已变更",
     workspaceCommitConfirm: "提交并推送",
     workspaceCommitOnly: "仅提交",
+    workspacePushOnly: "仅推送",
     workspaceCommitActionHint:
       "仅提交只写入本地分支；提交并推送会同时更新远端分支。",
     workspaceCommitCancel: "取消",
@@ -1377,6 +1378,7 @@ const messages = {
     workspaceCommitChangedFiles: "{count} files changed",
     workspaceCommitConfirm: "Commit & Push",
     workspaceCommitOnly: "Commit only",
+    workspacePushOnly: "Push only",
     workspaceCommitActionHint:
       "Commit only writes to the local branch; Commit & Push also updates the remote branch.",
     workspaceCommitCancel: "Cancel",

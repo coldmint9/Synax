@@ -91,7 +91,11 @@ import {
 } from "./loop-guards.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { streamLoopModelStep } from "./loop-model-stream.js";
-import { buildLoopSystemPrompt, buildLoopStepNote } from "./loop-prompt.js";
+import {
+  buildLoopSystemPrompt,
+  buildLoopStepNote,
+  buildTaskProgressReminder,
+} from "./loop-prompt.js";
 import { buildRuntimeEnvironment } from "./prompt-environment.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
@@ -2791,17 +2795,22 @@ export class AgentLoopRuntime {
       input.profile.consecutiveFailureReminderThreshold,
     );
 
-    const tailReminders = mode === "chat"
-      ? []
-      : [
-          buildRuntimeEnvironment(input.sessionId, session.projectId),
-          workRuntime.prompt(input.sessionId) ?? "",
-          synaxAgent.buildRuntimeStateSection(session) ?? "",
-          goalEvidenceSection(session, input.previousToolCalls) ?? "",
-          buildLoopStepNote({ ...input, mode }),
-          failureReminder ?? "",
-          needsInstructionOverride ? userRequest : "",
-        ].filter(Boolean);
+    const tailReminders = [
+      ...(mode === "chat"
+        ? []
+        : [
+            buildRuntimeEnvironment(input.sessionId, session.projectId),
+            workRuntime.prompt(input.sessionId) ?? "",
+            synaxAgent.buildRuntimeStateSection(session) ?? "",
+            goalEvidenceSection(session, input.previousToolCalls) ?? "",
+            buildLoopStepNote({ ...input, mode }),
+            failureReminder ?? "",
+            needsInstructionOverride ? userRequest : "",
+          ]),
+      // Keep this as the final instruction so it survives the other
+      // round-end guidance and reaches chat-mode runs as well.
+      buildTaskProgressReminder(input.converging) ?? "",
+    ].filter(Boolean);
 
     const currentStep = this.store.getRunStep(input.stepId);
     const reminder = snapshotRuntimeReminder(

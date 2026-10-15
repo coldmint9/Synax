@@ -239,6 +239,7 @@ function RepositoryProjectCard({
           loading={loading}
           reload={reload}
           embedded
+          branchInSwitcher={(environment.repositories?.length ?? 0) > 2}
         />
       }
     >
@@ -518,20 +519,20 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             id={`repository:${root.rootId}`}
             label={root.name}
           >
-            <RepositoryProjectCard
-              key={root.rootId}
-              sessionId={sessionId}
-              environment={environment}
-              repository={root}
-              loading={loading}
-              reload={reload}
-              changedFilesView={changedFilesView}
-              onChangedFilesView={setChangedFilesView}
-              onRevert={(file, rootId) => void revertFile(file, rootId)}
-              revertingPaths={revertingPaths}
-            />
-          </DashboardPanel>
-        ))}
+          <RepositoryProjectCard
+            key={root.rootId}
+            sessionId={sessionId}
+            environment={environment}
+            repository={root}
+            loading={loading}
+            reload={reload}
+            changedFilesView={changedFilesView}
+            onChangedFilesView={setChangedFilesView}
+            onRevert={(file, rootId) => void revertFile(file, rootId)}
+            revertingPaths={revertingPaths}
+          />
+        </DashboardPanel>
+      ))}
         <DashboardPanel id="files" label={t("workspaceCardFiles")}>
           <WorkspaceFilesDashboardPanel
             sessionId={sessionId}
@@ -610,51 +611,57 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                 aria-label={t("workspaceRepositorySelect")}
               >
                 {repositories.map((root) => (
-                  <button
+                  <div
                     key={root.rootId}
-                    type="button"
                     className="ws-project-option"
-                    aria-pressed={repository?.rootId === root.rootId}
-                    aria-label={root.name}
-                    onClick={() => selectRepository(sessionId, root.rootId)}
+                    data-selected={
+                      repository?.rootId === root.rootId || undefined
+                    }
                   >
-                    <span
-                      className="ws-project-option-top"
-                      data-project-color={getProjectThemeColor(root.rootId)}
+                    <button
+                      type="button"
+                      className="ws-project-option-select"
+                      aria-pressed={repository?.rootId === root.rootId}
+                      aria-label={`${root.name} · ${root.branch}`}
+                      onClick={() => selectRepository(sessionId, root.rootId)}
                     >
-                      <Folder size={13} />
-                      <strong title={root.name}>{root.name}</strong>
-                      {root.role === "primary" && (
-                        <Pin size={10} aria-label={c.primary} />
-                      )}
                       <span
-                        className="ws-project-change-count"
-                        data-dirty={root.changedFiles.length > 0 || undefined}
+                        className="ws-project-option-top"
+                        data-project-color={getProjectThemeColor(root.rootId)}
                       >
-                        {root.status === "ready"
-                          ? root.changedFiles.length || <Check size={10} />
-                          : "!"}
-                      </span>
-                    </span>
-                    <span className="ws-project-option-meta">
-                      {root.status === "ready" ? (
-                        <>
-                          <GitBranch size={10} />
-                          <span>{root.branch}</span>
-                        </>
-                      ) : (
-                        <span className="text-warning">
-                          {t(
-                            root.status === "missing"
-                              ? "workspaceRepositoryMissing"
-                              : root.status === "not_repository"
-                                ? "workspaceRepositoryNotGit"
-                                : "workspaceRepositoryError",
+                        <Folder size={13} />
+                        <strong title={root.name}>{root.name}</strong>
+                        {root.role === "primary" && (
+                          <Pin size={10} aria-label={c.primary} />
+                        )}
+                        <span
+                          className="ws-project-change-count"
+                          data-dirty={root.changedFiles.length > 0 || undefined}
+                          aria-label={t("workspaceCommitChangedFiles", {
+                            count: root.changedFiles.length,
+                          })}
+                          title={t("workspaceCommitChangedFiles", {
+                            count: root.changedFiles.length,
+                          })}
+                        >
+                          {root.status !== "ready" ? (
+                            "!"
+                          ) : root.changedFiles.length > 0 ? (
+                            `+${root.changedFiles.length}`
+                          ) : (
+                            <Check size={10} />
                           )}
                         </span>
-                      )}
-                    </span>
-                  </button>
+                      </span>
+                    </button>
+                    <RepositoryRowActions
+                      sessionId={sessionId}
+                      environment={environment}
+                      repository={root}
+                      loading={loading}
+                      reload={reload}
+                    />
+                  </div>
                 ))}
               </div>
             </section>
@@ -880,18 +887,91 @@ function ChangedFileFolder({
   );
 }
 
+/** Branch switching and commit for one project inside the aggregated switcher
+ * row. The row's own button only changes the selected repository. */
+function RepositoryRowActions({
+  sessionId,
+  environment,
+  repository,
+  loading,
+  reload,
+}: {
+  sessionId: string;
+  environment: SessionEnvironment;
+  repository: SessionEnvironmentRepository;
+  loading: boolean;
+  reload: () => void | Promise<void>;
+}) {
+  const { t } = useLocale();
+  const [commitOpen, setCommitOpen] = useState(false);
+  const unavailable = repository.status !== "ready";
+  const changedCount = repository.changedFiles.length;
+  return (
+    <span className="ws-project-option-actions">
+      {unavailable ? (
+        <span className="ws-project-option-state text-warning">
+          {t(
+            repository.status === "missing"
+              ? "workspaceRepositoryMissing"
+              : repository.status === "not_repository"
+                ? "workspaceRepositoryNotGit"
+                : "workspaceRepositoryError",
+          )}
+        </span>
+      ) : (
+        <RepositoryBranchPicker
+          sessionId={sessionId}
+          rootId={repository.rootId}
+          branch={repository.branch}
+          disabled={loading}
+          onSwitched={() => void reload()}
+        />
+      )}
+      <button
+        type="button"
+        className="ws-project-option-commit"
+        onClick={() => setCommitOpen(true)}
+        disabled={loading || unavailable || changedCount === 0}
+        title={t("workspaceCommitPush")}
+        aria-label={`${t("workspaceCommitPush")} · ${repository.name}`}
+      >
+        <GitCommit size={10} />
+      </button>
+      {commitOpen && (
+        <SessionCommitDialog
+          isOpen
+          sessionId={environment.sessionId}
+          projectId={environment.projectId}
+          rootId={repository.rootId}
+          rootName={repository.name}
+          branch={repository.branch}
+          changedFiles={changedCount}
+          onClose={() => {
+            setCommitOpen(false);
+            void reload();
+          }}
+          onCommitted={() => void reload()}
+        />
+      )}
+    </span>
+  );
+}
+
 function RepositoryCard({
   environment,
   repository,
   loading,
   reload,
   embedded = false,
+  branchInSwitcher = false,
 }: {
   environment: SessionEnvironment;
   repository?: SessionEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
   embedded?: boolean;
+  /** The project switcher row above renders the branch picker itself. */
+  branchInSwitcher?: boolean;
 }) {
   const { t } = useLocale();
   const [commitOpen, setCommitOpen] = useState(false);
@@ -947,15 +1027,19 @@ function RepositoryCard({
           </div>
         )}
         <div className="ws-repo-head">
-          <RepositoryBranchPicker
-            key={`${environment.sessionId}:${repository?.rootId ?? "primary"}`}
-            sessionId={environment.sessionId}
-            rootId={repository?.rootId}
-            branch={environment.branch}
-            openRequest={branchRequest}
-            disabled={loading || unavailable}
-            onSwitched={() => void reload()}
-          />
+          {/* The project switcher row above already shows this branch and owns
+              branch switching, so the embedded card only keeps commits. */}
+          {!branchInSwitcher && (
+            <RepositoryBranchPicker
+              key={`${environment.sessionId}:${repository?.rootId ?? "primary"}`}
+              sessionId={environment.sessionId}
+              rootId={repository?.rootId}
+              branch={environment.branch}
+              openRequest={branchRequest}
+              disabled={loading || unavailable}
+              onSwitched={() => void reload()}
+            />
+          )}
           {unavailable && (
             <span className="ws-repo-state bg-warning/15 text-warning">
               {t(

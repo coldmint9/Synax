@@ -187,10 +187,6 @@
   flex: 1;
   min-width: 0;
 }
-.workspace-manager-git-icon {
-  color: var(--theme-text-muted);
-  flex-shrink: 0;
-}
 .workspace-manager-more {
   height: 32px;
   width: 32px;
@@ -274,24 +270,6 @@
 .workspace-manager-worktrees p {
   margin-top: 3px;
 }
-.workspace-manager-git-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding: 7px 10px;
-  border: 1px solid var(--theme-border);
-  border-radius: 8px;
-  color: var(--theme-text);
-  font-size: 12px;
-}
-.workspace-manager-git-link:hover {
-  background: var(--theme-surface-secondary);
-}
-.workspace-manager-git-link:focus-visible {
-  outline: 2px solid var(--theme-focus);
-  outline-offset: 2px;
-}
 @media (max-width: 600px) {
   .workspace-manager {
     padding: 68px 16px 32px;
@@ -334,8 +312,5 @@
   .workspace-manager-worktrees {
     flex-wrap: wrap;
     padding: 16px;
-  }
-  .workspace-manager-git-link {
-    margin-left: 30px;
   }
 }

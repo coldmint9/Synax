@@ -1212,6 +1212,11 @@ export const agentRuntimeApi = {
         body: JSON.stringify(body),
       },
     ),
+  pushSessionWorkspace: (sessionId: string, body: { rootId?: string }) =>
+    request<{ rootId: string; branch: string; pushed: true; upstream: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/push`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   openSessionFileInSystemTerminal: (
     sessionId: string,
     body: { path: string; rootId?: string },

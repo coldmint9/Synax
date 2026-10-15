@@ -6,6 +6,7 @@ import { useLocale } from "../../shared/hooks/useLocale";
 import type { I18nKey } from "../../shared/lib/i18n";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
 import { getSubagentNameFromId } from "./SubagentIdentity";
+import { subagentTaskTitle } from "./subagentTaskTitle";
 import { openWorkspaceSubagent, useSessionWorkspace } from "./state/sessionWorkspaceStore";
 import "./subagentIsland.css";
 
@@ -26,7 +27,7 @@ const PRIORITY: Record<string, number> = {
 };
 
 function taskSummary(subagent: SessionEnvironmentSubagent): string {
-  return subagent.title?.trim() || subagent.prompt.trim().split("\n")[0]?.replace(/^#+\s*/, "") || "Subagent";
+  return subagentTaskTitle(subagent) || "Subagent";
 }
 
 export function SubagentIsland({ sessionId }: { sessionId: string }) {

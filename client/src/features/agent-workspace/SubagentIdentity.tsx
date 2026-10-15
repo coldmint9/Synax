@@ -1,9 +1,24 @@
 import { Bot } from "lucide-react";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
+import { useLocale } from "../../shared/hooks/useLocale";
+import type { I18nKey } from "../../shared/lib/i18n";
 
 const FALLBACK_ROLES: Record<string, { name: string; description: string }> = {
   explorer: { name: "探索员", description: "读取代码、搜索线索并梳理系统结构。" },
   reviewer: { name: "审查员", description: "检查实现、发现风险并给出可执行的审查意见。" },
+};
+
+/** Localized label for the compact status dot, so it never announces a raw id. */
+const STATUS_KEYS: Record<string, I18nKey> = {
+  queued: "workspaceStatusQueued",
+  running: "workspaceStatusRunning",
+  waiting_permission: "workspaceStatusWaitingPermission",
+  waiting_input: "workspaceStatusWaitingInput",
+  completed: "workspaceStatusCompleted",
+  failed: "workspaceStatusFailed",
+  cancelled: "workspaceStatusCancelled",
+  interrupted: "workspaceStatusInterrupted",
+  paused: "workspaceStatusPaused",
 };
 
 export function getSubagentNameFromId(
@@ -49,8 +64,11 @@ export function SubagentIdentity({
   compact = false,
   showStatus = true,
 }: Props) {
+  const { t } = useLocale();
   const name = getSubagentName(session);
   const role = getSubagentRole(session);
+  const statusKey = STATUS_KEYS[session.status];
+  const statusLabel = statusKey ? t(statusKey) : session.status;
   return (
     <div className={`subagent-identity${compact ? " subagent-identity--compact" : ""}`}>
       <span className="subagent-avatar" aria-hidden="true">
@@ -60,8 +78,10 @@ export function SubagentIdentity({
         <span className="subagent-identity-name">{name}</span>
         <span className="subagent-identity-role">{role.name}</span>
       </span>
+      {/* Decorative: the row already carries the localized status text, so the
+          compact dot must not announce the raw status id to screen readers. */}
       {showStatus ? (
-        <span className="subagent-status-dot" data-status={session.status} aria-label={session.status} />
+        <span className="subagent-status-dot" data-status={session.status} title={statusLabel} aria-hidden="true" />
       ) : null}
     </div>
   );

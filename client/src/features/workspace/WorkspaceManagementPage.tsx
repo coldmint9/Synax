@@ -6,7 +6,6 @@ import {
   useState,
 } from "react";
 import {
-  Link,
   useLocation,
   useNavigate,
   useOutletContext,
@@ -15,11 +14,9 @@ import {
 import {
   AlertCircle,
   ArrowLeft,
-  ArrowUpRight,
   Check,
   Ellipsis,
   Folder,
-  GitBranch,
   Info,
   Pencil,
   Plus,
@@ -423,24 +420,6 @@ export function WorkspaceManagementContent({
             </span>
           </div>
         </section>
-        {primary?.status === "available" && (
-          <section className="workspace-manager-git">
-            <span className="workspace-manager-git-icon">
-              <GitBranch size={20} aria-hidden="true" />
-            </span>
-            <div>
-              <h2>{c.gitWorktrees}</h2>
-              <p className="workspace-manager-note">{c.gitWorktreesHint}</p>
-            </div>
-            <Link
-              className="workspace-manager-git-link"
-              to={`/projects/${encodeURIComponent(workspaceId)}/git?view=worktrees`}
-            >
-              {c.openGit}
-              <ArrowUpRight size={14} aria-hidden="true" />
-            </Link>
-          </section>
-        )}
       </div>
       <Dialog
         open={Boolean(removeTarget)}

@@ -47,6 +47,7 @@ import {
 
 const THINKING_DISABLED_PURPOSES = new Set([
   "session-title",
+  "input-optimization",
   "context-signal",
   "validate",
 ]);

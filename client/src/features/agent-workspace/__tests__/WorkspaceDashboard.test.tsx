@@ -775,6 +775,27 @@ describe("WorkspaceDashboard", () => {
     ).toEqual(["api", "web"]);
   });
 
+  it("hides the progress panel while the session has no tasks", () => {
+    const { container } = renderDashboard();
+    expect(
+      container.querySelector('[data-dashboard-panel="progress"]'),
+    ).toBeNull();
+    expect(screen.queryByText("任务进度")).toBeNull();
+    expect(screen.queryByText("暂无任务")).toBeNull();
+
+    act(() =>
+      useAgentSessionStore.setState({
+        sessionTodos: [
+          { id: "todo-1", label: "Review outputs", status: "pending" },
+        ],
+      }),
+    );
+    expect(
+      container.querySelector('[data-dashboard-panel="progress"]'),
+    ).not.toBeNull();
+    expect(screen.getByText("Review outputs")).toBeTruthy();
+  });
+
   it("shows todos for the selected session and never leaks them into another session", () => {
     useAgentSessionStore.setState({
       selectedSessionId: "session-1",
@@ -823,5 +844,40 @@ describe("WorkspaceDashboard", () => {
     ).toHaveAttribute("data-status", "pending");
     expect(screen.getByText("0 / 1")).toBeVisible();
     expect(screen.queryByText("Review outputs")).toBeNull();
+  });
+
+  it("keeps branch switching and commit on each aggregated project row", async () => {
+    const listBranches = vi
+      .spyOn(agentRuntimeApi, "listSessionBranches")
+      .mockResolvedValue({
+        rootId: "primary",
+        dirtyFileCount: 0,
+        current: "main",
+        branches: [
+          { name: "main", current: true, occupied: false },
+          { name: "feature/awg2", current: false, occupied: false },
+        ],
+      });
+    renderDashboard({
+      repositories: [
+        { ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" },
+        { ...environment, rootId: "second", name: "Web", role: "reference", status: "ready", branch: "web-branch" },
+        { ...environment, rootId: "third", name: "Docs", role: "reference", status: "ready", branch: "docs-branch" },
+      ],
+    });
+
+    const rows = document.querySelectorAll(".ws-project-option");
+    expect(rows).toHaveLength(3);
+
+    // Each row owns a real branch trigger, not just a printed label.
+    const triggers = screen.getAllByRole("button", { name: /切换 Git 分支|Switch Git branch/ });
+    expect(triggers).toHaveLength(3);
+    fireEvent.click(triggers[0]);
+    await waitFor(() => expect(listBranches).toHaveBeenCalled());
+
+    // The commit action stays available on the dirty row.
+    const commits = screen.getAllByRole("button", { name: /提交并推送 ·/ });
+    expect(commits).toHaveLength(3);
+    expect(commits[0]).toBeEnabled();
   });
 });

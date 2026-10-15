@@ -143,7 +143,7 @@ import {
   switchSessionGitBranch,
   createSessionGitBranch,
 } from "../../modules/agent-runtime/session-git-branches.js";
-import { commitSessionWorkspace } from "../../modules/agent-runtime/session-git-commit.js";
+import { commitSessionWorkspace, pushSessionWorkspace } from "../../modules/agent-runtime/session-git-commit.js";
 import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
 import {
   prepareCommitMessageGeneration,
@@ -289,6 +289,26 @@ agentRuntimeRoutes.post("/input/optimize", async (c) => {
   if (!body.ok) return c.json({ error: body.error }, 400);
   const parsed = inputOptimizationSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
+  if (c.req.header("accept")?.includes("text/event-stream")) {
+    return streamSSE(c, async (stream) => {
+      const controller = new AbortController();
+      stream.onAbort(() => controller.abort());
+      const signal = AbortSignal.any([controller.signal, c.req.raw.signal]);
+      try {
+        const result = await optimizeInput(parsed.data, signal, async (text) => {
+          await stream.writeSSE({ event: "delta", data: JSON.stringify({ text }) });
+        });
+        await stream.writeSSE({ event: "result", data: JSON.stringify(result) });
+      } catch (error) {
+        if (!signal.aborted) {
+          await stream.writeSSE({
+            event: "error",
+            data: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+          });
+        }
+      }
+    });
+  }
   try {
     return c.json(await optimizeInput(parsed.data, c.req.raw.signal));
   } catch (error) {
@@ -1651,6 +1671,7 @@ agentRuntimeRoutes.post(
 
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
+  includeUntracked: z.boolean().optional(),
   model: z.string().trim().min(1).max(256),
   locale: z.enum(["zh", "en"]).optional(),
 });
@@ -1716,6 +1737,18 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/commit", async (c) => {
     return c.json(
       await commitSessionWorkspace(c.req.param("sessionId"), parsed.data),
     );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post("/sessions/:sessionId/git/push", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({ rootId: z.string().min(1).optional() }).safeParse(body.data ?? {});
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    return c.json(await pushSessionWorkspace(c.req.param("sessionId"), parsed.data));
   } catch (error) {
     return runtimeError(c, error);
   }

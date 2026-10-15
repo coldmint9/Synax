@@ -6,7 +6,7 @@ import { workRuntime } from '../work-runtime.js';
 import { workStore } from '../work-store.js';
 import { goalStopReason } from '../control-runtime.js';
 import { TaskStore } from '../tools/task-tools.js';
-import { buildLoopStepNote } from '../loop-prompt.js';
+import { buildLoopStepNote, buildTaskProgressReminder } from '../loop-prompt.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resolveSessionCapabilities } from '../session-capabilities.js';
 import { createPlanArtifact } from '../plan-artifact-store.js';
@@ -93,6 +93,12 @@ describe('workflow boundaries', () => {
     const { s } = active(mode);
     expect(workRuntime.prompt(s.id)).not.toMatch(/work\.checkpoint|goal\.finish|verification\.run/);
     expect(buildLoopStepNote({ stepIndex: 50, maxSteps: 50, converging: true, mode })).not.toMatch(/work\.checkpoint|goal\.finish/);
+  });
+  it('adds a soft task progress reminder at the end of a converging round', () => {
+    expect(buildTaskProgressReminder(true)).toMatch(/task_list/);
+    expect(buildTaskProgressReminder(true)).toMatch(/task_update/);
+    expect(buildTaskProgressReminder(true)).toMatch(/unfinished work/);
+    expect(buildTaskProgressReminder(false)).toBeNull();
   });
   it('goal acceptance cannot be bypassed by plain final text', async () => {
     const { input } = active('goal');

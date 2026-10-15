@@ -13,6 +13,35 @@ const request = (body: unknown) =>
     body: JSON.stringify(body),
   });
 beforeEach(() => vi.clearAllMocks());
+it("streams deltas followed by the validated result", async () => {
+  mocks.optimize.mockImplementation(async (_input, _signal, onDelta) => {
+    await onDelta("- 清晰");
+    await onDelta("意图");
+    return { text: "- 清晰意图", status: "optimized" };
+  });
+  const response = await agentRuntimeRoutes.request("http://localhost/input/optimize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ projectId: "p1", text: "原文" }),
+  });
+  expect(response.headers.get("content-type")).toContain("text/event-stream");
+  const body = await response.text();
+  expect(body).toContain('event: delta\ndata: {"text":"- 清晰"}');
+  expect(body).toContain('event: result\ndata: {"text":"- 清晰意图","status":"optimized"}');
+  expect(body.indexOf("event: delta")).toBeLessThan(body.indexOf("event: result"));
+});
+
+it("reports stream failures without a successful result", async () => {
+  mocks.optimize.mockRejectedValue(new Error("provider failed"));
+  const response = await agentRuntimeRoutes.request("http://localhost/input/optimize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ projectId: "p1", text: "原文" }),
+  });
+  const body = await response.text();
+  expect(body).toContain('event: error\ndata: {"error":"provider failed"}');
+  expect(body).not.toContain("event: result");
+});
 it("accepts draft-only requests and forwards the selected model", async () => {
   mocks.optimize.mockResolvedValue({ text: "优化" });
   const input = {
