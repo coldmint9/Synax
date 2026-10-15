@@ -22,6 +22,7 @@ interface SessionState {
   firstSegment: number; totalBytes: number; readers: number;
   batches: Array<{ segment: number; offset: number; length: number; first: number; last: number }>;
 }
+export type LogSyncMode = "full" | "data";
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const hashEnvelope = ({ hash: _hash, ...rest }: Envelope) => digest(JSON.stringify(rest));
 const error = (code: string, message: string) => Object.assign(new Error(message), { code });
@@ -41,7 +42,15 @@ export class SessionLog {
   private states = new Map<string, SessionState>();
   private loading = new Map<string, Promise<SessionState>>();
   private failures = new Map<string, unknown>();
-  constructor(readonly root: string, private readonly options: { replayRetention?: number; compactBytes?: number } = {}) {}
+  constructor(
+    readonly root: string,
+    private readonly options: {
+      replayRetention?: number;
+      compactBytes?: number;
+      /** Replay records can use data-only flushes; direct callers stay strict. */
+      syncMode?: LogSyncMode;
+    } = {},
+  ) {}
 
   async append(sessionId: string, requestId: string, events: LogEvent[]): Promise<LogReceipt> {
     sessionKey(sessionId);
@@ -105,7 +114,7 @@ export class SessionLog {
           if (!result.bytesWritten) throw error('LOG_SHORT_WRITE', 'Session log made no write progress.');
           written += result.bytesWritten;
         }
-        await handle.sync();
+        await this.syncFile(handle);
         // New entries must be durable before acknowledging the first batch.
         if (!state.bytes || segment !== state.segment) await this.syncDirectory(dir);
       } catch (failure) {
@@ -387,5 +396,12 @@ export class SessionLog {
     if (process.platform === 'win32') return; // Windows directory handles require a native flush adapter.
     const handle = await fs.open(dir, constants.O_RDONLY);
     try { await handle.sync(); } finally { await handle.close(); }
+  }
+  private async syncFile(handle: fs.FileHandle): Promise<void> {
+    if (this.options.syncMode !== "data") {
+      await handle.sync();
+      return;
+    }
+    await handle.datasync();
   }
 }

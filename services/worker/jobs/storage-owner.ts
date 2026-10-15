@@ -24,7 +24,10 @@ try {
   // Import only after setting this worker's environment: it owns the sole connection.
   const { getRawSqlite, assertRuntimeExecutionCurrent } = await import('../../local-node/infrastructure/database/index.js');
   const db = getRawSqlite();
-  const log = new SessionLog(path.join(root, "session-logs"), { replayRetention: 1024 });
+  const log = new SessionLog(path.join(root, "session-logs"), {
+    replayRetention: 1024,
+    syncMode: process.env.SYNAX_REPLAY_FULL_FSYNC === "1" ? "full" : "data",
+  });
   let transactionOwner: Socket | undefined;
   let transactionDeadline: NodeJS.Timeout | undefined;
   const queue: Array<{ socket: Socket; request: OwnerRequest }> = [];

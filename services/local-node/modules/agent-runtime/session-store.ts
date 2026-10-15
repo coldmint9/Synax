@@ -1825,10 +1825,29 @@ export class AgentRuntimeStore {
         bindAssets(record.sessionId, record.contentParts);
       getRawSqlite()
         .prepare(
-          `INSERT OR REPLACE INTO agent_runtime_tool_calls
+          `INSERT INTO agent_runtime_tool_calls
          (id, session_id, run_id, step_id, model_tool_call_id, tool_id, category, mutability, args_hash, input_summary,
           input_ref_json, output_summary, output_ref_json, status, permission_decision_id, started_at, ended_at, error, content_parts_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           session_id=excluded.session_id,
+           run_id=excluded.run_id,
+           step_id=excluded.step_id,
+           model_tool_call_id=excluded.model_tool_call_id,
+           tool_id=excluded.tool_id,
+           category=excluded.category,
+           mutability=excluded.mutability,
+           args_hash=excluded.args_hash,
+           input_summary=excluded.input_summary,
+           input_ref_json=excluded.input_ref_json,
+           output_summary=excluded.output_summary,
+           output_ref_json=excluded.output_ref_json,
+           status=excluded.status,
+           permission_decision_id=excluded.permission_decision_id,
+           started_at=excluded.started_at,
+           ended_at=excluded.ended_at,
+           error=excluded.error,
+           content_parts_json=excluded.content_parts_json`,
         )
         .run(
           record.id,
