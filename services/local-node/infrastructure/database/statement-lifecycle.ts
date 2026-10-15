@@ -11,3 +11,17 @@ export function runToCompletion(db: Database.Database, statement: Database.State
   };
   return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
 }
+
+/** Drain row-producing get() statements before a transaction commits. */
+export function getToCompletion(statement: Database.Statement, args: unknown[]) {
+  if (!statement.reader) return statement.get(...args);
+  let first: unknown;
+  let seen = false;
+  for (const row of statement.iterate(...args)) {
+    if (!seen) {
+      first = row;
+      seen = true;
+    }
+  }
+  return first;
+}

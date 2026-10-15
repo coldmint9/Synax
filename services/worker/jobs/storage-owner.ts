@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { workerData, type MessagePort } from 'node:worker_threads';
 import { frame, receiveFrames, type OwnerRequest, type OwnerReply } from '../../local-node/infrastructure/database/owner-protocol.js';
 import { runWithExecutionContext, withoutExecutionContext } from '../../local-node/infrastructure/runtime/execution-context.js';
+import { runToCompletion } from '../../local-node/infrastructure/database/statement-lifecycle.js';
 
 const { root, token, endpoint, port, signal } = workerData as {
   root: string; token: string; endpoint: string; port: MessagePort; signal: SharedArrayBuffer;
@@ -110,11 +111,19 @@ try {
           const columns = statement.columns();
           let rows: unknown[][] = [], rowsAffected = 0, lastInsertRowid: bigint | undefined;
           if (statement.reader) rows = statement.raw(true).all(...args) as unknown[][];
-          else { const result = statement.run(...args); rowsAffected = result.changes; lastInsertRowid = BigInt(result.lastInsertRowid); }
+          else { const result = runToCompletion(db, statement, args) as { changes: number; lastInsertRowid: number | bigint }; rowsAffected = result.changes; lastInsertRowid = BigInt(result.lastInsertRowid); }
           return { columns: columns.map(column => column.name), columnTypes: columns.map(column => column.type ?? ''), rows, rowsAffected, lastInsertRowid };
         }
         if (request.operation !== 'run' && request.operation !== 'get' && request.operation !== 'all') throw new Error('Unsupported storage operation.');
-        return statement[request.operation](...args);
+        if (request.operation === 'run') return runToCompletion(db, statement, args);
+        if (request.operation === 'all') return statement.all(...args);
+        if (!statement.reader) return statement.get(...args);
+        let first: unknown;
+        let seen = false;
+        for (const row of statement.iterate(...args)) {
+          if (!seen) { first = row; seen = true; }
+        }
+        return first;
       };
       const result = request.context === null
         ? withoutExecutionContext(invoke)

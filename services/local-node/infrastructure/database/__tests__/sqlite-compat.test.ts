@@ -61,6 +61,18 @@ describe('libsql raw helpers', () => {
     expect(row.value).toBe('ready');
   });
 
+  it('drains row-producing get reads before a deferred read transaction commits', async () => {
+    const { getRawSqlite } = await import('../index.js');
+    const db = getRawSqlite();
+    db.exec('CREATE TABLE read_get_drain_test (value TEXT NOT NULL)');
+    db.prepare('INSERT INTO read_get_drain_test (value) VALUES (?)').run('ready');
+    const row = db.readTransaction(() =>
+      db.prepare('SELECT value FROM read_get_drain_test UNION ALL SELECT value FROM read_get_drain_test').get() as { value: string },
+    )();
+    expect(row.value).toBe('ready');
+    expect(db.prepare('INSERT INTO read_get_drain_test (value) VALUES (?)').run('next')).toMatchObject({ changes: 1 });
+  });
+
   it('provides libsql raw transaction helpers', async () => {
     const { getRawSqlite } = await import('../index.js');
     const db = getRawSqlite();

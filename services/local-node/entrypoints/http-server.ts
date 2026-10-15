@@ -79,6 +79,10 @@ installRuntimeAccess(app, {
 
 function shouldProxyRead(pathname: string, method: string): boolean {
   if (method !== "GET" && method !== "HEAD") return false;
+  // Asset reads combine SQLite metadata with a file under DATA_ROOT. Keep
+  // them on the primary runtime so refreshes cannot observe a stale or
+  // partially initialized read-service process for an attachment.
+  if (pathname === "/api/agent-runtime/assets" || pathname.startsWith("/api/agent-runtime/assets/")) return false;
   // Streaming endpoints stay on the primary runtime because their live buses
   // and WebSocket upgrades are owned there. The read service handles bounded
   // snapshots and lists only.
@@ -119,6 +123,11 @@ app.use("*", async (c, next) => {
       headers,
       signal: c.req.raw.signal,
     });
+    if (response.status >= 500 || (response.status === 404 && requestUrl.pathname.startsWith("/api/agent-runtime/"))) {
+      await response.body?.cancel().catch(() => undefined);
+      pinoLogger.warn({ status: response.status, path: c.req.path }, "read service response unavailable; falling back to primary API");
+      return next();
+    }
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set("X-Synax-Read-Service", "1");
     return new Response(response.body, {

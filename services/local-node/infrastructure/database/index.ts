@@ -1,4 +1,4 @@
-import { runToCompletion } from "./statement-lifecycle.js";
+import { getToCompletion, runToCompletion } from "./statement-lifecycle.js";
 import { createOwnerClient } from "./owner-libsql-client.js";
 import { connectStorageOwner, startStorageOwner, stopStorageOwner } from "./owner-client.js";
 import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
@@ -76,6 +76,16 @@ function createTransaction(
     return (...args: Args): Result => {
       assertTransactionSafe(sqlite);
       const state = getTransactionState(sqlite);
+
+      // The storage-owner client is a synchronous IPC facade. Holding a
+      // deferred read transaction across several IPC round trips pins a
+      // snapshot in the owner process and can prevent checkpoints or a later
+      // writer from making progress. Read callers already use bounded queries;
+      // execute those reads independently on the owner connection.
+      if (mode === "read" && process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+        return fn(...args);
+      }
+
       const useSavepoint = state.depth > 0 || sqliteIsInTransaction(sqlite);
 
       if (useSavepoint) {
@@ -141,7 +151,9 @@ function installSqliteCompat(
             if (guarded) assertDatabaseWriteAllowed(compat, databasePath);
             const result = key === "run"
               ? runToCompletion(compat, target, args)
-              : value.apply(target, args);
+              : key === "get"
+                ? getToCompletion(target, args)
+                : value.apply(target, args);
             return result === target ? wrapped : result;
           };
         },
