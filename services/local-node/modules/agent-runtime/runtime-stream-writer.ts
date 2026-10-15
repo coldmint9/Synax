@@ -70,6 +70,21 @@ export class RuntimeStreamWriter {
     const persist = this.persist ?? (process.env.SYNAX_STORAGE_OWNER_ENDPOINT
       ? (sessionId: string, id: string, values: AgentRunStreamChunk[], revision: number) => runtimeJournal.appendDurable(sessionId, id, values, revision)
       : undefined);
+    if (runtimeFacade.streamMode() === 'authoritative') {
+      const write = runtimeFacade.appendStreamAuthoritative({
+        sessionId: this.sessionId,
+        runId,
+        producerId: `${this.sidecarProducerId}:${runId}`,
+        producerSequence: ++this.sidecarProducerSequence,
+        epoch: 1,
+        revision: this.revision,
+        chunks,
+      })
+        .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
+        .finally(() => this.writes.delete(write));
+      this.writes.add(write);
+      return;
+    }
     if (persist) {
       const write = persist(this.sessionId, runId, chunks, this.revision)
         .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })

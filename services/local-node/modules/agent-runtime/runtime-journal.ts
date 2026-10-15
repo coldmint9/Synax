@@ -17,6 +17,7 @@ import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 export interface RuntimeStreamRecord {
   sequence: number;
@@ -54,6 +55,40 @@ const mapRow = (row: JournalRow): RuntimeStreamRecord => {
     },
   };
 };
+
+function authoritativeState(sessionId: string): RuntimeStreamRecord["state"] {
+  const session = projectSessionState(agentRuntimeStore.getSession(sessionId));
+  return {
+    status: session.status,
+    activeRunId: session.activeRunId,
+    pendingResumeToken: session.pendingResumeToken,
+    blockedReason: session.blockedReason,
+    updatedAt: session.updatedAt,
+  };
+}
+
+async function readAuthoritative(
+  sessionId: string,
+  after: number,
+  limit: number,
+  runId?: string,
+): Promise<RuntimeStreamRecord[]> {
+  if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256)
+    throw new AgentValidationError("Invalid stream cursor.");
+  const events = await runtimeFacade.replayAuthoritative(sessionId, after, runId);
+  const state = authoritativeState(sessionId);
+  const records: RuntimeStreamRecord[] = [];
+  for (const event of events.slice(0, limit)) {
+    let chunk: AgentRunStreamChunk;
+    try {
+      chunk = JSON.parse(Buffer.from(event.payload).toString("utf8")) as AgentRunStreamChunk;
+    } catch (error) {
+      throw new AgentValidationError(`Invalid sidecar stream payload: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    records.push({ sequence: event.sequence, sessionId, runId: event.runId, chunk, state });
+  }
+  return records;
+}
 
 class RuntimeJournal {
   private readonly waiters = new Map<string, Set<() => void>>();
@@ -147,6 +182,8 @@ class RuntimeJournal {
   }
 
   async readDurable(sessionId: string, after = 0, limit = 256, runId?: string): Promise<RuntimeStreamRecord[]> {
+    if (runtimeFacade.streamMode() === 'authoritative')
+      return readAuthoritative(sessionId, after, limit, runId);
     if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.read(sessionId, after, limit, runId);
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256)
       throw new AgentValidationError("Invalid stream cursor.");
@@ -170,6 +207,24 @@ class RuntimeJournal {
   }
 
   async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal["snapshot"]>> {
+    if (runtimeFacade.streamMode() === 'authoritative') {
+      const snapshot = this.snapshot(sessionId);
+      const remote = await runtimeFacade.snapshotAuthoritative(sessionId);
+      if (!remote) return snapshot;
+      snapshot.cursor = remote.cursor;
+      const current = snapshot.run ? agentRuntimeStore.listRunSteps(snapshot.run.id).at(-1) : undefined;
+      if (current && !current.completedAt) {
+        const replay = await readAuthoritative(sessionId, Math.max(0, remote.cursor - 1024), 256, snapshot.run!.id);
+        snapshot.liveChunks = [{ type: "step_started", step: current }];
+        for (const record of replay) {
+          const chunk = record.chunk;
+          if (!("stepId" in chunk) || chunk.stepId !== current.id) continue;
+          if (chunk.type === "retry_status" && ["waiting", "group_wait"].includes(chunk.retry.phase)) snapshot.liveChunks.length = 1;
+          snapshot.liveChunks.push(chunk);
+        }
+      }
+      return snapshot;
+    }
     if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.snapshot(sessionId);
     // Capture a cursor before the SQL snapshot: new events after it are replayed
     // by observe(), including events committed during snapshot assembly.

@@ -177,7 +177,7 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node Unix-socket protobuf client 和显式 Rust sidecar supervisor skeleton 已完成；尚未切换现有 runtime 业务路径。
+状态：Node client、supervisor、shadow 验证和 authoritative stream adapter code 已完成；完整 Node runtime 验证与 admission cutover 尚未完成。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
@@ -190,7 +190,9 @@ runtime-sidecar/
 - [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
-- [ ] `runtime-stream-writer.ts` 使用 sidecar 作为 authoritative append；
+- [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
+- [x] `runtime-journal.ts` 增加可配置 sidecar replay/snapshot projection；
+- [ ] 在完整 Node runtime 中验证 authoritative stream adapter；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；

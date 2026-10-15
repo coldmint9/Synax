@@ -4,9 +4,10 @@ import type { AgentRun } from '../contracts.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
 
 export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
-export type RuntimeSidecarStreamMode = 'disabled' | 'shadow';
+export type RuntimeSidecarStreamMode = 'disabled' | 'shadow' | 'authoritative';
 
 function streamMode(): RuntimeSidecarStreamMode {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') return 'authoritative';
   return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'shadow'
     ? 'shadow'
     : 'disabled';
@@ -47,6 +48,10 @@ export class RuntimeFacade {
     private readonly mode: () => RuntimeSidecarAdmissionMode = admissionMode,
   ) {}
 
+  streamMode(): RuntimeSidecarStreamMode {
+    return streamMode();
+  }
+
   enabled(): boolean {
     return this.mode() !== 'disabled' && this.clientFactory() !== null;
   }
@@ -83,6 +88,60 @@ export class RuntimeFacade {
         { ...details, sessionId: input.sessionId, runId: input.run.id, requestId: input.runtime.requestId, error },
         '[runtime-sidecar] shadow admission failed',
       );
+    } finally {
+      client.close();
+    }
+  }
+
+  async appendStreamAuthoritative(input: ShadowStreamInput): Promise<void> {
+    if (streamMode() !== 'authoritative') return;
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    try {
+      await client.appendStream({
+        sessionId: input.sessionId,
+        runId: input.runId,
+        producerId: input.producerId,
+        producerSequence: input.producerSequence,
+        epoch: input.epoch,
+        revision: input.revision,
+        durability: 'group_commit',
+        events: input.chunks.map((chunk) => ({
+          kind: typeof chunk === 'object' && chunk && 'type' in chunk
+            ? String((chunk as { type: unknown }).type)
+            : 'runtime_chunk',
+          payload: Buffer.from(JSON.stringify(chunk)),
+        })),
+      });
+    } finally {
+      client.close();
+    }
+  }
+
+  async replayAuthoritative(
+    sessionId: string,
+    after: number,
+    runId?: string,
+  ): Promise<Array<{ sequence: number; runId: string; payload: Uint8Array }>> {
+    if (streamMode() !== 'authoritative') return [];
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    try {
+      const response = await client.replay(sessionId, after);
+      return response.events
+        .filter((event) => !runId || event.runId === runId)
+        .map((event) => ({ sequence: event.sequence, runId: event.runId, payload: event.payload }));
+    } finally {
+      client.close();
+    }
+  }
+
+  async snapshotAuthoritative(sessionId: string) {
+    if (streamMode() !== 'authoritative') return null;
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    try {
+      return await client.snapshot(sessionId);
     } finally {
       client.close();
     }
