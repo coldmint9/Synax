@@ -170,7 +170,8 @@ runtime-sidecar/
 - [x] 基础 compaction 后 canonical event 可 replay；
 - [ ] 高并发 compaction/ENOSPC 压测；
 - [x] 注入提交后 ack unknown 后，receipt 查询和幂等重试结果稳定；
-- [ ] 真实进程崩溃、ENOSPC 和高并发 compaction 压测。
+- [x] 真实进程在 commit 后 ack 前崩溃，重启后 request receipt/reused admission 收敛；
+- [ ] ENOSPC 和高并发 compaction 压测。
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 

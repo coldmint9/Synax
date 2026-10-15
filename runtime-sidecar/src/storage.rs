@@ -84,6 +84,7 @@ struct StoredRun {
 #[derive(Clone)]
 struct FaultConfig {
     ack_unknown_after_commit: bool,
+    abort_after_commit: bool,
 }
 
 #[derive(Clone)]
@@ -98,7 +99,10 @@ impl HotStore {
         Self::open_with_faults(
             path,
             FaultConfig {
-                ack_unknown_after_commit: false,
+                ack_unknown_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ACK_UNKNOWN")
+                    == Ok("1".to_owned()),
+                abort_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ABORT_AFTER_COMMIT")
+                    == Ok("1".to_owned()),
             },
         )
     }
@@ -470,6 +474,9 @@ impl HotStore {
         let mut options = WriteOptions::default();
         options.set_sync(matches!(durability, Durability::Sync));
         self.db.write_opt(batch, &options)?;
+        if self.faults.abort_after_commit {
+            std::process::abort();
+        }
         if self.faults.ack_unknown_after_commit {
             return Err(RuntimeError::InvalidCommand("DURABILITY_UNKNOWN".to_owned()).into());
         }
@@ -611,6 +618,7 @@ mod tests {
             &path,
             FaultConfig {
                 ack_unknown_after_commit: true,
+                abort_after_commit: false,
             },
         )
         .unwrap();

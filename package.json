@@ -74,7 +74,8 @@
     "runtime-sidecar:check": "node scripts/runtime-sidecar-cargo.mjs check",
     "runtime-sidecar:test": "node scripts/runtime-sidecar-cargo.mjs test",
     "runtime-sidecar:build": "node scripts/runtime-sidecar-cargo.mjs build --release",
-    "runtime-sidecar:smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-smoke.mjs"
+    "runtime-sidecar:smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-smoke.mjs",
+    "runtime-sidecar:crash-smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-crash-smoke.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
