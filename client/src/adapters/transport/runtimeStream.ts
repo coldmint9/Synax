@@ -25,6 +25,16 @@ export interface RuntimeSnapshot {
   completedStepIds: string[]
 }
 
+/** Keep reconnect hydration as one render transaction on the client. */
+export interface RuntimeSnapshotEvent {
+  type: 'runtime_snapshot'
+  sessionId: string
+  session: AgentSession
+  cursor: number
+  liveChunks: RuntimeChunk[]
+  completedStepIds: string[]
+}
+
 /** Chunks the store consumes locally by upserting the payload they carry; they must not trigger a full detail refresh. */
 const LOCAL_CHUNK_TYPES = new Set([
   'message_delta',
@@ -47,8 +57,18 @@ export class RuntimeStreamProjector {
     this.stepId = null
     this.completedSteps = new Set(value.completedStepIds)
     this.stateKey = this.key(value.session)
-    return [{ type: 'runtime_state', sessionId: value.session.id, patch: value.session, reset: true, refresh: true },
-      ...value.liveChunks.flatMap(chunk => this.live(chunk))]
+    for (const chunk of value.liveChunks) {
+      if (chunk.type === 'step_started' && chunk.step && !this.completedSteps.has(chunk.step.id))
+        this.stepId = chunk.step.id
+    }
+    return [{
+      type: 'runtime_snapshot',
+      sessionId: value.session.id,
+      session: value.session,
+      cursor: value.cursor,
+      liveChunks: value.liveChunks,
+      completedStepIds: value.completedStepIds,
+    }]
   }
 
   record(value: RuntimeStreamRecord): SessionLiveEvent[] {

@@ -18,7 +18,7 @@ function parseSimpleYamlBlock(block: string): Record<string, unknown> {
     const line = rawLine.trimEnd();
     if (!line.trim() || line.trim().startsWith('#')) continue;
 
-    const nestedMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*(.*)$/);
+    const nestedMatch = line.match(/^ {2}([A-Za-z0-9_-]+):\s*(.*)$/);
     if (nested && nestedMatch) {
       nested[nestedMatch[1]!] = parseScalar(nestedMatch[2] ?? '');
       continue;

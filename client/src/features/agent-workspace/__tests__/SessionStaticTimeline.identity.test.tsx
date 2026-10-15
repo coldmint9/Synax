@@ -213,7 +213,7 @@ it("mounts the bottom of long histories immediately while keeping distant histor
   expect(screen.getByText("History message 0")).toBeTruthy();
 });
 
-it("invalidates mounted history on an epoch rewrite and displays revised content", () => {
+it("updates an epoch rewrite in place without remounting the visible row", () => {
   const { rerender } = render(<SessionStaticTimeline {...props} />);
   ViewportObserver.reveal();
   const original = screen.getByText("History").closest("details")!;
@@ -222,7 +222,7 @@ it("invalidates mounted history on an epoch rewrite and displays revised content
   rerender(<SessionStaticTimeline {...props} messages={[{ ...history, content: "Rewritten history" }]} />);
   ViewportObserver.reveal();
   const rewritten = screen.getByText("Rewritten history").closest("details")!;
-  expect(rewritten).not.toBe(original);
-  expect(rewritten.open).toBe(false);
+  expect(rewritten).toBe(original);
+  expect(rewritten.open).toBe(true);
   expect(screen.queryByText("History")).toBeNull();
 });

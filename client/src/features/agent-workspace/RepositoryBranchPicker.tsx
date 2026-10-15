@@ -19,6 +19,7 @@ import {
 } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { refreshWorkspace } from "./workspaceRefresh";
+import { fetchStaleResource, readStaleResource, writeStaleResource } from "../../shared/lib/staleResource";
 
 interface Props {
   sessionId: string;
@@ -57,8 +58,13 @@ function BranchPickerContent({
   const [createError, setCreateError] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const lastOpenRequest = useRef<number | undefined>(undefined);
-  const [data, setData] = useState<SessionGitBranches | null>(null);
-  const [loading, setLoading] = useState(false);
+  const cacheKey = `session-git-branches:${sessionId}:${rootId ?? ""}`;
+  const [data, setData] = useState<SessionGitBranches | null>(() =>
+    readStaleResource<SessionGitBranches>(cacheKey) ?? null,
+  );
+  const [loading, setLoading] = useState(() =>
+    readStaleResource<SessionGitBranches>(cacheKey) === undefined,
+  );
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -88,11 +94,13 @@ function BranchPickerContent({
     setCreating(false);
     setNewBranch("");
     setCreateError(null);
-    setLoading(true);
+    const cached = readStaleResource<SessionGitBranches>(cacheKey);
+    setData(cached ?? null);
+    setLoading(cached === undefined);
     setError(null);
-    setData(null);
-    void agentRuntimeApi
-      .listSessionBranches(sessionId, rootId)
+    void fetchStaleResource(cacheKey, () =>
+      agentRuntimeApi.listSessionBranches(sessionId, rootId),
+    )
       .then((result) => {
         if (active) setData(result);
       })
@@ -105,7 +113,7 @@ function BranchPickerContent({
     return () => {
       active = false;
     };
-  }, [open, sessionId, rootId]);
+  }, [open, sessionId, rootId, cacheKey]);
 
   async function select(name: string | null) {
     if (!name || disabled || mutating.current) return;
@@ -135,6 +143,7 @@ function BranchPickerContent({
         ? await agentRuntimeApi.switchSessionBranch(sessionId, name, rootId, true)
         : await agentRuntimeApi.switchSessionBranch(sessionId, name, rootId);
       if (request === generation.current) {
+        writeStaleResource(cacheKey, result);
         setData(result);
         refreshWorkspace(sessionId, rootId);
         onSwitched();
@@ -175,6 +184,7 @@ function BranchPickerContent({
         rootId,
       );
       if (request === generation.current) {
+        writeStaleResource(cacheKey, result);
         setData(result);
         refreshWorkspace(sessionId, rootId);
         close();

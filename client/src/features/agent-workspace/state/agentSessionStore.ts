@@ -727,6 +727,65 @@ function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
   return replaced;
 }
 
+type RuntimeSnapshotEventPayload = Extract<
+  SessionLiveEvent,
+  { type: "runtime_snapshot" }
+>;
+
+/** Replay a reconnect snapshot into one local state transition. */
+function projectRuntimeSnapshot(
+  state: Pick<
+    AgentSessionStoreState,
+    "steps" | "toolCalls" | "streamingLive" | "streamingStepId" | "streamingRetry"
+  >,
+  event: RuntimeSnapshotEventPayload,
+): Pick<
+  AgentSessionStoreState,
+  "steps" | "toolCalls" | "streamingLive" | "streamingStepId" | "streamingRetry"
+> {
+  let stepId: string | null = null;
+  let streamingLive = EMPTY_STREAMING_BUFFERS;
+  let streamingRetry: LlmRetryState | null = null;
+  let steps = state.steps;
+  let toolCalls = state.toolCalls;
+
+  for (const chunk of event.liveChunks) {
+    if (chunk.type === "step_started" && chunk.step) {
+      stepId = chunk.step.id;
+      steps = upsertById(steps, chunk.step);
+      streamingLive = EMPTY_STREAMING_BUFFERS;
+      streamingRetry = null;
+      continue;
+    }
+    if (!stepId || chunk.stepId !== stepId) continue;
+
+    if (chunk.type === "message_delta" && chunk.delta !== undefined) {
+      streamingLive = applyMessageDelta(streamingLive, chunk.delta);
+    } else if (chunk.type === "thought_delta" && chunk.delta !== undefined) {
+      streamingLive = applyThoughtDelta(streamingLive, chunk.delta);
+    } else if (chunk.type === "tool_call" && chunk.toolCall) {
+      streamingLive = applyToolCall(streamingLive, chunk.toolCall);
+      toolCalls = upsertById(toolCalls, chunk.toolCall);
+    } else if (chunk.type === "tool_result" && chunk.toolCall) {
+      streamingLive = applyToolResult(streamingLive, chunk.toolCall);
+      toolCalls = upsertById(toolCalls, chunk.toolCall);
+    } else if (chunk.type === "retry_status" && chunk.retry) {
+      streamingRetry =
+        chunk.retry.phase === "recovered" ? null : chunk.retry;
+      if (chunk.retry.phase === "waiting" || chunk.retry.phase === "group_wait")
+        streamingLive = EMPTY_STREAMING_BUFFERS;
+    }
+  }
+
+  return {
+    steps,
+    toolCalls,
+    streamingLive,
+    streamingStepId: stepId,
+    streamingRetry,
+  };
+}
+
 // Batch token bursts at most once every 32 ms, preserving transport order.
 // Flush the whole batch at step/tool boundaries so buffered text never moves
 // behind a tool or disappears when a fast model starts its next step.
@@ -1467,32 +1526,51 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     resetConversationHistory: (sessionId) => {
-      if (get().selectedSessionId === sessionId) clearFinalReplyRetry();
+      const selected = get().selectedSessionId === sessionId;
+      const alreadyRefreshing =
+        activeDetailRefresh?.sessionId === sessionId ||
+        activeTranscriptRefresh?.sessionId === sessionId;
+      const existingCache = get().sessionDetailCache[sessionId];
+      // The history mutation itself and its SSE confirmation can arrive back
+      // to back. Keep one refresh transaction so a reconnect cannot clear the
+      // transcript twice or start two competing snapshot hydrations.
+      if (alreadyRefreshing && existingCache?.cachedAt === 0) return;
+      if (selected) clearFinalReplyRetry();
       ++detailRefreshEpoch;
       activeDetailRefresh = null;
       activeTranscriptRefresh = null;
-      const selected = get().selectedSessionId === sessionId;
       if (selected) {
         releaseSessionLiveSubscription();
         clearStreamingBuffers();
       }
       set((state) => {
         const cache = { ...state.sessionDetailCache };
-        delete cache[sessionId];
-        const childSessions = { ...state.childSessions };
-        delete childSessions[sessionId];
+        const previous = cache[sessionId];
+        if (previous) {
+          cache[sessionId] = {
+            ...previous,
+            cachedAt: 0,
+            historyPagesLoaded: false,
+            timelineIndexLoaded: false,
+          };
+        }
         return {
           sessionDetailCache: cache,
-          childSessions,
           inputQueues: { ...state.inputQueues, [sessionId]: [] },
           ...(selected
             ? {
-                ...emptyDetailPayload(),
+                // Keep the last complete transcript painted while the new
+                // history root is fetched. The refresh flag communicates that
+                // it is being replaced without flashing an empty skeleton.
+                detailLoading: false,
+                detailRefreshing: true,
+                detailError: null,
                 streamingRetry: null,
                 streamingStepId: null,
                 streamingLive: EMPTY_STREAMING_BUFFERS,
                 streamingCompletedSteps: [],
                 interactionState: null,
+                contextCompactionNotice: null,
               }
             : {}),
         };
@@ -1963,9 +2041,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const hasReadyCache = Boolean(
         get().sessionDetailCache[targetSessionId]?.cachedAt,
       );
+      const hasVisibleDetail =
+        get().selectedSessionId === targetSessionId &&
+        (get().messages.length > 0 ||
+          get().steps.length > 0 ||
+          get().runs.length > 0);
       set({
-        // Only show the blocking skeleton when no complete transcript exists.
-        detailLoading: !hasReadyCache,
+        // A history rewrite invalidates the cache but should keep the last
+        // complete transcript painted until the replacement arrives.
+        detailLoading: !hasReadyCache && !hasVisibleDetail,
         detailRefreshing: true,
         detailError: null,
       });
@@ -2563,6 +2647,44 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "runtime_snapshot": {
+          if (!streamVisible || get().selectedSessionId !== event.sessionId)
+            break;
+          const next = projectRuntimeSnapshot(get(), event);
+          const runtimeActive = [
+            "running",
+            "queued",
+            "waiting_permission",
+            "waiting_input",
+          ].includes(event.session.status);
+          clearStreamingBuffers();
+          set((state) => {
+            const index = state.sessions.findIndex(
+              (session) => session.id === event.sessionId,
+            );
+            if (index < 0) return state;
+            const sessions = [...state.sessions];
+            sessions[index] = patchAgentSession(
+              sessions[index],
+              event.session,
+            );
+            return {
+              sessions,
+              steps: next.steps,
+              toolCalls: next.toolCalls,
+              streamingStepId: runtimeActive ? next.streamingStepId : null,
+              streamingLive: runtimeActive
+                ? next.streamingLive
+                : EMPTY_STREAMING_BUFFERS,
+              streamingRetry: runtimeActive ? next.streamingRetry : null,
+            };
+          });
+          // The snapshot repairs the visible stream immediately. Reconcile
+          // persisted messages and stats in the background without clearing the
+          // just-hydrated turn again.
+          scheduleLiveRefreshDetail();
+          break;
+        }
         case "media_job":
           if (streamVisible) scheduleLiveRefreshDetail();
           break;

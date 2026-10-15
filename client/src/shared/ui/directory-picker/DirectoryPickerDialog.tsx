@@ -23,6 +23,7 @@ import {
 import { useLocale } from "../../hooks/useLocale";
 import { Button } from "../ui/Button";
 import "../../../features/workspace/workspaceProjects.css";
+import { readStaleResource, writeStaleResource } from "../../lib/staleResource";
 
 /**
  * Directory picker for paths on the runtime host, including local Electron hosts.
@@ -171,7 +172,14 @@ function DirectoryPickerContent({
       request.current?.abort();
       const controller = new AbortController();
       request.current = controller;
-      setLoading(true);
+      const cacheKey = `directory-picker:${locationKind}:${distribution ?? ""}:${showHidden ? "hidden" : "visible"}:${showIgnored ? "ignored" : "clean"}:${target ?? lastPath.current ?? ""}`;
+      const cached = readStaleResource<RemoteDirectoryListing>(cacheKey);
+      if (cached) {
+        setListing(cached);
+        lastPath.current = cached.path;
+        setPathInput(cached.path);
+      }
+      setLoading(cached === undefined);
       setError(null);
       try {
         const next = await listRemoteDirectories(target, {
@@ -182,6 +190,7 @@ function DirectoryPickerContent({
           distribution,
         });
         if (controller.signal.aborted) return;
+        writeStaleResource(cacheKey, next);
         setListing(next);
         lastPath.current = next.path;
         setPathInput(next.path);

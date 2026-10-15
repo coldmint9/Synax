@@ -25,7 +25,7 @@ describe("configured local web search engines", () => {
 
   it("falls back to a public no-auth engine when the configured channel has no credentials", async () => {
     const fetchMock = vi.fn(
-      async (_input: string | URL | Request) =>
+      async (input: string | URL | Request) =>
         new Response(
           `<html><body><div class="result"><a class="result__a" href="https://example.com/public">Public result</a><div class="result__snippet">Public snippet</div></div></body></html>`,
           { status: 200, headers: { "Content-Type": "text/html" } },
@@ -135,7 +135,7 @@ describe("batched concurrent web search", () => {
   it("starts every batched query before any resolves and merges annotated results", async () => {
     const resolvers: Array<(response: Response) => void> = [];
     const fetchMock = vi.fn(
-      (input: string | URL | Request) =>
+      (_input: string | URL | Request) =>
         new Promise<Response>((resolve) => {
           resolvers.push(resolve);
         }),

@@ -138,10 +138,12 @@ export function buildInterleavedTurns(
   const lastStepByRun = new Map(sorted.map((step) => [step.runId, step.id]));
 
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
-  const seenMessages = new Set<string>();
-  for (const message of messages) {
-    if (seenMessages.has(message.id)) continue;
-    seenMessages.add(message.id);
+  // A live upsert and a detail refresh can briefly overlap. Keep the newest
+  // record for each id before building blocks so the transcript never renders
+  // the same assistant message twice.
+  const uniqueMessages = new Map<string, AgentRuntimeMessage>();
+  for (const message of messages) uniqueMessages.set(message.id, message);
+  for (const message of uniqueMessages.values()) {
     if (
       ["artifact_publisher", "artifact_request", "artifact_job"].includes(
         String(message.metadata?.source),
@@ -161,7 +163,10 @@ export function buildInterleavedTurns(
   }
 
   const toolCallsByStep = new Map<string, ToolCallRecord[]>();
-  for (const toolCall of toolCallRecords) {
+  const uniqueToolCalls = new Map<string, ToolCallRecord>();
+  for (const toolCall of toolCallRecords)
+    uniqueToolCalls.set(toolCall.id, toolCall);
+  for (const toolCall of uniqueToolCalls.values()) {
     if (!toolCall.stepId) continue;
     const bucket = toolCallsByStep.get(toolCall.stepId);
     if (bucket) bucket.push(toolCall);

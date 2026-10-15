@@ -1363,6 +1363,33 @@ describe("agentLoopRuntime", () => {
     expect(logText).toContain("[agent-runtime] model step completed");
   });
 
+  it("stops instead of repeating an identical tool call forever", async () => {
+    for (let i = 0; i < 4; i++) {
+      queueMockStep(
+        makeToolStep({
+          toolName: "file_read",
+          toolCallId: `repeated-read-${i}`,
+          args: { path: "package.json" },
+        }),
+      );
+    }
+
+    const session = agentSessionRuntime.create(executorInput);
+    const chunks = await collectChunks(
+      agentLoopRuntime.streamRun(session.id, {
+        message: "Run the verification command.",
+      }),
+    );
+
+    const failure = chunks.find(
+      (chunk) => (chunk as { type?: string }).type === "run_failed",
+    ) as { error?: string } | undefined;
+    expect(failure?.error).toContain("Repeated tool call detected");
+    expect(agentRuntimeStore.listToolCalls(session.id)).toHaveLength(3);
+    expect(mockStepResults).toHaveLength(1);
+    expect(agentRuntimeStore.getSession(session.id).status).toBe("failed");
+  });
+
   it("repairs OpenCode-style tool JSON followed by assistant text", async () => {
     queueMockStep(
       makeTextStep(

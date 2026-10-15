@@ -49,7 +49,7 @@ function sizeOf(db: NativeDatabase.Database, table: string, where = "1=1", args:
   try { return Number((db.prepare(`SELECT coalesce(sum(length(CAST(result_json AS BLOB))),0) AS n FROM ${table} WHERE ${where}`).get(...args) as { n: number }).n); } catch { return 0; }
 }
 export function planMaintenance(db: NativeDatabase.Database, dataRoot = DATA_ROOT, now = Date.now()): MaintenancePlan {
-  const active = activeProjectIds(dataRoot); let orphanScanCacheRows = 0, orphanScanCacheBytes = 0;
+  const active = activeProjectIds(dataRoot); const orphanScanCacheRows = 0, orphanScanCacheBytes = 0;
   let closedOwnerlessProcessRows = 0, closedOwnerlessProcessBytes = 0;
   try {
     const rows = db.prepare("SELECT count(*) AS n,coalesce(sum(length(command_label)+length(id)),0) AS bytes FROM agent_runtime_processes WHERE state='closed' AND kind='command' AND session_id IS NULL AND ended_at IS NOT NULL AND ended_at<?").get(new Date(now - 30 * 86400_000).toISOString()) as { n: number; bytes: number }; closedOwnerlessProcessRows = rows.n; closedOwnerlessProcessBytes = rows.bytes;
@@ -62,7 +62,7 @@ export function planMaintenance(db: NativeDatabase.Database, dataRoot = DATA_ROO
   return { orphanScanCacheRows, orphanScanCacheBytes, closedOwnerlessProcessRows, closedOwnerlessProcessBytes, replayRows, replayBytes, replayRetainRows, ftsTables: dbstat(db).map(row => row.name).filter(name => FTS_NAMES.has(name) || name.startsWith("agent_search_")), warnings: ["This plan never deletes authoritative messages, events, checkpoints, billing, undo, fork, or asset rows.", "Apply requires an offline runtime lock check and a consistent backup."] };
 }
 export function applyMaintenance(db: NativeDatabase.Database, plan: MaintenancePlan, dataRoot = DATA_ROOT, now = Date.now()): { deletedCacheRows: number; deletedProcessRows: number; deletedReplayRows: number; optimizedFts: string[] } {
-  const active = activeProjectIds(dataRoot); let deletedCacheRows = 0;
+  const active = activeProjectIds(dataRoot); const deletedCacheRows = 0;
   // No generated-document cache remains after the documentation module removal.
   let deletedProcessRows = 0;
   try { deletedProcessRows = db.prepare("DELETE FROM agent_runtime_processes WHERE state='closed' AND kind='command' AND session_id IS NULL AND ended_at IS NOT NULL AND ended_at<?").run(new Date(now - 30 * 86400_000).toISOString()).changes; } catch { /* optional */ }

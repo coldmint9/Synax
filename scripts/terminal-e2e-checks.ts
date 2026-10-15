@@ -42,7 +42,7 @@ export async function terminalE2E({ desktop, page, repository, sessionId, projec
   const legacy = page.locator('.session-workspace-sidebar--dock .bui-process-command').filter({ hasText: 'a-very-long-background-service-command-0' });
   await legacy.click();
   await page.getByText('此服务尚未接入交互终端', { exact: true }).waitFor();
-  let listed = (await api(`/projects/${projectId}`)).body.items as any[];
+  const listed = (await api(`/projects/${projectId}`)).body.items as any[];
   const beforeLegacy = listed.length;
   assert.equal((await api(`/projects/${projectId}`)).body.items.length, beforeLegacy);
   await page.getByRole('textbox', { name: '重启命令', exact: true }).fill("printf 'MIGRATED_%s\\n' SERVICE");

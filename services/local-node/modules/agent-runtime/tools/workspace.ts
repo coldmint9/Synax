@@ -19,6 +19,23 @@ import {
 
 const sessionWorkspaceRoots = new Map<string, string>();
 
+/**
+ * Session membership reads hit SQLite and the on-disk project registry, and a
+ * branch switch asks about every session to find the ones sharing the changed
+ * checkout. Memoize the answer and drop it on the mutations that can change it:
+ * session metadata, project membership and migration.
+ */
+const membershipCache = new Map<
+  string,
+  { projectId: string; roots: ProjectWorkspaceRoot[] }
+>();
+const MAX_MEMBERSHIP_CACHE = 2048;
+
+export function invalidateSessionWorkspaceRoots(sessionId?: string): void {
+  if (sessionId === undefined) membershipCache.clear();
+  else membershipCache.delete(sessionId);
+}
+
 export function workspaceRoot(sessionId?: string): string {
   if (!sessionId) return path.resolve(process.cwd());
   const bound = sessionWorkspaceRoots.get(sessionId);
@@ -186,13 +203,19 @@ export function resolveSessionWorkspaceRoots(
   sessionId: string,
   projectId: string,
 ): ProjectWorkspaceRoot[] {
+  const cached = membershipCache.get(sessionId);
+  if (cached && cached.projectId === projectId) return cached.roots;
   const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata
     ?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
   const project = readWorkspaceProject(projectId);
   const roots = binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []);
-  return withSessionPrimary(
+  const resolved = withSessionPrimary(
     roots, resolveSessionWorkspaceLocation(sessionId, projectId), projectId,
   );
+  if (membershipCache.size >= MAX_MEMBERSHIP_CACHE && !cached)
+    membershipCache.delete(membershipCache.keys().next().value!);
+  membershipCache.set(sessionId, { projectId, roots: resolved });
+  return resolved;
 }
 
 /** Freeze the real execution root before accepting work; never infer it from server cwd. */
@@ -244,6 +267,7 @@ export function bindSessionWorkDir(sessionId: string): string {
     return normalized;
   });
   setSessionWorkspaceRoot(sessionId, root);
+  invalidateSessionWorkspaceRoots(sessionId);
   agentRuntimeStore.updateSessionMetadata(sessionId, {
     backend: {
       ...binding,
@@ -265,6 +289,7 @@ function readProjectWorkDirEntriesSafely(): ProjectWorkDirEntry[] {
 
 export function clearSessionWorkspaceRoot(sessionId: string): void {
   sessionWorkspaceRoots.delete(sessionId);
+  membershipCache.delete(sessionId);
 }
 
 /**
@@ -287,6 +312,7 @@ export function refreshSessionWorkspaceRoots(sessionId: string): boolean {
   if (session.activeRunId || session.parentSessionId) return false;
   const backend = { ...binding };
   delete backend.workspaceRoots;
+  invalidateSessionWorkspaceRoots(sessionId);
   agentRuntimeStore.updateSessionMetadata(sessionId, { backend });
   return true;
 }

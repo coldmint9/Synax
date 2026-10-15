@@ -14,6 +14,7 @@ import { projectApi, type GitWorkspaceSummary } from "../../adapters/transport/p
 import { useLocale } from "../../shared/hooks/useLocale";
 import "./agentControls.css";
 import "./workspaceHill.css";
+import { fetchStaleResource, readStaleResource, writeStaleResource } from "../../shared/lib/staleResource";
 
 interface Props {
   projectId: string;
@@ -77,9 +78,11 @@ function GitWorkspacePickerContent({
   const { locale } = useLocale();
   const zh = locale === "zh";
   const isHill = variant === "hill";
+  const cacheKey = `git-workspace-picker:${projectId}:${rootId ?? ""}`;
+  const cachedSummary = readStaleResource<GitWorkspaceSummary>(cacheKey);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [summary, setSummary] = useState<GitWorkspaceSummary | null>(null);
+  const [summary, setSummary] = useState<GitWorkspaceSummary | null>(() => cachedSummary ?? null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -93,18 +96,17 @@ function GitWorkspacePickerContent({
     if (!open) return;
 
     let active = true;
-    setLoading(true);
+    const cached = readStaleResource<GitWorkspaceSummary>(cacheKey);
+    setSummary(cached ?? null);
+    setLoading(cached === undefined);
     setUnavailable(false);
-    void projectApi
-      .listGitWorkspaces(projectId, rootId)
+    void fetchStaleResource(cacheKey, () => projectApi.listGitWorkspaces(projectId, rootId))
       .then((result) => {
+        writeStaleResource(cacheKey, result);
         if (active) setSummary(result);
       })
       .catch(() => {
-        if (active) {
-          setSummary(null);
-          setUnavailable(true);
-        }
+        if (active) setUnavailable(cached === undefined);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -112,7 +114,7 @@ function GitWorkspacePickerContent({
     return () => {
       active = false;
     };
-  }, [open, projectId, rootId]);
+  }, [open, projectId, rootId, cacheKey]);
 
   const options = useMemo<WorkspaceOption[]>(() => {
     const defaultOption: WorkspaceOption = {

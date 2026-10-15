@@ -4,6 +4,7 @@ import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import {
   RuntimeStreamProjector,
+  type RuntimeSnapshotEvent,
   type RuntimeSnapshot,
   type RuntimeStreamRecord,
 } from "./runtimeStream";
@@ -17,6 +18,7 @@ import type {
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | RuntimeSnapshotEvent
   | { type: "media_job"; jobId: string; status: string; resultAssetIds: string[] }
   | {
       type: "context_compaction_state";

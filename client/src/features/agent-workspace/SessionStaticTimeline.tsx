@@ -419,7 +419,6 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   return (
     <div className="flex flex-col gap-5">
       <TimelineRows
-        key={`${session?.id ?? "standalone"}:${historyWindow?.epoch ?? 0}`}
         history={history}
         entries={tail}
         liveId={showLive ? liveId : null}

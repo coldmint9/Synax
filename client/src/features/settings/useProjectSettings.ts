@@ -1,24 +1,33 @@
 import { useCallback, useEffect, useState } from 'react'
 import { projectSettingsApi } from '../../adapters/transport/project-settings'
+import { fetchStaleResource, readStaleResource, writeStaleResource } from '../../shared/lib/staleResource'
 import type { ProjectSettings, UpdateProjectSettingsRequest } from '../../shared/contracts/project-settings'
 
 export function useProjectSettings(projectId: string) {
-  const [settings, setSettings] = useState<ProjectSettings | null>(null)
-  const [loading, setLoading] = useState(false)
+  const cacheKey = `project-settings:${projectId}`
+  const [settings, setSettings] = useState<ProjectSettings | null>(() =>
+    readStaleResource<ProjectSettings>(cacheKey) ?? null,
+  )
+  const [loading, setLoading] = useState(() =>
+    readStaleResource<ProjectSettings>(cacheKey) === undefined,
+  )
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    const cached = readStaleResource<ProjectSettings>(cacheKey)
+    setSettings(cached ?? null)
+    setLoading(cached === undefined)
     setError(null)
     try {
-      const resp = await projectSettingsApi.get(projectId)
-      setSettings(resp.settings)
+      const resp = await fetchStaleResource(cacheKey, async () => (await projectSettingsApi.get(projectId)).settings)
+      writeStaleResource(cacheKey, resp)
+      setSettings(resp)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load project settings')
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   useEffect(() => {
     void load()
@@ -26,33 +35,38 @@ export function useProjectSettings(projectId: string) {
 
   const update = useCallback(async (patch: UpdateProjectSettingsRequest) => {
     const resp = await projectSettingsApi.update(projectId, patch)
+    writeStaleResource(cacheKey, resp.settings)
     setSettings(resp.settings)
     return resp.settings
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   const patchSection = useCallback(async (section: string, data: unknown) => {
     const resp = await projectSettingsApi.patchSection(projectId, section, data)
+    writeStaleResource(cacheKey, resp.settings)
     setSettings(resp.settings)
     return resp.settings
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   const archive = useCallback(async (justification: string) => {
     const auth = { confirmPhrase: 'CONFIRM', securityCode: '000000', justification }
     const resp = await projectSettingsApi.archive(projectId, auth)
+    writeStaleResource(cacheKey, resp.settings)
     setSettings(resp.settings)
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   const restore = useCallback(async (justification: string) => {
     const auth = { confirmPhrase: 'CONFIRM', securityCode: '000000', justification }
     const resp = await projectSettingsApi.restore(projectId, auth)
+    writeStaleResource(cacheKey, resp.settings)
     setSettings(resp.settings)
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   const transfer = useCallback(async (newOwnerMemberId: string, justification: string) => {
     const auth = { confirmPhrase: 'CONFIRM', securityCode: '000000', justification }
     const resp = await projectSettingsApi.transfer(projectId, newOwnerMemberId, auth)
+    writeStaleResource(cacheKey, resp.settings)
     setSettings(resp.settings)
-  }, [projectId])
+  }, [projectId, cacheKey])
 
   const reset = useCallback(async () => {
     await projectSettingsApi.reset(projectId)

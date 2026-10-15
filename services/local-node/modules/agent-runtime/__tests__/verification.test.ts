@@ -57,7 +57,7 @@ describe('verification acceptance criterion selection', () => {
 
   it('does not guess when whitespace normalization matches two different approved criteria', async () => {
     const { session, verify } = setup(['Tests  pass', 'Tests pass']);
-    await expect(verify('  Tests\n pass  ')).rejects.toThrow(/Tests  pass.*Tests pass/s);
+    await expect(verify('  Tests\n pass  ')).rejects.toThrow(/Tests {2}pass.*Tests pass/s);
     await verify('Tests pass');
     expect(workStore.current(session.id)!.verifications.map(receipt => receipt.criterion))
       .toEqual(['Tests pass']);

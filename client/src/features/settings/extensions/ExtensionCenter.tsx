@@ -139,7 +139,6 @@ export function ExtensionCenter({
         mounted.current
       ) {
         setError(error instanceof Error ? error.message : 'Request failed')
-        setResult({ items: [], total: 0, hasMore: false, warnings: [] })
       }
     } finally {
       if (

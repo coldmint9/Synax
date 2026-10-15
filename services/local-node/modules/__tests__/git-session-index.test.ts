@@ -1,0 +1,22 @@
+import NativeDatabase from "libsql";
+import { afterEach, expect, it, vi } from "vitest";
+const state = vi.hoisted(() => ({ db: null as unknown as NativeDatabase.Database }));
+vi.mock("../../infrastructure/database/index.js", () => ({ getRawSqlite: () => state.db }));
+import { listGitSessions } from "../git-session-index.js";
+afterEach(() => state.db?.close());
+it("projects only Git metadata and joins live runs while respecting archive/deletion visibility", () => {
+  state.db = new NativeDatabase(":memory:");
+  state.db.exec(`CREATE TABLE agent_runtime_sessions(id TEXT, project_id TEXT, title TEXT, prompt TEXT, status TEXT, active_run_id TEXT, pending_resume_token TEXT, session_metadata_json TEXT, archived_at TEXT, updated_at TEXT);
+    CREATE TABLE agent_runtime_runs(id TEXT, status TEXT);
+    CREATE TABLE conversation_v3_deletions(session_id TEXT);`);
+  const insert = state.db.prepare("INSERT INTO agent_runtime_sessions VALUES(?,?,?,?,?,?,?,?,?,?)");
+  const metadata = JSON.stringify({ backend: { workDir: "/repo", workspaceRoots: [{ path: "/linked" }] }, unrelated: "x".repeat(100000) });
+  insert.run("visible", "p", "", "x".repeat(1000), "completed", "r", null, metadata, null, "1");
+  insert.run("other", "q", "Other", "", "paused", null, "resume", "invalid-json", null, "2");
+  insert.run("archived", "p", "Archived", "", "completed", null, null, "{}", "yes", "3");
+  insert.run("deleted", "p", "Deleted", "", "completed", null, null, "{}", null, "4");
+  state.db.exec("INSERT INTO agent_runtime_runs VALUES('r','running'); INSERT INTO conversation_v3_deletions VALUES('deleted')");
+  expect(listGitSessions("p")).toEqual([{ id: "visible", title: "x".repeat(100), status: "completed", activeRunId: "r", pendingResumeToken: null, runStatus: "running", backend: { workDir: "/repo", workspaceRoots: [{ path: "/linked" }] } }]);
+  expect(listGitSessions()).toHaveLength(2);
+  expect(listGitSessions("q")[0]).toMatchObject({ id: "other", status: "paused", backend: undefined });
+});

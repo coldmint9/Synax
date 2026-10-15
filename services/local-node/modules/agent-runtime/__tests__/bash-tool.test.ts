@@ -116,6 +116,22 @@ describe('bashTool', () => {
       expect(r.stdout).toContain('hello world');
     });
 
+    it('forces foreground commands into non-interactive CI mode', async () => {
+      const result = await bashTool.execute({
+        sessionId: 's1',
+        runId: null,
+        stepId: null,
+        toolCallId: 'tc1',
+        toolId: 'bash',
+        category: 'shell',
+        mutability: 'read',
+        args: { command: 'node -p "process.env.CI"' },
+      });
+      const r = result.result as Record<string, unknown>;
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain('1');
+    });
+
     it('executes ls', async () => {
       const result = await bashTool.execute({
         sessionId: 's1',
@@ -337,7 +353,7 @@ describe('bashTool', () => {
       expect(r.stdout).toContain('[TIMED OUT after 1s');
       expect(r.stderr).toContain('Command timed out after 1s');
       expect(r.stderr).toMatch(/elapsed \d+\.\d+s/);
-      expect(r.stderr).toContain('larger timeoutMs');
+      expect(r.stderr).toContain('raise timeoutMs once');
     }, 20_000);
   });
 

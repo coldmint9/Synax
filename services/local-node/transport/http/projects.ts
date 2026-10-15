@@ -10,11 +10,9 @@ import {
   workspaceRootHostPath,
   workspaceRootLocation,
   type ProjectReference,
-  type ProjectWorkspaceRoot,
 } from "../../modules/project-workspace.js";
 import {
   canonicalizeWorkspaceLocation,
-  locationKey,
   physicalLocationKey,
   type WorkspaceLocation,
 } from "../../modules/workspace-location.js";
@@ -25,7 +23,6 @@ import {
   readFileSync,
   renameSync,
   writeFileSync,
-  copyFileSync,
   rmSync,
 } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
@@ -44,6 +41,7 @@ import {
   GitWorkspaceError,
   listGitWorkspaces,
   gitHistoryPage,
+  gitHistoryRefs,
   gitCommitDetail,
   gitHistoryAction,
   gitHistoryState,
@@ -55,6 +53,7 @@ import {
   cleanupGitWorktrees,
   previewGitWorktreePrune,
 } from "../../modules/git-workspaces.js";
+import { listGitSessions } from "../../modules/git-session-index.js";
 import { MAX_WORKTREE_CLEANUP_PATHS, isTerminalWorktreeSession } from "../../modules/git-worktree-management-contracts.js";
 
 // ---------------------------------------------------------------------------
@@ -388,42 +387,30 @@ function projectGitRoot(
   };
 }
 
-function sessionWorktreeUsage(activeOnly = false): Map<string, number> {
-  const counts = new Map<string, number>();
-  const sessions = agentRuntimeStore.listSessions({
-    limit: Number.MAX_SAFE_INTEGER,
-  });
-  for (const session of sessions) {
-    if (activeOnly && isTerminalWorktreeSession(session.status) && !session.pendingResumeToken) {
-      if (!session.activeRunId) continue;
-      try {
-        if (isTerminalWorktreeSession(agentRuntimeStore.getRun(session.activeRunId).status)) continue;
-      } catch { /* Missing run state must conservatively protect the worktree. */ }
-    }
-    const backend = session.sessionMetadata?.backend as
-      | { workDir?: string | null; workspaceRoots?: ProjectWorkspaceRoot[] }
-      | undefined;
-    const paths = new Set(
-      [
-        backend?.workDir,
-        ...(backend?.workspaceRoots ?? []).map((root) => root.path),
-      ]
-        .filter((value): value is string => Boolean(value))
-        .map((value) => {
-          try {
-            return canonicalWorkspaceDirectory(value);
-          } catch {
-            return normalize(value);
-          }
-        }),
-    );
-    for (const key of paths) counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return counts;
-}
-
 function readWorktreeSessionUsage() {
-  return { sessionCounts: sessionWorktreeUsage(), activeSessionCounts: sessionWorktreeUsage(true) };
+  const sessionCounts = new Map<string, number>();
+  const activeSessionCounts = new Map<string, number>();
+  const canonicalPaths = new Map<string, string>();
+  for (const session of listGitSessions()) {
+    const backend = session.backend;
+    const active = !isTerminalWorktreeSession(session.status) || Boolean(session.pendingResumeToken) ||
+      Boolean(session.activeRunId && !isTerminalWorktreeSession(session.runStatus));
+    const paths = new Set([backend?.workDir, ...(backend?.workspaceRoots ?? []).map(root => root.path)]
+      .filter((value): value is string => typeof value === "string" && Boolean(value))
+      .map(value => {
+        const cached = canonicalPaths.get(value);
+        if (cached) return cached;
+        let canonical: string;
+        try { canonical = canonicalWorkspaceDirectory(value); } catch { canonical = normalize(value); }
+        canonicalPaths.set(value, canonical);
+        return canonical;
+      }));
+    for (const key of paths) {
+      sessionCounts.set(key, (sessionCounts.get(key) ?? 0) + 1);
+      if (active) activeSessionCounts.set(key, (activeSessionCounts.get(key) ?? 0) + 1);
+    }
+  }
+  return { sessionCounts, activeSessionCounts };
 }
 
 function gitWorkspaceRouteError(c: Context, error: unknown) {
@@ -832,12 +819,15 @@ projectRoutes.get("/:id/git/workspaces", async (c) => {
   if (!project) return c.json({ error: "Project not found" }, 404);
   try {
     const root = projectGitRoot(project, c.req.query("rootId"));
+    const inventoryOnly = c.req.query("mode") === "inventory";
+    const usage = inventoryOnly ? undefined : readWorktreeSessionUsage();
     return c.json(
       await listGitWorkspaces(
         root.repository,
         root.scope,
-        sessionWorktreeUsage(),
-        sessionWorktreeUsage(true),
+        usage?.sessionCounts,
+        usage?.activeSessionCounts,
+        { includeHistory: false, inspectStatus: !inventoryOnly },
       ),
     );
   } catch (error) {
@@ -864,17 +854,17 @@ projectRoutes.get("/:id/git/associations", async (c) => {
   if (!project) return c.json({ error: "Project not found" }, 404);
   try {
     const root = projectGitRoot(project, c.req.query("rootId"));
-    const [workspace, history, epics] = await Promise.all([
-      listGitWorkspaces(root.repository, root.scope), gitHistoryPage(root.repository, { limit: 1 }), gitEpicStore.list(project.id, root.scope),
+    const [workspace, refs, epics] = await Promise.all([
+      listGitWorkspaces(root.repository, root.scope, undefined, undefined, { includeHistory: false, inspectStatus: false }), gitHistoryRefs(root.repository), gitEpicStore.list(project.id, root.scope),
     ]);
-    const sessions = agentRuntimeStore.listSessions({ projectId: project.id, limit: Number.MAX_SAFE_INTEGER }).map(session => {
-      const backend = session.sessionMetadata?.backend as { workDir?: string; workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+    const sessions = listGitSessions(project.id).map(session => {
+      const backend = session.backend;
       const workPaths = [backend?.workDir, ...(backend?.workspaceRoots ?? []).map(item => item.path)].filter((value): value is string => Boolean(value)).map(value => {
         try { return canonicalWorkspaceDirectory(value); } catch { return normalize(value); }
       });
-      return { id: session.id, title: session.title || session.prompt.slice(0, 100), status: session.status, workPaths };
+      return { id: session.id, title: session.title, status: session.status, workPaths };
     });
-    return c.json({ epics, refs: history.refs, sessions: sessions.map(({ id, title, status }) => ({ id, title, status })), branches: indexBranchSessions(history.refs.map(ref => ref.fullName), workspace.worktrees, sessions, epics) });
+    return c.json({ epics, refs, sessions: sessions.map(({ id, title, status }) => ({ id, title, status })), branches: indexBranchSessions(refs.map(ref => ref.fullName), workspace.worktrees, sessions, epics) });
   } catch (error) { return gitWorkspaceRouteError(c, error); }
 });
 
@@ -1059,12 +1049,14 @@ projectRoutes.post("/:id/git/worktrees/prune", async (c) => {
     if (queryRoot && parsed.data.rootId && queryRoot !== parsed.data.rootId) return c.json({ error: "Conflicting rootId" }, 400);
     const root = projectGitRoot(project, parsed.data.rootId ?? queryRoot, true);
     await pruneGitWorktrees(root.repository, [...new Set(parsed.data.paths)], readWorktreeSessionUsage);
+    const usage = readWorktreeSessionUsage();
     return c.json(
       await listGitWorkspaces(
         root.repository,
         root.scope,
-        sessionWorktreeUsage(),
-        sessionWorktreeUsage(true),
+        usage.sessionCounts,
+        usage.activeSessionCounts,
+        { includeHistory: false },
       ),
     );
   } catch (error) {
@@ -1159,7 +1151,7 @@ projectRoutes.post("/", async (c) => {
     );
   }
 
-  const { name, environment, source, description, overwriteExisting } =
+  const { name, environment, source, description: description, overwriteExisting } =
     parsed.data;
   if (source.kind === "wsl") {
     if (!source.distribution || !source.path)

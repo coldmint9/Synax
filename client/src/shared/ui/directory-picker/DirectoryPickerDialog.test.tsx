@@ -13,6 +13,7 @@ import {
   type RemoteDirectoryListing,
 } from "../../../adapters/transport/fs";
 import { DirectoryPickerDialog } from "./DirectoryPickerDialog";
+import { clearStaleResourceCache } from "../../lib/staleResource";
 
 vi.mock("../../../adapters/transport/fs", () => ({
   listRemoteDirectories: vi.fn(),
@@ -48,6 +49,7 @@ function deferred<T>() {
 
 describe("DirectoryPickerDialog", () => {
   beforeEach(() => {
+    clearStaleResourceCache();
     vi.mocked(listRemoteDirectories).mockReset();
   });
 

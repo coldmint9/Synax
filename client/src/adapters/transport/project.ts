@@ -176,9 +176,11 @@ export const projectApi = {
     );
   },
 
-  listGitWorkspaces(id: string, rootId?: string): Promise<GitWorkspaceSummary> {
+  listGitWorkspaces(id: string, rootId?: string, mode?: "inventory"): Promise<GitWorkspaceSummary> {
+    const query = new URLSearchParams(rootId ? { rootId } : {});
+    if (mode) query.set("mode", mode);
     return projectRequest(
-      `${API_BASE}/${encodeURIComponent(id)}/git/workspaces${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
+      `${API_BASE}/${encodeURIComponent(id)}/git/workspaces?${query}`,
       { priority: "low" },
     );
   },

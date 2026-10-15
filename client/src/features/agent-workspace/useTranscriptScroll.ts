@@ -30,6 +30,8 @@ export function useTranscriptScroll(
   const pinnedRef = useRef(true);
   const readingRef = useRef(false);
   const lastTopRef = useRef(0);
+  const readingChangeRef = useRef(onReadingHistoryChange);
+  readingChangeRef.current = onReadingHistoryChange;
 
   const scrollToBottom = useCallback(
     (force = true) => {
@@ -39,7 +41,7 @@ export function useTranscriptScroll(
         pinnedRef.current = true;
         if (readingRef.current) {
           readingRef.current = false;
-          onReadingHistoryChange?.(false);
+          readingChangeRef.current?.(false);
         }
       } else if (!pinnedRef.current) {
         return;
@@ -47,7 +49,7 @@ export function useTranscriptScroll(
       element.scrollTop = element.scrollHeight;
       lastTopRef.current = element.scrollTop;
     },
-    [onReadingHistoryChange, scrollRef],
+    [scrollRef],
   );
 
   useLayoutEffect(() => {
@@ -65,7 +67,7 @@ export function useTranscriptScroll(
     const publish = (reading: boolean) => {
       if (readingRef.current === reading) return;
       readingRef.current = reading;
-      onReadingHistoryChange?.(reading);
+      readingChangeRef.current?.(reading);
     };
     const markManual = () => {
       manualUntil = performance.now() + 1000;
@@ -131,7 +133,7 @@ export function useTranscriptScroll(
     window.addEventListener("pointercancel", handlePointerUp);
     element.scrollTop = pinnedRef.current ? element.scrollHeight : saved!.top;
     lastTopRef.current = element.scrollTop;
-    onReadingHistoryChange?.(readingRef.current);
+    readingChangeRef.current?.(readingRef.current);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
@@ -165,9 +167,9 @@ export function useTranscriptScroll(
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
       observer?.disconnect();
-      onReadingHistoryChange?.(false);
+      readingChangeRef.current?.(false);
     };
-  }, [scrollRef, sessionId, onReadingHistoryChange, ready]);
+  }, [scrollRef, sessionId, ready]);
 
   return { scrollToBottom };
 }

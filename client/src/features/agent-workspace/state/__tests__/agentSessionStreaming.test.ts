@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAgentSessionStore as store } from "../agentSessionStore";
 import { materializeLiveBlocks } from "../../streamingLiveBlocks";
-import type { ToolCallRecord } from "../../../../adapters/transport/agentRuntime";
+import type {
+  AgentSession,
+  AgentRunStep,
+  ToolCallRecord,
+} from "../../../../adapters/transport/agentRuntime";
 
 const toolCall = {
   id: "tool",
@@ -56,6 +60,58 @@ it("batches a burst without dropping text at a step boundary", () => {
   ]);
   vi.advanceTimersByTime(100);
   expect(materializeLiveBlocks(store.getState().streamingLive)).toEqual([]);
+});
+
+it("hydrates a reconnect snapshot in one visible state transition", () => {
+  const session = {
+    id: "s",
+    status: "running",
+    activeRunId: "run",
+    pendingResumeToken: null,
+    blockedReason: null,
+    updatedAt: "2026-01-01T00:00:00Z",
+  } as AgentSession;
+  const step = {
+    id: "snapshot-step",
+    sessionId: "s",
+    runId: "run",
+    index: 2,
+    status: "running",
+  } as AgentRunStep;
+  const listener = vi.fn();
+  store.setState({ selectedSessionId: "s", sessions: [session] });
+  const unsubscribe = store.subscribe((state, previous) => {
+    if (
+      state.streamingStepId !== previous.streamingStepId ||
+      state.streamingLive !== previous.streamingLive
+    )
+      listener();
+  });
+
+  store.getState().applyLiveEvent({
+    type: "runtime_snapshot",
+    sessionId: "s",
+    session,
+    cursor: 12,
+    completedStepIds: [],
+    liveChunks: [
+      { type: "step_started", step },
+      { type: "message_delta", stepId: step.id, delta: "Recovered" },
+      {
+        type: "tool_call",
+        stepId: step.id,
+        toolCall: { ...toolCall, stepId: step.id },
+      },
+    ],
+  });
+
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(store.getState().streamingStepId).toBe(step.id);
+  expect(materializeLiveBlocks(store.getState().streamingLive)).toEqual([
+    { type: "text", content: "Recovered" },
+    expect.objectContaining({ type: "tool_call" }),
+  ]);
+  unsubscribe();
 });
 
 it("preserves text/thought/tool ordering when events arrive before the next paint", () => {

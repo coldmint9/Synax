@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   GitMerge,
   GitFork,
@@ -32,10 +32,20 @@ import GitHistoryTree from "./GitHistoryTree";
 import { GitWorktreesView } from "./GitWorktreesView";
 import { Button } from "../../shared/ui/ui/Button";
 import { isTerminal, statusLabels } from "./mergeUi";
+import { fetchStaleResource, readStaleResource, writeStaleResource } from "../../shared/lib/staleResource";
 import "./gitWorkbench.css";
 import "./gitHistory.css";
 import "./mergeRequest.css";
 type View = "requests" | "branches" | "presets" | "worktrees";
+type GitWorkbenchIndex = {
+  requests: MergeRequest[];
+  presets: MergePreset[];
+  roots: ProjectWorkspaceRoot[];
+};
+
+const gitWorkbenchIndexKey = (projectId: string) => `git-workbench:index:${projectId}`;
+const gitWorkspaceKey = (projectId: string, rootId: string, mode: "inventory" | "full") =>
+  `git-workbench:workspace:${mode}:${projectId}:${rootId}`;
 export default function GitWorkbenchPage() {
   const { projectId, mrId } = useParams();
   if (!projectId) return null;
@@ -66,11 +76,17 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       },
       { replace: true },
     );
-  const [requests, setRequests] = useState<MergeRequest[]>([]);
-  const [presets, setPresets] = useState<MergePreset[]>([]);
-  const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>([]);
-  const [rootId, setRootId] = useState<string | null>(null);
+  const cachedIndex = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
+  const [requests, setRequests] = useState<MergeRequest[]>(() => cachedIndex?.requests ?? []);
+  const [presets, setPresets] = useState<MergePreset[]>(() => cachedIndex?.presets ?? []);
+  const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>(() => cachedIndex?.roots ?? []);
+  const [rootId, setRootId] = useState<string | null>(() => {
+    const available = cachedIndex?.roots.filter((root) => root.status === "available") ?? [];
+    return available.find(root => root.id === searchParams.get("rootId"))?.id ?? available.find((root) => root.role === "primary")?.id ?? available[0]?.id ?? null;
+  });
   const [worktreeBusy, setWorktreeBusy] = useState(false);
+  const statusReadVersion = useRef(0);
+  const [inventoryReady, setInventoryReady] = useState<string | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const requestedRootId = searchParams.get("rootId");
   useEffect(() => {
@@ -78,11 +94,15 @@ function GitWorkbench({ projectId }: { projectId: string }) {
     const requested = roots.find(root => root.id === requestedRootId && root.status === "available");
     if (requested) setRootId(requested.id);
   }, [roots, requestedRootId, worktreeBusy]);
-  const [workspace, setWorkspace] = useState<GitWorkspaceSummary | null>(null);
+  const [workspace, setWorkspace] = useState<GitWorkspaceSummary | null>(() =>
+    rootId ? readStaleResource<GitWorkspaceSummary>(gitWorkspaceKey(projectId, rootId, "inventory")) ?? null : null,
+  );
   const [error, setError] = useState("");
   const [branchError, setBranchError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [branchLoading, setBranchLoading] = useState(false);
+  const [loading, setLoading] = useState(() => cachedIndex === undefined);
+  const [branchLoading, setBranchLoading] = useState(() =>
+    rootId !== null && readStaleResource<GitWorkspaceSummary>(gitWorkspaceKey(projectId, rootId, "inventory")) === undefined,
+  );
   const [busy, setBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const openRequest = (id: string) =>
@@ -95,60 +115,58 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       gitMrApi.presets(projectId),
       projectApi.getWorkspace(projectId),
     ]);
+    const nextIndex = { requests: nextRequests, presets: nextPresets, roots: nextWorkspace.roots };
+    writeStaleResource(gitWorkbenchIndexKey(projectId), nextIndex);
     setRequests(nextRequests);
     setPresets(nextPresets);
     setRoots(nextWorkspace.roots);
-    setRootId(
-      (current) =>
-        current ??
-        nextWorkspace.roots.find(
-          (root) => root.role === "primary" && root.status === "available",
-        )?.id ??
-        nextWorkspace.roots.find((root) => root.status === "available")?.id ??
-        "",
-    );
+    setRootId((current) => {
+      if (current && nextWorkspace.roots.some((root) => root.id === current && root.status === "available")) return current;
+      return nextWorkspace.roots.find((root) => root.role === "primary" && root.status === "available")?.id ??
+        nextWorkspace.roots.find((root) => root.status === "available")?.id ?? null;
+    });
   }, [projectId]);
   useEffect(() => {
     let active = true;
-    Promise.all([
-      gitMrApi.list(projectId),
-      gitMrApi.presets(projectId),
-      projectApi.getWorkspace(projectId),
-    ])
-      .then(([nextRequests, nextPresets, nextWorkspace]) => {
+    // Unblock repository views as soon as roots arrive, independently of MR I/O.
+    projectApi.getWorkspace(projectId)
+      .then(nextWorkspace => {
         if (!active) return;
-        setRequests(nextRequests);
-        setPresets(nextPresets);
+        const cached = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
+        writeStaleResource(gitWorkbenchIndexKey(projectId), { requests: cached?.requests ?? [], presets: cached?.presets ?? [], roots: nextWorkspace.roots });
         setRoots(nextWorkspace.roots);
-        setRootId(
-          nextWorkspace.roots.find(
-            (root) => root.role === "primary" && root.status === "available",
-          )?.id ??
-            nextWorkspace.roots.find((root) => root.status === "available")
-              ?.id ??
-            "",
-        );
+        setRootId(current => {
+          if (current && nextWorkspace.roots.some(root => root.id === current && root.status === "available")) return current;
+          return nextWorkspace.roots.find(root => root.id === requestedRootId && root.status === "available")?.id ?? nextWorkspace.roots.find(root => root.role === "primary" && root.status === "available")?.id ?? nextWorkspace.roots.find(root => root.status === "available")?.id ?? null;
+        });
       })
-      .catch((err) => {
-        if (active) setError(String(err.message ?? err));
+      .catch(err => { if (active) setError(String(err.message ?? err)); })
+      .finally(() => { if (active) setLoading(false); });
+    Promise.all([gitMrApi.list(projectId), gitMrApi.presets(projectId)])
+      .then(([nextRequests, nextPresets]) => {
+        if (!active) return;
+        const cached = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
+        writeStaleResource(gitWorkbenchIndexKey(projectId), { requests: nextRequests, presets: nextPresets, roots: cached?.roots ?? [] });
+        setRequests(nextRequests); setPresets(nextPresets);
       })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+      .catch(err => { if (active) setError(String(err.message ?? err)); });
+    return () => { active = false; };
   }, [projectId]);
   useEffect(() => {
     if (rootId === null) return;
     let active = true;
-    setWorkspace(null);
+    const key = gitWorkspaceKey(projectId, rootId, "inventory");
+    setWorkspace(readStaleResource<GitWorkspaceSummary>(key) ?? null);
     setBranchError("");
     setBranchLoading(true);
-    projectApi
-      .listGitWorkspaces(projectId, rootId || undefined)
+    setInventoryReady(null);
+    void fetchStaleResource(key, () => projectApi.listGitWorkspaces(projectId, rootId, "inventory"))
       .then((value) => {
-        if (active) setWorkspace(value);
+        writeStaleResource(key, value);
+        if (active) {
+          setWorkspace(value);
+          setInventoryReady(`${projectId}/${rootId}/${workspaceRevision}`);
+        }
       })
       .catch((err) => {
         if (active) setBranchError(String(err.message ?? err));
@@ -160,6 +178,23 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       active = false;
     };
   }, [projectId, rootId, workspaceRevision]);
+  useEffect(() => {
+    if (view !== "worktrees" || rootId === null || inventoryReady !== `${projectId}/${rootId}/${workspaceRevision}`) return;
+    let active = true;
+    const version = ++statusReadVersion.current;
+    const key = gitWorkspaceKey(projectId, rootId, "full");
+    const cached = readStaleResource<GitWorkspaceSummary>(key);
+    if (cached) setWorkspace(cached);
+    void projectApi.listGitWorkspaces(projectId, rootId)
+      .then((value) => {
+        if (active && version === statusReadVersion.current) {
+          writeStaleResource(key, value);
+          setWorkspace(value);
+        }
+      })
+      .catch(err => { if (active) setBranchError(String(err.message ?? err)); });
+    return () => { active = false; };
+  }, [view, projectId, rootId, workspaceRevision, inventoryReady]);
   async function perform(action: () => Promise<unknown>) {
     setBusy(true);
     setError("");
@@ -342,11 +377,15 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       ) : (
         <>
           {view === "worktrees" && (
-            rootId === null || branchLoading ? <p className="mr-empty" role="status">正在读取工作树…</p> : !workspace ?
+            rootId === null || (branchLoading && !workspace) ? <p className="mr-empty" role="status">正在读取工作树…</p> : !workspace ?
             <div className="mr-empty"><p>无法读取工作树，请检查仓库路径与权限。</p><Button onClick={() => setWorkspaceRevision(value => value + 1)}>重试</Button></div> :
             <GitWorktreesView key={`${projectId}/${rootId}`} projectId={projectId} rootId={rootId || undefined}
               repositoryName={roots.find(root => root.id === rootId)?.name ?? "当前仓库"}
-              workspace={workspace} onUpdate={setWorkspace} onBusy={setWorktreeBusy}
+              workspace={workspace} onUpdate={value => {
+                statusReadVersion.current++;
+                writeStaleResource(gitWorkspaceKey(projectId, rootId ?? "", "full"), value);
+                setWorkspace(value);
+              }} onBusy={setWorktreeBusy}
               onHistory={item => setSearchParams(current => { const next = new URLSearchParams(current); next.set("view", "branches"); if (rootId) next.set("rootId", rootId); next.set("commit", item.head); return next; })} />
           )}
           {view === "requests" && (
@@ -448,7 +487,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           )}
           {view === "branches" && (
             <section className="mr-history-card flex min-h-0 flex-1 flex-col">
-              {branchLoading ? (
+              {branchLoading && !workspace ? (
                 <div
                   role="status"
                   className="git-history-loading flex flex-1 items-center justify-center gap-3 rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-panel)] text-sm text-[var(--ui-subtle)]"

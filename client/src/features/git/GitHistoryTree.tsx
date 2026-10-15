@@ -34,6 +34,7 @@ import { Button } from "../../shared/ui/ui/Button";
 import { GitHistoryRefs } from "./GitHistoryRefs";
 import { GitCommitInspector } from "./GitCommitInspector";
 import type { MergeFile } from "../../../../services/local-node/modules/git-mr/contracts";
+import { readStaleResource, writeStaleResource } from "../../shared/lib/staleResource";
 
 type HistoryFilter = "all" | "merge" | "workspace";
 const LANE_WIDTH = 22;
@@ -111,13 +112,17 @@ export default function GitHistoryTree({
   rootId?: string;
   focusCommitId?: string;
 }) {
+  const historyCacheKey = `git-history:${projectId ?? "embedded"}:${rootId ?? ""}`;
+  const cachedHistory = projectId
+    ? readStaleResource<{ commits: GitCommitSummary[]; nextOffset: number | null; snapshot?: string }>(historyCacheKey)
+    : undefined;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pages, setPages] = useState<GitCommitSummary[]>([]);
-  const [nextOffset, setNextOffset] = useState<number | null>(0);
-  const nextOffsetRef = useRef<number | null>(0);
-  const snapshot = useRef<string | undefined>(undefined);
+  const [pages, setPages] = useState<GitCommitSummary[]>(() => cachedHistory?.commits ?? []);
+  const [nextOffset, setNextOffset] = useState<number | null>(() => cachedHistory?.nextOffset ?? 0);
+  const nextOffsetRef = useRef<number | null>(cachedHistory?.nextOffset ?? 0);
+  const snapshot = useRef<string | undefined>(cachedHistory?.snapshot);
   const generation = useRef(0);
   const inFlight = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -240,13 +245,21 @@ export default function GitHistoryTree({
       });
       if (version !== generation.current) return;
       snapshot.current = page.snapshot;
-      setPages((current) => [
+      const nextCommits = [
         ...new Map(
-          (offset === 0 ? page.commits : [...current, ...page.commits]).map(
+          (offset === 0 ? page.commits : [...pages, ...page.commits]).map(
             (commit) => [commit.id, commit],
           ),
         ).values(),
-      ]);
+      ];
+      setPages(nextCommits);
+      if (projectId) {
+        writeStaleResource(historyCacheKey, {
+          commits: nextCommits,
+          nextOffset: page.nextOffset,
+          snapshot: page.snapshot,
+        });
+      }
       nextOffsetRef.current = page.nextOffset;
       setNextOffset(page.nextOffset);
     } catch (err) {
@@ -264,8 +277,11 @@ export default function GitHistoryTree({
     inFlight.current = false;
     snapshot.current = undefined;
     nextOffsetRef.current = 0;
-    setPages([]);
-    setNextOffset(0);
+    const cached = projectId
+      ? readStaleResource<{ commits: GitCommitSummary[]; nextOffset: number | null; snapshot?: string }>(historyCacheKey)
+      : undefined;
+    setPages(cached?.commits ?? []);
+    setNextOffset(cached?.nextOffset ?? 0);
     setSelectedId(focusCommitId ?? null);
     void loadPage(0);
     return () => {

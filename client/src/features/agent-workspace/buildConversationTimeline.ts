@@ -169,7 +169,9 @@ export function buildUserMessageEntries(
   session?: AgentSession,
   includeInitialPrompt = true,
 ): UserMessageTimelineEntry[] {
-  const fromMessages = messages
+  const uniqueMessages = new Map<string, AgentRuntimeMessage>();
+  for (const message of messages) uniqueMessages.set(message.id, message);
+  const fromMessages = [...uniqueMessages.values()]
     .filter(isTimelineUserMessage)
     .sort((a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt))
     .map(userTimelineEntry);

@@ -10,6 +10,7 @@ import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 import { prepareOwnedProcess, releaseOwnedProcess } from '../process-ownership.js';
 import { agentRuntimeRoutes } from '../../../transport/http/agent-runtime.js';
+import { getSessionEnvironment } from '../session-environment.js';
 
 let dir: string;
 let one: string;
@@ -178,4 +179,26 @@ it('does not require a local main branch to create a branch', async () => {
   const result = await createBranch(owner.id, 'codex/from-master');
   expect(result.status).toBe(200);
   expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'master'));
+});
+
+it('refreshes the workspace snapshot of sessions sharing the switched checkout', async () => {
+  const other = session(one, false);
+  const before = await getSessionEnvironment(other.id);
+  expect(before.repositories.find(root => root.role === 'primary')?.branch).toBe('main');
+  const owner = session(one, false);
+  expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
+  // The sibling session sees the checkout's new branch instead of a stale one.
+  const after = await getSessionEnvironment(other.id);
+  expect(after.repositories.find(root => root.role === 'primary')?.branch).toBe('feature');
+});
+
+it('stops invalidating sessions whose checkout did not change', async () => {
+  const elsewhere = session(two, false);
+  const before = await getSessionEnvironment(elsewhere.id);
+  const owner = session(one, false);
+  expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
+  // An untouched snapshot is reused byte-for-byte, so the other checkout is
+  // never re-read by the branch switch.
+  expect(await getSessionEnvironment(elsewhere.id)).toBe(before);
+  expect(before.repositories.find(root => root.role === 'primary')?.branch).toBe('main');
 });

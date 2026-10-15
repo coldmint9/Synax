@@ -281,7 +281,10 @@ export function SessionHistoryProvider({
           });
           const store = useAgentSessionStore.getState();
           store.resetConversationHistory(sessionId);
-          await Promise.all([store.refreshSessions(), store.refreshDetail()]);
+          // The history mutation has already been accepted. Keep the editor
+          // responsive and let the store refresh the transcript in the
+          // background while the previous layout remains painted.
+          void store.refreshSessions();
           close(true);
           void refresh();
           return true;
@@ -357,7 +360,7 @@ export function SessionHistoryProvider({
       );
       const store = useAgentSessionStore.getState();
       store.resetConversationHistory(pending.sessionId);
-      await Promise.all([store.refreshSessions(), store.refreshDetail()]);
+      void store.refreshSessions();
       close(true);
       void refresh();
     } catch (e) {

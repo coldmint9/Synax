@@ -22,6 +22,18 @@ vi.mock('../../infrastructure/runtime/logger.js', () => ({ logger: { info: vi.fn
 vi.mock('../../modules/context/context-service.js', () => ({ contextService: {} }));
 vi.mock('../../infrastructure/database/index.js', () => ({ getRawSqlite: vi.fn() }));
 vi.mock('../../modules/agent-runtime/session-store.js', () => ({ agentRuntimeStore: { listSessions: isolation.listSessions, getRun: isolation.getRun } }));
+vi.mock('../../modules/git-session-index.js', () => ({ listGitSessions: () =>
+  isolation.listSessions({ limit: Number.MAX_SAFE_INTEGER }).map((session: {
+    status: string; activeRunId?: string; pendingResumeToken?: string;
+    sessionMetadata?: { backend?: { workDir?: string; workspaceRoots?: ProjectWorkspaceRoot[] } };
+  }) => {
+    let runStatus: string | null = null;
+    if (session.activeRunId) {
+      try { runStatus = isolation.getRun(session.activeRunId)?.status ?? null; } catch { /* missing protects worktree */ }
+    }
+    return { ...session, backend: session.sessionMetadata?.backend, runStatus };
+  }),
+}));
 vi.mock('../../modules/git-workspaces.js', () => ({
   GitWorkspaceError: class extends Error { constructor(message: string, public status: number) { super(message); } },
   createGitWorktree: isolation.createGitWorktree,
@@ -281,7 +293,7 @@ describe('workspace creation and repository selection API', () => {
     ]);
     expect((await routes.request(`/main/git/workspaces?rootId=${rootId}`)).status).toBe(200);
     expect(isolation.listSessions).toHaveBeenCalledWith({ limit: Number.MAX_SAFE_INTEGER });
-    expect(isolation.listGitWorkspaces).toHaveBeenLastCalledWith(localPath, `main/${rootId}`, new Map([[worktreePath, 2], [mainPath, 1]]), new Map([[worktreePath, 2], [mainPath, 1]]));
+    expect(isolation.listGitWorkspaces).toHaveBeenLastCalledWith(localPath, `main/${rootId}`, new Map([[worktreePath, 2], [mainPath, 1]]), new Map([[worktreePath, 2], [mainPath, 1]]), { includeHistory: false, inspectStatus: true });
 
     const create = await routes.request('/main/git/worktrees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -600,4 +612,11 @@ describe("project store initialization", () => {
     expect((await reload()).items).toHaveLength(3);
     expect(diskProjects()).toEqual(realProjects);
   });
+});
+
+it('returns inventory without querying any session usage or scanning worktree status', async () => {
+  const response = await routes.request('/main/git/workspaces?mode=inventory');
+  expect(response.status).toBe(200);
+  expect(isolation.listSessions).not.toHaveBeenCalled();
+  expect(isolation.listGitWorkspaces).toHaveBeenCalledWith(mainPath, 'main', undefined, undefined, { includeHistory: false, inspectStatus: false });
 });

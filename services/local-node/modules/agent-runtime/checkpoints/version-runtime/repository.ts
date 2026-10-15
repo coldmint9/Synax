@@ -594,7 +594,9 @@ export class RuntimeVersionRepository {
     return this.atomic(sessionId, () => {
       const previous = this.checkpointIndex.findExisting(sessionId, kind, messageId);
       if (previous) return previous;
-      let { head, roots } = this.roots(sessionId);
+      const rootState = this.roots(sessionId);
+      let { head } = rootState;
+      const { roots } = rootState;
       const mode = this.objects.db.prepare("SELECT boundary_only,runtime_sequence FROM conversation_v3_heads WHERE session_id=?").get(sessionId) as { boundary_only: number; runtime_sequence: number };
       if (mode.boundary_only) {
         const record = this.objects.put("record", Buffer.from(JSON.stringify({ through: mode.runtime_sequence })));

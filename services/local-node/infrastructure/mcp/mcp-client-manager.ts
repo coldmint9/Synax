@@ -168,7 +168,9 @@ export class McpClientManager {
     const starting: ServerState & { status: "starting" } = { status: "starting" };
     this.servers.set(key, starting);
 
+    // The promise closes over itself so startup cleanup can clear the matching inflight entry.
     let promise!: Promise<ServerState>;
+    // eslint-disable-next-line prefer-const
     promise = (async (): Promise<ServerState> => {
       let transport: Transport | undefined;
       let client: Client | undefined;

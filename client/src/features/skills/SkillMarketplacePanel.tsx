@@ -119,10 +119,6 @@ export function SkillMarketplacePanel({
       setError(null);
     } catch (err) {
       if (!isCurrent()) return;
-      setSkills([]);
-      setTotalSkills(0);
-      setTotalExact(false);
-      setHasMore(false);
       setError(err instanceof Error ? err.message : "Failed to load skills");
     } finally {
       if (isCurrent()) setLoading(false);

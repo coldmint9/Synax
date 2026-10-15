@@ -186,4 +186,21 @@ describe("buildInterleavedTurns", () => {
       expect(turns[0].blocks[1].calls).toHaveLength(2);
     }
   });
+
+  it("deduplicates a tool record that arrives from both live upsert and refresh", () => {
+    const turns = buildInterleavedTurns(
+      [makeStep()],
+      [
+        makeToolCall({ id: "tc-1", status: "running", outputSummary: null }),
+        makeToolCall({ id: "tc-1", status: "completed", outputSummary: "done" }),
+      ],
+      [],
+    );
+
+    expect(turns[0].blocks).toHaveLength(1);
+    expect(turns[0].blocks[0]).toMatchObject({
+      type: "tool_call",
+      call: { id: "tc-1", status: "completed", outputSummary: "done" },
+    });
+  });
 });

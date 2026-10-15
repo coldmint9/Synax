@@ -95,7 +95,7 @@ function checkFileRedirects(command: string): string | null {
       ch === ">" ||
       (ch === "2" && i + 1 < command.length && command[i + 1] === ">")
     ) {
-      let redirectPos = ch === "2" ? i + 1 : i;
+      const redirectPos = ch === "2" ? i + 1 : i;
       let j = redirectPos;
       while (j < command.length && command[j] === ">") {
         j++;
@@ -211,7 +211,7 @@ export const bashTool: RegisteredTool = {
   id: "bash",
   label: "Bash",
   description:
-    "Executes a bash command in the workspace. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
+    "Executes a bash command in the workspace. Foreground commands run non-interactively with CI=1, so test runners such as Vitest use one-shot mode instead of watch mode. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
   category: "shell",
   internalGate: "shell",
   mutability: "read",
@@ -249,7 +249,7 @@ export const bashTool: RegisteredTool = {
       ),
   }),
   progressiveDetails:
-    "Accepts { command: string, workdir?: string, stdin?: string, background?: boolean, timeoutMs?: number }. Use background:true for dev servers and other long-lived services; do not detach with nohup or disown. Set timeoutMs when the command legitimately needs longer than the 30s default (tests, typechecks, installs); a timed-out command returns its partial output and can be re-run with a larger timeoutMs. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
+    "Accepts { command: string, workdir?: string, stdin?: string, background?: boolean, timeoutMs?: number }. Foreground commands set CI=1; use background:true for dev servers and other long-lived services. Set timeoutMs when the command legitimately needs longer than the 30s default (tests, typechecks, installs); after a timeout inspect the partial output and change the approach before retrying instead of blindly repeating the same command. Do not detach with nohup or disown. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
   getPattern(args) {
     if (
       typeof args === "object" &&
@@ -433,7 +433,13 @@ async function executeBashCommand(
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
     timeoutMs: input.timeoutMs,
-    env: { ...process.env, HOME: await sessionHomeDir(DATA_ROOT, input.sessionId) },
+    // Agent shell commands have no interactive terminal. Force CI mode so
+    // runners such as Vitest do one pass instead of entering watch mode.
+    env: {
+      ...process.env,
+      CI: "1",
+      HOME: await sessionHomeDir(DATA_ROOT, input.sessionId),
+    },
     stdin: input.stdin ?? undefined,
   });
   const elapsedMs = Date.now() - startedAtMs;
@@ -459,7 +465,7 @@ async function executeBashCommand(
       const timeoutSeconds = input.timeoutMs / 1000;
       const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
       const timeoutMarker = `[TIMED OUT after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s): the command was killed, so its output is partial.]`;
-      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Re-run with a larger timeoutMs (max ${MAX_EXEC_TIMEOUT_MS / 1000}s) if the command legitimately needs more time.`;
+      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Inspect the partial output and change the approach before retrying; do not blindly repeat the same command. If it legitimately needs more time, raise timeoutMs once (max ${MAX_EXEC_TIMEOUT_MS / 1000}s).`;
       return {
         result: {
           command,

@@ -86,6 +86,8 @@ import type {
 import { agentEventService, type AgentEventService } from "./event-service.js";
 import {
   detectDoomLoop,
+  RUN_STEP_HARD_LIMIT,
+  RUN_TOOL_CALL_HARD_LIMIT,
   shouldConverge,
   buildConsecutiveFailureReminder,
 } from "./loop-guards.js";
@@ -850,6 +852,14 @@ export class AgentLoopRuntime {
           if (this.store.getRun(run.id).metadata.roundHandoff) {
             yield* this.finishYieldedRun(sessionId, run);
             return;
+          }
+
+          if (run.currentStep >= RUN_STEP_HARD_LIMIT) {
+            throw new AgentRuntimeError(
+              `Run stopped after ${RUN_STEP_HARD_LIMIT} steps without converging. Review the latest tool output and continue with a changed approach.`,
+              "RUN_STEP_LIMIT",
+              409,
+            );
           }
 
           run = this.store.updateRun(run.id, {
@@ -1836,12 +1846,13 @@ export class AgentLoopRuntime {
             yield* this.finishWorkRun(sessionId, run);
             return;
           }
-          const doomLoop = workStore.current(sessionId)
-            ? null
-            : detectDoomLoop(
-                this.store.listRunToolCalls(run.id).filter((call) => !isCodeNestedCall(call)),
-                profile?.doomLoopThreshold,
-              );
+          const runToolCalls = this.store
+            .listRunToolCalls(run.id)
+            .filter((call) => !isCodeNestedCall(call));
+          const doomLoop = detectDoomLoop(
+            runToolCalls,
+            profile?.doomLoopThreshold,
+          );
           if (doomLoop) {
             const note = `Repeated tool call detected for ${doomLoop.toolId} with identical arguments. Change approach or report the blocker; converge to an honest status report without repeating unchanged calls.`;
             logger.warn(
@@ -1867,6 +1878,14 @@ export class AgentLoopRuntime {
               metadata: { guard: "doom_loop" },
               createdAt: nowIso(),
             });
+            throw new AgentRuntimeError(note, "DOOM_LOOP", 409);
+          }
+          if (runToolCalls.length >= RUN_TOOL_CALL_HARD_LIMIT) {
+            throw new AgentRuntimeError(
+              `Run stopped after ${RUN_TOOL_CALL_HARD_LIMIT} tool calls without converging. Review the latest tool output and continue with a changed approach.`,
+              "RUN_TOOL_CALL_LIMIT",
+              409,
+            );
           }
 
           currentPrompt = prompt;

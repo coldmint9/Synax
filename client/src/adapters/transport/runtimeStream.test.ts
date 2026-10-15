@@ -11,7 +11,11 @@ const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId:
 describe('runtime stream projection', () => {
   it('hydrates partial output on reconnect, then deduplicates cursor replay', () => {
     const projector = new RuntimeStreamProjector()
-    expect(projector.snapshot(snapshot)).toContainEqual({ type: 'message_delta', stepId: 'step', delta: 'partial' })
+    expect(projector.snapshot(snapshot)).toEqual([expect.objectContaining({
+      type: 'runtime_snapshot',
+      sessionId: 'session',
+      liveChunks: snapshot.liveChunks,
+    })])
     expect(projector.record(record)).toEqual([{ type: 'message_delta', stepId: 'step', delta: ' rest' }])
     expect(projector.record(record)).toEqual([])
   })

@@ -53,6 +53,21 @@ export interface GitWorkspaceSummary {
   worktrees: GitWorktreeSummary[];
 }
 
+function parseHistoryRefs(raw: string): GitHistoryRef[] {
+  return raw.trim().split("\n").filter(Boolean).map((line) => {
+    const [fullName, object, peeled] = line.split("\0");
+    const kind = fullName.startsWith("refs/heads/") ? "local" : fullName.startsWith("refs/remotes/") ? "remote" : "tag";
+    return { fullName, name: fullName.replace(/^refs\/(heads|remotes|tags)\//, ""), head: peeled || object, kind };
+  });
+}
+const historyRefArgs = ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/remotes", "refs/tags"];
+
+/** Associations need ref tips, not a history traversal or worktree status scan. */
+export async function gitHistoryRefs(repository: RepositoryInput): Promise<GitHistoryRef[]> {
+  const context = await assertRepository(repository);
+  return parseHistoryRefs((await git(context.location, context.root, historyRefArgs)).stdout);
+}
+
 /** A ref fingerprint rejects stale pages rather than silently skipping commits. */
 export async function gitHistoryPage(
   repository: RepositoryInput,
@@ -64,18 +79,18 @@ export async function gitHistoryPage(
   const limit = input.limit ?? 100;
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200)
     throw new GitWorkspaceError("Invalid history page.");
-  const readRefs = async () => (await run(["for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/remotes", "refs/tags"])).stdout;
-  const raw = await readRefs();
-  let head = "";
-  try { head = (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); } catch { /* unborn repository */ }
+  const readRefs = async () => (await run(historyRefArgs)).stdout;
+  const readHead = async () => {
+    try { return (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); }
+    catch { return ""; } // unborn repository
+  };
+  const [raw, head] = await Promise.all([readRefs(), readHead()]);
   const snapshot = createHash("sha256").update(raw).update(head).digest("hex");
   if (input.snapshot && input.snapshot !== snapshot)
     throw new GitWorkspaceError("Git history changed. Refresh the history to continue.", 409);
-  const refs: GitHistoryRef[] = raw.trim().split("\n").filter(Boolean).map((line) => {
-    const [fullName, object, peeled] = line.split("\0");
-    const kind = fullName.startsWith("refs/heads/") ? "local" : fullName.startsWith("refs/remotes/") ? "remote" : "tag";
-    return { fullName, name: fullName.replace(/^refs\/(heads|remotes|tags)\//, ""), head: peeled || object, kind };
-  });
+  const refs = parseHistoryRefs(raw);
+  const refsByHead = new Map<string, string[]>();
+  for (const ref of refs) refsByHead.set(ref.head, [...(refsByHead.get(ref.head) ?? []), ref.fullName]);
   if (!refs.length && !head) return { commits: [], refs, snapshot, nextOffset: null };
   const output = await run(["log", "--all", ...(head ? ["HEAD"] : []), "--topo-order", `--skip=${offset}`, `--max-count=${limit + 1}`, "--format=%H%x00%P%x00%s%x00%an%x00%aI%x00", "--"]);
   const fields = output.stdout.split("\0");
@@ -83,12 +98,11 @@ export async function gitHistoryPage(
   for (let i = 0; i + 4 < fields.length; i += 5) {
     const id = fields[i].trim();
     if (!id) continue;
-    commits.push({ id, parents: fields[i + 1].split(" ").filter(Boolean), subject: fields[i + 2], author: fields[i + 3], authoredAt: fields[i + 4], refs: refs.filter((ref) => ref.head === id).map((ref) => ref.fullName), rebase: false });
+    commits.push({ id, parents: fields[i + 1].split(" ").filter(Boolean), subject: fields[i + 2], author: fields[i + 3], authoredAt: fields[i + 4], refs: refsByHead.get(id) ?? [], rebase: false });
   }
   // Detect concurrent fetch/commit before returning a mixed snapshot.
-  let currentHead = "";
-  try { currentHead = (await run(["rev-parse", "--verify", "HEAD"])).stdout.trim(); } catch { /* unborn */ }
-  if (raw !== await readRefs() || currentHead !== head)
+  const [currentRaw, currentHead] = await Promise.all([readRefs(), readHead()]);
+  if (raw !== currentRaw || currentHead !== head)
     throw new GitWorkspaceError("Git history changed. Refresh the history to continue.", 409);
   return { commits: commits.slice(0, limit), refs, snapshot, nextOffset: commits.length > limit ? offset + limit : null };
 }
@@ -125,11 +139,10 @@ export class GitWorkspaceError extends Error {
 }
 
 async function historyOperation(context: RepositoryContext): Promise<GitActionResult["operation"]> {
-  for (const [marker, operation] of [["rebase-merge", "rebase"], ["rebase-apply", "rebase"], ["MERGE_HEAD", "merge"], ["CHERRY_PICK_HEAD", "cherry-pick"]] as const) {
-    const markerPath = (await git(context.location, context.root, ["rev-parse", "--git-path", marker])).stdout.trim();
-    const absolute = pathApi(context.location).resolve(context.root, markerPath);
-    if (await pathExists(context.location, context.root, absolute)) return operation;
-  }
+  const gitDir = (await git(context.location, context.root, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  const markers = [["rebase-merge", "rebase"], ["rebase-apply", "rebase"], ["MERGE_HEAD", "merge"], ["CHERRY_PICK_HEAD", "cherry-pick"]] as const;
+  const exists = await Promise.all(markers.map(([marker]) => pathExists(context.location, context.root, pathApi(context.location).join(gitDir, marker))));
+  for (let index = 0; index < markers.length; index++) if (exists[index]) return markers[index][1];
   return null;
 }
 
@@ -523,11 +536,29 @@ async function withRepositoryLock<T>(
   }
 }
 
+// Cap filesystem scans across repositories. Never cache status used by mutation
+// safety checks: a user may edit a file while an earlier UI scan is in flight.
+let statusReaders = 0;
+const statusWaiters: Array<() => void> = [];
+async function inspectWorktreeStatus(context: RepositoryContext, worktreePath: string): Promise<boolean | null> {
+  if (statusReaders >= 4) await new Promise<void>(resolve => statusWaiters.push(resolve));
+  else statusReaders++;
+  try {
+    const result = await git(context.location, worktreePath, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"]);
+    return Boolean(result.stdout.trim());
+  } catch { return null; }
+  finally {
+    const next = statusWaiters.shift();
+    if (next) next(); else statusReaders--;
+  }
+}
+
 export async function listGitWorkspaces(
   repositoryPath: RepositoryInput,
   projectId: string,
   sessionCounts: ReadonlyMap<string, number> = new Map(),
   activeSessionCounts: ReadonlyMap<string, number> = sessionCounts,
+  options: { includeHistory?: boolean; inspectStatus?: boolean } = {},
 ): Promise<GitWorkspaceSummary> {
   const context = await assertRepository(repositoryPath);
   const worktrees = await rawWorktrees(context);
@@ -578,7 +609,7 @@ export async function listGitWorkspaces(
         checkedOutPath: branchPaths.get(name) ?? null,
       };
     });
-  const commitLog = await git(context.location, context.root, [
+  const commitLog = options.includeHistory === false ? { stdout: "" } : await git(context.location, context.root, [
     "log",
     "--branches",
     "--full-history",
@@ -590,6 +621,7 @@ export async function listGitWorkspaces(
   ]);
   let rebaseIds = new Set<string>();
   try {
+    if (options.includeHistory !== false) {
     const reflog = await git(context.location, context.root, [
       "reflog",
       "--all",
@@ -606,6 +638,7 @@ export async function listGitWorkspaces(
         .filter((record) => /\brebase\b/i.test(record))
         .map((record) => record.split("\0", 1)[0]),
     );
+    }
   } catch {
     // Reflogs may be disabled; the commit graph remains authoritative.
   }
@@ -625,24 +658,11 @@ export async function listGitWorkspaces(
         rebase: rebaseIds.has(id),
       };
     });
-  const dirtyResults = await Promise.all(
-    worktrees.map(async (item) => {
-      if (item.prunable) return null;
-      try {
-        return Boolean(
-          (
-            await git(context.location, item.path, [
-              "status",
-              "--porcelain",
-              "--untracked-files=normal",
-            ])
-          ).stdout.trim(),
-        );
-      } catch {
-        return null;
-      }
-    }),
-  );
+  const dirtyResults = await Promise.all(worktrees.map(item =>
+    options.inspectStatus === false || item.prunable
+      ? Promise.resolve(null)
+      : inspectWorktreeStatus(context, item.path),
+  ));
   return {
     repositoryRoot: worktrees[0].path,
     defaultPath: context.root,
@@ -703,7 +723,7 @@ export async function createGitWorktree(
     );
     await git(context.location, context.root, args);
     const canonicalDestination = await canonical(context.location, destination);
-    const summary = await listGitWorkspaces(context.location, projectId);
+    const summary = await listGitWorkspaces(context.location, projectId, undefined, undefined, { includeHistory: false });
     const created = summary.worktrees.find((item) =>
       samePath(context.location, item.path, canonicalDestination),
     );
@@ -733,7 +753,7 @@ export async function createDetachedGitWorktree(
       "worktree", "add", "--detach", destination, "HEAD",
     ]);
     const canonicalDestination = await canonical(context.location, destination);
-    const summary = await listGitWorkspaces(context.location, projectId);
+    const summary = await listGitWorkspaces(context.location, projectId, undefined, undefined, { includeHistory: false });
     const created = summary.worktrees.find((item) =>
       samePath(context.location, item.path, canonicalDestination),
     );
@@ -759,7 +779,7 @@ export async function previewGitWorktreePath(repository: RepositoryInput, projec
 
 export async function previewGitWorktreeCleanup(repository: RepositoryInput, projectId: string, readUsage?: ReadWorktreeSessionUsage): Promise<GitWorktreeCleanupPreview> {
   const usage = await readUsage?.();
-  const summary = await listGitWorkspaces(repository, projectId, usage?.sessionCounts, usage?.activeSessionCounts);
+  const summary = await listGitWorkspaces(repository, projectId, usage?.sessionCounts, usage?.activeSessionCounts, { includeHistory: false });
   const result: GitWorktreeCleanupPreview = { candidates: [], retained: [] };
   for (const worktree of summary.worktrees) {
     const reasons = cleanupReasons(worktree);
@@ -802,7 +822,7 @@ export async function removeGitWorktree(
       () => normalized(context.location, worktreePath),
     );
     const usage = await options.readUsage?.();
-    const summary = await listGitWorkspaces(context.location, projectId, usage?.sessionCounts, usage?.activeSessionCounts);
+    const summary = await listGitWorkspaces(context.location, projectId, usage?.sessionCounts, usage?.activeSessionCounts, { includeHistory: false });
     const target = summary.worktrees.find((item) =>
       samePath(context.location, item.path, requested),
     );
@@ -882,7 +902,7 @@ export async function resolveGitWorkspaceSelection(
 }> {
   const context = await assertRepository(repositoryPath);
   if (selection.kind === "default") {
-    const summary = await listGitWorkspaces(context.location, projectId);
+    const summary = await listGitWorkspaces(context.location, projectId, undefined, undefined, { includeHistory: false });
     return {
       workDir: context.root,
       branch:
@@ -911,7 +931,7 @@ export async function resolveGitWorkspaceSelection(
         );
       },
     );
-    const summary = await listGitWorkspaces(context.location, projectId);
+    const summary = await listGitWorkspaces(context.location, projectId, undefined, undefined, { includeHistory: false });
     const worktree = summary.worktrees.find((item) =>
       samePath(context.location, item.path, requested),
     );
@@ -933,7 +953,7 @@ export async function resolveGitWorkspaceSelection(
     };
   }
   await assertBranchName(context, selection.branch);
-  const summary = await listGitWorkspaces(context.location, projectId);
+  const summary = await listGitWorkspaces(context.location, projectId, undefined, undefined, { includeHistory: false });
   const branch = summary.branches.find(
     (item) => item.name === selection.branch,
   );

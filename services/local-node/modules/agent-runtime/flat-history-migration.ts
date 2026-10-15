@@ -327,7 +327,7 @@ export function migrateFlatHistory(sessionId: string): {
     if (versioned)
       metadata.historyRollbackEnabled =
         session.sessionMetadata?.historyRollbackEnabled !== false &&
-        !Boolean(session.sessionMetadata?.fork);
+        !session.sessionMetadata?.fork;
     if (!versioned && !transcript) {
       db.prepare(
         `WITH ordered AS MATERIALIZED (SELECT id,row_number() OVER(ORDER BY sequence,created_at,rowid) AS n FROM agent_runtime_messages WHERE session_id=?)

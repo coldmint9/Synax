@@ -18,6 +18,7 @@ import { listWslDistributions } from "../../adapters/transport/wsl";
 import type { ProjectSummary } from "../../shared/state/shellStore";
 import { resolveSessionsEntryPath } from "../agent-workspace/sessionLastVisit";
 import { ProjectCreateDialog } from "./ProjectCreateDialog";
+import { clearStaleResourceCache } from "../../shared/lib/staleResource";
 
 const { navigate, nativePicker, runtime } = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -97,6 +98,7 @@ function row(name: string) {
 const desktopWindow = window as Window & { electronAPI?: { platform: string } };
 
 beforeEach(() => {
+  clearStaleResourceCache();
   vi.clearAllMocks();
   runtime.electron = true;
   nativePicker.mockReset().mockResolvedValue(null);
