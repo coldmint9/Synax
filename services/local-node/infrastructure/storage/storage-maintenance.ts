@@ -11,6 +11,7 @@ const CATEGORIES: Record<string, string> = {
 };
 export interface StorageReport {
   path: string; fileBytes: number; walBytes: number; shmBytes: number;
+  replayFileBytes: number;
   pageSize: number; pageCount: number; freePages: number; freeBytes: number;
   allocatedBytes: number; integrity: string; categories: Array<{ category: string; bytes: number; payloadBytes: number; names: string[] }>;
   rows: Record<string, number>;
@@ -22,6 +23,18 @@ export interface MaintenancePlan {
   ftsTables: string[]; warnings: string[];
 }
 function fileSize(file: string): number { try { return fs.statSync(file).size; } catch { return 0; } }
+function directorySize(root: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); }
+  catch { return 0; }
+  for (const entry of entries) {
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory()) total += directorySize(file);
+    else if (entry.isFile()) total += fileSize(file);
+  }
+  return total;
+}
 function dbstat(db: NativeDatabase.Database) {
   try { return db.prepare("SELECT name,sum(pgsize) AS bytes,sum(payload) AS payloadBytes FROM dbstat GROUP BY name").all() as Array<{ name: string; bytes: number; payloadBytes: number }>; }
   catch { return []; }
@@ -40,7 +53,7 @@ export function reportStorage(db: NativeDatabase.Database, dbPath: string): Stor
   for (const name of ["agent_runtime_events", "agent_runtime_stream_records", "agent_runtime_processes", "conversation_history_journal", "agent_runtime_sessions"]) {
     try { rows[name] = Number((db.prepare(`SELECT count(*) AS n FROM "${name}"`).get() as { n: number }).n); } catch { /* optional table */ }
   }
-  return { path: dbPath, fileBytes: fileSize(dbPath), walBytes: fileSize(`${dbPath}-wal`), shmBytes: fileSize(`${dbPath}-shm`), pageSize, pageCount, freePages, freeBytes: freePages * pageSize, allocatedBytes: (pageCount - freePages) * pageSize, integrity: String((db.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check), categories: [...categories].map(([category, value]) => ({ category, ...value })).sort((a, b) => b.bytes - a.bytes), rows };
+  return { path: dbPath, fileBytes: fileSize(dbPath), walBytes: fileSize(`${dbPath}-wal`), shmBytes: fileSize(`${dbPath}-shm`), replayFileBytes: directorySize(path.join(path.dirname(dbPath), "session-logs")), pageSize, pageCount, freePages, freeBytes: freePages * pageSize, allocatedBytes: (pageCount - freePages) * pageSize, integrity: String((db.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check), categories: [...categories].map(([category, value]) => ({ category, ...value })).sort((a, b) => b.bytes - a.bytes), rows };
 }
 function activeProjectIds(dataRoot: string): Set<string> | null {
   try { const raw = JSON.parse(fs.readFileSync(path.join(dataRoot, "projects.json"), "utf8")) as { items?: Array<{ id?: string }> }; return new Set((raw.items ?? []).flatMap(item => typeof item.id === "string" ? [item.id] : [])); } catch { return null; }
