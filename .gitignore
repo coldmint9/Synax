@@ -128,3 +128,6 @@ Thumbs.db
 .codex
 /api/.data/
 .workbuddy
+
+# Rust build artifacts.
+runtime-sidecar/target/

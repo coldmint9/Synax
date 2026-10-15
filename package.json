@@ -70,7 +70,11 @@
     "version:patch": "node scripts/release-version.mjs patch",
     "version:minor": "node scripts/release-version.mjs minor",
     "test:code-mode": "vitest run services/local-node/modules/agent-runtime/code-mode",
-    "test:code-mode:bundle": "node scripts/code-mode-smoke.mjs"
+    "test:code-mode:bundle": "node scripts/code-mode-smoke.mjs",
+    "runtime-sidecar:check": "cargo check --manifest-path runtime-sidecar/Cargo.toml",
+    "runtime-sidecar:test": "cargo test --manifest-path runtime-sidecar/Cargo.toml",
+    "runtime-sidecar:build": "cargo build --release --manifest-path runtime-sidecar/Cargo.toml",
+    "runtime-sidecar:smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-smoke.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
