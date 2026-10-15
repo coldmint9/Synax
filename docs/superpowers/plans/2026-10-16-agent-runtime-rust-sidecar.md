@@ -168,7 +168,8 @@ runtime-sidecar/
 - [x] sidecar 重启后可恢复 session snapshot 和 cursor；
 - [x] Moka cache 命中不改变 revision/epoch 语义；
 - [ ] compaction 不破坏 canonical event；
-- [ ] 注入 WAL 后 ack 前崩溃后，receipt 查询结果稳定。
+- [x] 注入提交后 ack unknown 后，receipt 查询和幂等重试结果稳定；
+- [ ] 真实进程崩溃、ENOSPC 和高并发 compaction 压测。
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 

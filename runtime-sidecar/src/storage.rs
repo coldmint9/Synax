@@ -81,13 +81,28 @@ struct StoredRun {
 }
 
 #[derive(Clone)]
+struct FaultConfig {
+    ack_unknown_after_commit: bool,
+}
+
+#[derive(Clone)]
 pub struct HotStore {
     db: Arc<DB>,
     snapshots: Cache<String, SessionSnapshot>,
+    faults: FaultConfig,
 }
 
 impl HotStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_with_faults(
+            path,
+            FaultConfig {
+                ack_unknown_after_commit: false,
+            },
+        )
+    }
+
+    fn open_with_faults(path: impl AsRef<Path>, faults: FaultConfig) -> Result<Self, StorageError> {
         let mut options = Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
@@ -101,6 +116,7 @@ impl HotStore {
             snapshots: Cache::builder()
                 .max_capacity(SNAPSHOT_CACHE_CAPACITY)
                 .build(),
+            faults,
         })
     }
 
@@ -426,6 +442,9 @@ impl HotStore {
         let mut options = WriteOptions::default();
         options.set_sync(true);
         self.db.write_opt(batch, &options)?;
+        if self.faults.ack_unknown_after_commit {
+            return Err(RuntimeError::InvalidCommand("DURABILITY_UNKNOWN".to_owned()).into());
+        }
         Ok(())
     }
 }
@@ -553,6 +572,33 @@ mod tests {
             Err(StorageError::Runtime(RuntimeError::RequestConflict))
         ));
         drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn ack_unknown_after_commit_converges_via_receipt_after_reopen() {
+        let path = temp_path("ack-unknown");
+        let faulty = HotStore::open_with_faults(
+            &path,
+            FaultConfig {
+                ack_unknown_after_commit: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            faulty.admit_run("s", "req", "body", "r", 1, 0),
+            Err(StorageError::Runtime(RuntimeError::InvalidCommand(message))) if message == "DURABILITY_UNKNOWN"
+        ));
+        drop(faulty);
+
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(reopened.receipt("s", "req").unwrap().unwrap().run_id, "r");
+        let reused = reopened
+            .admit_run("s", "req", "body", "r-retry", 99, 99)
+            .unwrap();
+        assert!(reused.reused);
+        assert_eq!(reused.run_id, "r");
+        drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
 
