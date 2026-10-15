@@ -43,16 +43,19 @@ describe('runtime Cua MCP', () => {
     }
   }, 20_000);
 
-  it('preserves JSON schemas and structured results in isolated session clients', async () => {
+  it('shares one physical CUA client across session warmups', async () => {
     const { setRuntimeCuaConnection, CUA_SERVER_ID } = await import('../runtime-cua-config.js');
     const { mcpClientManager } = await import('../mcp-client-manager.js');
-    setRuntimeCuaConnection({ generation: 'test-1', command: process.execPath, args: [fixture], environment: [] });
+    const starts = path.join(root, 'starts.txt');
+    setRuntimeCuaConnection({ generation: 'test-1', command: process.execPath, args: [fixture], environment: [{ name: 'MCP_FIXTURE_START_LOG', value: starts }] });
     try {
       await mcpClientManager.warmup([CUA_SERVER_ID], 'project-a', 'session-a');
       await mcpClientManager.warmup([CUA_SERVER_ID], 'project-a', 'session-b');
+      await mcpClientManager.warmup([CUA_SERVER_ID], 'project-b', 'session-c');
+      expect(fs.readFileSync(starts, 'utf8').trim().split('\n')).toHaveLength(1);
       expect(mcpClientManager.getCachedTools(CUA_SERVER_ID, 'project-a', 'session-a').find(t => t.name === 'danger')?.inputSchema).toMatchObject({ required: ['sideEffect'] });
       expect(mcpClientManager.getCachedTools(CUA_SERVER_ID, 'project-a', 'session-b').length).toBeGreaterThan(0);
-      expect(mcpClientManager.getCachedTools(CUA_SERVER_ID, 'project-a', 'session-c')).toEqual([]);
+      expect(mcpClientManager.getCachedTools(CUA_SERVER_ID, 'project-b', 'session-c').length).toBeGreaterThan(0);
       const result = await mcpClientManager.callTool(CUA_SERVER_ID, 'echo', { text: 'hello' }, 'project-a', 'session-a');
       expect(result.structuredContent).toMatchObject({ snapshot_id: 'fixture-snapshot' });
       const image = await mcpClientManager.callTool(CUA_SERVER_ID, 'screenshot', {}, 'project-a', 'session-a');
