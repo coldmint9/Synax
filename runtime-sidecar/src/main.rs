@@ -1,7 +1,10 @@
+mod actor;
 mod protocol;
 mod transport;
 
 use std::sync::Arc;
+
+use crate::actor::SessionShardRouter;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use transport::{TransportContext, cleanup_socket, serve_websocket, socket_path_from_env};
@@ -23,6 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = TransportContext {
         token: Arc::from(token),
         shutdown: shutdown_tx.clone(),
+        router: Arc::new(SessionShardRouter::new(16, 1024)?),
     };
 
     #[cfg(unix)]

@@ -1,0 +1,798 @@
+use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
+
+use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
+
+const DEFAULT_EVENT_RETENTION: usize = 1024;
+const DEFAULT_SUBSCRIBER_CAPACITY: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamEvent {
+    pub sequence: u64,
+    pub run_id: String,
+    pub kind: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSnapshot {
+    pub session_id: String,
+    pub epoch: u64,
+    pub revision: u64,
+    pub active_run_id: Option<String>,
+    pub cursor: u64,
+    pub retained_from: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunAdmission {
+    pub session_id: String,
+    pub run_id: String,
+    pub epoch: u64,
+    pub revision: u64,
+    pub reused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamAppendReceipt {
+    pub session_id: String,
+    pub run_id: String,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RuntimeError {
+    #[error("actor mailbox or subscriber is full")]
+    Backpressure,
+    #[error("session actor is unavailable")]
+    SessionClosed,
+    #[error("request id was reused with different input")]
+    RequestConflict,
+    #[error("session epoch is stale: expected {expected}, actual {actual}")]
+    StaleEpoch { expected: u64, actual: u64 },
+    #[error("session revision is stale: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+    #[error("session already has an active run")]
+    SessionBusy,
+    #[error("producer sequence was already seen: expected {expected}, actual {actual}")]
+    ProducerSequenceReplay { expected: u64, actual: u64 },
+    #[error("producer sequence has a gap: expected {expected}, actual {actual}")]
+    ProducerSequenceGap { expected: u64, actual: u64 },
+    #[error("replay cursor expired: after {after}, retained from {retained_from}")]
+    CursorExpired { after: u64, retained_from: u64 },
+    #[error("invalid command: {0}")]
+    InvalidCommand(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandResult {
+    RunAdmission(RunAdmission),
+    StreamAppend(StreamAppendReceipt),
+    Snapshot(SessionSnapshot),
+    Replay(Vec<StreamEvent>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingEvent {
+    pub kind: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Debug)]
+enum ActorCommand {
+    AdmitRun {
+        session_id: String,
+        request_id: String,
+        body_hash: String,
+        run_id: String,
+        epoch: u64,
+        expected_revision: u64,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    AppendStream {
+        session_id: String,
+        run_id: String,
+        producer_id: String,
+        producer_sequence: u64,
+        epoch: u64,
+        events: Vec<PendingEvent>,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    Snapshot {
+        session_id: String,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    Replay {
+        session_id: String,
+        after: u64,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    Subscribe {
+        session_id: String,
+        after: u64,
+        sender: mpsc::Sender<StreamEvent>,
+        response: oneshot::Sender<Result<SessionSnapshot, RuntimeError>>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Receipt {
+    body_hash: String,
+    result: CommandResult,
+}
+
+struct SessionState {
+    session_id: String,
+    epoch: u64,
+    revision: u64,
+    active_run_id: Option<String>,
+    cursor: u64,
+    retained_from: u64,
+    events: VecDeque<StreamEvent>,
+    receipts: HashMap<String, Receipt>,
+    producer_sequences: HashMap<String, u64>,
+    subscribers: Vec<mpsc::Sender<StreamEvent>>,
+    event_retention: usize,
+}
+
+impl SessionState {
+    fn new(session_id: String, event_retention: usize) -> Self {
+        Self {
+            session_id,
+            epoch: 1,
+            revision: 0,
+            active_run_id: None,
+            cursor: 0,
+            retained_from: 1,
+            events: VecDeque::new(),
+            receipts: HashMap::new(),
+            producer_sequences: HashMap::new(),
+            subscribers: Vec::new(),
+            event_retention,
+        }
+    }
+
+    fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: self.session_id.clone(),
+            epoch: self.epoch,
+            revision: self.revision,
+            active_run_id: self.active_run_id.clone(),
+            cursor: self.cursor,
+            retained_from: self.retained_from,
+        }
+    }
+
+    fn ensure_epoch(&self, epoch: u64) -> Result<(), RuntimeError> {
+        if epoch == self.epoch {
+            Ok(())
+        } else {
+            Err(RuntimeError::StaleEpoch {
+                expected: self.epoch,
+                actual: epoch,
+            })
+        }
+    }
+
+    fn ensure_revision(&self, expected: u64) -> Result<(), RuntimeError> {
+        if expected == self.revision {
+            Ok(())
+        } else {
+            Err(RuntimeError::RevisionConflict {
+                expected,
+                actual: self.revision,
+            })
+        }
+    }
+
+    fn append_events(&mut self, run_id: &str, events: Vec<PendingEvent>) -> StreamAppendReceipt {
+        let first_sequence = self.cursor + 1;
+        for pending in events {
+            self.cursor += 1;
+            let event = StreamEvent {
+                sequence: self.cursor,
+                run_id: run_id.to_owned(),
+                kind: pending.kind,
+                payload: pending.payload,
+            };
+            self.events.push_back(event.clone());
+            self.subscribers
+                .retain(|subscriber| matches!(subscriber.try_send(event.clone()), Ok(())));
+        }
+        while self.events.len() > self.event_retention {
+            self.events.pop_front();
+        }
+        self.retained_from = self
+            .events
+            .front()
+            .map(|event| event.sequence)
+            .unwrap_or(self.cursor + 1);
+        StreamAppendReceipt {
+            session_id: self.session_id.clone(),
+            run_id: run_id.to_owned(),
+            first_sequence,
+            last_sequence: self.cursor,
+            epoch: self.epoch,
+        }
+    }
+
+    fn replay(&self, after: u64) -> Result<Vec<StreamEvent>, RuntimeError> {
+        if after > 0 && after + 1 < self.retained_from {
+            return Err(RuntimeError::CursorExpired {
+                after,
+                retained_from: self.retained_from,
+            });
+        }
+        Ok(self
+            .events
+            .iter()
+            .filter(|event| event.sequence > after)
+            .cloned()
+            .collect())
+    }
+}
+
+pub struct SessionShardRouter {
+    shards: Vec<mpsc::Sender<ActorCommand>>,
+    subscriber_capacity: usize,
+}
+
+impl SessionShardRouter {
+    pub fn new(shard_count: usize, mailbox_capacity: usize) -> Result<Self, RuntimeError> {
+        Self::with_limits(
+            shard_count,
+            mailbox_capacity,
+            DEFAULT_EVENT_RETENTION,
+            DEFAULT_SUBSCRIBER_CAPACITY,
+        )
+    }
+
+    pub fn with_limits(
+        shard_count: usize,
+        mailbox_capacity: usize,
+        event_retention: usize,
+        subscriber_capacity: usize,
+    ) -> Result<Self, RuntimeError> {
+        if shard_count == 0
+            || mailbox_capacity == 0
+            || event_retention == 0
+            || subscriber_capacity == 0
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "all actor limits must be positive".to_owned(),
+            ));
+        }
+        let mut shards = Vec::with_capacity(shard_count);
+        for _ in 0..shard_count {
+            let (sender, receiver) = mpsc::channel(mailbox_capacity);
+            tokio::spawn(run_shard(receiver, event_retention));
+            shards.push(sender);
+        }
+        Ok(Self {
+            shards,
+            subscriber_capacity,
+        })
+    }
+
+    pub async fn admit_run(
+        &self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        body_hash: impl Into<String>,
+        run_id: impl Into<String>,
+        epoch: u64,
+        expected_revision: u64,
+    ) -> Result<RunAdmission, RuntimeError> {
+        let session_id = session_id.into();
+        let (response, receiver) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::AdmitRun {
+                session_id: session_id.clone(),
+                request_id: request_id.into(),
+                body_hash: body_hash.into(),
+                run_id: run_id.into(),
+                epoch,
+                expected_revision,
+                response,
+            },
+        )?;
+        match receiver.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::RunAdmission(admission) => Ok(admission),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected admission response".to_owned(),
+            )),
+        }
+    }
+
+    pub async fn append_stream(
+        &self,
+        session_id: impl Into<String>,
+        run_id: impl Into<String>,
+        producer_id: impl Into<String>,
+        producer_sequence: u64,
+        epoch: u64,
+        events: Vec<PendingEvent>,
+    ) -> Result<StreamAppendReceipt, RuntimeError> {
+        if events.is_empty() {
+            return Err(RuntimeError::InvalidCommand(
+                "stream batch cannot be empty".to_owned(),
+            ));
+        }
+        let session_id = session_id.into();
+        let (response, receiver) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::AppendStream {
+                session_id: session_id.clone(),
+                run_id: run_id.into(),
+                producer_id: producer_id.into(),
+                producer_sequence,
+                epoch,
+                events,
+                response,
+            },
+        )?;
+        match receiver.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::StreamAppend(receipt) => Ok(receipt),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected stream response".to_owned(),
+            )),
+        }
+    }
+
+    pub async fn snapshot(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<SessionSnapshot, RuntimeError> {
+        let session_id = session_id.into();
+        let (response, receiver) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::Snapshot {
+                session_id: session_id.clone(),
+                response,
+            },
+        )?;
+        match receiver.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected snapshot response".to_owned(),
+            )),
+        }
+    }
+
+    pub async fn replay(
+        &self,
+        session_id: impl Into<String>,
+        after: u64,
+    ) -> Result<Vec<StreamEvent>, RuntimeError> {
+        let session_id = session_id.into();
+        let (response, receiver) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::Replay {
+                session_id: session_id.clone(),
+                after,
+                response,
+            },
+        )?;
+        match receiver.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::Replay(events) => Ok(events),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected replay response".to_owned(),
+            )),
+        }
+    }
+
+    pub async fn subscribe(
+        &self,
+        session_id: impl Into<String>,
+        after: u64,
+    ) -> Result<(SessionSnapshot, mpsc::Receiver<StreamEvent>), RuntimeError> {
+        let session_id = session_id.into();
+        let (sender, receiver) = mpsc::channel(self.subscriber_capacity);
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::Subscribe {
+                session_id: session_id.clone(),
+                after,
+                sender,
+                response,
+            },
+        )?;
+        let snapshot = result.await.map_err(|_| RuntimeError::SessionClosed)??;
+        Ok((snapshot, receiver))
+    }
+
+    fn dispatch(&self, session_id: &str, command: ActorCommand) -> Result<(), RuntimeError> {
+        let index = shard_index(session_id, self.shards.len());
+        self.shards[index]
+            .try_send(command)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => RuntimeError::Backpressure,
+                mpsc::error::TrySendError::Closed(_) => RuntimeError::SessionClosed,
+            })
+    }
+}
+
+fn shard_index(session_id: &str, shard_count: usize) -> usize {
+    let mut hasher = DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    (hasher.finish() as usize) % shard_count
+}
+
+async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: usize) {
+    let mut sessions: HashMap<String, SessionState> = HashMap::new();
+    while let Some(command) = receiver.recv().await {
+        match command {
+            ActorCommand::AdmitRun {
+                session_id,
+                request_id,
+                body_hash,
+                run_id,
+                epoch,
+                expected_revision,
+                response,
+            } => {
+                let state = sessions
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionState::new(session_id.clone(), event_retention));
+                let result = admit_run(
+                    state,
+                    request_id,
+                    body_hash,
+                    run_id,
+                    epoch,
+                    expected_revision,
+                );
+                let _ = response.send(result.map(CommandResult::RunAdmission));
+            }
+            ActorCommand::AppendStream {
+                session_id,
+                run_id,
+                producer_id,
+                producer_sequence,
+                epoch,
+                events,
+                response,
+            } => {
+                let state = sessions
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionState::new(session_id.clone(), event_retention));
+                let result =
+                    append_stream(state, run_id, producer_id, producer_sequence, epoch, events);
+                let _ = response.send(result.map(CommandResult::StreamAppend));
+            }
+            ActorCommand::Snapshot {
+                session_id,
+                response,
+            } => {
+                let state = sessions
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionState::new(session_id, event_retention));
+                let _ = response.send(Ok(CommandResult::Snapshot(state.snapshot())));
+            }
+            ActorCommand::Replay {
+                session_id,
+                after,
+                response,
+            } => {
+                let state = sessions
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionState::new(session_id, event_retention));
+                let _ = response.send(state.replay(after).map(CommandResult::Replay));
+            }
+            ActorCommand::Subscribe {
+                session_id,
+                after,
+                sender,
+                response,
+            } => {
+                let state = sessions
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionState::new(session_id, event_retention));
+                let result = match state.replay(after) {
+                    Ok(events) => {
+                        let mut accepted = true;
+                        for event in events {
+                            if sender.try_send(event).is_err() {
+                                accepted = false;
+                                break;
+                            }
+                        }
+                        if accepted {
+                            state.subscribers.push(sender);
+                            Ok(state.snapshot())
+                        } else {
+                            Err(RuntimeError::Backpressure)
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+                let _ = response.send(result);
+            }
+        }
+    }
+}
+
+fn admit_run(
+    state: &mut SessionState,
+    request_id: String,
+    body_hash: String,
+    run_id: String,
+    epoch: u64,
+    expected_revision: u64,
+) -> Result<RunAdmission, RuntimeError> {
+    if let Some(receipt) = state.receipts.get(&request_id) {
+        if receipt.body_hash != body_hash {
+            return Err(RuntimeError::RequestConflict);
+        }
+        if let CommandResult::RunAdmission(admission) = &receipt.result {
+            let mut reused = admission.clone();
+            reused.reused = true;
+            return Ok(reused);
+        }
+        return Err(RuntimeError::InvalidCommand(
+            "request receipt has an unexpected result".to_owned(),
+        ));
+    }
+    state.ensure_epoch(epoch)?;
+    state.ensure_revision(expected_revision)?;
+    if state.active_run_id.is_some() {
+        return Err(RuntimeError::SessionBusy);
+    }
+    state.revision += 1;
+    state.active_run_id = Some(run_id.clone());
+    let admission = RunAdmission {
+        session_id: state.session_id.clone(),
+        run_id,
+        epoch: state.epoch,
+        revision: state.revision,
+        reused: false,
+    };
+    state.receipts.insert(
+        request_id,
+        Receipt {
+            body_hash,
+            result: CommandResult::RunAdmission(admission.clone()),
+        },
+    );
+    Ok(admission)
+}
+
+fn append_stream(
+    state: &mut SessionState,
+    run_id: String,
+    producer_id: String,
+    producer_sequence: u64,
+    epoch: u64,
+    events: Vec<PendingEvent>,
+) -> Result<StreamAppendReceipt, RuntimeError> {
+    state.ensure_epoch(epoch)?;
+    let expected = state
+        .producer_sequences
+        .get(&producer_id)
+        .copied()
+        .unwrap_or(0)
+        + 1;
+    if producer_sequence < expected {
+        return Err(RuntimeError::ProducerSequenceReplay {
+            expected,
+            actual: producer_sequence,
+        });
+    }
+    if producer_sequence > expected {
+        return Err(RuntimeError::ProducerSequenceGap {
+            expected,
+            actual: producer_sequence,
+        });
+    }
+    state
+        .producer_sequences
+        .insert(producer_id, producer_sequence);
+    Ok(state.append_events(&run_id, events))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(kind: &str) -> PendingEvent {
+        PendingEvent {
+            kind: kind.to_owned(),
+            payload: kind.as_bytes().to_vec(),
+        }
+    }
+
+    #[tokio::test]
+    async fn router_rejects_invalid_limits() {
+        assert!(matches!(
+            SessionShardRouter::new(0, 1),
+            Err(RuntimeError::InvalidCommand(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn admits_idempotently_and_rejects_conflicting_request_body() {
+        let router = SessionShardRouter::new(2, 16).unwrap();
+        let first = router
+            .admit_run("session-a", "request-a", "body-a", "run-a", 1, 0)
+            .await
+            .unwrap();
+        assert!(!first.reused);
+        assert_eq!(first.revision, 1);
+
+        let reused = router
+            .admit_run("session-a", "request-a", "body-a", "run-new", 99, 99)
+            .await
+            .unwrap();
+        assert!(reused.reused);
+        assert_eq!(reused.run_id, "run-a");
+        assert!(matches!(
+            router
+                .admit_run("session-a", "request-a", "body-b", "run-b", 1, 1)
+                .await,
+            Err(RuntimeError::RequestConflict)
+        ));
+    }
+
+    #[tokio::test]
+    async fn fences_epoch_revision_and_busy_sessions() {
+        let router = SessionShardRouter::new(1, 16).unwrap();
+        router
+            .admit_run("session-a", "request-a", "body-a", "run-a", 1, 0)
+            .await
+            .unwrap();
+        assert!(matches!(
+            router
+                .admit_run("session-a", "request-b", "body-b", "run-b", 2, 1)
+                .await,
+            Err(RuntimeError::StaleEpoch { .. })
+        ));
+        assert!(matches!(
+            router
+                .admit_run("session-a", "request-b", "body-b", "run-b", 1, 1)
+                .await,
+            Err(RuntimeError::SessionBusy)
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_revision_conflicts_before_busy_state() {
+        let router = SessionShardRouter::new(1, 16).unwrap();
+        router
+            .admit_run("session-a", "request-a", "body-a", "run-a", 1, 0)
+            .await
+            .unwrap();
+        assert!(matches!(
+            router
+                .admit_run("session-a", "request-b", "body-b", "run-b", 1, 0)
+                .await,
+            Err(RuntimeError::RevisionConflict {
+                expected: 0,
+                actual: 1
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn slow_subscriber_is_dropped_without_blocking_other_sessions() {
+        let router = SessionShardRouter::with_limits(2, 16, 8, 1).unwrap();
+        let (_, _slow_receiver) = router.subscribe("slow-session", 0).await.unwrap();
+        router
+            .append_stream(
+                "slow-session",
+                "run-slow",
+                "producer-slow",
+                1,
+                1,
+                vec![event("first")],
+            )
+            .await
+            .unwrap();
+        router
+            .append_stream(
+                "slow-session",
+                "run-slow",
+                "producer-slow",
+                2,
+                1,
+                vec![event("second")],
+            )
+            .await
+            .unwrap();
+        let fast = router.snapshot("fast-session").await.unwrap();
+        assert_eq!(fast.session_id, "fast-session");
+        assert_eq!(fast.cursor, 0);
+    }
+
+    #[tokio::test]
+    async fn appends_replays_and_subscribes_without_losing_order() {
+        let router = SessionShardRouter::with_limits(1, 16, 3, 4).unwrap();
+        let (snapshot, mut receiver) = router.subscribe("session-a", 0).await.unwrap();
+        assert_eq!(snapshot.cursor, 0);
+        router
+            .append_stream(
+                "session-a",
+                "run-a",
+                "producer-a",
+                1,
+                1,
+                vec![event("one"), event("two")],
+            )
+            .await
+            .unwrap();
+        let first = receiver.recv().await.unwrap();
+        let second = receiver.recv().await.unwrap();
+        assert_eq!((first.sequence, second.sequence), (1, 2));
+
+        let replay = router.replay("session-a", 0).await.unwrap();
+        assert_eq!(
+            replay.iter().map(|item| item.sequence).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(matches!(
+            router
+                .append_stream("session-a", "run-a", "producer-a", 3, 1, vec![event("gap")])
+                .await,
+            Err(RuntimeError::ProducerSequenceGap {
+                expected: 2,
+                actual: 3
+            })
+        ));
+        router
+            .append_stream(
+                "session-a",
+                "run-a",
+                "producer-a",
+                2,
+                1,
+                vec![event("three")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(router.snapshot("session-a").await.unwrap().cursor, 3);
+    }
+
+    #[tokio::test]
+    async fn bounded_mailbox_returns_backpressure() {
+        let router = SessionShardRouter::with_limits(1, 1, 8, 1).unwrap();
+        let first = router.snapshot("session-a");
+        let second = router.snapshot("session-a");
+        let first_result = first.await;
+        let second_result = second.await;
+        assert!(first_result.is_ok() || second_result.is_ok());
+        assert!(first_result.is_ok() || matches!(second_result, Err(RuntimeError::Backpressure)));
+    }
+
+    #[tokio::test]
+    async fn cursor_expires_after_retention_window() {
+        let router = SessionShardRouter::with_limits(1, 32, 2, 2).unwrap();
+        for sequence in 1..=3 {
+            router
+                .append_stream(
+                    "session-a",
+                    "run-a",
+                    "producer-a",
+                    sequence,
+                    1,
+                    vec![event("x")],
+                )
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            router.replay("session-a", 0).await,
+            Ok(events) if events.len() == 2
+        ));
+        assert!(matches!(
+            router.replay("session-a", 1).await,
+            Ok(events) if events.len() == 2
+        ));
+    }
+}

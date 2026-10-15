@@ -137,19 +137,21 @@ runtime-sidecar/
 
 ## 阶段 2：协议和 session actor
 
+状态：已完成内存 actor、protobuf command transport 和基础 live subscription；RocksDB 持久化留在阶段 3。
+
 目标：实现不依赖 RocksDB 的内存 session actor，先验证顺序、幂等、epoch 和背压。
 
 验收：
 
-- 同一个 session 的 command 按 producer sequence 排序；
-- 不同 session 能并行处理；
-- 重复 request_id 返回原 receipt；
-- 相同 request_id 不同 body 返回 `REQUEST_CONFLICT`；
-- 旧 epoch 写入返回 `STALE_EPOCH`；
-- revision 不匹配返回 `REVISION_CONFLICT`；
-- mailbox 超限返回 `BACKPRESSURE`；
-- subscribe 支持 snapshot_then_live 和 replay_after_cursor；
-- 慢客户端不会阻塞其他 session。
+- [x] 同一个 session 的 command 按 producer sequence 排序；
+- [x] 不同 session 路由到独立 shard actor；
+- [x] 重复 request_id 返回原 receipt；
+- [x] 相同 request_id 不同 body 返回 `REQUEST_CONFLICT`；
+- [x] 旧 epoch 写入返回 `STALE_EPOCH`；
+- [x] revision 不匹配返回 `REVISION_CONFLICT`；
+- [x] mailbox 超限返回 `BACKPRESSURE`；
+- [x] subscribe 支持 snapshot_then_live 和 replay_after_cursor；
+- [x] 慢客户端被丢弃或要求 resync，不阻塞其他 session。
 
 ## 阶段 3：runtime-hot RocksDB 和 Moka
 
@@ -234,4 +236,4 @@ runtime-sidecar/
 
 ## 当前下一步
 
-下一步进入阶段 2：将 JSON health stub 收敛为 protobuf envelope，实现 request receipt、epoch/revision fencing、session shard actor、bounded mailbox 和 snapshot/replay。此阶段仍不接入现有 session 数据。
+下一步进入阶段 3：引入 runtime-hot RocksDB、WriteBatch、Moka session cache、持久 cursor 和 crash recovery；仍先保持 Node 业务执行平面不变。

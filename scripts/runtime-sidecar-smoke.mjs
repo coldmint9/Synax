@@ -23,6 +23,169 @@ const cleanup = () => {
 };
 process.once('exit', cleanup);
 
+const concat = (...parts) => Buffer.concat(parts.filter(Boolean));
+const varint = value => {
+  const bytes = [];
+  let current = BigInt(value);
+  do {
+    let byte = Number(current & 0x7fn);
+    current >>= 7n;
+    if (current) byte |= 0x80;
+    bytes.push(byte);
+  } while (current);
+  return Buffer.from(bytes);
+};
+const fieldBytes = (field, bytes) => concat(varint((field << 3) | 2), varint(bytes.length), bytes);
+const fieldString = (field, value) => fieldBytes(field, Buffer.from(value));
+const fieldUint = (field, value) => concat(varint(field << 3), varint(value));
+const envelope = ({ requestId = '', sessionId = '', epoch = 0, revision = 0, bodyField, body = Buffer.alloc(0) }) => concat(
+  requestId && fieldString(1, requestId),
+  sessionId && fieldString(2, sessionId),
+  epoch && fieldUint(3, epoch),
+  revision && fieldUint(4, revision),
+  fieldBytes(bodyField, body),
+);
+const hello = token => envelope({ bodyField: 10, body: fieldString(1, token) });
+const health = () => envelope({ bodyField: 11 });
+const shutdown = () => envelope({ bodyField: 12 });
+const subscribe = ({ requestId, sessionId, after }) => envelope({
+  requestId,
+  sessionId,
+  bodyField: 18,
+  body: fieldUint(1, after),
+});
+const admitRun = ({ requestId, sessionId, epoch, revision, bodyHash, runId }) => envelope({
+  requestId,
+  sessionId,
+  epoch,
+  revision,
+  bodyField: 14,
+  body: concat(fieldString(1, bodyHash), fieldString(2, runId)),
+});
+const appendStream = ({ requestId, sessionId, epoch, revision, runId, producerId, producerSequence, kind, payload }) => envelope({
+  requestId,
+  sessionId,
+  epoch,
+  revision,
+  bodyField: 15,
+  body: concat(
+    fieldString(1, runId),
+    fieldString(2, producerId),
+    fieldUint(3, producerSequence),
+    fieldBytes(4, concat(fieldString(1, kind), fieldBytes(2, Buffer.from(payload)))),
+  ),
+});
+const snapshot = ({ requestId, sessionId, epoch, revision }) => envelope({
+  requestId,
+  sessionId,
+  epoch,
+  revision,
+  bodyField: 16,
+});
+const replay = ({ requestId, sessionId, after }) => envelope({
+  requestId,
+  sessionId,
+  bodyField: 17,
+  body: fieldUint(1, after),
+});
+
+const readVarint = (bytes, state) => {
+  let result = 0n;
+  let shift = 0n;
+  while (state.offset < bytes.length) {
+    const byte = bytes[state.offset++];
+    result |= BigInt(byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return result;
+    shift += 7n;
+  }
+  throw new Error('truncated protobuf varint');
+};
+const hasField = (bytes, wanted) => {
+  const state = { offset: 0 };
+  while (state.offset < bytes.length) {
+    const key = Number(readVarint(bytes, state));
+    const field = key >>> 3;
+    const wire = key & 7;
+    if (wire === 0) {
+      readVarint(bytes, state);
+    } else if (wire === 2) {
+      const length = Number(readVarint(bytes, state));
+      const start = state.offset;
+      state.offset += length;
+      if (field === wanted) return bytes.subarray(start, state.offset);
+    } else if (wire === 1) {
+      state.offset += 8;
+    } else if (wire === 5) {
+      state.offset += 4;
+    } else {
+      throw new Error(`unsupported protobuf wire type ${wire}`);
+    }
+  }
+  return null;
+};
+const toBuffer = async value => {
+  if (value instanceof Blob) return Buffer.from(await value.arrayBuffer());
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  return Buffer.from(value);
+};
+
+function connectUnix() {
+  const socket = createConnection(socketPath);
+  let pending = Buffer.alloc(0);
+  const readFrame = () => new Promise((resolve, reject) => {
+    const onData = chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (pending.length < 4) return;
+      const size = pending.readUInt32BE(0);
+      if (pending.length < 4 + size) return;
+      const frame = pending.subarray(4, 4 + size);
+      pending = pending.subarray(4 + size);
+      socket.off('data', onData);
+      resolve(frame);
+    };
+    socket.on('data', onData);
+    socket.once('error', reject);
+  });
+  const sendFrame = payload => {
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(payload.length);
+    socket.write(Buffer.concat([header, payload]));
+  };
+  const connected = new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('error', reject);
+  });
+  return { socket, readFrame, sendFrame, connected };
+}
+
+async function connectWebSocket(port) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/runtime`);
+  const messages = [];
+  const waitFor = predicate => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('WebSocket response timed out')), 5_000);
+    const onMessage = async event => {
+      try {
+        const message = await toBuffer(event.data);
+        messages.push(message);
+        if (predicate(message)) {
+          clearTimeout(timer);
+          socket.removeEventListener('message', onMessage);
+          resolve(message);
+        }
+      } catch (error) { reject(error); }
+    };
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('error', reject, { once: true });
+  });
+  await new Promise((resolve, reject) => {
+    socket.addEventListener('open', resolve, { once: true });
+    socket.addEventListener('error', reject, { once: true });
+  });
+  socket.send(hello('smoke-token'));
+  await waitFor(message => Boolean(hasField(message, 19)));
+  return { socket, messages, waitFor };
+}
+
 try {
   const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('sidecar startup timed out')), 10_000);
@@ -39,68 +202,42 @@ try {
     child.once('exit', code => reject(new Error(`sidecar exited before READY (${code})`)));
   });
 
-  const ws = new WebSocket(`ws://127.0.0.1:${ready.port}/runtime`);
-  const messages = [];
-  const decode = async value => JSON.parse(new TextDecoder().decode(await value.arrayBuffer()));
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('WebSocket health timed out')), 5_000);
-    ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'hello', token: 'smoke-token' })));
-    ws.addEventListener('message', async event => {
-      try {
-        messages.push(await decode(event.data));
-        if (messages.at(-1)?.type === 'ready') ws.send(JSON.stringify({ type: 'health' }));
-        if (messages.at(-1)?.type === 'health') {
-          clearTimeout(timer);
-          ws.close();
-          resolve();
-        }
-      } catch (error) { reject(error); }
-    });
-    ws.addEventListener('error', reject);
-  });
-  if (messages[0]?.type !== 'ready' || messages[1]?.type !== 'health' || messages[1]?.ok !== true)
-    throw new Error(`unexpected WebSocket messages: ${JSON.stringify(messages)}`);
+  const control = await connectWebSocket(ready.port);
+  control.socket.send(health());
+  await control.waitFor(message => Boolean(hasField(message, 20)));
+  control.socket.close();
+  console.log('websocket protobuf health passed');
 
-  const socket = createConnection(socketPath);
-  const readFrame = () => new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0);
-    const onData = chunk => {
-      buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.length < 4) return;
-      const size = buffer.readUInt32BE(0);
-      if (buffer.length < 4 + size) return;
-      socket.off('data', onData);
-      resolve(JSON.parse(buffer.subarray(4, 4 + size).toString('utf8')));
-    };
-    socket.on('data', onData);
-    socket.once('error', reject);
-  });
-  const sendFrame = payload => {
-    const body = Buffer.from(JSON.stringify(payload));
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(body.length);
-    socket.write(Buffer.concat([header, body]));
-  };
-  await new Promise((resolve, reject) => {
-    socket.once('connect', resolve);
-    socket.once('error', reject);
-  });
-  sendFrame({ type: 'hello', token: 'smoke-token' });
-  const unixReady = await readFrame();
-  if (unixReady.type !== 'ready' || unixReady.transport !== 'unix') throw new Error(JSON.stringify(unixReady));
-  sendFrame({ type: 'health' });
-  const unixHealth = await readFrame();
-  if (unixHealth.type !== 'health' || unixHealth.ok !== true) throw new Error(JSON.stringify(unixHealth));
-  sendFrame({ type: 'shutdown' });
-  const shutdown = await readFrame();
-  if (shutdown.type !== 'ack' || shutdown.request !== 'shutdown') throw new Error(JSON.stringify(shutdown));
-  socket.destroy();
+  const subscription = await connectWebSocket(ready.port);
+  subscription.socket.send(subscribe({ requestId: 'sub-1', sessionId: 'unix-session', after: 0 }));
+  const snapshotResponse = await subscription.waitFor(message => Boolean(hasField(message, 25)));
+  if (!hasField(snapshotResponse, 25)) throw new Error('subscription snapshot missing');
+
+  const unix = connectUnix();
+  await unix.connected;
+  unix.sendFrame(hello('smoke-token'));
+  if (!hasField(await unix.readFrame(), 19)) throw new Error('unix READY missing');
+  unix.sendFrame(admitRun({ requestId: 'unix-req', sessionId: 'unix-session', epoch: 1, revision: 0, bodyHash: 'unix-body', runId: 'unix-run' }));
+  if (!hasField(await unix.readFrame(), 24)) throw new Error('unix admission missing');
+  unix.sendFrame(appendStream({ requestId: 'unix-append', sessionId: 'unix-session', epoch: 1, revision: 1, runId: 'unix-run', producerId: 'producer-1', producerSequence: 1, kind: 'message_delta', payload: 'hello' }));
+  if (!hasField(await unix.readFrame(), 22)) throw new Error('unix append ack missing');
+  const liveEvent = await subscription.waitFor(message => Boolean(hasField(message, 26)));
+  if (!hasField(liveEvent, 26)) throw new Error('subscription live event missing');
+  subscription.socket.close();
+
+  unix.sendFrame(replay({ requestId: 'unix-replay', sessionId: 'unix-session', after: 0 }));
+  if (!hasField(await unix.readFrame(), 26)) throw new Error('unix replay missing');
+  unix.sendFrame(snapshot({ requestId: 'unix-snapshot', sessionId: 'unix-session', epoch: 1, revision: 1 }));
+  if (!hasField(await unix.readFrame(), 25)) throw new Error('unix snapshot missing');
+  unix.sendFrame(shutdown());
+  if (!hasField(await unix.readFrame(), 22)) throw new Error('unix shutdown ack missing');
+  unix.socket.destroy();
 
   await new Promise((resolve, reject) => {
     child.once('exit', resolve);
     setTimeout(() => reject(new Error('sidecar shutdown timed out')), 5_000);
   });
-  console.log('runtime sidecar smoke passed');
+  console.log('unix protobuf command/replay/subscription smoke passed');
 } finally {
   cleanup();
 }
