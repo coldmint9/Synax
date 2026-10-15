@@ -55,6 +55,7 @@ import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { transcriptRepository } from "./transcript-repository.js";
 import { transcriptStorageEnabled } from "./transcript-repository.js";
 import { bumpSimpleHistoryRevision, simpleHistorySession } from "./simple-history.js";
+import { shouldPersistRuntimeEvent } from "./event-durability.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -1417,10 +1418,16 @@ export class AgentRuntimeStore {
       );
     return getRawSqlite().transaction(() => {
       this.getSession(sessionId);
-      if (versionedSession(sessionId) && !boundaryOnlySession(sessionId)) {
+      const versioned = versionedSession(sessionId) && !boundaryOnlySession(sessionId);
+      const boundaryOnly = boundaryOnlySession(sessionId);
+      const persisted = events.filter((event) =>
+        shouldPersistRuntimeEvent(event.type, { versioned, boundaryOnly }),
+      );
+      if (!persisted.length) return [...events];
+      if (versioned) {
         versionRepository().putBatch(
           sessionId,
-          events.map((event) => ({
+          persisted.map((event) => ({
             table: "events",
             id: event.id,
             fields: event as unknown as Record<string, unknown>,
@@ -1430,7 +1437,7 @@ export class AgentRuntimeStore {
         const insert = getRawSqlite().prepare(
           "INSERT OR REPLACE INTO agent_runtime_events(id,session_id,type,timestamp,visibility,summary,payload_json) VALUES(?,?,?,?,?,?,?)",
         );
-        for (const event of events) {
+        for (const event of persisted) {
           insert.run(
             event.id,
             event.sessionId,
@@ -1452,6 +1459,13 @@ export class AgentRuntimeStore {
   appendEvent(event: RuntimeEvent): RuntimeEvent {
     if (boundaryOnlySession(event.sessionId))
       return this.appendEvents([event])[0];
+    if (
+      !shouldPersistRuntimeEvent(event.type, {
+        versioned: versionedSession(event.sessionId),
+        boundaryOnly: false,
+      })
+    )
+      return event;
     if (versionedSession(event.sessionId)) {
       versionRepository().put(
         event.sessionId,
