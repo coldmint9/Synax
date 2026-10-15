@@ -135,7 +135,11 @@ export class McpClientManager {
   }
 
   private key(serverId: string, projectId?: string, sessionId?: string): string {
-    return JSON.stringify([projectId ?? null, serverId, serverId === CUA_SERVER_ID ? sessionId ?? null : null]);
+    // CUA controls one physical desktop. It must be a process-wide singleton;
+    // keying it by session starts one native helper per Agent session and can
+    // briefly create dozens of Synax Helper processes during warmup.
+    if (serverId === CUA_SERVER_ID) return JSON.stringify([null, serverId, null]);
+    return JSON.stringify([projectId ?? null, serverId, null]);
   }
 
   private configById(projectId?: string): Map<string, McpServerConfig> {
