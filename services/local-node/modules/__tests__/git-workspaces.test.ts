@@ -62,7 +62,7 @@ describe("git workspace maintenance", () => {
     fs.writeFileSync(path.join(repository, "README.md"), "local edits\n");
     if (staged) git(["add", "README.md"]);
 
-    await expect(switchGitBranch(repository, "feature/conflict", undefined, { transferChanges: true }))
+    await expect(switchGitBranch(repository, "feature/conflict", { transferChanges: true }))
       .rejects.toThrow(/restoring local changes or the index failed/);
 
     expect(git(["branch", "--show-current"])).toBe("feature/conflict");

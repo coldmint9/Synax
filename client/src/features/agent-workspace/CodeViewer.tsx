@@ -31,14 +31,54 @@ const RASTER_IMAGE_EXTENSIONS = new Set([
   "ico",
 ]);
 
+const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdown"]);
+
+/**
+ * Filenames may carry a query/hash suffix (for example
+ * `doc.md?version=2`), so the extension is read from the path segment only.
+ */
+function extensionOfPath(path: string): string {
+  const name = (path.split(/[\\/]/).pop() ?? "").split(/[?#]/)[0];
+  const separator = name.lastIndexOf(".");
+  return separator > 0 ? name.slice(separator + 1).toLowerCase() : "";
+}
+
+/** `text/…` attachments are readable text, but only some of them render richly. */
+function isTextAttachmentMediaType(mediaType: string): boolean {
+  const normalized = mediaType.split(";")[0].trim().toLowerCase();
+  return normalized.startsWith("text/") || normalized === "application/json";
+}
+
 function previewKindForPath(path: string): FilePreviewKind {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  const extension = extensionOfPath(path);
   if (RASTER_IMAGE_EXTENSIONS.has(extension)) return "image";
   if (extension === "svg") return "svg";
   if (extension === "pdf") return "pdf";
   if (extension === "html" || extension === "htm") return "html";
-  if (extension === "md" || extension === "markdown") return "markdown";
+  if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
   return "text";
+}
+
+/**
+ * Attachment previews need the asset's own media type: `image/svg+xml` must
+ * not be decoded as text, while `text/plain` Markdown (the type the runtime
+ * detects for `.md` files) has to be rendered instead of being rejected as an
+ * unsupported attachment.
+ */
+function previewKindForAttachment(
+  label: string,
+  mediaType: string | undefined,
+): FilePreviewKind {
+  const normalized = mediaType?.split(";")[0].trim().toLowerCase() ?? "";
+  if (normalized === "image/svg+xml") return "svg";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("image/")) return "image";
+  if (!normalized) return previewKindForPath(label);
+  if (!isTextAttachmentMediaType(normalized)) return "text";
+  const byMediaType = previewKindForPath(label);
+  if (byMediaType === "text" && MARKDOWN_EXTENSIONS.has(extensionOfPath(label)))
+    return "markdown";
+  return byMediaType;
 }
 
 export const CodeViewer = memo(function CodeViewer({
@@ -69,15 +109,23 @@ export const CodeViewer = memo(function CodeViewer({
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [attachmentMediaType, setAttachmentMediaType] = useState<
+    string | null
+  >(null);
   // Guards against a slow read for a previous file overwriting the current one.
   const requestRef = useRef(0);
   const contentRef = useRef(content);
   const dirtyRef = useRef(false);
   const setTabDirty = useSessionWorkspaceStore((state) => state.setTabDirty);
+  // The declared media type of the attachment currently being read; avoids
+  // rendering (or rejecting) an asset while another one's type is still set.
+  const pendingMediaTypeRef = useRef<string | null>(null);
   const previewKind = inputSource
     ? inputSource.assetId
-      ? previewKindForPath(inputSource.label)
-      : "text"
+      ? previewKindForAttachment(inputSource.label, attachmentMediaType ?? undefined)
+      : inputSource.toolCallId
+        ? previewKindForPath(inputSource.label)
+        : "text"
     : previewKindForPath(path);
   const markdownImages = useWorkspaceMarkdownImages({ sessionId, path, rootId });
 
@@ -97,17 +145,29 @@ export const CodeViewer = memo(function CodeViewer({
     setMediaBlob(null);
     try {
       if (inputSource?.assetId) {
+        pendingMediaTypeRef.current = null;
         const blob = await runtimeMedia.blob(inputSource.assetId);
         if (requestRef.current !== requestId) return;
-        if (previewKind === "image" || previewKind === "pdf") {
+        if (blob.type) pendingMediaTypeRef.current = blob.type;
+        // Trust the attachment's own media type over its filename: a `.svg`
+        // upload must stay inert as an image, and Markdown uploaded as
+        // `text/plain` must render instead of falling back to a rejection note.
+        const attachmentKind = previewKindForAttachment(
+          inputSource.label,
+          blob.type,
+        );
+        if (attachmentKind === "text") {
+          const text = await blob.text();
+          if (requestRef.current !== requestId) return;
+          setAttachmentMediaType(pendingMediaTypeRef.current);
+          setMediaBlob(null);
+          setContent(text);
+          contentRef.current = text;
+        } else {
+          setAttachmentMediaType(pendingMediaTypeRef.current);
           setMediaBlob(blob);
           setContent("");
           contentRef.current = "";
-        } else {
-          setMediaBlob(null);
-          const note = `${inputSource.label}\n\n该附件类型暂不支持内联预览，请使用工具栏的下载按钮查看原文件。`;
-          setContent(note);
-          contentRef.current = note;
         }
         setTruncated(false);
         setDirty(false);
@@ -170,7 +230,7 @@ export const CodeViewer = memo(function CodeViewer({
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty, previewKind]);
+  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!editable || !tabId) return false;

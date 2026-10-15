@@ -267,6 +267,30 @@ export function clearSessionWorkspaceRoot(sessionId: string): void {
   sessionWorkspaceRoots.delete(sessionId);
 }
 
+/**
+ * Adopt the project's current membership after it changed (a workspace root was
+ * linked or unlinked) instead of keeping the snapshot frozen at bind time.
+ *
+ * A run in flight reads its roots from the frozen snapshot, so it is left
+ * untouched: an in-flight run must not have directories appear or disappear
+ * underneath it. Idle sessions drop the snapshot and re-resolve it from the
+ * project record on the next read.
+ */
+export function refreshSessionWorkspaceRoots(sessionId: string): boolean {
+  const session = agentRuntimeStore.tryGetSession(sessionId);
+  if (!session) return false;
+  const binding = session.sessionMetadata?.backend as
+    | { workspaceRoots?: ProjectWorkspaceRoot[] }
+    | undefined;
+  if (!binding?.workspaceRoots) return false;
+  // Children inherit the parent's frozen membership for the whole run.
+  if (session.activeRunId || session.parentSessionId) return false;
+  const backend = { ...binding };
+  delete backend.workspaceRoots;
+  agentRuntimeStore.updateSessionMetadata(sessionId, { backend });
+  return true;
+}
+
 function workspaceRootForSession(sessionId?: string): string {
   return workspaceRoot(sessionId);
 }

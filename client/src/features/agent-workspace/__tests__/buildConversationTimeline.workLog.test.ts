@@ -115,6 +115,53 @@ function build(
 }
 
 describe("buildConversationTimeline work logs", () => {
+  it("keeps replies with missing steps out of subsequent work duration", () => {
+    const timeline = build(
+      [makeStep(2), makeStep(3)],
+      [answer(1, "Historical reply"), thinking(2), thinking(3), answer(3)],
+      [toolCall(2), toolCall(3)],
+    );
+
+    expect(timeline.map((entry) => entry.kind)).toEqual([
+      "agent", "work_log", "agent",
+    ]);
+    expect(timeline[0]).toMatchObject({
+      id: "reply-msg-text-1",
+      turn: { blocks: [{ type: "text", content: "Historical reply" }] },
+    });
+    expect(timeline[1]).toMatchObject({
+      stats: { elapsedMs: 90_000, stepCount: 2, toolCallCount: 2 },
+    });
+  });
+
+  it("does not fabricate a work log for replies whose steps are all missing", () => {
+    const timeline = build([], [answer(1), answer(2)], []);
+    expect(timeline.map((entry) => entry.kind)).toEqual(["agent", "agent"]);
+  });
+
+  it("uses available step timings when a start time is invalid", () => {
+    const timeline = build(
+      [{ ...makeStep(1), startedAt: "invalid" }, makeStep(2)],
+      [thinking(1), thinking(2)],
+      [],
+    );
+    expect(timeline[0]).toMatchObject({ stats: { elapsedMs: 30_000 } });
+  });
+
+  it.each<[string, string | null, number]>([
+    ["invalid", "invalid", 0],
+    ["2026-01-01T00:01:00.000Z", "invalid", 0],
+    ["2026-01-01T00:01:00.000Z", null, 0],
+    ["2026-01-01T00:01:00.000Z", "2026-01-01T00:00:30.000Z", 0],
+  ])("keeps duration finite and nonnegative for %s / %s", (startedAt, completedAt, elapsedMs) => {
+    const timeline = build(
+      [{ ...makeStep(1), startedAt, completedAt }],
+      [thinking(1)],
+      [],
+    );
+    expect(timeline[0]).toMatchObject({ stats: { elapsedMs } });
+  });
+
   it("folds a process-only run into one entry", () => {
     const steps = [1, 2, 3, 4].map((index) => makeStep(index));
     const messages = steps.map((step) => thinking(step.index));

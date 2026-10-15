@@ -34,8 +34,13 @@ export class TaskStore {
     // Read only the newest task snapshot instead of scanning the whole log.
     const latest = agentRuntimeStore.getLatestEventByType(sessionId, TaskToolEventType.TaskStateUpdated)
     if (!latest) return store
-    const workId = agentRuntimeStore.getSession(sessionId).sessionMetadata?.activeWorkId
-    if (workId && latest.payload.workId && latest.payload.workId !== workId) return store
+    // One session owns one TODO list. `persist` tags each snapshot with the
+    // `activeWorkId` of the moment it was written, and a new work attaches to
+    // the session on every run, so filtering the newest snapshot by the
+    // CURRENT work would discard an unchanged list as soon as the next work
+    // started: `task.update` could no longer find its own task and `task.list`
+    // reported 0/0, which is what kept the model re-listing. Keep the work tag
+    // on the event for attribution, but read the newest snapshot regardless.
     const items = latest.payload.tasks as Task[]
     for (const t of items) store.tasks.set(t.id, t)
     store.nextId = (latest.payload.nextId as number) ?? items.length + 1

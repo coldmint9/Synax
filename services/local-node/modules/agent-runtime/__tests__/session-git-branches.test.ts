@@ -35,8 +35,17 @@ function session(root = one, includeReference = true) {
   ] } });
   return created;
 }
-function switchBranch(id: string, rootId?: string, transferChanges = false) {
-  return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/switch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ branch: 'feature', rootId, transferChanges }) });
+function switchBranch(
+  id: string,
+  rootId?: string,
+  transferChanges = false,
+  branch = 'feature',
+) {
+  return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/switch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ branch, rootId, transferChanges }),
+  });
 }
 it('requires an explicit member and switches only the selected checkout', async () => {
   const owner = session();
@@ -49,22 +58,25 @@ it('requires an explicit member and switches only the selected checkout', async 
   expect(git(one, 'branch', '--show-current')).toBe('main');
   expect(git(two, 'branch', '--show-current')).toBe('feature');
 });
-it('blocks another active session or background service sharing the physical checkout', async () => {
+it('hot-switches while another session runs in the same checkout', async () => {
   const owner = session(one, false); const other = session(one, false);
   agentRuntimeStore.updateSession(other.id, { status: 'running' });
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(409);
+  expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
   agentRuntimeStore.updateSession(other.id, { status: 'stopping' });
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(409);
+  expect((await switchBranch(owner.id, 'primary', false, 'main')).status).toBe(200);
   agentRuntimeStore.updateSession(other.id, { status: 'completed' });
   agentRuntimeStore.updateSessionMetadata(other.id, { runtimeControl: { state: 'unconfirmed' } });
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(409);
+  expect((await switchBranch(owner.id, 'primary', false, 'feature')).status).toBe(200);
   agentRuntimeStore.updateSessionMetadata(other.id, { runtimeControl: null });
   const process = prepareOwnedProcess('test background', true, { sessionId: other.id, background: true });
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(409);
-  releaseOwnedProcess(process.id);
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
+  try {
+    expect((await switchBranch(owner.id, 'primary', false, 'main')).status).toBe(200);
+    expect(git(one, 'branch', '--show-current')).toBe('main');
+  } finally {
+    releaseOwnedProcess(process.id);
+  }
 });
-it('allows an unrelated running repository and protects uncommitted files', async () => {
+it('keeps uncommitted files when a hot switch is not confirmed', async () => {
   const owner = session(one, false); const other = session(two, false);
   agentRuntimeStore.updateSession(other.id, { status: 'running' });
   fs.writeFileSync(path.join(one, 'file.txt'), 'do not discard');
@@ -74,19 +86,25 @@ it('allows an unrelated running repository and protects uncommitted files', asyn
   expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
 });
 
-it('protects a checkout with a manually opened terminal, even without an AI-session owner', async () => {
+it('hot-switches a checkout that has a manually opened terminal', async () => {
   const owner = session(one, false);
   const terminal = await terminalManager.create({ projectId: 'same-checkout', rootId: 'primary', cwd: one, kind: 'terminal', title: 'open shell', shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh', shellArgs: process.platform === 'win32' ? [] : ['-i'] });
-  try { expect((await switchBranch(owner.id, 'primary')).status).toBe(409); }
-  finally { await terminalManager.stop(terminal.id); }
-  expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
+  try {
+    expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
+    expect(git(one, 'branch', '--show-current')).toBe('feature');
+  } finally { await terminalManager.stop(terminal.id); }
 });
 
-function createBranch(id: string, branch: string, rootId = 'primary') {
+function createBranch(
+  id: string,
+  branch: string,
+  rootId = 'primary',
+  transferChanges = false,
+) {
   return agentRuntimeRoutes.request(`/sessions/${id}/git/branches/create`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ branch, rootId }),
+    body: JSON.stringify({ branch, rootId, transferChanges }),
   });
 }
 it('reports the active checkout dirty-file count, including untracked files', async () => {
@@ -109,7 +127,8 @@ it('creates and checks out a branch from the current HEAD', async () => {
   expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'feature/existing'));
   expect(git(one, 'branch', '--show-current')).toBe('feature/new-ui');
 });
-it('never creates a branch when changes, invalid names, or another active session block checkout', async () => {
+it('never creates a branch when changes or invalid names block checkout', async () => {
+  // The branch router rejects non-empty checkouts for create as well.
   const owner = session(one, false);
   fs.writeFileSync(path.join(one, 'untracked.txt'), 'keep');
   expect((await createBranch(owner.id, 'feature/keep')).status).toBe(409);
@@ -118,10 +137,13 @@ it('never creates a branch when changes, invalid names, or another active sessio
   fs.unlinkSync(path.join(one, 'untracked.txt'));
   expect((await createBranch(owner.id, 'invalid name')).status).toBe(400);
   expect((await createBranch(owner.id, 'feature')).status).toBe(409);
+  // A running sibling session no longer blocks a hot branch creation, so only
+  // the checkout's own state can stop it.
   const other = session(one, false);
   agentRuntimeStore.updateSession(other.id, { status: 'running' });
-  expect((await createBranch(owner.id, 'feature/blocked')).status).toBe(409);
-  expect(git(one, 'branch', '--list', 'feature/blocked')).toBe('');
+  const fresh = session(two, false);
+  expect((await createBranch(fresh.id, 'hotfix/sibling', 'primary')).status).toBe(200);
+  expect(git(two, 'branch', '--show-current')).toBe('hotfix/sibling');
 });
 
 it('counts a staged rename as one changed file', async () => {

@@ -1015,7 +1015,6 @@ async function assertNoGitOperation(context: RepositoryContext): Promise<void> {
 export async function createAndSwitchGitBranch(
   repositoryPath: RepositoryInput,
   branch: string,
-  assertIdle: (root: string) => void = () => {},
 ): Promise<string> {
   const context = await assertRepository(repositoryPath);
   return withRepositoryLock(context, async () => {
@@ -1023,7 +1022,6 @@ export async function createAndSwitchGitBranch(
     if (await branchExists(context, branch))
       throw new GitWorkspaceError(`Branch "${branch}" already exists.`, 409);
     await assertCheckoutSafe(context);
-    assertIdle(context.root);
     await git(context.location, context.root, ["switch", "-c", branch]);
     return (
       await git(context.location, context.root, ["branch", "--show-current"])
@@ -1056,7 +1054,6 @@ export async function attachDetachedGitBranch(
 export async function switchGitBranch(
   repositoryPath: RepositoryInput,
   branch: string,
-  assertIdle: (root: string) => void = () => {},
   options: { transferChanges?: boolean } = {},
 ): Promise<string> {
   const context = await assertRepository(repositoryPath);
@@ -1079,7 +1076,6 @@ export async function switchGitBranch(
         "This branch is already checked out in another worktree.",
         409,
       );
-    assertIdle(context.root);
     const dirty = await countGitCheckoutChanges(context.location);
     let stashRef: string | undefined;
     if (dirty && !options.transferChanges)

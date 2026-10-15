@@ -307,6 +307,21 @@ export function validateAssets(
   }
   return assets;
 }
+export function bindValidatedAssets(
+  sessionId: string,
+  assets: RuntimeAsset[],
+): void {
+  const db = getRawSqlite();
+  if (versionedSession(sessionId)) {
+    bindVersionAssets(sessionId, assets);
+    return;
+  }
+  for (const a of assets)
+    db.prepare(
+      "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
+    ).run(a.id, sessionId);
+}
+
 export function bindAssets(
   sessionId: string,
   parts: RuntimeContentPart[],
@@ -316,15 +331,7 @@ export function bindAssets(
     .prepare("SELECT project_id FROM agent_runtime_sessions WHERE id=?")
     .get(sessionId) as { project_id: string } | undefined;
   if (!session) error("Session not found.", "NOT_FOUND", 404);
-  const assets = validateAssets(parts, session!.project_id);
-  if (versionedSession(sessionId)) {
-    bindVersionAssets(sessionId, assets);
-    return;
-  }
-  for (const a of assets)
-    db.prepare(
-      "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
-    ).run(a.id, sessionId);
+  bindValidatedAssets(sessionId, validateAssets(parts, session!.project_id));
 }
 export function sessionHasAsset(sessionId: string, id: string): boolean {
   if (versionedSession(sessionId)) return versionSessionHasAsset(sessionId, id);

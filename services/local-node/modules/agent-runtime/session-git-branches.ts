@@ -1,4 +1,3 @@
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import {
   listGitWorkspaces,
   switchGitBranch,
@@ -17,16 +16,8 @@ import {
   invalidateSessionEnvironment,
 } from "./session-environment.js";
 import { resolveSessionWorkspaceRoots } from "./tools/workspace.js";
-import { hasBackgroundProcesses } from "./process-ownership.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 
-const BUSY = new Set([
-  "queued",
-  "running",
-  "stopping",
-  "waiting_permission",
-  "waiting_input",
-]);
 function sharesRepository(
   sessionId: string,
   projectId: string,
@@ -48,45 +39,12 @@ function sharesRepository(
     return false;
   }
 }
-function assertRepositoryIdle(root: string) {
-  const terminals = getRawSqlite()
-    .prepare(
-      "SELECT t.cwd FROM terminal_sessions t JOIN agent_runtime_processes p ON p.id=t.id WHERE t.kind='terminal' AND p.state<>'closed'",
-    )
-    .all() as { cwd: string }[];
-  for (const terminal of terminals) {
-    let cwd: string;
-    try {
-      cwd = canonicalWorkspaceDirectory(terminal.cwd);
-    } catch {
-      continue;
-    }
-    if (isWithinWorkspace(root, cwd) || isWithinWorkspace(cwd, root))
-      throw new AgentRuntimeError(
-        "请先结束此仓库的终端，再切换分支。 / End the open terminal in this repository before switching branches.",
-        "GIT_WORKSPACE_BUSY",
-        409,
-      );
-  }
-  const sessions = agentRuntimeStore.listSessions({ limit: Infinity });
-  for (const session of sessions) {
-    const control = session.sessionMetadata?.runtimeControl as
-      | { state?: string }
-      | undefined;
-    const uncertainShutdown =
-      control?.state === "stopping" || control?.state === "unconfirmed";
-    if (
-      (BUSY.has(session.status) ||
-        uncertainShutdown ||
-        hasBackgroundProcesses(session.id)) &&
-      sharesRepository(session.id, session.projectId, root)
-    ) {
-      throw new AgentRuntimeError(
-        "请先停止此仓库中的运行任务与后台服务，再切换分支。 / Stop active tasks and services in this repository before switching branches.",
-        "GIT_WORKSPACE_BUSY",
-        409,
-      );
-    }
+/** Detached-worktree sessions keep their own path; only the checked-out shared
+ * worktree location changes, so repository snapshots must be refreshed there. */
+function refreshSharedSessions(checkoutPath: string): void {
+  for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
+    if (sharesRepository(item.id, item.projectId, checkoutPath))
+      invalidateSessionEnvironment(item.id);
   }
 }
 async function withGitErrors<T>(action: () => Promise<T>): Promise<T> {
@@ -146,24 +104,14 @@ export function switchSessionGitBranch(
       rootId,
       true,
     );
-    let checkoutPath = root.path;
     try {
-      await switchGitBranch(
-      workspaceRootLocation(root),
-      branch,
-      (physicalRoot) => {
-        assertRepositoryIdle(physicalRoot);
-        checkoutPath = physicalRoot;
-      },
-      { transferChanges },
-      );
+      await switchGitBranch(workspaceRootLocation(root), branch, {
+        transferChanges,
+      });
     } finally {
       // Stash restoration may fail after HEAD changes. Refresh shared snapshots
       // on failure too, so the UI reports the actual checkout.
-      for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
-        if (sharesRepository(item.id, item.projectId, checkoutPath))
-          invalidateSessionEnvironment(item.id);
-      }
+      refreshSharedSessions(root.path);
     }
     return listSessionGitBranches(sessionId, root.id);
   });
@@ -177,15 +125,8 @@ export function createSessionGitBranch(
   return withGitErrors(async () => {
     const session = agentRuntimeStore.getSession(sessionId);
     const root = resolveSessionRepository(sessionId, session.projectId, rootId, true);
-    let checkoutPath = root.path;
-    await createAndSwitchGitBranch(workspaceRootLocation(root), branch, (physicalRoot) => {
-      assertRepositoryIdle(physicalRoot);
-      checkoutPath = physicalRoot;
-    });
-    for (const item of agentRuntimeStore.listSessions({ limit: Infinity })) {
-      if (sharesRepository(item.id, item.projectId, checkoutPath))
-        invalidateSessionEnvironment(item.id);
-    }
+    await createAndSwitchGitBranch(workspaceRootLocation(root), branch);
+    refreshSharedSessions(root.path);
     return listSessionGitBranches(sessionId, root.id);
   });
 }

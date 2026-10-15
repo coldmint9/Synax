@@ -129,12 +129,13 @@ export async function listTurnReferenceOptions(
 export function prepareTurnReferences(
   sessionId: string,
   references: TurnReference[] = [],
+  rootOverride?: string,
 ): TurnReferenceContext | undefined {
   if (!references.length) return undefined;
   const session = agentRuntimeStore.getSession(sessionId);
   const backend = resolveSessionBackend(sessionId);
   const profile = profileService.getForSession(session);
-  const root = bindSessionWorkDir(sessionId);
+  const root = rootOverride ?? bindSessionWorkDir(sessionId);
   const sections: string[] = [];
   const normalized: TurnReference[] = [];
   const skillIds: string[] = [],

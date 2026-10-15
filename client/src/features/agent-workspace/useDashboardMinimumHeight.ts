@@ -75,8 +75,15 @@ export function useDashboardMinimumHeight(
           [...body.querySelectorAll<HTMLElement>(ITEM)].find(
             (el) =>
               el.getClientRects().length > 0 &&
-              el.getBoundingClientRect().height > 0,
-          ) ?? (body.firstElementChild as HTMLElement | null);
+              el.getBoundingClientRect().height > 0 &&
+              // A hidden tab panel (or a collapsed card) keeps zero-size
+              // rectangles; such an item would collapse the whole panel.
+              el.offsetParent !== null,
+          ) ??
+          (body.firstElementChild instanceof HTMLElement &&
+          body.firstElementChild.offsetParent !== null
+            ? body.firstElementChild
+            : null);
         if (!item) {
           measurements.push({
             panel,

@@ -37,6 +37,7 @@ import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { revokeAllProjectToolGrants } from "../../modules/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../../modules/agent-runtime/session-store.js";
 import { invalidateSessionEnvironment } from "../../modules/agent-runtime/session-environment.js";
+import { refreshSessionWorkspaceRoots } from "../../modules/agent-runtime/tools/workspace.js";
 import { gitEpicStore, indexBranchSessions } from "../../modules/git-epics.js";
 import {
   createGitWorktree,
@@ -458,6 +459,9 @@ function invalidateWorkspaceSessionEnvironments(projectId: string): void {
     projectId,
     limit: Number.MAX_SAFE_INTEGER,
   })) {
+    // Drop the membership frozen at bind time so idle sessions pick up the
+    // linked/unlinked root; in-flight runs keep theirs until they finish.
+    refreshSessionWorkspaceRoots(session.id);
     invalidateSessionEnvironment(session.id);
   }
 }

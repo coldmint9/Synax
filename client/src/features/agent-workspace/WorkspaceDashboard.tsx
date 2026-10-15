@@ -923,7 +923,6 @@ function RepositoryRowActions({
           sessionId={sessionId}
           rootId={repository.rootId}
           branch={repository.branch}
-          disabled={loading}
           onSwitched={() => void reload()}
         />
       )}
@@ -992,7 +991,6 @@ function RepositoryCard({
         type: "action",
         id: "branch",
         label: t("contextSwitchBranch"),
-        disabled: Boolean(loading || unavailable),
         restoreFocus: false,
         run: () => setBranchRequest((value) => value + 1),
       },
@@ -1036,7 +1034,7 @@ function RepositoryCard({
               rootId={repository?.rootId}
               branch={environment.branch}
               openRequest={branchRequest}
-              disabled={loading || unavailable}
+              disabled={unavailable}
               onSwitched={() => void reload()}
             />
           )}

@@ -335,11 +335,21 @@ function workLogEntry(
   anchorId: string,
 ): ConversationTimelineEntry {
   const first = stepById.get(turns[0].stepId);
-  const last = stepById.get(turns[turns.length - 1].stepId);
-  const startMs = first ? toTimestamp(first.startedAt) : 0;
-  const endMs = last
-    ? toTimestamp(last.completedAt ?? last.startedAt)
-    : startMs;
+  let startMs = Infinity;
+  let endMs = -Infinity;
+  for (const turn of turns) {
+    const step = stepById.get(turn.stepId);
+    if (!step) continue;
+    const startedAt = toTimestamp(step.startedAt);
+    if (!Number.isFinite(startedAt)) continue;
+    const completedAt = toTimestamp(step.completedAt ?? step.startedAt);
+    startMs = Math.min(startMs, startedAt);
+    endMs = Math.max(
+      endMs,
+      startedAt,
+      Number.isFinite(completedAt) ? completedAt : startedAt,
+    );
+  }
 
   return {
     // Anchored to the first step so the id stays stable while the run grows.
@@ -358,7 +368,8 @@ function workLogEntry(
         (total, turn) => total + turnThinkingChars(turn),
         0,
       ),
-      elapsedMs: Math.max(0, endMs - startMs),
+      // Missing step timings must never be interpreted as the Unix epoch.
+      elapsedMs: Number.isFinite(startMs) ? Math.max(0, endMs - startMs) : 0,
     },
   };
 }
@@ -672,9 +683,9 @@ export function buildConversationTimeline(
     }
     if (!blocks.length) continue;
     seenOrphans.add(message.id);
-    // Forks intentionally have no execution steps. Their copied replies are
-    // transcript rows, so never fold them into a fabricated work log.
-    if (isForkReply) standaloneReplyIds.add(`reply-${message.id}`);
+    // Both forked replies and replies outside the loaded step window are
+    // transcript rows, not timed execution steps. Keep them out of work logs.
+    standaloneReplyIds.add(`reply-${message.id}`);
     items.push({
       timestamp: toTimestamp(message.createdAt),
       entry: {

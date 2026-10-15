@@ -3,6 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     server: "services/local-node/entrypoints/http-server.ts",
+    "read-server": "services/local-node/entrypoints/read-server.ts",
     "services/cloud-node/server": "services/cloud-node/server.ts",
     cli: "cli/index.ts",
     "workers/code-mode": "services/local-node/modules/agent-runtime/code-mode/worker.mjs",

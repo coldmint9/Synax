@@ -880,4 +880,38 @@ describe("WorkspaceDashboard", () => {
     expect(commits).toHaveLength(3);
     expect(commits[0]).toBeEnabled();
   });
+
+  it("keeps long branch names ellipsized without losing their full value", async () => {
+    const longBranch = "2e-admin/hungrypanda_support_ronghan_settlement";
+    const longName = "hp-finance-server-with-an-extremely-long-project-name";
+    renderDashboard({
+      repositories: [
+        { ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" },
+        {
+          ...environment,
+          rootId: "long",
+          name: longName,
+          role: "reference",
+          status: "ready",
+          branch: longBranch,
+        },
+      ],
+    });
+
+    const rows = document.querySelectorAll(".ws-project-option");
+    expect(rows).toHaveLength(2);
+
+    // The row still exposes a real branch trigger whose label is clipped by CSS
+    // instead of stretching the row, and whose title keeps the untruncated name.
+    const trigger = screen.getByRole("button", {
+      name: new RegExp(`切换 Git 分支|Switch Git branch.*`, "s"),
+    });
+    expect(trigger).toHaveAttribute("title", longBranch);
+    expect(
+      within(rows[1] as HTMLElement).getByTitle(longBranch),
+    ).toBeTruthy();
+
+    // The selector button keeps the full project name available on hover.
+    expect(screen.getByTitle(longName)).toBeTruthy();
+  });
 });

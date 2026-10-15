@@ -43,6 +43,24 @@ describe('libsql raw helpers', () => {
     expect(() => db.transaction(() => db.prepare('PRAGMA journal_mode').run())()).not.toThrow();
   });
 
+  it('provides an explicit deferred read transaction alongside the legacy write helper', async () => {
+    const { getRawSqlite } = await import('../index.js');
+    const db = getRawSqlite();
+
+    expect(typeof db.readTransaction).toBe('function');
+    expect(typeof db.writeTransaction).toBe('function');
+
+    db.exec('CREATE TABLE read_tx_test (value TEXT NOT NULL)');
+    db.writeTransaction(() => {
+      db.prepare('INSERT INTO read_tx_test (value) VALUES (?)').run('ready');
+    })();
+
+    const row = db.readTransaction(() =>
+      db.prepare('SELECT value FROM read_tx_test').get() as { value: string },
+    )();
+    expect(row.value).toBe('ready');
+  });
+
   it('provides libsql raw transaction helpers', async () => {
     const { getRawSqlite } = await import('../index.js');
     const db = getRawSqlite();

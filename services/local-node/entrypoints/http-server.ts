@@ -53,6 +53,7 @@ import { startSessionArchiveRetention } from "../modules/agent-runtime/session-a
 import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/browser-manager.js";
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
+import { readServiceOrigin, startReadService, stopReadService } from "../infrastructure/runtime/read-service.js";
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -74,6 +75,61 @@ installRuntimeAccess(app, {
   trustedHosts: process.env.SYNAX_TRUSTED_HOSTS?.split(",")
     .map((value) => value.trim())
     .filter(Boolean),
+});
+
+function shouldProxyRead(pathname: string, method: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  // Streaming endpoints stay on the primary runtime because their live buses
+  // and WebSocket upgrades are owned there. The read service handles bounded
+  // snapshots and lists only.
+  if (
+    pathname === "/api/context/sync" ||
+    pathname === "/api/notifications/stream" ||
+    pathname === "/api/agent-runtime/events/stream" ||
+    pathname.includes("/stream") ||
+    pathname.endsWith("/live") ||
+    pathname.includes("/visualization") ||
+    pathname.endsWith("/prune")
+  ) return false;
+  return [
+    "/api/projects",
+    "/api/context",
+    "/api/config",
+    "/api/agent-runtime",
+    "/api/skills",
+    "/api/skill-sources",
+    "/api/logs",
+    "/api/project-settings",
+    "/api/fs",
+    "/api/wsl",
+  ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+app.use("*", async (c, next) => {
+  const readOrigin = readServiceOrigin();
+  if (!readOrigin || !shouldProxyRead(c.req.path, c.req.method)) return next();
+  try {
+    const requestUrl = new URL(c.req.url);
+    const headers = new Headers(c.req.raw.headers as HeadersInit);
+    headers.delete("host");
+    headers.delete("connection");
+    headers.delete("content-length");
+    const response = await fetch(`${readOrigin}${requestUrl.pathname}${requestUrl.search}`, {
+      method: c.req.method,
+      headers,
+      signal: c.req.raw.signal,
+    });
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set("X-Synax-Read-Service", "1");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    pinoLogger.warn({ error }, "read service proxy failed; falling back to primary API");
+    return next();
+  }
 });
 
 // 请求日志
@@ -164,7 +220,11 @@ async function startRuntime(): Promise<void> {
   stopSessionArchiveRetention = startSessionArchiveRetention();
   startInteractionRecovery();
 
+  // Let the primary API become ready immediately. The child may use the same
+  // WAL database, but its synchronous reads cannot occupy this process's event
+  // loop. Requests fall back to the primary API until the read service is ready.
   if (!shuttingDown) startServer(recovery.resumable);
+  void startReadService();
 }
 
 function startServer(resumable: string[]): void {
@@ -204,6 +264,7 @@ async function shutdownRuntime(): Promise<void> {
   shuttingDown = true;
   closeObservationSockets?.();
   closeTerminalSockets?.();
+  await stopReadService();
   httpServer?.closeAllConnections();
   httpServer?.close();
   let failed = false;

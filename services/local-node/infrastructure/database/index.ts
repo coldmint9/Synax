@@ -25,7 +25,10 @@ export type SqliteTransaction = <Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
 ) => (...args: Args) => Result;
 export type RawSqlite = NativeDatabase.Database & {
+  /** Legacy write transaction. Prefer writeTransaction/readTransaction explicitly. */
   transaction: SqliteTransaction;
+  readTransaction: SqliteTransaction;
+  writeTransaction: SqliteTransaction;
   query: NativeDatabase.Database["prepare"];
 };
 
@@ -63,7 +66,10 @@ function sqliteIsInTransaction(sqlite: NativeDatabase.Database): boolean {
   }
 }
 
-function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
+function createTransaction(
+  sqlite: NativeDatabase.Database,
+  mode: "read" | "write",
+): SqliteTransaction {
   return function transaction<Args extends unknown[], Result>(
     fn: (...args: Args) => Result,
   ) {
@@ -89,9 +95,10 @@ function createTransaction(sqlite: NativeDatabase.Database): SqliteTransaction {
         }
       }
 
-      // Reserve the writer before reading checkpoint state, avoiding a deferred
-      // snapshot upgrade race with another process.
-      sqlite.exec("BEGIN IMMEDIATE");
+      // Read snapshots use a deferred transaction and never reserve the writer.
+      // Write transactions keep the old IMMEDIATE behavior so existing mutation
+      // call sites retain their admission and rollback semantics.
+      sqlite.exec(mode === "read" ? "BEGIN DEFERRED" : "BEGIN IMMEDIATE");
       state.depth++;
       try {
         const result = fn(...args);
@@ -149,9 +156,17 @@ function installSqliteCompat(
       return exec(sql);
     },
   });
+  Object.defineProperty(compat, "readTransaction", {
+    configurable: true,
+    value: createTransaction(sqlite, "read"),
+  });
+  Object.defineProperty(compat, "writeTransaction", {
+    configurable: true,
+    value: createTransaction(sqlite, "write"),
+  });
   Object.defineProperty(compat, "transaction", {
     configurable: true,
-    value: createTransaction(sqlite),
+    value: createTransaction(sqlite, "write"),
   });
   if (typeof compat.query !== "function") {
     Object.defineProperty(compat, "query", {
@@ -535,16 +550,26 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
     _sqlite = installSqliteCompat(connectStorageOwner(dbPath), dbPath, false);
     return _sqlite;
   }
-  const sqlite = installSqliteCompat(new NativeDatabase(dbPath), dbPath);
-  configureSqlite(sqlite);
+  const readOnly = process.env.SYNAX_READ_SERVICE === "1";
+  const sqlite = installSqliteCompat(
+    new NativeDatabase(dbPath, readOnly ? { readonly: true } : undefined),
+    dbPath,
+  );
+  if (readOnly) {
+    // The primary runtime owns migrations and writes. A read service must never
+    // become a second writer just because a GET route has a hidden side effect.
+    sqlite.exec("PRAGMA busy_timeout=1000");
+  } else {
+    configureSqlite(sqlite);
 
-  try {
-    runMigrations(sqlite);
-    ensureRuntimeSchema(sqlite);
-    if (shouldRunMigrationsInThisProcess()) installConversationHistoryTriggers(sqlite);
-  } catch (error) {
-    sqlite.close();
-    throw error;
+    try {
+      runMigrations(sqlite);
+      ensureRuntimeSchema(sqlite);
+      if (shouldRunMigrationsInThisProcess()) installConversationHistoryTriggers(sqlite);
+    } catch (error) {
+      sqlite.close();
+      throw error;
+    }
   }
 
   _sqlite = sqlite;

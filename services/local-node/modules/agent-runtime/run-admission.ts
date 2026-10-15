@@ -6,7 +6,7 @@ import {
 } from "./checkpoints/guards.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
-import { bindAssets } from "./media-assets.js";
+import { bindValidatedAssets, validateAssets } from "./media-assets.js";
 import { prepareTurnReferences } from "./turn-references.js";
 import { profileService } from "./profile-service.js";
 import { createHash } from "node:crypto";
@@ -20,6 +20,7 @@ import {
 } from "./backends/backend-binding.js";
 import {
   bindSessionWorkDir,
+  resolveSessionWorkDir,
   tryResolveSessionWorkspaceLocation,
 } from "./tools/workspace.js";
 import { interactionService } from "./interaction-service.js";
@@ -78,6 +79,57 @@ export function acceptRuntimeRun(
   const inputHash = createHash("sha256")
     .update(JSON.stringify(stable({ input, mode })))
     .digest("hex");
+
+  // Resolve filesystem references and validate media before opening the write
+  // transaction. These checks can touch the filesystem and provider catalogs;
+  // they do not need to hold SQLite's writer reservation. The transaction
+  // below only rechecks state and persists the run-level changes.
+  const preparedSession = agentRuntimeStore.getSession(sessionId);
+  const preparedBinding = resolveSessionBackend(sessionId);
+  if (profileService.getForSession(preparedSession).executionHost === "embedded") {
+    throw new AgentRuntimeError(
+      "This session belongs to an embedded job host. Use that job’s controls.",
+      "EMBEDDED_HOST_REQUIRED",
+      409,
+    );
+  }
+  if (
+    tryResolveSessionWorkspaceLocation(sessionId, preparedSession.projectId)?.kind ===
+      "wsl" &&
+    preparedBinding.id !== "native"
+  ) {
+    throw new AgentRuntimeError(
+      "WSL2 projects currently support only the Synax native backend.",
+      "WSL_BACKEND_UNSUPPORTED",
+      409,
+    );
+  }
+  validateBackendTurnInput(preparedBinding.id, input);
+  const preparedModel = resolveBackendModel(sessionId, input);
+  const preparedAssets = validateAssets(
+    inputParts(input),
+    preparedSession.projectId,
+  );
+  let preparedWorkDir: string;
+  try {
+    preparedWorkDir = resolveSessionWorkDir(
+      sessionId,
+      preparedSession.projectId,
+    );
+  } catch (error) {
+    throw new AgentValidationError(
+      error instanceof Error ? error.message : "Invalid execution workspace.",
+    );
+  }
+  // A permission change is part of the acceptance transaction. Keep
+  // reference validation inside that transaction in this uncommon case so a
+  // newly granted tier is applied before the files are checked.
+  const permissionChangeRequested =
+    input.permissionTier !== undefined || input.permissionOverrides !== undefined;
+  const preparedReferenceContext = permissionChangeRequested
+    ? undefined
+    : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
+
   const db = getRawSqlite();
   return db.transaction(() => {
     assertHistoryUnlocked(sessionId);
@@ -179,17 +231,9 @@ export function acceptRuntimeRun(
         409,
       );
     }
-    validateBackendTurnInput(binding.id, input);
-    bindAssets(sessionId, inputParts(input));
-    const model = resolveBackendModel(sessionId, input);
-    let workDir: string;
-    try {
-      workDir = bindSessionWorkDir(sessionId);
-    } catch (error) {
-      throw new AgentValidationError(
-        error instanceof Error ? error.message : "Invalid execution workspace.",
-      );
-    }
+    bindValidatedAssets(sessionId, preparedAssets);
+    const model = preparedModel;
+    const workDir = bindSessionWorkDir(sessionId);
     if (
       input.permissionTier !== undefined ||
       input.permissionOverrides !== undefined
@@ -204,7 +248,10 @@ export function acceptRuntimeRun(
       mode,
       input: {
         ...input,
-        referenceContext: prepareTurnReferences(sessionId, input.references),
+        referenceContext:
+          preparedReferenceContext && preparedWorkDir === workDir
+            ? preparedReferenceContext
+            : prepareTurnReferences(sessionId, input.references, workDir),
         ...(model ? { model } : {}),
       },
       backendId: binding.id,

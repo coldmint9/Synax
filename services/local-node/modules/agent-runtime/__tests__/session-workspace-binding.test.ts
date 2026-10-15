@@ -107,3 +107,40 @@ it('rejects relative session directories instead of resolving them inside the ap
   expect(() => workspace.resolveWorkspaceRoot('.')).toThrow(/absolute path/);
   expect(() => workspace.setSessionWorkspaceRoot('relative', 'src')).toThrow(/absolute path/);
 });
+
+it('adopts a root linked after binding and drops one that was unlinked', () => {
+  const s = session();
+  registry();
+  workspace.bindSessionWorkDir(s.id);
+  expect(workspace.resolveSessionWorkspaceRoots(s.id, s.projectId).map(r => r.path)).toEqual([worktree]);
+
+  // The reference is linked after the session bound its frozen membership.
+  registry(reference);
+  expect(workspace.refreshSessionWorkspaceRoots(s.id)).toBe(true);
+  expect(workspace.resolveSessionWorkspaceRoots(s.id, s.projectId).map(r => r.path)).toEqual([worktree, reference]);
+
+  // A snapshot that is already gone is a no-op, not a second refresh.
+  expect(workspace.refreshSessionWorkspaceRoots(s.id)).toBe(false);
+
+  // Unlinking the reference clears it again on the next bind, keeping the
+  // explicit worktree as primary.
+  registry();
+  workspace.bindSessionWorkDir(s.id);
+  expect(workspace.refreshSessionWorkspaceRoots(s.id)).toBe(true);
+  expect(workspace.resolveSessionWorkspaceRoots(s.id, s.projectId).map(r => r.path)).toEqual([worktree]);
+});
+
+it('keeps the frozen membership while a run is in flight', () => {
+  const s = session();
+  registry();
+  workspace.bindSessionWorkDir(s.id);
+  store.updateSession(s.id, { activeRunId: 'frozen-run' });
+  registry(reference);
+
+  expect(workspace.refreshSessionWorkspaceRoots(s.id)).toBe(false);
+  expect(workspace.resolveSessionWorkspaceRoots(s.id, s.projectId).map(r => r.path)).toEqual([worktree]);
+
+  store.updateSession(s.id, { activeRunId: null });
+  expect(workspace.refreshSessionWorkspaceRoots(s.id)).toBe(true);
+  expect(workspace.resolveSessionWorkspaceRoots(s.id, s.projectId).map(r => r.path)).toEqual([worktree, reference]);
+});

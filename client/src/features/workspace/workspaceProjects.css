@@ -652,6 +652,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 6px 8px;
@@ -675,6 +677,7 @@
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
+  overflow: hidden;
   align-items: center;
   border: 0;
   padding: 2px 0;
@@ -687,8 +690,10 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  flex: 0 0 auto;
+  /* Long branch names must yield instead of pushing the row past its track. */
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 .ws-project-option-commit {
   display: inline-grid;
@@ -773,6 +778,7 @@
   background: hsl(var(--foreground-hsl) / 0.06);
 }
 .ws-project-option-actions .ws-branch-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -135,7 +135,7 @@ class RuntimeJournal {
     if (!chunks.length) return;
     chunks = chunks.map(projectReplayChunk);
     assertBatchInput(chunks);
-    const state = getRawSqlite().transaction(() => {
+    const state = getRawSqlite().readTransaction(() => {
       if (historyEpoch(sessionId) !== revision) throw new AgentValidationError("Obsolete conversation execution.");
       const run = agentRuntimeStore.getRun(runId);
       if (run.sessionId !== sessionId) throw new AgentValidationError("Stream Run belongs to another session.");
@@ -276,6 +276,8 @@ class RuntimeJournal {
     if (signal?.aborted) return Promise.resolve();
     return new Promise((resolve) => {
       const waiters = this.waiters.get(sessionId) ?? new Set<() => void>();
+      // The timeout is created after wake closes over it.
+      // eslint-disable-next-line prefer-const
       let timer: ReturnType<typeof setTimeout>;
       const wake = () => {
         clearTimeout(timer);
@@ -292,7 +294,7 @@ class RuntimeJournal {
   }
 
   snapshot(sessionId: string) {
-    return getRawSqlite().transaction(() => {
+    return getRawSqlite().readTransaction(() => {
       const session = projectSessionState(
         agentRuntimeStore.getSession(sessionId),
       );
