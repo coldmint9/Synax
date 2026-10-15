@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
 import { historyEpoch } from "./checkpoints/guards.js";
-const FILE_REPLAY_BASE = 2 ** 40;
 const replayProducer = randomUUID();
 let replayRequestNumber = 0;
 import { projectReplayChunk } from "./runtime-stream-projection.js";
@@ -17,6 +16,7 @@ import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { FILE_REPLAY_BASE, fileBackedReplayEnabled } from "./replay-storage.js";
 
 export interface RuntimeStreamRecord {
   sequence: number;
@@ -131,7 +131,7 @@ class RuntimeJournal {
   /** File-backed replay is independent of SQLite commit/retention. Existing
    * cursors remain readable below FILE_REPLAY_BASE during the cutover. */
   async appendDurable(sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision = historyEpoch(sessionId), requestId = `replay:${replayProducer}:${++replayRequestNumber}`): Promise<void> {
-    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) { this.appendBatch(sessionId, runId, chunks); return; }
+    if (!fileBackedReplayEnabled()) { this.appendBatch(sessionId, runId, chunks); return; }
     if (!chunks.length) return;
     chunks = chunks.map(projectReplayChunk);
     assertBatchInput(chunks);
@@ -147,7 +147,7 @@ class RuntimeJournal {
   }
 
   async readDurable(sessionId: string, after = 0, limit = 256, runId?: string): Promise<RuntimeStreamRecord[]> {
-    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.read(sessionId, after, limit, runId);
+    if (!fileBackedReplayEnabled()) return this.read(sessionId, after, limit, runId);
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256)
       throw new AgentValidationError("Invalid stream cursor.");
     const legacy = after < FILE_REPLAY_BASE ? this.read(sessionId, after, limit, runId) : [];
@@ -170,7 +170,7 @@ class RuntimeJournal {
   }
 
   async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal["snapshot"]>> {
-    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.snapshot(sessionId);
+    if (!fileBackedReplayEnabled()) return this.snapshot(sessionId);
     // Capture a cursor before the SQL snapshot: new events after it are replayed
     // by observe(), including events committed during snapshot assembly.
     const fileCursor = await sessionLogClient.cursor(sessionId);

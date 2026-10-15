@@ -9,6 +9,7 @@ import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
+import { fileBackedReplayEnabled } from './replay-storage.js';
 
 /**
  * The journal admission budget uses this conservative upper bound for the
@@ -64,7 +65,7 @@ export class RuntimeStreamWriter {
     const runId = this.runId;
     if (!runId || chunks.length === 0) return;
     if (this.writeFailure) throw this.writeFailure;
-    const persist = this.persist ?? (process.env.SYNAX_STORAGE_OWNER_ENDPOINT
+    const persist = this.persist ?? (fileBackedReplayEnabled()
       ? (sessionId: string, id: string, values: AgentRunStreamChunk[], revision: number) => runtimeJournal.appendDurable(sessionId, id, values, revision)
       : undefined);
     if (persist) {
@@ -79,7 +80,7 @@ export class RuntimeStreamWriter {
   }
 
   async prepareFinish(): Promise<void> {
-    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT || !this.runId || !this.isCurrent()) return;
+    if (!fileBackedReplayEnabled() || !this.runId || !this.isCurrent()) return;
     const step = agentRuntimeStore.listRunSteps(this.runId).at(-1);
     if (!step) return;
     const cursor = await sessionLogClient.cursor(this.sessionId);

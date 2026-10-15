@@ -8,6 +8,7 @@ import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import { projectReplayChunk } from "./runtime-stream-projection.js";
 import type { AgentRunStreamChunk } from "./contracts.js";
 import { runtimeJournal } from "./runtime-journal.js";
+import { fileBackedReplayEnabled } from "./replay-storage.js";
 
 export interface JournalWrite {
   id: number;
@@ -44,7 +45,7 @@ export class JournalWriter {
     const bytes = assertBatchInput(chunks);
     if (this.pending.size >= MAX_PENDING_JOURNAL_COMMITS || this.bytes + bytes > 4 * 1024 * 1024)
       throw new Error("Journal writer is busy; bounded queue is full.");
-    if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+    if (fileBackedReplayEnabled()) {
       while (this.fileWrites.size >= MAX_PENDING_JOURNAL_COMMITS || this.fileBytes + bytes > 4 * 1024 * 1024) {
         // Propagate disk backpressure to the producer instead of failing a run
         // simply because another session currently occupies the bounded queue.
