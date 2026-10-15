@@ -90,10 +90,11 @@ export class RuntimeSidecarClient {
     epoch: number;
     revision: number;
     events: Array<{ kind: string; payload: Uint8Array }>;
+    durability?: 'sync' | 'group_commit' | 'ephemeral';
   }): Promise<Extract<SidecarBody, { type: 'ack' }>> {
-    const { sessionId, runId, producerId, producerSequence, epoch, revision, events } = input;
+    const { sessionId, runId, producerId, producerSequence, epoch, revision, events, durability } = input;
     return this.request(
-      { type: 'append_stream', runId, producerId, producerSequence, events },
+      { type: 'append_stream', runId, producerId, producerSequence, events, durability },
       sessionId,
       epoch,
       revision,

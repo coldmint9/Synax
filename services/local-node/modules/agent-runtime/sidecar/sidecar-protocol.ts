@@ -10,6 +10,7 @@ export type SidecarBody =
       producerId: string;
       producerSequence: number;
       events: Array<{ kind: string; payload: Uint8Array }>;
+      durability?: 'sync' | 'group_commit' | 'ephemeral';
     }
   | { type: 'snapshot' }
   | { type: 'replay'; after: number }
@@ -122,6 +123,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
         ...body.events.map((event) =>
           fieldBytes(4, concat(fieldString(1, event.kind), fieldBytes(2, event.payload))),
         ),
+        body.durability === undefined ? new Uint8Array() : fieldUint(5, body.durability === 'group_commit' ? 1 : body.durability === 'ephemeral' ? 2 : 0),
       );
     case 'replay':
     case 'subscribe':

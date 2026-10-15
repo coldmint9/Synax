@@ -1,4 +1,4 @@
-use crate::actor::{PendingEvent, RuntimeError, SessionShardRouter};
+use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
     WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireReady,
@@ -409,14 +409,16 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
             producer_id,
             producer_sequence,
             events,
+            durability,
         })) => match context
             .router
-            .append_stream(
+            .append_stream_with_durability(
                 session_id.clone(),
                 run_id,
                 producer_id,
                 producer_sequence,
                 request.epoch,
+                decode_durability(durability),
                 events
                     .into_iter()
                     .map(|event| PendingEvent {
@@ -513,6 +515,14 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
             )),
             false,
         ),
+    }
+}
+
+fn decode_durability(value: u32) -> Durability {
+    match value {
+        1 => Durability::GroupCommit,
+        2 => Durability::Ephemeral,
+        _ => Durability::Sync,
     }
 }
 

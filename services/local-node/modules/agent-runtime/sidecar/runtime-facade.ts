@@ -100,6 +100,7 @@ export class RuntimeFacade {
         producerSequence: input.producerSequence,
         epoch: input.epoch,
         revision: input.revision,
+        durability: 'group_commit',
         events: input.chunks.map((chunk) => ({
           kind: typeof chunk === 'object' && chunk && 'type' in chunk
             ? String((chunk as { type: unknown }).type)

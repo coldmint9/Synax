@@ -139,6 +139,8 @@ pub struct WireAppendStream {
     pub producer_sequence: u64,
     #[prost(message, repeated, tag = "4")]
     pub events: Vec<WirePendingEvent>,
+    #[prost(uint32, tag = "5")]
+    pub durability: u32,
 }
 
 #[derive(Clone, PartialEq, Message)]

@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::actor::{
-    PendingEvent, RunAdmission, RuntimeError, SessionSnapshot, StreamAppendReceipt, StreamEvent,
+    Durability, PendingEvent, RunAdmission, RuntimeError, SessionSnapshot, StreamAppendReceipt,
+    StreamEvent,
 };
 
 const CF_SESSIONS: &str = "sessions";
@@ -169,16 +170,18 @@ impl HotStore {
         producer_id: String,
         producer_sequence: u64,
         epoch: u64,
+        durability: Durability,
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, StorageError> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            store.append_stream(
+            store.append_stream_with_durability(
                 &session_id,
                 &run_id,
                 &producer_id,
                 producer_sequence,
                 epoch,
+                durability,
                 events,
             )
         })
@@ -279,7 +282,7 @@ impl HotStore {
             run_key(session_id, run_id),
             &serde_json::to_vec(&run)?,
         )?;
-        self.write_sync(batch)?;
+        self.write_with_durability(batch, Durability::Sync)?;
         self.update_snapshot_cache(&state);
         Ok(admission)
     }
@@ -313,6 +316,27 @@ impl HotStore {
         producer_id: &str,
         producer_sequence: u64,
         epoch: u64,
+        events: Vec<PendingEvent>,
+    ) -> Result<StreamAppendReceipt, StorageError> {
+        self.append_stream_with_durability(
+            session_id,
+            run_id,
+            producer_id,
+            producer_sequence,
+            epoch,
+            Durability::Sync,
+            events,
+        )
+    }
+
+    pub fn append_stream_with_durability(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        producer_id: &str,
+        producer_sequence: u64,
+        epoch: u64,
+        durability: Durability,
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, StorageError> {
         if events.is_empty() {
@@ -373,7 +397,7 @@ impl HotStore {
             session_key(session_id),
             &serde_json::to_vec(&state)?,
         )?;
-        self.write_sync(batch)?;
+        self.write_with_durability(batch, durability)?;
         self.update_snapshot_cache(&state);
         Ok(StreamAppendReceipt {
             session_id: session_id.to_owned(),
@@ -438,9 +462,13 @@ impl HotStore {
         Ok(())
     }
 
-    fn write_sync(&self, batch: WriteBatch) -> Result<(), StorageError> {
+    fn write_with_durability(
+        &self,
+        batch: WriteBatch,
+        durability: Durability,
+    ) -> Result<(), StorageError> {
         let mut options = WriteOptions::default();
-        options.set_sync(true);
+        options.set_sync(matches!(durability, Durability::Sync));
         self.db.write_opt(batch, &options)?;
         if self.faults.ack_unknown_after_commit {
             return Err(RuntimeError::InvalidCommand("DURABILITY_UNKNOWN".to_owned()).into());
@@ -518,12 +546,13 @@ mod tests {
         let admission = store.admit_run("s", "req", "body", "r", 1, 0).unwrap();
         assert_eq!(admission.revision, 1);
         store
-            .append_stream(
+            .append_stream_with_durability(
                 "s",
                 "r",
                 "producer",
                 1,
                 1,
+                Durability::GroupCommit,
                 vec![event("delta-1"), event("delta-2")],
             )
             .unwrap();

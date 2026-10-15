@@ -84,6 +84,13 @@ pub struct PendingEvent {
     pub payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Durability {
+    Sync,
+    GroupCommit,
+    Ephemeral,
+}
+
 #[derive(Debug)]
 enum ActorCommand {
     AdmitRun {
@@ -101,6 +108,7 @@ enum ActorCommand {
         producer_id: String,
         producer_sequence: u64,
         epoch: u64,
+        durability: Durability,
         events: Vec<PendingEvent>,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
@@ -406,6 +414,28 @@ impl SessionShardRouter {
         epoch: u64,
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, RuntimeError> {
+        self.append_stream_with_durability(
+            session_id,
+            run_id,
+            producer_id,
+            producer_sequence,
+            epoch,
+            Durability::Sync,
+            events,
+        )
+        .await
+    }
+
+    pub async fn append_stream_with_durability(
+        &self,
+        session_id: impl Into<String>,
+        run_id: impl Into<String>,
+        producer_id: impl Into<String>,
+        producer_sequence: u64,
+        epoch: u64,
+        durability: Durability,
+        events: Vec<PendingEvent>,
+    ) -> Result<StreamAppendReceipt, RuntimeError> {
         if events.is_empty() {
             return Err(RuntimeError::InvalidCommand(
                 "stream batch cannot be empty".to_owned(),
@@ -421,6 +451,7 @@ impl SessionShardRouter {
                 producer_id: producer_id.into(),
                 producer_sequence,
                 epoch,
+                durability,
                 events,
                 response,
             },
@@ -582,6 +613,7 @@ async fn run_shard(
                 producer_id,
                 producer_sequence,
                 epoch,
+                durability,
                 events,
                 response,
             } => {
@@ -604,6 +636,7 @@ async fn run_shard(
                             producer_id,
                             producer_sequence,
                             epoch,
+                            durability,
                             events.clone(),
                         )
                         .await
@@ -618,6 +651,7 @@ async fn run_shard(
                         Err(error) => Err(storage_error_to_runtime(error)),
                     }
                 } else {
+                    let _ = durability;
                     append_stream(
                         sessions.get_mut(&session_id).unwrap(),
                         run_id,

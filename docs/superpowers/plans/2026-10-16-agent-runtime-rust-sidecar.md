@@ -164,10 +164,11 @@ runtime-sidecar/
 - [x] run admission 使用单个 WriteBatch；
 - [x] stream batch sequence 单调递增；
 - [x] canonical event 使用 sync durability；
-- [ ] group commit 事件不会重复；
+- [x] group commit durability 字段进入 protobuf、actor、RocksDB WriteBatch，replay sequence 不重复；
 - [x] sidecar 重启后可恢复 session snapshot 和 cursor；
 - [x] Moka cache 命中不改变 revision/epoch 语义；
-- [ ] compaction 不破坏 canonical event；
+- [x] 基础 compaction 后 canonical event 可 replay；
+- [ ] 高并发 compaction/ENOSPC 压测；
 - [x] 注入提交后 ack unknown 后，receipt 查询和幂等重试结果稳定；
 - [ ] 真实进程崩溃、ENOSPC 和高并发 compaction 压测。
 
@@ -246,4 +247,4 @@ runtime-sidecar/
 
 ## 当前下一步
 
-下一步完成阶段 3 的剩余验收：durability 分级/group commit、sidecar crash receipt recovery、compaction/ENOSPC 压测；同时将 Node client 接到 RuntimeFacade，再切换 run admission 和 stream writer。
+下一步完成阶段 3 的高并发 compaction/ENOSPC 压测；同时继续把 Node shadow facade 推向 authoritative stream adapter，并验证 supervisor 下的真实 Node runtime。

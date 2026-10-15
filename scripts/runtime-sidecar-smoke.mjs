@@ -63,7 +63,7 @@ const admitRun = ({ requestId, sessionId, epoch, revision, bodyHash, runId }) =>
   bodyField: 14,
   body: concat(fieldString(1, bodyHash), fieldString(2, runId)),
 });
-const appendStream = ({ requestId, sessionId, epoch, revision, runId, producerId, producerSequence, kind, payload }) => envelope({
+const appendStream = ({ requestId, sessionId, epoch, revision, runId, producerId, producerSequence, kind, payload, durability = 'sync' }) => envelope({
   requestId,
   sessionId,
   epoch,
@@ -74,6 +74,7 @@ const appendStream = ({ requestId, sessionId, epoch, revision, runId, producerId
     fieldString(2, producerId),
     fieldUint(3, producerSequence),
     fieldBytes(4, concat(fieldString(1, kind), fieldBytes(2, Buffer.from(payload)))),
+    durability === 'sync' ? Buffer.alloc(0) : fieldUint(5, durability === 'group_commit' ? 1 : 2),
   ),
 });
 const snapshot = ({ requestId, sessionId, epoch, revision }) => envelope({
@@ -220,7 +221,7 @@ try {
   if (!hasField(await unix.readFrame(), 19)) throw new Error('unix READY missing');
   unix.sendFrame(admitRun({ requestId: 'unix-req', sessionId: 'unix-session', epoch: 1, revision: 0, bodyHash: 'unix-body', runId: 'unix-run' }));
   if (!hasField(await unix.readFrame(), 24)) throw new Error('unix admission missing');
-  unix.sendFrame(appendStream({ requestId: 'unix-append', sessionId: 'unix-session', epoch: 1, revision: 1, runId: 'unix-run', producerId: 'producer-1', producerSequence: 1, kind: 'message_delta', payload: 'hello' }));
+  unix.sendFrame(appendStream({ requestId: 'unix-append', sessionId: 'unix-session', epoch: 1, revision: 1, runId: 'unix-run', producerId: 'producer-1', producerSequence: 1, kind: 'message_delta', payload: 'hello', durability: 'group_commit' }));
   if (!hasField(await unix.readFrame(), 22)) throw new Error('unix append ack missing');
   const liveEvent = await subscription.waitFor(message => Boolean(hasField(message, 26)));
   if (!hasField(liveEvent, 26)) throw new Error('subscription live event missing');
