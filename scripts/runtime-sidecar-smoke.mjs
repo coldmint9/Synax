@@ -12,6 +12,7 @@ const child = spawn(binary, [], {
     ...process.env,
     SYNAX_RUNTIME_SIDECAR_SOCKET: socketPath,
     SYNAX_RUNTIME_SIDECAR_TOKEN: 'smoke-token',
+    SYNAX_RUNTIME_HOT_PATH: join(root, 'runtime-hot'),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });

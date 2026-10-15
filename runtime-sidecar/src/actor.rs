@@ -1,13 +1,16 @@
 use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
+use crate::storage::{HotStore, StorageError};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
 const DEFAULT_EVENT_RETENTION: usize = 1024;
 const DEFAULT_SUBSCRIBER_CAPACITY: usize = 128;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamEvent {
     pub sequence: u64,
     pub run_id: String,
@@ -15,7 +18,7 @@ pub struct StreamEvent {
     pub payload: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub session_id: String,
     pub epoch: u64,
@@ -25,7 +28,7 @@ pub struct SessionSnapshot {
     pub retained_from: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunAdmission {
     pub session_id: String,
     pub run_id: String,
@@ -34,7 +37,7 @@ pub struct RunAdmission {
     pub reused: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamAppendReceipt {
     pub session_id: String,
     pub run_id: String,
@@ -75,7 +78,7 @@ pub enum CommandResult {
     Replay(Vec<StreamEvent>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingEvent {
     pub kind: String,
     pub payload: Vec<u8>,
@@ -152,6 +155,62 @@ impl SessionState {
             producer_sequences: HashMap::new(),
             subscribers: Vec::new(),
             event_retention,
+        }
+    }
+
+    fn from_snapshot(snapshot: SessionSnapshot, event_retention: usize) -> Self {
+        Self {
+            session_id: snapshot.session_id,
+            epoch: snapshot.epoch,
+            revision: snapshot.revision,
+            active_run_id: snapshot.active_run_id,
+            cursor: snapshot.cursor,
+            retained_from: snapshot.retained_from,
+            events: VecDeque::new(),
+            receipts: HashMap::new(),
+            producer_sequences: HashMap::new(),
+            subscribers: Vec::new(),
+            event_retention,
+        }
+    }
+
+    fn sync_snapshot(&mut self, snapshot: &SessionSnapshot) {
+        self.epoch = snapshot.epoch;
+        self.revision = snapshot.revision;
+        self.active_run_id = snapshot.active_run_id.clone();
+        self.cursor = snapshot.cursor;
+        self.retained_from = snapshot.retained_from;
+    }
+
+    fn apply_admission(&mut self, admission: &RunAdmission) {
+        self.epoch = admission.epoch;
+        self.revision = admission.revision;
+        self.active_run_id = Some(admission.run_id.clone());
+    }
+
+    fn publish_persisted_events(
+        &mut self,
+        receipt: &StreamAppendReceipt,
+        run_id: &str,
+        events: Vec<PendingEvent>,
+    ) {
+        self.cursor = receipt.last_sequence;
+        self.retained_from = self.cursor.saturating_sub(self.event_retention as u64) + 1;
+        let mut sequence = receipt.first_sequence;
+        for pending in events {
+            let event = StreamEvent {
+                sequence,
+                run_id: run_id.to_owned(),
+                kind: pending.kind,
+                payload: pending.payload,
+            };
+            self.events.push_back(event.clone());
+            self.subscribers
+                .retain(|subscriber| matches!(subscriber.try_send(event.clone()), Ok(())));
+            sequence += 1;
+        }
+        while self.events.len() > self.event_retention {
+            self.events.pop_front();
         }
     }
 
@@ -256,6 +315,36 @@ impl SessionShardRouter {
         event_retention: usize,
         subscriber_capacity: usize,
     ) -> Result<Self, RuntimeError> {
+        Self::with_limits_and_store(
+            shard_count,
+            mailbox_capacity,
+            event_retention,
+            subscriber_capacity,
+            None,
+        )
+    }
+
+    pub fn with_store(
+        shard_count: usize,
+        mailbox_capacity: usize,
+        store: Arc<HotStore>,
+    ) -> Result<Self, RuntimeError> {
+        Self::with_limits_and_store(
+            shard_count,
+            mailbox_capacity,
+            DEFAULT_EVENT_RETENTION,
+            DEFAULT_SUBSCRIBER_CAPACITY,
+            Some(store),
+        )
+    }
+
+    fn with_limits_and_store(
+        shard_count: usize,
+        mailbox_capacity: usize,
+        event_retention: usize,
+        subscriber_capacity: usize,
+        store: Option<Arc<HotStore>>,
+    ) -> Result<Self, RuntimeError> {
         if shard_count == 0
             || mailbox_capacity == 0
             || event_retention == 0
@@ -268,7 +357,7 @@ impl SessionShardRouter {
         let mut shards = Vec::with_capacity(shard_count);
         for _ in 0..shard_count {
             let (sender, receiver) = mpsc::channel(mailbox_capacity);
-            tokio::spawn(run_shard(receiver, event_retention));
+            tokio::spawn(run_shard(receiver, event_retention, store.clone()));
             shards.push(sender);
         }
         Ok(Self {
@@ -426,7 +515,11 @@ fn shard_index(session_id: &str, shard_count: usize) -> usize {
     (hasher.finish() as usize) % shard_count
 }
 
-async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: usize) {
+async fn run_shard(
+    mut receiver: mpsc::Receiver<ActorCommand>,
+    event_retention: usize,
+    store: Option<Arc<HotStore>>,
+) {
     let mut sessions: HashMap<String, SessionState> = HashMap::new();
     while let Some(command) = receiver.recv().await {
         match command {
@@ -439,17 +532,48 @@ async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: 
                 expected_revision,
                 response,
             } => {
-                let state = sessions
-                    .entry(session_id.clone())
-                    .or_insert_with(|| SessionState::new(session_id.clone(), event_retention));
-                let result = admit_run(
-                    state,
-                    request_id,
-                    body_hash,
-                    run_id,
-                    epoch,
-                    expected_revision,
-                );
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    match store
+                        .admit_run_async(
+                            session_id.clone(),
+                            request_id.clone(),
+                            body_hash.clone(),
+                            run_id.clone(),
+                            epoch,
+                            expected_revision,
+                        )
+                        .await
+                    {
+                        Ok(admission) => {
+                            sessions
+                                .get_mut(&session_id)
+                                .unwrap()
+                                .apply_admission(&admission);
+                            Ok(admission)
+                        }
+                        Err(error) => Err(storage_error_to_runtime(error)),
+                    }
+                } else {
+                    admit_run(
+                        sessions.get_mut(&session_id).unwrap(),
+                        request_id,
+                        body_hash,
+                        run_id,
+                        epoch,
+                        expected_revision,
+                    )
+                };
                 let _ = response.send(result.map(CommandResult::RunAdmission));
             }
             ActorCommand::AppendStream {
@@ -461,31 +585,106 @@ async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: 
                 events,
                 response,
             } => {
-                let state = sessions
-                    .entry(session_id.clone())
-                    .or_insert_with(|| SessionState::new(session_id.clone(), event_retention));
-                let result =
-                    append_stream(state, run_id, producer_id, producer_sequence, epoch, events);
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    match store
+                        .append_stream_async(
+                            session_id.clone(),
+                            run_id.clone(),
+                            producer_id,
+                            producer_sequence,
+                            epoch,
+                            events.clone(),
+                        )
+                        .await
+                    {
+                        Ok(receipt) => {
+                            sessions
+                                .get_mut(&session_id)
+                                .unwrap()
+                                .publish_persisted_events(&receipt, &run_id, events);
+                            Ok(receipt)
+                        }
+                        Err(error) => Err(storage_error_to_runtime(error)),
+                    }
+                } else {
+                    append_stream(
+                        sessions.get_mut(&session_id).unwrap(),
+                        run_id,
+                        producer_id,
+                        producer_sequence,
+                        epoch,
+                        events,
+                    )
+                };
                 let _ = response.send(result.map(CommandResult::StreamAppend));
             }
             ActorCommand::Snapshot {
                 session_id,
                 response,
             } => {
-                let state = sessions
-                    .entry(session_id.clone())
-                    .or_insert_with(|| SessionState::new(session_id, event_retention));
-                let _ = response.send(Ok(CommandResult::Snapshot(state.snapshot())));
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    match store.snapshot_async(session_id.clone()).await {
+                        Ok(snapshot) => {
+                            sessions
+                                .get_mut(&session_id)
+                                .unwrap()
+                                .sync_snapshot(&snapshot);
+                            Ok(snapshot)
+                        }
+                        Err(error) => Err(storage_error_to_runtime(error)),
+                    }
+                } else {
+                    Ok(sessions.get(&session_id).unwrap().snapshot())
+                };
+                let _ = response.send(result.map(CommandResult::Snapshot));
             }
             ActorCommand::Replay {
                 session_id,
                 after,
                 response,
             } => {
-                let state = sessions
-                    .entry(session_id.clone())
-                    .or_insert_with(|| SessionState::new(session_id, event_retention));
-                let _ = response.send(state.replay(after).map(CommandResult::Replay));
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    store
+                        .replay_async(session_id, after)
+                        .await
+                        .map_err(storage_error_to_runtime)
+                } else {
+                    sessions.get(&session_id).unwrap().replay(after)
+                };
+                let _ = response.send(result.map(CommandResult::Replay));
             }
             ActorCommand::Subscribe {
                 session_id,
@@ -493,11 +692,32 @@ async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: 
                 sender,
                 response,
             } => {
-                let state = sessions
-                    .entry(session_id.clone())
-                    .or_insert_with(|| SessionState::new(session_id, event_retention));
-                let result = match state.replay(after) {
-                    Ok(events) => {
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    store
+                        .replay_async(session_id.clone(), after)
+                        .await
+                        .map_err(storage_error_to_runtime)
+                        .map(|events| (events, sessions.get(&session_id).unwrap().snapshot()))
+                } else {
+                    sessions
+                        .get(&session_id)
+                        .unwrap()
+                        .replay(after)
+                        .map(|events| (events, sessions.get(&session_id).unwrap().snapshot()))
+                };
+                let result = match result {
+                    Ok((events, snapshot)) => {
                         let mut accepted = true;
                         for event in events {
                             if sender.try_send(event).is_err() {
@@ -506,8 +726,12 @@ async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: 
                             }
                         }
                         if accepted {
-                            state.subscribers.push(sender);
-                            Ok(state.snapshot())
+                            sessions
+                                .get_mut(&session_id)
+                                .unwrap()
+                                .subscribers
+                                .push(sender);
+                            Ok(snapshot)
                         } else {
                             Err(RuntimeError::Backpressure)
                         }
@@ -517,6 +741,35 @@ async fn run_shard(mut receiver: mpsc::Receiver<ActorCommand>, event_retention: 
                 let _ = response.send(result);
             }
         }
+    }
+}
+
+async fn ensure_session_state(
+    sessions: &mut HashMap<String, SessionState>,
+    session_id: &str,
+    event_retention: usize,
+    store: Option<&Arc<HotStore>>,
+) -> Result<(), RuntimeError> {
+    if sessions.contains_key(session_id) {
+        return Ok(());
+    }
+    let state = if let Some(store) = store {
+        let snapshot = store
+            .snapshot_async(session_id.to_owned())
+            .await
+            .map_err(storage_error_to_runtime)?;
+        SessionState::from_snapshot(snapshot, event_retention)
+    } else {
+        SessionState::new(session_id.to_owned(), event_retention)
+    };
+    sessions.insert(session_id.to_owned(), state);
+    Ok(())
+}
+
+fn storage_error_to_runtime(error: StorageError) -> RuntimeError {
+    match error {
+        StorageError::Runtime(error) => error,
+        other => RuntimeError::InvalidCommand(format!("storage error: {other}")),
     }
 }
 

@@ -155,18 +155,20 @@ runtime-sidecar/
 
 ## 阶段 3：runtime-hot RocksDB 和 Moka
 
+状态：HotStore、WriteBatch、Moka snapshot cache 和 actor 持久路径已完成基础实现；group commit、崩溃注入和 compaction 验收仍在进行。
+
 目标：实现权威 session/run/stream/control 状态。
 
 验收：
 
-- run admission 使用单个 WriteBatch；
-- stream batch sequence 单调递增；
-- canonical event 使用 sync durability；
-- group commit 事件不会重复；
-- sidecar 重启后可恢复 session snapshot 和 cursor；
-- Moka cache 命中不改变 revision/epoch 语义；
-- compaction 不破坏 canonical event；
-- 注入 WAL 后 ack 前崩溃后，receipt 查询结果稳定。
+- [x] run admission 使用单个 WriteBatch；
+- [x] stream batch sequence 单调递增；
+- [x] canonical event 使用 sync durability；
+- [ ] group commit 事件不会重复；
+- [x] sidecar 重启后可恢复 session snapshot 和 cursor；
+- [x] Moka cache 命中不改变 revision/epoch 语义；
+- [ ] compaction 不破坏 canonical event；
+- [ ] 注入 WAL 后 ack 前崩溃后，receipt 查询结果稳定。
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
@@ -236,4 +238,4 @@ runtime-sidecar/
 
 ## 当前下一步
 
-下一步进入阶段 3：引入 runtime-hot RocksDB、WriteBatch、Moka session cache、持久 cursor 和 crash recovery；仍先保持 Node 业务执行平面不变。
+下一步完成阶段 3 的剩余验收：durability 分级/group commit、sidecar crash receipt recovery、compaction/ENOSPC 压测；之后进入阶段 4 的 Node RuntimeFacade 接入。

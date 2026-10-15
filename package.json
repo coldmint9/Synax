@@ -71,9 +71,9 @@
     "version:minor": "node scripts/release-version.mjs minor",
     "test:code-mode": "vitest run services/local-node/modules/agent-runtime/code-mode",
     "test:code-mode:bundle": "node scripts/code-mode-smoke.mjs",
-    "runtime-sidecar:check": "cargo check --manifest-path runtime-sidecar/Cargo.toml",
-    "runtime-sidecar:test": "cargo test --manifest-path runtime-sidecar/Cargo.toml",
-    "runtime-sidecar:build": "cargo build --release --manifest-path runtime-sidecar/Cargo.toml",
+    "runtime-sidecar:check": "node scripts/runtime-sidecar-cargo.mjs check",
+    "runtime-sidecar:test": "node scripts/runtime-sidecar-cargo.mjs test",
+    "runtime-sidecar:build": "node scripts/runtime-sidecar-cargo.mjs build --release",
     "runtime-sidecar:smoke": "npm run runtime-sidecar:build && node scripts/runtime-sidecar-smoke.mjs"
   },
   "dependencies": {

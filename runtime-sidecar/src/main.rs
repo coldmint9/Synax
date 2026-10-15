@@ -1,10 +1,12 @@
 mod actor;
 mod protocol;
+mod storage;
 mod transport;
 
 use std::sync::Arc;
 
 use crate::actor::SessionShardRouter;
+use crate::storage::HotStore;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use transport::{TransportContext, cleanup_socket, serve_websocket, socket_path_from_env};
@@ -23,10 +25,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let websocket_listener = TcpListener::bind(("127.0.0.1", port)).await?;
     let websocket_port = websocket_listener.local_addr()?.port();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
+        .map(HotStore::open)
+        .transpose()?;
+    let router = match hot_store {
+        Some(store) => SessionShardRouter::with_store(16, 1024, Arc::new(store))?,
+        None => SessionShardRouter::new(16, 1024)?,
+    };
     let context = TransportContext {
         token: Arc::from(token),
         shutdown: shutdown_tx.clone(),
-        router: Arc::new(SessionShardRouter::new(16, 1024)?),
+        router: Arc::new(router),
     };
 
     #[cfg(unix)]
