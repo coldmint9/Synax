@@ -172,11 +172,14 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
+状态：Node Unix-socket protobuf client skeleton 已完成；尚未切换现有 runtime 业务路径。
+
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
 验收：
 
-- 新增 `RuntimeFacade`，HTTP route 不再直接访问 runtime SQLite；
+- [x] 新增 sidecar protobuf codec 和 Unix-socket request client；
+- [ ] 新增 `RuntimeFacade`，HTTP route 不再直接访问 runtime SQLite；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - `runtime-stream-writer.ts` 使用 sidecar append；
 - Node worker 可以直接向 sidecar 写 stream batch；
@@ -238,4 +241,4 @@ runtime-sidecar/
 
 ## 当前下一步
 
-下一步完成阶段 3 的剩余验收：durability 分级/group commit、sidecar crash receipt recovery、compaction/ENOSPC 压测；之后进入阶段 4 的 Node RuntimeFacade 接入。
+下一步完成阶段 3 的剩余验收：durability 分级/group commit、sidecar crash receipt recovery、compaction/ENOSPC 压测；同时将 Node client 接到 RuntimeFacade，再切换 run admission 和 stream writer。
