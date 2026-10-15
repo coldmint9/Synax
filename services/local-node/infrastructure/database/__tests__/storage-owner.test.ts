@@ -51,6 +51,40 @@ describe('single database owner', () => {
     expect(db.prepare('SELECT count(*) AS n FROM owner_returning').get()).toMatchObject({ n: 2 });
   }, 60_000);
 
+  it('does not pin an owner transaction across a deferred read helper', async () => {
+    const db = await setup();
+    db.exec('CREATE TABLE owner_read_tx(id INTEGER PRIMARY KEY, value TEXT)');
+    db.prepare('INSERT INTO owner_read_tx(value) VALUES(?)').run('one');
+
+    const result = db.readTransaction(() => {
+      expect(db.inTransaction).toBe(false);
+      const first = db.prepare('SELECT value FROM owner_read_tx WHERE id=1').get() as { value: string };
+      const second = db.prepare('SELECT count(*) AS n FROM owner_read_tx').get() as { n: number };
+      return { first, second };
+    })();
+
+    expect(result.first).toMatchObject({ value: 'one' });
+    expect(result.second).toMatchObject({ n: 1 });
+    expect(db.inTransaction).toBe(false);
+    db.prepare('INSERT INTO owner_read_tx(value) VALUES(?)').run('two');
+    expect(db.prepare('SELECT count(*) AS n FROM owner_read_tx').get()).toMatchObject({ n: 2 });
+  }, 60_000);
+
+  it('drains row-producing reads before committing an owner transaction', async () => {
+    const db = await setup();
+    db.exec('CREATE TABLE owner_read_commit(id INTEGER PRIMARY KEY, value TEXT)');
+    db.prepare('INSERT INTO owner_read_commit(value) VALUES(?)').run('one');
+
+    const row = db.transaction(() => {
+      const first = db.prepare('SELECT value FROM owner_read_commit UNION ALL SELECT value FROM owner_read_commit').get() as { value: string };
+      db.prepare('INSERT INTO owner_read_commit(value) VALUES(?)').run('two');
+      return first;
+    })();
+
+    expect(row).toMatchObject({ value: 'one' });
+    expect(db.prepare('SELECT count(*) AS n FROM owner_read_commit').get()).toMatchObject({ n: 2 });
+  }, 60_000);
+
   it('preserves nested savepoints, binary values, rollback and paged iterators', async () => {
     const db = await setup();
     db.exec('CREATE TABLE owner_test(id INTEGER PRIMARY KEY,value BLOB)');

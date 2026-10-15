@@ -16,8 +16,10 @@ import { notificationRoutes } from "../transport/http/notifications.js";
 import { projectSettingsRoutes } from "../transport/http/project-settings.js";
 import { fsRoutes } from "../transport/http/fs.js";
 import { wslRoutes } from "../transport/http/wsl.js";
+import { initializeReadServiceRuntime } from "./read-service-bootstrap.js";
 
 const app = new Hono();
+initializeReadServiceRuntime();
 app.get("/api/agent-node", (c) => c.json({
   nodeId: localAgentNode.identity.nodeId,
   kind: localAgentNode.identity.kind,
