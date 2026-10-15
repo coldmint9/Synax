@@ -179,6 +179,7 @@ runtime-sidecar/
 验收：
 
 - [x] 新增 sidecar protobuf codec 和 Unix-socket request client；
+- [x] 添加 Node client 的真实 Unix socket fake-server 回归测试；
 - [x] 新增显式开关控制的 Rust sidecar supervisor 和 READY/shutdown 生命周期；
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
 - [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
