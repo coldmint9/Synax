@@ -29,6 +29,8 @@ pub enum StorageError {
     Runtime(#[from] RuntimeError),
     #[error("missing column family: {0}")]
     MissingColumnFamily(String),
+    #[error("storage disk full")]
+    DiskFull,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +87,7 @@ struct StoredRun {
 struct FaultConfig {
     ack_unknown_after_commit: bool,
     abort_after_commit: bool,
+    disk_full: bool,
 }
 
 #[derive(Clone)]
@@ -103,6 +106,7 @@ impl HotStore {
                     == Ok("1".to_owned()),
                 abort_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ABORT_AFTER_COMMIT")
                     == Ok("1".to_owned()),
+                disk_full: false,
             },
         )
     }
@@ -473,7 +477,16 @@ impl HotStore {
     ) -> Result<(), StorageError> {
         let mut options = WriteOptions::default();
         options.set_sync(matches!(durability, Durability::Sync));
-        self.db.write_opt(batch, &options)?;
+        if self.faults.disk_full {
+            return Err(StorageError::DiskFull);
+        }
+        if let Err(error) = self.db.write_opt(batch, &options) {
+            let message = error.to_string().to_ascii_lowercase();
+            if message.contains("no space") || message.contains("disk full") {
+                return Err(StorageError::DiskFull);
+            }
+            return Err(StorageError::Rocks(error));
+        }
         if self.faults.abort_after_commit {
             std::process::abort();
         }
@@ -619,6 +632,7 @@ mod tests {
             FaultConfig {
                 ack_unknown_after_commit: true,
                 abort_after_commit: false,
+                disk_full: false,
             },
         )
         .unwrap();
@@ -691,6 +705,29 @@ mod tests {
             assert_eq!(events.last().unwrap().sequence, batches_per_session * 2);
         }
         drop(shared);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn disk_full_is_a_stable_write_error_without_a_receipt() {
+        let path = temp_path("disk-full");
+        let store = HotStore::open_with_faults(
+            &path,
+            FaultConfig {
+                ack_unknown_after_commit: false,
+                abort_after_commit: false,
+                disk_full: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            store.admit_run("s", "req", "body", "r", 1, 0),
+            Err(StorageError::DiskFull)
+        ));
+        drop(store);
+        let reopened = HotStore::open(&path).unwrap();
+        assert!(reopened.receipt("s", "req").unwrap().is_none());
+        drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
 
