@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+import { decodeEnvelope, encodeEnvelope } from "./sidecar-protocol.js";
+
+describe("runtime sidecar protobuf codec", () => {
+  it("round trips an admission command", () => {
+    const encoded = encodeEnvelope({
+      requestId: "req-1",
+      sessionId: "session-1",
+      epoch: 1,
+      revision: 0,
+      body: { type: "admit_run", bodyHash: "body", runId: "run-1" },
+    });
+    expect(decodeEnvelope(encoded)).toEqual({
+      requestId: "req-1",
+      sessionId: "session-1",
+      epoch: 1,
+      revision: 0,
+      body: { type: "admit_run", bodyHash: "body", runId: "run-1" },
+    });
+  });
+
+  it("round trips stream payload bytes without text conversion", () => {
+    const encoded = encodeEnvelope({
+      requestId: "req-2",
+      sessionId: "session-1",
+      epoch: 1,
+      revision: 1,
+      body: {
+        type: "append_stream",
+        runId: "run-1",
+        producerId: "worker-1",
+        producerSequence: 4,
+        events: [{ kind: "message_delta", payload: new Uint8Array([0, 1, 255]) }],
+      },
+    });
+    const decoded = decodeEnvelope(encoded);
+    expect(decoded.body).toMatchObject({
+      type: "append_stream",
+      runId: "run-1",
+      producerId: "worker-1",
+      producerSequence: 4,
+    });
+    expect(Array.from(decoded.body.type === "append_stream" ? decoded.body.events[0].payload : [])).toEqual([0, 1, 255]);
+  });
+});
