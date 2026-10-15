@@ -54,6 +54,7 @@ import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
 import { readServiceOrigin, startReadService, stopReadService } from "../infrastructure/runtime/read-service.js";
+import { startRustRuntimeSidecar, stopRustRuntimeSidecar, type RustRuntimeSidecarHandle } from "../infrastructure/runtime/rust-sidecar.js";
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -203,10 +204,12 @@ let httpServer: Server | undefined;
 let closeTerminalSockets: (() => void) | undefined;
 let closeObservationSockets: (() => void) | undefined;
 let shuttingDown = false;
+let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 
 let stopFileUndoRetention = () => {};
 let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
+  rustRuntimeSidecar = await startRustRuntimeSidecar();
   const recovery = await recoverRuntime(runtimeHost.hostId);
   const mediaJobs = recoverMediaJobs();
   if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
@@ -294,6 +297,8 @@ async function shutdownRuntime(): Promise<void> {
   }
   await closeAllBrowserSessions("Runtime host is shutting down.");
   mcpClientManager.closeAll();
+  await stopRustRuntimeSidecar(rustRuntimeSidecar);
+  rustRuntimeSidecar = null;
   try { await journalWriter.close(); }
   catch (error) { failed = true; pinoLogger.error({ error }, "journal writer shutdown failed"); }
   runtimeHost.release();

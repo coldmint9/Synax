@@ -172,13 +172,14 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node Unix-socket protobuf client skeleton 已完成；尚未切换现有 runtime 业务路径。
+状态：Node Unix-socket protobuf client 和显式 Rust sidecar supervisor skeleton 已完成；尚未切换现有 runtime 业务路径。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
 验收：
 
 - [x] 新增 sidecar protobuf codec 和 Unix-socket request client；
+- [x] 新增显式开关控制的 Rust sidecar supervisor 和 READY/shutdown 生命周期；
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
 - [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
