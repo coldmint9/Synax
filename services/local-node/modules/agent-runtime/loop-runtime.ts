@@ -2795,6 +2795,33 @@ export class AgentLoopRuntime {
       input.profile.consecutiveFailureReminderThreshold,
     );
 
+    const currentStep = this.store.getRunStep(input.stepId);
+    // Task reconciliation is progress-gated and once-per-round. One round is
+    // one run, so the run's own start bounds the progress window, and a
+    // reminder already carried by an earlier step of this run keeps it silent.
+    // Asking the model to reconcile the task list when no progress was
+    // recorded is what produced the repeated `task_list` loop, so without
+    // recorded progress the section is simply absent.
+    const run = this.store.getRun(currentStep.runId);
+    const taskProgress = this.store
+      .listEvents(input.sessionId)
+      .some(
+        (event) =>
+          event.type === "task_state_updated" &&
+          event.timestamp >= run.startedAt,
+      );
+    const taskReminderAlreadyInjected = this.store
+      .listRunSteps(currentStep.runId)
+      .some(
+        (step) =>
+          step.id !== input.stepId &&
+          typeof step.metadata.taskProgressReminderStepId === "string",
+      );
+    const taskProgressReminder = buildTaskProgressReminder({
+      progress: taskProgress,
+      alreadyInjected: taskReminderAlreadyInjected,
+    });
+
     const tailReminders = [
       ...(mode === "chat"
         ? []
@@ -2809,10 +2836,9 @@ export class AgentLoopRuntime {
           ]),
       // Keep this as the final instruction so it survives the other
       // round-end guidance and reaches chat-mode runs as well.
-      buildTaskProgressReminder(input.converging) ?? "",
+      taskProgressReminder ?? "",
     ].filter(Boolean);
 
-    const currentStep = this.store.getRunStep(input.stepId);
     const reminder = snapshotRuntimeReminder(
       currentStep.metadata,
       tailReminders,
@@ -3083,6 +3109,11 @@ export class AgentLoopRuntime {
       metadata: {
         ...this.store.getRunStep(input.stepId).metadata,
         runtimeReminder: reminder,
+        // Marks the round's single task reconciliation. Later steps of this
+        // run read it and stay silent.
+        ...(taskProgressReminder
+          ? { taskProgressReminderStepId: input.stepId }
+          : {}),
         contextReceiptEnabled: allowedTools.some(
           (tool) => tool.id === "context.read",
         ),

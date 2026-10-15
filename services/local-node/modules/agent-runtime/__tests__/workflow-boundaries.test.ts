@@ -94,11 +94,51 @@ describe('workflow boundaries', () => {
     expect(workRuntime.prompt(s.id)).not.toMatch(/work\.checkpoint|goal\.finish|verification\.run/);
     expect(buildLoopStepNote({ stepIndex: 50, maxSteps: 50, converging: true, mode })).not.toMatch(/work\.checkpoint|goal\.finish/);
   });
-  it('adds a soft task progress reminder at the end of a converging round', () => {
-    expect(buildTaskProgressReminder(true)).toMatch(/task_list/);
-    expect(buildTaskProgressReminder(true)).toMatch(/task_update/);
-    expect(buildTaskProgressReminder(true)).toMatch(/unfinished work/);
-    expect(buildTaskProgressReminder(false)).toBeNull();
+  it('reconciles the task list once, and only when the round recorded progress', () => {
+    const injected = buildTaskProgressReminder({ progress: true, alreadyInjected: false });
+    expect(injected).toMatch(/task_update/);
+    // No recorded progress: nothing to reconcile, so no reminder at all.
+    expect(buildTaskProgressReminder({ progress: false, alreadyInjected: false })).toBeNull();
+    // Progress exists but this round already injected it: stay silent.
+    expect(buildTaskProgressReminder({ progress: true, alreadyInjected: true })).toBeNull();
+  });
+  it('does not ask for task reconciliation twice in the same round', () => {
+    const { s, input } = active('chat');
+    const run = store.getRun(input.runId);
+    // Nothing recorded progress in this round: no reminder to reconcile.
+    expect(
+      buildTaskProgressReminder({
+        progress: store.listEvents(s.id).some(
+          e => e.type === 'task_state_updated' && e.timestamp >= run.startedAt,
+        ),
+        alreadyInjected: false,
+      }),
+    ).toBeNull();
+
+    // Task progress inside the round makes the reminder available once.
+    const tasks = new TaskStore();
+    tasks.create('Tracked work', 'pending');
+    tasks.persist(s.id);
+    const progress = store.listEvents(s.id).some(
+      e => e.type === 'task_state_updated' && e.timestamp >= run.startedAt,
+    );
+    expect(progress).toBe(true);
+    expect(buildTaskProgressReminder({ progress, alreadyInjected: false })).toMatch(/task_update/);
+
+    // A later step of the same run sees the marker and stays silent.
+    store.updateRunStep(input.stepId, {
+      metadata: { ...store.getRunStep(input.stepId).metadata, taskProgressReminderStepId: input.stepId },
+    });
+    const laterStepId = `step-later-${s.id}`;
+    store.appendRunStep({
+      id: laterStepId, sessionId: s.id, runId: run.id, index: 2, status: 'running',
+      startedAt: new Date().toISOString(), completedAt: null, model: null, finishReason: null, metadata: {},
+    });
+    const alreadyInjected = store
+      .listRunSteps(run.id)
+      .some(step => step.id !== laterStepId && typeof step.metadata.taskProgressReminderStepId === 'string');
+    expect(alreadyInjected).toBe(true);
+    expect(buildTaskProgressReminder({ progress, alreadyInjected })).toBeNull();
   });
   it('goal acceptance cannot be bypassed by plain final text', async () => {
     const { input } = active('goal');

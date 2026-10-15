@@ -247,11 +247,22 @@ export function buildLoopStepNote(input: {
 }
 
 /**
- * A soft nudge at the end of a long round. The model remains responsible for
- * deciding whether a task changed and for updating it; the runtime never
- * infers or writes task progress here.
+ * A single reminder to reconcile the task list, emitted at most once per round.
+ *
+ * Two conditions gate it, and both must hold:
+ *  - The round recorded task progress: a `task_state_updated` event was written
+ *    after this round started. Without new progress there is nothing to
+ *    reconcile, and asking the model to inspect the list would just make it
+ *    call task_list again — the loop this reminder used to cause.
+ *  - The reminder has not been injected yet in this round.
+ *
+ * The model still decides what to write; the runtime never infers or writes
+ * task progress here.
  */
-export function buildTaskProgressReminder(converging: boolean): string | null {
-  if (!converging) return null;
-  return "Before ending this round, inspect the task list with task_list and use task_update for any task whose status or progress changed. Keep the list aligned with the work actually completed; do not invent progress or mark unfinished work completed.";
+export function buildTaskProgressReminder(input: {
+  progress: boolean;
+  alreadyInjected: boolean;
+}): string | null {
+  if (!input.progress || input.alreadyInjected) return null;
+  return "This round recorded task progress. Reconcile the task list once with task_update for the task whose status actually changed; do not re-inspect unchanged tasks or invent progress.";
 }
