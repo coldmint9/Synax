@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +41,63 @@ describe("agentSessionRuntime", () => {
     const stored = agentRuntimeStore.getSession(session.id);
     expect(stored.reasoningEffort).toBe("xhigh");
     expect(stored.mcpServerIds).toEqual(["mcp-files", "mcp-git"]);
+  });
+
+  it("updates hot tool-call rows in place instead of replace-delete-insert", () => {
+    const session = agentSessionRuntime.create(plannerSessionInput);
+    const run = agentRuntimeStore.appendRun({
+      id: "upsert-run",
+      sessionId: session.id,
+      status: "running",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: null,
+      triggerMessageId: null,
+      currentStep: 0,
+      stopReason: null,
+      model: null,
+      metadata: {},
+    });
+    const step = agentRuntimeStore.appendRunStep({
+      id: "upsert-step",
+      runId: run.id,
+      sessionId: session.id,
+      index: 0,
+      status: "running",
+      model: null,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: null,
+      finishReason: null,
+      metadata: {},
+    });
+    agentRuntimeStore.appendToolCall({
+      id: "upsert-tool",
+      sessionId: session.id,
+      runId: run.id,
+      stepId: step.id,
+      modelToolCallId: null,
+      toolId: "file.read",
+      category: "read",
+      mutability: "read",
+      argsHash: "hash",
+      inputSummary: "Read file",
+      inputRef: null,
+      outputSummary: null,
+      outputRef: null,
+      status: "running",
+      permissionDecisionId: null,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: null,
+      error: null,
+    });
+    const db = getRawSqlite();
+    const before = db.prepare("SELECT rowid FROM agent_runtime_tool_calls WHERE id=?").get("upsert-tool") as { rowid: number };
+    agentRuntimeStore.updateToolCall(session.id, "upsert-tool", {
+      status: "completed",
+      outputSummary: "Done",
+      endedAt: "2026-01-01T00:00:01.000Z",
+    });
+    const after = db.prepare("SELECT rowid,status FROM agent_runtime_tool_calls WHERE id=?").get("upsert-tool") as { rowid: number; status: string };
+    expect(after).toMatchObject({ rowid: before.rowid, status: "completed" });
   });
 
   it("writes canonical session metadata while accepting legacy client input", () => {
