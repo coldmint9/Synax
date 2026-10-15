@@ -5,6 +5,7 @@ import {
   journalWriteLockBudgetMs,
   journalWriteLockPolicy,
   retryWriteLockAcquisition,
+  runtimeWriteLockPolicy,
   sleepSync,
   type WriteLockPolicy,
 } from '../write-contention.js';
@@ -101,5 +102,22 @@ describe('lock acquisition retry', () => {
     sleepSync(60);
     sleepSync(0);
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe('runtime write lock policy', () => {
+  it('provides a bounded retry window for execution state writes', () => {
+    const previous = process.env.SYNAX_RUNTIME_WRITE_LOCK_WAIT_MS;
+    process.env.SYNAX_RUNTIME_WRITE_LOCK_WAIT_MS = '40';
+    try {
+      expect(runtimeWriteLockPolicy()).toEqual({
+        waitMs: 40,
+        attempts: 3,
+        backoffMs: 250,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.SYNAX_RUNTIME_WRITE_LOCK_WAIT_MS;
+      else process.env.SYNAX_RUNTIME_WRITE_LOCK_WAIT_MS = previous;
+    }
   });
 });

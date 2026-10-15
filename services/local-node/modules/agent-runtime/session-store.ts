@@ -55,8 +55,23 @@ import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { transcriptRepository } from "./transcript-repository.js";
 import { transcriptStorageEnabled } from "./transcript-repository.js";
 import { bumpSimpleHistoryRevision, simpleHistorySession } from "./simple-history.js";
+import {
+  retryWriteLockAcquisition,
+  runtimeWriteLockPolicy,
+} from "../../infrastructure/database/write-contention.js";
 
 type JsonObject = Record<string, unknown>;
+
+function retryRuntimeControlWrite<T>(action: () => T): T {
+  return retryWriteLockAcquisition(
+    runtimeWriteLockPolicy(),
+    action,
+    // These control writes are single statements executed outside a caller
+    // transaction. SQLite reports contention before SQLITE_DONE, so replaying
+    // the statement cannot duplicate a committed row.
+    () => false,
+  );
+}
 
 interface SessionRow {
   id: string;
@@ -1616,7 +1631,7 @@ export class AgentRuntimeStore {
         run,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   getRun(runId: string): AgentRun {
@@ -1691,7 +1706,7 @@ export class AgentRuntimeStore {
         step,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   getRunStep(stepId: string): AgentRunStep {
@@ -1768,7 +1783,7 @@ export class AgentRuntimeStore {
         part,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   listRunParts(stepId: string): AgentRunPart[] {
@@ -1847,7 +1862,7 @@ export class AgentRuntimeStore {
         record,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   updateToolCall(
@@ -1976,7 +1991,7 @@ export class AgentRuntimeStore {
         decision,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   updatePermission(
@@ -2049,7 +2064,7 @@ export class AgentRuntimeStore {
         artifact,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {
@@ -2093,7 +2108,7 @@ export class AgentRuntimeStore {
         bundle,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   getContextBundle(id: string): AgentContextBundle {
@@ -2135,7 +2150,7 @@ export class AgentRuntimeStore {
         summary,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   getThinkingSummary(id: string): ThinkingSummary {
@@ -2176,7 +2191,7 @@ export class AgentRuntimeStore {
         record,
         writeControl,
       );
-    return writeControl();
+    return retryRuntimeControlWrite(writeControl);
   }
 
   getLatestCompactionRecord(sessionId: string): CompactionRecord | null {

@@ -19,6 +19,9 @@ export const JOURNAL_COMMIT_DEADLINE_MS = 30_000;
 const DEFAULT_LOCK_WAIT_MS = 2_500;
 const LOCK_ATTEMPTS = 3;
 const LOCK_BACKOFF_MS = 250;
+const DEFAULT_RUNTIME_LOCK_WAIT_MS = 2_500;
+const RUNTIME_LOCK_ATTEMPTS = 3;
+const RUNTIME_LOCK_BACKOFF_MS = 250;
 
 /** Commits the parent admits while the child waits. The stream writer emits at
  * most one coalesced delta per `DELTA_FLUSH_MS`, so this limit must outlast a
@@ -48,6 +51,26 @@ export function journalWriteLockPolicy(): WriteLockPolicy {
     waitMs: Math.min(requested, Math.floor(reservable / LOCK_ATTEMPTS)),
     attempts: LOCK_ATTEMPTS,
     backoffMs: LOCK_BACKOFF_MS,
+  };
+}
+
+/**
+ * Runtime control writes are short and idempotent at the transaction boundary,
+ * but they can briefly overlap bounded history maintenance. Keep a separate
+ * policy so ordinary execution writes can wait for that maintenance without
+ * inheriting the journal writer's acknowledgement budget.
+ */
+export function runtimeWriteLockPolicy(): WriteLockPolicy {
+  const raw = env("SYNAX_RUNTIME_WRITE_LOCK_WAIT_MS").trim();
+  const parsed = Number(raw);
+  const requested =
+    raw !== "" && Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : DEFAULT_RUNTIME_LOCK_WAIT_MS;
+  return {
+    waitMs: Math.min(requested, 10_000),
+    attempts: RUNTIME_LOCK_ATTEMPTS,
+    backoffMs: RUNTIME_LOCK_BACKOFF_MS,
   };
 }
 
