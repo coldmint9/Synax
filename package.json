@@ -81,7 +81,8 @@
     "runtime-sidecar:supervisor-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-supervisor-smoke.ts",
     "runtime-sidecar:electron-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-electron-smoke.ts",
     "runtime-sidecar:lifecycle-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-lifecycle-smoke.ts",
-    "runtime-sidecar:ui-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-ui-smoke.ts"
+    "runtime-sidecar:ui-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-ui-smoke.ts",
+    "runtime-sidecar:recovery-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-recovery-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

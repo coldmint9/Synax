@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,6 +73,14 @@ try {
   await page.waitForFunction(() => (window as any).records.length === 625, { }, { timeout: 15_000 });
   assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 625 }, (_, i) => i + 1));
   assert(tickets >= 2, 'reconnect requires a fresh one-use ticket');
+  const originalProcess = runtime.process;
+  const exited = once(originalProcess, 'exit');
+  originalProcess.kill('SIGKILL'); await exited;
+  await runtime.waitUntilReady();
+  await append(25);
+  await page.waitForFunction(() => (window as any).records.length === 650, {}, { timeout: 15_000 });
+  assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 650 }, (_, i) => i + 1));
+  assert(runtime.generation >= 2 && tickets >= 3, 'process restart must renew discovery and ticket');
   await page.evaluate(() => (window as any).connection.close());
 
   // Use a second native socket without the adapter: lack of ACK must stop at 64 events.
@@ -101,7 +110,7 @@ try {
   const overflowGrant = await control.issueTicket(sessionId, 'overflow-window');
   await page.evaluate(({ port, hello, subscribe }) => {
     const w = window as any;
-    w.overflow = { count: 0, last: 625, ready: false, autoAck: false, errors: [] };
+    w.overflow = { count: 0, last: 650, ready: false, autoAck: false, errors: [] };
     const socket = w.overflowSocket = new WebSocket(`ws://127.0.0.1:${port}/runtime`);
     socket.binaryType = 'arraybuffer';
     socket.onopen = () => socket.send(new Uint8Array(hello));
@@ -118,7 +127,7 @@ try {
       if (body.type === 'error') w.overflow.errors.push(body.code);
     };
   }, { port: runtime.port, hello: envelope({ type: 'hello', token: overflowGrant.token, clientId: 'overflow-window' }),
-    subscribe: envelope({ type: 'subscribe', after: 625 }, 'overflow') });
+    subscribe: envelope({ type: 'subscribe', after: 650 }, 'overflow') });
   await page.waitForFunction(() => (window as any).overflow.ready);
   await append(200); // More than send window + live mailbox; no ACKs yet.
   await page.waitForFunction(() => (window as any).overflow.count === 64);
@@ -157,7 +166,7 @@ try {
   assert.deepEqual(errors, []);
   const screenshot = path.join(tmpdir(), 'synax-rust-ui-smoke.png');
   await page.screenshot({ path: screenshot });
-  console.log(`Electron native UI adapter passed: 600-event backlog, 25 live/reconnected events without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets. Screenshot: ${screenshot}`);
+  console.log(`Electron native UI adapter passed: 600-event backlog, 50 live/reconnected events including a real Rust process restart without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets. Screenshot: ${screenshot}`);
 } finally {
   await desktop?.close(); control.close();
   await stopRustRuntimeSidecar(runtime);

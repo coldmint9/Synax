@@ -311,6 +311,12 @@ resync_required
 
 由于浏览器 WebSocket API 没有应用层 backpressure，服务端必须按 event 数量和 byte 数量维护信用窗口。窗口耗尽时只保留 canonical event，并允许合并 delta；无法保持连续回放时发送 `RESYNC_REQUIRED`。
 
+### 6.4 执行恢复与幂等边界
+
+Rust sidecar 的 supervisor 在每次启动都等待 `READY` 和 Unix control health；socket path、token 和 RocksDB hot path 在同一 Node owner 生命周期内稳定，sidecar 重启只更换随机 TCP 端口。Node 的 append 请求带稳定 `request_id`，Rust 用版本化 SHA-256 指纹持久化 `(session, run, producer, producer_sequence, epoch, durability, events)` receipt。相同请求在提交后响应丢失时返回原 receipt，不能重新写 event 或重复 fanout；同一 producer sequence 的 payload 改变返回 `REQUEST_CONFLICT`。
+
+control transport 为每连接 32 个任务、全局 128 个任务、8 MiB 响应预算；慢请求不能阻塞快请求，shutdown 等待已接受任务有界排空。关闭或父进程死亡会清理子进程和 Unix socket；客户端在 transport error 或 durability unknown 时只用同一 request frame 重试，并受总 deadline 限制。
+
 ## 7. Node 侧职责调整
 
 新增：

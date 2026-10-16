@@ -92,6 +92,39 @@ describe('RuntimeSidecarClient', () => {
     finally { client.close(); }
   });
 
+  it('retries an interrupted append with identical command bytes and correlation ID', async () => {
+    const commands: SidecarEnvelope[] = [];
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello') send(socket, { requestId: '', sessionId: '', epoch: 0, revision: 0,
+        body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: ['append_receipts'] } });
+      else if (envelope.body.type === 'append_stream') {
+        commands.push(envelope);
+        if (commands.length === 1) socket.destroy();
+        else send(socket, { ...envelope, body: { type: 'ack', request: 'stream:1-1' } });
+      }
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token', requestTimeoutMs: 500, retryTimeoutMs: 1500 });
+    try {
+      await expect(client.appendStream({ sessionId: 's', runId: 'r', producerId: 'p', producerSequence: 1,
+        epoch: 1, revision: 1, events: [{ kind: 'delta', payload: new Uint8Array([1, 2, 3]) }] })).resolves.toMatchObject({ request: 'stream:1-1' });
+      expect(commands).toHaveLength(2);
+      expect(commands[1]).toEqual(commands[0]);
+    } finally { client.close(); }
+  });
+
+  it('does not reconnect after explicit disposal interrupts retry backoff', async () => {
+    let connects = 0;
+    const bound = await startServer((socket) => { connects++; socket.destroy(); });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token', requestTimeoutMs: 100, retryTimeoutMs: 1500 });
+    const operation = client.health();
+    const rejected = expect(operation).rejects.toThrow();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    client.close(); await rejected;
+    const stoppedAt = connects;
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(connects).toBe(stoppedAt);
+  });
+
   it('maps sidecar errors while preserving expected and actual revisions', async () => {
     const bound = await startServer((socket, envelope) => {
       if (envelope.body.type === 'hello') {

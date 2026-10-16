@@ -5,6 +5,7 @@ use std::sync::Arc;
 use moka::future::Cache;
 use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::actor::{
@@ -17,6 +18,7 @@ const CF_SESSIONS: &str = "sessions";
 const CF_RUNS: &str = "runs";
 const CF_RECEIPTS: &str = "receipts";
 const CF_STREAMS: &str = "streams";
+const CF_APPENDS: &str = "append_receipts";
 const CF_TRANSITIONS: &str = "transitions";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
@@ -87,10 +89,50 @@ struct StoredRun {
     revision: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredAppendReceipt {
+    fingerprint: String,
+    receipt: StreamAppendReceipt,
+}
+
+/// Versioned, length-delimited digest; stable across processes and Rust releases.
+pub fn append_fingerprint(
+    session: &str,
+    run: &str,
+    producer: &str,
+    sequence: u64,
+    epoch: u64,
+    durability: Durability,
+    events: &[PendingEvent],
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"synax.runtime.append.v1\0");
+    for value in [session, run, producer] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    digest.update(sequence.to_be_bytes());
+    digest.update(epoch.to_be_bytes());
+    digest.update([match durability {
+        Durability::Sync => 0,
+        Durability::GroupCommit => 1,
+        Durability::Ephemeral => 2,
+    }]);
+    digest.update((events.len() as u64).to_be_bytes());
+    for event in events {
+        digest.update((event.kind.len() as u64).to_be_bytes());
+        digest.update(event.kind.as_bytes());
+        digest.update((event.payload.len() as u64).to_be_bytes());
+        digest.update(&event.payload);
+    }
+    format!("{:x}", digest.finalize())
+}
+
 #[derive(Clone)]
 struct FaultConfig {
     ack_unknown_after_commit: bool,
     abort_after_commit: bool,
+    abort_after_append: bool,
     disk_full: bool,
 }
 
@@ -109,6 +151,8 @@ impl HotStore {
             FaultConfig {
                 ack_unknown_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ACK_UNKNOWN")
                     == Ok("1".to_owned()),
+                abort_after_append: std::env::var("SYNAX_RUNTIME_HOT_ABORT_APPEND_AFTER_COMMIT")
+                    == Ok("1".to_owned()),
                 abort_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ABORT_AFTER_COMMIT")
                     == Ok("1".to_owned()),
                 disk_full: false,
@@ -126,6 +170,7 @@ impl HotStore {
             CF_RECEIPTS,
             CF_STREAMS,
             CF_TRANSITIONS,
+            CF_APPENDS,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -481,6 +526,26 @@ impl HotStore {
                 RuntimeError::InvalidCommand("stream batch cannot be empty".to_owned()).into(),
             );
         }
+        let key = serde_json::to_vec(&(session_id, run_id, epoch, producer_id, producer_sequence))?;
+        let fingerprint = append_fingerprint(
+            session_id,
+            run_id,
+            producer_id,
+            producer_sequence,
+            epoch,
+            durability,
+            &events,
+        );
+        if let Some(bytes) = self.get(CF_APPENDS, &key)? {
+            let saved: StoredAppendReceipt = serde_json::from_slice(&bytes)?;
+            if saved.fingerprint != fingerprint {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
+            let mut receipt = saved.receipt;
+            receipt.reused = true;
+            return Ok(receipt);
+        }
         let mut state = self.read_session(session_id)?;
         ensure_epoch(&state, epoch)?;
         if state.active_run_id.as_deref() != Some(run_id) {
@@ -538,14 +603,28 @@ impl HotStore {
             session_key(session_id),
             &serde_json::to_vec(&state)?,
         )?;
-        self.write_with_durability(batch, durability)?;
-        Ok(StreamAppendReceipt {
+        let receipt = StreamAppendReceipt {
+            reused: false,
             session_id: session_id.to_owned(),
             run_id: run_id.to_owned(),
             first_sequence,
             last_sequence: state.cursor,
             epoch: state.epoch,
-        })
+        };
+        self.put_batch(
+            &mut batch,
+            CF_APPENDS,
+            key,
+            &serde_json::to_vec(&StoredAppendReceipt {
+                fingerprint,
+                receipt: receipt.clone(),
+            })?,
+        )?;
+        self.write_with_durability(batch, durability)?;
+        if self.faults.abort_after_append {
+            std::process::abort();
+        }
+        Ok(receipt)
     }
 
     pub fn replay(&self, session_id: &str, after: u64) -> Result<Vec<StreamEvent>, StorageError> {
@@ -721,6 +800,100 @@ mod tests {
     }
 
     #[test]
+    fn append_retry_returns_the_original_receipt_after_reopen_and_completion() {
+        let path = temp_path("append-receipt");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "body", "r", 1, 0).unwrap();
+        let first = store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::GroupCommit,
+                vec![event("one"), event("two")],
+            )
+            .unwrap();
+        assert!(!first.reused);
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        store
+            .finish_run("s", "finish", "r", "completed", 1, 1)
+            .unwrap();
+        store
+            .admit_run("s", "start-next", "next", "next", 2, 2)
+            .unwrap();
+        let retry = store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::GroupCommit,
+                vec![event("one"), event("two")],
+            )
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(
+            (retry.first_sequence, retry.last_sequence),
+            (first.first_sequence, first.last_sequence)
+        );
+        assert_eq!(store.replay("s", 0).unwrap().len(), 2);
+        assert_eq!(
+            store.snapshot("s").unwrap().active_run_id.as_deref(),
+            Some("next")
+        );
+        assert!(matches!(
+            store.append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::GroupCommit,
+                vec![event("changed")]
+            ),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn uncertain_append_closes_live_observers_and_retry_does_not_duplicate() {
+        let path = temp_path("append-uncertain");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "body", "r", 1, 0).unwrap();
+        let mut faulty = store.clone();
+        faulty.faults.ack_unknown_after_commit = true;
+        let router = crate::actor::SessionShardRouter::with_store(1, 16, Arc::new(faulty)).unwrap();
+        let (_, _, mut live) = router.subscribe("s", 0).await.unwrap();
+        assert!(matches!(
+            router
+                .append_stream("s", "r", "p", 1, 1, vec![event("one")])
+                .await,
+            Err(RuntimeError::DurabilityUnknown(_))
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), live.recv())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let retry = store
+            .append_stream("s", "r", "p", 1, 1, vec![event("one")])
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(store.snapshot("s").unwrap().cursor, 1);
+        drop(router);
+        tokio::task::yield_now().await;
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn completion_persists_fences_and_idempotent_receipt() {
         let path = temp_path("finish");
         let store = HotStore::open(&path).unwrap();
@@ -872,6 +1045,7 @@ mod tests {
             FaultConfig {
                 ack_unknown_after_commit: true,
                 abort_after_commit: false,
+                abort_after_append: false,
                 disk_full: false,
             },
         )
@@ -956,6 +1130,7 @@ mod tests {
             FaultConfig {
                 ack_unknown_after_commit: false,
                 abort_after_commit: false,
+                abort_after_append: false,
                 disk_full: true,
             },
         )

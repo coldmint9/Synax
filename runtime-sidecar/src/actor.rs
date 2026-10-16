@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::storage::{HotStore, StorageError};
+use crate::storage::{HotStore, StorageError, append_fingerprint};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -39,6 +39,8 @@ pub struct RunAdmission {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamAppendReceipt {
+    #[serde(default)]
+    pub reused: bool,
     pub session_id: String,
     pub run_id: String,
     pub first_sequence: u64,
@@ -150,6 +152,13 @@ struct Receipt {
     result: CommandResult,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ReceiptKey {
+    Admit(String),
+    Finish(String),
+    Append(String, u64, String, u64),
+}
+
 struct SessionState {
     session_id: String,
     epoch: u64,
@@ -158,7 +167,7 @@ struct SessionState {
     cursor: u64,
     retained_from: u64,
     events: VecDeque<StreamEvent>,
-    receipts: HashMap<String, Receipt>,
+    receipts: HashMap<ReceiptKey, Receipt>,
     producer_sequences: HashMap<String, u64>,
     subscribers: Vec<mpsc::Sender<Arc<StreamEvent>>>,
     event_retention: usize,
@@ -285,6 +294,7 @@ impl SessionState {
             .map(|event| event.sequence)
             .unwrap_or(self.cursor + 1);
         StreamAppendReceipt {
+            reused: false,
             session_id: self.session_id.clone(),
             run_id: run_id.to_owned(),
             first_sequence,
@@ -639,9 +649,19 @@ async fn run_shard(
                                     .sync_snapshot(&snapshot);
                                 Ok(admission)
                             }
-                            Err(error) => Err(storage_error_to_runtime(error)),
+                            Err(error) => {
+                                if storage_state_uncertain(&error) {
+                                    sessions.remove(&session_id);
+                                }
+                                Err(storage_error_to_runtime(error))
+                            }
                         },
-                        Err(error) => Err(storage_error_to_runtime(error)),
+                        Err(error) => {
+                            if storage_state_uncertain(&error) {
+                                sessions.remove(&session_id);
+                            }
+                            Err(storage_error_to_runtime(error))
+                        }
                     }
                 } else {
                     admit_run(
@@ -695,9 +715,19 @@ async fn run_shard(
                                     .sync_snapshot(&current);
                                 Ok(receipt)
                             }
-                            Err(error) => Err(storage_error_to_runtime(error)),
+                            Err(error) => {
+                                if storage_state_uncertain(&error) {
+                                    sessions.remove(&session_id);
+                                }
+                                Err(storage_error_to_runtime(error))
+                            }
                         },
-                        Err(error) => Err(storage_error_to_runtime(error)),
+                        Err(error) => {
+                            if storage_state_uncertain(&error) {
+                                sessions.remove(&session_id);
+                            }
+                            Err(storage_error_to_runtime(error))
+                        }
                     }
                 } else {
                     finish_run(
@@ -746,22 +776,30 @@ async fn run_shard(
                         .await
                     {
                         Ok(receipt) => {
-                            sessions
-                                .get_mut(&session_id)
-                                .unwrap()
-                                .publish_persisted_events(&receipt, &run_id, events);
+                            // Retry acknowledgements never publish a second copy of an event.
+                            if !receipt.reused {
+                                sessions
+                                    .get_mut(&session_id)
+                                    .unwrap()
+                                    .publish_persisted_events(&receipt, &run_id, events);
+                            }
                             Ok(receipt)
                         }
-                        Err(error) => Err(storage_error_to_runtime(error)),
+                        Err(error) => {
+                            if storage_state_uncertain(&error) {
+                                sessions.remove(&session_id);
+                            }
+                            Err(storage_error_to_runtime(error))
+                        }
                     }
                 } else {
-                    let _ = durability;
                     append_stream(
                         sessions.get_mut(&session_id).unwrap(),
                         run_id,
                         producer_id,
                         producer_sequence,
                         epoch,
+                        durability,
                         events,
                     )
                 };
@@ -791,7 +829,12 @@ async fn run_shard(
                                 .sync_snapshot(&snapshot);
                             Ok(snapshot)
                         }
-                        Err(error) => Err(storage_error_to_runtime(error)),
+                        Err(error) => {
+                            if storage_state_uncertain(&error) {
+                                sessions.remove(&session_id);
+                            }
+                            Err(storage_error_to_runtime(error))
+                        }
                     }
                 } else {
                     Ok(sessions.get(&session_id).unwrap().snapshot())
@@ -921,6 +964,10 @@ async fn ensure_session_state(
     Ok(())
 }
 
+fn storage_state_uncertain(error: &StorageError) -> bool {
+    !matches!(error, StorageError::Runtime(error) if !matches!(error, RuntimeError::DurabilityUnknown(_) | RuntimeError::StorageUnavailable(_)))
+}
+
 fn storage_error_to_runtime(error: StorageError) -> RuntimeError {
     match error {
         StorageError::Runtime(error) => error,
@@ -937,7 +984,8 @@ fn admit_run(
     epoch: u64,
     expected_revision: u64,
 ) -> Result<RunAdmission, RuntimeError> {
-    if let Some(receipt) = state.receipts.get(&request_id) {
+    let request_key = ReceiptKey::Admit(request_id);
+    if let Some(receipt) = state.receipts.get(&request_key) {
         if receipt.body_hash != body_hash {
             return Err(RuntimeError::RequestConflict);
         }
@@ -965,7 +1013,7 @@ fn admit_run(
         reused: false,
     };
     state.receipts.insert(
-        request_id,
+        request_key,
         Receipt {
             body_hash,
             result: CommandResult::RunAdmission(admission.clone()),
@@ -993,7 +1041,7 @@ fn finish_run(
     revision: u64,
 ) -> Result<SessionSnapshot, RuntimeError> {
     validate_terminal_status(&status)?;
-    let key = format!("finish:{request_id}");
+    let key = ReceiptKey::Finish(request_id);
     let identity = serde_json::to_string(&(&run_id, &status)).unwrap();
     if let Some(receipt) = state.receipts.get(&key) {
         if receipt.body_hash != identity {
@@ -1030,8 +1078,35 @@ fn append_stream(
     producer_id: String,
     producer_sequence: u64,
     epoch: u64,
+    durability: Durability,
     events: Vec<PendingEvent>,
 ) -> Result<StreamAppendReceipt, RuntimeError> {
+    let key = ReceiptKey::Append(
+        run_id.clone(),
+        epoch,
+        producer_id.clone(),
+        producer_sequence,
+    );
+    let fingerprint = append_fingerprint(
+        &state.session_id,
+        &run_id,
+        &producer_id,
+        producer_sequence,
+        epoch,
+        durability,
+        &events,
+    );
+    if let Some(receipt) = state.receipts.get(&key) {
+        if receipt.body_hash != fingerprint {
+            return Err(RuntimeError::RequestConflict);
+        }
+        if let CommandResult::StreamAppend(saved) = &receipt.result {
+            let mut reused = saved.clone();
+            reused.reused = true;
+            return Ok(reused);
+        }
+        return Err(RuntimeError::RequestConflict);
+    }
     state.ensure_epoch(epoch)?;
     if state.active_run_id.as_deref() != Some(&run_id) {
         return Err(RuntimeError::InvalidCommand("run is not active".into()));
@@ -1057,7 +1132,15 @@ fn append_stream(
     state
         .producer_sequences
         .insert(producer_id, producer_sequence);
-    Ok(state.append_events(&run_id, events))
+    let receipt = state.append_events(&run_id, events);
+    state.receipts.insert(
+        key,
+        Receipt {
+            body_hash: fingerprint,
+            result: CommandResult::StreamAppend(receipt.clone()),
+        },
+    );
+    Ok(receipt)
 }
 
 #[cfg(test)]
@@ -1136,6 +1219,34 @@ mod tests {
         assert_eq!(backlog.len(), 200);
         assert_eq!(live.recv().await.unwrap().sequence, 201);
         assert!(live.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn duplicate_append_is_not_republished_and_changed_payload_is_rejected() {
+        let router = SessionShardRouter::new(1, 16).unwrap();
+        router
+            .admit_run("s", "start", "body", "r", 1, 0)
+            .await
+            .unwrap();
+        let (_, _, mut live) = router.subscribe("s", 0).await.unwrap();
+        router
+            .append_stream("s", "r", "p", 1, 1, vec![event("one")])
+            .await
+            .unwrap();
+        assert_eq!(live.recv().await.unwrap().sequence, 1);
+        let retried = router
+            .append_stream("s", "r", "p", 1, 1, vec![event("one")])
+            .await
+            .unwrap();
+        assert!(retried.reused);
+        assert!(live.try_recv().is_err());
+        assert!(matches!(
+            router
+                .append_stream("s", "r", "p", 1, 1, vec![event("other")])
+                .await,
+            Err(RuntimeError::RequestConflict)
+        ));
+        assert_eq!(router.snapshot("s").await.unwrap().cursor, 1);
     }
 
     #[tokio::test]

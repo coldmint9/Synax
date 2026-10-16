@@ -118,13 +118,17 @@ export class RuntimeFacade {
 
   async uiTicket(sessionId: string, clientId: string) {
     if (streamMode() !== 'authoritative') return null;
-    const port = Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT);
     const client = this.clientFactory();
-    if (!client || !Number.isInteger(port) || port < 1 || port > 65535)
-      throw new Error('Runtime sidecar discovery is not ready.');
-    const ticket = await client.issueTicket(sessionId, clientId);
-    return { url: `ws://127.0.0.1:${port}/runtime`, token: ticket.token,
-      expiresAtMs: ticket.expiresAtMs, clientId, sessionId, protocol: 'synax.runtime.v2' as const };
+    if (!client) throw new Error('Runtime sidecar discovery is not ready.');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const port = Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Runtime sidecar discovery is not ready.');
+      const ticket = await client.issueTicket(sessionId, clientId);
+      if (Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT) !== port) continue;
+      return { url: `ws://127.0.0.1:${port}/runtime`, token: ticket.token,
+        expiresAtMs: ticket.expiresAtMs, clientId, sessionId, protocol: 'synax.runtime.v2' as const };
+    }
+    throw new Error('Runtime sidecar restarted during ticket issuance.');
   }
 
   async streamFence(sessionId: string, runId: string): Promise<{ epoch: number; revision: number }> {

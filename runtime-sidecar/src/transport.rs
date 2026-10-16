@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio::time::timeout;
@@ -23,13 +23,15 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
-const MAX_FRAME_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "health",
     "shutdown",
     "admit_run",
     "finish_run",
     "append_stream",
+    "append_receipts",
+    "control_multiplex",
     "snapshot",
     "replay",
     "subscribe",
@@ -52,6 +54,7 @@ pub enum TransportError {
 #[derive(Clone)]
 pub struct TransportContext {
     pub token: Arc<str>,
+    pub control_budget: Arc<crate::control::ControlBudget>,
     pub tickets: Arc<TicketStore>,
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
@@ -265,6 +268,7 @@ async fn handle_wire_websocket(
                 let (response, should_shutdown) = execute_wire(request, &context, false).await;
                 send_wire(&mut socket, &response).await?;
                 if should_shutdown {
+                    let _ = context.shutdown.send(true);
                     return Ok(());
                 }
             }
@@ -553,15 +557,12 @@ async fn execute_wire(
         Some(wire_envelope::Body::Ping(_)) => {
             (envelope(wire_envelope::Body::Pong(WirePong {})), false)
         }
-        Some(wire_envelope::Body::Shutdown(_)) => {
-            let _ = context.shutdown.send(true);
-            (
-                envelope(wire_envelope::Body::Ack(WireAck {
-                    request: "shutdown".to_owned(),
-                })),
-                true,
-            )
-        }
+        Some(wire_envelope::Body::Shutdown(_)) => (
+            envelope(wire_envelope::Body::Ack(WireAck {
+                request: "shutdown".to_owned(),
+            })),
+            true,
+        ),
         Some(wire_envelope::Body::AdmitRun(WireAdmitRun { body_hash, run_id })) => match context
             .router
             .admit_run(
@@ -906,13 +907,18 @@ pub async fn serve_unix(
     context: TransportContext,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), TransportError> {
+    let slots = Arc::new(Semaphore::new(64));
+    let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
-            _ = shutdown.changed() => return Ok(()),
+            _ = shutdown.changed() => break,
+            _ = connections.join_next(), if !connections.is_empty() => {},
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
+                let Ok(permit) = slots.clone().try_acquire_owned() else { continue; };
                 let child_context = context.clone();
-                tokio::spawn(async move {
+                connections.spawn(async move {
+                    let _permit = permit;
                     if let Err(error) = handle_unix(stream, child_context).await {
                         eprintln!("[runtime-sidecar] unix connection failed: {error}");
                     }
@@ -920,6 +926,15 @@ pub async fn serve_unix(
             }
         }
     }
+    if timeout(Duration::from_secs(3), async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        connections.abort_all();
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -927,7 +942,9 @@ async fn handle_unix(
     mut stream: tokio::net::UnixStream,
     context: TransportContext,
 ) -> Result<(), TransportError> {
-    let request = read_frame(&mut stream).await?;
+    let request = timeout(Duration::from_secs(5), read_frame(&mut stream))
+        .await
+        .map_err(|_| TransportError::Protocol("control hello timed out".into()))??;
     if let Ok(envelope) = decode_wire(&request) {
         if !authenticate_wire(&envelope, &context) {
             write_frame(
@@ -944,24 +961,13 @@ async fn handle_unix(
             return Ok(());
         }
         write_frame(&mut stream, &encode_wire(&context.wire_ready("unix"))).await?;
-        loop {
-            let request = match read_frame(&mut stream).await {
-                Ok(request) => request,
-                Err(TransportError::Io(error))
-                    if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    return Ok(());
-                }
-                Err(error) => return Err(error),
-            };
-            let envelope = decode_wire(&request)
-                .map_err(|error| TransportError::Protocol(error.to_string()))?;
-            let (response, should_shutdown) = execute_wire(envelope, &context, true).await;
-            write_frame(&mut stream, &encode_wire(&response)).await?;
-            if should_shutdown {
-                return Ok(());
-            }
-        }
+        let shutdown = context.shutdown.clone();
+        let budget = context.control_budget.clone();
+        return crate::control::run(stream, shutdown, budget, move |envelope| {
+            let context = context.clone();
+            async move { execute_wire(envelope, &context, true).await }
+        })
+        .await;
     }
 
     if !authenticate_json(&request, &context)? {
@@ -1022,8 +1028,9 @@ async fn handle_unix(
     }
 }
 
-#[cfg(unix)]
-async fn read_frame(stream: &mut tokio::net::UnixStream) -> Result<Vec<u8>, TransportError> {
+pub(crate) async fn read_frame<R: AsyncRead + Unpin>(
+    stream: &mut R,
+) -> Result<Vec<u8>, TransportError> {
     let size = stream.read_u32().await? as usize;
     if size == 0 || size > MAX_FRAME_BYTES {
         return Err(TransportError::Protocol("invalid frame size".to_owned()));
@@ -1033,9 +1040,8 @@ async fn read_frame(stream: &mut tokio::net::UnixStream) -> Result<Vec<u8>, Tran
     Ok(bytes)
 }
 
-#[cfg(unix)]
-async fn write_frame(
-    stream: &mut tokio::net::UnixStream,
+pub(crate) async fn write_frame<W: AsyncWrite + Unpin>(
+    stream: &mut W,
     bytes: &[u8],
 ) -> Result<(), TransportError> {
     if bytes.is_empty() || bytes.len() > MAX_FRAME_BYTES {

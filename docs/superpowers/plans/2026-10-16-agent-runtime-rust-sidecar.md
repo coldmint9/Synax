@@ -17,8 +17,8 @@
 | Tokio + Moka | 多线程 Tokio；缓存现已改为 moka::future::Cache；写入完成/未知确认后失效 | 全局内存预算、负载下限流与压测 |
 | group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
-| Node 执行接入 | Unix socket 连接复用，握手超时/协议校验/断线重连；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
-| 实时数据 | 已接入短期单次 ticket、会话只读作用域、preload、原生 WS、消费确认窗口与重连游标；订阅 backlog/live 在同一 actor turn 建立 | 初始完整业务快照仍由 Node/SQLite 组装；全量状态与历史迁移、进程崩溃后的自动恢复未完成 |
+| Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
+| 实时数据 | 已接入短期单次 ticket、会话只读作用域、preload、原生 WS、消费确认窗口与重连游标；订阅 backlog/live 在同一 actor turn 建立 | 初始完整业务快照仍由 Node/SQLite 组装；全量状态与历史迁移、真实 Rust 进程崩溃后 supervisor 重启、持久 append receipt 重试和 Electron 重连已完成；完整 session/lease 恢复仍未完成 |
 | 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
@@ -47,7 +47,12 @@
 - `npm run typecheck`、`npm run test:desktop`、`npm run build:desktop`
 - `SYNAX_RUNTIME_SIDECAR_SUPERVISOR=1 SYNAX_RUNTIME_SIDECAR_ADMISSION=shadow SYNAX_RUNTIME_SIDECAR_STREAM=shadow npm run test:desktop:smoke`
 
-下一阶段还必须处理两个执行侧缺口：私有 Unix 连接当前逐请求等待执行，跨会话仍可能队头阻塞，需要有界的请求复用；sidecar 进程崩溃后的 supervisor 重启、stream append 幂等重试和 lease 恢复尚未闭环。现有连接重连测试不代表进程崩溃恢复完成。
+2026-10-16 第三轮执行侧实现：
+
+- Unix control connection 改为每连接 32 个本地任务、全局 128 个执行许可和 8 MiB 响应预算；快请求不会被同连接慢请求队头阻塞，关闭前会有界排空。
+- append command 增加 SHA-256 v1 内容指纹与持久化 receipt。相同 session/run/producer/sequence/epoch/durability/events 的重试返回原 receipt，不重复 fanout；内容变化返回 `REQUEST_CONFLICT`。
+- 真实 RocksDB `abort_after_append` 测试覆盖“写入完成后进程 abort”；Supervisor 保持 socket/token 稳定，等待 Rust READY + health，并自动重启；Node owner 被 SIGKILL 时 Rust 子进程和 socket 清理。
+- Renderer UI smoke 增加真实 Rust 进程 kill/restart 后继续消费，事件序列保持 1..650；连接凭证在重启后重新签发。
 
 后续顺序：推进 session/run/control 的异步 Rust repository，并使初始完整 UI 快照来自同一个权威状态；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 

@@ -1,5 +1,6 @@
 mod actor;
 mod commit;
+mod control;
 mod flow;
 mod protocol;
 mod storage;
@@ -17,8 +18,42 @@ use transport::{TransportContext, cleanup_socket, serve_websocket, socket_path_f
 #[cfg(unix)]
 use tokio::net::UnixListener;
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(run());
+    // A managed stdin watch uses a blocking OS read. Never let it keep a stopped
+    // runtime alive after an administrative shutdown while the parent is alive.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+    result
+}
+
+async fn parent_closed() {
+    if std::env::var("SYNAX_RUNTIME_PARENT_WATCH") != Ok("1".into()) {
+        return std::future::pending().await;
+    }
+    use tokio::io::AsyncReadExt;
+    let mut stdin = tokio::io::stdin();
+    let mut byte = [0u8; 1];
+    while matches!(stdin.read(&mut byte).await, Ok(1)) {}
+}
+
+async fn terminate_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?
+            .recv()
+            .await;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::future::pending().await
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("SYNAX_RUNTIME_SIDECAR_TOKEN")
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     let port = std::env::var("SYNAX_RUNTIME_SIDECAR_PORT")
@@ -37,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let context = TransportContext {
         token: Arc::from(token),
+        control_budget: Arc::new(control::ControlBudget::new()),
         tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
@@ -80,6 +116,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut shutdown_signal = shutdown_rx.clone();
     tokio::select! {
         result = tokio::signal::ctrl_c() => result?,
+        result = terminate_signal() => result?,
+        _ = parent_closed() => {},
         result = shutdown_signal.changed() => result?,
     }
     let _ = shutdown_tx.send(true);
