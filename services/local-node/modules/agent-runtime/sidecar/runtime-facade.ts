@@ -272,9 +272,13 @@ export class RuntimeFacade {
     const messages = agentRuntimeStore.listMessages(sessionId);
     const runs = agentRuntimeStore.listRuns(sessionId);
     const tools = agentRuntimeStore.listToolCalls(sessionId);
+    const steps = runs.flatMap(run => agentRuntimeStore.listRunSteps(run.id));
+    const parts = steps.flatMap(step => agentRuntimeStore.listRunParts(step.id));
     const objects = [
       ...messages.map(value => ({ kind: 'runtime.message', value })),
       ...runs.map(value => ({ kind: 'runtime.run', value })),
+      ...steps.map(value => ({ kind: 'runtime.step', value })),
+      ...parts.map(value => ({ kind: 'runtime.part', value })),
       ...tools.map(value => ({ kind: 'runtime.tool_call', value })),
     ];
     for (let index = 0; index < objects.length; index++) {
@@ -304,6 +308,11 @@ export class RuntimeFacade {
       operation: 'list_messages',
       payload: {},
     }) as { items?: unknown[] };
+    return state.items ?? [];
+  }
+
+  async listHistoryObjects(sessionId: string, operation: 'list_steps' | 'list_parts' | 'list_tool_calls'): Promise<unknown[]> {
+    const state = await this.historyCommand({ sessionId, requestId: `history-${operation}:${sessionId}`, operation, payload: {} }) as { items?: unknown[] };
     return state.items ?? [];
   }
 

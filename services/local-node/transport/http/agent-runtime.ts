@@ -1046,8 +1046,12 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const items = await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_steps");
+      return c.json({ items: items.filter((item) => (item as { runId?: string }).runId === c.req.param("runId")) });
+    }
     return c.json({
       items: agentLoopRuntime
         .listRunSteps(c.req.param("sessionId"), c.req.param("runId"))
@@ -1058,8 +1062,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/steps", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/steps", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json({ items: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_steps") });
     return c.json({
       items: agentRuntimeStore
         .listSessionSteps(c.req.param("sessionId"))
@@ -1424,9 +1430,11 @@ agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", async (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json({ items: (await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_tool_calls")).map(item => projectToolCallForWire(item as never)) });
     return c.json({
       items: agentRuntimeStore
         .listToolCalls(c.req.param("sessionId"))
