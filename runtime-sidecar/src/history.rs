@@ -18,8 +18,11 @@ const CF_HEADS: &str = "heads";
 const CF_PINS: &str = "pins";
 const CF_RECEIPTS: &str = "receipts";
 const CF_INDEXES: &str = "indexes";
+const CF_BLOBS: &str = "blobs";
 const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_BLOB_CHUNK_BYTES: usize = 256 * 1024;
+const MAX_BLOB_CHUNKS: u64 = 16_384;
 const PAGE_LIMIT: usize = 256;
 
 #[derive(Debug, Error)]
@@ -74,7 +77,7 @@ impl HistoryStore {
         let mut options = Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
-        let descriptors = [CF_OBJECTS, CF_HEADS, CF_PINS, CF_RECEIPTS, CF_INDEXES]
+        let descriptors = [CF_OBJECTS, CF_HEADS, CF_PINS, CF_RECEIPTS, CF_INDEXES, CF_BLOBS]
             .into_iter()
             .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
             .collect::<Vec<_>>();
@@ -154,6 +157,11 @@ impl HistoryStore {
 
         let result = match operation {
             "put_object" => self.put_object(&value)?,
+            "put_blob_chunk" => self.put_blob_chunk(&value)?,
+            "put_blob_manifest" => self.put_blob_manifest(&value)?,
+            "get_blob_chunk" => self.get_blob_chunk(&value)?,
+            "get_blob_manifest" => self.get_blob_manifest(&value)?,
+            "delete_blob" => self.delete_blob(&value)?,
             "get_object" => {
                 let object_id = required_string(&value, "objectId")?;
                 self.read_object(object_id)?
@@ -239,6 +247,107 @@ impl HistoryStore {
             self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(&serde_json::json!({"objectId": object_id, "bytes": bytes.len()}))?)
+    }
+
+    fn put_blob_chunk(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        let index = required_u64(value, "index")?;
+        let total = required_u64(value, "total")?;
+        let bytes_hex = value.get("bytesHex").and_then(|item| item.as_str()).unwrap_or_default();
+        if total == 0 || total > MAX_BLOB_CHUNKS || index >= total {
+            return Err(HistoryError::InvalidCommand("invalid blob chunk bounds".into()));
+        }
+        let bytes = decode_hex(bytes_hex)?;
+        if bytes.len() > MAX_BLOB_CHUNK_BYTES {
+            return Err(HistoryError::InvalidCommand("blob chunk exceeds bounds".into()));
+        }
+        let key = blob_chunk_key(blob_id, index);
+        if let Some(previous) = self.get(CF_BLOBS, key.as_bytes())? {
+            if previous != bytes {
+                return Err(HistoryError::RequestConflict);
+            }
+        } else {
+            let mut batch = WriteBatch::default();
+            batch.put_cf(self.cf(CF_BLOBS)?, key.as_bytes(), bytes.as_slice());
+            self.db.write(batch)?;
+        }
+        Ok(serde_json::to_vec(&serde_json::json!({"blobId":blob_id,"index":index,"total":total,"bytes":bytes.len()}))?)
+    }
+
+    fn put_blob_manifest(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        let total = required_u64(value, "total")?;
+        let size = required_u64(value, "size")?;
+        if total == 0 || total > MAX_BLOB_CHUNKS {
+            return Err(HistoryError::InvalidCommand("invalid blob manifest bounds".into()));
+        }
+        let mut digest = Sha256::new();
+        let mut actual_size = 0u64;
+        for index in 0..total {
+            let key = blob_chunk_key(blob_id, index);
+            let Some(bytes) = self.get(CF_BLOBS, key.as_bytes())? else {
+                return Err(HistoryError::InvalidCommand(format!("missing blob chunk {index}")));
+            };
+            actual_size = actual_size.saturating_add(bytes.len() as u64);
+            digest.update(&bytes);
+        }
+        if actual_size != size {
+            return Err(HistoryError::InvalidCommand("blob manifest size does not match chunks".into()));
+        }
+        let actual_sha256 = format!("{:x}", digest.finalize());
+        if let Some(expected) = value.get("sha256").and_then(|item| item.as_str()) {
+            if expected != actual_sha256 {
+                return Err(HistoryError::InvalidCommand("blob manifest digest does not match chunks".into()));
+            }
+        }
+        let manifest = serde_json::json!({"blobId":blob_id,"total":total,"size":size,"sha256":actual_sha256});
+        let mut batch = WriteBatch::default();
+        batch.put_cf(self.cf(CF_BLOBS)?, blob_manifest_key(blob_id).as_bytes(), serde_json::to_vec(&manifest)?);
+        self.db.write(batch)?;
+        Ok(serde_json::to_vec(&manifest)?)
+    }
+
+    fn get_blob_chunk(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        let index = required_u64(value, "index")?;
+        let bytes = self.get(CF_BLOBS, blob_chunk_key(blob_id, index).as_bytes())?
+            .ok_or_else(|| HistoryError::ObjectMissing(format!("blob chunk {blob_id}/{index}")))?;
+        let total = self.get_blob_manifest_value(blob_id)?.and_then(|manifest| manifest["total"].as_u64());
+        Ok(serde_json::to_vec(&serde_json::json!({"blobId":blob_id,"index":index,"total":total,"bytesHex":encode_hex(&bytes)}))?)
+    }
+
+    fn get_blob_manifest(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        self.get_blob_manifest_value(blob_id)?
+            .map(|manifest| serde_json::to_vec(&manifest))
+            .transpose()?
+            .ok_or_else(|| HistoryError::ObjectMissing(format!("blob manifest {blob_id}")))
+    }
+
+    fn get_blob_manifest_value(&self, blob_id: &str) -> Result<Option<serde_json::Value>, HistoryError> {
+        self.get(CF_BLOBS, blob_manifest_key(blob_id).as_bytes())?
+            .map(|bytes| serde_json::from_slice(&bytes).map_err(HistoryError::Serialization))
+            .transpose()
+    }
+
+    fn delete_blob(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        let prefix = format!("c/{blob_id}/");
+        let mut batch = WriteBatch::default();
+        let mut deleted = 0u64;
+        for item in self.db.iterator_cf(self.cf(CF_BLOBS)?, rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)) {
+            let (key, _) = item?;
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            batch.delete_cf(self.cf(CF_BLOBS)?, key);
+            deleted += 1;
+        }
+        let manifest_key = blob_manifest_key(blob_id);
+        if self.get(CF_BLOBS, manifest_key.as_bytes())?.is_some() {
+            batch.delete_cf(self.cf(CF_BLOBS)?, manifest_key.as_bytes());
+            deleted += 1;
+        }
+        if deleted > 0 { self.db.write(batch)?; }
+        Ok(serde_json::to_vec(&serde_json::json!({"blobId":blob_id,"deleted":deleted}))?)
     }
 
     fn head_read(&self, session_id: &str) -> Result<Vec<u8>, HistoryError> {
@@ -482,9 +591,31 @@ fn required_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a st
     value[key].as_str().filter(|item| !item.is_empty()).ok_or_else(|| HistoryError::InvalidCommand(format!("{key} is required")))
 }
 
+fn required_u64(value: &serde_json::Value, key: &str) -> Result<u64, HistoryError> {
+    value[key].as_u64().ok_or_else(|| HistoryError::InvalidCommand(format!("{key} is required")))
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, HistoryError> {
+    if value.len() % 2 != 0 { return Err(HistoryError::InvalidCommand("hex payload must have an even length".into())); }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let chars = value.as_bytes();
+    for index in (0..chars.len()).step_by(2) {
+        let high = (chars[index] as char).to_digit(16).ok_or_else(|| HistoryError::InvalidCommand("invalid hex payload".into()))?;
+        let low = (chars[index + 1] as char).to_digit(16).ok_or_else(|| HistoryError::InvalidCommand("invalid hex payload".into()))?;
+        bytes.push(((high << 4) | low) as u8);
+    }
+    Ok(bytes)
+}
+
+fn encode_hex(value: &[u8]) -> String {
+    value.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn object_key(object_id: &str) -> String { format!("o/{object_id}") }
 fn head_key(session_id: &str) -> String { format!("h/{session_id}") }
 fn pin_key(session_id: &str, pin_id: &str) -> String { format!("p/{session_id}/{pin_id}") }
+fn blob_chunk_key(blob_id: &str, index: u64) -> String { format!("c/{blob_id}/{index:08}") }
+fn blob_manifest_key(blob_id: &str) -> String { format!("m/{blob_id}") }
 fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
 
 #[cfg(test)]
@@ -515,6 +646,24 @@ mod tests {
         store.command("s", "unpin", "unpin", br#"{"pinId":"checkpoint"}"#).unwrap();
         let gc = store.command("s", "gc-2", "gc", b"{}").unwrap();
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&gc).unwrap()["deleted"], 0, "head still retains both referenced objects");
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn chunked_blobs_are_verified_before_manifest_publication() {
+        let path = temp_path("blob");
+        let store = HistoryStore::open(&path).unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"hello world"));
+        store.command("s", "blob-1", "put_blob_chunk", br#"{"blobId":"asset-1","index":0,"total":2,"bytesHex":"68656c6c6f20"}"#).unwrap();
+        store.command("s", "blob-2", "put_blob_chunk", br#"{"blobId":"asset-1","index":1,"total":2,"bytesHex":"776f726c64"}"#).unwrap();
+        let manifest = store.command("s", "blob-manifest", "put_blob_manifest", serde_json::to_vec(&serde_json::json!({"blobId":"asset-1","total":2,"size":11,"sha256":digest})).unwrap().as_slice()).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&manifest).unwrap()["size"], 11);
+        let chunk = store.command("s", "blob-read", "get_blob_chunk", br#"{"blobId":"asset-1","index":1}"#).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&chunk).unwrap()["bytesHex"], "776f726c64");
+        assert!(store.command("s", "blob-bad", "put_blob_manifest", br#"{"blobId":"asset-1","total":2,"size":11,"sha256":"deadbeef"}"#).is_err());
+        store.command("s", "blob-delete", "delete_blob", br#"{"blobId":"asset-1"}"#).unwrap();
+        assert!(store.command("s", "blob-missing", "get_blob_manifest", br#"{"blobId":"asset-1"}"#).is_err());
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

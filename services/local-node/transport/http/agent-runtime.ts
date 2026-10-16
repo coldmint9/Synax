@@ -615,7 +615,7 @@ agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/search", (c) => {
+agentRuntimeRoutes.get("/sessions/search", async (c) => {
   const parsed = z
     .object({
       projectId: z.string().min(1).max(128),
@@ -627,6 +627,22 @@ agentRuntimeRoutes.get("/sessions/search", (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId, q, limit, offset } = parsed.data;
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const sessions = (await runtimeFacade.listSessionProjection())
+        .map(item => projectSessionState(item as never))
+        .filter(session => session.projectId === projectId && !session.parentSessionId && !session.sessionMetadata?.archivedAt);
+      const lowered = q.toLocaleLowerCase();
+      const matches = (await Promise.all(sessions.map(async session => {
+        if (session.title?.toLocaleLowerCase().includes(lowered) || session.prompt.toLocaleLowerCase().includes(lowered))
+          return { session, snippet: (session.title || session.prompt).slice(0, 160), updatedAt: session.updatedAt };
+        const message = (await runtimeFacade.listMessageHistory(session.id) as AgentRuntimeMessage[])
+          .find(item => item.content.toLocaleLowerCase().includes(lowered));
+        return message ? { session, snippet: message.content.slice(0, 160), updatedAt: session.updatedAt } : null;
+      }))).filter((item): item is { session: AgentSession; snippet: string; updatedAt: string } => Boolean(item))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.session.id.localeCompare(b.session.id));
+      const page = matches.slice(offset, offset + limit + 1);
+      return c.json({ items: page.slice(0, limit).map(item => ({ session: projectSessionSummary(item.session), snippet: item.snippet })), hasMore: page.length > limit });
+    }
     const result = searchSessions(projectId, q, limit, offset);
     return c.json({
       ...result,
@@ -677,7 +693,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
 
 /** Badge counts only need id/status/updatedAt; a dedicated sparse projection
  *  keeps per-project polling payloads at bytes-per-row instead of kilobytes. */
-agentRuntimeRoutes.get("/sessions/badges", (c) => {
+agentRuntimeRoutes.get("/sessions/badges", async (c) => {
   const projectIds = (c.req.query("projectIds") ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -685,6 +701,13 @@ agentRuntimeRoutes.get("/sessions/badges", (c) => {
     .slice(0, 50);
   if (projectIds.length === 0) return c.json({ items: [] });
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const selected = new Set(projectIds);
+      return c.json({ items: (await runtimeFacade.listSessionProjection())
+        .map(item => projectSessionState(item as never))
+        .filter(session => selected.has(session.projectId) && !session.sessionMetadata?.archivedAt)
+        .map(session => ({ id: session.id, projectId: session.projectId, status: session.status, updatedAt: session.updatedAt })) });
+    }
     return c.json({ items: agentRuntimeStore.listSessionBadges(projectIds) });
   } catch (error) {
     return runtimeError(c, error);

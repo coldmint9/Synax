@@ -356,3 +356,14 @@ runtime-sidecar/
 ## 当前下一步
 
 以本文顶部的实现审计和后续顺序为准；完整目标保持 active。
+
+## 2026-10-17 第八轮：迁移验收与 authoritative 读路径收口
+
+- 新增 `runtime:migrate verify-runtime`：检查 Rust session list、UI projection、runtime-hot active fence、保留窗口 replay 连续性、runtime-history head 和全局对象完整性；迁移 smoke 已覆盖 export → verify → import → verify-runtime → rebuild-index。
+- runtime-history 正常 terminal mirror 现在会写入分层 `runtime.session.root` 并切换 head，GC 不会把已镜像对象误判为不可达；history verifier 会校验内容寻址 hash、引用、head 和 pin。
+- authoritative HTTP read path 已切到 Rust：session search/badges、history window/timeline、message content/visualization、run detail/steps、runtime events 和 run stream 存在性检查；Node SQLite 只保留兼容镜像与执行上下文。
+- authoritative stream payload 的 session state 改为从 Rust UI projection 获取；run observation 的终态判断读取 Rust projection/history，避免事件与状态分别来自 Rust/SQLite。
+- 移除产品 host 的 `SYNAX_RUNTIME_LEGACY` 环境开关；`SYNAX_RUNTIME_SIDECAR_STREAM=disabled` 仅作为测试 fixture 的显式 transport 选择。
+- runtime-history 增加分块 blob chunk/manifest/digest 校验命令，单 chunk 上限 256 KiB；媒体文件仍由现有 asset CAS 保存，runtime-history 只保存引用。
+
+本轮验证：`npm run typecheck`、Rust 55 项测试、迁移 smoke、history smoke、lifecycle smoke、forked worker smoke、provider worker smoke 均通过。Windows/macOS/Linux desktop workflow 已触发，等待目标机结果。
