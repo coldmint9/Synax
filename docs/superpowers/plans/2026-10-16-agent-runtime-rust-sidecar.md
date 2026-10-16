@@ -387,3 +387,11 @@ runtime-sidecar/
 - 5000 session / 64 concurrency / 4 stream batches / 1 KiB payload：35000 operations，p50 1.438ms、p95 3.393ms、p99 6.542ms、max 24.712ms（macOS arm64，本地验收数据，不是发布承诺）。
 - 真实 lifecycle、真实 provider-worker、Rust 56 项单元测试、focused Node suite 与 typecheck 通过。全量 Vitest 当前可复现的失败仍为既有 `context-epochs.test.ts` 3 项 compaction fixture（预期 checkpoint 未生成），与本轮 Rust sidecar 改动无直接关联；全量运行因慢 fixture 未作为发布 gate。
 - Windows workflow `38965983058` 仍在目标机执行，待 Named Pipe、Windows packaged smoke 和 NSIS publisher 配置结果。
+
+## 2026-10-17 第十轮：归档、媒体与 legacy replay 收口
+
+- authoritative session archive list/restore 已从 Rust UI projection 读取并先写 Rust，再更新 SQLite 兼容镜像。
+- 新媒体资产先写 runtime-history blob chunks/manifest/digest，再写本地文件和 SQLite metadata；读取 authoritative 新资产优先走 Rust blob，旧资产保留兼容读取。
+- 删除无线上线调用的 `SessionLog`、其 benchmark 和测试，离线迁移目录扫描仍保留。
+- interrupted/failed partial assistant message 在 authoritative 模式改为 canonical `message` append，并在 Rust terminal finish 前等待写入完成。
+- history smoke 新增 global asset blob command 验收；当前 Rust 测试为 57 项。
