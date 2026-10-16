@@ -1593,7 +1593,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/plans/:revision", (c) => {
   }
 });
 
-agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", (c) => {
+agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", async (c) => {
   try {
     const session = agentSessionRuntime.get(c.req.param("sessionId"));
     const revision = Number(c.req.param("revision"));
@@ -1603,11 +1603,14 @@ agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", (c) => {
       return c.json({ error: "Stop the session before restoring a plan revision." }, 409);
     const plan = restorePlanArtifact(session.id, revision);
     const goalMode = session.sessionMetadata?.mode === "goal";
-    const updated = agentRuntimeStore.updateSessionMetadata(session.id, {
+    const metadataPatch = {
       mode: goalMode ? "goal" : "chat",
       plan: { ...plan, status: "draft" },
       goal: goalMode ? { ...initializeGoal(plan.objective), status: "planning" } : null,
-    });
+    };
+    const updated = runtimeFacade.streamMode() === "authoritative"
+      ? await runtimeFacade.sessionPatch(session.id, `plan-restore:${session.id}:${revision}`, { sessionMetadata: metadataPatch }) as AgentSession
+      : agentRuntimeStore.updateSessionMetadata(session.id, metadataPatch);
     return c.json({ plan, session: updated });
   } catch (error) {
     return runtimeError(c, error);
@@ -2498,7 +2501,6 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
     const id = c.req.param("sessionId");
     if (runtimeFacade.streamMode() === "authoritative") {
       const patched = await runtimeFacade.sessionPatch(id, `session-pin:${id}:${parsed.data.pinned}`, { sessionMetadata: { pinned: parsed.data.pinned } }) as AgentSession;
-      try { agentRuntimeStore.updateSessionMetadata(id, parsed.data); } catch (error) { logger.warn({ id, error }, "[runtime] legacy session pin mirror failed"); }
       return c.json({ session: projectSessionSummary(projectSessionState(patched as never)) });
     }
     const session = agentRuntimeStore.updateSessionMetadata(
@@ -2558,14 +2560,6 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
             : {}),
         },
       }) as AgentSession;
-      try {
-        agentRuntimeStore.updateSessionMetadata(id, {
-          mode,
-          ...(mode === "goal" && !session.sessionMetadata?.goal
-            ? { goal: initializeGoal(session.prompt) }
-            : {}),
-        });
-      } catch (error) { logger.warn({ id, error }, "[runtime] legacy session mode mirror failed"); }
       workRuntime.onModeChanged(id, workflowMode(patched));
       return c.json({ session: patched });
     }
