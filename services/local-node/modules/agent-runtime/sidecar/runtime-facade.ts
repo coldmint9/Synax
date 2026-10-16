@@ -88,6 +88,18 @@ export class RuntimeFacade {
         revision: state.revision,
       });
       if (admission.runId !== input.run.id) throw new Error('Runtime admission returned a different run identity.');
+      if (authoritative && input.run.status === 'queued') {
+        const activated = await client.activateRun({
+          requestId: `${input.runtime.requestId}:activate`,
+          sessionId: input.sessionId,
+          epoch: admission.epoch,
+          revision: admission.revision,
+          run: input.run,
+        });
+        if (activated.activeRunId !== input.run.id || activated.epoch !== admission.epoch) {
+          throw new Error('Runtime activation returned an invalid run fence.');
+        }
+      }
       const current = await client.snapshot(input.sessionId);
       if (current.activeRunId !== input.run.id || current.epoch !== admission.epoch)
         throw new Error('Cannot relaunch a completed or superseded run.');

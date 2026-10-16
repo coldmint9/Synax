@@ -54,22 +54,25 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34"
     )]
     pub body: Option<wire_envelope::Body>,
 }
 
 pub mod wire_envelope {
     use super::{
-        WireAck, WireAdmitRun, WireAppendStream, WireCredit, WireError, WireEventBatch,
-        WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket, WirePing,
-        WirePong, WireReady, WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot,
-        WireSnapshotResponse, WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse,
+        WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireCredit, WireError,
+        WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
+        WirePing, WirePong, WireReady, WireReplay, WireRunAdmission, WireSeedUi, WireShutdown,
+        WireSnapshot, WireSnapshotResponse, WireSubscribe, WireTicket, WireUiSnapshot,
+        WireUiSnapshotResponse,
     };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "34")]
+        ActivateRun(WireActivateRun),
         #[prost(message, tag = "31")]
         SeedUi(WireSeedUi),
         #[prost(message, tag = "32")]
@@ -127,6 +130,12 @@ pub struct WireHello {
     pub client_id: String,
     #[prost(string, tag = "1")]
     pub token: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireActivateRun {
+    #[prost(bytes = "vec", tag = "1")]
+    pub run_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]

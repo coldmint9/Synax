@@ -26,6 +26,12 @@ try {
     async *execute(sessionId, _mode, input): AsyncGenerator<AgentRunStreamChunk> {
       const state = await client.snapshot(sessionId);
       assert.equal(state.activeRunId, input.acceptedRunId, 'Rust admission must precede execution');
+      const activated = JSON.parse(new TextDecoder().decode(await client.uiSnapshot(sessionId)));
+      assert.equal(activated.session.status, 'running');
+      assert.equal(activated.run.id, input.acceptedRunId);
+      assert.equal(activated.run.status, 'running');
+      const journal = await client.replay(sessionId, Math.max(0, state.cursor - 1));
+      assert.equal(journal.events.at(-1)?.kind, 'run_activated', 'Rust activation event must precede the provider');
       const run = activateAcceptedRun(sessionId, input.acceptedRunId!, 'user', null);
       agentRuntimeStore.updateSession(sessionId, { status: 'running', activeRunId: run.id });
       yield { type: 'run_started', run };
@@ -46,20 +52,20 @@ try {
     const state = await client.snapshot(session.id);
     assert.equal(state.activeRunId, undefined);
     assert.equal(state.epoch, turn + 1);
-    assert.equal(state.revision, turn * 2);
-    assert.equal(state.cursor, turn * 4);
+    assert.equal(state.revision, turn * 3);
+    assert.equal(state.cursor, turn * 5);
     const ui = JSON.parse(new TextDecoder().decode(await client.uiSnapshot(session.id)));
     assert.equal(ui.cursor, state.cursor); assert.equal(ui.session.status, 'completed');
     assert.equal(ui.session.activeRunId, null); assert.equal(ui.run.id, accepted.run.id);
     assert.deepEqual(ui.liveChunks, []);
   }
   const replay = await client.replay(session.id, 0);
-  assert.deepEqual(replay.events.map(event => event.sequence), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(replay.events.map(event => event.sequence), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual([...new Set(replay.events.map(event => event.runId))], runs);
   await assert.rejects(client.appendStream({ sessionId: session.id, runId: runs[0], producerId: 'late',
     producerSequence: 1, epoch: 1, revision: 1, events: [{ kind: 'late', payload: new Uint8Array() }] }),
     { code: 'STALE_EPOCH' });
-  console.log('Node coordinator → Rust lifecycle passed: admission before execution, two turns, durable replay, epoch fencing. Driver is controlled; no external LLM was called.');
+  console.log('Node coordinator → Rust lifecycle passed: durable admission/activation before execution, two turns, durable replay, epoch fencing. Driver is controlled; no external LLM was called.');
 } finally {
   client.close();
   await stopRustRuntimeSidecar(runtime);

@@ -2,6 +2,7 @@ export type SidecarBody =
   | { type: 'seed_ui'; sessionJson: Uint8Array }
   | { type: 'ui_snapshot' }
   | { type: 'ui_snapshot_response'; snapshotJson: Uint8Array }
+  | { type: 'activate_run'; runJson: Uint8Array }
   | { type: 'hello'; token: string; clientId?: string }
   | { type: 'issue_ticket'; clientId: string }
   | { type: 'ticket'; token: string; expiresAtMs: number }
@@ -74,6 +75,7 @@ const BODY_FIELDS: Record<SidecarBody['type'], number> = {
   seed_ui: 31,
   ui_snapshot: 32,
   ui_snapshot_response: 33,
+  activate_run: 34,
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -126,6 +128,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'seed_ui': return fieldBytes(1, body.sessionJson);
     case 'ui_snapshot': return new Uint8Array();
     case 'ui_snapshot_response': return fieldBytes(1, body.snapshotJson);
+    case 'activate_run': return fieldBytes(1, body.runJson);
     case 'hello': return concat(fieldString(1, body.token), body.clientId ? fieldString(2, body.clientId) : new Uint8Array());
     case 'issue_ticket': return fieldString(1, body.clientId);
     case 'ticket': return concat(fieldString(1, body.token), fieldUint(2, body.expiresAtMs));
@@ -288,6 +291,7 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 31: return { type: 'seed_ui', sessionJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 32: return { type: 'ui_snapshot' };
     case 33: return { type: 'ui_snapshot_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 34: return { type: 'activate_run', runJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 27: return { type: 'finish_run', runId: firstString(bytes, 1) ?? '', status: firstString(bytes, 2) ?? '' };
     case 10: return { type: 'hello', token: firstString(bytes, 1) ?? '', ...(firstString(bytes, 2) ? { clientId: firstString(bytes, 2) } : {}) };
     case 28: return { type: 'issue_ticket', clientId: firstString(bytes, 1) ?? '' };
@@ -332,7 +336,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 33 && item.wire === 2);
+  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 34 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

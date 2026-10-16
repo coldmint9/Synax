@@ -64,6 +64,13 @@
 - 迁移边界：首次 missing projection 可从 Node session 元数据 seed，但已执行的 SQLite runs 或已产生 Rust stream 的旧会话必须离线迁移，不能伪造空快照。旧元数据更新与 permission/input/history 还没有全部变成 Rust command；仍不得开启全量默认切换。
 - 验证：37 项 Rust 测试（1600 事件超出热保留窗后完整快照、重启、错误原子回滚、ACK unknown/幂等、大小边界等）；前端 46 项、Node/Electron 相关最终套件 92 项通过；真实 Electron WS 初始 projection + 重启续传、真实 commit 后 abort 恢复、受控 coordinator 两轮、打包业务页面 + codesign 均已验证。之后的补测以对应命令输出为准。
 
+2026-10-16 第五轮：Rust durable run activation
+
+- admission 后新增 `activate_run` 私有 control command。它只接受相同 session、epoch/revision 下已经 admission 的 queued run document；在 RocksDB 同一 WriteBatch 写入 `run_activated` event、run activation receipt、session cursor、UI projection 和 run document。
+- 激活 receipt 使用 `(session, request_id)` 和内容指纹幂等。Node 在 provider/tool 执行前等待 activation；重复请求返回原 snapshot，不重复发布 event；不同 run document 返回 `REQUEST_CONFLICT`。
+- 真实 coordinator lifecycle 已验证两轮执行：Rust admission → activation event → provider driver，结束后 replay 事件顺序、epoch/revision 和 projection 状态一致。Rust 测试扩展到 38 项。
+- 仍未迁移 SQLite 的 run/session 业务行写入；SQLite 是兼容查询和 Node 执行上下文的旧权威。下一步是把 activate/finish 的 Node store 更新改为 projection/read model，并迁移 permission/input/stop/resume command。
+
 后续顺序：推进 session/run/control 的异步 Rust repository，把剩余 session 元数据写入/permission/interaction/stop/resume 迁成 Rust command；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 
 ## 总目标

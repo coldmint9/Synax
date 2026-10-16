@@ -15,6 +15,7 @@ use crate::actor::{
 use crate::commit::Committer;
 use crate::projection::UiSnapshot;
 
+const CF_ACTIVATIONS: &str = "run_activations";
 const CF_UI: &str = "ui_projections";
 const CF_SESSIONS: &str = "sessions";
 const CF_RUNS: &str = "runs";
@@ -84,11 +85,28 @@ struct StoredReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredRun {
     #[serde(default)]
+    activation_request: Option<String>,
+    #[serde(default)]
+    document: Option<serde_json::Value>,
+    #[serde(default)]
     terminal_status: Option<String>,
     run_id: String,
     session_id: String,
     epoch: u64,
     revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivationReceipt {
+    pub snapshot: SessionSnapshot,
+    pub event: StreamEvent,
+    #[serde(default)]
+    pub reused: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredActivation {
+    identity: String,
+    result: ActivationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +192,7 @@ impl HotStore {
             CF_TRANSITIONS,
             CF_APPENDS,
             CF_UI,
+            CF_ACTIVATIONS,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -394,6 +413,8 @@ impl HotStore {
             admission: admission.clone(),
         };
         let run = StoredRun {
+            activation_request: None,
+            document: None,
             terminal_status: None,
             run_id: run_id.to_owned(),
             session_id: session_id.to_owned(),
@@ -430,6 +451,159 @@ impl HotStore {
         }
         self.write_with_durability(batch, Durability::Sync)?;
         Ok(admission)
+    }
+
+    pub async fn activate_run_async(
+        &self,
+        session_id: String,
+        request_id: String,
+        run_json: Vec<u8>,
+        epoch: u64,
+        revision: u64,
+    ) -> Result<ActivationReceipt, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            store.activate_run(&session_id, &request_id, &run_json, epoch, revision)
+        })
+        .await
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+
+    fn activate_run(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        run_json: &[u8],
+        epoch: u64,
+        revision: u64,
+    ) -> Result<ActivationReceipt, StorageError> {
+        if request_id.is_empty() || request_id.len() > 256 || run_json.len() > 512 * 1024 {
+            return Err(RuntimeError::InvalidCommand(
+                "activation request exceeds its bounds".into(),
+            )
+            .into());
+        }
+        let mut document: serde_json::Value = serde_json::from_slice(run_json)?;
+        let run_id = document["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| RuntimeError::InvalidCommand("missing run identity".into()))?
+            .to_owned();
+        if document["sessionId"].as_str() != Some(session_id)
+            || document["status"] != "queued"
+            || document["startedAt"].as_str().is_none()
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "activation requires an admitted queued run document".into(),
+            )
+            .into());
+        }
+        let identity = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(epoch, revision, &document))?)
+        );
+        let key = serde_json::to_vec(&(session_id, request_id))?;
+        if let Some(bytes) = self.get(CF_ACTIVATIONS, &key)? {
+            let saved: StoredActivation = serde_json::from_slice(&bytes)?;
+            if saved.identity != identity {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
+            let mut receipt = saved.result;
+            receipt.reused = true;
+            return Ok(receipt);
+        }
+        let mut state = self.read_session(session_id)?;
+        ensure_epoch(&state, epoch)?;
+        ensure_revision(&state, revision)?;
+        if state.active_run_id.as_deref() != Some(&run_id) {
+            return Err(RuntimeError::InvalidCommand("run is not admitted".into()).into());
+        }
+        let stored = self
+            .get(CF_RUNS, run_key(session_id, &run_id).as_bytes())?
+            .ok_or_else(|| RuntimeError::InvalidCommand("admitted run is missing".into()))?;
+        let mut run: StoredRun = serde_json::from_slice(&stored)?;
+        if run.activation_request.is_some() || run.terminal_status.is_some() {
+            return Err(RuntimeError::InvalidCommand(
+                "run was already activated or finalized".into(),
+            )
+            .into());
+        }
+        let mut projection = self
+            .read_ui_projection(session_id)?
+            .ok_or(RuntimeError::ProjectionMissing)?;
+        // A command-generated event carries the committed state just like streamed events.
+        document["status"] = serde_json::json!("running");
+        document["completedAt"] = serde_json::Value::Null;
+        let payload = serde_json::to_vec(&serde_json::json!({"schema":1,
+            "chunk":{"type":"run_activated", "run":document},
+            "state":{"status":"running", "activeRunId":run_id, "pendingResumeToken":null, "blockedReason":null, "updatedAt":document["startedAt"]}
+        }))?;
+        let pending = PendingEvent {
+            kind: "run_activated".into(),
+            payload,
+        };
+        state.cursor += 1;
+        state.revision += 1;
+        projection.apply(state.cursor, &run_id, &pending)?;
+        run.activation_request = Some(request_id.into());
+        run.document = Some(document);
+        run.revision = state.revision;
+        let event = StreamEvent {
+            sequence: state.cursor,
+            run_id: run_id.clone(),
+            kind: pending.kind,
+            payload: pending.payload,
+        };
+        let previous_retained = state.retained_from;
+        state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
+        let result = ActivationReceipt {
+            snapshot: state.snapshot(),
+            event,
+            reused: false,
+        };
+        let mut batch = WriteBatch::default();
+        self.put_batch(
+            &mut batch,
+            CF_SESSIONS,
+            session_key(session_id),
+            &serde_json::to_vec(&state)?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_RUNS,
+            run_key(session_id, &run_id),
+            &serde_json::to_vec(&run)?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_UI,
+            session_key(session_id),
+            &projection.encode()?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_STREAMS,
+            stream_key(session_id, state.cursor),
+            &serde_json::to_vec(&result.event)?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_ACTIVATIONS,
+            key,
+            &serde_json::to_vec(&StoredActivation {
+                identity,
+                result: result.clone(),
+            })?,
+        )?;
+        for sequence in previous_retained..state.retained_from {
+            batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
+        }
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(result)
     }
 
     pub async fn finish_run_async(
@@ -933,6 +1107,61 @@ mod tests {
         assert!(completed.session["activeRunId"].is_null());
         assert!(completed.live_chunks.is_empty());
         assert_eq!(completed.cursor, 1600);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn activation_is_idempotent_and_persists_a_command_event_before_provider_output() {
+        let path = temp_path("activation");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let admission = store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let run = serde_json::json!({
+            "id":"r", "sessionId":"s", "status":"queued", "startedAt":"2026-10-16T00:00:00Z",
+            "completedAt":null, "metadata":{}
+        });
+        let first = store
+            .activate_run(
+                "s",
+                "activate:req",
+                &serde_json::to_vec(&run).unwrap(),
+                admission.epoch,
+                admission.revision,
+            )
+            .unwrap();
+        assert!(!first.reused);
+        assert_eq!(first.event.kind, "run_activated");
+        assert_eq!(first.snapshot.cursor, 1);
+        assert_eq!(first.snapshot.revision, 2);
+        assert_eq!(
+            serde_json::from_slice::<UiSnapshot>(&store.ui_snapshot("s", None).unwrap())
+                .unwrap()
+                .run["status"],
+            "running"
+        );
+        let retry = store
+            .activate_run(
+                "s",
+                "activate:req",
+                &serde_json::to_vec(&run).unwrap(),
+                admission.epoch,
+                admission.revision,
+            )
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(store.replay("s", 0).unwrap().len(), 1);
+        let changed = serde_json::json!({ "id":"r", "sessionId":"s", "status":"queued", "startedAt":"2026-10-16T00:00:01Z" });
+        assert!(matches!(
+            store.activate_run(
+                "s",
+                "activate:req",
+                &serde_json::to_vec(&changed).unwrap(),
+                admission.epoch,
+                admission.revision
+            ),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

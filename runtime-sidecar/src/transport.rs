@@ -29,6 +29,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "shutdown",
     "admit_run",
     "finish_run",
+    "activate_run",
     "append_stream",
     "append_receipts",
     "control_multiplex",
@@ -635,6 +636,48 @@ async fn execute_wire(
             ),
             Err(error) => (envelope(error_to_wire(error)), false),
         },
+        Some(wire_envelope::Body::ActivateRun(activate)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "activation requires private control transport",
+                    )),
+                    false,
+                );
+            }
+            match context
+                .router
+                .activate_run(
+                    session_id.clone(),
+                    request_id.clone(),
+                    activate.run_json,
+                    request.epoch,
+                    request.revision,
+                )
+                .await
+            {
+                Ok(snapshot) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: snapshot.epoch,
+                        revision: snapshot.revision,
+                        body: Some(wire_envelope::Body::SnapshotResponse(
+                            WireSnapshotResponse {
+                                epoch: snapshot.epoch,
+                                revision: snapshot.revision,
+                                active_run_id: snapshot.active_run_id,
+                                cursor: snapshot.cursor,
+                                retained_from: snapshot.retained_from,
+                            },
+                        )),
+                    },
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router

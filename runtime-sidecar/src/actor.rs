@@ -117,6 +117,14 @@ enum ActorCommand {
         expected_revision: u64,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
+    ActivateRun {
+        session_id: String,
+        request_id: String,
+        run_json: Vec<u8>,
+        epoch: u64,
+        revision: u64,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
     FinishRun {
         session_id: String,
         request_id: String,
@@ -434,6 +442,34 @@ impl SessionShardRouter {
         }
     }
 
+    pub async fn activate_run(
+        &self,
+        session_id: String,
+        request_id: String,
+        run_json: Vec<u8>,
+        epoch: u64,
+        revision: u64,
+    ) -> Result<SessionSnapshot, RuntimeError> {
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::ActivateRun {
+                session_id: session_id.clone(),
+                request_id,
+                run_json,
+                epoch,
+                revision,
+                response,
+            },
+        )?;
+        match result.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected activation response".into(),
+            )),
+        }
+    }
+
     pub async fn finish_run(
         &self,
         session_id: impl Into<String>,
@@ -708,6 +744,60 @@ async fn run_shard(
                     )
                 };
                 let _ = response.send(result.map(CommandResult::RunAdmission));
+            }
+            ActorCommand::ActivateRun {
+                session_id,
+                request_id,
+                run_json,
+                epoch,
+                revision,
+                response,
+            } => {
+                let result = if let Some(store) = store.as_ref() {
+                    match ensure_session_state(
+                        &mut sessions,
+                        &session_id,
+                        event_retention,
+                        Some(store),
+                    )
+                    .await
+                    {
+                        Err(error) => Err(error),
+                        Ok(()) => match store
+                            .activate_run_async(
+                                session_id.clone(),
+                                request_id,
+                                run_json,
+                                epoch,
+                                revision,
+                            )
+                            .await
+                        {
+                            Ok(receipt) => {
+                                if !receipt.reused {
+                                    let state = sessions.get_mut(&session_id).unwrap();
+                                    state.sync_snapshot(&receipt.snapshot);
+                                    let event = Arc::new(receipt.event);
+                                    state.subscribers.retain(|subscriber| {
+                                        subscriber.try_send(event.clone()).is_ok()
+                                    });
+                                }
+                                Ok(receipt.snapshot)
+                            }
+                            Err(error) => {
+                                if storage_state_uncertain(&error) {
+                                    sessions.remove(&session_id);
+                                }
+                                Err(storage_error_to_runtime(error))
+                            }
+                        },
+                    }
+                } else {
+                    Err(RuntimeError::StorageUnavailable(
+                        "run activation requires RocksDB".into(),
+                    ))
+                };
+                let _ = response.send(result.map(CommandResult::Snapshot));
             }
             ActorCommand::FinishRun {
                 session_id,
