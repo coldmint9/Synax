@@ -1770,15 +1770,21 @@ export class AgentRuntimeStore {
         );
       return part;
     };
-    if (part.sessionId && versionedSession(part.sessionId))
-      return writeVersionEntity(
+    const saved = part.sessionId && versionedSession(part.sessionId)
+      ? writeVersionEntity(
         part.sessionId,
         "parts",
         part.id,
         part,
         writeControl,
-      );
-    return retryRuntimeControlWrite(writeControl);
+      )
+      : retryRuntimeControlWrite(writeControl);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      void import("./sidecar/runtime-facade.js")
+        .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(part.sessionId, "runtime.part", saved))
+        .catch(() => {});
+    }
+    return saved;
   }
 
   listRunParts(stepId: string): AgentRunPart[] {

@@ -324,6 +324,23 @@ export class RuntimeFacade {
     }
   }
 
+  async persistHistoryObject(
+    sessionId: string,
+    kind: string,
+    value: unknown,
+  ): Promise<void> {
+    if (streamMode() !== 'authoritative' || !value || typeof value !== 'object') return;
+    const id = (value as { id?: unknown }).id;
+    if (typeof id !== 'string') return;
+    const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    await this.historyCommand({
+      sessionId,
+      requestId: `history-entity:${kind}:${id}:${digest}`,
+      operation: 'put_object',
+      payload: { kind, value },
+    });
+  }
+
   async listRunHistory(sessionId: string): Promise<unknown[]> {
     const state = await this.historyCommand({
       sessionId,
