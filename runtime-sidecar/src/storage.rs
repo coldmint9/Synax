@@ -233,7 +233,7 @@ impl HotStore {
                     == Ok("1".to_owned()),
                 abort_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ABORT_AFTER_COMMIT")
                     == Ok("1".to_owned()),
-                disk_full: false,
+                disk_full: std::env::var("SYNAX_RUNTIME_HOT_DISK_FULL") == Ok("1".to_owned()),
             },
         )
     }
