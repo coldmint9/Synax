@@ -47,6 +47,7 @@
 - `npm run runtime-sidecar:worker-process-smoke`（真实 forked Node worker 通过 Unix IPC append Rust-authoritative stream）
 - `npm run runtime-sidecar:provider-worker-smoke`（真实 agent-session-runner + 本地 OpenAI-compatible streaming provider）
 - `npm run runtime-sidecar:physical-enospc-smoke`（临时 APFS 256MiB 镜像物理写满测试）
+- `npm run runtime-sidecar:cutover-smoke`（authoritative host 不启动 storage owner，legacy 模式需显式 `SYNAX_RUNTIME_LEGACY=1`）
 - `npm run runtime:migrate:smoke`（SQLite export/verify/import/rebuild-index）
 - `npm run runtime-sidecar:test`
 - `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
