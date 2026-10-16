@@ -21,7 +21,7 @@
 | 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复；session patch、permission/interaction/stop/resume control 已接入 Rust | 首次空会话元数据仍从 Node seed；完整 session/lease 恢复未完成 |
 | 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
 | 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 会导入 UI projection 与最近 1024 条 legacy canonical stream；migration/provider/benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
-| 旧链路移除 | authoritative 默认路径已禁止 storage owner、legacy journal write/maintenance；产品 host 不再提供 legacy 环境开关 | 删除兼容代码、journal writer 模块、多模式历史和双游标 |
+| 旧链路移除 | authoritative host 已删除 storage owner、journal writer、SQLite replay 线上读写和 legacy 环境开关 | 删除剩余旧 checkpoint/history mode、旧迁移表和兼容测试 |
 
 注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append；provider-worker smoke 又覆盖了真实 agent-session-runner child → 本地 OpenAI-compatible HTTP streaming provider → Node coordinator → Rust history/stream，仍未替代外部真实凭证 provider 验收。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；物理 APFS 小容量镜像 ENOSPC smoke 已通过，Windows Named Pipe 已写入 Tokio transport 路径但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
 
@@ -339,7 +339,7 @@ runtime-sidecar/
 
 删除候选：
 
-- `agent_runtime_stream_records` 线上读写；
+- `agent_runtime_stream_records` 旧迁移表和离线清理引用；
 - `SessionLog` runtime replay；
 - journal writer child；
 - storage owner runtime path；
@@ -368,6 +368,8 @@ runtime-sidecar/
 - 移除产品 host 的 `SYNAX_RUNTIME_LEGACY` 环境开关；`SYNAX_RUNTIME_SIDECAR_STREAM=disabled` 仅作为测试 fixture 的显式 transport 选择。
 - 删除线上 `journal-writer` worker、Node journal writer 和 storage-owner replay 写入；非 authoritative 测试 fixture 使用 bounded in-memory journal，authoritative host 只通过 Rust IPC 读写 stream。
 - 运行时 stream 依赖扫描已清除 `agent_runtime_stream_records` 的线上读写；剩余 SQLite 引用只存在于离线历史/旧 checkpoint 清理代码与迁移 fixture，下一步随旧 history mode 一并删除。
+- 删除 Node storage-owner worker、owner IPC protocol、owner libsql facade、session log client，以及对应打包入口；local Node host 直接打开 SQLite 兼容库，Rust sidecar 负责 runtime stream/control/history 权威状态。
+- 新增 migration `0079_runtime_authoritative_cleanup.sql`，新 host 初始化后不再保留 `agent_runtime_stream_records` 表；旧数据库先通过 export/import/verify-runtime/purge-legacy 离线处理。
 - runtime-history 增加分块 blob chunk/manifest/digest 校验命令，单 chunk 上限 256 KiB；媒体文件仍由现有 asset CAS 保存，runtime-history 只保存引用。
 
 本轮验证：`npm run typecheck`、Rust 55 项测试、迁移 smoke、history smoke、lifecycle smoke、forked worker smoke、provider worker smoke 均通过。Windows/macOS/Linux desktop workflow 已触发，等待目标机结果。
