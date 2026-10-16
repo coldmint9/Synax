@@ -527,6 +527,7 @@ export class RunCoordinator {
         await flush();
         await writer.prepareFinish();
         runWithExecutionContext(owner.context, () => writer.finish());
+        if (runtimeFacade.streamMode() === "authoritative") await writer.settled();
         if (this.ownsLease(owner)) await runtimeFacade.finishExecution(sessionId, agentRuntimeStore.getRun(owner.runId));
         // A replacement execution may have acquired the lease while the
         // persistence acknowledgement was in flight. Fence finalization too.

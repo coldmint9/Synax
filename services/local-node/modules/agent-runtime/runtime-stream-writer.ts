@@ -155,7 +155,11 @@ export class RuntimeStreamWriter {
       return { id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
         role: 'assistant' as const, content, createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: run.id, stepId: step.id } };
     })();
-    if (partial && this.isCurrent()) agentRuntimeStore.appendMessage(partial);
+    if (partial && this.isCurrent()) {
+      if (runtimeFacade.streamMode() === 'authoritative')
+        this.write({ type: 'message', message: partial });
+      else agentRuntimeStore.appendMessage(partial);
+    }
   }
 
   abandon(): void {
