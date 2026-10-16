@@ -253,6 +253,77 @@ export class RuntimeFacade {
     return JSON.parse(Buffer.from(bytes).toString('utf8'));
   }
 
+  async historyCommandGlobal(input: {
+    scopeId: string;
+    requestId: string;
+    operation: string;
+    payload?: unknown;
+  }): Promise<unknown> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    const bytes = await client.historyCommandGlobal({
+      sessionId: input.scopeId,
+      requestId: input.requestId,
+      operation: input.operation,
+      payload: input.payload,
+    });
+    return JSON.parse(Buffer.from(bytes).toString('utf8'));
+  }
+
+  async putAssetBlob(assetId: string, asset: unknown, bytes: Uint8Array): Promise<void> {
+    const scopeId = `asset:${assetId}`;
+    const chunkSize = 256 * 1024;
+    const total = Math.max(1, Math.ceil(bytes.length / chunkSize));
+    const hex = (value: Uint8Array) => Buffer.from(value).toString('hex');
+    for (let index = 0; index < total; index++) {
+      const chunk = bytes.subarray(index * chunkSize, Math.min(bytes.length, (index + 1) * chunkSize));
+      await this.historyCommandGlobal({
+        scopeId,
+        requestId: `asset-blob-chunk:${assetId}:${index}`,
+        operation: 'put_blob_chunk',
+        payload: { blobId: assetId, index, total, bytesHex: hex(chunk) },
+      });
+    }
+    await this.historyCommandGlobal({
+      scopeId,
+      requestId: `asset-blob-manifest:${assetId}`,
+      operation: 'put_blob_manifest',
+      payload: { blobId: assetId, total, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+    });
+    await this.historyCommandGlobal({
+      scopeId,
+      requestId: `asset-object:${assetId}`,
+      operation: 'put_object',
+      payload: { kind: 'runtime.asset', value: asset },
+    });
+  }
+
+  async readAssetBlob(assetId: string): Promise<Uint8Array> {
+    const scopeId = `asset:${assetId}`;
+    const manifest = await this.historyCommandGlobal({
+      scopeId,
+      requestId: `asset-blob-manifest-read:${assetId}`,
+      operation: 'get_blob_manifest',
+      payload: { blobId: assetId },
+    }) as { total?: number; size?: number; sha256?: string };
+    const total = Number(manifest.total);
+    if (!Number.isSafeInteger(total) || total < 1 || total > 2048) throw new Error('Invalid runtime asset blob manifest.');
+    const parts: Buffer[] = [];
+    for (let index = 0; index < total; index++) {
+      const chunk = await this.historyCommandGlobal({
+        scopeId,
+        requestId: `asset-blob-chunk-read:${assetId}:${index}`,
+        operation: 'get_blob_chunk',
+        payload: { blobId: assetId, index },
+      }) as { bytesHex?: string };
+      parts.push(Buffer.from(chunk.bytesHex ?? '', 'hex'));
+    }
+    const bytes = Buffer.concat(parts);
+    if (manifest.size !== undefined && bytes.length !== manifest.size) throw new Error('Runtime asset blob size mismatch.');
+    if (manifest.sha256 && createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw new Error('Runtime asset blob digest mismatch.');
+    return bytes;
+  }
+
   async persistRunHistory(run: unknown & { id?: string; sessionId?: string }): Promise<void> {
     const client = this.clientFactory() as (RuntimeSidecarClient & { historyCommand?: unknown }) | null;
     if (!client || typeof client.historyCommand !== 'function') return;

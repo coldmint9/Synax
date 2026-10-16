@@ -205,6 +205,26 @@ export class RuntimeSidecarClient {
     return this.expect(envelope, 'history_state').stateJson;
   }
 
+  async historyCommandGlobal(input: {
+    sessionId: string;
+    requestId: string;
+    operation: string;
+    payload?: unknown;
+  }): Promise<Uint8Array> {
+    const envelope = await this.request(
+      {
+        type: 'history_command',
+        operation: input.operation,
+        payload: new TextEncoder().encode(JSON.stringify(input.payload ?? null)),
+      },
+      input.sessionId,
+      0,
+      0,
+      input.requestId,
+    );
+    return this.expect(envelope, 'history_state').stateJson;
+  }
+
   async sessionList(): Promise<Uint8Array> {
     const envelope = await this.request({ type: 'session_list' }, '', 0, 0);
     return this.expect(envelope, 'session_list_response').sessionsJson;

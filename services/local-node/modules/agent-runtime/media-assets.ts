@@ -189,6 +189,14 @@ export async function readAsset(
   projectId?: string,
 ): Promise<Buffer> {
   const asset = getAsset(id, projectId);
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    try {
+      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+      return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
+    } catch {
+      // Pre-migration assets may only exist in the local compatibility store.
+    }
+  }
   const file = await fsp
     .open(
       path.join(root(), id),
@@ -257,6 +265,10 @@ export async function createAsset(
     flag: "wx",
     mode: 0o600,
   });
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+      await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
+    }
     getRawSqlite()
       .prepare(
         "INSERT INTO agent_runtime_assets (id,project_id,filename,media_type,size,sha256,created_at) VALUES (?,?,?,?,?,?,?)",
