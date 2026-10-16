@@ -127,6 +127,8 @@ class RuntimeJournal {
     runId: string,
     chunks: AgentRunStreamChunk[],
   ): RuntimeStreamRecord[] {
+    if (runtimeFacade.streamMode() === 'authoritative')
+      throw new AgentValidationError('Authoritative runtime stream writes must use the Rust sidecar append command.');
     if (chunks.length === 0) return [];
     if (chunks.length > 256) throw new AgentValidationError("Replay burst limit exceeded.");
     chunks = chunks.map(projectReplayChunk);
