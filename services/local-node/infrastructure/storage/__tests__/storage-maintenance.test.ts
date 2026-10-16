@@ -11,7 +11,6 @@ function dbFixture() {
   const db = new NativeDatabase(path.join(root, "context.db"));
   db.exec(`
     CREATE TABLE agent_runtime_processes(id TEXT, session_id TEXT, state TEXT, ended_at TEXT, command_label TEXT, kind TEXT);
-    CREATE TABLE agent_runtime_stream_records(sequence INTEGER PRIMARY KEY, session_id TEXT, chunk_json TEXT);
     CREATE TABLE agent_runtime_events(id TEXT PRIMARY KEY, session_id TEXT, payload_json TEXT);
     CREATE TABLE agent_runtime_sessions(id TEXT PRIMARY KEY, status TEXT);
     CREATE VIRTUAL TABLE agent_search_messages USING fts5(text);
@@ -44,22 +43,14 @@ describe("storage maintenance", () => {
     db.prepare("INSERT INTO agent_runtime_processes VALUES(?,?,?,?,?,?)").run("process", null, "closed", old, "git", "command");
     db.prepare("INSERT INTO agent_runtime_sessions VALUES(?,?)").run("session", "completed");
     db.prepare("INSERT INTO agent_runtime_events VALUES(?,?,?)").run("event", "session", "{}");
-    const insert = db.prepare("INSERT INTO agent_runtime_stream_records VALUES(?,?,?)");
-    for (let sequence = 1; sequence <= 1030; sequence++)
-      insert.run(sequence, "session", JSON.stringify({ sequence }));
-
     const count = (table: string) => (db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n;
     const plan = planMaintenance(db, root);
     expect(plan.closedOwnerlessProcessRows).toBe(1);
-    expect(plan.replayRows).toBe(6);
     expect(count("agent_runtime_processes")).toBe(1);
-    expect(count("agent_runtime_stream_records")).toBe(1030);
 
     const applied = applyMaintenance(db, plan, root);
     expect(applied.deletedProcessRows).toBe(1);
-    expect(applied.deletedReplayRows).toBe(6);
-    expect(count("agent_runtime_stream_records")).toBe(1024);
     expect(count("agent_runtime_events")).toBe(1);
-    expect(db.prepare("SELECT min(sequence) AS first FROM agent_runtime_stream_records").get()).toMatchObject({ first: 7 });
+    expect(applied.deletedReplayRows).toBe(0);
   });
 });

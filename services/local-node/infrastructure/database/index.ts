@@ -306,7 +306,8 @@ function bootstrapMigrationLedger(
 
 function shouldRunMigrationsInThisProcess(): boolean {
   return (
-    process.env.SYNAX_AGENT_SESSION_CHILD !== "1"
+    process.env.SYNAX_AGENT_SESSION_CHILD !== "1" &&
+    process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative"
   );
 }
 
