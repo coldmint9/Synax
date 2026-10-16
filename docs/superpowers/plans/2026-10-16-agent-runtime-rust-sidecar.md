@@ -43,7 +43,9 @@
 - `npm run runtime-sidecar:electron-smoke`
 - `npm run runtime-sidecar:ui-smoke`（真实 Electron 原生 WS 与共享前端适配器，包含慢消费者/越权测试）
 - `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
-- `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（2026-10-17 当前 macOS arm64 证据：3500 operations，p50 25.233ms，p95 42.252ms，p99 55.637ms，max 65.890ms；不是发布承诺）
+- `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（2026-10-17 macOS arm64 基线：3500 operations，p50 25.233ms，p95 42.252ms，p99 55.637ms，max 65.890ms；不是发布承诺）
+- `SYNAX_RUNTIME_BENCH_SESSIONS=500 SYNAX_RUNTIME_BENCH_CONCURRENCY=64 SYNAX_RUNTIME_BENCH_BATCHES=16 npm run runtime-sidecar:benchmark`（2026-10-17 macOS arm64：9500 operations，p50 7.229ms，p95 18.088ms，p99 26.985ms，max 59.608ms）。
+- `SYNAX_RUNTIME_BENCH_SESSIONS=1000 SYNAX_RUNTIME_BENCH_CONCURRENCY=64 SYNAX_RUNTIME_BENCH_BATCHES=8 npm run runtime-sidecar:benchmark`（2026-10-17 macOS arm64：11000 operations，p50 2.042ms，p95 8.081ms，p99 15.759ms，max 25.840ms）。Benchmark 以 64 个 worker pool 遵守 sidecar client 的 128 在途请求预算。
 - `npm run runtime-sidecar:worker-process-smoke`（真实 forked Node worker 通过 Unix IPC append Rust-authoritative stream）
 - `npm run runtime-sidecar:provider-worker-smoke`（真实 agent-session-runner + 本地 OpenAI-compatible streaming provider）
 - `npm run runtime-sidecar:physical-enospc-smoke`（临时 APFS 256MiB 镜像物理写满测试）

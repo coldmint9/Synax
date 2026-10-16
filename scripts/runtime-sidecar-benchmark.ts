@@ -9,7 +9,8 @@ import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runti
 const sessions = Number(process.env.SYNAX_RUNTIME_BENCH_SESSIONS ?? 100);
 const batches = Number(process.env.SYNAX_RUNTIME_BENCH_BATCHES ?? 32);
 const payloadBytes = Number(process.env.SYNAX_RUNTIME_BENCH_PAYLOAD_BYTES ?? 4096);
-if (![sessions, batches, payloadBytes].every(value => Number.isInteger(value) && value > 0)) throw new Error('Benchmark parameters must be positive integers.');
+const concurrency = Number(process.env.SYNAX_RUNTIME_BENCH_CONCURRENCY ?? 64);
+if (![sessions, batches, payloadBytes, concurrency].every(value => Number.isInteger(value) && value > 0)) throw new Error('Benchmark parameters must be positive integers.');
 
 const root = await mkdtemp(path.join(tmpdir(), 'synax-runtime-benchmark-'));
 const supervisor = new RustRuntimeSupervisor({ dataRoot: root });
@@ -31,7 +32,7 @@ try {
   client = new RuntimeSidecarClient({ socketPath: supervisor.socketPath, token: supervisor.token, requestTimeoutMs: 30_000, retryTimeoutMs: 60_000 });
   const encoder = new TextEncoder();
   const delta = 'x'.repeat(payloadBytes);
-  await Promise.all(Array.from({ length: sessions }, async (_, index) => {
+  const runSession = async (index: number) => {
     const sessionId = `bench-session-${index}`;
     await client!.seedUi(sessionId, encoder.encode(JSON.stringify({ id: sessionId, projectId: 'benchmark', status: 'queued', updatedAt: new Date().toISOString() })));
     await measure(() => client!.admitRun({ sessionId, requestId: `bench-admit-${index}`, bodyHash: `body-${index}`, runId: `bench-run-${index}`, epoch: 1, revision: 0 }));
@@ -45,10 +46,18 @@ try {
     }
     const fence = await client!.snapshot(sessionId);
     await measure(() => client!.finishRun({ sessionId, requestId: `bench-finish-${index}`, runId: `bench-run-${index}`, status: 'completed', epoch: fence.epoch, revision: fence.revision, run: { id: `bench-run-${index}`, sessionId, status: 'completed', completedAt: new Date().toISOString(), metadata: {} } }));
+  };
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, sessions) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= sessions) return;
+      await runSession(index);
+    }
   }));
   const health = await client.health();
   assert.equal(health.ok, true);
-  console.log(JSON.stringify({ sessions, batchesPerSession: batches, payloadBytes, operations: latencies.length,
+  console.log(JSON.stringify({ sessions, concurrency, batchesPerSession: batches, payloadBytes, operations: latencies.length,
     p50Ms: Number(percentile(0.50).toFixed(3)), p95Ms: Number(percentile(0.95).toFixed(3)), p99Ms: Number(percentile(0.99).toFixed(3)),
     maxMs: Number(Math.max(...latencies).toFixed(3)), generation: supervisor.generation }, null, 2));
 } finally {
