@@ -846,6 +846,22 @@ export class RunCoordinator {
     }
   }
 
+  async waitForSessionIdle(sessionId: string): Promise<void> {
+    while (this.owners.has(sessionId) || this.queueDispatches.has(sessionId)) {
+      const owner = this.owners.get(sessionId);
+      if (owner?.stopFailed && !owner.stopTask)
+        throw new AgentRuntimeError(
+          "An execution requires recovery before Runtime can become idle.",
+          "RECOVERY_REQUIRED",
+          409,
+        );
+      await Promise.all([
+        ...(owner ? [owner.stopTask ?? owner.task] : []),
+        ...(this.queueDispatches.has(sessionId) ? [this.queueDispatches.get(sessionId)!] : []),
+      ]);
+    }
+  }
+
   async *observeRun(
     sessionId: string,
     runId: string,

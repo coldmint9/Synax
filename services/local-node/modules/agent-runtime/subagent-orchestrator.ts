@@ -283,6 +283,18 @@ export async function runChildToCompletion(
 
   let stream: AsyncGenerator<import("./contracts.js").AgentRunStreamChunk> | undefined;
   try {
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      const { runCoordinator } = await import("./run-coordinator.js");
+      const requestId = `subagent:${childSessionId}:${startedAt}`;
+      await runCoordinator.submitAsync(
+        childSessionId,
+        opts.input ?? {},
+        requestId,
+        opts.resume ? "resume" : "turn",
+      );
+      await runCoordinator.waitForSessionIdle(childSessionId);
+      lastProgressAt = Date.now();
+    } else {
     stream = opts.resume
       ? deps.loop.streamContinue(childSessionId, opts.input ?? {}, controller.signal)
       : deps.loop.streamRun(childSessionId, opts.input ?? {}, controller.signal);
@@ -305,6 +317,7 @@ export async function runChildToCompletion(
       if (chunk.done) break;
       lastProgressAt = Date.now();
       touch("running");
+    }
     }
   } catch (err) {
     logger.warn(
