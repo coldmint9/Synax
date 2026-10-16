@@ -2202,7 +2202,12 @@ agentRuntimeRoutes.post(
       const permissionEndedSession =
         !decision.resumeToken && decision.action !== "allow";
       const permissionResolvedAt = new Date().toISOString();
-      agentRuntimeStore.updateSession(sessionId, {
+      let authoritativeSession: AgentSession | undefined;
+      if (runtimeFacade.streamMode() === "authoritative") {
+        authoritativeSession = projectSessionState(
+          (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never,
+        );
+      } else agentRuntimeStore.updateSession(sessionId, {
         status: permissionEndedSession ? "completed" : "running",
         updatedAt: permissionResolvedAt,
         pendingResumeToken: decision.resumeToken,
@@ -2226,7 +2231,7 @@ agentRuntimeRoutes.post(
           parsed.data.message ? { message: parsed.data.message } : {},
         );
       }
-      return c.json(decision);
+      return c.json(authoritativeSession ? { decision, session: authoritativeSession } : decision);
     } catch (error) {
       return runtimeError(c, error);
     }
