@@ -62,6 +62,33 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
+const AUTHORITATIVE_SESSION_PATCH_FIELDS = new Set([
+  "title", "prompt", "contextSnapshotId", "profileId", "nodeId",
+  "childSessionIds", "skillIds", "mcpServerIds", "permissionRules",
+  "status", "activeRunId", "completedAt", "updatedAt", "resultSummary",
+  "blockedReason", "pendingResumeToken", "sessionMetadata",
+]);
+
+function mirrorAuthoritativeSessionPatch(
+  sessionId: string,
+  next: AgentSession,
+  patch: Partial<AgentSession>,
+): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return;
+  const sessionPatch = Object.fromEntries(
+    [...AUTHORITATIVE_SESSION_PATCH_FIELDS]
+      .filter((field) => field in patch)
+      .map((field) => [field, next[field as keyof AgentSession]]),
+  );
+  if (!Object.keys(sessionPatch).length) return;
+  const requestId = `session-mirror:${sessionId}:${createHash("sha256")
+    .update(JSON.stringify(sessionPatch))
+    .digest("hex")}`;
+  void import("./sidecar/runtime-facade.js")
+    .then(({ runtimeFacade }) => runtimeFacade.sessionPatch(sessionId, requestId, sessionPatch))
+    .catch((error) => logger.debug({ sessionId, error }, "[session-store] authoritative session mirror deferred"));
+}
+
 function retryRuntimeControlWrite<T>(action: () => T): T {
   return retryWriteLockAcquisition(
     runtimeWriteLockPolicy(),
@@ -709,6 +736,7 @@ export class AgentRuntimeStore {
         }
       });
     else notify();
+    mirrorAuthoritativeSessionPatch(id, next, patch);
     return next;
   }
 
