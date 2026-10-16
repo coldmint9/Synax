@@ -636,9 +636,10 @@ async fn execute_wire(
             body_hash,
             run_id,
             queue_item_json,
+            run_json,
         })) => match context
             .router
-            .admit_run_with_queue(
+            .admit_run_with_document(
                 session_id.clone(),
                 request_id.clone(),
                 body_hash,
@@ -646,6 +647,7 @@ async fn execute_wire(
                 request.epoch,
                 request.revision,
                 queue_item_json,
+                run_json,
             )
             .await
         {

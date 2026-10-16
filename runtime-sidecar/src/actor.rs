@@ -127,6 +127,7 @@ enum ActorCommand {
         request_id: String,
         body_hash: String,
         queue_item: Vec<u8>,
+        run_json: Vec<u8>,
         run_id: String,
         epoch: u64,
         expected_revision: u64,
@@ -504,6 +505,30 @@ impl SessionShardRouter {
         expected_revision: u64,
         queue_item: Vec<u8>,
     ) -> Result<RunAdmission, RuntimeError> {
+        self.admit_run_with_document(
+            session_id,
+            request_id,
+            body_hash,
+            run_id,
+            epoch,
+            expected_revision,
+            queue_item,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn admit_run_with_document(
+        &self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        body_hash: impl Into<String>,
+        run_id: impl Into<String>,
+        epoch: u64,
+        expected_revision: u64,
+        queue_item: Vec<u8>,
+        run_json: Vec<u8>,
+    ) -> Result<RunAdmission, RuntimeError> {
         let session_id = session_id.into();
         let (response, receiver) = oneshot::channel();
         self.dispatch(
@@ -513,6 +538,7 @@ impl SessionShardRouter {
                 request_id: request_id.into(),
                 body_hash: body_hash.into(),
                 queue_item,
+                run_json,
                 run_id: run_id.into(),
                 epoch,
                 expected_revision,
@@ -869,6 +895,7 @@ async fn run_shard(
                 request_id,
                 body_hash,
                 queue_item,
+                run_json,
                 run_id,
                 epoch,
                 expected_revision,
@@ -887,7 +914,7 @@ async fn run_shard(
                 }
                 let result = if let Some(store) = store.as_ref() {
                     match store
-                        .admit_run_async(
+                        .admit_run_with_document_async(
                             session_id.clone(),
                             request_id.clone(),
                             body_hash.clone(),
@@ -895,6 +922,7 @@ async fn run_shard(
                             epoch,
                             expected_revision,
                             queue_item,
+                            run_json,
                         )
                         .await
                     {

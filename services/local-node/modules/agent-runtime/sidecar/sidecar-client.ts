@@ -102,10 +102,13 @@ export class RuntimeSidecarClient {
     bodyHash: string;
     queueItem?: unknown;
     runId: string;
+    run?: unknown;
     epoch: number;
     revision: number;
   }): Promise<Extract<SidecarBody, { type: 'run_admission' }>> {
-    return this.request({ type: 'admit_run', bodyHash: input.bodyHash, runId: input.runId, queueItemJson: input.queueItem ? new TextEncoder().encode(JSON.stringify(input.queueItem)) : undefined }, input.sessionId, input.epoch, input.revision, input.requestId)
+    return this.request({ type: 'admit_run', bodyHash: input.bodyHash, runId: input.runId,
+      queueItemJson: input.queueItem ? new TextEncoder().encode(JSON.stringify(input.queueItem)) : undefined,
+      runJson: input.run === undefined ? undefined : new TextEncoder().encode(JSON.stringify(input.run)) }, input.sessionId, input.epoch, input.revision, input.requestId)
       .then((envelope) => this.expect(envelope, 'run_admission'));
   }
 

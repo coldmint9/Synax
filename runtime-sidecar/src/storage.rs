@@ -83,6 +83,8 @@ struct StoredReceipt {
     admission: RunAdmission,
     #[serde(default)]
     queue_item: Option<serde_json::Value>,
+    #[serde(default)]
+    run_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,10 +300,34 @@ impl HotStore {
         expected_revision: u64,
         queue_item: Vec<u8>,
     ) -> Result<RunAdmission, StorageError> {
+        self.admit_run_with_document_async(
+            session_id,
+            request_id,
+            body_hash,
+            run_id,
+            epoch,
+            expected_revision,
+            queue_item,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn admit_run_with_document_async(
+        &self,
+        session_id: String,
+        request_id: String,
+        body_hash: String,
+        run_id: String,
+        epoch: u64,
+        expected_revision: u64,
+        queue_item: Vec<u8>,
+        run_json: Vec<u8>,
+    ) -> Result<RunAdmission, StorageError> {
         let store = self.clone();
         let key = session_id.clone();
         let result = tokio::task::spawn_blocking(move || {
-            store.admit_run_with_queue(
+            store.admit_run_with_document(
                 &session_id,
                 &request_id,
                 &body_hash,
@@ -309,6 +335,7 @@ impl HotStore {
                 epoch,
                 expected_revision,
                 &queue_item,
+                &run_json,
             )
         })
         .await
@@ -946,16 +973,59 @@ impl HotStore {
         expected_revision: u64,
         queue_item_json: &[u8],
     ) -> Result<RunAdmission, StorageError> {
+        self.admit_run_with_document(
+            session_id,
+            request_id,
+            body_hash,
+            run_id,
+            epoch,
+            expected_revision,
+            queue_item_json,
+            &[],
+        )
+    }
+
+    pub fn admit_run_with_document(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        body_hash: &str,
+        run_id: &str,
+        epoch: u64,
+        expected_revision: u64,
+        queue_item_json: &[u8],
+        run_json: &[u8],
+    ) -> Result<RunAdmission, StorageError> {
         let queue_item: Option<serde_json::Value> = if queue_item_json.is_empty() {
             None
         } else {
             Some(serde_json::from_slice(queue_item_json)?)
         };
+        let run_document: Option<serde_json::Value> = if run_json.is_empty() {
+            None
+        } else {
+            let document: serde_json::Value = serde_json::from_slice(run_json)?;
+            if document["id"].as_str() != Some(run_id)
+                || document["sessionId"].as_str() != Some(session_id)
+                || document["status"] != "queued"
+                || document["startedAt"].as_str().is_none()
+            {
+                return Err(RuntimeError::InvalidCommand(
+                    "admission requires a queued run document with matching identity".into(),
+                )
+                .into());
+            }
+            Some(document)
+        };
+        let run_hash = (!run_json.is_empty()).then(|| format!("{:x}", Sha256::digest(run_json)));
         let mut state = self.read_session(session_id)?;
         let receipt_key = receipt_key(session_id, request_id);
         if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
             let receipt: StoredReceipt = serde_json::from_slice(&bytes)?;
-            if receipt.body_hash != body_hash || receipt.queue_item != queue_item {
+            if receipt.body_hash != body_hash
+                || receipt.queue_item != queue_item
+                || receipt.run_hash != run_hash
+            {
                 return Err(RuntimeError::RequestConflict.into());
             }
             // A prior write may have reached memory/WAL but lost its sync acknowledgement.
@@ -1053,10 +1123,11 @@ impl HotStore {
             body_hash: body_hash.to_owned(),
             admission: admission.clone(),
             queue_item,
+            run_hash,
         };
         let run = StoredRun {
             activation_request: None,
-            document: None,
+            document: run_document.clone(),
             terminal_status: None,
             run_id: run_id.to_owned(),
             session_id: session_id.to_owned(),
@@ -1083,6 +1154,9 @@ impl HotStore {
         )?;
         if let Some(mut projection) = projection {
             projection.admitted(run_id);
+            if let Some(document) = run_document {
+                projection.run = document;
+            }
             self.put_batch(
                 &mut batch,
                 CF_UI,
@@ -2115,6 +2189,39 @@ mod tests {
             ))
         ));
         drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn admission_persists_the_queued_run_document_in_projection_and_survives_reopen() {
+        let path = temp_path("admission-run-document");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let run = serde_json::json!({
+            "id": "r",
+            "sessionId": "s",
+            "status": "queued",
+            "startedAt": "2026-10-17T00:00:00Z",
+            "completedAt": null,
+            "metadata": {"runtime": {"requestId": "req"}}
+        });
+        store
+            .admit_run_with_document(
+                "s",
+                "req",
+                "body",
+                "r",
+                1,
+                0,
+                &[],
+                &serde_json::to_vec(&run).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(ui_read(&store).run, run);
+        drop(store);
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(ui_read(&reopened).run["id"], "r");
+        drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
 

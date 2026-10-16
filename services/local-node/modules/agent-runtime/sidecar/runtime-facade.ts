@@ -92,7 +92,8 @@ export class RuntimeFacade {
         const state = await client.snapshot(input.sessionId);
         try {
           admission = await client.admitRun({ sessionId: input.sessionId, requestId: input.runtime.requestId,
-            bodyHash: input.runtime.inputHash, runId: input.run.id, epoch: state.epoch, revision: state.revision, queueItem: input.runtime.queueItem });
+            bodyHash: input.runtime.inputHash, runId: input.run.id, run: input.run,
+            epoch: state.epoch, revision: state.revision, queueItem: input.runtime.queueItem });
           break;
         } catch (error) {
           if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;

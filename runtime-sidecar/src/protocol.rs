@@ -289,6 +289,8 @@ pub struct WireAdmitRun {
     pub run_id: String,
     #[prost(bytes = "vec", tag = "3")]
     pub queue_item_json: Vec<u8>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub run_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -469,6 +471,7 @@ mod tests {
                 body_hash: "hash".to_owned(),
                 run_id: "run-1".to_owned(),
                 queue_item_json: Vec::new(),
+                run_json: Vec::new(),
             })),
         };
         let decoded = decode_wire(&encode_wire(&envelope)).unwrap();
