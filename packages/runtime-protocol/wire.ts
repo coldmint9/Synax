@@ -10,7 +10,7 @@ export type SidecarBody =
   | { type: 'health' }
   | { type: 'shutdown' }
   | { type: 'ping' }
-  | { type: 'finish_run'; runId: string; status: string }
+  | { type: 'finish_run'; runId: string; status: string; runJson?: Uint8Array }
   | { type: 'admit_run'; bodyHash: string; runId: string }
   | {
       type: 'append_stream';
@@ -139,7 +139,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'snapshot':
       return new Uint8Array();
     case 'finish_run':
-      return concat(fieldString(1, body.runId), fieldString(2, body.status));
+      return concat(fieldString(1, body.runId), fieldString(2, body.status), body.runJson ? fieldBytes(3, body.runJson) : new Uint8Array());
     case 'admit_run':
       return concat(fieldString(1, body.bodyHash), fieldString(2, body.runId));
     case 'append_stream':
@@ -292,7 +292,7 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 32: return { type: 'ui_snapshot' };
     case 33: return { type: 'ui_snapshot_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 34: return { type: 'activate_run', runJson: firstBytes(bytes, 1) ?? new Uint8Array() };
-    case 27: return { type: 'finish_run', runId: firstString(bytes, 1) ?? '', status: firstString(bytes, 2) ?? '' };
+    case 27: return { type: 'finish_run', runId: firstString(bytes, 1) ?? '', status: firstString(bytes, 2) ?? '', ...(firstBytes(bytes, 3) ? { runJson: firstBytes(bytes, 3) } : {}) };
     case 10: return { type: 'hello', token: firstString(bytes, 1) ?? '', ...(firstString(bytes, 2) ? { clientId: firstString(bytes, 2) } : {}) };
     case 28: return { type: 'issue_ticket', clientId: firstString(bytes, 1) ?? '' };
     case 29: return { type: 'ticket', token: firstString(bytes, 1) ?? '', expiresAtMs: firstNumber(bytes, 2) };

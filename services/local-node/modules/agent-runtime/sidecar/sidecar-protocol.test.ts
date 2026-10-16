@@ -8,6 +8,7 @@ describe("runtime sidecar protobuf codec", () => {
       { type: 'seed_ui' as const, sessionJson: new Uint8Array([0, 128, 255]) },
       { type: 'ui_snapshot_response' as const, snapshotJson: new Uint8Array([0, 128, 255]) },
       { type: 'activate_run' as const, runJson: new Uint8Array([0, 128, 255]) },
+      { type: 'finish_run' as const, runId: 'r', status: 'failed', runJson: new Uint8Array([0, 128, 255]) },
     ]) {
       const envelope = { requestId: 'ui', sessionId: 's', epoch: 0, revision: 0, body };
       expect(decodeEnvelope(encodeEnvelope(envelope))).toEqual(envelope);

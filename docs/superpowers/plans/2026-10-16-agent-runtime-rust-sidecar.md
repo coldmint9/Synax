@@ -71,6 +71,15 @@
 - 真实 coordinator lifecycle 已验证两轮执行：Rust admission → activation event → provider driver，结束后 replay 事件顺序、epoch/revision 和 projection 状态一致。Rust 测试扩展到 38 项。
 - 仍未迁移 SQLite 的 run/session 业务行写入；SQLite 是兼容查询和 Node 执行上下文的旧权威。下一步是把 activate/finish 的 Node store 更新改为 projection/read model，并迁移 permission/input/stop/resume command。
 
+2026-10-16 第六轮：Rust terminal run completion
+
+- `finish_run` 接受完整 terminal run document，校验 run/session/status/completedAt/stopReason，缺失完成时间由 Rust 生成并固定在 receipt。
+- finish 与 `run_finished` canonical event、最终 run document、session epoch/revision、UI projection、transition receipt 在同一 WriteBatch 提交；在线 subscriber 只收到一次结束事件。
+- `executionLease.closed` 在 Rust 最终文档中落为 true；projection、stream payload、RocksDB run document 使用相同最终文档。`DURABILITY_UNKNOWN` 后重试保持同一 timestamp/cursor/event。
+- 支持 `blocked` terminal run：session 展示保持现有兼容映射，run 保留 blocked status 和 blockedReason，active run 被释放。
+- 真实 lifecycle、finish 后 abort/restart、Electron online completion、旧 receipt、错误回滚和 blocked terminal 测试均通过；Rust 测试扩展到 45 项。
+- SQLite 仍作为 Node compatibility read model；permission/interaction/input queue/stop/resume/history 写路径还未全部迁移。
+
 后续顺序：推进 session/run/control 的异步 Rust repository，把剩余 session 元数据写入/permission/interaction/stop/resume 迁成 Rust command；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 
 ## 总目标

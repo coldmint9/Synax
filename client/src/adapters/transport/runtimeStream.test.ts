@@ -9,6 +9,15 @@ const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId:
   chunk: { type: 'message_delta', stepId: 'step', delta: ' rest' } }
 
 describe('runtime stream projection', () => {
+  it('ends live output from a committed Rust finish command and ignores receipt replay', () => {
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot(snapshot);
+    const finished: RuntimeStreamRecord = { ...record, chunk: { type: 'run_finished', runId: 'run' },
+      state: { ...session, status: 'failed', activeRunId: null, pendingResumeToken: null, blockedReason: 'provider disconnected', updatedAt: '2026-10-16T07:00:00Z' } };
+    expect(projector.record(finished)).toEqual([expect.objectContaining({ type: 'runtime_state', reset: true, refresh: true,
+      patch: expect.objectContaining({ status: 'failed', activeRunId: null, blockedReason: 'provider disconnected' }) })]);
+    expect(projector.record(finished)).toEqual([]);
+  });
   it('hydrates partial output on reconnect, then deduplicates cursor replay', () => {
     const projector = new RuntimeStreamProjector()
     expect(projector.snapshot(snapshot)).toEqual([expect.objectContaining({

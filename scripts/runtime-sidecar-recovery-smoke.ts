@@ -11,7 +11,7 @@ import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runti
 
 const root = await mkdtemp(path.join(tmpdir(), 'synax-runtime-recovery-'));
 const supervisor = new RustRuntimeSupervisor({ dataRoot: path.join(root, 'recover'),
-  env: { SYNAX_RUNTIME_HOT_ABORT_APPEND_AFTER_COMMIT: '1' } });
+  env: { SYNAX_RUNTIME_HOT_ABORT_APPEND_AFTER_COMMIT: '1', SYNAX_RUNTIME_HOT_ABORT_FINISH_AFTER_COMMIT: '1' } });
 let client: RuntimeSidecarClient | undefined;
 let parent: ChildProcess | undefined;
 let parentChild: { pid: number; socket: string } | undefined;
@@ -43,7 +43,20 @@ try {
   assert.equal(ui.cursor, 1); assert.equal(ui.liveChunks[0].step.id, 'step');
   assert.equal((await client.replay('s', 0)).events.length, 1);
   await assert.rejects(client.appendStream({ ...input, events: [{ kind: 'delta', payload: new TextEncoder().encode('different content') }] }), { code: 'REQUEST_CONFLICT' });
-  await client.finishRun({ sessionId: 's', requestId: 'finish', runId: 'r', status: 'completed', epoch: 1, revision: 1 });
+  const generationBeforeFinish = supervisor.generation;
+  const finalRun = { id: 'r', sessionId: 's', status: 'completed', completedAt: new Date().toISOString(), currentStep: 3, stopReason: null };
+  const finishRequest = { sessionId: 's', requestId: 'finish', runId: 'r', status: 'completed' as const, epoch: 1, revision: 1, run: finalRun };
+  const finish = await client.finishRun(finishRequest);
+  assert(supervisor.generation > generationBeforeFinish, 'completion must recover a real post-commit abort');
+  assert.equal(finish.cursor, 2);
+  const retried = await client.finishRun(finishRequest);
+  assert.equal(retried.cursor, 2);
+  const finalUi = JSON.parse(new TextDecoder().decode(await client.uiSnapshot('s')));
+  assert.equal(finalUi.run.currentStep, 3); assert.equal(finalUi.run.completedAt, finalRun.completedAt);
+  assert.equal(finalUi.cursor, 2); assert.equal(finalUi.session.status, 'completed');
+  const terminalEvents = (await client.replay('s', 1)).events;
+  assert.equal(terminalEvents.length, 1); assert.equal(terminalEvents[0].kind, 'run_finished');
+  await assert.rejects(client.finishRun({ ...finishRequest, run: { ...finalRun, currentStep: 4 } }), { code: 'REQUEST_CONFLICT' });
   await client.appendStream(input); // Even a late duplicate after completion cannot reopen the run.
   assert.equal((await client.snapshot('s')).epoch, 2);
   assert.equal((await client.snapshot('s')).activeRunId, undefined);
@@ -81,7 +94,7 @@ try {
     catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
   }, 'Rust process survived the death of its Node owner');
   assert.equal(existsSync(parentChild.socket), false);
-  console.log('Recovery passed: real post-commit abort → supervisor restart → identical retry → exactly one event; conflict rejection, completion fence, and Node-owner death cleanup verified.');
+  console.log('Recovery passed: real append and completion post-commit aborts → supervisor restart → identical retries → one event per command; conflict rejection, completion fence, and Node-owner death cleanup verified.');
 } finally {
   client?.close(); await supervisor.stop();
   if (parent && parent.exitCode === null && parent.signalCode === null) { const gone = once(parent, 'exit'); parent.kill('SIGKILL'); await gone; }

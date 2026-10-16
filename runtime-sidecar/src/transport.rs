@@ -681,13 +681,14 @@ async fn execute_wire(
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router
-                .finish_run(
+                .finish_run_with_document(
                     session_id.clone(),
                     request_id.clone(),
                     finish.run_id,
                     finish.status,
                     request.epoch,
                     request.revision,
+                    finish.run_json,
                 )
                 .await
             {

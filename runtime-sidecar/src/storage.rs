@@ -110,6 +110,26 @@ struct StoredActivation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinishReceipt {
+    pub snapshot: SessionSnapshot,
+    pub event: Option<StreamEvent>,
+    #[serde(default)]
+    pub reused: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredFinish {
+    identity: String,
+    result: FinishReceipt,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FinishRecord {
+    Current(StoredFinish),
+    // Prior versions completed runs without a stream event. Never invent one on retry.
+    Legacy((String, SessionSnapshot)),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredAppendReceipt {
     fingerprint: String,
     receipt: StreamAppendReceipt,
@@ -153,6 +173,7 @@ struct FaultConfig {
     ack_unknown_after_commit: bool,
     abort_after_commit: bool,
     abort_after_append: bool,
+    abort_after_finish: bool,
     disk_full: bool,
 }
 
@@ -170,6 +191,8 @@ impl HotStore {
             path,
             FaultConfig {
                 ack_unknown_after_commit: std::env::var("SYNAX_RUNTIME_HOT_ACK_UNKNOWN")
+                    == Ok("1".to_owned()),
+                abort_after_finish: std::env::var("SYNAX_RUNTIME_HOT_ABORT_FINISH_AFTER_COMMIT")
                     == Ok("1".to_owned()),
                 abort_after_append: std::env::var("SYNAX_RUNTIME_HOT_ABORT_APPEND_AFTER_COMMIT")
                     == Ok("1".to_owned()),
@@ -614,18 +637,28 @@ impl HotStore {
         status: String,
         epoch: u64,
         revision: u64,
-    ) -> Result<SessionSnapshot, StorageError> {
+        run_json: Vec<u8>,
+    ) -> Result<FinishReceipt, StorageError> {
         let store = self.clone();
         let key = session_id.clone();
         let result = tokio::task::spawn_blocking(move || {
-            store.finish_run(&session_id, &request_id, &run_id, &status, epoch, revision)
+            store.finish_run_with_document(
+                &session_id,
+                &request_id,
+                &run_id,
+                &status,
+                epoch,
+                revision,
+                &run_json,
+            )
         })
         .await
-        .map_err(|error| StorageError::Runtime(RuntimeError::InvalidCommand(error.to_string())));
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
         self.snapshots.invalidate(&key).await;
         result?
     }
 
+    #[cfg(test)]
     fn finish_run(
         &self,
         session_id: &str,
@@ -635,16 +668,47 @@ impl HotStore {
         epoch: u64,
         revision: u64,
     ) -> Result<SessionSnapshot, StorageError> {
-        crate::actor::validate_terminal_status(status)?;
+        self.finish_run_with_document(session_id, request_id, run_id, status, epoch, revision, &[])
+            .map(|receipt| receipt.snapshot)
+    }
+
+    fn finish_run_with_document(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        run_id: &str,
+        status: &str,
+        epoch: u64,
+        revision: u64,
+        run_json: &[u8],
+    ) -> Result<FinishReceipt, StorageError> {
+        if request_id.is_empty() || request_id.len() > 256 {
+            return Err(
+                RuntimeError::InvalidCommand("invalid completion request id".into()).into(),
+            );
+        }
+        let supplied =
+            crate::completion::decode_run_document(session_id, run_id, status, run_json)?;
         let key = receipt_key(session_id, request_id);
-        let identity = serde_json::to_string(&(run_id, status))?;
+        let identity = serde_json::to_string(&(run_id, status, &supplied))?;
         if let Some(bytes) = self.get(CF_TRANSITIONS, key.as_bytes())? {
-            let (previous, snapshot): (String, SessionSnapshot) = serde_json::from_slice(&bytes)?;
-            if previous != identity {
-                return Err(RuntimeError::RequestConflict.into());
-            }
+            let record: FinishRecord = serde_json::from_slice(&bytes)?;
+            let mut result = match record {
+                FinishRecord::Current(saved) if saved.identity == identity => saved.result,
+                FinishRecord::Legacy((old, snapshot))
+                    if supplied.is_none() && old == serde_json::to_string(&(run_id, status))? =>
+                {
+                    FinishReceipt {
+                        snapshot,
+                        event: None,
+                        reused: true,
+                    }
+                }
+                _ => return Err(RuntimeError::RequestConflict.into()),
+            };
             self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
-            return Ok(snapshot);
+            result.reused = true;
+            return Ok(result);
         }
         let mut state = self.read_session(session_id)?;
         ensure_epoch(&state, epoch)?;
@@ -656,12 +720,46 @@ impl HotStore {
             .get(CF_RUNS, run_key(session_id, run_id).as_bytes())?
             .ok_or_else(|| RuntimeError::InvalidCommand("active run is missing".into()))?;
         let mut run: StoredRun = serde_json::from_slice(&bytes)?;
-        run.terminal_status = Some(status.into());
+        let mut projection = self.read_ui_projection(session_id)?;
+        let projected_document = projection
+            .as_ref()
+            .filter(|projection| projection.run["id"].as_str() == Some(run_id))
+            .map(|projection| projection.run.clone());
+        let previous_reason = projection
+            .as_ref()
+            .map(|projection| projection.session["blockedReason"].clone())
+            .unwrap_or(serde_json::Value::Null);
+        let completion = crate::completion::complete(
+            run_id,
+            status,
+            supplied.or(projected_document).or(run.document.clone()),
+            previous_reason,
+        )?;
+        let previous_retained = state.retained_from;
         state.active_run_id = None;
         state.epoch += 1;
         state.revision += 1;
+        state.cursor += 1;
+        state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
         state.producer_sequences.clear();
-        let snapshot = state.snapshot();
+        run.terminal_status = Some(status.into());
+        run.revision = state.revision;
+        run.document = completion.document;
+        if let Some(projection) = projection.as_mut() {
+            projection.apply(state.cursor, run_id, &completion.event)?;
+            projection.session["completedAt"] = serde_json::json!(completion.completed_at);
+        }
+        let event = StreamEvent {
+            sequence: state.cursor,
+            run_id: run_id.into(),
+            kind: completion.event.kind,
+            payload: completion.event.payload,
+        };
+        let result = FinishReceipt {
+            snapshot: state.snapshot(),
+            event: Some(event.clone()),
+            reused: false,
+        };
         let mut batch = WriteBatch::default();
         self.put_batch(
             &mut batch,
@@ -677,12 +775,20 @@ impl HotStore {
         )?;
         self.put_batch(
             &mut batch,
+            CF_STREAMS,
+            stream_key(session_id, state.cursor),
+            &serde_json::to_vec(&event)?,
+        )?;
+        self.put_batch(
+            &mut batch,
             CF_TRANSITIONS,
             key,
-            &serde_json::to_vec(&(identity, &snapshot))?,
+            &serde_json::to_vec(&StoredFinish {
+                identity,
+                result: result.clone(),
+            })?,
         )?;
-        if let Some(mut projection) = self.read_ui_projection(session_id)? {
-            projection.finish(run_id, status);
+        if let Some(projection) = projection {
             self.put_batch(
                 &mut batch,
                 CF_UI,
@@ -690,8 +796,14 @@ impl HotStore {
                 &projection.encode()?,
             )?;
         }
+        for sequence in previous_retained..state.retained_from {
+            batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
+        }
         self.write_with_durability(batch, Durability::Sync)?;
-        Ok(snapshot)
+        if self.faults.abort_after_finish {
+            std::process::abort();
+        }
+        Ok(result)
     }
 
     pub fn compact_stream(&self, session_id: &str) -> Result<(), StorageError> {
@@ -1106,7 +1218,7 @@ mod tests {
         assert_eq!(completed.session["status"], "completed");
         assert!(completed.session["activeRunId"].is_null());
         assert!(completed.live_chunks.is_empty());
-        assert_eq!(completed.cursor, 1600);
+        assert_eq!(completed.cursor, 1601);
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
@@ -1321,7 +1433,11 @@ mod tests {
             (retry.first_sequence, retry.last_sequence),
             (first.first_sequence, first.last_sequence)
         );
-        assert_eq!(store.replay("s", 0).unwrap().len(), 2);
+        assert_eq!(store.replay("s", 0).unwrap().len(), 3);
+        assert_eq!(
+            store.replay("s", 2).unwrap().first().unwrap().kind,
+            "run_finished"
+        );
         assert_eq!(
             store.snapshot("s").unwrap().active_run_id.as_deref(),
             Some("next")
@@ -1370,6 +1486,238 @@ mod tests {
         assert_eq!(store.snapshot("s").unwrap().cursor, 1);
         drop(router);
         tokio::task::yield_now().await;
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn terminal_document(status: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({ "id":"r", "sessionId":"s", "status":status,
+            "completedAt":"2026-10-16T07:00:00.123Z", "currentStep":7, "stopReason":"provider error",
+            "metadata":{"executionLease":{"epoch":"lease1","closed":false}}
+        })).unwrap()
+    }
+
+    #[test]
+    fn completion_atomically_persists_final_document_event_and_receipt_across_restarts() {
+        for status in ["completed", "failed", "cancelled", "interrupted", "blocked"] {
+            let path = temp_path("finish-document");
+            let store = HotStore::open(&path).unwrap();
+            store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+            store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+            let final_run = terminal_document(status);
+            let first = store
+                .finish_run_with_document("s", "finish", "r", status, 1, 1, &final_run)
+                .unwrap();
+            assert!(!first.reused);
+            assert_eq!(first.snapshot.cursor, 1);
+            assert_eq!(first.snapshot.epoch, 2);
+            assert_eq!(first.snapshot.revision, 2);
+            let event = first.event.clone().unwrap();
+            let payload: serde_json::Value = serde_json::from_slice(&event.payload).unwrap();
+            let projection = ui_read(&store);
+            assert_eq!(projection.run["currentStep"], 7);
+            assert_eq!(projection.run["completedAt"], "2026-10-16T07:00:00.123Z");
+            assert_eq!(projection.run["metadata"]["executionLease"]["closed"], true);
+            assert_eq!(projection.run, payload["chunk"]["run"]);
+            assert_eq!(
+                projection.session["updatedAt"],
+                projection.run["completedAt"]
+            );
+            assert_eq!(
+                projection.session["completedAt"],
+                projection.run["completedAt"]
+            );
+            assert_eq!(
+                projection.session["status"],
+                if status == "blocked" {
+                    "completed"
+                } else {
+                    status
+                }
+            );
+            if status == "blocked" {
+                assert_eq!(projection.run["status"], "blocked");
+                assert_eq!(projection.session["blockedReason"], "provider error");
+            }
+            assert_eq!(projection.cursor, event.sequence);
+            assert!(projection.session["activeRunId"].is_null());
+            let stored: StoredRun = serde_json::from_slice(
+                &store
+                    .get(CF_RUNS, run_key("s", "r").as_bytes())
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stored.document.as_ref(), Some(&projection.run));
+            drop(store);
+            let store = HotStore::open(&path).unwrap();
+            store.admit_run("s", "next", "hash2", "next", 2, 2).unwrap();
+            let retry = store
+                .finish_run_with_document("s", "finish", "r", status, 1, 1, &final_run)
+                .unwrap();
+            assert!(retry.reused);
+            assert_eq!(retry.event.unwrap(), event);
+            assert_eq!(store.replay("s", 0).unwrap().len(), 1);
+            assert_eq!(
+                store.snapshot("s").unwrap().active_run_id.as_deref(),
+                Some("next")
+            );
+            let mut changed: serde_json::Value = serde_json::from_slice(&final_run).unwrap();
+            changed["currentStep"] = serde_json::json!(8);
+            assert!(matches!(
+                store.finish_run_with_document(
+                    "s",
+                    "finish",
+                    "r",
+                    status,
+                    1,
+                    1,
+                    &serde_json::to_vec(&changed).unwrap()
+                ),
+                Err(StorageError::Runtime(RuntimeError::RequestConflict))
+            ));
+            drop(store);
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+
+    #[test]
+    fn completion_commit_then_unknown_ack_keeps_exact_event_timestamp_and_new_fence() {
+        let path = temp_path("finish-unknown");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let mut faulty = store.clone();
+        faulty.faults.ack_unknown_after_commit = true;
+        assert!(matches!(
+            faulty.finish_run_with_document("s", "finish", "r", "failed", 1, 1, &[]),
+            Err(StorageError::Runtime(RuntimeError::DurabilityUnknown(_)))
+        ));
+        let original = store.replay("s", 0).unwrap()[0].clone();
+        drop(faulty);
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        let retry = store
+            .finish_run_with_document("s", "finish", "r", "failed", 1, 1, &[])
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(retry.event.unwrap(), original);
+        assert_eq!(ui_read(&store).cursor, 1);
+        assert_eq!(store.snapshot("s").unwrap().epoch, 2);
+        assert_eq!(store.replay("s", 0).unwrap().len(), 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn failed_completion_validation_or_disk_write_does_not_mutate_state_or_notify() {
+        let path = temp_path("finish-failure");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let before = ui_read(&store);
+        let mut wrong: serde_json::Value =
+            serde_json::from_slice(&terminal_document("failed")).unwrap();
+        wrong["id"] = serde_json::json!("other");
+        assert!(
+            store
+                .finish_run_with_document(
+                    "s",
+                    "finish",
+                    "r",
+                    "failed",
+                    1,
+                    1,
+                    &serde_json::to_vec(&wrong).unwrap()
+                )
+                .is_err()
+        );
+        let mut faulty = store.clone();
+        faulty.faults.disk_full = true;
+        assert!(matches!(
+            faulty.finish_run_with_document(
+                "s",
+                "finish",
+                "r",
+                "failed",
+                1,
+                1,
+                &terminal_document("failed")
+            ),
+            Err(StorageError::DiskFull)
+        ));
+        assert_eq!(ui_read(&store), before);
+        assert_eq!(store.snapshot("s").unwrap().cursor, 0);
+        assert!(store.replay("s", 0).unwrap().is_empty());
+        assert!(
+            store
+                .get(CF_TRANSITIONS, receipt_key("s", "finish").as_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !store
+                .finish_run_with_document(
+                    "s",
+                    "finish",
+                    "r",
+                    "failed",
+                    1,
+                    1,
+                    &terminal_document("failed")
+                )
+                .unwrap()
+                .reused
+        );
+        drop(faulty);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_legacy_completion_receipt_is_replayed_without_synthesizing_an_event() {
+        let path = temp_path("finish-legacy");
+        let store = HotStore::open(&path).unwrap();
+        let snapshot = SessionSnapshot {
+            session_id: "s".into(),
+            epoch: 2,
+            revision: 2,
+            active_run_id: None,
+            cursor: 12,
+            retained_from: 1,
+        };
+        let identity = serde_json::to_string(&("r", "completed")).unwrap();
+        let mut batch = WriteBatch::default();
+        store
+            .put_batch(
+                &mut batch,
+                CF_TRANSITIONS,
+                receipt_key("s", "legacy"),
+                &serde_json::to_vec(&(identity, &snapshot)).unwrap(),
+            )
+            .unwrap();
+        store
+            .write_with_durability(batch, Durability::Sync)
+            .unwrap();
+        let retry = store
+            .finish_run_with_document("s", "legacy", "r", "completed", 1, 1, &[])
+            .unwrap();
+        assert!(retry.reused);
+        assert!(retry.event.is_none());
+        assert_eq!(retry.snapshot, snapshot);
+        assert!(store.replay("s", 0).unwrap().is_empty());
+        assert!(matches!(
+            store.finish_run_with_document(
+                "s",
+                "legacy",
+                "r",
+                "completed",
+                1,
+                1,
+                &terminal_document("completed")
+            ),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
@@ -1527,6 +1875,7 @@ mod tests {
                 ack_unknown_after_commit: true,
                 abort_after_commit: false,
                 abort_after_append: false,
+                abort_after_finish: false,
                 disk_full: false,
             },
         )
@@ -1612,6 +1961,7 @@ mod tests {
                 ack_unknown_after_commit: false,
                 abort_after_commit: false,
                 abort_after_append: false,
+                abort_after_finish: false,
                 disk_full: true,
             },
         )

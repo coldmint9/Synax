@@ -49,7 +49,7 @@ export class RuntimeStreamWriter {
     if (!this.isCurrent()) { this.abandon(); return; }
     const commit: AgentRunStreamChunk[] = [];
     if (!this.runId) {
-      if ('run' in chunk) this.runId = chunk.run.id;
+      if ('run' in chunk && chunk.run) this.runId = chunk.run.id;
       else if ('runId' in chunk) this.runId = chunk.runId;
       else if (chunk.type === 'step_started') this.runId = chunk.step.runId;
       if (!this.runId) { if (this.pending.length >= 64) throw new Error("Run identity was not established before the bounded stream queue filled."); this.pending.push(chunk); return; }

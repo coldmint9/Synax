@@ -5,7 +5,7 @@ import { agentRuntimeStore } from '../session-store.js';
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const snapshot = { session: { id: 's', status: 'completed' }, run: null, cursor: 1400, liveChunks: [], completedStepIds: ['step'] };
 const remote = (overrides: object) => overrides as unknown as RuntimeSidecarClient;
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 it('reads a persisted projection without touching legacy session storage', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });
   const client = remote({ uiSnapshot: vi.fn(async () => encode(snapshot)), seedUi: vi.fn() });
@@ -40,4 +40,19 @@ it('does not seed an empty Rust projection over already executed SQLite history'
   });
   await expect(new RuntimeFacade(() => client).uiSnapshotAuthoritative('s')).rejects.toMatchObject({ code: 'PROJECTION_MIGRATION_REQUIRED' });
   expect(client.seedUi).not.toHaveBeenCalled();
+});
+
+it('submits the terminal run document to Rust and propagates persistence failure without local writes', async () => {
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
+  const updateRun = vi.spyOn(agentRuntimeStore, 'updateRun').mockImplementation(() => { throw new Error('must not write local run'); });
+  const updateSession = vi.spyOn(agentRuntimeStore, 'updateSession').mockImplementation(() => { throw new Error('must not write local session'); });
+  const run = { id: 'r', sessionId: 's', status: 'failed', completedAt: '2026-10-16T12:00:00.123Z', currentStep: 4, stopReason: 'provider error' } as never;
+  const finishRun = vi.fn().mockResolvedValue({ epoch: 2, revision: 3, cursor: 10 });
+  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), finishRun });
+  const facade = new RuntimeFacade(() => client);
+  await facade.finishExecution('s', run);
+  expect(finishRun).toHaveBeenCalledWith({ sessionId: 's', requestId: 'finish:r', runId: 'r', status: 'failed', epoch: 1, revision: 2, run });
+  finishRun.mockRejectedValueOnce(new Error('fsync unavailable'));
+  await expect(facade.finishExecution('s', run)).rejects.toThrow('fsync unavailable');
+  expect(updateRun).not.toHaveBeenCalled(); expect(updateSession).not.toHaveBeenCalled();
 });

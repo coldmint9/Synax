@@ -77,15 +77,6 @@ impl UiSnapshot {
         self.session["status"] = json!("queued");
         self.session["blockedReason"] = Value::Null;
     }
-    pub fn finish(&mut self, run_id: &str, status: &str) {
-        self.session["activeRunId"] = Value::Null;
-        self.session["status"] = json!(status);
-        self.session["pendingResumeToken"] = Value::Null;
-        if self.run["id"].as_str() == Some(run_id) {
-            self.run["status"] = json!(status);
-        }
-        self.complete_current();
-    }
     fn current_step(&self) -> Option<String> {
         self.live_chunks
             .first()

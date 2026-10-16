@@ -317,6 +317,12 @@ Rust sidecar 的 supervisor 在每次启动都等待 `READY` 和 Unix control he
 
 control transport 为每连接 32 个任务、全局 128 个任务、8 MiB 响应预算；慢请求不能阻塞快请求，shutdown 等待已接受任务有界排空。关闭或父进程死亡会清理子进程和 Unix socket；客户端在 transport error 或 durability unknown 时只用同一 request frame 重试，并受总 deadline 限制。
 
+### 6.5 Terminal completion boundary
+
+`finish_run` 接受完整 terminal run document。Rust 校验 run/session/status/completedAt/stopReason，缺失完成时间由 Rust 生成并固定在 receipt；`executionLease.closed` 写入最终文档。finish 与 `run_finished` canonical event、session fence、UI projection、transition receipt 在同一 WriteBatch 提交，重试不重复发布。
+
+`blocked` 是 terminal run status，但兼容 session projection 仍可映射为 completed；Rust run document 保留 blocked，projection 保留 blockedReason，active run fence 会释放，避免后续 turn 被 stale active run 卡住。SQLite 仍作为 Node compatibility read model；permission、interaction、input queue、stop/resume 和 history 写路径仍需迁移。
+
 ## 7. Node 侧职责调整
 
 新增：

@@ -192,6 +192,8 @@ pub struct WireFinishRun {
     pub run_id: String,
     #[prost(string, tag = "2")]
     pub status: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub run_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]

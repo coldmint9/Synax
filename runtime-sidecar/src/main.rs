@@ -1,5 +1,6 @@
 mod actor;
 mod commit;
+mod completion;
 mod control;
 mod flow;
 mod projection;

@@ -110,10 +110,10 @@ export class RuntimeSidecarClient {
 
   async finishRun(input: {
     sessionId: string; requestId: string; runId: string;
-    status: 'completed' | 'failed' | 'cancelled' | 'interrupted';
-    epoch: number; revision: number;
+    status: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'blocked';
+    epoch: number; revision: number; run?: unknown;
   }): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
-    return this.request({ type: 'finish_run', runId: input.runId, status: input.status },
+    return this.request({ type: 'finish_run', runId: input.runId, status: input.status, runJson: input.run === undefined ? undefined : new TextEncoder().encode(JSON.stringify(input.run)) },
       input.sessionId, input.epoch, input.revision, input.requestId)
       .then(envelope => this.expect(envelope, 'snapshot_response'));
   }

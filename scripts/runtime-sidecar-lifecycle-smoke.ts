@@ -36,7 +36,8 @@ try {
       agentRuntimeStore.updateSession(sessionId, { status: 'running', activeRunId: run.id });
       yield { type: 'run_started', run };
       yield { type: 'message_delta', runId: run.id, stepId: 'step', delta: 'controlled lifecycle output' };
-      const completed = agentRuntimeStore.updateRun(run.id, { status: 'completed', completedAt: new Date().toISOString() });
+      const status = input.message === 'turn 3' ? 'blocked' : 'completed';
+      const completed = agentRuntimeStore.updateRun(run.id, { status, completedAt: new Date().toISOString(), stopReason: status === 'blocked' ? 'controlled blocker' : null });
       agentRuntimeStore.updateSession(sessionId, { status: 'completed', activeRunId: null });
       yield { type: 'run_completed', run: completed };
       yield { type: 'done', sessionId, runId: run.id };
@@ -45,7 +46,7 @@ try {
   });
   const session = agentSessionRuntime.create({ ...plannerSessionInput, workDir: tmpdir() });
   const runs: string[] = [];
-  for (let turn = 1; turn <= 2; turn++) {
+  for (let turn = 1; turn <= 3; turn++) {
     const accepted = coordinator.submit(session.id, { message: `turn ${turn}` }, `request-${turn}`);
     runs.push(accepted.run.id);
     await coordinator.waitForIdle();
@@ -53,19 +54,30 @@ try {
     assert.equal(state.activeRunId, undefined);
     assert.equal(state.epoch, turn + 1);
     assert.equal(state.revision, turn * 3);
-    assert.equal(state.cursor, turn * 5);
+    assert.equal(state.cursor, turn * 6);
     const ui = JSON.parse(new TextDecoder().decode(await client.uiSnapshot(session.id)));
     assert.equal(ui.cursor, state.cursor); assert.equal(ui.session.status, 'completed');
     assert.equal(ui.session.activeRunId, null); assert.equal(ui.run.id, accepted.run.id);
     assert.deepEqual(ui.liveChunks, []);
+    const terminal = (await client.replay(session.id, state.cursor - 1)).events[0];
+    assert.equal(terminal.kind, 'run_finished');
+    const payload = JSON.parse(new TextDecoder().decode(terminal.payload));
+    const finalRun = agentRuntimeStore.getRun(accepted.run.id);
+    assert.equal(payload.chunk.run.completedAt, finalRun.completedAt);
+    assert.equal(payload.chunk.run.currentStep, finalRun.currentStep);
+    assert.equal(payload.chunk.run.metadata.executionLease.closed, true);
+    assert.equal(payload.state.updatedAt, finalRun.completedAt);
+    assert.deepEqual(payload.chunk.run, ui.run);
+    if (turn === 3) { assert.equal(ui.run.status, 'blocked'); assert.equal(ui.session.blockedReason, 'controlled blocker'); }
+    assert.equal(ui.session.completedAt, finalRun.completedAt);
   }
   const replay = await client.replay(session.id, 0);
-  assert.deepEqual(replay.events.map(event => event.sequence), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(replay.events.map(event => event.sequence), Array.from({ length: 18 }, (_, i) => i + 1));
   assert.deepEqual([...new Set(replay.events.map(event => event.runId))], runs);
   await assert.rejects(client.appendStream({ sessionId: session.id, runId: runs[0], producerId: 'late',
     producerSequence: 1, epoch: 1, revision: 1, events: [{ kind: 'late', payload: new Uint8Array() }] }),
     { code: 'STALE_EPOCH' });
-  console.log('Node coordinator → Rust lifecycle passed: durable admission/activation before execution, two turns, durable replay, epoch fencing. Driver is controlled; no external LLM was called.');
+  console.log('Node coordinator → Rust lifecycle passed: durable admission/activation before execution, three turns including a blocked terminal run, durable replay, epoch fencing. Driver is controlled; no external LLM was called.');
 } finally {
   client.close();
   await stopRustRuntimeSidecar(runtime);

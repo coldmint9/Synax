@@ -170,10 +170,37 @@ try {
   }, { port: runtime.port, hello: envelope({ type: 'hello', token: limited.token, clientId: 'limited' }),
     forbidden: [envelope({ type: 'snapshot' }, 'other', 'other-session'), envelope({ type: 'ui_snapshot' }, 'other-ui', 'other-session'), envelope({ type: 'seed_ui', sessionJson: new TextEncoder().encode('{}') }, 'seed'), envelope({ type: 'shutdown' }, 'shutdown')] });
   assert.deepEqual(codes, [['FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN'], ['UNAUTHENTICATED']]);
+  // A newly attached real renderer must observe command-driven completion without reconnecting.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.finalSnapshots = []; w.finalEvents = []; w.finalStates = [];
+    w.finalConnection = new w.RustTransport.RustRuntimeConnection({ sessionId: 'ui-session', bootstrap: (needsSnapshot: boolean) => w.getTicket(needsSnapshot),
+      snapshot: (snapshot: unknown) => w.finalSnapshots.push(snapshot),
+      record: (record: any) => { w.finalEvents.push(record); document.querySelector('#status')!.textContent = `${record.state.status}: ${record.state.blockedReason ?? ''}`; },
+      state: (state: string) => w.finalStates.push(state), fallback: () => { throw new Error('unexpected fallback'); },
+    });
+    w.finalConnection.start();
+  });
+  await page.waitForFunction(() => (window as any).finalStates.includes('connected'));
+  assert.equal(await page.evaluate(() => (window as any).finalSnapshots[0].cursor), 850);
+  const finishInput = { sessionId, requestId: 'finish-ui', runId: 'r', status: 'failed' as const, epoch: 1, revision: 1,
+    run: { id: 'r', sessionId, status: 'failed', completedAt: new Date().toISOString(), stopReason: 'provider disconnected', currentStep: 7 } };
+  await control.finishRun(finishInput);
+  await control.finishRun(finishInput);
+  await page.waitForFunction(() => (window as any).finalEvents.some((record: any) => record.chunk.type === 'run_finished'));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const finalEvents = await page.evaluate(() => (window as any).finalEvents);
+  assert.equal(finalEvents.length, 1);
+  assert.equal(finalEvents[0].sequence, 851);
+  assert.equal(finalEvents[0].state.status, 'failed');
+  assert.equal(finalEvents[0].state.activeRunId, null);
+  assert.equal(finalEvents[0].state.blockedReason, 'provider disconnected');
+  assert.equal(await page.locator('#status').innerText(), 'failed: provider disconnected');
+  await page.evaluate(() => (window as any).finalConnection.close());
   assert.deepEqual(errors, []);
   const screenshot = path.join(tmpdir(), 'synax-rust-ui-smoke.png');
   await page.screenshot({ path: screenshot });
-  console.log(`Electron native UI adapter passed: Rust materialized snapshot through event 600, 50 live/reconnected events including a real Rust process restart without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets. Screenshot: ${screenshot}`);
+  console.log(`Electron native UI adapter passed: Rust materialized snapshot through event 600, 50 live/reconnected events including a real Rust process restart without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets, and exactly-once live completion. Screenshot: ${screenshot}`);
 } finally {
   await desktop?.close(); control.close();
   await stopRustRuntimeSidecar(runtime);

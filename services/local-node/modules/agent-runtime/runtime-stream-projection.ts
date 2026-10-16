@@ -11,7 +11,7 @@ export function projectReplayChunk(
       ? text.slice(0, limit) +
         "\n[Replay preview truncated; full content is in history]"
       : text;
-  if ("run" in value) value.run = { ...value.run, metadata: {} };
+  if ("run" in value && value.run) value.run = { ...value.run, metadata: {} };
   if ("step" in value) value.step = { ...value.step, metadata: {} };
   if ("toolCall" in value)
     value.toolCall = {

@@ -748,6 +748,8 @@ export interface CompactionRecord {
 }
 
 export type AgentRunStreamChunk =
+  | { type: "run_activated"; run: AgentRun }
+  | { type: "run_finished"; runId: string; run?: AgentRun }
   | {
       type: "retry_status";
       runId: string;

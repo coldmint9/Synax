@@ -130,6 +130,7 @@ enum ActorCommand {
         request_id: String,
         run_id: String,
         status: String,
+        run_json: Vec<u8>,
         epoch: u64,
         revision: u64,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
@@ -470,6 +471,7 @@ impl SessionShardRouter {
         }
     }
 
+    #[cfg(test)]
     pub async fn finish_run(
         &self,
         session_id: impl Into<String>,
@@ -478,6 +480,28 @@ impl SessionShardRouter {
         status: impl Into<String>,
         epoch: u64,
         revision: u64,
+    ) -> Result<SessionSnapshot, RuntimeError> {
+        self.finish_run_with_document(
+            session_id,
+            request_id,
+            run_id,
+            status,
+            epoch,
+            revision,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn finish_run_with_document(
+        &self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        run_id: impl Into<String>,
+        status: impl Into<String>,
+        epoch: u64,
+        revision: u64,
+        run_json: Vec<u8>,
     ) -> Result<SessionSnapshot, RuntimeError> {
         let session_id = session_id.into();
         let (response, receiver) = oneshot::channel();
@@ -488,6 +512,7 @@ impl SessionShardRouter {
                 request_id: request_id.into(),
                 run_id: run_id.into(),
                 status: status.into(),
+                run_json,
                 epoch,
                 revision,
                 response,
@@ -804,6 +829,7 @@ async fn run_shard(
                 request_id,
                 run_id,
                 status,
+                run_json,
                 epoch,
                 revision,
                 response,
@@ -828,16 +854,23 @@ async fn run_shard(
                             status,
                             epoch,
                             revision,
+                            run_json,
                         )
                         .await
                     {
                         Ok(receipt) => match store.snapshot_async(session_id.clone()).await {
                             Ok(current) => {
-                                sessions
-                                    .get_mut(&session_id)
-                                    .unwrap()
-                                    .sync_snapshot(&current);
-                                Ok(receipt)
+                                let state = sessions.get_mut(&session_id).unwrap();
+                                state.sync_snapshot(&current);
+                                if !receipt.reused {
+                                    if let Some(event) = receipt.event {
+                                        let shared = Arc::new(event);
+                                        state.subscribers.retain(|subscriber| {
+                                            subscriber.try_send(shared.clone()).is_ok()
+                                        });
+                                    }
+                                }
+                                Ok(receipt.snapshot)
                             }
                             Err(error) => {
                                 if storage_state_uncertain(&error) {
@@ -861,6 +894,7 @@ async fn run_shard(
                         status,
                         epoch,
                         revision,
+                        &run_json,
                     )
                 };
                 let _ = response.send(result.map(CommandResult::Snapshot));
@@ -1163,7 +1197,10 @@ fn admit_run(
 }
 
 pub fn validate_terminal_status(status: &str) -> Result<(), RuntimeError> {
-    if matches!(status, "completed" | "failed" | "cancelled" | "interrupted") {
+    if matches!(
+        status,
+        "completed" | "failed" | "cancelled" | "interrupted" | "blocked"
+    ) {
         Ok(())
     } else {
         Err(RuntimeError::InvalidCommand(
@@ -1179,10 +1216,12 @@ fn finish_run(
     status: String,
     epoch: u64,
     revision: u64,
+    run_json: &[u8],
 ) -> Result<SessionSnapshot, RuntimeError> {
-    validate_terminal_status(&status)?;
+    let document =
+        crate::completion::decode_run_document(&state.session_id, &run_id, &status, run_json)?;
     let key = ReceiptKey::Finish(request_id);
-    let identity = serde_json::to_string(&(&run_id, &status)).unwrap();
+    let identity = serde_json::to_string(&(&run_id, &status, &document)).unwrap();
     if let Some(receipt) = state.receipts.get(&key) {
         if receipt.body_hash != identity {
             return Err(RuntimeError::RequestConflict);
@@ -1197,6 +1236,9 @@ fn finish_run(
     if state.active_run_id.as_deref() != Some(&run_id) {
         return Err(RuntimeError::InvalidCommand("run is not active".into()));
     }
+    let completion =
+        crate::completion::complete(&run_id, &status, document, serde_json::Value::Null)?;
+    state.append_events(&run_id, vec![completion.event]);
     state.active_run_id = None;
     state.epoch += 1;
     state.revision += 1;
@@ -1387,6 +1429,62 @@ mod tests {
             Err(RuntimeError::RequestConflict)
         ));
         assert_eq!(router.snapshot("s").await.unwrap().cursor, 1);
+    }
+
+    #[tokio::test]
+    async fn finish_publishes_once_and_retry_after_next_admission_does_not_revert_cache() {
+        for persistent in [false, true] {
+            let path =
+                std::env::temp_dir().join(format!("synax-live-finish-{}", uuid::Uuid::new_v4()));
+            let store = if persistent {
+                Some(Arc::new(HotStore::open(&path).unwrap()))
+            } else {
+                None
+            };
+            let router = if let Some(store) = &store {
+                SessionShardRouter::with_store(1, 16, store.clone()).unwrap()
+            } else {
+                SessionShardRouter::new(1, 16).unwrap()
+            };
+            router
+                .admit_run("s", "start", "hash", "r", 1, 0)
+                .await
+                .unwrap();
+            let (_, _, mut live) = router.subscribe("s", 0).await.unwrap();
+            let first = router
+                .finish_run("s", "finish", "r", "failed", 1, 1)
+                .await
+                .unwrap();
+            let event = tokio::time::timeout(std::time::Duration::from_secs(1), live.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(event.sequence, first.cursor);
+            assert_eq!(event.kind, "run_finished");
+            router
+                .admit_run("s", "next", "hash2", "next", 2, 2)
+                .await
+                .unwrap();
+            assert_eq!(
+                router
+                    .finish_run("s", "finish", "r", "failed", 1, 1)
+                    .await
+                    .unwrap(),
+                first
+            );
+            assert!(matches!(
+                live.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert_eq!(
+                router.snapshot("s").await.unwrap().active_run_id.as_deref(),
+                Some("next")
+            );
+            drop(router);
+            tokio::task::yield_now().await;
+            drop(store);
+            let _ = std::fs::remove_dir_all(path);
+        }
     }
 
     #[tokio::test]

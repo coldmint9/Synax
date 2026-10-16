@@ -113,7 +113,7 @@ export class RuntimeFacade {
     const authoritative = streamMode() === 'authoritative';
     if (!authoritative && this.mode() !== 'shadow' && streamMode() !== 'shadow') return;
     const status = run.status;
-    if (status !== 'completed' && status !== 'failed' && status !== 'cancelled' && status !== 'interrupted') return;
+    if (status !== 'completed' && status !== 'failed' && status !== 'cancelled' && status !== 'interrupted' && status !== 'blocked') return;
     const client = this.clientFactory();
     if (!client) {
       if (authoritative) throw new Error('Runtime sidecar client is not configured.');
@@ -122,7 +122,7 @@ export class RuntimeFacade {
     try {
       const state = await client.snapshot(sessionId);
       await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`,
-        status, epoch: state.epoch, revision: state.revision });
+        status, epoch: state.epoch, revision: state.revision, run });
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
