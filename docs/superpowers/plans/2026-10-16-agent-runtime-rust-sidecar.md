@@ -371,5 +371,6 @@ runtime-sidecar/
 - 删除 Node storage-owner worker、owner IPC protocol、owner libsql facade、session log client，以及对应打包入口；local Node host 直接打开 SQLite 兼容库，Rust sidecar 负责 runtime stream/control/history 权威状态。
 - 新增 migration `0079_runtime_authoritative_cleanup.sql`，新 host 初始化后不再保留 `agent_runtime_stream_records` 表；旧数据库先通过 export/import/verify-runtime/purge-legacy 离线处理。
 - runtime-history 增加分块 blob chunk/manifest/digest 校验命令，单 chunk 上限 256 KiB；媒体文件仍由现有 asset CAS 保存，runtime-history 只保存引用。
+- 修复 authoritative host 迁移启动回归：migrations 始终执行，只有旧 conversation history triggers 在 authoritative host 禁用。当前 macOS arm64 packaged desktop smoke 已通过；最新 DMG 为 `out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `a3d61e5dc6105d2ab32fb0893834a889b1dba90fb8cd4b1233be4b8047324272`。
 
 本轮验证：`npm run typecheck`、Rust 55 项测试、迁移 smoke、history smoke、lifecycle smoke、forked worker smoke、provider worker smoke 均通过。Windows/macOS/Linux desktop workflow 已触发，等待目标机结果。
