@@ -5,6 +5,7 @@ import { historyEpoch } from "./checkpoints/guards.js";
 const FILE_REPLAY_BASE = 2 ** 40;
 const replayProducer = randomUUID();
 let replayRequestNumber = 0;
+const replayProducerSequences = new Map<string, number>();
 import { projectReplayChunk } from "./runtime-stream-projection.js";
 import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import { admitVersionGrowth } from "./checkpoints/resource-admission.js";
@@ -175,7 +176,26 @@ class RuntimeJournal {
 
   /** File-backed replay is independent of SQLite commit/retention. Existing
    * cursors remain readable below FILE_REPLAY_BASE during the cutover. */
-  async appendDurable(sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision = historyEpoch(sessionId), requestId = `replay:${replayProducer}:${++replayRequestNumber}`): Promise<void> {
+  async appendDurable(sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision = historyEpoch(sessionId), requestId?: string): Promise<void> {
+    const requestSequence = ++replayRequestNumber;
+    const producerSequence = (replayProducerSequences.get(sessionId) ?? 0) + 1;
+    replayProducerSequences.set(sessionId, producerSequence);
+    const effectiveRequestId = requestId ?? `replay:${replayProducer}:${requestSequence}`;
+    if (runtimeFacade.streamMode() === 'authoritative') {
+      if (!chunks.length) return;
+      const fence = await runtimeFacade.streamFence(sessionId, runId);
+      await runtimeFacade.appendStreamAuthoritative({
+        sessionId,
+        runId,
+        producerId: `journal:${replayProducer}`,
+        producerSequence,
+        epoch: fence.epoch,
+        revision: fence.revision,
+        chunks,
+        state: runtimeRecordState(sessionId),
+      });
+      return;
+    }
     if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) { this.appendBatch(sessionId, runId, chunks); return; }
     if (!chunks.length) return;
     chunks = chunks.map(projectReplayChunk);
@@ -187,7 +207,7 @@ class RuntimeJournal {
       const session = projectSessionState(agentRuntimeStore.getSession(sessionId));
       return { status: session.status, activeRunId: session.activeRunId, pendingResumeToken: session.pendingResumeToken, blockedReason: session.blockedReason, updatedAt: session.updatedAt };
     })();
-    await sessionLogClient.append(sessionId, requestId, chunks.map(chunk => ({ type: "runtime.replay", payload: { sessionId, runId, chunk, state, epoch: revision } })));
+    await sessionLogClient.append(sessionId, effectiveRequestId, chunks.map(chunk => ({ type: "runtime.replay", payload: { sessionId, runId, chunk, state, epoch: revision } })));
     this.notifyCommitted(sessionId);
   }
 

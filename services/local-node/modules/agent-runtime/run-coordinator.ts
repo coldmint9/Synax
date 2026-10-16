@@ -733,7 +733,7 @@ export class RunCoordinator {
       payload: { runId },
       visibility: "internal",
     });
-    if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
+    if (runtimeFacade.streamMode() === "authoritative" || process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {
       void runtimeJournal
         .appendDurable(sessionId, runId, [{ type: "event", event }])
         .catch((error) =>
