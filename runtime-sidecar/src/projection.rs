@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const MAX_PROJECTION_BYTES: usize = 768 * 1024;
-fn valid_status(status: &str) -> bool {
+pub fn is_valid_status(status: &str) -> bool {
     matches!(
         status,
         "stopping"
@@ -20,6 +20,10 @@ fn valid_status(status: &str) -> bool {
             | "cancelled"
             | "interrupted"
     )
+}
+
+fn valid_status(status: &str) -> bool {
+    is_valid_status(status)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

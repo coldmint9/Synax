@@ -14,10 +14,133 @@ import {
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { nowIso } from "./runtime-ids.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
-import type { StreamTurnRequest } from "./contracts.js";
+import type { AgentRun, AgentSession, StreamTurnRequest } from "./contracts.js";
 
 export function isDurableRuntimeCheckpoint(status: string): boolean {
   return status === "waiting_permission" || status === "waiting_input";
+}
+
+async function recoverAuthoritativeRuntime(
+  hostId: string,
+): Promise<{ reviewed: number; resumable: string[] }> {
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  const unresolved = await recoverOwnedProcesses(hostId);
+  const projections = await runtimeFacade.listSessionProjection();
+  const resumable: string[] = [];
+  let reviewed = 0;
+  for (const item of projections) {
+    const session = item as AgentSession;
+    const [snapshot, control, historyRuns] = await Promise.all([
+      runtimeFacade.uiSnapshotAuthoritative(session.id),
+      runtimeFacade.controlState(session.id) as Promise<{ runtimeControl?: unknown; processLeases?: unknown[] }>,
+      runtimeFacade.listRunHistory(session.id),
+    ]);
+    const local = agentRuntimeStore.tryGetSession(session.id);
+    const runs = historyRuns as AgentRun[];
+    const active =
+      ((snapshot.run as AgentRun | null | undefined) &&
+        ["queued", "running", "waiting_permission", "waiting_input"].includes(
+          (snapshot.run as AgentRun).status,
+        )
+        ? (snapshot.run as AgentRun)
+        : undefined) ??
+      runs.find((run) =>
+        ["queued", "running", "waiting_permission", "waiting_input"].includes(
+          run.status,
+        ),
+      );
+    const leases = Array.isArray(control.processLeases) ? control.processLeases : [];
+    const processUnknown =
+      leases.length > 0 || unresolved.some((record) => record.session_id === session.id);
+    const localRuns = local ? agentRuntimeStore.listRuns(session.id) : [];
+    const checkpoint = local ? findDurableCheckpoint(session.id, localRuns) : null;
+    if (
+      active &&
+      isDurableRuntimeCheckpoint(active.status) &&
+      !processUnknown
+    ) {
+      if (
+        checkpoint &&
+        ((active.status === "waiting_input" && interactionService.ready(session.id)) ||
+          (active.status === "waiting_permission" &&
+            permissionPolicy.list(session.id).some((permission) => permission.userReply !== null)))
+      )
+        resumable.push(session.id);
+      continue;
+    }
+    if (
+      !active &&
+      !control.runtimeControl &&
+      !processUnknown &&
+      !["running", "stopping", "queued"].includes(session.status)
+    )
+      continue;
+
+    const reason = processUnknown
+      ? "Process shutdown remains unconfirmed after runtime restart."
+      : active
+        ? "The runtime restarted during execution. The previous run was interrupted."
+        : "The runtime restarted without a confirmed active run. Continue the session explicitly.";
+    if (active && !processUnknown) {
+      const finalRun: AgentRun = {
+        ...active,
+        status: "interrupted",
+        completedAt: nowIso(),
+        stopReason: reason,
+        metadata: {
+          ...active.metadata,
+          recovery: { phase: active.status, at: nowIso() },
+          executionLease: {
+            ...((active.metadata.executionLease as object | undefined) ?? {}),
+            closed: true,
+          },
+        },
+      };
+      await runtimeFacade.finishExecution(session.id, finalRun);
+      await runtimeFacade.sessionPatch(session.id, `recovery:${session.id}:${finalRun.id}`, {
+        status: "paused",
+        activeRunId: null,
+        pendingResumeToken: null,
+        blockedReason: reason,
+        completedAt: null,
+        updatedAt: finalRun.completedAt,
+        sessionMetadata: { runtimeControl: null },
+      });
+      if (local) {
+        try {
+          agentRuntimeStore.updateRun(finalRun.id, finalRun);
+          agentRuntimeStore.updateSession(session.id, {
+            status: "paused",
+            activeRunId: null,
+            pendingResumeToken: null,
+            blockedReason: reason,
+            updatedAt: finalRun.completedAt!,
+            sessionMetadata: { ...(local.sessionMetadata ?? {}), runtimeControl: null },
+          });
+        } catch {
+          // Rust is the authority; a missing compatibility mirror is recoverable.
+        }
+      }
+    } else {
+      await runtimeFacade.controlCommand({
+        sessionId: session.id,
+        requestId: `recovery-unconfirmed:${session.id}`,
+        operation: "stop_unconfirmed",
+        payload: { runId: (snapshot.session as AgentSession).activeRunId, reason },
+      });
+      if (local) {
+        try {
+          agentRuntimeStore.updateSessionMetadata(session.id, {
+            runtimeControl: { state: "unconfirmed", source: "restart", reason },
+          });
+        } catch {
+          // Keep the durable Rust recovery fence even when the mirror is stale.
+        }
+      }
+    }
+    reviewed++;
+  }
+  return { reviewed, resumable };
 }
 
 type DurableCheckpoint = {
@@ -65,6 +188,8 @@ function findDurableCheckpoint(
 export async function recoverRuntime(
   hostId: string,
 ): Promise<{ reviewed: number; resumable: string[] }> {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
+    return recoverAuthoritativeRuntime(hostId);
   const db = getRawSqlite();
   // Revoke business writes before inspecting or terminating old processes.
   db.prepare(

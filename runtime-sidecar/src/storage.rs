@@ -731,7 +731,12 @@ impl HotStore {
                 let patch = value["patch"].as_object().ok_or_else(|| RuntimeError::InvalidCommand("session patch must be an object".into()))?;
                 for (key, patch_value) in patch {
                     match key.as_str() {
-                        "title" | "pinned" | "mode" | "archivedAt" | "archiveBatchId" | "resultSummary" | "blockedReason" | "pendingResumeToken" => {
+                        "title" | "pinned" | "mode" | "status" | "activeRunId" | "completedAt" | "updatedAt" | "archivedAt" | "archiveBatchId" | "resultSummary" | "blockedReason" | "pendingResumeToken" => {
+                            if key == "status"
+                                && !patch_value.as_str().is_some_and(crate::projection::is_valid_status)
+                            {
+                                return Err(RuntimeError::InvalidCommand("invalid session status patch".into()).into());
+                            }
                             projection.session[key] = patch_value.clone();
                         }
                         "sessionMetadata" => {
