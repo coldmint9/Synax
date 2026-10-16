@@ -23,7 +23,7 @@
 | 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 与 benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
-注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append，但它仍是受控 provider stub，不是真实 LLM provider 全链路。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
+注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append；新增 provider-worker smoke 又覆盖了真实 agent-session-runner child → 本地 OpenAI-compatible HTTP streaming provider → Node coordinator → Rust history/stream，仍未替代外部真实凭证 provider 验收。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
 
 2026-10-16 第二轮补充实现：
 
@@ -286,7 +286,8 @@ runtime-sidecar/
 - [x] `runtime-journal.ts` 增加可配置 sidecar replay/snapshot projection；
 - [x] 通过真实 Node↔Rust authoritative stream smoke 验证 append/replay/payload/sequence；
 - [x] 通过同进程 `recordRuntimeStream`/`RuntimeStreamWriter` 受控生成器 smoke 验证 authoritative append/replay；
-- [x] 通过真实 forked Node worker smoke 验证 child process → Unix IPC → Rust append/replay；真实 LLM provider 全链路仍待验收；
+- [x] 通过真实 forked Node worker smoke 验证 child process → Unix IPC → Rust append/replay；
+- [x] 通过真实 agent-session-runner + 本地 OpenAI-compatible streaming provider 验证 provider protocol → child loop → coordinator → Rust stream/history；外部凭证 provider 仍待验收；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；
