@@ -385,6 +385,9 @@ runtime-sidecar/
 - authoritative `recoverRuntime` 已先读取 Rust projection、history run、process lease 和 control state；无未确认 lease 的 stale run 走 Rust interrupted finish，仍有 lease 时保留 `stop_unconfirmed` recovery fence。
 - macOS 本地 cargo wrapper 支持 Homebrew LLVM，并使用 `DYLD_FALLBACK_LIBRARY_PATH`，避免 Homebrew LLVM 污染 rustc 自身 LLVM；`npm run runtime-sidecar:check` 已通过。
 - 5000 session / 64 concurrency / 4 stream batches / 1 KiB payload：35000 operations，p50 1.438ms、p95 3.393ms、p99 6.542ms、max 24.712ms（macOS arm64，本地验收数据，不是发布承诺）。
+- authoritative subagent orchestration now uses `RunCoordinator.submitAsync` and session-scoped idle fencing, so child runs receive the same Rust admission/activation/finalization semantics as root runs.
+- `AgentRuntimeStore.updateSession` mirrors supported authoritative session fields into Rust `session_patch`; ACP permission requests are committed through Rust control before waiting for the external provider response.
+- Final local macOS arm64 package from commit `8f866d87` passed packaged desktop smoke. DMG: `out/make/Synax-1.26.3-darwin-arm64.dmg`; SHA-256 `ac56d2768f16d98f2e7fe9bdf4e09171a62de7038e93c507216d94a38829c48e`.
 - 真实 lifecycle、真实 provider-worker、Rust 56 项单元测试、focused Node suite 与 typecheck 通过。全量 Vitest 当前可复现的失败仍为既有 `context-epochs.test.ts` 3 项 compaction fixture（预期 checkpoint 未生成），与本轮 Rust sidecar 改动无直接关联；全量运行因慢 fixture 未作为发布 gate。
 - Windows workflow `38965983058` 仍在目标机执行，待 Named Pipe、Windows packaged smoke 和 NSIS publisher 配置结果。
 
