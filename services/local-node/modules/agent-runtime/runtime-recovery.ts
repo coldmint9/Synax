@@ -273,6 +273,15 @@ export async function acknowledgeRuntimeRecovery(
         409,
       );
   if (!session.sessionMetadata?.runtimeControl) return;
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `recovery-ack:${sessionId}`,
+      operation: "resume",
+      payload: { runId: session.activeRunId },
+    });
+  }
   agentRuntimeStore.updateSessionMetadata(sessionId, {
     runtimeControl: null,
     lastRecoveryAcknowledgedAt: nowIso(),
