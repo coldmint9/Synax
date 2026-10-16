@@ -76,7 +76,10 @@ function fixture(count = 10, length = 2800) {
   const input = {
     sessionId: session.id,
     toolSet,
-    contextLimit: 40000,
+    // The fixture serializes to 37,936 tokens for 13 steps. Keep the physical
+    // hard window just below that value so these cases exercise rescue and
+    // epoch restoration instead of the intentional within-window fast path.
+    contextLimit: 39900,
     outputReserve: 2000,
     systemTokens: 100,
   };
