@@ -438,15 +438,10 @@ export class RunCoordinator {
     mode: AgentSessionStreamMode,
     input: StreamTurnRequest,
   ): Promise<void> {
-    const legacyJournal = runtimeFacade.streamMode() === "authoritative"
-      ? undefined
-      : async (id: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) =>
-        (await import("./journal-writer.js")).journalWriter.append(id, runId, chunks, revision, owner.context);
     const writer = new RuntimeStreamWriter(
       sessionId,
       owner.runId,
       () => this.ownsLease(owner),
-      legacyJournal,
     );
     const record = async (chunk: AgentRunStreamChunk) => {
       writer.write(chunk);

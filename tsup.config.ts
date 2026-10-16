@@ -10,7 +10,6 @@ export default defineConfig({
     "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
     "workers/storage-owner": "services/worker/jobs/storage-owner.ts",
     "workers/storage-client": "services/worker/jobs/storage-client.ts",
-    "workers/journal-writer": "services/worker/jobs/journal-writer.ts",
   },
   format: ["cjs"],
   outDir: "server-dist",

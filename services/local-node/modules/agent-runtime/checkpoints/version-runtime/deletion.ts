@@ -60,7 +60,6 @@ export function queueHistoryDeletion(sessionId: string): void {
 
 const tables = [
   "agent_runtime_asset_sessions",
-  "agent_runtime_stream_records",
   "conversation_history_journal",
   "conversation_checkpoints",
   "conversation_mutations",

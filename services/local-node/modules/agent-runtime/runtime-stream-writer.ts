@@ -1,13 +1,8 @@
 import { logger } from '../../infrastructure/runtime/logger.js';
 import { randomUUID } from 'node:crypto';
-import { transcriptStorageEnabled } from "./transcript-repository.js";
-import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
-import { versionedSession, versionRepository } from "./checkpoints/version-runtime/bridge.js";
 import { historyEpoch } from "./checkpoints/guards.js";
-import { getRawSqlite } from '../../infrastructure/database/index.js';
 import { agentRuntimeStore } from './session-store.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
-import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { runtimeJournal, runtimeRecordState } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
@@ -33,9 +28,7 @@ export class RuntimeStreamWriter {
   private sidecarFence?: Promise<{ epoch: number; revision: number }>;
   private sidecarPending = 0;
   private shadowStopped = false;
-  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true,
-    private readonly persist?: (sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) => Promise<void>,
-  ) { this.revision = historyEpoch(sessionId); }
+  constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) { this.revision = historyEpoch(sessionId); }
 
   /** Acknowledgement barrier, including failures from a timer-driven delta flush. */
   async settled(): Promise<void> {
@@ -73,20 +66,9 @@ export class RuntimeStreamWriter {
     const runId = this.runId;
     if (!runId || chunks.length === 0) return;
     if (this.writeFailure) throw this.writeFailure;
-    const persist = this.persist ?? (process.env.SYNAX_STORAGE_OWNER_ENDPOINT
-      ? (sessionId: string, id: string, values: AgentRunStreamChunk[], revision: number) => runtimeJournal.appendDurable(sessionId, id, values, revision)
-      : undefined);
     if (runtimeFacade.streamMode() === 'authoritative') {
       if (this.sidecarPending >= 128) throw new Error('Runtime sidecar stream queue is full.');
       this.enqueueSidecar(runId, chunks, true);
-      return;
-    }
-    if (persist) {
-      const write = persist(this.sessionId, runId, chunks, this.revision)
-        .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
-        .finally(() => this.writes.delete(write));
-      this.writes.add(write);
-      if (runtimeFacade.streamMode() === 'shadow') this.enqueueSidecar(runId, chunks, false);
       return;
     }
     if (chunks.length === 1) runtimeJournal.append(this.sessionId, runId, chunks[0]);
@@ -134,13 +116,12 @@ export class RuntimeStreamWriter {
   }
 
   async prepareFinish(): Promise<void> {
-    if (runtimeFacade.streamMode() === 'authoritative' || !process.env.SYNAX_STORAGE_OWNER_ENDPOINT || !this.runId || !this.isCurrent()) return;
+    if (!this.runId || !this.isCurrent()) return;
     const step = agentRuntimeStore.listRunSteps(this.runId).at(-1);
     if (!step) return;
-    const cursor = await sessionLogClient.cursor(this.sessionId);
-    let after = 2 ** 40 + Math.max(0, cursor - 1024);
+    let after = 0;
     const deltas: string[] = [];
-    while (after < 2 ** 40 + cursor) {
+    for (let pageNumber = 0; pageNumber < 64; pageNumber++) {
       const page = await runtimeJournal.readDurable(this.sessionId, after, 256, this.runId);
       if (!page.length) break;
       after = page[page.length - 1].sequence;
@@ -149,6 +130,7 @@ export class RuntimeStreamWriter {
         if (chunk.type === "retry_status" && ["waiting", "group_wait"].includes(chunk.retry.phase)) deltas.length = 0;
         if (chunk.type === "message_delta") { deltas.push(chunk.delta); if (deltas.length > 128) deltas.shift(); }
       }
+      if (page.length < 256) break;
     }
     this.partialContent = deltas.join('');
     this.partialStepId = step.id;
@@ -158,25 +140,18 @@ export class RuntimeStreamWriter {
     if(!this.isCurrent()){this.abandon();return;}
     this.flush();
     if (!this.runId) return;
-    const partial = runtimeTransaction(() => {
+    const partial = (() => {
       const run = agentRuntimeStore.getRun(this.runId!);
       if (!['interrupted', 'cancelled', 'failed'].includes(run.status)) return;
       const step = agentRuntimeStore.listRunSteps(run.id).at(-1);
       if (!step) return;
-      const db = getRawSqlite();
-      const existing = versionedSession(this.sessionId) ? versionRepository().last(this.sessionId, "messages", ["id"], { field: "stepId", value: step.id }) : transcriptStorageEnabled() ? agentRuntimeStore.listMessages(this.sessionId).find(message => message.role === "assistant" && message.runId === run.id && message.stepId === step.id) : db.prepare("SELECT id FROM agent_runtime_messages WHERE run_id = ? AND step_id = ? AND role = 'assistant' LIMIT 1").get(run.id, step.id);
+      const existing = agentRuntimeStore.listMessages(this.sessionId).find(message => message.role === 'assistant' && message.runId === run.id && message.stepId === step.id);
       if (existing) return;
-      const records = this.partialStepId === step.id ? [] : db.prepare(`SELECT chunk_json FROM agent_runtime_stream_records WHERE run_id = ? AND kind = 'message_delta'
-        AND json_extract(chunk_json, '$.chunk.stepId') = ?
-        AND sequence > COALESCE((SELECT MAX(sequence) FROM agent_runtime_stream_records
-          WHERE run_id = ? AND kind = 'retry_status' AND json_extract(chunk_json, '$.chunk.stepId') = ?
-          AND json_extract(chunk_json, '$.chunk.retry.phase') IN ('waiting', 'group_wait')), 0)
-        AND length(CAST(chunk_json AS BLOB))<=65536 ORDER BY sequence DESC LIMIT 128`).all(run.id, step.id, run.id, step.id) as Array<{ chunk_json: string }>;
-      const content = this.partialStepId === step.id ? this.partialContent : records.reverse().map(row => (JSON.parse(row.chunk_json) as { chunk: { delta: string } }).chunk.delta).join('');
+      const content = this.partialStepId === step.id ? this.partialContent : '';
       if (!content) return;
       return { id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: run.id, stepId: step.id,
         role: 'assistant' as const, content, createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: run.id, stepId: step.id } };
-    });
+    })();
     if (partial && this.isCurrent()) agentRuntimeStore.appendMessage(partial);
   }
 

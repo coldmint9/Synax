@@ -366,6 +366,7 @@ runtime-sidecar/
 - authoritative HTTP read path 已切到 Rust：session search/badges、history window/timeline、message content/visualization、run detail/steps、runtime events 和 run stream 存在性检查；Node SQLite 只保留兼容镜像与执行上下文。
 - authoritative stream payload 的 session state 改为从 Rust UI projection 获取；run observation 的终态判断读取 Rust projection/history，避免事件与状态分别来自 Rust/SQLite。
 - 移除产品 host 的 `SYNAX_RUNTIME_LEGACY` 环境开关；`SYNAX_RUNTIME_SIDECAR_STREAM=disabled` 仅作为测试 fixture 的显式 transport 选择。
+- 删除线上 `journal-writer` worker、Node journal writer 和 storage-owner replay 写入；非 authoritative 测试 fixture 使用 bounded in-memory journal，authoritative host 只通过 Rust IPC 读写 stream。
 - runtime-history 增加分块 blob chunk/manifest/digest 校验命令，单 chunk 上限 256 KiB；媒体文件仍由现有 asset CAS 保存，runtime-history 只保存引用。
 
 本轮验证：`npm run typecheck`、Rust 55 项测试、迁移 smoke、history smoke、lifecycle smoke、forked worker smoke、provider worker smoke 均通过。Windows/macOS/Linux desktop workflow 已触发，等待目标机结果。

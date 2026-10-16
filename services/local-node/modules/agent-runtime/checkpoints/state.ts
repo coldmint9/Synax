@@ -184,9 +184,6 @@ export function replaceHistory(
       if (table === "agent_runtime_messages") transcriptRepository.deleteLegacySession(id);
       else db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(id);
     }
-    db.prepare(
-      "DELETE FROM agent_runtime_stream_records WHERE session_id=?",
-    ).run(id);
     if (!retained.has(id)) {
       db.prepare(
         "UPDATE agent_runtime_processes SET session_id=NULL WHERE session_id=?",
@@ -573,9 +570,6 @@ export function restoreHistoryBoundary(
       db.prepare(
         "UPDATE agent_runtime_permissions SET action='deny',user_reply='reject',resolved_at=?,resume_token=NULL WHERE session_id=? AND resolved_at IS NULL",
       ).run(nowIso(), id);
-      db.prepare(
-        "DELETE FROM agent_runtime_stream_records WHERE session_id=?",
-      ).run(id);
     }
     const placeholders = scope.map(() => "?").join(",");
     db.prepare(

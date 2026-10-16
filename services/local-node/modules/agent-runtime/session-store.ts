@@ -274,7 +274,6 @@ const RUNTIME_TABLES = [
   "conversation_checkpoints",
   "conversation_mutations",
   "agent_runtime_processes",
-  "agent_runtime_stream_records",
   "agent_runtime_work",
   "agent_runtime_aux_usage",
   "agent_runtime_interactions",
@@ -1189,10 +1188,6 @@ export class AgentRuntimeStore {
         db.prepare(
           "DELETE FROM agent_runtime_asset_sessions WHERE session_id=?",
         ).run(id);
-      const deleteStream = db.prepare(
-        "DELETE FROM agent_runtime_stream_records WHERE session_id = ?",
-      );
-      for (const id of deleteIds) deleteStream.run(id);
       const deleteWork = db.prepare(
         "DELETE FROM agent_runtime_work WHERE session_id = ?",
       );

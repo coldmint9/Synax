@@ -302,10 +302,6 @@ async function shutdownRuntime(): Promise<void> {
   mcpClientManager.closeAll();
   await stopRustRuntimeSidecar(rustRuntimeSidecar);
   rustRuntimeSidecar = null;
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
-    try { await (await import("../modules/agent-runtime/journal-writer.js")).journalWriter.close(); }
-    catch (error) { failed = true; pinoLogger.error({ error }, "journal writer shutdown failed"); }
-  }
   runtimeHost.release();
   closeDb();
   process.exit(failed ? 1 : 0);

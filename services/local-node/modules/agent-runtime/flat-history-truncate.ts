@@ -182,7 +182,6 @@ export function applyFlatHistory(
       "agent_runtime_thinking_summaries",
       "agent_runtime_work",
       "agent_plan_artifacts",
-      "agent_runtime_stream_records",
       "conversation_checkpoints",
       "conversation_history_journal",
       "conversation_history_tracking",
