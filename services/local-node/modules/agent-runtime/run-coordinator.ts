@@ -226,6 +226,48 @@ export class RunCoordinator {
     try {
       const queued = await inputQueueRuntime.snapshot(sessionId);
       if (this.isActive(sessionId)) return false;
+      if (runtimeFacade.streamMode() === "authoritative") {
+        const candidate = getRawSqlite().transaction(() => {
+          const session = agentRuntimeStore.getSession(sessionId);
+          const work = workStore.current(sessionId);
+          const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
+          if (
+            (!forced && session.status !== "completed") ||
+            session.activeRunId ||
+            session.parentSessionId ||
+            session.sessionMetadata?.runtimeControl ||
+            (!forced && latestRun?.status !== "completed") ||
+            (!forced && latestRun?.stopReason === "round_yielded" && goalContinuationInput(sessionId, latestRun.id) !== null) ||
+            (!forced && work && work.status !== "completed" && !(work.status === "active" && latestRun.stopReason === "round_yielded" && !usesGoalWorkflow(session))) ||
+            (!forced && interactionService.pending(sessionId))
+          ) return null;
+          const forcedId = queued.forceInjectItemId;
+          return queued.items.find(item => item.id === forcedId) ?? queued.items[0] ?? null;
+        })();
+        if (!candidate) return false;
+        const accepted = await acceptRuntimeRunAuthoritative(
+          sessionId,
+          {
+            message: candidate.message,
+            contentParts: candidate.contentParts,
+            references: candidate.references,
+            referenceContext: candidate.referenceContext,
+            model: candidate.model ?? undefined,
+            reasoningEffort: candidate.reasoningEffort,
+          },
+          `input-queue:${candidate.id}`,
+          "turn",
+          candidate,
+        );
+        if (!accepted.reused) {
+          const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
+          this.launch(sessionId, accepted.run.id, "turn", {
+            ...runtime.input,
+            acceptedRunId: accepted.run.id,
+          });
+        }
+        return true;
+      }
       const accepted = getRawSqlite().transaction(() => {
         const session = agentRuntimeStore.getSession(sessionId);
         const work = workStore.current(sessionId);
