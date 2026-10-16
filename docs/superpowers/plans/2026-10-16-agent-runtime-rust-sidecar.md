@@ -381,6 +381,8 @@ runtime-sidecar/
 - HTTP `runs.submit`、HTTP continue、history edit、Git 初始 review 和 goal continuation 在 authoritative 模式走异步 Rust-first admission；Node SQLite run/session 行只作为暂时兼容镜像，在 Rust durable fence 成功后写入。
 - queued input / forced goal continuation 将 queue item 放入 admission document，Rust 负责原子消费队列；旧同步路径仍保留给非 authoritative fixture 和离线历史工具。
 - canonical stream append 成功后，Rust history 即时写入 `runtime.run`、`runtime.step`、`runtime.message`、`runtime.tool_call` 和 `runtime.event` 对象；terminal finish 的 SQLite 扫描降为补偿性重建路径。
+- `run_part` 写入也进入 authoritative history mirror；Rust `session_patch` 允许 recovery 原子修正 status、activeRunId、completedAt 和 updatedAt。
+- authoritative `recoverRuntime` 已先读取 Rust projection、history run、process lease 和 control state；无未确认 lease 的 stale run 走 Rust interrupted finish，仍有 lease 时保留 `stop_unconfirmed` recovery fence。
 - macOS 本地 cargo wrapper 支持 Homebrew LLVM，并使用 `DYLD_FALLBACK_LIBRARY_PATH`，避免 Homebrew LLVM 污染 rustc 自身 LLVM；`npm run runtime-sidecar:check` 已通过。
 - 5000 session / 64 concurrency / 4 stream batches / 1 KiB payload：35000 operations，p50 1.438ms、p95 3.393ms、p99 6.542ms、max 24.712ms（macOS arm64，本地验收数据，不是发布承诺）。
 - 真实 lifecycle、真实 provider-worker、Rust 56 项单元测试、focused Node suite 与 typecheck 通过。全量 Vitest 当前可复现的失败仍为既有 `context-epochs.test.ts` 3 项 compaction fixture（预期 checkpoint 未生成），与本轮 Rust sidecar 改动无直接关联；全量运行因慢 fixture 未作为发布 gate。
