@@ -1,4 +1,5 @@
 import { decodeRuntimePayload } from '../../../../packages/runtime-protocol/stream.js';
+import { randomUUID } from 'node:crypto';
 import { projectReplayChunk } from './runtime-stream-projection.js';
 import { assertBatchInput } from './checkpoints/version-runtime/batch-input.js';
 import { normalizeAgentSessionStatus, projectSessionState } from './session-projection.js';
@@ -9,6 +10,7 @@ import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 const RETENTION = 1024;
 const MAX_READ_BYTES = 1024 * 1024;
+const durableProducerId = `runtime-journal:${process.pid}:${randomUUID()}`;
 
 export interface RuntimeStreamRecord {
   sequence: number;
@@ -86,7 +88,7 @@ class RuntimeJournal {
       const key = `producer:${sessionId}`;
       const sequence = (this.producerSequences.get(key) ?? 0) + 1;
       this.producerSequences.set(key, sequence);
-      await runtimeFacade.appendStreamAuthoritative({ sessionId, runId, producerId: `runtime-journal:${process.pid}`, producerSequence: sequence, epoch: fence.epoch, revision: fence.revision, chunks, state: await runtimeFacade.authoritativeRecordState(sessionId) });
+      await runtimeFacade.appendStreamAuthoritative({ sessionId, runId, producerId: durableProducerId, producerSequence: sequence, epoch: fence.epoch, revision: fence.revision, chunks, state: await runtimeFacade.authoritativeRecordState(sessionId) });
       return;
     }
     this.appendBatch(sessionId, runId, chunks);
