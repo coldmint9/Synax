@@ -303,10 +303,11 @@ function bootstrapMigrationLedger(
 }
 
 function shouldRunMigrationsInThisProcess(): boolean {
-  return (
-    process.env.SYNAX_AGENT_SESSION_CHILD !== "1" &&
-    process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative"
-  );
+  return process.env.SYNAX_AGENT_SESSION_CHILD !== "1";
+}
+
+function shouldInstallConversationHistoryTriggers(): boolean {
+  return shouldRunMigrationsInThisProcess() && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative";
 }
 
 function runMigrations(sqlite: NativeDatabase.Database): void {
@@ -555,7 +556,7 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
     try {
       runMigrations(sqlite);
       ensureRuntimeSchema(sqlite);
-      if (shouldRunMigrationsInThisProcess()) installConversationHistoryTriggers(sqlite);
+      if (shouldInstallConversationHistoryTriggers()) installConversationHistoryTriggers(sqlite);
     } catch (error) {
       sqlite.close();
       throw error;
