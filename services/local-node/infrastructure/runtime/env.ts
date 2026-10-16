@@ -33,10 +33,16 @@ function defaultDataRoot(): string {
 /** 数据根目录，统一存放于 ~/.synax */
 export const DATA_ROOT = env("DATA_ROOT", defaultDataRoot());
 
-/** New production sessions use flat SQLite. Versioned mode remains available
- * for compatibility fixtures and explicit legacy-data recovery. */
-export const HISTORY_MODE = env("SYNAX_HISTORY_MODE", NODE_ENV === "test" || process.env.VITEST ? "versioned" : "flat");
-export const SIMPLE_HISTORY_STORAGE = HISTORY_MODE !== "versioned";
+/** Authoritative sidecar hosts never create new flat SQLite history. Flat mode
+ * remains available only to explicit tests and offline migration tooling. */
+export const RUNTIME_SIDECAR_AUTHORITATIVE =
+  process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" ||
+  process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR === "1";
+export const HISTORY_MODE = RUNTIME_SIDECAR_AUTHORITATIVE
+  ? "versioned"
+  : env("SYNAX_HISTORY_MODE", NODE_ENV === "test" || process.env.VITEST ? "versioned" : "flat");
+export const SIMPLE_HISTORY_STORAGE =
+  !RUNTIME_SIDECAR_AUTHORITATIVE && HISTORY_MODE !== "versioned";
 export const TRANSCRIPT_STORAGE = env(
   "SYNAX_TRANSCRIPT_STORAGE",
   "legacy",
