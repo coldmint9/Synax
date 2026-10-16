@@ -65,6 +65,10 @@ try {
   assert(events.events.some(event => event.kind === 'message_delta'));
   const history = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId: session.id, requestId: 'provider-history-runs', operation: 'list_runs', payload: {} }))) as { items: Array<{ id: string }> };
   assert(history.items.some(item => item.id === accepted.run.id));
+  const head = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId: session.id, requestId: 'provider-history-head', operation: 'head_read', payload: {} }))) as { objectId?: string; revision: number };
+  assert(typeof head.objectId === 'string' && head.revision > 0, 'terminal history must publish a reachable head');
+  const integrity = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId: '__system__', requestId: 'provider-history-verify', operation: 'verify', payload: {} }))) as { ok: boolean };
+  assert.equal(integrity.ok, true);
   client.close();
   console.log('Real provider worker smoke passed: forked agent-session-runner → local OpenAI-compatible HTTP provider → Node coordinator → Rust authoritative stream/history.');
 } finally {

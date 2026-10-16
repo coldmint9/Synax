@@ -13,7 +13,7 @@ import {
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
 import { agentEventService } from "./event-service.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
-import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
+import type { AgentRun, AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import {
   acceptRuntimeRun,
@@ -786,12 +786,17 @@ export class RunCoordinator {
     after = 0,
     signal?: AbortSignal,
   ): AsyncGenerator<RuntimeStreamRecord> {
-    if (agentRuntimeStore.getRun(runId).sessionId !== sessionId)
-      throw new AgentRuntimeError(
-        "Run belongs to another session.",
-        "NOT_FOUND",
-        404,
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+      const historical = (await runtimeFacade.listRunHistory(sessionId)).some(item =>
+        (item as { id?: unknown; sessionId?: unknown }).id === runId &&
+        (item as { sessionId?: unknown }).sessionId === sessionId,
       );
+      if (snapshot.run?.id !== runId && !historical)
+        throw new AgentRuntimeError("Run belongs to another session.", "NOT_FOUND", 404);
+    } else if (agentRuntimeStore.getRun(runId).sessionId !== sessionId) {
+      throw new AgentRuntimeError("Run belongs to another session.", "NOT_FOUND", 404);
+    }
     let cursor = after;
     while (!signal?.aborted) {
       const records = await runtimeJournal.readDurable(
@@ -807,12 +812,14 @@ export class RunCoordinator {
         if (record.chunk.type === "done") return;
       }
       if (!records.length) {
-        const run = agentRuntimeStore.getRun(runId);
-        if (
-          !this.isActive(sessionId) &&
-          !["queued", "running"].includes(run.status)
-        )
-          return;
+        if (runtimeFacade.streamMode() === "authoritative") {
+          const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+          const run = snapshot.run?.id === runId ? snapshot.run : (await runtimeFacade.listRunHistory(sessionId)).find(item => (item as { id?: unknown }).id === runId) as AgentRun | undefined;
+          if (!this.isActive(sessionId) && run && !["queued", "running"].includes(run.status)) return;
+        } else {
+          const run = agentRuntimeStore.getRun(runId);
+          if (!this.isActive(sessionId) && !["queued", "running"].includes(run.status)) return;
+        }
         await runtimeJournal.wait(sessionId, signal);
       }
     }

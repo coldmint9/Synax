@@ -14,11 +14,11 @@ it('reads a persisted projection without touching legacy session storage', async
   expect(read).not.toHaveBeenCalled(); expect(client.seedUi).not.toHaveBeenCalled();
 });
 
-it('defaults a supervised host to authoritative mode while preserving an explicit legacy escape hatch', () => {
+it('defaults a supervised host to authoritative mode while allowing an explicit disabled test transport', () => {
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SUPERVISOR', '1');
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', '');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
-  vi.stubEnv('SYNAX_RUNTIME_LEGACY', '1');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'disabled');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('disabled');
 });
 it('uses the persisted result of create-if-absent when another command wins seed initialization', async () => {

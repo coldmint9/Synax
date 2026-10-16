@@ -38,7 +38,7 @@ const tables = [
 ];
 
 function usage(): never {
-  console.error('usage: npm run runtime:migrate -- <export|import|verify|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
+  console.error('usage: npm run runtime:migrate -- <export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
   process.exit(2);
 }
 
@@ -171,6 +171,114 @@ async function verifyBundle(): Promise<void> {
   if (quarantine.length) process.exitCode = 1;
 }
 
+type RuntimeVerificationIssue = { sessionId?: string; reason: string };
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function verifyRuntime(): Promise<void> {
+  const expected = existsSync(input)
+    ? await loadBundle()
+    : undefined;
+  const expectedById = new Map<string, SessionBundle>();
+  for (const item of expected?.sessions ?? []) {
+    if (typeof item.session?.id === 'string') expectedById.set(item.session.id, item);
+  }
+
+  const result = await withSidecar(async client => {
+    const issues: RuntimeVerificationIssue[] = [];
+    const list = asRecord(JSON.parse(new TextDecoder().decode(await client.sessionList())));
+    const sessions = Array.isArray(list.items) ? list.items : [];
+    const seen = new Set<string>();
+
+    const historyVerify = asRecord(JSON.parse(new TextDecoder().decode(await client.historyCommand({
+      sessionId: '__system__',
+      requestId: `verify-runtime:history:${Date.now()}`,
+      operation: 'verify',
+      payload: {},
+    }))));
+    if (historyVerify.ok !== true) {
+      issues.push({ reason: `runtime-history verification failed: ${JSON.stringify(historyVerify)}` });
+    }
+
+    for (const item of sessions) {
+      const session = asRecord(item);
+      const sessionId = typeof session.id === 'string' ? session.id : undefined;
+      if (!sessionId) {
+        issues.push({ reason: 'Rust session list contains an item without a string id' });
+        continue;
+      }
+      seen.add(sessionId);
+      const expectedItem = expectedById.get(sessionId);
+      try {
+        const projection = asRecord(JSON.parse(new TextDecoder().decode(await client.uiSnapshot(sessionId))));
+        const projectedSession = asRecord(projection.session);
+        const hot = await client.snapshot(sessionId);
+        if (projectedSession.id !== sessionId) issues.push({ sessionId, reason: 'projection session id mismatch' });
+        if ((projectedSession.activeRunId ?? null) !== (hot.activeRunId ?? null)) issues.push({ sessionId, reason: 'projection activeRunId differs from runtime-hot fence' });
+        if (projection.cursor !== hot.cursor) issues.push({ sessionId, reason: `projection cursor ${String(projection.cursor)} differs from hot cursor ${String(hot.cursor)}` });
+
+        let cursor = Math.max(0, hot.retainedFrom - 1);
+        let delivered = 0;
+        for (let page = 0; page < 64 && cursor < hot.cursor; page++) {
+          const batch = await client.replay(sessionId, cursor);
+          if (batch.events.length === 0) {
+            issues.push({ sessionId, reason: `replay ended at ${cursor} before hot cursor ${hot.cursor}` });
+            break;
+          }
+          for (const event of batch.events) {
+            if (!Number.isSafeInteger(event.sequence) || event.sequence <= cursor) {
+              issues.push({ sessionId, reason: 'replay sequence is not strictly increasing' });
+              break;
+            }
+            cursor = event.sequence;
+            delivered++;
+          }
+        }
+        if (cursor !== hot.cursor) issues.push({ sessionId, reason: `replay ended at ${cursor}, expected ${hot.cursor}` });
+        if (delivered > 1024) issues.push({ sessionId, reason: 'replay exceeded the bounded retention window' });
+
+        const head = asRecord(JSON.parse(new TextDecoder().decode(await client.historyCommand({
+          sessionId,
+          requestId: `verify-runtime:head:${sessionId}`,
+          operation: 'head_read',
+          payload: {},
+        }))));
+        const hasLegacyRows = expectedItem
+          ? Object.values(expectedItem.tables ?? {}).some(rows => Array.isArray(rows) && rows.length > 0)
+          : false;
+        if (hasLegacyRows && typeof head.objectId !== 'string') {
+          issues.push({ sessionId, reason: 'migrated session has legacy rows but no runtime-history head' });
+        }
+
+        if (expectedItem) {
+          const legacySession = expectedItem.session;
+          for (const key of ['id', 'project_id', 'status'] as const) {
+            const expectedValue = key === 'id' ? legacySession.id : legacySession[key];
+            const actualKey = key === 'project_id' ? 'projectId' : key;
+            if (expectedValue !== undefined && session[actualKey] !== expectedValue) {
+              issues.push({ sessionId, reason: `session field ${actualKey} differs from migration input` });
+            }
+          }
+        }
+      } catch (error) {
+        issues.push({ sessionId, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    for (const sessionId of expectedById.keys()) {
+      if (!seen.has(sessionId)) issues.push({ sessionId, reason: 'migration input session is missing from Rust session list' });
+    }
+    return { sessions: sessions.length, issues };
+  });
+
+  console.log(JSON.stringify({ command: 'verify-runtime', input: existsSync(input) ? input : undefined, ...result, ok: result.issues.length === 0 }, null, 2));
+  if (result.issues.length) process.exitCode = 1;
+}
+
 async function withSidecar<T>(fn: (client: RuntimeSidecarClient) => Promise<T>): Promise<T> {
   const supervisor = new RustRuntimeSupervisor({ dataRoot });
   await supervisor.start();
@@ -238,9 +346,10 @@ async function purgeLegacy(): Promise<void> {
   console.log(JSON.stringify({ command: 'purge-legacy', database, deleted, force: true }, null, 2));
 }
 
-if (!command || !['export', 'import', 'verify', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
+if (!command || !['export', 'import', 'verify', 'verify-runtime', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
 if (command === 'export') await exportLegacy();
 else if (command === 'import') await importBundle();
 else if (command === 'verify') await verifyBundle();
+else if (command === 'verify-runtime') await verifyRuntime();
 else if (command === 'rebuild-index') await rebuildIndex();
 else await purgeLegacy();

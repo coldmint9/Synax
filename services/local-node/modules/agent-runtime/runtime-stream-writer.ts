@@ -102,7 +102,6 @@ export class RuntimeStreamWriter {
       logger.warn({ sessionId: this.sessionId, runId }, '[runtime-sidecar] shadow stream queue full; mirroring stopped');
       return;
     }
-    const state = runtimeRecordState(this.sessionId);
     const producerSequence = ++this.sidecarProducerSequence;
     this.sidecarPending++;
     // Preserve producer order even when multiple flushes overlap. Capture the epoch once;
@@ -112,6 +111,9 @@ export class RuntimeStreamWriter {
       if (!this.isCurrent()) return;
       this.sidecarFence ??= runtimeFacade.streamFence(this.sessionId, runId);
       const fence = await this.sidecarFence;
+      const state = authoritative
+        ? await runtimeFacade.authoritativeRecordState(this.sessionId)
+        : runtimeRecordState(this.sessionId);
       const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
         producerSequence, ...fence, chunks, state };
       if (authoritative) await runtimeFacade.appendStreamAuthoritative(input);

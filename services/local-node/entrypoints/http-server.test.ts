@@ -5,9 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
-it('selects the single storage owner before startup maintenance opens the database', async () => {
+it('selects the single storage owner for an explicitly disabled sidecar test host before startup maintenance opens the database', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-host-startup-'));
-  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'production', LOG_LEVEL: 'error', SYNAX_DESKTOP_SIDECAR: '1', SYNAX_RUNTIME_LEGACY: '1' };
+  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'production', LOG_LEVEL: 'error', SYNAX_DESKTOP_SIDECAR: '1', SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '0', SYNAX_RUNTIME_SIDECAR_STREAM: 'disabled' };
   for (const key of Object.keys(env)) if (key.startsWith('SYNAX_STORAGE_OWNER_') || key === 'SYNAX_RUNTIME_HOST_ID' || key === 'SYNAX_RUNTIME_DATA_ROOT' || key === 'VITEST') delete env[key as keyof typeof env];
   const server = fileURLToPath(new URL('./http-server.ts', import.meta.url));
   const database = fileURLToPath(new URL('../infrastructure/database/index.ts', import.meta.url));

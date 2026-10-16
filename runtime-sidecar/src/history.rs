@@ -170,6 +170,7 @@ impl HistoryStore {
             "list_steps" => self.list_indexed(session_id, "step")?,
             "list_parts" => self.list_indexed(session_id, "part")?,
             "list_tool_calls" => self.list_indexed(session_id, "tool")?,
+            "list_events" => self.list_indexed(session_id, "event")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index()?,
             "gc" => self.gc()?,
@@ -220,6 +221,7 @@ impl HistoryStore {
                 "runtime.step" => Some("step"),
                 "runtime.part" => Some("part"),
                 "runtime.tool_call" => Some("tool"),
+                "runtime.event" => Some("event"),
                 _ => None,
             };
             if let Some(index_kind) = index_kind {
@@ -365,11 +367,35 @@ impl HistoryStore {
             match serde_json::from_slice::<HistoryObject>(&value) {
                 Ok(object) => {
                     objects += 1;
-                    if object.object_id != String::from_utf8_lossy(&key).trim_start_matches("o/") {
-                        invalid.push(String::from_utf8_lossy(&key).to_string());
+                    let key_id = String::from_utf8_lossy(&key).trim_start_matches("o/").to_owned();
+                    let identity = serde_json::to_vec(&(object.kind.clone(), object.value.clone(), object.refs.clone()))?;
+                    let digest_id = format!("sha256:{:x}", Sha256::digest(&identity));
+                    if object.object_id != key_id || object.object_id != digest_id {
+                        invalid.push(format!("{key_id}:content-hash"));
+                    }
+                    for reference in &object.refs {
+                        if self.get(CF_OBJECTS, object_key(reference).as_bytes())?.is_none() {
+                            invalid.push(format!("{key_id}:missing-ref:{reference}"));
+                        }
                     }
                 }
                 Err(_) => invalid.push(String::from_utf8_lossy(&key).to_string()),
+            }
+        }
+        for item in self.db.iterator_cf(self.cf(CF_HEADS)?, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            let head: HistoryHead = serde_json::from_slice(&value)?;
+            if let Some(object_id) = head.object_id.as_deref() {
+                if self.get(CF_OBJECTS, object_key(object_id).as_bytes())?.is_none() {
+                    invalid.push(format!("{}:missing-head:{object_id}", String::from_utf8_lossy(&key)));
+                }
+            }
+        }
+        for item in self.db.iterator_cf(self.cf(CF_PINS)?, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            let object_id = String::from_utf8_lossy(&value);
+            if self.get(CF_OBJECTS, object_key(&object_id).as_bytes())?.is_none() {
+                invalid.push(format!("{}:missing-pin:{object_id}", String::from_utf8_lossy(&key)));
             }
         }
         Ok(serde_json::to_vec(&serde_json::json!({"objects":objects,"invalid":invalid,"ok":invalid.is_empty()}))?)
@@ -481,11 +507,14 @@ mod tests {
         let head = store.command("s", "head", "head_switch", serde_json::to_vec(&serde_json::json!({"objectId":second_id,"expectedRevision":0})).unwrap().as_slice()).unwrap();
         assert_eq!(serde_json::from_slice::<HistoryHead>(&head).unwrap().revision, 1);
         store.command("s", "pin", "pin", serde_json::to_vec(&serde_json::json!({"pinId":"checkpoint","objectId":first_id})).unwrap().as_slice()).unwrap();
+        store.command("s", "event-1", "put_object", serde_json::to_vec(&serde_json::json!({"kind":"runtime.event","value":{"id":"event-1","sessionId":"s","type":"run_started"}})).unwrap().as_slice()).unwrap();
+        let events = store.command("s", "list-events", "list_events", b"{}").unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&events).unwrap()["items"][0]["id"], "event-1");
         let gc = store.command("s", "gc", "gc", b"{}").unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&gc).unwrap()["deleted"], 0);
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&gc).unwrap()["deleted"], 1, "the unreferenced event is collected");
         store.command("s", "unpin", "unpin", br#"{"pinId":"checkpoint"}"#).unwrap();
         let gc = store.command("s", "gc-2", "gc", b"{}").unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&gc).unwrap()["deleted"], 0, "head still retains both objects");
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&gc).unwrap()["deleted"], 0, "head still retains both referenced objects");
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

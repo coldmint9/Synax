@@ -36,6 +36,8 @@ try {
   assert.equal(exported.sessions.length, 1);
   await invoke('verify', '--data-root', root, '--input', bundle);
   await invoke('import', '--data-root', root, '--input', bundle);
+  const runtime = await invoke('verify-runtime', '--data-root', root, '--input', bundle);
+  assert.match(runtime.stdout, /"ok": true/);
   const rebuilt = await invoke('rebuild-index', '--data-root', root);
   assert.match(rebuilt.stdout, /"rebuilt": true/);
   console.log('Runtime migration smoke passed: SQLite export, quarantine-aware verify, immutable history import and index rebuild.');

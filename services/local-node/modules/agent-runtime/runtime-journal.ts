@@ -194,7 +194,7 @@ class RuntimeJournal {
         epoch: fence.epoch,
         revision: fence.revision,
         chunks,
-        state: runtimeRecordState(sessionId),
+        state: await runtimeFacade.authoritativeRecordState(sessionId),
       });
       return;
     }
