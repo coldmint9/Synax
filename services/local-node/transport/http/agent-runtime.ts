@@ -650,7 +650,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
     try {
       const all = (await runtimeFacade.listSessionProjection())
         .map(item => projectSessionState(item as never))
-        .filter(session => session.sessionMetadata?.archivedAt === undefined)
+        .filter(session => !session.sessionMetadata?.archivedAt)
         .filter(session => !filter.projectId || session.projectId === filter.projectId)
         .filter(session => !filter.nodeId || session.nodeId === filter.nodeId)
         .filter(session => !status || session.status === status)
@@ -739,13 +739,21 @@ agentRuntimeRoutes.get("/session-archives", (c) => {
   }
 });
 
-agentRuntimeRoutes.post("/session-archives/:batchId/restore", (c) => {
+agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
   try {
+    const restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(
+      c.req.param("batchId"),
+    );
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await Promise.all(restoredSessionIds.map(id => runtimeFacade.sessionPatch(
+        id,
+        `restore:${c.req.param("batchId")}:${id}`,
+        { sessionMetadata: { archivedAt: null, archiveBatchId: null } },
+      )));
+    }
     return c.json({
       ok: true,
-      restoredSessionIds: agentRuntimeStore.restoreArchivedBatch(
-        c.req.param("batchId"),
-      ),
+      restoredSessionIds,
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -804,6 +812,13 @@ async function archiveSessionRoute(c: Context) {
     if (!id) throw new AgentValidationError("Session id is required.");
     const control = await readControl(c);
     const result = await archiveSessionAfterShutdown(id, control.runId);
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await Promise.all(result.archivedSessionIds.map(archivedId => runtimeFacade.sessionPatch(
+        archivedId,
+        `archive:${result.archiveBatchId}:${archivedId}`,
+        { sessionMetadata: { archivedAt: result.archivedAt, archiveBatchId: result.archiveBatchId } },
+      )));
+    }
     for (const archivedId of result.archivedSessionIds)
       invalidateSessionEnvironment(archivedId);
     if (result.parentId) invalidateSessionEnvironment(result.parentId);
