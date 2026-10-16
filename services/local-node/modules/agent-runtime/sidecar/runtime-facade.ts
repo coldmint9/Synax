@@ -129,6 +129,7 @@ export class RuntimeFacade {
         try { await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`, status, epoch: state.epoch, revision: state.revision, run }); break; }
         catch (error) { if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error; }
       }
+      await this.persistRunHistory(run);
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
@@ -226,6 +227,28 @@ export class RuntimeFacade {
     if (!client) throw new Error('Runtime sidecar client is not configured.');
     const bytes = await client.historyCommand(input);
     return JSON.parse(Buffer.from(bytes).toString('utf8'));
+  }
+
+  async persistRunHistory(run: unknown & { id?: string; sessionId?: string }): Promise<void> {
+    const sessionId = typeof run.sessionId === 'string' ? run.sessionId : undefined;
+    const runId = typeof run.id === 'string' ? run.id : undefined;
+    if (!sessionId || !runId) return;
+    await this.historyCommand({
+      sessionId,
+      requestId: `history-run:${runId}`,
+      operation: 'put_object',
+      payload: { kind: 'runtime.run', value: run },
+    });
+  }
+
+  async listRunHistory(sessionId: string): Promise<unknown[]> {
+    const state = await this.historyCommand({
+      sessionId,
+      requestId: `history-list-runs:${sessionId}`,
+      operation: 'list_runs',
+      payload: {},
+    }) as { items?: unknown[] };
+    return state.items ?? [];
   }
 
   async uiSnapshotAuthoritative(sessionId: string): Promise<{

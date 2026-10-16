@@ -1013,8 +1013,18 @@ agentRuntimeRoutes.get(
   },
 );
 
-agentRuntimeRoutes.get("/sessions/:sessionId/runs", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/runs", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const sessionId = c.req.param("sessionId");
+      const [history, snapshot] = await Promise.all([
+        runtimeFacade.listRunHistory(sessionId),
+        runtimeFacade.uiSnapshotAuthoritative(sessionId),
+      ]);
+      const items = [...history] as Array<{ id?: string }>;
+      if (snapshot.run && !items.some(item => item.id === (snapshot.run as { id?: string }).id)) items.unshift(snapshot.run);
+      return c.json({ items });
+    }
     return c.json({
       items: agentLoopRuntime.listRuns(c.req.param("sessionId")),
     });

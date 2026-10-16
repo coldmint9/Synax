@@ -165,6 +165,7 @@ impl HistoryStore {
             "pin" => self.pin(session_id, &value)?,
             "unpin" => self.unpin(session_id, &value)?,
             "page" => self.page(&value)?,
+            "list_runs" => self.list_runs(session_id)?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index()?,
             "gc" => self.gc()?,
@@ -209,6 +210,18 @@ impl HistoryStore {
         let mut batch = WriteBatch::default();
         if self.get(CF_OBJECTS, object_key(&object_id).as_bytes())?.is_none() {
             batch.put_cf(self.cf(CF_OBJECTS)?, object_key(&object_id).as_bytes(), &bytes);
+            if kind == "runtime.run" {
+                if let (Some(session_id), Some(run_id)) = (
+                    object.value["sessionId"].as_str(),
+                    object.value["id"].as_str(),
+                ) {
+                    batch.put_cf(
+                        self.cf(CF_INDEXES)?,
+                        format!("run/{session_id}/{run_id}").as_bytes(),
+                        object_id.as_bytes(),
+                    );
+                }
+            }
             self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(&serde_json::json!({"objectId": object_id, "bytes": bytes.len()}))?)
@@ -311,6 +324,25 @@ impl HistoryStore {
             objects.push(object);
         }
         Ok(serde_json::to_vec(&serde_json::json!({"items":objects,"next":queue.front()}))?)
+    }
+
+    fn list_runs(&self, session_id: &str) -> Result<Vec<u8>, HistoryError> {
+        let prefix = format!("run/{session_id}/");
+        let mut items = Vec::new();
+        for item in self.db.iterator_cf(
+            self.cf(CF_INDEXES)?,
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
+        ) {
+            let (key, value) = item?;
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            let object_id = String::from_utf8_lossy(&value).to_string();
+            if let Ok(bytes) = self.read_object(&object_id) {
+                if let Ok(object) = serde_json::from_slice::<HistoryObject>(&bytes) {
+                    items.push(object.value);
+                }
+            }
+        }
+        Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?)
     }
 
     fn verify(&self) -> Result<Vec<u8>, HistoryError> {
