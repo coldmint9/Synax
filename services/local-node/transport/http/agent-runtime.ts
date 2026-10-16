@@ -806,16 +806,26 @@ agentRuntimeRoutes.get("/session-archives", async (c) => {
 
 agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
   try {
-    const restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(
-      c.req.param("batchId"),
-    );
     if (runtimeFacade.streamMode() === "authoritative") {
-      await Promise.all(restoredSessionIds.map(id => runtimeFacade.sessionPatch(
-        id,
-        `restore:${c.req.param("batchId")}:${id}`,
+      const batchId = c.req.param("batchId");
+      const projected = (await runtimeFacade.listSessionProjection())
+        .map(item => projectSessionState(item as never) as AgentSession)
+        .filter(session => session.sessionMetadata?.archiveBatchId === batchId && session.sessionMetadata?.archivedAt);
+      if (!projected.some(session => session.id === batchId)) throw new AgentNotFoundError(batchId);
+      await Promise.all(projected.map(session => runtimeFacade.sessionPatch(
+        session.id,
+        `restore:${batchId}:${session.id}`,
         { sessionMetadata: { archivedAt: null, archiveBatchId: null } },
       )));
+      let restoredSessionIds = projected.map(session => session.id);
+      try {
+        restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(batchId);
+      } catch (error) {
+        logger.warn({ batchId, error }, "[runtime] archived batch compatibility mirror restore failed");
+      }
+      return c.json({ ok: true, restoredSessionIds });
     }
+    const restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(c.req.param("batchId"));
     return c.json({
       ok: true,
       restoredSessionIds,
