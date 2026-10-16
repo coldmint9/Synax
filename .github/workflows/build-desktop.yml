@@ -79,6 +79,19 @@ jobs:
           SYNAX_UPDATE_PUBLIC_KEY: ${{ vars.SYNAX_UPDATE_PUBLIC_KEY }}
         run: npm run build:electron
 
+      - name: Install Rust native build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Install Rust native build dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
+            choco install llvm -y --no-progress
+          }
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Check Rust runtime sidecar for the target platform
         run: npm run runtime-sidecar:check
 
