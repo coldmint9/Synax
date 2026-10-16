@@ -1,7 +1,7 @@
-import type { RuntimeRecordState } from '../../../../../packages/runtime-protocol/stream.js';
+import { decodeUiSnapshot, type RuntimeRecordState } from '../../../../../packages/runtime-protocol/stream.js';
 import { RuntimeSidecarClient, RuntimeSidecarError } from './sidecar-client.js';
 import type { AcceptedRuntimeInput } from '../run-admission.js';
-import type { AgentRun } from '../contracts.js';
+import type { AgentRun, AgentSession, AgentRunStreamChunk } from '../contracts.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
 
 export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
@@ -77,6 +77,7 @@ export class RuntimeFacade {
       return;
     }
     try {
+      if (authoritative) await this.ensureUiProjection(input.sessionId);
       const state = await client.snapshot(input.sessionId);
       const admission = await client.admitRun({
         sessionId: input.sessionId,
@@ -114,6 +115,34 @@ export class RuntimeFacade {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
     }
+  }
+
+  /** Seed only an empty Rust session during cutover. Existing projections never read SQL. */
+  async ensureUiProjection(sessionId: string): Promise<void> {
+    await this.uiSnapshotAuthoritative(sessionId);
+  }
+
+  async uiSnapshotAuthoritative(sessionId: string): Promise<{
+    session: AgentSession; run: AgentRun | null; cursor: number;
+    liveChunks: AgentRunStreamChunk[]; completedStepIds: string[];
+  }> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    let bytes: Uint8Array;
+    try { bytes = await client.uiSnapshot(sessionId); }
+    catch (error) {
+      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
+      const { agentRuntimeStore } = await import('../session-store.js');
+      const session = agentRuntimeStore.getSession(sessionId);
+      if (agentRuntimeStore.listRuns(sessionId).some(run => run.status !== 'queued')) {
+        throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MIGRATION_REQUIRED',
+          message: 'Existing executed runs require offline projection migration.' });
+      }
+      // Seed is create-if-absent, serialized by the session actor. It cannot overwrite
+      // live data; pre-existing runs without a projection require offline migration.
+      bytes = await client.seedUi(sessionId, Buffer.from(JSON.stringify(session)));
+    }
+    return decodeUiSnapshot(bytes, sessionId);
   }
 
   async uiTicket(sessionId: string, clientId: string) {

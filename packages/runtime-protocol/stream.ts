@@ -23,3 +23,16 @@ export function decodeRuntimePayload(bytes: Uint8Array): RuntimePayload {
   }
   return value as RuntimePayload;
 }
+
+/** Both the browser and HTTP compatibility gateway validate the persisted snapshot. */
+export function decodeUiSnapshot(bytes: Uint8Array, sessionId: string) {
+  const value = JSON.parse(new TextDecoder().decode(bytes));
+  if (value?.session?.id !== sessionId || typeof value.session.status !== 'string' ||
+      !Number.isSafeInteger(value.cursor) || value.cursor < 0 ||
+      !Array.isArray(value.liveChunks) || value.liveChunks.some((chunk: { type?: unknown }) => typeof chunk?.type !== 'string') ||
+      !Array.isArray(value.completedStepIds) || value.completedStepIds.some((id: unknown) => typeof id !== 'string') ||
+      !(value.run === null || (typeof value.run?.id === 'string' && value.run.sessionId === sessionId))) {
+    throw new Error('Invalid persisted runtime UI snapshot.');
+  }
+  return value;
+}

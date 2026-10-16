@@ -137,6 +137,16 @@ export class RuntimeSidecarClient {
     ).then((envelope) => this.expect(envelope, 'ack'));
   }
 
+  async uiSnapshot(sessionId: string): Promise<Uint8Array> {
+    return this.request({ type: 'ui_snapshot' }, sessionId, 0, 0)
+      .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);
+  }
+
+  async seedUi(sessionId: string, sessionJson: Uint8Array): Promise<Uint8Array> {
+    return this.request({ type: 'seed_ui', sessionJson }, sessionId, 0, 0)
+      .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);
+  }
+
   async snapshot(sessionId: string, epoch = 0, revision = 0): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
     return this.request({ type: 'snapshot' }, sessionId, epoch, revision)
       .then((envelope) => this.expect(envelope, 'snapshot_response'));

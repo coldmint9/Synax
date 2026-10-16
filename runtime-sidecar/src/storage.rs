@@ -13,7 +13,9 @@ use crate::actor::{
     StreamEvent,
 };
 use crate::commit::Committer;
+use crate::projection::UiSnapshot;
 
+const CF_UI: &str = "ui_projections";
 const CF_SESSIONS: &str = "sessions";
 const CF_RUNS: &str = "runs";
 const CF_RECEIPTS: &str = "receipts";
@@ -171,6 +173,7 @@ impl HotStore {
             CF_STREAMS,
             CF_TRANSITIONS,
             CF_APPENDS,
+            CF_UI,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -299,6 +302,46 @@ impl HotStore {
         })?
     }
 
+    pub async fn ui_snapshot_async(
+        &self,
+        session_id: String,
+        seed: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.ui_snapshot(&session_id, seed.as_deref()))
+            .await
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+
+    pub fn ui_snapshot(
+        &self,
+        session_id: &str,
+        seed: Option<&[u8]>,
+    ) -> Result<Vec<u8>, StorageError> {
+        if let Some(bytes) = self.get(CF_UI, session_key(session_id).as_bytes())? {
+            return Ok(bytes);
+        }
+        let Some(seed) = seed else {
+            return Err(RuntimeError::ProjectionMissing.into());
+        };
+        let state = self.read_session(session_id)?;
+        if state.cursor != 0 || state.revision != 0 || state.active_run_id.is_some() {
+            return Err(RuntimeError::ProjectionMigrationRequired.into());
+        }
+        let projection = UiSnapshot::seed(session_id, seed)?;
+        let bytes = projection.encode()?;
+        let mut batch = WriteBatch::default();
+        self.put_batch(&mut batch, CF_UI, session_key(session_id), &bytes)?;
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(bytes)
+    }
+
+    fn read_ui_projection(&self, session_id: &str) -> Result<Option<UiSnapshot>, StorageError> {
+        self.get(CF_UI, session_key(session_id).as_bytes())?
+            .map(|bytes| serde_json::from_slice(&bytes).map_err(StorageError::from))
+            .transpose()
+    }
+
     pub fn snapshot(&self, session_id: &str) -> Result<SessionSnapshot, StorageError> {
         Ok(self.read_session(session_id)?.snapshot())
     }
@@ -376,6 +419,15 @@ impl HotStore {
             run_key(session_id, run_id),
             &serde_json::to_vec(&run)?,
         )?;
+        if let Some(mut projection) = self.read_ui_projection(session_id)? {
+            projection.admitted(run_id);
+            self.put_batch(
+                &mut batch,
+                CF_UI,
+                session_key(session_id),
+                &projection.encode()?,
+            )?;
+        }
         self.write_with_durability(batch, Durability::Sync)?;
         Ok(admission)
     }
@@ -455,6 +507,15 @@ impl HotStore {
             key,
             &serde_json::to_vec(&(identity, &snapshot))?,
         )?;
+        if let Some(mut projection) = self.read_ui_projection(session_id)? {
+            projection.finish(run_id, status);
+            self.put_batch(
+                &mut batch,
+                CF_UI,
+                session_key(session_id),
+                &projection.encode()?,
+            )?;
+        }
         self.write_with_durability(batch, Durability::Sync)?;
         Ok(snapshot)
     }
@@ -576,8 +637,12 @@ impl HotStore {
             .insert(producer_id.to_owned(), producer_sequence);
         let first_sequence = state.cursor + 1;
         let mut batch = WriteBatch::default();
+        let mut projection = self.read_ui_projection(session_id)?;
         for pending in events {
             state.cursor += 1;
+            if let Some(projection) = projection.as_mut() {
+                projection.apply(state.cursor, run_id, &pending)?;
+            }
             let event = StreamEvent {
                 sequence: state.cursor,
                 run_id: run_id.to_owned(),
@@ -620,6 +685,14 @@ impl HotStore {
                 receipt: receipt.clone(),
             })?,
         )?;
+        if let Some(projection) = projection {
+            self.put_batch(
+                &mut batch,
+                CF_UI,
+                session_key(session_id),
+                &projection.encode()?,
+            )?;
+        }
         self.write_with_durability(batch, durability)?;
         if self.faults.abort_after_append {
             std::process::abort();
@@ -797,6 +870,185 @@ mod tests {
             kind: kind.to_owned(),
             payload: kind.as_bytes().to_vec(),
         }
+    }
+
+    fn ui_seed() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({ "id":"s", "projectId":"p", "status":"queued", "updatedAt":"2026-10-16" })).unwrap()
+    }
+    fn ui_event(chunk: serde_json::Value) -> PendingEvent {
+        PendingEvent { kind: chunk["type"].as_str().unwrap().into(), payload: serde_json::to_vec(&serde_json::json!({ "schema":1, "chunk":chunk,
+            "state":{"status":"running","activeRunId":"r","pendingResumeToken":null,"blockedReason":null,"updatedAt":"2026-10-16"} })).unwrap() }
+    }
+    fn ui_read(store: &HotStore) -> UiSnapshot {
+        serde_json::from_slice(&store.ui_snapshot("s", None).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn materialized_snapshot_retains_the_full_live_step_after_event_retention_and_restart() {
+        let path = temp_path("projection-retention");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        for batch in 0..8 {
+            let events = (0..200).map(|index| {
+                if batch == 0 && index == 0 { ui_event(serde_json::json!({"type":"step_started","step":{"id":"step","sessionId":"s","runId":"r","index":1}})) }
+                else { ui_event(serde_json::json!({"type":"message_delta","stepId":"step","runId":"r","delta":"x"})) }
+            }).collect();
+            store
+                .append_stream_with_durability(
+                    "s",
+                    "r",
+                    "p",
+                    batch + 1,
+                    1,
+                    Durability::GroupCommit,
+                    events,
+                )
+                .unwrap();
+        }
+        assert_eq!(store.snapshot("s").unwrap().retained_from, 577);
+        let projection = ui_read(&store);
+        assert_eq!(projection.cursor, 1600);
+        assert_eq!(projection.live_chunks.len(), 2);
+        assert_eq!(
+            projection.live_chunks[1]["delta"].as_str().unwrap().len(),
+            1599
+        );
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        assert_eq!(ui_read(&store), projection);
+        // Seed retries are create-if-absent: stale SQL cannot overwrite persisted state.
+        assert_eq!(
+            serde_json::from_slice::<UiSnapshot>(
+                &store.ui_snapshot("s", Some(&ui_seed())).unwrap()
+            )
+            .unwrap(),
+            projection
+        );
+        store
+            .finish_run("s", "finish", "r", "completed", 1, 1)
+            .unwrap();
+        let completed = ui_read(&store);
+        assert_eq!(completed.session["status"], "completed");
+        assert!(completed.session["activeRunId"].is_null());
+        assert!(completed.live_chunks.is_empty());
+        assert_eq!(completed.cursor, 1600);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn projection_validation_failure_rolls_back_events_sequence_and_receipt() {
+        let path = temp_path("projection-reject");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let invalid = ui_event(
+            serde_json::json!({"type":"step_started","step":{"id":"step","sessionId":"wrong","runId":"r"}}),
+        );
+        assert!(
+            store
+                .append_stream("s", "r", "p", 1, 1, vec![invalid])
+                .is_err()
+        );
+        assert_eq!(store.snapshot("s").unwrap().cursor, 0);
+        assert_eq!(ui_read(&store).cursor, 0);
+        assert!(store.replay("s", 0).unwrap().is_empty());
+        store
+            .append_stream(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                vec![ui_event(serde_json::json!({"type":"event"}))],
+            )
+            .unwrap();
+        assert_eq!(ui_read(&store).cursor, 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn projection_and_receipt_survive_unknown_ack_without_double_applying_delta() {
+        let path = temp_path("projection-unknown-ack");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let batch = vec![
+            ui_event(
+                serde_json::json!({"type":"step_started","step":{"id":"step","sessionId":"s","runId":"r"}}),
+            ),
+            ui_event(serde_json::json!({"type":"message_delta","stepId":"step","delta":"once"})),
+        ];
+        let mut faulty = store.clone();
+        faulty.faults.ack_unknown_after_commit = true;
+        assert!(matches!(
+            faulty.append_stream("s", "r", "p", 1, 1, batch.clone()),
+            Err(StorageError::Runtime(RuntimeError::DurabilityUnknown(_)))
+        ));
+        drop(faulty);
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        assert!(
+            store
+                .append_stream("s", "r", "p", 1, 1, batch)
+                .unwrap()
+                .reused
+        );
+        let projection = ui_read(&store);
+        assert_eq!(projection.cursor, 2);
+        assert_eq!(projection.live_chunks[1]["delta"], "once");
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn oversized_projection_rejects_the_batch_without_advancing_durable_cursor() {
+        let path = temp_path("projection-size");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        store.append_stream("s", "r", "p", 1, 1, vec![ui_event(serde_json::json!({"type":"step_started","step":{"id":"step","sessionId":"s","runId":"r"}}))]).unwrap();
+        let large = ui_event(
+            serde_json::json!({"type":"message_delta","stepId":"step","delta":"x".repeat(crate::projection::MAX_PROJECTION_BYTES)}),
+        );
+        assert!(matches!(
+            store.append_stream("s", "r", "p", 2, 1, vec![large]),
+            Err(StorageError::Runtime(RuntimeError::ProjectionTooLarge))
+        ));
+        assert_eq!(store.snapshot("s").unwrap().cursor, 1);
+        assert_eq!(ui_read(&store).cursor, 1);
+        store
+            .append_stream(
+                "s",
+                "r",
+                "p",
+                2,
+                1,
+                vec![ui_event(
+                    serde_json::json!({"type":"message_delta","stepId":"step","delta":"valid"}),
+                )],
+            )
+            .unwrap();
+        assert_eq!(ui_read(&store).live_chunks[1]["delta"], "valid");
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn existing_unprojected_runs_require_migration_instead_of_an_invented_snapshot() {
+        let path = temp_path("projection-migration");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        assert!(matches!(
+            store.ui_snapshot("s", Some(&ui_seed())),
+            Err(StorageError::Runtime(
+                RuntimeError::ProjectionMigrationRequired
+            ))
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]

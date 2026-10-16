@@ -1,12 +1,12 @@
 import { decodeEnvelope, encodeEnvelope, type SidecarBody, type SidecarEnvelope } from '../../../../packages/runtime-protocol/wire';
-import { decodeRuntimePayload } from '../../../../packages/runtime-protocol/stream';
+import { decodeRuntimePayload, decodeUiSnapshot } from '../../../../packages/runtime-protocol/stream';
 import type { RuntimeSnapshot, RuntimeStreamRecord } from './runtimeStream';
 
 export interface RuntimeTicket {
   url: string; token: string; expiresAtMs: number;
   clientId: string; sessionId: string; protocol: 'synax.runtime.v2';
 }
-export type RuntimeBootstrap = { transport: 'node' } | { transport: 'rust'; ticket: RuntimeTicket; snapshot?: RuntimeSnapshot };
+export type RuntimeBootstrap = { transport: 'node' } | { transport: 'rust'; ticket: RuntimeTicket };
 export type RuntimeConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 export interface RustConnectionOptions {
   sessionId: string;
@@ -77,20 +77,14 @@ export class RustRuntimeConnection {
         if (this.selected) throw new Error('Rust runtime transport changed during a session.');
         this.close(); this.options.fallback(); return;
       }
-      const { ticket, snapshot } = bootstrap;
+      const { ticket } = bootstrap;
       const url = new URL(ticket.url);
       if (url.protocol !== 'ws:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/runtime' || url.search || url.hash || url.username || url.password ||
           ticket.sessionId !== this.options.sessionId || ticket.protocol !== 'synax.runtime.v2' || !ticket.token || !ticket.clientId || ticket.expiresAtMs <= Date.now()) {
         throw new Error('Invalid Rust runtime ticket.');
       }
       this.selected = true;
-      if (this.cursor === undefined) {
-        if (!snapshot || snapshot.session.id !== this.options.sessionId || !Number.isSafeInteger(snapshot.cursor) || snapshot.cursor < 0)
-          throw new Error('A runtime snapshot is required for initial synchronization.');
-        this.options.snapshot(snapshot);
-        this.cursor = snapshot.cursor;
-      }
-      this.lastAck = this.cursor;
+      this.lastAck = this.cursor ?? 0;
       this.subscriptionId = crypto.randomUUID();
       const socket = (this.options.socket ?? (url => new WebSocket(url)))(ticket.url);
       this.socket = socket;
@@ -114,15 +108,24 @@ export class RustRuntimeConnection {
             fail(new Error(`${frame.body.code}: ${frame.body.message}`), reset); return;
           }
           if (!ready) {
-            if (frame.body.type !== 'ready' || frame.body.protocol !== 'synax.runtime.v2' || !frame.body.capabilities.includes('credit_window')) throw new Error('Unsupported Rust runtime handshake.');
+            if (frame.body.type !== 'ready' || frame.body.protocol !== 'synax.runtime.v2' || (!frame.body.capabilities.includes('credit_window') || !frame.body.capabilities.includes('ui_projection'))) throw new Error('Unsupported Rust runtime handshake.');
             ready = true;
-            this.send({ type: 'subscribe', after: this.cursor! });
+            this.send(this.cursor === undefined ? { type: 'ui_snapshot' } : { type: 'subscribe', after: this.cursor });
             return;
           }
           if (frame.body.type === 'pong') return;
           if (frame.sessionId !== this.options.sessionId || frame.requestId !== this.subscriptionId) throw new Error('Runtime subscription identity mismatch.');
+          if (frame.body.type === 'ui_snapshot_response') {
+            if (subscribed || this.cursor !== undefined) throw new Error('Unexpected UI snapshot response.');
+            const snapshot = decodeUiSnapshot(frame.body.snapshotJson, this.options.sessionId) as RuntimeSnapshot;
+            this.options.snapshot(snapshot);
+            this.cursor = snapshot.cursor;
+            this.lastAck = snapshot.cursor;
+            this.send({ type: 'subscribe', after: this.cursor });
+            return;
+          }
           if (frame.body.type === 'snapshot_response') {
-            if (subscribed || frame.body.cursor < this.cursor! || frame.body.retainedFrom > this.cursor! + 1) {
+            if (this.cursor === undefined || subscribed || frame.body.cursor < this.cursor! || frame.body.retainedFrom > this.cursor! + 1) {
               fail(new Error('Runtime cursor requires resynchronization.'), true); return;
             }
             subscribed = true;

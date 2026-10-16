@@ -50,6 +50,12 @@ pub struct StreamAppendReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
+    #[error("session UI projection has not been initialized")]
+    ProjectionMissing,
+    #[error("UI projection exceeds transport budget; content externalization required")]
+    ProjectionTooLarge,
+    #[error("session has existing events or runs and requires offline projection migration")]
+    ProjectionMigrationRequired,
     #[error("storage disk full")]
     DiskFull,
     #[error("durability could not be confirmed: {0}")]
@@ -84,6 +90,7 @@ pub enum CommandResult {
     StreamAppend(StreamAppendReceipt),
     Snapshot(SessionSnapshot),
     Replay(Vec<StreamEvent>),
+    UiSnapshot(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +134,11 @@ enum ActorCommand {
         epoch: u64,
         durability: Durability,
         events: Vec<PendingEvent>,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    UiSnapshot {
+        session_id: String,
+        seed: Option<Vec<u8>>,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
     Snapshot {
@@ -512,6 +524,28 @@ impl SessionShardRouter {
         }
     }
 
+    pub async fn ui_snapshot(
+        &self,
+        session_id: String,
+        seed: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::UiSnapshot {
+                session_id: session_id.clone(),
+                seed,
+                response,
+            },
+        )?;
+        match result.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::UiSnapshot(bytes) => Ok(bytes),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected UI snapshot response".into(),
+            )),
+        }
+    }
+
     pub async fn snapshot(
         &self,
         session_id: impl Into<String>,
@@ -804,6 +838,22 @@ async fn run_shard(
                     )
                 };
                 let _ = response.send(result.map(CommandResult::StreamAppend));
+            }
+            ActorCommand::UiSnapshot {
+                session_id,
+                seed,
+                response,
+            } => {
+                let result = match store.as_ref() {
+                    Some(store) => store
+                        .ui_snapshot_async(session_id, seed)
+                        .await
+                        .map_err(storage_error_to_runtime),
+                    None => Err(RuntimeError::StorageUnavailable(
+                        "UI projection requires persistent storage".into(),
+                    )),
+                };
+                let _ = response.send(result.map(CommandResult::UiSnapshot));
             }
             ActorCommand::Snapshot {
                 session_id,

@@ -48,6 +48,10 @@ try {
     assert.equal(state.epoch, turn + 1);
     assert.equal(state.revision, turn * 2);
     assert.equal(state.cursor, turn * 4);
+    const ui = JSON.parse(new TextDecoder().decode(await client.uiSnapshot(session.id)));
+    assert.equal(ui.cursor, state.cursor); assert.equal(ui.session.status, 'completed');
+    assert.equal(ui.session.activeRunId, null); assert.equal(ui.run.id, accepted.run.id);
+    assert.deepEqual(ui.liveChunks, []);
   }
   const replay = await client.replay(session.id, 0);
   assert.deepEqual(replay.events.map(event => event.sequence), [1, 2, 3, 4, 5, 6, 7, 8]);

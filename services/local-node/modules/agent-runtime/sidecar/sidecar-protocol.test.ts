@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { decodeEnvelope, encodeEnvelope } from "./sidecar-protocol.js";
 
 describe("runtime sidecar protobuf codec", () => {
+  it('encodes persisted snapshot commands without text conversion', () => {
+    for (const body of [
+      { type: 'ui_snapshot' as const },
+      { type: 'seed_ui' as const, sessionJson: new Uint8Array([0, 128, 255]) },
+      { type: 'ui_snapshot_response' as const, snapshotJson: new Uint8Array([0, 128, 255]) },
+    ]) {
+      const envelope = { requestId: 'ui', sessionId: 's', epoch: 0, revision: 0, body };
+      expect(decodeEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
+    }
+  });
+
   it("rejects negative cursors and overlong varints without looping", () => {
     expect(() => encodeEnvelope({ requestId: '', sessionId: 's', epoch: 0, revision: 0,
       body: { type: 'subscribe', after: -1 } })).toThrow('Invalid unsigned protobuf integer');

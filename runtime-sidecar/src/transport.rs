@@ -3,8 +3,8 @@ use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
     WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireReady,
-    WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket, decode_client_message,
-    decode_wire, encode_server_message, encode_wire, wire_envelope,
+    WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket, WireUiSnapshotResponse,
+    decode_client_message, decode_wire, encode_server_message, encode_wire, wire_envelope,
 };
 use crate::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
@@ -36,6 +36,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "replay",
     "subscribe",
     "ui_ticket",
+    "ui_projection",
     "credit_window",
 ];
 
@@ -196,11 +197,17 @@ async fn handle_websocket(
             let mut ready = context.wire_ready("websocket");
             if scope.is_some() {
                 if let Some(wire_envelope::Body::Ready(ref mut body)) = ready.body {
-                    body.capabilities =
-                        ["health", "snapshot", "replay", "subscribe", "credit_window"]
-                            .iter()
-                            .map(|value| (*value).into())
-                            .collect();
+                    body.capabilities = [
+                        "health",
+                        "snapshot",
+                        "replay",
+                        "subscribe",
+                        "credit_window",
+                        "ui_projection",
+                    ]
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect();
                 }
             }
             send_wire(&mut socket, &ready).await?;
@@ -293,7 +300,8 @@ async fn handle_wire_websocket(
 fn ui_command_allowed(request: &WireEnvelope, scope: &UiScope) -> bool {
     match request.body {
         Some(wire_envelope::Body::Health(_)) | Some(wire_envelope::Body::Ping(_)) => true,
-        Some(wire_envelope::Body::Snapshot(_))
+        Some(wire_envelope::Body::UiSnapshot(_))
+        | Some(wire_envelope::Body::Snapshot(_))
         | Some(wire_envelope::Body::Replay(_))
         | Some(wire_envelope::Body::Subscribe(_)) => request.session_id == scope.session_id,
         _ => false,
@@ -519,6 +527,41 @@ async fn execute_wire(
     };
 
     match request.body {
+        Some(wire_envelope::Body::SeedUi(seed)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "UI initialization requires private control transport",
+                    )),
+                    false,
+                );
+            }
+            match context
+                .router
+                .ui_snapshot(session_id.clone(), Some(seed.session_json))
+                .await
+            {
+                Ok(snapshot_json) => (
+                    envelope(wire_envelope::Body::UiSnapshotResponse(
+                        WireUiSnapshotResponse { snapshot_json },
+                    )),
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
+        Some(wire_envelope::Body::UiSnapshot(_)) => {
+            match context.router.ui_snapshot(session_id.clone(), None).await {
+                Ok(snapshot_json) => (
+                    envelope(wire_envelope::Body::UiSnapshotResponse(
+                        WireUiSnapshotResponse { snapshot_json },
+                    )),
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
         Some(wire_envelope::Body::IssueTicket(issue)) => {
             if !local_control {
                 return (
@@ -754,6 +797,7 @@ async fn execute_wire(
         | Some(wire_envelope::Body::RunAdmission(_))
         | Some(wire_envelope::Body::SnapshotResponse(_))
         | Some(wire_envelope::Body::EventBatch(_))
+        | Some(wire_envelope::Body::UiSnapshotResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))
         | None => (
@@ -776,6 +820,24 @@ fn decode_durability(value: u32) -> Durability {
 
 fn error_to_wire(error: RuntimeError) -> wire_envelope::Body {
     let (code, message, expected, actual) = match error {
+        RuntimeError::ProjectionMissing => (
+            "PROJECTION_MISSING",
+            "session UI projection requires initialization".into(),
+            None,
+            None,
+        ),
+        RuntimeError::ProjectionTooLarge => (
+            "PROJECTION_TOO_LARGE",
+            "session UI projection requires content externalization".into(),
+            None,
+            None,
+        ),
+        RuntimeError::ProjectionMigrationRequired => (
+            "PROJECTION_MIGRATION_REQUIRED",
+            "existing run or stream requires offline projection migration".into(),
+            None,
+            None,
+        ),
         RuntimeError::DiskFull => ("DISK_FULL", "storage disk full".into(), None, None),
         RuntimeError::DurabilityUnknown(message) => ("DURABILITY_UNKNOWN", message, None, None),
         RuntimeError::StorageUnavailable(message) => ("STORAGE_UNAVAILABLE", message, None, None),

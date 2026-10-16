@@ -19,12 +19,18 @@ const control = new RuntimeSidecarClient({ socketPath: runtime.socketPath, token
 let desktop: ElectronApplication | undefined;
 try {
   const sessionId = 'ui-session';
+  await control.seedUi(sessionId, new TextEncoder().encode(JSON.stringify({ id: sessionId, projectId: 'test', status: 'queued', updatedAt: new Date().toISOString() })));
   await control.admitRun({ sessionId, requestId: 'start', bodyHash: 'body', runId: 'r', epoch: 1, revision: 0 });
   const state = { status: 'running', activeRunId: 'r', pendingResumeToken: null, blockedReason: null, updatedAt: new Date().toISOString() };
   let producerSequence = 0;
   async function append(count: number) {
     await control.appendStream({ sessionId, runId: 'r', producerId: 'p', producerSequence: ++producerSequence, epoch: 1, revision: 1,
-      events: Array.from({ length: count }, () => ({ kind: 'message_delta', payload: new TextEncoder().encode(JSON.stringify({ schema: 1, state, chunk: { type: 'message_delta', stepId: 'step', delta: 'delta' } })) })),
+      events: Array.from({ length: count }, (_, index) => {
+        const chunk = producerSequence === 1 && index === 0
+          ? { type: 'step_started', step: { id: 'step', sessionId, runId: 'r', index: 1 } }
+          : { type: 'message_delta', stepId: 'step', delta: 'delta' };
+        return { kind: chunk.type, payload: new TextEncoder().encode(JSON.stringify({ schema: 1, state, chunk })) };
+      }),
     });
   }
   for (let batch = 0; batch < 3; batch++) await append(200);
@@ -55,31 +61,32 @@ try {
     tickets++;
     const ticket = await control.issueTicket(sessionId, 'window1');
     return { transport: 'rust', ticket: { url: `ws://127.0.0.1:${runtime.port}/runtime`, token: ticket.token, expiresAtMs: ticket.expiresAtMs,
-      sessionId, clientId: 'window1', protocol: 'synax.runtime.v2' },
-      snapshot: snapshot ? { session: { id: sessionId, ...state }, cursor: 0, run: null, liveChunks: [], completedStepIds: [] } : undefined };
+      sessionId, clientId: 'window1', protocol: 'synax.runtime.v2' } };
   });
   await page.evaluate(() => {
     const w = window as any;
-    w.records = []; w.states = [];
+    w.records = []; w.states = []; w.snapshots = [];
     w.connection = new w.RustTransport.RustRuntimeConnection({ sessionId: 'ui-session', bootstrap: (needsSnapshot: boolean) => w.getTicket(needsSnapshot),
-      snapshot: () => {}, record: (record: { sequence: number }) => { w.records.push(record.sequence); document.querySelector('#status')!.textContent = `Received ${w.records.length} events`; },
+      snapshot: (snapshot: unknown) => w.snapshots.push(snapshot), record: (record: { sequence: number }) => { w.records.push(record.sequence); document.querySelector('#status')!.textContent = `Received ${w.records.length} events`; },
       state: (state: string) => w.states.push(state), fallback: () => { throw new Error('unexpected Node fallback'); },
     });
     w.connection.start();
   });
-  await page.waitForFunction(() => (window as any).records.length === 600, { }, { timeout: 15_000 });
+  await page.waitForFunction(() => (window as any).states.includes('connected'), {}, { timeout: 15_000 });
+  assert.equal(await page.evaluate(() => (window as any).snapshots[0].cursor), 600);
+  assert.equal(await page.evaluate(() => (window as any).snapshots[0].liveChunks[1].delta), 'delta'.repeat(599));
   await page.evaluate(() => (window as any).connection.wake());
   await append(25);
-  await page.waitForFunction(() => (window as any).records.length === 625, { }, { timeout: 15_000 });
-  assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 625 }, (_, i) => i + 1));
+  await page.waitForFunction(() => (window as any).records.length === 25, { }, { timeout: 15_000 });
+  assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 25 }, (_, i) => i + 601));
   assert(tickets >= 2, 'reconnect requires a fresh one-use ticket');
   const originalProcess = runtime.process;
   const exited = once(originalProcess, 'exit');
   originalProcess.kill('SIGKILL'); await exited;
   await runtime.waitUntilReady();
   await append(25);
-  await page.waitForFunction(() => (window as any).records.length === 650, {}, { timeout: 15_000 });
-  assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 650 }, (_, i) => i + 1));
+  await page.waitForFunction(() => (window as any).records.length === 50, {}, { timeout: 15_000 });
+  assert.deepEqual(await page.evaluate(() => (window as any).records), Array.from({ length: 50 }, (_, i) => i + 601));
   assert(runtime.generation >= 2 && tickets >= 3, 'process restart must renew discovery and ticket');
   await page.evaluate(() => (window as any).connection.close());
 
@@ -161,12 +168,12 @@ try {
     });
     return [await connect(), await connect()];
   }, { port: runtime.port, hello: envelope({ type: 'hello', token: limited.token, clientId: 'limited' }),
-    forbidden: [envelope({ type: 'snapshot' }, 'other', 'other-session'), envelope({ type: 'shutdown' }, 'shutdown')] });
-  assert.deepEqual(codes, [['FORBIDDEN', 'FORBIDDEN'], ['UNAUTHENTICATED']]);
+    forbidden: [envelope({ type: 'snapshot' }, 'other', 'other-session'), envelope({ type: 'ui_snapshot' }, 'other-ui', 'other-session'), envelope({ type: 'seed_ui', sessionJson: new TextEncoder().encode('{}') }, 'seed'), envelope({ type: 'shutdown' }, 'shutdown')] });
+  assert.deepEqual(codes, [['FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN'], ['UNAUTHENTICATED']]);
   assert.deepEqual(errors, []);
   const screenshot = path.join(tmpdir(), 'synax-rust-ui-smoke.png');
   await page.screenshot({ path: screenshot });
-  console.log(`Electron native UI adapter passed: 600-event backlog, 50 live/reconnected events including a real Rust process restart without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets. Screenshot: ${screenshot}`);
+  console.log(`Electron native UI adapter passed: Rust materialized snapshot through event 600, 50 live/reconnected events including a real Rust process restart without duplicates, 64-event credit limit, forged ACK rejection, slow-consumer resync, scoped/one-use tickets. Screenshot: ${screenshot}`);
 } finally {
   await desktop?.close(); control.close();
   await stopRustRuntimeSidecar(runtime);

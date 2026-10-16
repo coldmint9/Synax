@@ -1173,10 +1173,10 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
     if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative')
       return c.json({ transport: 'node' as const });
     c.header('Cache-Control', 'no-store');
-    const snapshot = parsed.data.snapshot ? await runtimeJournal.snapshotDurable(sessionId) : undefined;
+    if (parsed.data.snapshot) await runtimeFacade.ensureUiProjection(sessionId);
     const ticket = await runtimeFacade.uiTicket(sessionId, parsed.data.clientId);
     if (!ticket) throw new Error('Runtime sidecar ticket is unavailable.');
-    return c.json({ transport: 'rust' as const, ticket, snapshot });
+    return c.json({ transport: 'rust' as const, ticket });
   } catch (error) { return runtimeError(c, error); }
 });
 

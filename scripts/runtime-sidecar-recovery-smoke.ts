@@ -27,9 +27,10 @@ try {
   await supervisor.start();
   const original = { token: supervisor.token, socket: supervisor.socketPath, pid: supervisor.process.pid };
   client = new RuntimeSidecarClient({ socketPath: supervisor.socketPath, token: supervisor.token, requestTimeoutMs: 1000, retryTimeoutMs: 10_000 });
+  await client.seedUi('s', new TextEncoder().encode(JSON.stringify({ id: 's', projectId: 'p', status: 'queued', updatedAt: new Date().toISOString() })));
   await client.admitRun({ sessionId: 's', requestId: 'start', bodyHash: 'body', runId: 'r', epoch: 1, revision: 0 });
   const input = { sessionId: 's', runId: 'r', producerId: 'worker', producerSequence: 1, epoch: 1, revision: 1,
-    durability: 'group_commit' as const, events: [{ kind: 'delta', payload: new TextEncoder().encode('committed before process abort') }] };
+    durability: 'group_commit' as const, events: [{ kind: 'step_started', payload: new TextEncoder().encode(JSON.stringify({ schema: 1, chunk: { type: 'step_started', step: { id: 'step', sessionId: 's', runId: 'r', index: 1 } }, state: { status: 'running', activeRunId: 'r', blockedReason: null, pendingResumeToken: null, updatedAt: new Date().toISOString() } })) }] };
   // The first append aborts the real Rust process after its WAL barrier and before replying.
   const receipt = await client.appendStream(input);
   assert.equal(receipt.request, 'stream:1-1');
@@ -38,6 +39,8 @@ try {
   assert.equal(supervisor.token, original.token);
   assert.equal(supervisor.socketPath, original.socket);
   assert.equal((await client.snapshot('s')).cursor, 1);
+  const ui = JSON.parse(new TextDecoder().decode(await client.uiSnapshot('s')));
+  assert.equal(ui.cursor, 1); assert.equal(ui.liveChunks[0].step.id, 'step');
   assert.equal((await client.replay('s', 0)).events.length, 1);
   await assert.rejects(client.appendStream({ ...input, events: [{ kind: 'delta', payload: new TextEncoder().encode('different content') }] }), { code: 'REQUEST_CONFLICT' });
   await client.finishRun({ sessionId: 's', requestId: 'finish', runId: 'r', status: 'completed', epoch: 1, revision: 1 });

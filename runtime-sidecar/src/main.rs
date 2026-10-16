@@ -2,6 +2,7 @@ mod actor;
 mod commit;
 mod control;
 mod flow;
+mod projection;
 mod protocol;
 mod storage;
 mod tickets;

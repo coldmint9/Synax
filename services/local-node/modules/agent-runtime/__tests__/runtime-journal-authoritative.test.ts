@@ -10,7 +10,7 @@ vi.mock('../sidecar/runtime-facade.js', () => ({
   runtimeFacade: {
     streamMode: sidecar.mode,
     replayAuthoritative: sidecar.replay,
-    snapshotAuthoritative: sidecar.snapshot,
+    uiSnapshotAuthoritative: sidecar.snapshot,
   },
 }));
 
@@ -80,40 +80,22 @@ describe('authoritative sidecar runtime journal projection', () => {
     expect(agentRuntimeStore.listEvents(session.id)).toHaveLength(localEventsBefore);
   });
 
-  it('uses the sidecar cursor for durable snapshots', async () => {
-    const { session } = sessionRun();
-    sidecar.snapshot.mockResolvedValue({
-      epoch: 1,
-      revision: 1,
-      activeRunId: `run-${session.id}`,
-      cursor: 88,
-      retainedFrom: 1,
-    });
-
-    const snapshot = await runtimeJournal.snapshotDurable(session.id);
-    expect(snapshot.cursor).toBe(88);
-    expect(sidecar.snapshot).toHaveBeenCalledWith(session.id);
+  it('returns the persisted Rust snapshot without assembling state from SQLite or replay', async () => {
+    const { session, run } = sessionRun();
+    const materialized = { session, run, cursor: 1600, liveChunks: [], completedStepIds: ['step'] };
+    sidecar.snapshot.mockResolvedValue(materialized);
+    const getSession = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('SQL must not be read'); });
+    const getSteps = vi.spyOn(agentRuntimeStore, 'listRunSteps').mockImplementation(() => { throw new Error('SQL steps must not be read'); });
+    try {
+      expect(await runtimeJournal.snapshotDurable(session.id)).toEqual(materialized);
+      expect(sidecar.snapshot).toHaveBeenCalledWith(session.id);
+      expect(sidecar.replay).not.toHaveBeenCalled();
+      expect(getSession).not.toHaveBeenCalled(); expect(getSteps).not.toHaveBeenCalled();
+    } finally { getSession.mockRestore(); getSteps.mockRestore(); }
   });
 
-  it('hydrates every retained page up to the captured cursor, not only the first 256 events', async () => {
-    const { session, run } = sessionRun();
-    const step = { id: 'step', runId: run.id, sessionId: session.id, index: 1, completedAt: null };
-    const steps = vi.spyOn(agentRuntimeStore, 'listRunSteps').mockReturnValue([step] as never);
-    sidecar.snapshot.mockResolvedValue({ epoch: 1, revision: 1, activeRunId: run.id, cursor: 600, retainedFrom: 1 });
-    const events = Array.from({ length: 602 }, (_, index) => ({
-      sequence: index + 1, runId: run.id,
-      payload: new TextEncoder().encode(JSON.stringify({ schema: 1,
-        state: { status: 'running', activeRunId: run.id, pendingResumeToken: null, blockedReason: null, updatedAt: '2026-10-16T00:00:00Z' },
-        chunk: { type: 'message_delta', runId: run.id, stepId: 'step', delta: String(index + 1) },
-      })),
-    }));
-    sidecar.replay.mockImplementation(async (_id, after) => events.filter(event => event.sequence > after));
-    try {
-      const snapshot = await runtimeJournal.snapshotDurable(session.id);
-      expect(snapshot.cursor).toBe(600);
-      expect(snapshot.liveChunks).toHaveLength(601);
-      expect(snapshot.liveChunks.at(-1)).toMatchObject({ delta: '600' });
-      expect(sidecar.replay).toHaveBeenCalledTimes(3);
-    } finally { steps.mockRestore(); }
+  it('propagates missing or invalid Rust snapshot failures without a SQL fallback', async () => {
+    sidecar.snapshot.mockRejectedValue(new Error('offline migration required'));
+    await expect(runtimeJournal.snapshotDurable('existing')).rejects.toThrow('offline migration required');
   });
 });

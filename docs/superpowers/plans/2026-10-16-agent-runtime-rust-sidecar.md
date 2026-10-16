@@ -18,7 +18,7 @@
 | group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
 | Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
-| 实时数据 | 已接入短期单次 ticket、会话只读作用域、preload、原生 WS、消费确认窗口与重连游标；订阅 backlog/live 在同一 actor turn 建立 | 初始完整业务快照仍由 Node/SQLite 组装；全量状态与历史迁移、真实 Rust 进程崩溃后 supervisor 重启、持久 append receipt 重试和 Electron 重连已完成；完整 session/lease 恢复仍未完成 |
+| 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复 | 首次空会话元数据仍从 Node seed；session 元数据修改/permission/control 尚未全量迁移；完整 session/lease 恢复未完成 |
 | 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
@@ -54,7 +54,17 @@
 - 真实 RocksDB `abort_after_append` 测试覆盖“写入完成后进程 abort”；Supervisor 保持 socket/token 稳定，等待 Rust READY + health，并自动重启；Node owner 被 SIGKILL 时 Rust 子进程和 socket 清理。
 - Renderer UI smoke 增加真实 Rust 进程 kill/restart 后继续消费，事件序列保持 1..650；连接凭证在重启后重新签发。
 
-后续顺序：推进 session/run/control 的异步 Rust repository，并使初始完整 UI 快照来自同一个权威状态；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
+2026-10-16 第四轮：Rust 持久化 UI projection
+
+- 新增 RocksDB `ui_projections` CF；seed 只允许创建尚无事件/执行状态的空会话，已存在 projection 永不被 seed 覆盖。
+- 新增 Protobuf `seed_ui` / `ui_snapshot` / `ui_snapshot_response`。只有私有 IPC 能 seed；ticket 的只读会话授权允许读取自己的 projection，跨会话读取和 UI seed 被拒绝。
+- run admission、finish、stream append 把 projection 与原有状态/receipt/events 写入同一个 WriteBatch。retry 原 receipt 不重放 reducer；确认未知时的重启/retry保持原 cursor 和文本。
+- projection 保存 session 初始元数据、最新提交状态、run、当前 step 的合并 delta/tool/retry，以及 completedStepIds；不依赖 1024 条事件保留窗口重建长输出。当前限制为 768 KiB，超出会明确返回 `PROJECTION_TOO_LARGE`，整批不提交；blob 分块尚待 history/CAS 阶段，不能据此宣称支持无限长会话。
+- Renderer 收到 READY 后先通过原生 WebSocket 请求持久化快照，再从该 cursor 订阅。preload/ticket HTTP 响应已删除 Node snapshot。Web 的 snapshot compatibility facade 也直接读取 Rust projection，后续快照不再拼接 SQL/session/steps/replay。
+- 迁移边界：首次 missing projection 可从 Node session 元数据 seed，但已执行的 SQLite runs 或已产生 Rust stream 的旧会话必须离线迁移，不能伪造空快照。旧元数据更新与 permission/input/history 还没有全部变成 Rust command；仍不得开启全量默认切换。
+- 验证：37 项 Rust 测试（1600 事件超出热保留窗后完整快照、重启、错误原子回滚、ACK unknown/幂等、大小边界等）；前端 46 项、Node/Electron 相关最终套件 92 项通过；真实 Electron WS 初始 projection + 重启续传、真实 commit 后 abort 恢复、受控 coordinator 两轮、打包业务页面 + codesign 均已验证。之后的补测以对应命令输出为准。
+
+后续顺序：推进 session/run/control 的异步 Rust repository，把剩余 session 元数据写入/permission/interaction/stop/resume 迁成 Rust command；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 
 ## 总目标
 
@@ -253,7 +263,7 @@ runtime-sidecar/
 
 ## 阶段 5：Electron WebSocket
 
-状态：ticket、preload、业务页面原生 WS、窗口/重连/重同步已落地并完成真实 Electron 验收。初始完整快照仍是过渡实现，进程崩溃自动恢复与默认切换未完成。
+状态：ticket、preload、业务页面原生 WS、窗口/重连/重同步已落地并完成真实 Electron 验收。初始 UI 快照已由 Rust 物化并通过 WebSocket 读取，真实进程重启恢复已验收；session 元数据 seed 仍为过渡依赖，默认切换未完成。
 
 目标：桌面端实时会话切换到 Rust sidecar WebSocket。
 

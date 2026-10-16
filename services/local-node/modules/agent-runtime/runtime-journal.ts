@@ -218,29 +218,7 @@ class RuntimeJournal {
 
   async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal["snapshot"]>> {
     if (runtimeFacade.streamMode() === 'authoritative') {
-      const remote = await runtimeFacade.snapshotAuthoritative(sessionId);
-      if (!remote) throw new AgentValidationError("Runtime sidecar snapshot is unavailable.");
-      const snapshot = this.snapshot(sessionId);
-      snapshot.cursor = remote.cursor;
-      const current = snapshot.run ? agentRuntimeStore.listRunSteps(snapshot.run.id).at(-1) : undefined;
-      if (current && !current.completedAt) {
-        const replay: RuntimeStreamRecord[] = [];
-        let after = Math.max(0, remote.retainedFrom - 1);
-        while (after < remote.cursor) {
-          const page = await readAuthoritative(sessionId, after, 256);
-          if (!page.length) throw new AgentValidationError("Runtime replay ended before its snapshot cursor.");
-          after = page[page.length - 1].sequence;
-          replay.push(...page.filter(record => record.sequence <= remote.cursor && record.runId === snapshot.run!.id));
-        }
-        snapshot.liveChunks = [{ type: "step_started", step: current }];
-        for (const record of replay) {
-          const chunk = record.chunk;
-          if (!("stepId" in chunk) || chunk.stepId !== current.id) continue;
-          if (chunk.type === "retry_status" && ["waiting", "group_wait"].includes(chunk.retry.phase)) snapshot.liveChunks.length = 1;
-          snapshot.liveChunks.push(chunk);
-        }
-      }
-      return snapshot;
+      return runtimeFacade.uiSnapshotAuthoritative(sessionId);
     }
     if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT) return this.snapshot(sessionId);
     // Capture a cursor before the SQL snapshot: new events after it are replayed

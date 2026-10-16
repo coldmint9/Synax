@@ -368,6 +368,7 @@ try {
   assert.deepEqual(native, { nativeModules: true, childFork: true });
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') {
     let snapshots = 0;
+    let materializedSnapshots = 0;
     let clientHello = false;
     page.on('websocket', socket => {
       if (!/^ws:\/\/127\.0\.0\.1:\d+\/runtime$/.test(socket.url())) return;
@@ -380,6 +381,7 @@ try {
         if (typeof frame.payload === 'string') return;
         const body = decodeEnvelope(frame.payload).body;
         if (body.type === 'snapshot_response') snapshots++;
+        if (body.type === 'ui_snapshot_response') materializedSnapshots++;
       });
     });
     const session = await page.evaluate(async projectId => {
@@ -413,11 +415,13 @@ try {
     await page.reload();
     await page.locator('.agent-session-controls').waitFor({ state: 'visible', timeout: 15_000 });
     const deadline = Date.now() + 15_000;
-    while (!snapshots && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
-    assert(snapshots > 0 && clientHello, 'business session page must obtain a scoped ticket through preload and subscribe directly to Rust');
+    while ((!snapshots || !materializedSnapshots) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert(snapshots > 0 && materializedSnapshots > 0 && clientHello, 'business session page must load the RocksDB UI snapshot and subscribe over Rust WebSocket');
+    const descriptor = await page.evaluate(async id => (window as any).electronAPI.getRuntimeConnection(id, 'snapshot-check', true), session.id);
+    assert.equal('snapshot' in descriptor, false, 'preload ticket response must not transport a Node snapshot');
     assert.deepEqual(errors, [], 'Rust business-session renderer errors');
     await page.screenshot({ path: path.join(tmpdir(), 'synax-runtime-packaged.png') });
-    console.log('Packaged business session → preload → Node ticket → Rust WebSocket subscription passed.');
+    console.log('Packaged business session → preload ticket → Rust persisted UI snapshot + WebSocket subscription passed.');
   }
   console.log(
     `Desktop smoke passed: ${process.platform}/${process.arch}, version ${bridge.version}; renderer, API, native modules and child fork OK.`,

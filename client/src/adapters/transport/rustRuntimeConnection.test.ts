@@ -16,21 +16,22 @@ class Socket {
   open() { this.readyState = 1; this.onopen?.(); }
   send(bytes: Uint8Array) { this.sent.push(decodeEnvelope(bytes)); }
   close() { this.readyState = 3; this.onclose?.({ code: 1000, reason: '' }); }
-  frame(body: SidecarBody, requestId = this.sent.find(frame => frame.body.type === 'subscribe')?.requestId ?? '', sessionId = 's') {
+  frame(body: SidecarBody, requestId = this.sent.find(frame => ['subscribe', 'ui_snapshot'].includes(frame.body.type))?.requestId ?? '', sessionId = 's') {
     const bytes = encodeEnvelope({ requestId, sessionId, epoch: 1, revision: 1, body });
     this.onmessage?.({ data: bytes.slice().buffer });
   }
 }
 const settle = async () => { for (let n = 0; n < 12; n++) await Promise.resolve(); };
 let connection: RustRuntimeConnection;
-const snapshot = (cursor: number) => ({ session: { id: 's' }, cursor, run: null, liveChunks: [], completedStepIds: [] }) as unknown as RuntimeSnapshot;
+let initialCursor = 0;
+const snapshot = (cursor: number) => ({ session: { id: 's', status: 'running' }, cursor, run: null, liveChunks: [], completedStepIds: [] }) as unknown as RuntimeSnapshot;
 function setup(cursor = 0) {
+  initialCursor = cursor;
   const options = {
     sessionId: 's', snapshot: vi.fn(), record: vi.fn(), state: vi.fn(), fallback: vi.fn(), error: vi.fn(),
     socket: (url: string) => new Socket(url) as unknown as WebSocket,
     bootstrap: vi.fn(async (needsSnapshot: boolean) => ({ transport: 'rust' as const,
-      ticket: { url: 'ws://127.0.0.1:12345/runtime', token: 'short-ticket', clientId: 'window1', sessionId: 's', expiresAtMs: Date.now() + 30_000, protocol: 'synax.runtime.v2' as const },
-      snapshot: needsSnapshot ? snapshot(cursor) : undefined })),
+      ticket: { url: 'ws://127.0.0.1:12345/runtime', token: 'short-ticket', clientId: 'window1', sessionId: 's', expiresAtMs: Date.now() + 30_000, protocol: 'synax.runtime.v2' as const } })),
   } satisfies RustConnectionOptions;
   connection = new RustRuntimeConnection(options); connection.start();
   return options;
@@ -39,8 +40,12 @@ async function attach(highWater = 0) {
   await settle();
   const socket = Socket.all.at(-1)!;
   socket.open();
-  socket.frame({ type: 'ready', protocol: 'synax.runtime.v2', transport: 'websocket', capabilities: ['credit_window'] }, '');
+  socket.frame({ type: 'ready', protocol: 'synax.runtime.v2', transport: 'websocket', capabilities: ['credit_window', 'ui_projection'] }, '');
   await settle();
+  if (socket.sent.at(-1)?.body.type === 'ui_snapshot') {
+    socket.frame({ type: 'ui_snapshot_response', snapshotJson: new TextEncoder().encode(JSON.stringify(snapshot(initialCursor))) });
+    await settle();
+  }
   socket.frame({ type: 'snapshot_response', epoch: 1, revision: 1, cursor: highWater, retainedFrom: 1 });
   await settle();
   return socket;
@@ -53,6 +58,19 @@ beforeEach(() => { vi.useFakeTimers(); Socket.all = []; });
 afterEach(() => { connection?.close(); vi.useRealTimers(); });
 
 describe('Rust runtime consumer', () => {
+  it('waits for the Rust snapshot before applying state or subscribing', async () => {
+    const options = setup(9); await settle();
+    const socket = Socket.all.at(-1)!; socket.open();
+    socket.frame({ type: 'ready', protocol: 'synax.runtime.v2', transport: 'websocket', capabilities: ['credit_window', 'ui_projection'] }, '');
+    await settle();
+    expect(options.snapshot).not.toHaveBeenCalled();
+    expect(socket.sent.at(-1)?.body).toEqual({ type: 'ui_snapshot' });
+    socket.frame({ type: 'ui_snapshot_response', snapshotJson: new TextEncoder().encode(JSON.stringify(snapshot(9))) });
+    await settle();
+    expect(options.snapshot).toHaveBeenCalledWith(snapshot(9));
+    expect(socket.sent.at(-1)?.body).toEqual({ type: 'subscribe', after: 9 });
+  });
+
   it('applies backlog before acknowledging it and resumes from the applied cursor', async () => {
     const options = setup(5);
     const socket = await attach(100);
