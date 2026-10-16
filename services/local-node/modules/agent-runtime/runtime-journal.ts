@@ -1,3 +1,4 @@
+import { decodeRuntimePayload } from '../../../../packages/runtime-protocol/stream.js';
 import { randomUUID } from "node:crypto";
 import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
 import { historyEpoch } from "./checkpoints/guards.js";
@@ -13,7 +14,7 @@ import {
   projectSessionState,
 } from "./session-projection.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
+import type { AgentRun, AgentRunStreamChunk, AgentSession } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
@@ -56,7 +57,7 @@ const mapRow = (row: JournalRow): RuntimeStreamRecord => {
   };
 };
 
-function authoritativeState(sessionId: string): RuntimeStreamRecord["state"] {
+export function runtimeRecordState(sessionId: string): RuntimeStreamRecord["state"] {
   const session = projectSessionState(agentRuntimeStore.getSession(sessionId));
   return {
     status: session.status,
@@ -75,17 +76,26 @@ async function readAuthoritative(
 ): Promise<RuntimeStreamRecord[]> {
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256)
     throw new AgentValidationError("Invalid stream cursor.");
-  const events = await runtimeFacade.replayAuthoritative(sessionId, after, runId);
-  const state = authoritativeState(sessionId);
   const records: RuntimeStreamRecord[] = [];
-  for (const event of events.slice(0, limit)) {
-    let chunk: AgentRunStreamChunk;
-    try {
-      chunk = JSON.parse(Buffer.from(event.payload).toString("utf8")) as AgentRunStreamChunk;
-    } catch (error) {
-      throw new AgentValidationError(`Invalid sidecar stream payload: ${error instanceof Error ? error.message : String(error)}`);
+  let position = after;
+  for (let page = 0; page < 64; page++) {
+    const events = await runtimeFacade.replayAuthoritative(sessionId, position);
+    if (!events.length) break;
+    if (events.at(-1)!.sequence <= position) throw new AgentValidationError("Runtime replay cursor did not advance.");
+    position = events.at(-1)!.sequence;
+    for (const event of events) {
+      if (runId && event.runId !== runId) continue;
+      try {
+        const payload = decodeRuntimePayload(event.payload);
+        records.push({ sequence: event.sequence, sessionId, runId: event.runId,
+          chunk: payload.chunk as AgentRunStreamChunk,
+          state: { ...payload.state, status: normalizeAgentSessionStatus(payload.state.status) } });
+        if (records.length === limit) return records;
+      } catch (error) {
+        throw new AgentValidationError(`Invalid sidecar stream payload: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
-    records.push({ sequence: event.sequence, sessionId, runId: event.runId, chunk, state });
+    if (records.length) break;
   }
   return records;
 }
@@ -208,13 +218,20 @@ class RuntimeJournal {
 
   async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal["snapshot"]>> {
     if (runtimeFacade.streamMode() === 'authoritative') {
-      const snapshot = this.snapshot(sessionId);
       const remote = await runtimeFacade.snapshotAuthoritative(sessionId);
-      if (!remote) return snapshot;
+      if (!remote) throw new AgentValidationError("Runtime sidecar snapshot is unavailable.");
+      const snapshot = this.snapshot(sessionId);
       snapshot.cursor = remote.cursor;
       const current = snapshot.run ? agentRuntimeStore.listRunSteps(snapshot.run.id).at(-1) : undefined;
       if (current && !current.completedAt) {
-        const replay = await readAuthoritative(sessionId, Math.max(0, remote.cursor - 1024), 256, snapshot.run!.id);
+        const replay: RuntimeStreamRecord[] = [];
+        let after = Math.max(0, remote.retainedFrom - 1);
+        while (after < remote.cursor) {
+          const page = await readAuthoritative(sessionId, after, 256);
+          if (!page.length) throw new AgentValidationError("Runtime replay ended before its snapshot cursor.");
+          after = page[page.length - 1].sequence;
+          replay.push(...page.filter(record => record.sequence <= remote.cursor && record.runId === snapshot.run!.id));
+        }
         snapshot.liveChunks = [{ type: "step_started", step: current }];
         for (const record of replay) {
           const chunk = record.chunk;
@@ -348,7 +365,7 @@ class RuntimeJournal {
     });
   }
 
-  snapshot(sessionId: string) {
+  snapshot(sessionId: string): { session: AgentSession; run: AgentRun | null; cursor: number; liveChunks: AgentRunStreamChunk[]; completedStepIds: string[] } {
     return getRawSqlite().readTransaction(() => {
       const session = projectSessionState(
         agentRuntimeStore.getSession(sessionId),

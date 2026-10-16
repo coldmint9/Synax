@@ -9,7 +9,7 @@ import { agentRuntimeStore } from './session-store.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { runtimeTransaction } from './runtime-transaction.js';
 import type { AgentRunStreamChunk } from './contracts.js';
-import { runtimeJournal } from './runtime-journal.js';
+import { runtimeJournal, runtimeRecordState } from './runtime-journal.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
 
@@ -102,6 +102,7 @@ export class RuntimeStreamWriter {
       logger.warn({ sessionId: this.sessionId, runId }, '[runtime-sidecar] shadow stream queue full; mirroring stopped');
       return;
     }
+    const state = runtimeRecordState(this.sessionId);
     const producerSequence = ++this.sidecarProducerSequence;
     this.sidecarPending++;
     // Preserve producer order even when multiple flushes overlap. Capture the epoch once;
@@ -112,7 +113,7 @@ export class RuntimeStreamWriter {
       this.sidecarFence ??= runtimeFacade.streamFence(this.sessionId, runId);
       const fence = await this.sidecarFence;
       const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
-        producerSequence, ...fence, chunks };
+        producerSequence, ...fence, chunks, state };
       if (authoritative) await runtimeFacade.appendStreamAuthoritative(input);
       else await runtimeFacade.shadowAppendStream(input);
     }).catch(error => {

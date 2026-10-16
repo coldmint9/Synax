@@ -1,3 +1,4 @@
+import type { RuntimeRecordState } from '../../../../../packages/runtime-protocol/stream.js';
 import { RuntimeSidecarClient, RuntimeSidecarError } from './sidecar-client.js';
 import type { AcceptedRuntimeInput } from '../run-admission.js';
 import type { AgentRun } from '../contracts.js';
@@ -49,6 +50,7 @@ export interface ShadowStreamInput {
   epoch: number;
   revision: number;
   chunks: unknown[];
+  state: RuntimeRecordState;
 }
 
 export class RuntimeFacade {
@@ -114,6 +116,17 @@ export class RuntimeFacade {
     }
   }
 
+  async uiTicket(sessionId: string, clientId: string) {
+    if (streamMode() !== 'authoritative') return null;
+    const port = Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT);
+    const client = this.clientFactory();
+    if (!client || !Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error('Runtime sidecar discovery is not ready.');
+    const ticket = await client.issueTicket(sessionId, clientId);
+    return { url: `ws://127.0.0.1:${port}/runtime`, token: ticket.token,
+      expiresAtMs: ticket.expiresAtMs, clientId, sessionId, protocol: 'synax.runtime.v2' as const };
+  }
+
   async streamFence(sessionId: string, runId: string): Promise<{ epoch: number; revision: number }> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
@@ -138,7 +151,7 @@ export class RuntimeFacade {
         kind: typeof chunk === 'object' && chunk && 'type' in chunk
           ? String((chunk as { type: unknown }).type)
           : 'runtime_chunk',
-        payload: Buffer.from(JSON.stringify(chunk)),
+        payload: Buffer.from(JSON.stringify({ schema: 1, chunk, state: input.state })),
       })),
     });
   }
@@ -181,7 +194,7 @@ export class RuntimeFacade {
           kind: typeof chunk === 'object' && chunk && 'type' in chunk
             ? String((chunk as { type: unknown }).type)
             : 'runtime_chunk',
-          payload: Buffer.from(JSON.stringify(chunk)),
+          payload: Buffer.from(JSON.stringify({ schema: 1, chunk, state: input.state })),
         })),
       });
     } catch (error) {

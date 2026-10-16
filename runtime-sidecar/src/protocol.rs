@@ -54,21 +54,28 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30"
     )]
     pub body: Option<wire_envelope::Body>,
 }
 
 pub mod wire_envelope {
     use super::{
-        WireAck, WireAdmitRun, WireAppendStream, WireError, WireEventBatch, WireFinishRun,
-        WireHealth, WireHealthResponse, WireHello, WirePing, WirePong, WireReady, WireReplay,
-        WireRunAdmission, WireShutdown, WireSnapshot, WireSnapshotResponse, WireSubscribe,
+        WireAck, WireAdmitRun, WireAppendStream, WireCredit, WireError, WireEventBatch,
+        WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket, WirePing,
+        WirePong, WireReady, WireReplay, WireRunAdmission, WireShutdown, WireSnapshot,
+        WireSnapshotResponse, WireSubscribe, WireTicket,
     };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "28")]
+        IssueTicket(WireIssueTicket),
+        #[prost(message, tag = "29")]
+        Ticket(WireTicket),
+        #[prost(message, tag = "30")]
+        Credit(WireCredit),
         #[prost(message, tag = "27")]
         FinishRun(WireFinishRun),
         #[prost(message, tag = "10")]
@@ -110,8 +117,28 @@ pub mod wire_envelope {
 
 #[derive(Clone, PartialEq, Message)]
 pub struct WireHello {
+    #[prost(string, tag = "2")]
+    pub client_id: String,
     #[prost(string, tag = "1")]
     pub token: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireIssueTicket {
+    #[prost(string, tag = "1")]
+    pub client_id: String,
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct WireTicket {
+    #[prost(string, tag = "1")]
+    pub token: String,
+    #[prost(uint64, tag = "2")]
+    pub expires_at_ms: u64,
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct WireCredit {
+    #[prost(uint64, tag = "1")]
+    pub through_sequence: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]

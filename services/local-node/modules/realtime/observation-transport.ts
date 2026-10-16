@@ -25,6 +25,8 @@ export function observationPath(value: unknown): string {
       throw new Error("Invalid project observation.");
     return `${url.pathname}?projectId=${encodeURIComponent(project)}`;
   }
+  if (/^\/api\/agent-runtime\/sessions\/[a-zA-Z0-9_.:-]{1,256}\/stream$/.test(url.pathname) && url.search === '?auxiliary=1')
+    return `${url.pathname}?auxiliary=1`;
   if (url.search) throw new Error("Invalid observation query.");
   if (url.pathname === "/api/agent-runtime/events/stream") return url.pathname;
   if (/^\/api\/agent-runtime\/sessions\/[a-zA-Z0-9_.:-]{1,256}\/stream$/.test(url.pathname)) return url.pathname;

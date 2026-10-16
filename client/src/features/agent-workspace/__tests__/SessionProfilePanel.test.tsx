@@ -1,3 +1,4 @@
+import { useRuntimeConnectionStore } from "../../../shared/state/runtimeConnectionStore";
 import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -78,6 +79,15 @@ function toggle() {
 }
 
 describe("SessionProfilePanel mini/detail", () => {
+  it("marks only the Rust stream as unconfirmed while the HTTP API stays reachable", () => {
+    setup();
+    act(() => useRuntimeConnectionStore.getState().set('profile', 'reconnecting'));
+    expect(screen.getByText("连接中断，状态待确认")).toBeInTheDocument();
+    expect(useApiConnectivityStore.getState().apiReachable).not.toBe('unreachable');
+    act(() => useRuntimeConnectionStore.getState().set('profile', 'connected'));
+    expect(screen.getByText("运行中")).toBeInTheDocument();
+    act(() => useRuntimeConnectionStore.getState().remove('profile'));
+  });
   it("marks cached running state as unconfirmed during a disconnect and recovers", () => {
     setup();
     act(() => useApiConnectivityStore.setState({ apiReachable: "unreachable" }));

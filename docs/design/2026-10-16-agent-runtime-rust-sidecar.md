@@ -109,6 +109,25 @@ Envelope {
 
 WebSocket 连接必须先完成短期 ticket authentication。ticket 绑定 client、过期时间、允许的 session 和 operation。随机端口只用于避免端口冲突，不作为安全边界。
 
+### 当前桌面接入（2026-10-16，过渡阶段）
+
+```text
+Renderer → preload IPC（可信 frame 校验）→ Node /runtime-ticket
+                                               ↓ 私有 Unix socket：IssueTicket
+Renderer ← preload ← 短期 ticket + 随机端口 URL ← Rust TicketStore
+
+Renderer ⇄ ws://127.0.0.1:<随机端口>/runtime ⇄ Rust UI Gateway
+  → Hello(ticket, client_id) → Subscribe(session_id, after)
+  ← Snapshot(cursor 高水位) → backlog → live events
+  → Credit(through_sequence)，仅在应用事件后发送
+```
+
+当前实现的 ticket 30 秒失效、单次使用、限定 client/session 和只读订阅操作；私有服务凭据不发给 Renderer。信用窗口为 64 个事件 / 2 MiB，积压无法连续交付时发送 `RESYNC_REQUIRED` 并完成有时限的关闭握手。Renderer 也识别 close reason，避免终止错误帧丢失时停留在错误游标。
+
+Node 与 Renderer 共享浏览器安全的 protobuf codec。事件 payload 已带 `schema:1` 及提交时状态，不能在 replay 时从 SQL 读取当前状态替代历史状态。RocksDB replay 按条数和字节预算分页；初始化快照已修复只取前 256 条的问题。
+
+**尚未满足最终架构的部分**：初始完整 session/run/step 快照仍由 Node/SQLite 组装，跨仓库原子边界尚待 repository 迁移；媒体和手动压缩事件仍在 Node 的独立辅助流。默认启用、完整 history、旧实现删除和真实压测未完成，不据此宣称已彻底切换。
+
 ### 3.2 Tokio 并发模型
 
 - Tokio multi-thread runtime 负责 RPC、session actor、fanout 和维护任务；

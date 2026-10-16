@@ -1,7 +1,9 @@
 mod actor;
 mod commit;
+mod flow;
 mod protocol;
 mod storage;
+mod tickets;
 mod transport;
 
 use std::sync::Arc;
@@ -35,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let context = TransportContext {
         token: Arc::from(token),
+        tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
     };
@@ -54,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "protocol": protocol::PROTOCOL_VERSION,
         "port": websocket_port,
         "socket": socket_path_from_env().map(|path| path.display().to_string()),
-        "capabilities": ["health", "shutdown"],
+        "capabilities": transport::HANDSHAKE_CAPABILITIES,
+        "pid": std::process::id(),
     });
     println!("SYNAX_RUNTIME_READY:{ready}");
 

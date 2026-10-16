@@ -87,7 +87,7 @@ try {
   const replay = await runtimeFacade.replayAuthoritative(session.id, 0, run.id);
   if (observed.length !== 3) throw new Error(`worker source observed ${observed.length} chunks`);
   if (replay.length !== 3) throw new Error(`sidecar replay returned ${replay.length} chunks`);
-  const payloads = replay.map((event) => JSON.parse(Buffer.from(event.payload).toString('utf8')) as { type?: string });
+  const payloads = replay.map((event) => JSON.parse(Buffer.from(event.payload).toString('utf8')).chunk as { type?: string });
   if (payloads.map((payload) => payload.type).join(',') !== 'run_started,message_delta,done')
     throw new Error(`unexpected worker replay: ${JSON.stringify(payloads)}`);
   console.log('in-process stream-writer authoritative smoke passed (not a forked provider worker)');

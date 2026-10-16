@@ -74,6 +74,11 @@ export class RuntimeSidecarClient {
     return this.request({ type: 'health' }, '', 0, 0).then((envelope) => this.expect(envelope, 'health_response'));
   }
 
+  async issueTicket(sessionId: string, clientId: string): Promise<Extract<SidecarBody, { type: 'ticket' }>> {
+    return this.request({ type: 'issue_ticket', clientId }, sessionId, 0, 0)
+      .then(envelope => this.expect(envelope, 'ticket'));
+  }
+
   async admitRun(input: {
     sessionId: string;
     requestId: string;

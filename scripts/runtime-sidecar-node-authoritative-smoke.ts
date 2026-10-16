@@ -59,6 +59,7 @@ try {
     producerSequence: 1,
     epoch: 1,
     revision: 0,
+    state: { status: 'running', activeRunId: 'node-run', pendingResumeToken: null, blockedReason: null, updatedAt: new Date().toISOString() },
     chunks: [
       { type: 'message_delta', runId: 'node-run', stepId: 'node-step', delta: 'hello from node' },
       { type: 'done', sessionId: 'node-session', runId: 'node-run' },
@@ -66,7 +67,7 @@ try {
   });
   const replay = await runtimeFacade.replayAuthoritative('node-session', 0, 'node-run');
   if (replay.length !== 2) throw new Error(`expected 2 sidecar events, got ${replay.length}`);
-  const first = JSON.parse(Buffer.from(replay[0].payload).toString('utf8')) as { type?: string; delta?: string };
+  const first = JSON.parse(Buffer.from(replay[0].payload).toString('utf8')).chunk as { type?: string; delta?: string };
   if (replay[0].sequence !== 1 || first.type !== 'message_delta' || first.delta !== 'hello from node')
     throw new Error(`unexpected authoritative replay: ${JSON.stringify({ sequence: replay[0].sequence, first })}`);
   if (replay[1].sequence !== 2) throw new Error(`unexpected second sequence: ${replay[1].sequence}`);

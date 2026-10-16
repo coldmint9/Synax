@@ -53,14 +53,16 @@ describe('authoritative sidecar runtime journal projection', () => {
         sequence: 42,
         runId: run.id,
         payload: new TextEncoder().encode(JSON.stringify({
-          type: 'message_delta',
+          schema: 1, state: { status: 'running', activeRunId: run.id, pendingResumeToken: null, blockedReason: null, updatedAt: '2026-10-16T00:00:00Z' },
+          chunk: { type: 'message_delta',
           runId: run.id,
           stepId: 'step-sidecar',
-          delta: 'from sidecar',
+          delta: 'from sidecar' },
         })),
       },
     ]);
 
+    agentRuntimeStore.updateSession(session.id, { status: 'completed', activeRunId: null });
     const records = await runtimeJournal.readDurable(session.id, 0, 10, run.id);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
@@ -91,5 +93,27 @@ describe('authoritative sidecar runtime journal projection', () => {
     const snapshot = await runtimeJournal.snapshotDurable(session.id);
     expect(snapshot.cursor).toBe(88);
     expect(sidecar.snapshot).toHaveBeenCalledWith(session.id);
+  });
+
+  it('hydrates every retained page up to the captured cursor, not only the first 256 events', async () => {
+    const { session, run } = sessionRun();
+    const step = { id: 'step', runId: run.id, sessionId: session.id, index: 1, completedAt: null };
+    const steps = vi.spyOn(agentRuntimeStore, 'listRunSteps').mockReturnValue([step] as never);
+    sidecar.snapshot.mockResolvedValue({ epoch: 1, revision: 1, activeRunId: run.id, cursor: 600, retainedFrom: 1 });
+    const events = Array.from({ length: 602 }, (_, index) => ({
+      sequence: index + 1, runId: run.id,
+      payload: new TextEncoder().encode(JSON.stringify({ schema: 1,
+        state: { status: 'running', activeRunId: run.id, pendingResumeToken: null, blockedReason: null, updatedAt: '2026-10-16T00:00:00Z' },
+        chunk: { type: 'message_delta', runId: run.id, stepId: 'step', delta: String(index + 1) },
+      })),
+    }));
+    sidecar.replay.mockImplementation(async (_id, after) => events.filter(event => event.sequence > after));
+    try {
+      const snapshot = await runtimeJournal.snapshotDurable(session.id);
+      expect(snapshot.cursor).toBe(600);
+      expect(snapshot.liveChunks).toHaveLength(601);
+      expect(snapshot.liveChunks.at(-1)).toMatchObject({ delta: '600' });
+      expect(sidecar.replay).toHaveBeenCalledTimes(3);
+    } finally { steps.mockRestore(); }
   });
 });

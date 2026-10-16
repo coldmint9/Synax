@@ -29,6 +29,8 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
   desktop = await _electron.launch({ args: [entry, `--user-data-dir=${path.join(root, 'profile')}`], env });
   const page = await desktop.firstWindow();
+  await page.waitForURL('app://synax/index.html');
+  await page.waitForLoadState('domcontentloaded');
   page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
   const versions = await desktop.evaluate(() => ({ ...process.versions, websocket: typeof WebSocket }));
   const health = await page.evaluate(async ({ port, token }) => {

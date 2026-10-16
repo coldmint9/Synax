@@ -116,6 +116,12 @@ it("keeps subscription failures local and gives each late subscriber its own sna
   expect(client.frames.some(f => f.type === "event" && f.id === "two")).toBe(true);
   expect(client.socket.readyState).toBe(WebSocket.OPEN);
 });
+it("allows only the explicit session auxiliary stream query", () => {
+  expect(observationPath('/api/agent-runtime/sessions/s/stream?auxiliary=1')).toBe('/api/agent-runtime/sessions/s/stream?auxiliary=1');
+  for (const query of ['auxiliary=0', 'auxiliary=1&after=2', 'auxiliary=1&auxiliary=1'])
+    expect(() => observationPath(`/api/agent-runtime/sessions/s/stream?${query}`)).toThrow();
+});
+
 it("rejects arbitrary proxy targets and malformed subscription frames", async () => {
   const client = await authorized();
   const denied = new Promise<number>(resolve => client.socket.once("close", resolve));

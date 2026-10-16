@@ -233,14 +233,25 @@ impl HotStore {
         session_id: String,
         after: u64,
     ) -> Result<Vec<StreamEvent>, StorageError> {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || store.replay(&session_id, after))
+        self.replay_bounded_async(session_id, after, 256, 1024 * 1024 - 8192)
             .await
-            .map_err(|error| {
-                StorageError::Runtime(RuntimeError::InvalidCommand(format!(
-                    "storage task failed: {error}"
-                )))
-            })?
+    }
+
+    pub async fn replay_bounded_async(
+        &self,
+        session_id: String,
+        after: u64,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<StreamEvent>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.replay_bounded(&session_id, after, max_events, max_bytes)
+        })
+        .await
+        .map_err(|error| {
+            StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
+        })?
     }
 
     pub fn snapshot(&self, session_id: &str) -> Result<SessionSnapshot, StorageError> {
@@ -455,6 +466,16 @@ impl HotStore {
         durability: Durability,
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, StorageError> {
+        if events.len() > 256
+            || events.iter().any(|event| {
+                event.payload.len() + event.kind.len() + run_id.len() > 1024 * 1024 - 8192
+            })
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "stream batch exceeds event or frame budget".into(),
+            )
+            .into());
+        }
         if events.is_empty() {
             return Err(
                 RuntimeError::InvalidCommand("stream batch cannot be empty".to_owned()).into(),
@@ -528,6 +549,16 @@ impl HotStore {
     }
 
     pub fn replay(&self, session_id: &str, after: u64) -> Result<Vec<StreamEvent>, StorageError> {
+        self.replay_bounded(session_id, after, EVENT_RETENTION as usize, 4 * 1024 * 1024)
+    }
+
+    fn replay_bounded(
+        &self,
+        session_id: &str,
+        after: u64,
+        max_events: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<StreamEvent>, StorageError> {
         let state = self.read_session(session_id)?;
         if after > 0 && after + 1 < state.retained_from {
             return Err(RuntimeError::CursorExpired {
@@ -537,13 +568,22 @@ impl HotStore {
             .into());
         }
         let mut events = Vec::new();
+        let mut remaining = max_bytes;
         let start = after.max(state.retained_from.saturating_sub(1)) + 1;
         for sequence in start..=state.cursor {
             let Some(bytes) = self.get(CF_STREAMS, stream_key(session_id, sequence).as_bytes())?
             else {
-                continue;
+                return Err(
+                    RuntimeError::StorageUnavailable("retained event is missing".into()).into(),
+                );
             };
-            events.push(serde_json::from_slice(&bytes)?);
+            let event: StreamEvent = serde_json::from_slice(&bytes)?;
+            let cost = event.payload.len() + event.run_id.len() + event.kind.len() + 32;
+            if events.len() >= max_events || cost > remaining {
+                break;
+            }
+            remaining -= cost;
+            events.push(event);
         }
         Ok(events)
     }

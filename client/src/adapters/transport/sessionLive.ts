@@ -1,3 +1,5 @@
+import { RustRuntimeConnection, type RuntimeBootstrap } from './rustRuntimeConnection';
+import { useRuntimeConnectionStore } from '../../shared/state/runtimeConnectionStore';
 import type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
 export type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
@@ -55,6 +57,60 @@ export type SessionLiveEvent =
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
 
 export function sessionLiveStream(
+  sessionId: string,
+  onEvent: (event: SessionLiveEvent) => void,
+  onError?: (err: Event) => void,
+): () => void {
+  const desktop = (window as unknown as { electronAPI?: {
+    getRuntimeConnection?: (sessionId: string, clientId: string, snapshot: boolean) => Promise<RuntimeBootstrap>;
+  } }).electronAPI;
+  if (!desktop?.getRuntimeConnection) return nodeSessionLiveStream(sessionId, onEvent, onError);
+  const projector = new RuntimeStreamProjector();
+  const clientId = crypto.randomUUID();
+  let auxiliary: AuthenticatedEventSource | undefined;
+  let fallback: (() => void) | undefined;
+  const connection = new RustRuntimeConnection({
+    sessionId,
+    bootstrap: async (snapshot, signal) => {
+      const result = await desktop.getRuntimeConnection!(sessionId, clientId, snapshot);
+      signal.throwIfAborted();
+      return result;
+    },
+    snapshot: value => {
+      useApiConnectivityStore.getState().markSuccess();
+      for (const projected of projector.snapshot(value)) onEvent(projected);
+      // These events belong to non-agent domains until their own storage migration.
+      if (!auxiliary) {
+        auxiliary = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream?auxiliary=1`);
+        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job']) {
+          auxiliary.addEventListener(type, event => {
+            try { onEvent(JSON.parse(event.data) as SessionLiveEvent); }
+            catch (error) { console.error(`Invalid ${type} event`, error); }
+          });
+        }
+      }
+    },
+    record: record => { for (const projected of projector.record(record)) onEvent(projected); },
+    state: state => useRuntimeConnectionStore.getState().set(sessionId, state),
+    fallback: () => {
+      useRuntimeConnectionStore.getState().remove(sessionId);
+      fallback = nodeSessionLiveStream(sessionId, onEvent, onError);
+    },
+    error: error => console.warn('Runtime connection recovering:', error.message),
+  });
+  const lifecycle = new AbortController();
+  const wake = () => { if (document.visibilityState !== 'hidden') connection.wake(); };
+  window.addEventListener('online', wake, { signal: lifecycle.signal });
+  window.addEventListener('pageshow', wake, { signal: lifecycle.signal });
+  document.addEventListener('visibilitychange', wake, { signal: lifecycle.signal });
+  connection.start();
+  return () => {
+    lifecycle.abort(); connection.close(); auxiliary?.close(); fallback?.();
+    useRuntimeConnectionStore.getState().remove(sessionId);
+  };
+}
+
+function nodeSessionLiveStream(
   sessionId: string,
   onEvent: (event: SessionLiveEvent) => void,
   onError?: (err: Event) => void,

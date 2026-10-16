@@ -1,3 +1,4 @@
+import { getRuntimeConnection } from "./lib/runtime-connection.js";
 import {
   SessionNotifications,
   isTrustedNotificationSender,
@@ -401,6 +402,10 @@ function registerIPC(): void {
         : await startSidecar();
     armUiReadyTimer();
     return port;
+  });
+  ipcMain.handle("app:runtime-connection", async (event, sessionId, clientId, snapshot) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted runtime connection request.");
+    return getRuntimeConnection(sessionId, clientId, snapshot);
   });
   ipcMain.handle("app:runtime-token", async (event) => {
     const url = event.senderFrame?.url ?? "";

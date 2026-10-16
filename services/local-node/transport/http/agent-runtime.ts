@@ -1,3 +1,4 @@
+import { runtimeFacade } from '../../modules/agent-runtime/sidecar/runtime-facade.js';
 import { readFlatHistoryWindow, readFlatTimeline } from "../../modules/agent-runtime/flat-history-reader.js";
 import { simpleHistorySession, simpleHistoryRevision } from "../../modules/agent-runtime/simple-history.js";
 import { migrateFlatHistory, prepareFlatHistory } from "../../modules/agent-runtime/flat-history-migration.js";
@@ -1160,6 +1161,25 @@ agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
   }
 });
 
+agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({ clientId: z.string().min(1).max(128), snapshot: z.boolean().default(false) }).safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const sessionId = c.req.param("sessionId");
+    agentRuntimeStore.getSession(sessionId);
+    // Remote web clients keep using the Node gateway; loopback discovery is desktop-only.
+    if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative')
+      return c.json({ transport: 'node' as const });
+    c.header('Cache-Control', 'no-store');
+    const snapshot = parsed.data.snapshot ? await runtimeJournal.snapshotDurable(sessionId) : undefined;
+    const ticket = await runtimeFacade.uiTicket(sessionId, parsed.data.clientId);
+    if (!ticket) throw new Error('Runtime sidecar ticket is unavailable.');
+    return c.json({ transport: 'rust' as const, ticket, snapshot });
+  } catch (error) { return runtimeError(c, error); }
+});
+
 agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
   try {
     return c.json(await runtimeJournal.snapshotDurable(c.req.param("sessionId")));
@@ -1208,6 +1228,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", (c) => {
       },
     );
     try {
+      if (c.req.query("auxiliary") === "1") {
+        if (!observer.signal.aborted) await new Promise<void>(resolve => observer.signal.addEventListener('abort', () => resolve(), { once: true }));
+        return;
+      }
       const snapshot = await runtimeJournal.snapshotDurable(sessionId);
       await stream.writeSSE({
         event: "snapshot",

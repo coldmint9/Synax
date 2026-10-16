@@ -82,6 +82,7 @@ export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandl
     cwd: process.cwd(),
     env: {
       ...process.env,
+      SYNAX_RUNTIME_SIDECAR_PORT: '0',
       SYNAX_RUNTIME_SIDECAR_SOCKET: socketPath,
       SYNAX_RUNTIME_SIDECAR_TOKEN: token,
       SYNAX_RUNTIME_HOT_PATH: hotPath,
@@ -130,6 +131,7 @@ export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandl
   process.env.SYNAX_RUNTIME_SIDECAR_SOCKET = socketPath;
   process.env.SYNAX_RUNTIME_SIDECAR_TOKEN = token;
   process.env.SYNAX_RUNTIME_HOT_PATH = hotPath;
+  process.env.SYNAX_RUNTIME_SIDECAR_PORT = String(ready.port);
   const handle: RustRuntimeSidecarHandle = {
     binaryPath,
     socketPath,
@@ -165,4 +167,5 @@ export async function stopRustRuntimeSidecar(
   if (process.env.SYNAX_RUNTIME_SIDECAR_TOKEN === handle.token)
     delete process.env.SYNAX_RUNTIME_SIDECAR_TOKEN;
   delete process.env.SYNAX_RUNTIME_HOT_PATH;
+  delete process.env.SYNAX_RUNTIME_SIDECAR_PORT;
 }

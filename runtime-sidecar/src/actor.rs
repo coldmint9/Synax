@@ -139,8 +139,8 @@ enum ActorCommand {
     Subscribe {
         session_id: String,
         after: u64,
-        sender: mpsc::Sender<StreamEvent>,
-        response: oneshot::Sender<Result<SessionSnapshot, RuntimeError>>,
+        sender: mpsc::Sender<Arc<StreamEvent>>,
+        response: oneshot::Sender<Result<(SessionSnapshot, Vec<StreamEvent>), RuntimeError>>,
     },
 }
 
@@ -160,7 +160,7 @@ struct SessionState {
     events: VecDeque<StreamEvent>,
     receipts: HashMap<String, Receipt>,
     producer_sequences: HashMap<String, u64>,
-    subscribers: Vec<mpsc::Sender<StreamEvent>>,
+    subscribers: Vec<mpsc::Sender<Arc<StreamEvent>>>,
     event_retention: usize,
 }
 
@@ -221,13 +221,10 @@ impl SessionState {
                 kind: pending.kind,
                 payload: pending.payload,
             };
-            self.events.push_back(event.clone());
+            let shared = Arc::new(event);
             self.subscribers
-                .retain(|subscriber| matches!(subscriber.try_send(event.clone()), Ok(())));
+                .retain(|subscriber| matches!(subscriber.try_send(shared.clone()), Ok(())));
             sequence += 1;
-        }
-        while self.events.len() > self.event_retention {
-            self.events.pop_front();
         }
     }
 
@@ -275,8 +272,9 @@ impl SessionState {
                 payload: pending.payload,
             };
             self.events.push_back(event.clone());
+            let shared = Arc::new(event);
             self.subscribers
-                .retain(|subscriber| matches!(subscriber.try_send(event.clone()), Ok(())));
+                .retain(|subscriber| matches!(subscriber.try_send(shared.clone()), Ok(())));
         }
         while self.events.len() > self.event_retention {
             self.events.pop_front();
@@ -552,7 +550,14 @@ impl SessionShardRouter {
         &self,
         session_id: impl Into<String>,
         after: u64,
-    ) -> Result<(SessionSnapshot, mpsc::Receiver<StreamEvent>), RuntimeError> {
+    ) -> Result<
+        (
+            SessionSnapshot,
+            Vec<StreamEvent>,
+            mpsc::Receiver<Arc<StreamEvent>>,
+        ),
+        RuntimeError,
+    > {
         let session_id = session_id.into();
         let (sender, receiver) = mpsc::channel(self.subscriber_capacity);
         let (response, result) = oneshot::channel();
@@ -565,8 +570,8 @@ impl SessionShardRouter {
                 response,
             },
         )?;
-        let snapshot = result.await.map_err(|_| RuntimeError::SessionClosed)??;
-        Ok((snapshot, receiver))
+        let (snapshot, backlog) = result.await.map_err(|_| RuntimeError::SessionClosed)??;
+        Ok((snapshot, backlog, receiver))
     }
 
     fn dispatch(&self, session_id: &str, command: ActorCommand) -> Result<(), RuntimeError> {
@@ -838,7 +843,12 @@ async fn run_shard(
                 }
                 let result = if let Some(store) = store.as_ref() {
                     store
-                        .replay_async(session_id.clone(), after)
+                        .replay_bounded_async(
+                            session_id.clone(),
+                            after,
+                            event_retention,
+                            4 * 1024 * 1024,
+                        )
                         .await
                         .map_err(storage_error_to_runtime)
                         .map(|events| (events, sessions.get(&session_id).unwrap().snapshot()))
@@ -851,22 +861,34 @@ async fn run_shard(
                 };
                 let result = match result {
                     Ok((events, snapshot)) => {
-                        let mut accepted = true;
-                        for event in events {
-                            if sender.try_send(event).is_err() {
-                                accepted = false;
-                                break;
-                            }
-                        }
-                        if accepted {
-                            sessions
-                                .get_mut(&session_id)
-                                .unwrap()
-                                .subscribers
-                                .push(sender);
-                            Ok(snapshot)
-                        } else {
+                        if after > snapshot.cursor {
+                            Err(RuntimeError::InvalidCommand(
+                                "subscription cursor is ahead of session".into(),
+                            ))
+                        } else if after.saturating_add(1) < snapshot.retained_from {
+                            Err(RuntimeError::CursorExpired {
+                                after,
+                                retained_from: snapshot.retained_from,
+                            })
+                        } else if events.last().map(|event| event.sequence).unwrap_or(after)
+                            < snapshot.cursor
+                        {
                             Err(RuntimeError::Backpressure)
+                        } else if events
+                            .iter()
+                            .map(|event| event.payload.len())
+                            .sum::<usize>()
+                            > 4 * 1024 * 1024
+                        {
+                            Err(RuntimeError::Backpressure)
+                        } else {
+                            // The same actor turn captures the backlog and installs the live sender.
+                            // Backlog never consumes the bounded live mailbox.
+                            let subscribers =
+                                &mut sessions.get_mut(&session_id).unwrap().subscribers;
+                            subscribers.retain(|sender| !sender.is_closed());
+                            subscribers.push(sender);
+                            Ok((snapshot, events))
                         }
                     }
                     Err(error) => Err(error),
@@ -1087,6 +1109,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn backlog_is_separate_from_live_mailbox_and_has_no_boundary_gap() {
+        let router = SessionShardRouter::with_limits(1, 16, 512, 4).unwrap();
+        router
+            .admit_run("s", "request", "body", "r", 1, 0)
+            .await
+            .unwrap();
+        router
+            .append_stream(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                (0..200).map(|_| event("backlog")).collect(),
+            )
+            .await
+            .unwrap();
+        let (subscription, append) = tokio::join!(
+            router.subscribe("s", 0),
+            router.append_stream("s", "r", "p", 2, 1, vec![event("live")])
+        );
+        append.unwrap();
+        let (snapshot, backlog, mut live) = subscription.unwrap();
+        assert_eq!(snapshot.cursor, 200);
+        assert_eq!(backlog.len(), 200);
+        assert_eq!(live.recv().await.unwrap().sequence, 201);
+        assert!(live.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn router_rejects_invalid_limits() {
         assert!(matches!(
             SessionShardRouter::new(0, 1),
@@ -1164,7 +1216,7 @@ mod tests {
             .admit_run("slow-session", "start", "body", "run-slow", 1, 0)
             .await
             .unwrap();
-        let (_, _slow_receiver) = router.subscribe("slow-session", 0).await.unwrap();
+        let (_, _, _slow_receiver) = router.subscribe("slow-session", 0).await.unwrap();
         router
             .append_stream(
                 "slow-session",
@@ -1199,7 +1251,7 @@ mod tests {
             .admit_run("session-a", "start", "body", "run-a", 1, 0)
             .await
             .unwrap();
-        let (snapshot, mut receiver) = router.subscribe("session-a", 0).await.unwrap();
+        let (snapshot, _, mut receiver) = router.subscribe("session-a", 0).await.unwrap();
         assert_eq!(snapshot.cursor, 0);
         router
             .append_stream(

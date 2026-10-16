@@ -1,3 +1,4 @@
+import { useRuntimeConnectionStore } from "../../shared/state/runtimeConnectionStore";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { memo, useId } from "react";
 import { ChevronDown, CircleAlert, Gauge } from "lucide-react";
@@ -163,7 +164,9 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
   );
   const compacting =
     sessionCompaction(session)?.status === "running" || liveCompaction;
-  const connected = useApiConnectivityStore(s => s.browserOnline && s.apiReachable !== "unreachable");
+  const apiConnected = useApiConnectivityStore(s => s.browserOnline && s.apiReachable !== "unreachable");
+  const streamConnected = useRuntimeConnectionStore(s => !s.sessions[sessionId] || s.sessions[sessionId] === 'connected');
+  const connected = apiConnected && streamConnected;
   const liveSummary = compacting
     ? {
         ...runtimeProfileSummary(stats, session?.status, zh),

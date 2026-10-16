@@ -101,6 +101,8 @@ if (process.isMainFrame)
     reportUIReady: () => ipcRenderer.send("app:ui-ready"),
     getApiPort: () => ipcRenderer.invoke("app:api-port"),
     getRuntimeToken: () => ipcRenderer.invoke("app:runtime-token"),
+    getRuntimeConnection: (sessionId: string, clientId: string, snapshot: boolean) =>
+      ipcRenderer.invoke("app:runtime-connection", sessionId, clientId, snapshot),
     onDeepLink: (callback: (url: string) => void) => {
       ipcRenderer.on("deep-link", (_event, url) => callback(url));
     },

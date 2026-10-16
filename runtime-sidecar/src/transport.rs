@@ -1,21 +1,30 @@
 use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
+use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
     WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireReady,
-    WireRunAdmission, WireSnapshotResponse, WireStreamEvent, decode_client_message, decode_wire,
-    encode_server_message, encode_wire, wire_envelope,
+    WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket, decode_client_message,
+    decode_wire, encode_server_message, encode_wire, wire_envelope,
 };
+use crate::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
+use prost::Message as ProstMessage;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
-use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+use tokio::sync::{Semaphore, watch};
+use tokio::time::timeout;
+use tokio_tungstenite::{
+    WebSocketStream, accept_hdr_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
-const HANDSHAKE_CAPABILITIES: &[&str] = &[
+pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "health",
     "shutdown",
     "admit_run",
@@ -23,6 +32,9 @@ const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "append_stream",
     "snapshot",
     "replay",
+    "subscribe",
+    "ui_ticket",
+    "credit_window",
 ];
 
 type WebSocket = WebSocketStream<TcpStream>;
@@ -40,6 +52,7 @@ pub enum TransportError {
 #[derive(Clone)]
 pub struct TransportContext {
     pub token: Arc<str>,
+    pub tickets: Arc<TicketStore>,
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
 }
@@ -79,13 +92,16 @@ pub async fn serve_websocket(
     context: TransportContext,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), TransportError> {
+    let slots = Arc::new(Semaphore::new(256));
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
+                let Ok(permit) = slots.clone().try_acquire_owned() else { continue; };
                 let child_context = context.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     if let Err(error) = handle_websocket(stream, child_context).await {
                         eprintln!("[runtime-sidecar] websocket connection failed: {error}");
                     }
@@ -99,8 +115,31 @@ async fn handle_websocket(
     stream: TcpStream,
     context: TransportContext,
 ) -> Result<(), TransportError> {
-    let mut socket = accept_async(stream).await?;
-    let first = match socket.next().await {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_FRAME_BYTES))
+        .max_frame_size(Some(MAX_FRAME_BYTES));
+    let mut socket = timeout(
+        Duration::from_secs(5),
+        accept_hdr_async_with_config(
+            stream,
+            |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+                if request.uri().path() != "/runtime" {
+                    return Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                        .status(404)
+                        .body(Some("not found".into()))
+                        .unwrap());
+                }
+                Ok(response)
+            },
+            Some(config),
+        ),
+    )
+    .await
+    .map_err(|_| TransportError::Protocol("websocket upgrade timed out".into()))??;
+    let first = match timeout(Duration::from_secs(5), socket.next())
+        .await
+        .map_err(|_| TransportError::Protocol("hello timed out".into()))?
+    {
         Some(Ok(message)) => message,
         Some(Err(error)) => return Err(error.into()),
         None => return Ok(()),
@@ -126,17 +165,43 @@ async fn handle_websocket(
         Message::Binary(bytes) => {
             let hello =
                 decode_wire(&bytes).map_err(|error| TransportError::Protocol(error.to_string()))?;
-            if !authenticate_wire(&hello, &context) {
-                send_wire(
-                    &mut socket,
-                    &wire_error_envelope("UNAUTHENTICATED", "hello authentication failed"),
-                )
-                .await?;
-                let _ = socket.close(None).await;
-                return Ok(());
+            let scope = if authenticate_wire(&hello, &context) {
+                None
+            } else {
+                let ticket = match &hello.body {
+                    Some(wire_envelope::Body::Hello(hello)) => {
+                        context
+                            .tickets
+                            .consume(&hello.token, &hello.client_id)
+                            .await
+                    }
+                    _ => None,
+                };
+                match ticket {
+                    Some(scope) => Some(scope),
+                    None => {
+                        send_wire(
+                            &mut socket,
+                            &wire_error_envelope("UNAUTHENTICATED", "hello authentication failed"),
+                        )
+                        .await?;
+                        let _ = socket.close(None).await;
+                        return Ok(());
+                    }
+                }
+            };
+            let mut ready = context.wire_ready("websocket");
+            if scope.is_some() {
+                if let Some(wire_envelope::Body::Ready(ref mut body)) = ready.body {
+                    body.capabilities =
+                        ["health", "snapshot", "replay", "subscribe", "credit_window"]
+                            .iter()
+                            .map(|value| (*value).into())
+                            .collect();
+                }
             }
-            send_wire(&mut socket, &context.wire_ready("websocket")).await?;
-            handle_wire_websocket(socket, context).await
+            send_wire(&mut socket, &ready).await?;
+            handle_wire_websocket(socket, context, scope).await
         }
         Message::Ping(payload) => {
             let _ = socket.send(Message::Pong(payload)).await?;
@@ -175,16 +240,29 @@ async fn handle_json_websocket(
 async fn handle_wire_websocket(
     mut socket: WebSocket,
     context: TransportContext,
+    scope: Option<UiScope>,
 ) -> Result<(), TransportError> {
     while let Some(message) = socket.next().await {
         match message? {
             Message::Binary(bytes) => {
                 let request = decode_wire(&bytes)
                     .map_err(|error| TransportError::Protocol(error.to_string()))?;
+                if scope
+                    .as_ref()
+                    .is_some_and(|scope| !ui_command_allowed(&request, scope))
+                {
+                    let mut error = wire_error_envelope(
+                        "FORBIDDEN",
+                        "ticket does not authorize this operation or session",
+                    );
+                    error.request_id = request.request_id;
+                    send_wire(&mut socket, &error).await?;
+                    continue;
+                }
                 if matches!(request.body, Some(wire_envelope::Body::Subscribe(_))) {
                     return handle_wire_subscription(socket, context, request).await;
                 }
-                let (response, should_shutdown) = execute_wire(request, &context).await;
+                let (response, should_shutdown) = execute_wire(request, &context, false).await;
                 send_wire(&mut socket, &response).await?;
                 if should_shutdown {
                     return Ok(());
@@ -208,6 +286,37 @@ async fn handle_wire_websocket(
     Ok(())
 }
 
+fn ui_command_allowed(request: &WireEnvelope, scope: &UiScope) -> bool {
+    match request.body {
+        Some(wire_envelope::Body::Health(_)) | Some(wire_envelope::Body::Ping(_)) => true,
+        Some(wire_envelope::Body::Snapshot(_))
+        | Some(wire_envelope::Body::Replay(_))
+        | Some(wire_envelope::Body::Subscribe(_)) => request.session_id == scope.session_id,
+        _ => false,
+    }
+}
+
+async fn close_websocket(socket: &mut WebSocket, reason: &'static str) {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+    // Drain the peer's outstanding ACKs and close reply. Dropping a socket with unread
+    // data can cause a TCP reset that discards the final RESYNC_REQUIRED frame.
+    let _ = timeout(Duration::from_secs(1), async {
+        socket
+            .close(Some(CloseFrame {
+                code: CloseCode::Policy,
+                reason: reason.into(),
+            }))
+            .await?;
+        while let Some(message) = socket.next().await {
+            if matches!(message?, Message::Close(_)) {
+                break;
+            }
+        }
+        Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+    })
+    .await;
+}
+
 async fn handle_wire_subscription(
     mut socket: WebSocket,
     context: TransportContext,
@@ -219,23 +328,25 @@ async fn handle_wire_subscription(
         Some(wire_envelope::Body::Subscribe(subscribe)) => subscribe.after,
         _ => return Ok(()),
     };
-    let (snapshot, mut receiver) = match context.router.subscribe(session_id.clone(), after).await {
-        Ok(value) => value,
-        Err(error) => {
-            send_wire(
-                &mut socket,
-                &WireEnvelope {
-                    request_id,
-                    session_id,
-                    epoch: 0,
-                    revision: 0,
-                    body: Some(error_to_wire(error)),
-                },
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    let (snapshot, backlog, mut receiver) =
+        match context.router.subscribe(session_id.clone(), after).await {
+            Ok(value) => value,
+            Err(error) => {
+                send_wire(
+                    &mut socket,
+                    &WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: 0,
+                        revision: 0,
+                        body: Some(error_to_wire(error)),
+                    },
+                )
+                .await?;
+                close_websocket(&mut socket, "RESYNC_REQUIRED").await;
+                return Ok(());
+            }
+        };
     send_wire(
         &mut socket,
         &WireEnvelope {
@@ -256,38 +367,81 @@ async fn handle_wire_subscription(
     )
     .await?;
 
+    let mut backlog: VecDeque<_> = backlog.into_iter().map(Arc::new).collect();
+    let mut pending = backlog.pop_front();
+    let mut credits = CreditWindow::new(after, 64, 2 * 1024 * 1024);
+    let mut shutdown = context.shutdown.subscribe();
     loop {
+        if let Some(event) = pending.as_ref() {
+            let envelope = WireEnvelope {
+                request_id: request_id.clone(),
+                session_id: session_id.clone(),
+                epoch: snapshot.epoch,
+                revision: snapshot.revision,
+                body: Some(wire_envelope::Body::EventBatch(WireEventBatch {
+                    events: vec![WireStreamEvent {
+                        sequence: event.sequence,
+                        run_id: event.run_id.clone(),
+                        kind: event.kind.clone(),
+                        payload: event.payload.clone(),
+                    }],
+                })),
+            };
+            let encoded = encode_wire(&envelope);
+            if encoded.len() > MAX_FRAME_BYTES {
+                send_wire(
+                    &mut socket,
+                    &wire_error_envelope("RESYNC_REQUIRED", "event exceeds transport limit"),
+                )
+                .await?;
+                close_websocket(&mut socket, "RESYNC_REQUIRED").await;
+                return Ok(());
+            }
+            if credits.available(encoded.len()) {
+                credits
+                    .sent(event.sequence, encoded.len())
+                    .map_err(|error| TransportError::Protocol(error.into()))?;
+                send_binary(&mut socket, encoded).await?;
+                pending = backlog.pop_front();
+                continue;
+            }
+        }
         tokio::select! {
-            message = socket.next() => {
-                match message {
+            _ = shutdown.changed() => return Ok(()),
+            message = timeout(Duration::from_secs(45), socket.next()) => {
+                match message.map_err(|_| TransportError::Protocol("subscriber heartbeat timed out".into()))? {
                     None | Some(Ok(Message::Close(_))) => return Ok(()),
                     Some(Ok(Message::Ping(payload))) => socket.send(Message::Pong(payload)).await?,
-                    Some(Ok(Message::Text(_))) | Some(Ok(Message::Binary(_))) => {
-                        send_wire(&mut socket, &wire_error_envelope("SUBSCRIPTION_READ_ONLY", "subscription connections only accept ping/close")).await?;
+                    Some(Ok(Message::Binary(bytes))) => {
+                        let request = decode_wire(&bytes).map_err(|error| TransportError::Protocol(error.to_string()))?;
+                        match request.body {
+                            Some(wire_envelope::Body::Credit(credit)) if request.session_id == session_id && request.request_id == request_id => {
+                                if let Err(error) = credits.ack(credit.through_sequence) {
+                                    send_wire(&mut socket, &wire_error_envelope("INVALID_CREDIT", error)).await?;
+                                    close_websocket(&mut socket, "INVALID_CREDIT").await;
+                                    return Ok(());
+                                }
+                            }
+                            Some(wire_envelope::Body::Ping(_)) => send_wire(&mut socket, &WireEnvelope {
+                                request_id: request.request_id, body: Some(wire_envelope::Body::Pong(WirePong {})), ..Default::default()
+                            }).await?,
+                            _ => send_wire(&mut socket, &wire_error_envelope("SUBSCRIPTION_READ_ONLY", "only credit, ping and close are accepted")).await?,
+                        }
                     }
-                    Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {}
+                    Some(Ok(Message::Text(_))) => send_wire(&mut socket, &wire_error_envelope("BINARY_REQUIRED", "protobuf required")).await?,
+                    Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {},
                     Some(Err(error)) => return Err(error.into()),
                 }
             }
-            event = receiver.recv() => {
-                let Some(event) = event else { return Ok(()); };
-                send_wire(
-                    &mut socket,
-                    &WireEnvelope {
-                        request_id: request_id.clone(),
-                        session_id: session_id.clone(),
-                        epoch: snapshot.epoch,
-                        revision: snapshot.revision,
-                        body: Some(wire_envelope::Body::EventBatch(WireEventBatch {
-                            events: vec![WireStreamEvent {
-                                sequence: event.sequence,
-                                run_id: event.run_id,
-                                kind: event.kind,
-                                payload: event.payload,
-                            }],
-                        })),
-                    },
-                ).await?;
+            event = receiver.recv(), if pending.is_none() => {
+                match event {
+                    Some(event) => pending = Some(event),
+                    None => {
+                        send_wire(&mut socket, &wire_error_envelope("RESYNC_REQUIRED", "live mailbox overflowed or actor stopped")).await?;
+                        close_websocket(&mut socket, "RESYNC_REQUIRED").await;
+                        return Ok(());
+                    }
+                }
             }
         }
     }
@@ -345,7 +499,11 @@ async fn handle_json_message(
     Ok(false)
 }
 
-async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (WireEnvelope, bool) {
+async fn execute_wire(
+    request: WireEnvelope,
+    context: &TransportContext,
+    local_control: bool,
+) -> (WireEnvelope, bool) {
     let request_id = request.request_id.clone();
     let session_id = request.session_id.clone();
     let envelope = |body| WireEnvelope {
@@ -357,6 +515,34 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
     };
 
     match request.body {
+        Some(wire_envelope::Body::IssueTicket(issue)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "tickets are issued only over the private control socket",
+                    )),
+                    false,
+                );
+            }
+            match context
+                .tickets
+                .issue(UiScope {
+                    session_id: session_id.clone(),
+                    client_id: issue.client_id,
+                })
+                .await
+            {
+                Ok((token, expires_at_ms)) => (
+                    envelope(wire_envelope::Body::Ticket(WireTicket {
+                        token,
+                        expires_at_ms,
+                    })),
+                    false,
+                ),
+                Err(message) => (envelope(wire_error("TICKET_UNAVAILABLE", message)), false),
+            }
+        }
         Some(wire_envelope::Body::Health(_)) => (
             envelope(wire_envelope::Body::HealthResponse(WireHealthResponse {
                 ok: true,
@@ -510,20 +696,44 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
                 .replay(session_id.clone(), replay.after)
                 .await
             {
-                Ok(events) => (
-                    envelope(wire_envelope::Body::EventBatch(WireEventBatch {
-                        events: events
-                            .into_iter()
-                            .map(|event| WireStreamEvent {
-                                sequence: event.sequence,
-                                run_id: event.run_id,
-                                kind: event.kind,
-                                payload: event.payload,
-                            })
-                            .collect(),
-                    })),
-                    false,
-                ),
+                Ok(events) => {
+                    // Bound the serialized response as well as its event count. Callers advance
+                    // from the last returned sequence; one large batch cannot break IPC framing.
+                    let mut page = Vec::new();
+                    let empty = envelope(wire_envelope::Body::EventBatch(WireEventBatch {
+                        events: vec![],
+                    }));
+                    let mut remaining = MAX_FRAME_BYTES.saturating_sub(empty.encoded_len() + 16);
+                    for event in events.into_iter().take(256) {
+                        let wire = WireStreamEvent {
+                            sequence: event.sequence,
+                            run_id: event.run_id,
+                            kind: event.kind,
+                            payload: event.payload,
+                        };
+                        let cost = wire.encoded_len() + 11;
+                        if cost > remaining {
+                            if page.is_empty() {
+                                return (
+                                    envelope(wire_error(
+                                        "EVENT_TOO_LARGE",
+                                        "event exceeds replay frame budget",
+                                    )),
+                                    false,
+                                );
+                            }
+                            break;
+                        }
+                        remaining -= cost;
+                        page.push(wire);
+                    }
+                    (
+                        envelope(wire_envelope::Body::EventBatch(WireEventBatch {
+                            events: page,
+                        })),
+                        false,
+                    )
+                }
                 Err(error) => (envelope(error_to_wire(error)), false),
             }
         }
@@ -543,6 +753,8 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
         | Some(wire_envelope::Body::RunAdmission(_))
         | Some(wire_envelope::Body::SnapshotResponse(_))
         | Some(wire_envelope::Body::EventBatch(_))
+        | Some(wire_envelope::Body::Ticket(_))
+        | Some(wire_envelope::Body::Credit(_))
         | None => (
             envelope(wire_error(
                 "INVALID_COMMAND",
@@ -652,18 +864,27 @@ fn wire_error_envelope(code: &str, message: &str) -> WireEnvelope {
     }
 }
 
+async fn send_binary(socket: &mut WebSocket, bytes: Vec<u8>) -> Result<(), TransportError> {
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err(TransportError::Protocol(
+            "response exceeds frame limit".into(),
+        ));
+    }
+    timeout(
+        Duration::from_secs(5),
+        socket.send(Message::Binary(bytes.into())),
+    )
+    .await
+    .map_err(|_| TransportError::Protocol("websocket write timed out".into()))??;
+    Ok(())
+}
 async fn send_json(socket: &mut WebSocket, message: &ServerMessage) -> Result<(), TransportError> {
     let bytes = encode_server_message(message)
         .map_err(|error| TransportError::Protocol(error.to_string()))?;
-    socket.send(Message::Binary(bytes.into())).await?;
-    Ok(())
+    send_binary(socket, bytes).await
 }
-
 async fn send_wire(socket: &mut WebSocket, envelope: &WireEnvelope) -> Result<(), TransportError> {
-    socket
-        .send(Message::Binary(encode_wire(envelope).into()))
-        .await?;
-    Ok(())
+    send_binary(socket, encode_wire(envelope)).await
 }
 
 fn authenticate_json(bytes: &[u8], context: &TransportContext) -> Result<bool, TransportError> {
@@ -735,7 +956,7 @@ async fn handle_unix(
             };
             let envelope = decode_wire(&request)
                 .map_err(|error| TransportError::Protocol(error.to_string()))?;
-            let (response, should_shutdown) = execute_wire(envelope, &context).await;
+            let (response, should_shutdown) = execute_wire(envelope, &context, true).await;
             write_frame(&mut stream, &encode_wire(&response)).await?;
             if should_shutdown {
                 return Ok(());

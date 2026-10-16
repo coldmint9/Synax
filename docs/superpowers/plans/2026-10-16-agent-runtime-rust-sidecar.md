@@ -12,30 +12,44 @@
 
 | 要求 | 当前证据 / 真实状态 | 剩余工作 |
 | --- | --- | --- |
-| Electron 原生 WebSocket | 从 39.8.10 升级并固定 44.8.0；真实 Electron `app://` + sandbox Renderer 通过 JSON/Protobuf 直连 Rust probe，主进程原生 WebSocket 可用 | 业务会话页面还未切到 Rust，probe 不是业务接管 |
+| Electron 原生 WebSocket | 从 39.8.10 升级并固定 44.8.0；真实 Electron `app://` + sandbox Renderer 通过 JSON/Protobuf 直连 Rust probe，主进程原生 WebSocket 可用 | authoritative 模式下业务会话页面已通过 preload/ticket 直连 Rust；默认切换仍待仓库和历史迁移 |
 | 桌面打包 | Forge prePackage 自动编译 locked release Rust，并收录 server-dist/workers；Electron 44 打包和桌面 smoke 已通过 | Windows 构建/传输尚未在目标机验收 |
 | Tokio + Moka | 多线程 Tokio；缓存现已改为 moka::future::Cache；写入完成/未知确认后失效 | 全局内存预算、负载下限流与压测 |
 | group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
 | Node 执行接入 | Unix socket 连接复用，握手超时/协议校验/断线重连；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
-| 实时数据 | Rust WebSocket listener 与 subscribe 已存在 | 短期 ticket、UI bridge、信用窗口、snapshot+live 边界及业务 UI 接入未完成 |
+| 实时数据 | 已接入短期单次 ticket、会话只读作用域、preload、原生 WS、消费确认窗口与重连游标；订阅 backlog/live 在同一 actor turn 建立 | 初始完整业务快照仍由 Node/SQLite 组装；全量状态与历史迁移、进程崩溃后的自动恢复未完成 |
 | 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
 注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。不要把已有 checkbox 推断成上述功能已完成。
 
-本轮实测：22 项 Rust 测试、90 项 Node/Electron 回归、JSON/Protobuf/订阅与崩溃 receipt smoke、受控两轮 lifecycle、Electron app:// 原生 WebSocket probe 均通过；Electron 44 打包后的桌面 smoke 和 codesign 校验通过。真实 provider 子进程、Windows 和吞吐/ENOSPC 验收仍缺失。
+2026-10-16 第二轮补充实现：
+
+- UI ticket 只经私有 Unix socket 签发，30 秒过期、单次使用，绑定 client/session；UI 只允许 health/ping/snapshot/replay/subscribe。
+- WebSocket 限制 256 连接，upgrade/hello 5 秒超时、1 MiB 帧；订阅最多 64 条 / 2 MiB 在途数据，消费后按已送达 sequence 确认，重复/future ACK 不扩窗。
+- 历史回放与 128 槽实时邮箱分离，backlog 最大 4 MiB；实时溢出要求 RESYNC。补充有时限的 close 握手与 close reason，避免未读 ACK 引发 TCP reset 丢掉最后错误帧。
+- IPC replay 按 256 条与字节上限分页。持久路径不再在 actor 中复制整份事件历史，fanout 使用 Arc 共享 payload。
+- 前后端共享 `packages/runtime-protocol/wire.ts`；新事件使用 `{schema:1, chunk, state}`，状态在提交时捕获。旧实验性 raw chunk payload 需要迁移，不能用当前 SQL 状态假造历史状态。
+- Renderer 已接到业务 sessionLiveStream，初次选择明确未启用 Rust 时保持 Node；一旦选择 Rust，连接失败只重连/重建快照，不静默换数据源。媒体/手动压缩辅助事件暂由 Node 独立辅助订阅发送。
+- 会话面板显示 Rust 连接恢复状态；Node HTTP 正常不会掩盖会话流断线。
+
+证据：26 项 Rust 测试；真实 Electron adapter 回放 600 条历史 + 25 条重连期间事件无重复，验证 64 条未确认上限、伪造 ACK、慢消费者溢出重同步、跨会话/写操作拒绝、ticket 重用拒绝；打包后的真实业务页面已通过 preload → Node ticket → Rust subscription 验收。最终扩展套件包含 99 项 Node/Electron 与 55 项前端测试，均通过。真实 provider 子进程、Windows、整体吞吐/ENOSPC 验收仍缺失。
+
 
 当前验收命令：
 
 - `npm run runtime-sidecar:electron-smoke`
+- `npm run runtime-sidecar:ui-smoke`（真实 Electron 原生 WS 与共享前端适配器，包含慢消费者/越权测试）
 - `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
 - `npm run runtime-sidecar:test`
 - `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
 - `npm run typecheck`、`npm run test:desktop`、`npm run build:desktop`
 - `SYNAX_RUNTIME_SIDECAR_SUPERVISOR=1 SYNAX_RUNTIME_SIDECAR_ADMISSION=shadow SYNAX_RUNTIME_SIDECAR_STREAM=shadow npm run test:desktop:smoke`
 
-后续顺序：完成 UI ticket / 原生 WS transport / replay+live 与信用窗口；推进 session/run/control 的异步 Rust repository；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
+下一阶段还必须处理两个执行侧缺口：私有 Unix 连接当前逐请求等待执行，跨会话仍可能队头阻塞，需要有界的请求复用；sidecar 进程崩溃后的 supervisor 重启、stream append 幂等重试和 lease 恢复尚未闭环。现有连接重连测试不代表进程崩溃恢复完成。
+
+后续顺序：推进 session/run/control 的异步 Rust repository，并使初始完整 UI 快照来自同一个权威状态；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 
 ## 总目标
 
@@ -233,6 +247,8 @@ runtime-sidecar/
 - SQLite runtime 表不再是活跃 session 的权威来源。
 
 ## 阶段 5：Electron WebSocket
+
+状态：ticket、preload、业务页面原生 WS、窗口/重连/重同步已落地并完成真实 Electron 验收。初始完整快照仍是过渡实现，进程崩溃自动恢复与默认切换未完成。
 
 目标：桌面端实时会话切换到 Rust sidecar WebSocket。
 

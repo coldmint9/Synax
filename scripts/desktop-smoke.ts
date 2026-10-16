@@ -1,3 +1,4 @@
+import { decodeEnvelope } from "../packages/runtime-protocol/wire.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -365,6 +366,59 @@ try {
     { probe, server: path.join(info.resources, "server-dist", "server.cjs") },
   );
   assert.deepEqual(native, { nativeModules: true, childFork: true });
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') {
+    let snapshots = 0;
+    let clientHello = false;
+    page.on('websocket', socket => {
+      if (!/^ws:\/\/127\.0\.0\.1:\d+\/runtime$/.test(socket.url())) return;
+      socket.on('framesent', frame => {
+        if (typeof frame.payload === 'string') return;
+        const body = decodeEnvelope(frame.payload).body;
+        if (body.type === 'hello') clientHello = Boolean(body.clientId);
+      });
+      socket.on('framereceived', frame => {
+        if (typeof frame.payload === 'string') return;
+        const body = decodeEnvelope(frame.payload).body;
+        if (body.type === 'snapshot_response') snapshots++;
+      });
+    });
+    const session = await page.evaluate(async projectId => {
+      const api = (window as any).electronAPI;
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${await api.getRuntimeToken()}` };
+      // Disposable configuration permits session creation; this test never submits a model turn.
+      const settings = await fetch(`http://127.0.0.1:${await api.getApiPort()}/api/config/global`, { headers });
+      const current = (await settings.json()).config;
+      const configured = await fetch(`http://127.0.0.1:${await api.getApiPort()}/api/config/global`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({
+          providers: [...current.providers, { id: 'custom-api:transport-smoke', label: 'Transport smoke', kind: 'api', status: 'live', caps: { canFollowUp: true, canCancel: true },
+            models: [{ id: 'local-test', label: 'Local test', isDefault: true }] }],
+          defaultApiProviderId: 'custom-api:transport-smoke',
+          providerConnections: { ...current.providerConnections, 'custom-api:transport-smoke': { providerId: 'custom-api:transport-smoke', baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'transport-smoke-placeholder', extra: { kind: 'api', apiFormat: 'openai', model: 'local-test' } } },
+        }),
+      });
+      if (!configured.ok) throw new Error(await configured.text());
+      const response = await fetch(`http://127.0.0.1:${await api.getApiPort()}/api/agent-runtime/sessions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await api.getRuntimeToken()}` },
+        body: JSON.stringify({ projectId, profileId: 'synax', prompt: 'Rust session transport smoke', sessionMetadata: { mode: 'chat', source: 'session-page' } }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(body));
+      return body.session;
+    }, created.id);
+    await desktop.evaluate(({ BrowserWindow }, { projectId, sessionId }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('menu:navigate', `/projects/${projectId}/sessions?session=${sessionId}`);
+    }, { projectId: created.id, sessionId: session.id });
+    await page.waitForURL(url => url.searchParams.get('session') === session.id);
+    await page.reload();
+    await page.locator('.agent-session-controls').waitFor({ state: 'visible', timeout: 15_000 });
+    const deadline = Date.now() + 15_000;
+    while (!snapshots && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert(snapshots > 0 && clientHello, 'business session page must obtain a scoped ticket through preload and subscribe directly to Rust');
+    assert.deepEqual(errors, [], 'Rust business-session renderer errors');
+    await page.screenshot({ path: path.join(tmpdir(), 'synax-runtime-packaged.png') });
+    console.log('Packaged business session → preload → Node ticket → Rust WebSocket subscription passed.');
+  }
   console.log(
     `Desktop smoke passed: ${process.platform}/${process.arch}, version ${bridge.version}; renderer, API, native modules and child fork OK.`,
   );
