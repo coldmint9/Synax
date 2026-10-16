@@ -1617,9 +1617,11 @@ agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", async (c
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", async (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json({ items: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_artifacts") });
     return c.json({
       items: agentRuntimeStore.listArtifacts(c.req.param("sessionId")),
     });

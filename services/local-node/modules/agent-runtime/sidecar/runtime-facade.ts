@@ -538,7 +538,7 @@ export class RuntimeFacade {
     return JSON.parse(new TextDecoder().decode(bytes));
   }
 
-  async listHistoryObjects(sessionId: string, operation: 'list_runs' | 'list_messages' | 'list_steps' | 'list_parts' | 'list_tool_calls' | 'list_events'): Promise<unknown[]> {
+  async listHistoryObjects(sessionId: string, operation: 'list_runs' | 'list_messages' | 'list_steps' | 'list_parts' | 'list_tool_calls' | 'list_events' | 'list_artifacts'): Promise<unknown[]> {
     const state = await this.historyCommand({ sessionId, requestId: historyReadRequest(operation, sessionId), operation, payload: {} }) as { items?: unknown[] };
     return state.items ?? [];
   }

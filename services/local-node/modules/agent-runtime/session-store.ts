@@ -2085,15 +2085,21 @@ export class AgentRuntimeStore {
         );
       return artifact;
     };
-    if (artifact.sessionId && versionedSession(artifact.sessionId))
-      return writeVersionEntity(
+    const saved = artifact.sessionId && versionedSession(artifact.sessionId)
+      ? writeVersionEntity(
         artifact.sessionId,
         "artifacts",
         artifact.id,
         artifact,
         writeControl,
-      );
-    return retryRuntimeControlWrite(writeControl);
+      )
+      : retryRuntimeControlWrite(writeControl);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      void import("./sidecar/runtime-facade.js")
+        .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(artifact.sessionId, "runtime.artifact", saved))
+        .catch(() => {});
+    }
+    return saved;
   }
 
   listArtifacts(sessionId: string): EvidenceArtifact[] {

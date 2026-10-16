@@ -179,6 +179,7 @@ impl HistoryStore {
             "list_parts" => self.list_indexed(session_id, "part")?,
             "list_tool_calls" => self.list_indexed(session_id, "tool")?,
             "list_events" => self.list_indexed(session_id, "event")?,
+            "list_artifacts" => self.list_indexed(session_id, "artifact")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index()?,
             "gc" => self.gc()?,
@@ -230,6 +231,7 @@ impl HistoryStore {
                 "runtime.part" => Some("part"),
                 "runtime.tool_call" => Some("tool"),
                 "runtime.event" => Some("event"),
+                "runtime.artifact" => Some("artifact"),
                 _ => None,
             };
             if let Some(index_kind) = index_kind {
