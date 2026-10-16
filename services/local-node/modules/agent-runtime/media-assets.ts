@@ -193,10 +193,20 @@ export async function readAsset(
     try {
       const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
       return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
-    } catch {
-      // Pre-migration assets may only exist in the local compatibility store.
+    } catch (error) {
+      // Migrate an existing local asset once, then make Rust authoritative for
+      // all subsequent reads. Do not silently keep falling back to SQLite.
+      if (!(error instanceof Error)) throw error;
+      const bytes = await readLocalAsset(asset, id);
+      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+      await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
+      return bytes;
     }
   }
+  return readLocalAsset(asset, id);
+}
+
+async function readLocalAsset(asset: RuntimeAsset, id: string): Promise<Buffer> {
   const file = await fsp
     .open(
       path.join(root(), id),
