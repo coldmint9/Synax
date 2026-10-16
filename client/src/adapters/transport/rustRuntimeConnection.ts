@@ -143,6 +143,12 @@ export class RustRuntimeConnection {
           if (!subscribed || frame.body.type !== 'event_batch') throw new Error('Unexpected runtime stream response.');
           for (const event of frame.body.events) {
             if (!current()) return;
+            if (event.ephemeral) {
+              const payload = decodeRuntimePayload(event.payload);
+              await this.options.record({ sequence: this.cursor ?? 0, ephemeral: true, sessionId: this.options.sessionId, runId: event.runId,
+                chunk: payload.chunk as RuntimeStreamRecord['chunk'], state: payload.state as RuntimeStreamRecord['state'] });
+              continue;
+            }
             if (!Number.isSafeInteger(event.sequence) || event.sequence < 1) throw new Error('Invalid runtime event cursor.');
             if (event.sequence <= this.cursor!) continue;
             if (event.sequence !== this.cursor! + 1) { fail(new Error('Runtime stream sequence gap.'), true); return; }

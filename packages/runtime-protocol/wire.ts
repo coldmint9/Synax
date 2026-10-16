@@ -50,7 +50,7 @@ export type SidecarBody =
     }
   | {
       type: 'event_batch';
-      events: Array<{ sequence: number; runId: string; kind: string; payload: Uint8Array }>;
+      events: Array<{ sequence: number; runId: string; kind: string; payload: Uint8Array; ephemeral?: boolean }>;
     };
 
 export interface SidecarEnvelope {
@@ -232,6 +232,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
               fieldString(2, event.runId),
               fieldString(3, event.kind),
               fieldBytes(4, event.payload),
+              event.ephemeral ? fieldUint(5, 1) : new Uint8Array(),
             ),
           ),
         ),
@@ -368,7 +369,7 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 25: return { type: 'snapshot_response', epoch: firstNumber(bytes, 1), revision: firstNumber(bytes, 2), activeRunId: firstString(bytes, 3), cursor: firstNumber(bytes, 4), retainedFrom: firstNumber(bytes, 5) };
     case 26: return { type: 'event_batch', events: fieldsOf(bytes, 1).map((item) => {
       const event = item.value as Uint8Array;
-      return { sequence: firstNumber(event, 1), runId: firstString(event, 2) ?? '', kind: firstString(event, 3) ?? '', payload: firstBytes(event, 4) ?? new Uint8Array() };
+      return { sequence: firstNumber(event, 1), runId: firstString(event, 2) ?? '', kind: firstString(event, 3) ?? '', payload: firstBytes(event, 4) ?? new Uint8Array(), ...(firstBool(event, 5) ? { ephemeral: true } : {}) };
     }) };
     default: throw new Error(`Unsupported sidecar response body field ${field}.`);
   }

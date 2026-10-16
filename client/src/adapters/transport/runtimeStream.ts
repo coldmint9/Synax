@@ -13,6 +13,7 @@ export interface RuntimeChunk {
 }
 export interface RuntimeStreamRecord {
   sequence: number
+  ephemeral?: boolean
   sessionId: string
   runId: string
   chunk: RuntimeChunk
@@ -76,8 +77,10 @@ export class RuntimeStreamProjector {
   }
 
   record(value: RuntimeStreamRecord): SessionLiveEvent[] {
-    if (value.sequence <= this.cursor) return []
-    this.cursor = value.sequence
+    if (!value.ephemeral) {
+      if (value.sequence <= this.cursor) return []
+      this.cursor = value.sequence
+    }
     const key = this.key(value.state)
     const terminal = !['running', 'queued', 'waiting_permission', 'waiting_input'].includes(value.state.status)
     const reset = terminal && this.stepId !== null

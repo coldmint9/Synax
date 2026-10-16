@@ -16,6 +16,8 @@ pub struct StreamEvent {
     pub run_id: String,
     pub kind: String,
     pub payload: Vec<u8>,
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +287,7 @@ impl SessionState {
                 run_id: run_id.to_owned(),
                 kind: pending.kind,
                 payload: pending.payload,
+                ephemeral: false,
             };
             let shared = Arc::new(event);
             self.subscribers
@@ -335,6 +338,7 @@ impl SessionState {
                 run_id: run_id.to_owned(),
                 kind: pending.kind,
                 payload: pending.payload,
+                ephemeral: false,
             };
             self.events.push_back(event.clone());
             let shared = Arc::new(event);
@@ -355,6 +359,27 @@ impl SessionState {
             run_id: run_id.to_owned(),
             first_sequence,
             last_sequence: self.cursor,
+            epoch: self.epoch,
+        }
+    }
+
+    fn publish_ephemeral(&mut self, run_id: &str, events: Vec<PendingEvent>) -> StreamAppendReceipt {
+        for pending in events {
+            let event = Arc::new(StreamEvent {
+                sequence: 0,
+                run_id: run_id.to_owned(),
+                kind: pending.kind,
+                payload: pending.payload,
+                ephemeral: true,
+            });
+            self.subscribers.retain(|subscriber| subscriber.try_send(event.clone()).is_ok());
+        }
+        StreamAppendReceipt {
+            reused: false,
+            session_id: self.session_id.clone(),
+            run_id: run_id.to_owned(),
+            first_sequence: 0,
+            last_sequence: 0,
             epoch: self.epoch,
         }
     }
@@ -1069,7 +1094,14 @@ async fn run_shard(
                     let _ = response.send(Err(error));
                     continue;
                 }
-                let result = if let Some(store) = store.as_ref() {
+                let result = if matches!(durability, Durability::Ephemeral) {
+                    append_ephemeral(
+                        sessions.get_mut(&session_id).unwrap(),
+                        run_id,
+                        epoch,
+                        events,
+                    )
+                } else if let Some(store) = store.as_ref() {
                     match store
                         .append_stream_async(
                             session_id.clone(),
@@ -1608,6 +1640,22 @@ fn append_stream(
     Ok(receipt)
 }
 
+fn append_ephemeral(
+    state: &mut SessionState,
+    run_id: String,
+    epoch: u64,
+    events: Vec<PendingEvent>,
+) -> Result<StreamAppendReceipt, RuntimeError> {
+    state.ensure_epoch(epoch)?;
+    if state.active_run_id.as_deref() != Some(&run_id) {
+        return Err(RuntimeError::InvalidCommand("run is not active".into()));
+    }
+    if events.is_empty() {
+        return Err(RuntimeError::InvalidCommand("stream batch cannot be empty".into()));
+    }
+    Ok(state.publish_ephemeral(&run_id, events))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1712,6 +1760,27 @@ mod tests {
             Err(RuntimeError::RequestConflict)
         ));
         assert_eq!(router.snapshot("s").await.unwrap().cursor, 1);
+    }
+
+    #[tokio::test]
+    async fn ephemeral_append_is_live_only_and_does_not_advance_replay_cursor() {
+        let path = std::env::temp_dir().join(format!("synax-ephemeral-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(HotStore::open(&path).unwrap());
+        let router = SessionShardRouter::with_store(1, 16, store).unwrap();
+        router.admit_run_with_queue("s", "start", "body", "r", 1, 0, Vec::new()).await.unwrap();
+        let (_snapshot, backlog, mut receiver) = router.subscribe("s", 0).await.unwrap();
+        assert!(backlog.is_empty());
+        let receipt = router.append_stream_with_durability(
+            "s", "r", "ephemeral-worker", 1, 1, Durability::Ephemeral, vec![event("heartbeat")],
+        ).await.unwrap();
+        assert_eq!(receipt.first_sequence, 0);
+        let live = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await.unwrap().unwrap();
+        assert!(live.ephemeral);
+        assert_eq!(live.sequence, 0);
+        assert!(router.replay("s", 0).await.unwrap().is_empty());
+        assert_eq!(router.snapshot("s").await.unwrap().cursor, 0);
+        drop(router);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[tokio::test]

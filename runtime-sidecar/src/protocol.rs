@@ -403,6 +403,8 @@ pub struct WireStreamEvent {
     pub kind: String,
     #[prost(bytes = "vec", tag = "4")]
     pub payload: Vec<u8>,
+    #[prost(bool, tag = "5")]
+    pub ephemeral: bool,
 }
 
 pub fn decode_wire(bytes: &[u8]) -> Result<WireEnvelope, prost::DecodeError> {

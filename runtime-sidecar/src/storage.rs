@@ -720,7 +720,7 @@ impl HotStore {
                 "chunk": {"type": event_name, "sessionId": session_id, "runId": event_run_id, "control": control.clone()},
                 "state": {"status": projection.session["status"], "activeRunId": projection.session["activeRunId"], "pendingResumeToken": projection.session["pendingResumeToken"], "blockedReason": projection.session["blockedReason"], "updatedAt": projection.session["updatedAt"]}
             });
-            let event = StreamEvent { sequence: state.cursor, run_id: event_run_id.clone(), kind: event_name, payload: serde_json::to_vec(&state_payload)? };
+            let event = StreamEvent { sequence: state.cursor, run_id: event_run_id.clone(), kind: event_name, payload: serde_json::to_vec(&state_payload)?, ephemeral: false };
             projection.apply(state.cursor, &event_run_id, &PendingEvent { kind: event.kind.clone(), payload: event.payload.clone() })?;
             state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
             let mut batch = WriteBatch::default();
@@ -826,6 +826,7 @@ impl HotStore {
                 run_id,
                 kind: "input_queue_changed".into(),
                 payload,
+                ephemeral: false,
             };
             self.put_batch(
                 &mut batch,
@@ -1005,6 +1006,7 @@ impl HotStore {
                 run_id: run_id.into(),
                 kind: "input_queue_changed".into(),
                 payload,
+                ephemeral: false,
             };
             projection.apply(
                 state.cursor,
@@ -1186,6 +1188,7 @@ impl HotStore {
             run_id: run_id.clone(),
             kind: pending.kind,
             payload: pending.payload,
+            ephemeral: false,
         };
         let previous_retained = state.retained_from;
         state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
@@ -1360,6 +1363,7 @@ impl HotStore {
             run_id: run_id.into(),
             kind: completion.event.kind,
             payload: completion.event.payload,
+            ephemeral: false,
         };
         let result = FinishReceipt {
             snapshot: state.snapshot(),
@@ -1540,6 +1544,7 @@ impl HotStore {
                 run_id: run_id.to_owned(),
                 kind: pending.kind,
                 payload: pending.payload,
+                ephemeral: false,
             };
             self.put_batch(
                 &mut batch,

@@ -413,6 +413,7 @@ async fn handle_wire_subscription(
                         run_id: event.run_id.clone(),
                         kind: event.kind.clone(),
                         payload: event.payload.clone(),
+                        ephemeral: event.ephemeral,
                     }],
                 })),
             };
@@ -427,10 +428,18 @@ async fn handle_wire_subscription(
                 return Ok(());
             }
             if credits.available(encoded.len()) {
-                credits
-                    .sent(event.sequence, encoded.len())
-                    .map_err(|error| TransportError::Protocol(error.into()))?;
+                if !event.ephemeral {
+                    credits
+                        .sent(event.sequence, encoded.len())
+                        .map_err(|error| TransportError::Protocol(error.into()))?;
+                }
                 send_binary(&mut socket, encoded).await?;
+                pending = backlog.pop_front();
+                continue;
+            }
+            if event.ephemeral {
+                // Ephemeral events have no replay cursor. Drop them when the durable
+                // credit window is full instead of allowing them to block canonical data.
                 pending = backlog.pop_front();
                 continue;
             }
@@ -968,6 +977,7 @@ async fn execute_wire(
                             run_id: event.run_id,
                             kind: event.kind,
                             payload: event.payload,
+                            ephemeral: event.ephemeral,
                         };
                         let cost = wire.encoded_len() + 11;
                         if cost > remaining {
