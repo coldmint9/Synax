@@ -38,7 +38,7 @@ const tables = [
 ];
 
 function usage(): never {
-  console.error('usage: npm run runtime:migrate -- <export|import|verify|rebuild-index> [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
+  console.error('usage: npm run runtime:migrate -- <export|import|verify|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
   process.exit(2);
 }
 
@@ -222,8 +222,25 @@ async function rebuildIndex(): Promise<void> {
   console.log(JSON.stringify({ command: 'rebuild-index', ...result }, null, 2));
 }
 
-if (!command || !['export', 'import', 'verify', 'rebuild-index'].includes(command)) usage();
+async function purgeLegacy(): Promise<void> {
+  if (!args.includes('--force')) throw new Error('purge-legacy requires --force after an offline export/import/verify pass.');
+  if (!existsSync(database)) throw new Error(`SQLite database does not exist: ${database}`);
+  const db = new NativeDatabase(database);
+  const tables = ['agent_runtime_stream_records', 'agent_runtime_events', 'conversation_history_journal'];
+  const deleted: Record<string, number> = {};
+  try {
+    for (const table of tables) {
+      if (!tableExists(db, table)) continue;
+      deleted[table] = Number(db.prepare(`DELETE FROM "${table}"`).run().changes ?? 0);
+    }
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } finally { db.close(); }
+  console.log(JSON.stringify({ command: 'purge-legacy', database, deleted, force: true }, null, 2));
+}
+
+if (!command || !['export', 'import', 'verify', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
 if (command === 'export') await exportLegacy();
 else if (command === 'import') await importBundle();
 else if (command === 'verify') await verifyBundle();
-else await rebuildIndex();
+else if (command === 'rebuild-index') await rebuildIndex();
+else await purgeLegacy();
