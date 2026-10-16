@@ -13,9 +13,9 @@ try {
   foreach ($file in @($app, $installer)) {
     if (!(Test-Path -LiteralPath $file)) { throw "Missing signed Windows artifact: $file" }
     $signature = Get-AuthenticodeSignature -FilePath $file
-    if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature for $file: $($signature.Status)" }
+    if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature for ${file}: $($signature.Status)" }
     if ($signature.SignerCertificate.Subject -notlike "*$expected*") {
-      throw "Unexpected signer for $file: $($signature.SignerCertificate.Subject)"
+      throw "Unexpected signer for ${file}: $($signature.SignerCertificate.Subject)"
     }
   }
 } finally {
