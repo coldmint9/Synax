@@ -8,8 +8,6 @@ export default defineConfig({
     cli: "cli/index.ts",
     "workers/code-mode": "services/local-node/modules/agent-runtime/code-mode/worker.mjs",
     "workers/agent-session-runner": "services/worker/jobs/agent-session-runner.ts",
-    "workers/storage-owner": "services/worker/jobs/storage-owner.ts",
-    "workers/storage-client": "services/worker/jobs/storage-client.ts",
   },
   format: ["cjs"],
   outDir: "server-dist",

@@ -60,14 +60,8 @@ export async function startReadService(): Promise<void> {
       PORT: String(port),
       SYNAX_READ_SERVICE: "1",
       SYNAX_DISABLE_READ_SERVICE: "1",
-      // Read requests use their own WAL connection. Keeping the shared
-      // storage-owner socket here would serialize reads behind command writes.
-      SYNAX_STORAGE_OWNER_PROCESS: "1",
       DATA_ROOT,
     };
-    delete childEnv.SYNAX_STORAGE_OWNER_ENDPOINT;
-    delete childEnv.SYNAX_STORAGE_OWNER_TOKEN;
-    delete childEnv.SYNAX_STORAGE_OWNER_ROOT;
     delete childEnv.SYNAX_RUNTIME_HOST_ID;
     delete childEnv.SYNAX_RUNTIME_DATA_ROOT;
 

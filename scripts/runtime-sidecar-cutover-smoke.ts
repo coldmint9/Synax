@@ -13,13 +13,12 @@ try {
   });
   const { getRawSqlite, closeDb } = await import('../services/local-node/infrastructure/database/index.js');
   const db = getRawSqlite();
-  assert.equal(process.env.SYNAX_STORAGE_OWNER_ENDPOINT, undefined, 'authoritative host must not start storage owner');
   assert.equal(typeof db.prepare, 'function');
   db.prepare('CREATE TABLE cutover_probe(id INTEGER PRIMARY KEY)').run();
   db.prepare('INSERT INTO cutover_probe VALUES (1)').run();
   assert.equal((db.prepare('SELECT count(*) AS n FROM cutover_probe').get() as { n: number }).n, 1);
   closeDb();
-  console.log('Authoritative cutover smoke passed: direct SQLite compatibility reads/writes remain available to Node execution context, while storage-owner IPC is disabled and Rust owns runtime stream/control paths.');
+  console.log('Authoritative cutover smoke passed: direct SQLite compatibility reads/writes remain available to Node execution context, while Rust owns runtime stream/control paths.');
 } finally {
   await rm(root, { recursive: true, force: true });
 }

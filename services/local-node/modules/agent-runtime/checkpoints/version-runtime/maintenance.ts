@@ -134,10 +134,10 @@ export function startVersionHistoryMaintenance(): () => void {
         lastWarning = Date.now();
       }
     }
-    timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
+    timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : 50);
     timer.unref();
   };
-  timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : process.env.SYNAX_STORAGE_OWNER_ENDPOINT ? 250 : 50);
+    timer = setTimeout(tick, SIMPLE_HISTORY_STORAGE ? 5000 : 50);
   timer.unref();
   return () => {
     stopped = true;

@@ -201,7 +201,7 @@ export class TranscriptRepository {
     // before that savepoint is released. Rejecting nesting here caused a
     // completed model response to be persisted and then reported as failed.
     const db = getRawSqlite();
-    if (db.inTransaction && !process.env.SYNAX_STORAGE_OWNER_ENDPOINT)
+    if (db.inTransaction)
       throw new AgentRuntimeError("JSONL acknowledgement requires its own transaction.", "TRANSCRIPT_NESTED_TRANSACTION", 409);
     if ((db.prepare("PRAGMA synchronous").get() as { synchronous: number }).synchronous < 2)
       throw new AgentRuntimeError("JSONL control requires FULL synchronous SQLite.", "TRANSCRIPT_DURABILITY_REQUIRED", 409);

@@ -52,10 +52,7 @@ console.log(JSON.stringify({ backupComplete: backup }));
 process.env.DATA_ROOT = root;
 process.env.SYNAX_TRANSCRIPT_STORAGE = 'jsonl';
 process.env.LOG_LEVEL = 'error';
-// Offline migration intentionally uses one direct connection; no IPC SQL costs
-// and no running legacy executable can modify the protected source tables.
-delete process.env.SYNAX_STORAGE_OWNER_ENDPOINT;
-delete process.env.SYNAX_STORAGE_OWNER_TOKEN;
+// Offline migration intentionally uses one direct connection.
 delete process.env.SYNAX_RUNTIME_HOST_ID;
 const { getRawSqlite, closeDb } = await import('../services/local-node/infrastructure/database/index.js');
 const { migrateJsonlSession } = await import('../services/local-node/modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js');

@@ -45,7 +45,7 @@ export function versionRepository(): RuntimeVersionRepository {
       new VersionObjects(db, {
         maxBytes: 1024 * 1024 * 1024,
         maxObjects: 2000000,
-      }, bytes => admitVersionGrowth(db, bytes), payloads, Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) || TRANSCRIPT_STORAGE === "jsonl"),
+      }, bytes => admitVersionGrowth(db, bytes), payloads, TRANSCRIPT_STORAGE === "jsonl"),
     );
     repositories.set(db, repo);
   }

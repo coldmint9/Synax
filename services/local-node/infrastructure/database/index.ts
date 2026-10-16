@@ -1,6 +1,4 @@
 import { runToCompletion } from "./statement-lifecycle.js";
-import { createOwnerClient } from "./owner-libsql-client.js";
-import { connectStorageOwner, startStorageOwner, stopStorageOwner } from "./owner-client.js";
 import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
 import { installConversationHistoryTriggers } from "./conversation-history-triggers.js";
 import { assertDatabaseWriteAllowed } from "../runtime/execution-context.js";
@@ -542,17 +540,6 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
   if (_sqlite) return _sqlite;
-  const rustAuthoritative = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative";
-  const useOwner = process.env.SYNAX_STORAGE_OWNER_PROCESS !== "1" && (
-    !rustAuthoritative && (Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) ||
-    (process.env.SYNAX_RUNTIME_HOST_ID && !process.env.VITEST && process.env.NODE_ENV !== "test")
-    )
-  );
-  if (useOwner) {
-    startStorageOwner(path.dirname(dbPath));
-    _sqlite = installSqliteCompat(connectStorageOwner(dbPath), dbPath, false);
-    return _sqlite;
-  }
   const readOnly = process.env.SYNAX_READ_SERVICE === "1";
   const sqlite = installSqliteCompat(
     new NativeDatabase(dbPath, readOnly ? { readonly: true } : undefined),
@@ -582,8 +569,6 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
 
 function getOrCreateClient(dbPath = resolveDbPath()): Client {
   if (_client) return _client;
-  if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT && process.env.SYNAX_STORAGE_OWNER_PROCESS !== "1")
-    return _client = createOwnerClient(dbPath);
   _client = createClient({ url: pathToFileURL(dbPath).href });
   const client = _client;
   const execute = client.execute.bind(client);
@@ -666,7 +651,6 @@ export function closeDb(): void {
   _client = null;
   _sqlite = null;
   _db = null;
-  stopStorageOwner();
 }
 
 export { schema };

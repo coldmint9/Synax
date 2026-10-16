@@ -21,11 +21,8 @@ describe('durable owned process receipts', () => {
   it('does not leak the runtime database or worker flags into project commands', () => {
     vi.stubEnv('SYNAX_RUNTIME_DATA_ROOT', '/tmp/runtime-owner'); vi.stubEnv('DATA_ROOT', '/tmp/runtime-owner');
     vi.stubEnv('SYNAX_AGENT_SESSION_CHILD', '1');
-    vi.stubEnv('SYNAX_STORAGE_OWNER_TOKEN', 'internal-only');
-    vi.stubEnv('SYNAX_STORAGE_OWNER_ENDPOINT', '/tmp/owner.sock');
     try {
       const env = externalCommandEnvironment();
-      expect(env.SYNAX_STORAGE_OWNER_TOKEN).toBeUndefined(); expect(env.SYNAX_STORAGE_OWNER_ENDPOINT).toBeUndefined();
       expect(env.DATA_ROOT).toBeUndefined(); expect(env.SYNAX_AGENT_SESSION_CHILD).toBeUndefined();
       expect(externalCommandEnvironment({ DATA_ROOT: '/tmp/project-test' }).DATA_ROOT).toBe('/tmp/project-test');
     } finally { vi.unstubAllEnvs(); }

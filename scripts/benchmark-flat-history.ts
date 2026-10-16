@@ -5,22 +5,13 @@ import assert from "node:assert/strict";
 
 // Synthetic, disposable database only. Never opens the user's data directory.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "synax-flat-benchmark-"));
-for (const name of [
-  "SYNAX_STORAGE_OWNER_ENDPOINT",
-  "SYNAX_STORAGE_OWNER_TOKEN",
-  "SYNAX_STORAGE_OWNER_ROOT",
-  "SYNAX_RUNTIME_HOST_ID",
-  "SYNAX_RUNTIME_DATA_ROOT",
-])
+for (const name of ["SYNAX_RUNTIME_HOST_ID", "SYNAX_RUNTIME_DATA_ROOT"])
   delete process.env[name];
 process.env.DATA_ROOT = root;
 process.env.NODE_ENV = "test";
 process.env.SYNAX_HISTORY_MODE = "flat";
 process.env.SYNAX_TRANSCRIPT_STORAGE = "jsonl";
 process.env.LOG_LEVEL = "error";
-const { startStorageOwner, stopStorageOwner } =
-  await import("../services/local-node/infrastructure/database/owner-client.js");
-if (process.argv.includes("--owner")) startStorageOwner(root);
 const { getRawSqlite, closeDb } =
   await import("../services/local-node/infrastructure/database/index.js");
 try {
@@ -141,6 +132,5 @@ try {
   );
 } finally {
   closeDb();
-  stopStorageOwner();
   fs.rmSync(root, { recursive: true, force: true });
 }
