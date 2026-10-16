@@ -79,6 +79,9 @@ jobs:
           SYNAX_UPDATE_PUBLIC_KEY: ${{ vars.SYNAX_UPDATE_PUBLIC_KEY }}
         run: npm run build:electron
 
+      - name: Check Rust runtime sidecar for the target platform
+        run: npm run runtime-sidecar:check
+
       - name: Import macOS signing certificate
         if: runner.os == 'macOS'
         env:

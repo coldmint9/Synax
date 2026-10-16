@@ -13,7 +13,7 @@
 | 要求 | 当前证据 / 真实状态 | 剩余工作 |
 | --- | --- | --- |
 | Electron 原生 WebSocket | 从 39.8.10 升级并固定 44.8.0；真实 Electron `app://` + sandbox Renderer 通过 JSON/Protobuf 直连 Rust probe，主进程原生 WebSocket 可用；桌面 Node sidecar 默认注入 authoritative Rust 模式 | 全量 session/history/control 迁移、旧 fallback 删除仍待完成；Web 部署继续可用旧模式 |
-| 桌面打包 | Forge prePackage 自动编译 locked release Rust，并收录 server-dist/workers；Electron 44 打包和桌面 smoke 已通过 | Windows 构建/传输尚未在目标机验收 |
+| 桌面打包 | Forge prePackage 自动编译 locked release Rust，并收录 server-dist/workers；Electron 44 打包和桌面 smoke 已通过；CI 已加入目标平台 Rust sidecar check | Windows 目标机运行结果仍待 CI/目标机证据 |
 | Tokio + Moka | 多线程 Tokio；缓存现已改为 moka::future::Cache；写入完成/未知确认后失效 | 全局内存预算、负载下限流与压测 |
 | group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
