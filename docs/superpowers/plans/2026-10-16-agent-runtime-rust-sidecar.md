@@ -20,7 +20,7 @@
 | Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
 | 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复 | 首次空会话元数据仍从 Node seed；session 元数据修改/permission/control 尚未全量迁移；完整 session/lease 恢复未完成 |
 | 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
-| 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
+| 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC 基础；migration export/import/verify/rebuild-index 已有真实 smoke | 旧 history API 全量切换、消息/媒体 blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
 注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。不要把已有 checkbox 推断成上述功能已完成。
@@ -173,7 +173,7 @@ G7 离线导入与旧实现清理
 
 ## 阶段 0：设计和基准冻结
 
-状态：文档与摸排已完成；性能基线和验收设计仍未完成。
+状态：文档与摸排已完成；性能基线和验收设计仍未完成。IPC 拓扑图已落在 `docs/design/2026-10-16-agent-runtime-ipc-topology.md`。
 
 本阶段交付：
 
@@ -243,7 +243,7 @@ runtime-sidecar/
 
 ## 阶段 3：runtime-hot RocksDB 和 Moka
 
-状态：HotStore、WriteBatch、异步 Moka 和实际 WAL group commit 已实现；生命周期部分可用，完整状态模型与压力/故障验收未完成。
+状态：HotStore、WriteBatch、异步 Moka、实际 WAL group commit、Rust control state 和 runtime-history CAS 已实现；完整状态模型与压力/故障验收未完成。
 
 目标：实现权威 session/run/stream/control 状态。
 
@@ -265,7 +265,7 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node client、supervisor、authoritative stream 与 coordinator admission/finalization 已接入；session/run repository 仍为 SQLite，完整权威状态切换未完成。
+状态：Node client、supervisor、authoritative stream、coordinator admission/finalization、control command 和 history command 已接入；session/run/message compatibility repository 仍为 SQLite，完整权威状态切换未完成。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
@@ -307,6 +307,8 @@ runtime-sidecar/
 - 不把长期 token 放到 URL query。
 
 ## 阶段 6：runtime-history RocksDB
+
+当前进度：已完成 immutable object CAS、head/pin/checkpoint、fork/rollback、page、verify、GC、`rebuild_index` 和离线迁移 CLI 的最小可运行闭环；尚未替换全部旧 history API。
 
 目标：统一旧 flat/versioned/JSONL history 为新的 immutable history store。
 

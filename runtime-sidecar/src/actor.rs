@@ -50,6 +50,14 @@ pub struct StreamAppendReceipt {
     pub epoch: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlCommandReceipt {
+    pub state_json: Vec<u8>,
+    pub snapshot: SessionSnapshot,
+    pub event: Option<StreamEvent>,
+    pub reused: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
     #[error("session UI projection has not been initialized")]
@@ -94,6 +102,7 @@ pub enum CommandResult {
     Replay(Vec<StreamEvent>),
     UiSnapshot(Vec<u8>),
     QueueState(Vec<u8>),
+    ControlState(ControlCommandReceipt),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +168,15 @@ enum ActorCommand {
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
     QueueMutation {
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    ControlCommand {
         session_id: String,
         request_id: String,
         epoch: u64,
@@ -694,6 +712,36 @@ impl SessionShardRouter {
         }
     }
 
+    pub async fn control_command(
+        &self,
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
+    ) -> Result<ControlCommandReceipt, RuntimeError> {
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::ControlCommand {
+                session_id: session_id.clone(),
+                request_id,
+                epoch,
+                revision,
+                operation,
+                payload,
+                response,
+            },
+        )?;
+        match result.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::ControlState(receipt) => Ok(receipt),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected control command response".into(),
+            )),
+        }
+    }
+
     pub async fn snapshot(
         &self,
         session_id: impl Into<String>,
@@ -1155,6 +1203,63 @@ async fn run_shard(
                     )),
                 };
                 let _ = response.send(result.map(CommandResult::QueueState));
+            }
+            ActorCommand::ControlCommand {
+                session_id,
+                request_id,
+                epoch,
+                revision,
+                operation,
+                payload,
+                response,
+            } => {
+                let result = match store.as_ref() {
+                    Some(store) => match ensure_session_state(
+                        &mut sessions,
+                        &session_id,
+                        event_retention,
+                        Some(store),
+                    )
+                    .await
+                    {
+                        Err(error) => Err(error),
+                        Ok(()) => match store
+                            .control_command_async(
+                                session_id.clone(),
+                                request_id,
+                                epoch,
+                                revision,
+                                operation,
+                                payload,
+                            )
+                            .await
+                        {
+                            Ok(receipt) => {
+                                let state = sessions.get_mut(&session_id).unwrap();
+                                state.sync_snapshot(&receipt.snapshot);
+                                if !receipt.reused {
+                                    if let Some(event) = receipt.event.clone() {
+                                        let event = Arc::new(event);
+                                        state.subscribers.retain(|subscriber| {
+                                            subscriber.try_send(event.clone()).is_ok()
+                                        });
+                                    }
+                                }
+                                Ok(receipt)
+                            }
+                            Err(error) => {
+                                if storage_state_uncertain(&error) {
+                                    sessions.remove(&session_id);
+                                }
+                                Err(storage_error_to_runtime(error))
+                            }
+                        },
+                    },
+                    None => Err(RuntimeError::StorageUnavailable(
+                        "runtime controls require persistent storage".into(),
+                    )),
+                };
+                let _ = response.send(result.map(CommandResult::ControlState));
             }
             ActorCommand::Snapshot {
                 session_id,

@@ -143,4 +143,22 @@ describe('RuntimeSidecarClient', () => {
     await expect(client.health()).rejects.toBeInstanceOf(RuntimeSidecarError);
     client.close();
   });
+
+  it('round trips a fenced control command and returns the committed revision', async () => {
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello') {
+        send(socket, { requestId: '', sessionId: '', epoch: 0, revision: 0,
+          body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: ['control_state'] } });
+      } else if (envelope.body.type === 'control_command') {
+        expect(envelope.body.operation).toBe('stop_begin');
+        expect(JSON.parse(new TextDecoder().decode(envelope.body.payload))).toEqual({ runId: 'r', reason: 'user' });
+        send(socket, { requestId: envelope.requestId, sessionId: envelope.sessionId, epoch: 1, revision: 8,
+          body: { type: 'control_state', stateJson: new TextEncoder().encode(JSON.stringify({ runtimeControl: { state: 'stopping' } })) } });
+      }
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
+    await expect(client.controlCommand({ sessionId: 's', requestId: 'stop-1', epoch: 1, revision: 7,
+      operation: 'stop_begin', payload: { runId: 'r', reason: 'user' } })).resolves.toMatchObject({ epoch: 1, revision: 8 });
+    client.close();
+  });
 });

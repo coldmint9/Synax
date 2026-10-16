@@ -151,6 +151,25 @@ pub struct QueueMutationReceipt {
     pub reused: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlState {
+    #[serde(default)]
+    pub permissions: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub interactions: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub runtime_control: Option<serde_json::Value>,
+    #[serde(default)]
+    pub process_leases: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredControlCommandReceipt {
+    identity: String,
+    result: crate::actor::ControlCommandReceipt,
+}
+
 /// Versioned, length-delimited digest; stable across processes and Rust releases.
 pub fn append_fingerprint(
     session: &str,
@@ -410,6 +429,282 @@ impl HotStore {
         })
         .await
         .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+
+    pub async fn control_state_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.control_state(&session_id))
+            .await
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+
+    pub async fn control_command_async(
+        &self,
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
+    ) -> Result<crate::actor::ControlCommandReceipt, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            store.control_command(
+                &session_id,
+                &request_id,
+                epoch,
+                revision,
+                &operation,
+                &payload,
+            )
+        })
+        .await
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+
+    fn control_state(&self, session_id: &str) -> Result<Vec<u8>, StorageError> {
+        let state = self.read_control_state(session_id)?;
+        Ok(serde_json::to_vec(&state)?)
+    }
+
+    fn control_command(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        epoch: u64,
+        revision: u64,
+        operation: &str,
+        payload: &[u8],
+    ) -> Result<crate::actor::ControlCommandReceipt, StorageError> {
+        use crate::actor::ControlCommandReceipt;
+
+        if request_id.is_empty()
+            || request_id.len() > 256
+            || operation.is_empty()
+            || operation.len() > 64
+            || payload.len() > 512 * 1024
+        {
+            return Err(RuntimeError::InvalidCommand("control command exceeds bounds".into()).into());
+        }
+        let value: serde_json::Value = if payload.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(payload)?
+        };
+        let identity = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&("control.v1", operation, &value))?)
+        );
+        let receipt_key = control_receipt_key(session_id, request_id);
+        if let Some(bytes) = self.get(CF_CONTROLS, receipt_key.as_bytes())? {
+            let saved: StoredControlCommandReceipt = serde_json::from_slice(&bytes)?;
+            if saved.identity != identity {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
+            let mut result = saved.result;
+            result.reused = true;
+            return Ok(result);
+        }
+
+        let mut state = self.read_session(session_id)?;
+        ensure_epoch(&state, epoch)?;
+        ensure_revision(&state, revision)?;
+        let mut control = self.read_control_state(session_id)?;
+        let mut projection = self
+            .read_ui_projection(session_id)?
+            .ok_or(RuntimeError::ProjectionMissing)?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut changed = false;
+        let mut event_name = operation.to_owned();
+        let mut event_run_id = projection.session["activeRunId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+
+        match operation {
+            "read" => {}
+            "permission_request" => {
+                let id = value["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| RuntimeError::InvalidCommand("permission id is required".into()))?;
+                if control.permissions.iter().any(|item| item["id"].as_str() == Some(id)) {
+                    return Err(RuntimeError::RequestConflict.into());
+                }
+                let mut item = value.clone();
+                if item["createdAt"].is_null() {
+                    item["createdAt"] = serde_json::json!(now);
+                }
+                if item["resolvedAt"].is_null() {
+                    item["resolvedAt"] = serde_json::Value::Null;
+                }
+                control.permissions.push(item.clone());
+                event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                if item["action"] == "ask" && item["resolvedAt"].is_null() {
+                    let reason = item["reason"].as_str().unwrap_or("Permission required");
+                    set_projection_state(
+                        &mut projection,
+                        "waiting_permission",
+                        Some(&event_run_id),
+                        item["resumeToken"].as_str(),
+                        Some(reason),
+                        &now,
+                    );
+                }
+                changed = true;
+                event_name = "permission_requested".into();
+            }
+            "permission_reply" => {
+                let id = required_string(&value, "id")?;
+                let reply = required_string(&value, "reply")?;
+                let item = control
+                    .permissions
+                    .iter_mut()
+                    .find(|item| item["id"].as_str() == Some(id))
+                    .ok_or_else(|| RuntimeError::InvalidCommand("permission was not found".into()))?;
+                if item["resolvedAt"].is_string() {
+                    if item["userReply"].as_str() == Some(reply) {
+                        return Err(RuntimeError::RequestConflict.into());
+                    }
+                    return Err(RuntimeError::InvalidCommand("permission was already resolved".into()).into());
+                }
+                let action = if reply == "reject" { "deny" } else { "allow" };
+                item["userReply"] = serde_json::json!(reply);
+                item["action"] = serde_json::json!(action);
+                item["resolvedAt"] = serde_json::json!(now);
+                if let Some(message) = value["message"].as_str() {
+                    item["reason"] = serde_json::json!(format!("{} {}", item["reason"].as_str().unwrap_or_default(), message));
+                }
+                event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                let resume = item["resumeToken"].as_str();
+                if action == "allow" && resume.is_some() {
+                    set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                } else {
+                    set_projection_state(&mut projection, "completed", None, None, item["reason"].as_str(), &now);
+                }
+                changed = true;
+                event_name = "permission_resolved".into();
+            }
+            "interaction_request" => {
+                let id = required_string(&value, "id")?;
+                if control.interactions.iter().any(|item| item["id"].as_str() == Some(id)) {
+                    return Err(RuntimeError::RequestConflict.into());
+                }
+                let mut item = value.clone();
+                if item["status"].is_null() { item["status"] = serde_json::json!("pending"); }
+                if item["createdAt"].is_null() { item["createdAt"] = serde_json::json!(now); }
+                control.interactions.push(item.clone());
+                event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                let title = item["request"]["title"].as_str().unwrap_or("Input required");
+                set_projection_state(&mut projection, "waiting_input", Some(&event_run_id), Some(&format!("interaction:{id}")), Some(title), &now);
+                changed = true;
+                event_name = "interaction_requested".into();
+            }
+            "interaction_reply" => {
+                let id = required_string(&value, "id")?;
+                let reply = value.get("reply").cloned().unwrap_or(serde_json::Value::Null);
+                let item = control
+                    .interactions
+                    .iter_mut()
+                    .find(|item| item["id"].as_str() == Some(id))
+                    .ok_or_else(|| RuntimeError::InvalidCommand("interaction was not found".into()))?;
+                if item["status"] != "pending" {
+                    if item["response"] == reply { return Err(RuntimeError::RequestConflict.into()); }
+                    return Err(RuntimeError::InvalidCommand("interaction was already resolved".into()).into());
+                }
+                if let Some(expected) = value["revision"].as_u64() {
+                    if item["revision"].as_u64() != Some(expected) {
+                        return Err(RuntimeError::RevisionConflict { expected, actual: item["revision"].as_u64().unwrap_or_default() }.into());
+                    }
+                }
+                let status = if reply["action"] == "cancel" { "cancelled" } else { "answered" };
+                item["status"] = serde_json::json!(status);
+                item["response"] = reply;
+                item["resolvedAt"] = serde_json::json!(now);
+                event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                changed = true;
+                event_name = "interaction_resolved".into();
+            }
+            "interaction_consume" => {
+                let id = required_string(&value, "id")?;
+                let item = control
+                    .interactions
+                    .iter_mut()
+                    .find(|item| item["id"].as_str() == Some(id))
+                    .ok_or_else(|| RuntimeError::InvalidCommand("interaction was not found".into()))?;
+                item["consumedAt"] = serde_json::json!(now);
+                event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                changed = true;
+                event_name = "interaction_consumed".into();
+            }
+            "stop_begin" | "stop_unconfirmed" => {
+                let run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                let control_state = if operation == "stop_begin" { "stopping" } else { "unconfirmed" };
+                control.runtime_control = Some(serde_json::json!({"state":control_state,"runId":run_id,"reason":value["reason"],"updatedAt":now}));
+                event_run_id = run_id.clone();
+                set_projection_state(&mut projection, "stopping", Some(&run_id), None, value["reason"].as_str(), &now);
+                changed = true;
+                event_name = operation.into();
+            }
+            "stop_ack" => {
+                control.runtime_control = None;
+                event_run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                set_projection_state(&mut projection, "interrupted", None, None, value["reason"].as_str(), &now);
+                changed = true;
+                event_name = "stop_acknowledged".into();
+            }
+            "resume" => {
+                control.runtime_control = None;
+                event_run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
+                set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                changed = true;
+                event_name = "run_resumed".into();
+            }
+            "lease_open" | "lease_close" => {
+                let lease_id = required_string(&value, "leaseId")?;
+                control.process_leases.retain(|item| item["leaseId"].as_str() != Some(lease_id));
+                if operation == "lease_open" { control.process_leases.push(value.clone()); }
+                changed = true;
+                event_name = operation.into();
+            }
+            _ => return Err(RuntimeError::InvalidCommand(format!("unknown control operation: {operation}")).into()),
+        }
+
+        let snapshot = if changed {
+            state.cursor += 1;
+            state.revision += 1;
+            let state_payload = serde_json::json!({
+                "schema": 1,
+                "chunk": {"type": event_name, "sessionId": session_id, "runId": event_run_id, "control": control.clone()},
+                "state": {"status": projection.session["status"], "activeRunId": projection.session["activeRunId"], "pendingResumeToken": projection.session["pendingResumeToken"], "blockedReason": projection.session["blockedReason"], "updatedAt": projection.session["updatedAt"]}
+            });
+            let event = StreamEvent { sequence: state.cursor, run_id: event_run_id.clone(), kind: event_name, payload: serde_json::to_vec(&state_payload)? };
+            projection.apply(state.cursor, &event_run_id, &PendingEvent { kind: event.kind.clone(), payload: event.payload.clone() })?;
+            state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
+            let mut batch = WriteBatch::default();
+            self.put_batch(&mut batch, CF_SESSIONS, session_key(session_id), &serde_json::to_vec(&state)?)?;
+            self.put_batch(&mut batch, CF_CONTROLS, control_state_key(session_id), &serde_json::to_vec(&control)?)?;
+            self.put_batch(&mut batch, CF_UI, session_key(session_id), &projection.encode()?)?;
+            self.put_batch(&mut batch, CF_STREAMS, stream_key(session_id, state.cursor), &serde_json::to_vec(&event)?)?;
+            for sequence in 1..state.retained_from { batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence)); }
+            let result = ControlCommandReceipt { state_json: serde_json::to_vec(&control)?, snapshot: state.snapshot(), event: Some(event), reused: false };
+            self.put_batch(&mut batch, CF_CONTROLS, receipt_key, &serde_json::to_vec(&StoredControlCommandReceipt { identity, result: result.clone() })?)?;
+            self.write_with_durability(batch, Durability::Sync)?;
+            result
+        } else {
+            let result = ControlCommandReceipt { state_json: serde_json::to_vec(&control)?, snapshot: state.snapshot(), event: None, reused: false };
+            let mut batch = WriteBatch::default();
+            self.put_batch(&mut batch, CF_CONTROLS, receipt_key, &serde_json::to_vec(&StoredControlCommandReceipt { identity, result: result.clone() })?)?;
+            self.write_with_durability(batch, Durability::Sync)?;
+            result
+        };
+        Ok(snapshot)
     }
     fn queue_mutation(
         &self,
@@ -1308,6 +1603,13 @@ impl HotStore {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
+    fn read_control_state(&self, session_id: &str) -> Result<ControlState, StorageError> {
+        let Some(bytes) = self.get(CF_CONTROLS, control_state_key(session_id).as_bytes())? else {
+            return Ok(ControlState::default());
+        };
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
     fn cf(&self, name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {
         self.db
             .cf_handle(name)
@@ -1409,6 +1711,42 @@ fn run_key(session_id: &str, run_id: &str) -> String {
 
 fn stream_key(session_id: &str, sequence: u64) -> String {
     format!("e/{session_id}/{sequence:020}")
+}
+
+fn control_state_key(session_id: &str) -> String {
+    format!("state/{session_id}")
+}
+
+fn control_receipt_key(session_id: &str, request_id: &str) -> String {
+    format!("command/{session_id}/{request_id}")
+}
+
+fn required_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, StorageError> {
+    value[key]
+        .as_str()
+        .filter(|item| !item.is_empty())
+        .ok_or_else(|| RuntimeError::InvalidCommand(format!("{key} is required")).into())
+}
+
+fn set_projection_state(
+    projection: &mut UiSnapshot,
+    status: &str,
+    active_run_id: Option<&str>,
+    pending_resume_token: Option<&str>,
+    blocked_reason: Option<&str>,
+    updated_at: &str,
+) {
+    projection.session["status"] = serde_json::json!(status);
+    projection.session["activeRunId"] = active_run_id
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    projection.session["pendingResumeToken"] = pending_resume_token
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    projection.session["blockedReason"] = blocked_reason
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+    projection.session["updatedAt"] = serde_json::json!(updated_at);
 }
 
 #[cfg(test)]
@@ -2588,6 +2926,86 @@ mod tests {
         }
         assert!(store.replay("s", 0).unwrap().len() <= EVENT_RETENTION as usize);
         drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn control_commands_are_fenced_idempotent_and_recoverable() {
+        let path = temp_path("controls");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+
+        let permission = serde_json::json!({
+            "id": "permission-1",
+            "sessionId": "s",
+            "runId": "r",
+            "action": "ask",
+            "reason": "write requires approval",
+            "resumeToken": "resume:permission-1",
+            "userReply": null,
+            "resolvedAt": null
+        });
+        let requested = store
+            .control_command(
+                "s",
+                "permission-request",
+                1,
+                0,
+                "permission_request",
+                &serde_json::to_vec(&permission).unwrap(),
+            )
+            .unwrap();
+        assert!(!requested.reused);
+        assert_eq!(requested.snapshot.revision, 1);
+        assert_eq!(requested.snapshot.cursor, 1);
+        assert_eq!(serde_json::from_slice::<ControlState>(&requested.state_json).unwrap().permissions.len(), 1);
+
+        let retry = store
+            .control_command(
+                "s",
+                "permission-request",
+                1,
+                0,
+                "permission_request",
+                &serde_json::to_vec(&permission).unwrap(),
+            )
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(store.snapshot("s").unwrap().revision, 1);
+
+        let resolved = store
+            .control_command(
+                "s",
+                "permission-reply",
+                1,
+                1,
+                "permission_reply",
+                br#"{"id":"permission-1","reply":"once"}"#,
+            )
+            .unwrap();
+        assert_eq!(resolved.snapshot.revision, 2);
+        assert_eq!(resolved.event.unwrap().kind, "permission_resolved");
+
+        let stop = store
+            .control_command(
+                "s",
+                "stop",
+                1,
+                2,
+                "stop_begin",
+                br#"{"runId":"r","reason":"user requested"}"#,
+            )
+            .unwrap();
+        assert_eq!(serde_json::from_slice::<ControlState>(&stop.state_json).unwrap().runtime_control.unwrap()["state"], "stopping");
+        drop(store);
+
+        let reopened = HotStore::open(&path).unwrap();
+        let state = reopened.control_state("s").unwrap();
+        let state: ControlState = serde_json::from_slice(&state).unwrap();
+        assert_eq!(state.permissions[0]["userReply"], "once");
+        assert_eq!(state.runtime_control.unwrap()["state"], "stopping");
+        assert_eq!(reopened.replay("s", 0).unwrap().len(), 3);
+        drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
 }

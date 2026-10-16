@@ -5,6 +5,10 @@ export type SidecarBody =
   | { type: 'activate_run'; runJson: Uint8Array }
   | { type: 'queue_read' }
   | { type: 'queue_state'; queueJson: Uint8Array }
+  | { type: 'control_command'; operation: string; payload: Uint8Array }
+  | { type: 'control_state'; stateJson: Uint8Array }
+  | { type: 'history_command'; operation: string; payload: Uint8Array }
+  | { type: 'history_state'; stateJson: Uint8Array }
   | { type: 'queue_mutation'; operation: string; payload: Uint8Array }
   | { type: 'hello'; token: string; clientId?: string }
   | { type: 'issue_ticket'; clientId: string }
@@ -82,6 +86,10 @@ const BODY_FIELDS: Record<SidecarBody['type'], number> = {
   queue_mutation: 35,
   queue_read: 36,
   queue_state: 37,
+  control_command: 38,
+  control_state: 39,
+  history_command: 40,
+  history_state: 41,
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -137,6 +145,10 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'activate_run': return fieldBytes(1, body.runJson);
     case 'queue_read': return new Uint8Array();
     case 'queue_state': return fieldBytes(1, body.queueJson);
+    case 'control_command': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
+    case 'control_state': return fieldBytes(1, body.stateJson);
+    case 'history_command': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
+    case 'history_state': return fieldBytes(1, body.stateJson);
     case 'queue_mutation': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
     case 'hello': return concat(fieldString(1, body.token), body.clientId ? fieldString(2, body.clientId) : new Uint8Array());
     case 'issue_ticket': return fieldString(1, body.clientId);
@@ -299,6 +311,10 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
   switch (field) {
     case 36: return { type: 'queue_read' };
     case 37: return { type: 'queue_state', queueJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 38: return { type: 'control_command', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
+    case 39: return { type: 'control_state', stateJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 40: return { type: 'history_command', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
+    case 41: return { type: 'history_state', stateJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 31: return { type: 'seed_ui', sessionJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 32: return { type: 'ui_snapshot' };
     case 33: return { type: 'ui_snapshot_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
@@ -348,7 +364,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 37 && item.wire === 2);
+  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 41 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

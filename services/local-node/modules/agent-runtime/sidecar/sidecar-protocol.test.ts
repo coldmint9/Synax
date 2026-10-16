@@ -11,6 +11,8 @@ describe("runtime sidecar protobuf codec", () => {
       { type: 'queue_mutation' as const, operation: 'force', payload: new Uint8Array([0, 128, 255]) },
       { type: 'queue_read' as const },
       { type: 'queue_state' as const, queueJson: new Uint8Array([0, 128, 255]) },
+      { type: 'control_command' as const, operation: 'permission_reply', payload: new Uint8Array([0, 128, 255]) },
+      { type: 'control_state' as const, stateJson: new Uint8Array([0, 128, 255]) },
       { type: 'admit_run' as const, bodyHash: 'hash', runId: 'r', queueItemJson: new Uint8Array([0, 128, 255]) },
       { type: 'finish_run' as const, runId: 'r', status: 'failed', runJson: new Uint8Array([0, 128, 255]) },
     ]) {

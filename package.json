@@ -83,7 +83,11 @@
     "runtime-sidecar:lifecycle-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-lifecycle-smoke.ts",
     "runtime-sidecar:ui-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-ui-smoke.ts",
     "runtime-sidecar:recovery-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-recovery-smoke.ts",
-    "runtime-sidecar:queue-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-queue-smoke.ts"
+    "runtime-sidecar:queue-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-queue-smoke.ts",
+    "runtime-sidecar:control-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-control-smoke.ts",
+    "runtime-sidecar:history-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-history-smoke.ts",
+    "runtime:migrate": "tsx scripts/synax-runtime-migrate.ts",
+    "runtime:migrate:smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-migration-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",

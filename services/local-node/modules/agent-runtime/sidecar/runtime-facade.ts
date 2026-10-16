@@ -169,6 +169,65 @@ export class RuntimeFacade {
     }
   }
 
+  async controlState(sessionId: string): Promise<unknown> {
+    if (streamMode() !== 'authoritative') throw new Error('Runtime sidecar controls are not authoritative.');
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    await this.ensureUiProjection(sessionId);
+    for (let attempt = 0; ; attempt++) {
+      const snapshot = await client.snapshot(sessionId);
+      try {
+        const result = await client.controlCommand({
+          sessionId,
+          requestId: `control-read:${sessionId}:${snapshot.epoch}:${snapshot.revision}`,
+          epoch: snapshot.epoch,
+          revision: snapshot.revision,
+          operation: 'read',
+        });
+        return JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+      } catch (error) {
+        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+      }
+    }
+  }
+
+  async controlCommand(input: {
+    sessionId: string;
+    requestId: string;
+    operation: string;
+    payload?: unknown;
+  }): Promise<unknown> {
+    if (streamMode() !== 'authoritative') return null;
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    await this.ensureUiProjection(input.sessionId);
+    for (let attempt = 0; ; attempt++) {
+      const snapshot = await client.snapshot(input.sessionId);
+      try {
+        const result = await client.controlCommand({
+          ...input,
+          epoch: snapshot.epoch,
+          revision: snapshot.revision,
+        });
+        return JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+      } catch (error) {
+        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+      }
+    }
+  }
+
+  async historyCommand(input: {
+    sessionId: string;
+    requestId: string;
+    operation: string;
+    payload?: unknown;
+  }): Promise<unknown> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    const bytes = await client.historyCommand(input);
+    return JSON.parse(Buffer.from(bytes).toString('utf8'));
+  }
+
   async uiSnapshotAuthoritative(sessionId: string): Promise<{
     session: AgentSession; run: AgentRun | null; cursor: number;
     liveChunks: AgentRunStreamChunk[]; completedStepIds: string[]; queuedInputs?: unknown[]; forceInjectItemId?: string | null;

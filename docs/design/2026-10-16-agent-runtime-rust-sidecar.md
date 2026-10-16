@@ -4,7 +4,9 @@
 
 基线：`origin/main` / `22ed239a8939ae66bfd2fee650de16057521de1d`
 
-状态：设计冻结候选，分阶段实施中
+状态：设计冻结候选，分阶段实施中；2026-10-16 已完成 Rust control/history 基础边界与离线迁移 smoke
+
+IPC 拓扑汇报图见：[Agent Runtime IPC 拓扑](./2026-10-16-agent-runtime-ipc-topology.md)。
 
 ## 1. 目标
 
@@ -126,7 +128,7 @@ Renderer ⇄ ws://127.0.0.1:<随机端口>/runtime ⇄ Rust UI Gateway
 
 Node 与 Renderer 共享浏览器安全的 protobuf codec。事件 payload 带 `schema:1` 及提交时状态，不能在 replay 时从 SQL 读取当前状态替代历史状态。RocksDB 的 `ui_projections` 与 session/run/event/receipt 在同一 WriteBatch 更新。Renderer 初次认证后发送 `ui_snapshot`，收到完整物化快照才从该 cursor 订阅，Node ticket 不再携带 snapshot；Web compatibility facade 同样读取 Rust projection。当前 step 的 delta 合并存储，不因热事件保留窗而丢失较早文本。
 
-**尚未满足最终架构的部分**：首次创建 projection 仍通过 Node session 元数据 seed；seed 是 create-if-absent 且仅接受没有旧执行的会话，旧会话需要离线迁移。session 元数据修改、permission/input/stop/resume 等写路径仍待 repository 迁移，媒体和手动压缩事件仍在 Node 的独立辅助流。projection 暂限 768 KiB，超出拒绝整批提交，不做截断；大内容 blob/CAS、默认启用、完整 history、旧实现删除和真实压测未完成。
+**尚未满足最终架构的部分**：首次创建 projection 仍通过 Node session 元数据 seed；seed 是 create-if-absent 且仅接受没有旧执行的会话，旧会话需要离线迁移。session 元数据修改、input、媒体和手动压缩事件仍在 Node 的兼容边界。permission/interaction/stop/resume 已有 Rust control command、receipt、epoch/revision、projection 和恢复 smoke，但 Node 兼容 read model 尚未删除。projection 暂限 768 KiB，超出拒绝整批提交；history CAS 已支持 immutable object/head/pin/checkpoint/fork/rollback/page/verify/GC 基础命令，完整消息 API、blob 分块策略和默认启用仍待迁移验收。
 
 ### 3.2 Tokio 并发模型
 
@@ -320,6 +322,12 @@ control transport 为每连接 32 个任务、全局 128 个任务、8 MiB 响�
 ### 6.5 Terminal completion boundary
 
 `finish_run` 接受完整 terminal run document。Rust 校验 run/session/status/completedAt/stopReason，缺失完成时间由 Rust 生成并固定在 receipt；`executionLease.closed` 写入最终文档。finish 与 `run_finished` canonical event、session fence、UI projection、transition receipt 在同一 WriteBatch 提交，重试不重复发布。
+
+### 6.7 Control 与 history command
+
+Rust control state 保存在 `control` column family，权限、交互、运行控制和 process lease 使用同一 session actor 边界。`permission_request`、`permission_reply`、`interaction_request`、`interaction_reply`、`interaction_consume`、`stop_begin`、`stop_unconfirmed`、`stop_ack`、`resume` 和 lease 命令均携带 request receipt；状态 projection、canonical event 与 session revision 同一 WriteBatch 提交。
+
+`runtime-history` 是独立 RocksDB。对象以 `sha256` 内容地址保存，head 只保存对象引用和 revision；checkpoint 是 head 切换加 pin，fork 复制 head 引用，rollback 是 head switch，page 沿 refs 读取，GC 从 head/pin 做可达性标记。离线迁移入口为 `npm run runtime:migrate -- export|import|verify|rebuild-index`，导入失败的 session 进入 quarantine report。
 
 `blocked` 是 terminal run status，但兼容 session projection 仍可映射为 completed；Rust run document 保留 blocked，projection 保留 blockedReason，active run fence 会释放，避免后续 turn 被 stale active run 卡住。SQLite 仍作为 Node compatibility read model；permission、interaction、input queue、stop/resume 和 history 写路径仍需迁移。
 

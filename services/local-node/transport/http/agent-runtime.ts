@@ -1860,9 +1860,13 @@ agentRuntimeRoutes.get("/sessions/:sessionId/todos", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/permissions", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/permissions", async (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const state = await runtimeFacade.controlState(c.req.param("sessionId")) as { permissions?: unknown[] };
+      return c.json({ items: state.permissions ?? [] });
+    }
     return c.json({ items: permissionPolicy.list(c.req.param("sessionId")) });
   } catch (error) {
     return runtimeError(c, error);
@@ -1937,6 +1941,18 @@ agentRuntimeRoutes.post(
           },
           409,
         );
+      }
+      if (runtimeFacade.streamMode() === "authoritative") {
+        await runtimeFacade.controlCommand({
+          sessionId,
+          requestId: `permission-reply:${c.req.param("permissionId")}:${parsed.data.reply}`,
+          operation: "permission_reply",
+          payload: {
+            id: c.req.param("permissionId"),
+            reply: parsed.data.reply,
+            message: parsed.data.message,
+          },
+        });
       }
       const decision = permissionPolicy.reply(
         sessionId,
@@ -2189,8 +2205,12 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
 });
 
 // Forms are durable resources, not permission grants or queued chat messages.
-agentRuntimeRoutes.get("/sessions/:sessionId/interactions", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/interactions", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const state = await runtimeFacade.controlState(c.req.param("sessionId")) as { interactions?: unknown[] };
+      return c.json({ interactions: state.interactions ?? [] });
+    }
     return c.json({
       interactions: interactionService.list(c.req.param("sessionId")),
     });
@@ -2226,6 +2246,14 @@ agentRuntimeRoutes.post(
         !backend.hasPendingInteraction?.(sessionId, id)
       )
         return c.json({ error: "Native input request expired." }, 409);
+      if (runtimeFacade.streamMode() === "authoritative") {
+        await runtimeFacade.controlCommand({
+          sessionId,
+          requestId: `interaction-reply:${id}:${parsed.data.revision}:${parsed.data.action}`,
+          operation: "interaction_reply",
+          payload: { id, revision: parsed.data.revision, reply: parsed.data },
+        });
+      }
       const interaction = interactionService.reply(sessionId, id, parsed.data);
       if (backendId === "native") {
         if (interactionService.ready(sessionId))

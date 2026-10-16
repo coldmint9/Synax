@@ -54,7 +54,7 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41"
     )]
     pub body: Option<wire_envelope::Body>,
 }
@@ -63,7 +63,7 @@ pub mod wire_envelope {
     use super::{
         WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireCredit, WireError,
         WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
-        WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady,
+        WireControlCommand, WireControlState, WireHistoryCommand, WireHistoryState, WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady,
         WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot, WireSnapshotResponse,
         WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse,
     };
@@ -75,6 +75,14 @@ pub mod wire_envelope {
         QueueRead(WireQueueRead),
         #[prost(message, tag = "37")]
         QueueState(WireQueueState),
+        #[prost(message, tag = "38")]
+        ControlCommand(WireControlCommand),
+        #[prost(message, tag = "39")]
+        ControlState(WireControlState),
+        #[prost(message, tag = "40")]
+        HistoryCommand(WireHistoryCommand),
+        #[prost(message, tag = "41")]
+        HistoryState(WireHistoryState),
         #[prost(message, tag = "34")]
         ActivateRun(WireActivateRun),
         #[prost(message, tag = "35")]
@@ -150,6 +158,34 @@ pub struct WireQueueRead {}
 pub struct WireQueueState {
     #[prost(bytes = "vec", tag = "1")]
     pub queue_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireControlCommand {
+    #[prost(string, tag = "1")]
+    pub operation: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireControlState {
+    #[prost(bytes = "vec", tag = "1")]
+    pub state_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireHistoryCommand {
+    #[prost(string, tag = "1")]
+    pub operation: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireHistoryState {
+    #[prost(bytes = "vec", tag = "1")]
+    pub state_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]

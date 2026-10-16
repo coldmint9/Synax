@@ -2,7 +2,7 @@ use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
 use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireQueueState,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WirePong, WireQueueState,
     WireReady, WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket,
     WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
     wire_envelope,
@@ -33,6 +33,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "activate_run",
     "queue_mutation",
     "queue_read",
+    "control_command",
+    "control_state",
     "append_stream",
     "append_receipts",
     "control_multiplex",
@@ -63,6 +65,7 @@ pub struct TransportContext {
     pub tickets: Arc<TicketStore>,
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
+    pub history: Option<Arc<crate::history::HistoryStore>>,
 }
 
 impl TransportContext {
@@ -209,6 +212,9 @@ async fn handle_websocket(
                         "credit_window",
                         "ui_projection",
                         "queue_read",
+                        "control_state",
+    "history_command",
+    "history_state",
                     ]
                     .iter()
                     .map(|value| (*value).into())
@@ -730,6 +736,84 @@ async fn execute_wire(
                 Err(error) => (envelope(error_to_wire(error)), false),
             }
         }
+        Some(wire_envelope::Body::ControlCommand(command)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "runtime control commands require private control transport",
+                    )),
+                    false,
+                );
+            }
+            match context
+                .router
+                .control_command(
+                    session_id.clone(),
+                    request_id.clone(),
+                    request.epoch,
+                    request.revision,
+                    command.operation,
+                    command.payload,
+                )
+                .await
+            {
+                Ok(receipt) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: receipt.snapshot.epoch,
+                        revision: receipt.snapshot.revision,
+                        body: Some(wire_envelope::Body::ControlState(WireControlState {
+                            state_json: receipt.state_json,
+                        })),
+                    },
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
+        Some(wire_envelope::Body::HistoryCommand(command)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "history commands require private control transport",
+                    )),
+                    false,
+                );
+            }
+            let Some(history) = context.history.as_ref() else {
+                return (
+                    envelope(wire_error("HISTORY_UNAVAILABLE", "runtime history is not configured")),
+                    false,
+                );
+            };
+            match history
+                .command_async(
+                    session_id.clone(),
+                    request_id.clone(),
+                    command.operation,
+                    command.payload,
+                )
+                .await
+            {
+                Ok(state_json) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: request.epoch,
+                        revision: request.revision,
+                        body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json })),
+                    },
+                    false,
+                ),
+                Err(error) => (
+                    envelope(wire_error("HISTORY_ERROR", &error.to_string())),
+                    false,
+                ),
+            }
+        }
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router
@@ -894,6 +978,8 @@ async fn execute_wire(
         | Some(wire_envelope::Body::SnapshotResponse(_))
         | Some(wire_envelope::Body::EventBatch(_))
         | Some(wire_envelope::Body::QueueState(_))
+        | Some(wire_envelope::Body::ControlState(_))
+        | Some(wire_envelope::Body::HistoryState(_))
         | Some(wire_envelope::Body::UiSnapshotResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))

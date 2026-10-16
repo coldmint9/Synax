@@ -3,6 +3,7 @@ mod commit;
 mod completion;
 mod control;
 mod flow;
+mod history;
 mod input_queue;
 mod projection;
 mod protocol;
@@ -69,6 +70,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
         .map(HotStore::open)
         .transpose()?;
+    let history_store = std::env::var_os("SYNAX_RUNTIME_HISTORY_PATH")
+        .map(history::HistoryStore::open)
+        .transpose()?;
     let router = match hot_store {
         Some(store) => SessionShardRouter::with_store(16, 1024, Arc::new(store))?,
         None => SessionShardRouter::new(16, 1024)?,
@@ -79,6 +83,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
+        history: history_store.map(Arc::new),
     };
 
     #[cfg(unix)]

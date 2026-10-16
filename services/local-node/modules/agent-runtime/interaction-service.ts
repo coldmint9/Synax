@@ -29,6 +29,7 @@ import {
   getPlanArtifact,
   updatePlanArtifact,
 } from "./plan-artifact-store.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 /** Injected on a skipped form: the model continues on its own recommendation
  *  instead of reading the skip as a refusal. */
@@ -155,7 +156,7 @@ export const interactionService = {
             const plan = agentPlanSchema.parse(raw.plan);
             return { title: plan.title, plan };
           })();
-    return getRawSqlite().transaction(() => {
+    const interaction = getRawSqlite().transaction(() => {
       const session = store.getSession(input.sessionId);
       if (
         session.parentSessionId ||
@@ -277,10 +278,17 @@ export const interactionService = {
       });
       return i;
     })();
+    void runtimeFacade.controlCommand({
+      sessionId: interaction.sessionId,
+      requestId: `interaction-request:${interaction.id}`,
+      operation: "interaction_request",
+      payload: interaction,
+    }).catch(() => {});
+    return interaction;
   },
   reply(sessionId: string, id: string, raw: unknown): AgentInteraction {
     const reply = interactionReplySchema.parse(raw);
-    return getRawSqlite().transaction(() => {
+    const interaction = getRawSqlite().transaction(() => {
       const row = getRawSqlite()
         .prepare(
           "SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?",
@@ -386,9 +394,16 @@ export const interactionService = {
       });
       return { ...i, status, response, resolvedAt };
     })();
+    void runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `interaction-reply:${id}:${reply.revision}:${reply.action}`,
+      operation: "interaction_reply",
+      payload: { id, revision: reply.revision, reply },
+    }).catch(() => {});
+    return interaction;
   },
   deferPlan(sessionId: string, id: string): AgentInteraction {
-    return getRawSqlite().transaction(() => {
+    const interaction = getRawSqlite().transaction(() => {
       const row = getRawSqlite()
         .prepare(
           "SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?",
@@ -435,9 +450,16 @@ export const interactionService = {
       });
       return { ...i, status: "answered" as const, response: reply, resolvedAt };
     })();
+    void runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `interaction-defer:${id}`,
+      operation: "interaction_reply",
+      payload: { id, revision: interaction.revision, reply: interaction.response },
+    }).catch(() => {});
+    return interaction;
   },
   consume(sessionId: string): AgentInteraction | null {
-    return getRawSqlite().transaction(() => {
+    const interaction = getRawSqlite().transaction(() => {
       const i = this.ready(sessionId);
       if (!i) return null;
       const summary = JSON.stringify({ kind: i.kind, ...i.response });
@@ -491,6 +513,15 @@ export const interactionService = {
       });
       return i;
     })();
+    if (interaction) {
+      void runtimeFacade.controlCommand({
+        sessionId,
+        requestId: `interaction-consume:${interaction.id}`,
+        operation: "interaction_consume",
+        payload: { id: interaction.id },
+      }).catch(() => {});
+    }
+    return interaction;
   },
   cancel(sessionId: string): void {
     if (versionedSession(sessionId)) {

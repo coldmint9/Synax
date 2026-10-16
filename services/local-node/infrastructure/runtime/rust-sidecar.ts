@@ -56,6 +56,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   readonly socketPath: string;
   readonly token = randomBytes(32).toString('hex');
   readonly hotPath: string;
+  readonly historyPath: string;
   process!: ChildProcess;
   port = 0;
   generation = 0;
@@ -81,6 +82,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
     const key = createHash('sha256').update(root).digest('hex').slice(0, 12);
     this.socketPath = path.join(os.tmpdir(), `synax-runtime-${key}-${process.pid}.sock`);
     this.hotPath = path.join(root, 'runtime-sidecar', 'runtime-hot');
+    this.historyPath = path.join(root, 'runtime-sidecar', 'runtime-history');
     this.startTimeout = options.startTimeoutMs ?? 30_000;
     this.stopTimeout = options.stopTimeoutMs ?? 5_000;
     this.delays = options.restartDelaysMs ?? [100, 500, 1500];
@@ -111,6 +113,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       env: { ...process.env, ...this.options.env,
         SYNAX_RUNTIME_SIDECAR_PORT: '0', SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath,
         SYNAX_RUNTIME_SIDECAR_TOKEN: this.token, SYNAX_RUNTIME_HOT_PATH: this.hotPath,
+        SYNAX_RUNTIME_HISTORY_PATH: this.historyPath,
         SYNAX_RUNTIME_PARENT_WATCH: '1',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -171,7 +174,8 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       this.port = ready.port; this.generation++; this.status = 'ready'; this.readyAt = Date.now();
       Object.assign(process.env, { SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath, SYNAX_RUNTIME_SIDECAR_TOKEN: this.token,
-        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_HOT_PATH: this.hotPath });
+        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_HOT_PATH: this.hotPath,
+        SYNAX_RUNTIME_HISTORY_PATH: this.historyPath });
       for (const waiter of this.waiters) waiter.resolve(); this.waiters.clear();
       logger.info({ binaryPath: this.binaryPath, socketPath: this.socketPath, port: this.port, sidecarPid: child.pid, generation: this.generation, protocol: ready.protocol }, '[runtime-sidecar] started');
     } catch (error) {
@@ -230,6 +234,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       if (process.env.SYNAX_RUNTIME_SIDECAR_TOKEN === this.token) {
         delete process.env.SYNAX_RUNTIME_SIDECAR_TOKEN; delete process.env.SYNAX_RUNTIME_SIDECAR_SOCKET;
         delete process.env.SYNAX_RUNTIME_SIDECAR_PORT; delete process.env.SYNAX_RUNTIME_HOT_PATH;
+        delete process.env.SYNAX_RUNTIME_HISTORY_PATH;
       }
       if (this.socketIdentity) {
         try {

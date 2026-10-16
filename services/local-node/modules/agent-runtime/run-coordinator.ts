@@ -188,6 +188,12 @@ export class RunCoordinator {
       this.pendingResumes.set(sessionId, resumeInput);
       return;
     }
+    void runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `resume:${sessionId}:${runId}`,
+      operation: "resume",
+      payload: { runId },
+    }).catch((error) => logger.warn({ sessionId, runId, error }, "[run-coordinator] Rust resume control could not be committed"));
     this.launch(sessionId, runId, "resume", resumeInput);
   }
 
@@ -599,6 +605,12 @@ export class RunCoordinator {
     const stopping = owner;
     stopping.stopping = true;
     stopping.finalizers = finalize ? [finalize] : [];
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `stop-begin:${sessionId}:${stopping.runId}:${reason}`,
+      operation: "stop_begin",
+      payload: { runId: stopping.runId, reason },
+    });
     agentRuntimeStore.updateSessionMetadata(sessionId, {
       runtimeControl: { state: "stopping", runId: stopping.runId, reason },
     });
@@ -646,6 +658,12 @@ export class RunCoordinator {
             (child) => child.owner.stopTask ?? child.owner.task,
           ),
         );
+        await runtimeFacade.controlCommand({
+          sessionId,
+          requestId: `stop-ack:${sessionId}:${stopping.runId}`,
+          operation: "stop_ack",
+          payload: { runId: stopping.runId, reason: "Execution shutdown confirmed." },
+        });
         for (const action of stopping.finalizers!) action();
         for (const child of descendants) {
           if (agentRuntimeStore.tryGetSession(child.id))
@@ -670,6 +688,15 @@ export class RunCoordinator {
           this.owners.delete(sessionId);
       } catch (error) {
         stopping.stopFailed = true;
+        await runtimeFacade.controlCommand({
+          sessionId,
+          requestId: `stop-unconfirmed:${sessionId}:${stopping.runId}`,
+          operation: "stop_unconfirmed",
+          payload: {
+            runId: stopping.runId,
+            reason: error instanceof Error ? error.message : "Execution shutdown could not be confirmed.",
+          },
+        }).catch(() => {});
         if (agentRuntimeStore.tryGetSession(sessionId)) {
           agentRuntimeStore.updateSessionMetadata(sessionId, {
             runtimeControl: {

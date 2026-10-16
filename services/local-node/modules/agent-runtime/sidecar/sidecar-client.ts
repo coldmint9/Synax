@@ -158,6 +158,50 @@ export class RuntimeSidecarClient {
       .then(envelope => this.expect(envelope, 'queue_state').queueJson);
   }
 
+  async controlCommand(input: {
+    sessionId: string;
+    requestId: string;
+    epoch: number;
+    revision: number;
+    operation: string;
+    payload?: unknown;
+  }): Promise<{ stateJson: Uint8Array; epoch: number; revision: number }> {
+    const envelope = await this.request(
+      {
+        type: 'control_command',
+        operation: input.operation,
+        payload: new TextEncoder().encode(JSON.stringify(input.payload ?? null)),
+      },
+      input.sessionId,
+      input.epoch,
+      input.revision,
+      input.requestId,
+    );
+    const body = this.expect(envelope, 'control_state');
+    return { stateJson: body.stateJson, epoch: envelope.epoch, revision: envelope.revision };
+  }
+
+  async historyCommand(input: {
+    sessionId: string;
+    requestId: string;
+    operation: string;
+    payload?: unknown;
+  }): Promise<Uint8Array> {
+    const snapshot = await this.snapshot(input.sessionId);
+    const envelope = await this.request(
+      {
+        type: 'history_command',
+        operation: input.operation,
+        payload: new TextEncoder().encode(JSON.stringify(input.payload ?? null)),
+      },
+      input.sessionId,
+      snapshot.epoch,
+      snapshot.revision,
+      input.requestId,
+    );
+    return this.expect(envelope, 'history_state').stateJson;
+  }
+
   async seedUi(sessionId: string, sessionJson: Uint8Array): Promise<Uint8Array> {
     return this.request({ type: 'seed_ui', sessionJson }, sessionId, 0, 0)
       .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);

@@ -18,6 +18,19 @@ import {
   parseBashInvocations,
   type BashInvocation,
 } from "./tools/bash-command-policy.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
+
+function mirrorPermissionRequest(decision: PermissionDecision): void {
+  void runtimeFacade.controlCommand({
+    sessionId: decision.sessionId,
+    requestId: `permission-request:${decision.id}`,
+    operation: "permission_request",
+    payload: decision,
+  }).catch(() => {
+    // Shadow and disabled deployments keep the existing local path. In authoritative
+    // mode the next control read/reply surfaces an unavailable sidecar explicitly.
+  });
+}
 
 function strictestPermissionAction(
   actions: PermissionAction[],
@@ -273,7 +286,7 @@ export class PermissionPolicy {
     const patterns = invocations.map((invocation) => invocation.pattern);
     const now = nowIso();
 
-    return this.store.appendPermission({
+    const decision = this.store.appendPermission({
       id: makeRuntimeId("pd"),
       sessionId: input.sessionId,
       runId: input.runId ?? null,
@@ -301,6 +314,8 @@ export class PermissionPolicy {
           ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
+    mirrorPermissionRequest(decision);
+    return decision;
   }
 
   evaluate(input: PermissionRequestInput): PermissionDecision {
@@ -308,7 +323,7 @@ export class PermissionPolicy {
     const { action, reason } = resolvePermissionDecision(input, review);
     const granted = grantedToolId(input);
     const now = nowIso();
-    return this.store.appendPermission({
+    const decision = this.store.appendPermission({
       id: makeRuntimeId("pd"),
       sessionId: input.sessionId,
       runId: input.runId ?? null,
@@ -334,6 +349,8 @@ export class PermissionPolicy {
           ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
+    mirrorPermissionRequest(decision);
+    return decision;
   }
 
   reply(
@@ -379,6 +396,12 @@ export class PermissionPolicy {
         resolvedAt: nowIso(),
         reason: message ? `${decision.reason} ${message}` : decision.reason,
       });
+      void runtimeFacade.controlCommand({
+        sessionId,
+        requestId: `permission-reply:${permissionId}:${reply}`,
+        operation: "permission_reply",
+        payload: { id: permissionId, reply, message },
+      }).catch(() => {});
       if (reply === "always" && persistRule && typeof toolId !== "string") {
         const pattern = decision.patterns[0] ?? "*";
         const gate = decision.internalGate === "none"
