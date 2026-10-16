@@ -80,7 +80,9 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
     this.binaryPath = options.binaryPath ?? resolveRustRuntimeSidecarBinary();
     const root = path.resolve(options.dataRoot ?? DATA_ROOT);
     const key = createHash('sha256').update(root).digest('hex').slice(0, 12);
-    this.socketPath = path.join(os.tmpdir(), `synax-runtime-${key}-${process.pid}.sock`);
+    this.socketPath = process.platform === 'win32'
+      ? `\\\\.\\pipe\\synax-runtime-${key}-${process.pid}`
+      : path.join(os.tmpdir(), `synax-runtime-${key}-${process.pid}.sock`);
     this.hotPath = path.join(root, 'runtime-sidecar', 'runtime-hot');
     this.historyPath = path.join(root, 'runtime-sidecar', 'runtime-history');
     this.startTimeout = options.startTimeoutMs ?? 30_000;
@@ -249,7 +251,6 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
 
 export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandle | null> {
   if (process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR !== '1') return null;
-  if (process.platform === 'win32') throw new Error('Rust runtime supervisor currently requires Unix transport.');
   const supervisor = new RustRuntimeSupervisor();
   try { await supervisor.start(); return supervisor; }
   catch (error) { await supervisor.stop(); throw error; }

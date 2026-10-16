@@ -2287,8 +2287,12 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
     .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    const id = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await runtimeFacade.sessionPatch(id, `session-pin:${id}:${parsed.data.pinned}`, { sessionMetadata: { pinned: parsed.data.pinned } });
+    }
     const session = agentRuntimeStore.updateSessionMetadata(
-      c.req.param("sessionId"),
+      id,
       parsed.data,
     );
     return c.json({
@@ -2335,6 +2339,16 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
         409,
       );
     const mode = parsed.data.mode;
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await runtimeFacade.sessionPatch(id, `session-mode:${id}:${mode}`, {
+        sessionMetadata: {
+          mode,
+          ...(mode === "goal" && !session.sessionMetadata?.goal
+            ? { goal: initializeGoal(session.prompt) }
+            : {}),
+        },
+      });
+    }
     const updated = agentRuntimeStore.updateSessionMetadata(id, {
       mode,
       ...(mode === "goal" && !session.sessionMetadata?.goal

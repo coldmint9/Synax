@@ -121,6 +121,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ))
     });
 
+    #[cfg(windows)]
+    let named_pipe_task = socket_path_from_env().map(|path| {
+        tokio::spawn(transport::serve_named_pipe(
+            path,
+            context.clone(),
+            shutdown_rx.clone(),
+        ))
+    });
+
     let mut shutdown_signal = shutdown_rx.clone();
     tokio::select! {
         result = tokio::signal::ctrl_c() => result?,
@@ -132,6 +141,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = websocket_task.await;
     #[cfg(unix)]
     if let Some(task) = unix_task {
+        let _ = task.await;
+    }
+    #[cfg(windows)]
+    if let Some(task) = named_pipe_task {
         let _ = task.await;
     }
     #[cfg(unix)]

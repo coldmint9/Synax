@@ -673,6 +673,25 @@ impl HotStore {
                 changed = true;
                 event_name = operation.into();
             }
+            "session_patch" => {
+                let patch = value["patch"].as_object().ok_or_else(|| RuntimeError::InvalidCommand("session patch must be an object".into()))?;
+                for (key, patch_value) in patch {
+                    match key.as_str() {
+                        "title" | "pinned" | "mode" | "archivedAt" | "archiveBatchId" | "resultSummary" | "blockedReason" | "pendingResumeToken" => {
+                            projection.session[key] = patch_value.clone();
+                        }
+                        "sessionMetadata" => {
+                            if !projection.session["sessionMetadata"].is_object() { projection.session["sessionMetadata"] = serde_json::json!({}); }
+                            let target = projection.session["sessionMetadata"].as_object_mut().ok_or_else(|| RuntimeError::InvalidCommand("sessionMetadata is not an object".into()))?;
+                            let source = patch_value.as_object().ok_or_else(|| RuntimeError::InvalidCommand("sessionMetadata patch must be an object".into()))?;
+                            for (nested_key, nested_value) in source { target.insert(nested_key.clone(), nested_value.clone()); }
+                        }
+                        _ => return Err(RuntimeError::InvalidCommand(format!("session field cannot be patched: {key}")).into()),
+                    }
+                }
+                changed = true;
+                event_name = "session_updated".into();
+            }
             _ => return Err(RuntimeError::InvalidCommand(format!("unknown control operation: {operation}")).into()),
         }
 

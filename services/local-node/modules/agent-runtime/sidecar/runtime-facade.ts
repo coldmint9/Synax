@@ -225,6 +225,10 @@ export class RuntimeFacade {
     }
   }
 
+  async sessionPatch(sessionId: string, requestId: string, patch: Record<string, unknown>): Promise<unknown> {
+    return this.controlCommand({ sessionId, requestId, operation: 'session_patch', payload: { patch } });
+  }
+
   async historyCommand(input: {
     sessionId: string;
     requestId: string;

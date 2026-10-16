@@ -40,11 +40,15 @@ try {
   const unconfirmed = await command('stop-unconfirmed', 'stop_unconfirmed', { runId: 'r', reason: 'worker did not exit' });
   assert.equal(JSON.parse(new TextDecoder().decode(unconfirmed.stateJson)).runtimeControl.state, 'unconfirmed');
   await command('resume', 'resume', { runId: 'r' });
+  await command('session-patch', 'session_patch', { patch: { sessionMetadata: { pinned: true }, title: 'Rust control session' } });
+  const projected = JSON.parse(new TextDecoder().decode(await client.uiSnapshot('s')));
+  assert.equal(projected.session.sessionMetadata.pinned, true);
+  assert.equal(projected.session.title, 'Rust control session');
 
   const events = await client.replay('s', 0);
   assert.deepEqual(events.events.map(event => event.kind), [
     'permission_requested', 'permission_resolved', 'interaction_requested', 'interaction_resolved',
-    'interaction_consumed', 'stop_begin', 'stop_unconfirmed', 'run_resumed',
+    'interaction_consumed', 'stop_begin', 'stop_unconfirmed', 'run_resumed', 'session_updated',
   ]);
   client.close(); client = undefined;
   const generation = supervisor.generation;
@@ -63,7 +67,7 @@ try {
   assert.equal(state.permissions[0].userReply, 'once');
   assert.equal(state.interactions[0].status, 'answered');
   assert.equal(state.runtimeControl, null);
-  assert.equal((await client.replay('s', 0)).events.length, 8);
+  assert.equal((await client.replay('s', 0)).events.length, 9);
   console.log('Rust control smoke passed: permission/interaction/stop/resume commands are fenced, receipt-idempotent, projected, replayable, and recover after sidecar restart.');
 } finally {
   client?.close();

@@ -1184,9 +1184,19 @@ pub async fn serve_unix(
 
 #[cfg(unix)]
 async fn handle_unix(
-    mut stream: tokio::net::UnixStream,
+    stream: tokio::net::UnixStream,
     context: TransportContext,
 ) -> Result<(), TransportError> {
+    handle_control_stream(stream, context).await
+}
+
+async fn handle_control_stream<S>(
+    mut stream: S,
+    context: TransportContext,
+) -> Result<(), TransportError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let request = timeout(Duration::from_secs(5), read_frame(&mut stream))
         .await
         .map_err(|_| TransportError::Protocol("control hello timed out".into()))??;
@@ -1271,6 +1281,41 @@ async fn handle_unix(
             return Ok(());
         }
     }
+}
+
+#[cfg(windows)]
+pub async fn serve_named_pipe(
+    path: PathBuf,
+    context: TransportContext,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), TransportError> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    let slots = Arc::new(Semaphore::new(64));
+    let mut connections = tokio::task::JoinSet::new();
+    loop {
+        let server = ServerOptions::new().create(&path)?;
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            _ = connections.join_next(), if !connections.is_empty() => {},
+            connected = server.connect() => {
+                connected?;
+                let Ok(permit) = slots.clone().try_acquire_owned() else { continue; };
+                let child_context = context.clone();
+                connections.spawn(async move {
+                    let _permit = permit;
+                    if let Err(error) = handle_control_stream(server, child_context).await {
+                        eprintln!("[runtime-sidecar] named pipe connection failed: {error}");
+                    }
+                });
+            }
+        }
+    }
+    if timeout(Duration::from_secs(3), async {
+        while connections.join_next().await.is_some() {}
+    }).await.is_err() {
+        connections.abort_all();
+    }
+    Ok(())
 }
 
 pub(crate) async fn read_frame<R: AsyncRead + Unpin>(
