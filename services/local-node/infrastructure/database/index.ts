@@ -541,9 +541,11 @@ function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
   if (_sqlite) return _sqlite;
+  const rustAuthoritative = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && process.env.SYNAX_RUNTIME_LEGACY !== "1";
   const useOwner = process.env.SYNAX_STORAGE_OWNER_PROCESS !== "1" && (
-    Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) ||
+    !rustAuthoritative && (Boolean(process.env.SYNAX_STORAGE_OWNER_ENDPOINT) ||
     (process.env.SYNAX_RUNTIME_HOST_ID && !process.env.VITEST && process.env.NODE_ENV !== "test")
+    )
   );
   if (useOwner) {
     startStorageOwner(path.dirname(dbPath));

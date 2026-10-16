@@ -186,6 +186,10 @@ electronParentPort?.on('message', event => acceptParentMessage(event.data));
 const runtimeHost = acquireRuntimeHost(DATA_ROOT);
 process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
+if (process.env.SYNAX_RUNTIME_LEGACY !== '1') {
+  process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
+  process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
+}
 
 // --- 初始化上下文数据库（提前触发 WAL 模式与迁移执行） ---
 try {
