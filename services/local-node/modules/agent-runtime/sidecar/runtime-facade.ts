@@ -267,6 +267,63 @@ export class RuntimeFacade {
     });
   }
 
+  async persistStreamHistory(
+    sessionId: string,
+    chunks: AgentRunStreamChunk[],
+  ): Promise<void> {
+    if (streamMode() !== 'authoritative') return;
+    const objects: Array<{ kind: string; value: unknown }> = [];
+    const add = (kind: string, value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const record = value as { id?: unknown; sessionId?: unknown };
+      if (typeof record.id !== 'string' || (record.sessionId !== undefined && record.sessionId !== sessionId)) return;
+      objects.push({ kind, value });
+    };
+    for (const chunk of chunks) {
+      switch (chunk.type) {
+        case 'run_started':
+        case 'run_activated':
+        case 'run_finished':
+        case 'run_completed':
+        case 'run_failed':
+        case 'run_resumed':
+          add('runtime.run', chunk.run);
+          break;
+        case 'step_started':
+          add('runtime.step', chunk.step);
+          break;
+        case 'message':
+        case 'input_injected':
+          add('runtime.message', chunk.message);
+          break;
+        case 'tool_call':
+        case 'tool_result':
+        case 'permission_requested':
+          add('runtime.tool_call', chunk.toolCall);
+          break;
+        case 'event':
+          add('runtime.event', chunk.event);
+          break;
+        default:
+          break;
+      }
+    }
+    const seen = new Set<string>();
+    for (const object of objects) {
+      const value = object.value as { id: string };
+      const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
+      const identity = `${object.kind}:${value.id}:${digest}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      await this.historyCommand({
+        sessionId,
+        requestId: `history-stream:${identity}`,
+        operation: 'put_object',
+        payload: object,
+      });
+    }
+  }
+
   async listRunHistory(sessionId: string): Promise<unknown[]> {
     const state = await this.historyCommand({
       sessionId,

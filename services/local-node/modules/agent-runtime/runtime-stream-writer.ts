@@ -98,7 +98,10 @@ export class RuntimeStreamWriter {
         : runtimeRecordState(this.sessionId);
       const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
         producerSequence, ...fence, chunks, state };
-      if (authoritative) await runtimeFacade.appendStreamAuthoritative(input);
+      if (authoritative) {
+        await runtimeFacade.appendStreamAuthoritative(input);
+        await runtimeFacade.persistStreamHistory(this.sessionId, chunks);
+      }
       else await runtimeFacade.shadowAppendStream(input);
     }).catch(error => {
       if (authoritative) {
