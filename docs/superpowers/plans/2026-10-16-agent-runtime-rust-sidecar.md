@@ -374,3 +374,14 @@ runtime-sidecar/
 - 修复 authoritative host 迁移启动回归：migrations 始终执行，只有旧 conversation history triggers 在 authoritative host 禁用。当前 macOS arm64 packaged desktop smoke 已通过；最新 DMG 为 `out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `a3d61e5dc6105d2ab32fb0893834a889b1dba90fb8cd4b1233be4b8047324272`。
 
 本轮验证：`npm run typecheck`、Rust 55 项测试、迁移 smoke、history smoke、lifecycle smoke、forked worker smoke、provider worker smoke 均通过。Windows/macOS/Linux desktop workflow 已触发，等待目标机结果。
+
+## 2026-10-17 第九轮：Rust-first admission 与流式 history
+
+- `WireAdmitRun` 增加完整 `run_json`；Rust admission 在同一 WriteBatch 保存 queued run document、receipt、runtime-hot session 和 UI projection。sidecar 重启后不再只能看到 run id 和 fence。
+- HTTP `runs.submit`、HTTP continue、history edit、Git 初始 review 和 goal continuation 在 authoritative 模式走异步 Rust-first admission；Node SQLite run/session 行只作为暂时兼容镜像，在 Rust durable fence 成功后写入。
+- queued input / forced goal continuation 将 queue item 放入 admission document，Rust 负责原子消费队列；旧同步路径仍保留给非 authoritative fixture 和离线历史工具。
+- canonical stream append 成功后，Rust history 即时写入 `runtime.run`、`runtime.step`、`runtime.message`、`runtime.tool_call` 和 `runtime.event` 对象；terminal finish 的 SQLite 扫描降为补偿性重建路径。
+- macOS 本地 cargo wrapper 支持 Homebrew LLVM，并使用 `DYLD_FALLBACK_LIBRARY_PATH`，避免 Homebrew LLVM 污染 rustc 自身 LLVM；`npm run runtime-sidecar:check` 已通过。
+- 5000 session / 64 concurrency / 4 stream batches / 1 KiB payload：35000 operations，p50 1.438ms、p95 3.393ms、p99 6.542ms、max 24.712ms（macOS arm64，本地验收数据，不是发布承诺）。
+- 真实 lifecycle、真实 provider-worker、Rust 56 项单元测试、focused Node suite 与 typecheck 通过。全量 Vitest 当前可复现的失败仍为既有 `context-epochs.test.ts` 3 项 compaction fixture（预期 checkpoint 未生成），与本轮 Rust sidecar 改动无直接关联；全量运行因慢 fixture 未作为发布 gate。
+- Windows workflow `38965983058` 仍在目标机执行，待 Named Pipe、Windows packaged smoke 和 NSIS publisher 配置结果。

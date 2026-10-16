@@ -71,5 +71,5 @@ flowchart LR
 ## 当前边界
 
 - 已落地：Tokio multi-thread、session shard、RocksDB hot/history、Moka、Rust control、Electron WebSocket、Unix socket、Windows Named Pipe 代码路径、迁移与故障 smoke；runtime-history 增加内容寻址的分块 blob/manifest 校验。
-- 仍在收口：Node SQLite session/run/message 兼容写入、旧 journal/history 模块、完整 HTTP/SSE read path、Windows 目标机实际执行验收，以及真实外部 provider 凭证验收。
+- 仍在收口：Node SQLite session/run/message 兼容镜像、旧 checkpoint/history mode、完整 recovery authority、完整 history part/media API、Windows 目标机实际执行验收，以及真实外部 provider 凭证验收。
 - 数据权威方向：新 authoritative host 由 Rust 管理 runtime-hot、control、history；产品 host 已移除 legacy 环境开关，旧同步路径只作为测试 fixture 的显式 disabled transport 保留，彻底删除安排在离线迁移与 purge 验收之后。
