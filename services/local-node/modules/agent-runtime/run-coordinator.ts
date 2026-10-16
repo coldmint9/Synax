@@ -47,7 +47,7 @@ interface Owner {
   stopping: boolean;
   stopTask?: Promise<void>;
   stopFailed?: boolean;
-  finalizers?: Array<() => void>;
+  finalizers?: Array<() => void | Promise<void>>;
 }
 interface Driver {
   execute: typeof executeBackendSession;
@@ -732,7 +732,7 @@ export class RunCoordinator {
           operation: "stop_ack",
           payload: { runId: stopping.runId, reason: "Execution shutdown confirmed." },
         });
-        for (const action of stopping.finalizers!) action();
+        for (const action of stopping.finalizers!) await action();
         for (const child of descendants) {
           if (agentRuntimeStore.tryGetSession(child.id))
             agentRuntimeStore.updateSessionMetadata(child.id, {

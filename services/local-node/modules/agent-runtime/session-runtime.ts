@@ -156,7 +156,7 @@ export class AgentSessionRuntime {
       }));
     }
     sessionMetadata.backend = backend;
-    if (SIMPLE_HISTORY_STORAGE) sessionMetadata.historyStorage = "sqlite-flat";
+    if (SIMPLE_HISTORY_STORAGE && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") sessionMetadata.historyStorage = "sqlite-flat";
     if (
       !parent &&
       (input.profileId === "synax" || input.profileId === "goal")
@@ -208,14 +208,16 @@ export class AgentSessionRuntime {
     };
     const saved = getRawSqlite().transaction(() => {
       const saved = this.store.createSession(session);
-      if (SIMPLE_HISTORY_STORAGE) initializeSimpleHistory(saved.id);
-      else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
-      else if (
-        !SIMPLE_HISTORY_STORAGE && !parent &&
-        (!input.backendId || input.backendId === "native") &&
-        process.env.SYNAX_VERSION_HISTORY !== "legacy"
-      )
-        initializeFreshVersionNative(saved);
+      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
+        if (SIMPLE_HISTORY_STORAGE) initializeSimpleHistory(saved.id);
+        else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
+        else if (
+          !SIMPLE_HISTORY_STORAGE && !parent &&
+          (!input.backendId || input.backendId === "native") &&
+          process.env.SYNAX_VERSION_HISTORY !== "legacy"
+        )
+          initializeFreshVersionNative(saved);
+      }
       return saved;
     })();
     const bundle = agentContextBuilder.build(input.projectId, {

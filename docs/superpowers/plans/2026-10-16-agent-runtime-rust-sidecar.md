@@ -398,3 +398,14 @@ runtime-sidecar/
 - 删除无线上线调用的 `SessionLog`、其 benchmark 和测试，离线迁移目录扫描仍保留。
 - interrupted/failed partial assistant message 在 authoritative 模式改为 canonical `message` append，并在 Rust terminal finish 前等待写入完成。
 - history smoke 新增 global asset blob command 验收；当前 Rust 测试为 57 项。
+
+## 2026-10-17 第十一轮：Rust history head、媒体引用和恢复控制继续收口
+
+- `runtime-history` 新增独立 asset metadata、session binding、binding 查询、删除保护和 blob 删除命令；新资产创建、绑定和删除先提交 Rust，再维护 SQLite 兼容镜像。
+- history head 现在在存在 `runtime.session.root` 时按可达对象读取，checkpoint pin 支持 metadata/list，rollback/edit authoritative 路径会构造新的 immutable root 并切换 head；后续 stream append 会把新对象接到当前 head，避免 head 切换后新事件重新进入旧历史。
+- authoritative checkpoint capture 已改为 Rust pin；HTTP checkpoint summary、preview、rollback、edit 和 history visit 已有 Rust 分支。fork 仍需要独立的 Rust session clone command，不能把旧 `simple-fork` 误标成完成。
+- permission timeout sweeper 已改为读取 Rust control state 并通过 `permission_reply` 自动拒绝；Rust permission reply 同批更新 session terminal projection、run blocked 文档和 live tool call 状态。
+- authoritative session permission 配置、archive delete、subagent pause/cancel/terminate 和 stop completion 已补 Rust-first 路径；SQLite 仅作为兼容镜像，下一步继续清理同步读取依赖。
+- 新增 Rust asset/checkpoint 单元覆盖；history smoke、Rust 57 项测试、typecheck 仍需以最新提交重新执行。
+
+本轮剩余硬边界：fork 的 Rust session clone、session/run/step/tool 的同步兼容读取、旧 checkpoint/history 模块的离线清理、真实外部 provider 凭证验收，以及 Windows packaged smoke。未完成前目标保持 active。

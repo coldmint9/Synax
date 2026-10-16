@@ -342,6 +342,33 @@ export function bindValidatedAssets(
     db.prepare(
       "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
     ).run(a.id, sessionId);
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    void import("./sidecar/runtime-facade.js").then(({ runtimeFacade }) =>
+      Promise.all(assets.map((asset) => runtimeFacade.bindAsset(sessionId, asset.id)))
+    ).catch(() => {
+      // The synchronous compatibility mirror remains available to legacy callers;
+      // authoritative admission awaits bindValidatedAssetsAuthoritative below.
+    });
+  }
+}
+
+export async function bindValidatedAssetsAuthoritative(
+  sessionId: string,
+  assets: RuntimeAsset[],
+): Promise<void> {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
+    bindValidatedAssets(sessionId, assets);
+    return;
+  }
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  await Promise.all(assets.map((asset) => runtimeFacade.bindAsset(sessionId, asset.id)));
+  // Keep the compatibility read model coherent for non-runtime consumers. The
+  // Rust binding is committed first and is the authority for admission.
+  const db = getRawSqlite();
+  for (const asset of assets)
+    db.prepare(
+      "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
+    ).run(asset.id, sessionId);
 }
 
 export function bindAssets(
@@ -365,7 +392,22 @@ export function sessionHasAsset(sessionId: string, id: string): boolean {
 }
 export async function deleteUnboundAsset(id: string): Promise<void> {
   const db = getRawSqlite();
-  getAsset(id);
+  const asset = getAsset(id);
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+    // Rust checks every durable binding before allowing metadata deletion. For
+    // assets created before cutover, import the local bytes first so deletion
+    // has the same metadata/blob invariant as a new asset.
+    try {
+      await runtimeFacade.deleteAssetMetadata(id);
+    } catch (caught) {
+      if (!(caught instanceof Error) || !/asset .*not found/i.test(caught.message)) throw caught;
+      const bytes = await readLocalAsset(asset, id);
+      await runtimeFacade.putAssetBlob(id, asset, bytes);
+      await runtimeFacade.deleteAssetMetadata(id);
+    }
+    await runtimeFacade.deleteAssetBlob(id).catch(() => {});
+  }
   db.transaction(() => {
     if (
       db

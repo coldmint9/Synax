@@ -11,6 +11,7 @@ import { profileService } from './profile-service.js';
 import { resolveSessionPermissionRules } from './permission-tiers.js';
 import { agentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
+import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 export const SESSION_PERMISSION_TIER_KEY = 'permissionTier';
 export const SESSION_PERMISSION_OVERRIDES_KEY = 'permissionOverrides';
@@ -118,6 +119,48 @@ export function applySessionPermissionUpdate(
   }
   return updated;
   });
+}
+
+export async function applySessionPermissionUpdateAuthoritative(
+  sessionId: string,
+  input: UpdateSessionPermissionRequest,
+): Promise<AgentSession> {
+  if (runtimeFacade.streamMode() !== 'authoritative') return applySessionPermissionUpdate(sessionId, input);
+  if (input.permissionTier === undefined && input.permissionOverrides === undefined)
+    return (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session;
+  const session = agentRuntimeStore.getSession(sessionId);
+  const profile = profileService.getForSession(session);
+  const metadataPatch: Record<string, unknown> = {};
+  if (input.permissionTier !== undefined) metadataPatch[SESSION_PERMISSION_TIER_KEY] = input.permissionTier;
+  if (input.permissionOverrides !== undefined) metadataPatch[SESSION_PERMISSION_OVERRIDES_KEY] = input.permissionOverrides;
+  const nextMetadata = { ...(session.sessionMetadata ?? {}), ...metadataPatch };
+  const permissionRules = rebuildSessionPermissionRules({ ...session, sessionMetadata: nextMetadata }, profile.permissionDefaults);
+  const now = nowIso();
+  const updated = await runtimeFacade.sessionPatch(sessionId, `permission-config:${sessionId}:${now}`, {
+    sessionMetadata: metadataPatch,
+    permissionRules,
+    updatedAt: now,
+  }) as AgentSession;
+  try {
+    agentRuntimeStore.updateSession(sessionId, { sessionMetadata: nextMetadata, permissionRules, updatedAt: now });
+    const pending = [...session.childSessionIds];
+    const seen = new Set([sessionId]);
+    while (pending.length) {
+      const childId = pending.shift()!;
+      if (seen.has(childId)) continue;
+      seen.add(childId);
+      const child = agentRuntimeStore.tryGetSession(childId);
+      if (!child) continue;
+      const childRules = rebuildSessionPermissionRules(child, profileService.getForSession(child).permissionDefaults);
+      await runtimeFacade.sessionPatch(childId, `permission-inherit:${sessionId}:${childId}:${now}`, { permissionRules: childRules, updatedAt: now });
+      agentRuntimeStore.updateSession(childId, { permissionRules: childRules, updatedAt: now });
+      pending.push(...child.childSessionIds);
+    }
+  } catch {
+    // Rust already owns the mutation; a stale compatibility mirror is repaired
+    // by the next projection read or offline reconciliation.
+  }
+  return updated;
 }
 
 export function appendAlwaysPermissionRule(

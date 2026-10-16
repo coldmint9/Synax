@@ -240,6 +240,38 @@ export class RuntimeFacade {
     return (await this.uiSnapshotAuthoritative(sessionId)).session;
   }
 
+  async stopSessionAuthoritative(sessionId: string, status: 'paused' | 'interrupted' | 'cancelled', reason: string): Promise<void> {
+    if (streamMode() !== 'authoritative') return;
+    const snapshot = await this.uiSnapshotAuthoritative(sessionId);
+    const now = new Date().toISOString();
+    const run = snapshot.run as AgentRun | null;
+    if (run && ['queued', 'running', 'waiting_permission', 'waiting_input'].includes(String(run.status))) {
+      await this.finishExecution(sessionId, {
+        ...run,
+        status: 'interrupted',
+        completedAt: now,
+        stopReason: reason,
+        metadata: {
+          ...run.metadata,
+          executionLease: {
+            ...((run.metadata?.executionLease as Record<string, unknown> | undefined) ?? {}),
+            closed: true,
+          },
+        },
+      });
+    }
+    await this.sessionPatch(sessionId, `stop-session:${sessionId}:${status}:${now}`, {
+      status,
+      activeRunId: null,
+      pendingResumeToken: null,
+      blockedReason: null,
+      resultSummary: reason,
+      completedAt: status === 'interrupted' ? now : null,
+      updatedAt: now,
+      sessionMetadata: { manualStop: { at: now, reason }, runtimeControl: null },
+    });
+  }
+
   async historyCommand(input: {
     sessionId: string;
     requestId: string;
@@ -272,6 +304,12 @@ export class RuntimeFacade {
 
   async putAssetBlob(assetId: string, asset: unknown, bytes: Uint8Array): Promise<void> {
     const scopeId = `asset:${assetId}`;
+    await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-metadata:${assetId}:${createHash('sha256').update(JSON.stringify(asset)).digest('hex')}`,
+      operation: 'asset_put',
+      payload: { asset },
+    });
     const chunkSize = 256 * 1024;
     const total = Math.max(1, Math.ceil(bytes.length / chunkSize));
     const hex = (value: Uint8Array) => Buffer.from(value).toString('hex');
@@ -295,6 +333,71 @@ export class RuntimeFacade {
       requestId: `asset-object:${assetId}`,
       operation: 'put_object',
       payload: { kind: 'runtime.asset', value: asset },
+    });
+  }
+
+  async getAssetMetadata(assetId: string): Promise<unknown> {
+    return this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-metadata-read:${assetId}`,
+      operation: 'asset_get',
+      payload: { assetId },
+    });
+  }
+
+  async bindAsset(sessionId: string, assetId: string): Promise<void> {
+    await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-bind:${sessionId}:${assetId}`,
+      operation: 'asset_bind',
+      payload: { sessionId, assetId },
+    });
+  }
+
+  async unbindAsset(sessionId: string, assetId: string): Promise<void> {
+    await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-unbind:${sessionId}:${assetId}`,
+      operation: 'asset_unbind',
+      payload: { sessionId, assetId },
+    });
+  }
+
+  async hasAssetBinding(sessionId: string, assetId: string): Promise<boolean> {
+    const result = await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-binding-read:${sessionId}:${assetId}`,
+      operation: 'asset_has_binding',
+      payload: { sessionId, assetId },
+    }) as { bound?: boolean };
+    return result.bound === true;
+  }
+
+  async listBoundAssets(sessionId: string): Promise<unknown[]> {
+    const result = await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-bindings-list:${sessionId}`,
+      operation: 'asset_list_bindings',
+      payload: { sessionId },
+    }) as { items?: unknown[] };
+    return result.items ?? [];
+  }
+
+  async deleteAssetMetadata(assetId: string): Promise<void> {
+    await this.historyCommandGlobal({
+      scopeId: 'assets',
+      requestId: `asset-delete:${assetId}`,
+      operation: 'asset_delete',
+      payload: { assetId },
+    });
+  }
+
+  async deleteAssetBlob(assetId: string): Promise<void> {
+    await this.historyCommandGlobal({
+      scopeId: `asset:${assetId}`,
+      requestId: `asset-blob-delete:${assetId}`,
+      operation: 'delete_blob',
+      payload: { blobId: assetId },
     });
   }
 
@@ -380,18 +483,39 @@ export class RuntimeFacade {
       }
     }
     const seen = new Set<string>();
+    const objectIds: string[] = [];
     for (const object of objects) {
       const value = object.value as { id: string };
       const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
       const identity = `${object.kind}:${value.id}:${digest}`;
       if (seen.has(identity)) continue;
       seen.add(identity);
-      await this.historyCommand({
+      const result = await this.historyCommand({
         sessionId,
         requestId: `history-stream:${identity}`,
         operation: 'put_object',
         payload: object,
-      });
+      }) as { objectId?: string };
+      if (result.objectId) objectIds.push(result.objectId);
+    }
+    if (objectIds.length) {
+      const head = await this.historyHeadAuthoritative(sessionId);
+      const refs = head.objectId ? [head.objectId, ...objectIds] : objectIds;
+      const root = await this.writeHistoryRootRefs(sessionId, refs, `history-stream-root:${sessionId}`);
+      for (let attempt = 0; ; attempt++) {
+        const current = await this.historyHeadAuthoritative(sessionId);
+        try {
+          await this.historyCommand({
+            sessionId,
+            requestId: `history-stream-head:${sessionId}:${root}:${current.revision}`,
+            operation: 'head_switch',
+            payload: { objectId: root, expectedRevision: current.revision },
+          });
+          break;
+        } catch (error) {
+          if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+        }
+      }
     }
   }
 
@@ -543,13 +667,161 @@ export class RuntimeFacade {
     return state.items ?? [];
   }
 
-  private async historyHead(sessionId: string): Promise<{ revision: number; objectId?: string }> {
+  async listHistoryCheckpoints(sessionId: string): Promise<Array<{ id: string; objectId: string; metadata: Record<string, unknown> }>> {
+    const state = await this.historyCommand({
+      sessionId,
+      requestId: historyReadRequest('list-checkpoints', sessionId),
+      operation: 'list_checkpoints',
+      payload: {},
+    }) as { items?: Array<{ id?: unknown; objectId?: unknown; metadata?: unknown }> };
+    return (state.items ?? []).flatMap((item) => {
+      if (typeof item.id !== 'string' || typeof item.objectId !== 'string') return [];
+      return [{ id: item.id, objectId: item.objectId, metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {} }];
+    });
+  }
+
+  async previewHistoryAuthoritative(sessionId: string, checkpointId: string, includeFiles = true): Promise<{
+    checkpointId: string;
+    revision: number;
+    removedMessages: number;
+    files: [];
+    conflicts: [];
+    canApply: boolean;
+    warnings: string[];
+    preservedFiles: [];
+    exclusions: string;
+  }> {
+    const [head, checkpoints, messages] = await Promise.all([
+      this.historyHeadAuthoritative(sessionId),
+      this.listHistoryCheckpoints(sessionId),
+      this.listMessageHistory(sessionId) as Promise<AgentRuntimeMessage[]>,
+    ]);
+    const checkpoint = checkpoints.find((item) => item.id === checkpointId);
+    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    const index = messages.findIndex((item) => item.id === checkpoint.metadata.messageId);
+    if (index < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    return {
+      checkpointId,
+      revision: head.revision,
+      removedMessages: Math.max(0, messages.length - index - 1),
+      files: [],
+      conflicts: [],
+      canApply: true,
+      warnings: [
+        'Rust history mutation changes the immutable conversation head.',
+        ...(includeFiles ? ['Workspace files are preserved; file rollback is not part of the runtime history command.'] : []),
+      ],
+      preservedFiles: [],
+      exclusions: 'Conversation history only; workspace files are not changed.',
+    };
+  }
+
+  private async writeHistoryRootRefs(sessionId: string, refs: string[], requestPrefix: string): Promise<string> {
+    let current = refs;
+    let part = 0;
+    while (current.length > 256) {
+      const next: string[] = [];
+      for (let offset = 0; offset < current.length; offset += 256) {
+        const chunk = current.slice(offset, offset + 256);
+        const result = await this.historyCommand({
+          sessionId,
+          requestId: `${requestPrefix}:chunk:${part++}:${createHash('sha256').update(chunk.join('\0')).digest('hex')}`,
+          operation: 'put_object',
+          payload: { kind: 'runtime.session.root.chunk', value: { sessionId, count: chunk.length }, refs: chunk },
+        }) as { objectId?: string };
+        if (!result.objectId) throw new Error('runtime-history root chunk did not return an object id');
+        next.push(result.objectId);
+      }
+      current = next;
+    }
+    const result = await this.historyCommand({
+      sessionId,
+      requestId: `${requestPrefix}:root:${createHash('sha256').update(current.join('\0')).digest('hex')}`,
+      operation: 'put_object',
+      payload: { kind: 'runtime.session.root', value: { sessionId, objectCount: refs.length, updatedAt: new Date().toISOString() }, refs: current },
+    }) as { objectId?: string };
+    if (!result.objectId) throw new Error('runtime-history root did not return an object id');
+    return result.objectId;
+  }
+
+  private async writeHistoryRoot(sessionId: string, objects: Array<{ kind: string; value: unknown }>, requestPrefix: string): Promise<string> {
+    const refs: string[] = [];
+    for (const object of objects) {
+      const result = await this.historyCommand({
+        sessionId,
+        requestId: `${requestPrefix}:${object.kind}:${createHash('sha256').update(JSON.stringify(object.value)).digest('hex')}`,
+        operation: 'put_object',
+        payload: object,
+      }) as { objectId?: string };
+      if (!result.objectId) throw new Error('runtime-history object did not return an object id');
+      refs.push(result.objectId);
+    }
+    return this.writeHistoryRootRefs(sessionId, refs, requestPrefix);
+  }
+
+  async applyHistoryAuthoritative(input: {
+    sessionId: string;
+    checkpointId: string;
+    revision: number;
+    requestId: string;
+    action: 'rollback' | 'edit';
+    message?: string;
+  }): Promise<{ sessionId: string; revision: number; input?: { message: string } }> {
+    const [head, checkpoints, messages, runs, steps, parts, tools, events] = await Promise.all([
+      this.historyHeadAuthoritative(input.sessionId),
+      this.listHistoryCheckpoints(input.sessionId),
+      this.listHistoryObjects(input.sessionId, 'list_messages'),
+      this.listHistoryObjects(input.sessionId, 'list_runs'),
+      this.listHistoryObjects(input.sessionId, 'list_steps'),
+      this.listHistoryObjects(input.sessionId, 'list_parts'),
+      this.listHistoryObjects(input.sessionId, 'list_tool_calls'),
+      this.listHistoryObjects(input.sessionId, 'list_events'),
+    ]);
+    if (head.revision !== input.revision) throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
+    const checkpoint = checkpoints.find((item) => item.id === input.checkpointId);
+    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    const orderedMessages = this.orderedHistory(messages as AgentRuntimeMessage[]);
+    const boundary = orderedMessages.findIndex((item) => item.id === checkpoint.metadata.messageId);
+    if (boundary < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    const keptMessages = orderedMessages.slice(0, boundary + 1);
+    const keptIds = new Set(keptMessages.map((item) => item.id));
+    const runIds = new Set(keptMessages.map((item) => item.runId).filter((id): id is string => Boolean(id)));
+    const keptRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
+    const keptSteps = (steps as AgentRunStep[]).filter((step) => runIds.has(step.runId));
+    const keptStepIds = new Set(keptSteps.map((step) => step.id));
+    const objects: Array<{ kind: string; value: unknown }> = [
+      ...keptMessages.map((value) => ({ kind: 'runtime.message', value })),
+      ...keptRuns.map((value) => ({ kind: 'runtime.run', value })),
+      ...keptSteps.map((value) => ({ kind: 'runtime.step', value })),
+      ...(parts as Array<{ stepId?: string }>).filter((part) => part.stepId && keptStepIds.has(part.stepId)).map((value) => ({ kind: 'runtime.part', value })),
+      ...(tools as Array<{ stepId?: string }>).filter((tool) => tool.stepId && keptStepIds.has(tool.stepId)).map((value) => ({ kind: 'runtime.tool_call', value })),
+      ...(events as Array<{ runId?: string }>).filter((event) => !event.runId || runIds.has(event.runId)).map((value) => ({ kind: 'runtime.event', value })),
+    ];
+    const root = await this.writeHistoryRoot(input.sessionId, objects, `history-mutation:${input.requestId}`);
+    const switched = await this.historyCommand({
+      sessionId: input.sessionId,
+      requestId: `history-head:${input.requestId}`,
+      operation: 'head_switch',
+      payload: { objectId: root, expectedRevision: input.revision },
+    }) as { revision?: number };
+    return {
+      sessionId: input.sessionId,
+      revision: Number(switched.revision ?? input.revision + 1),
+      ...(input.action === 'edit' && input.message ? { input: { message: input.message } } : {}),
+    };
+  }
+
+  async historyHeadAuthoritative(sessionId: string): Promise<{ revision: number; objectId?: string }> {
     return await this.historyCommand({
       sessionId,
       requestId: historyReadRequest('head', sessionId),
       operation: 'head_read',
       payload: {},
     }) as { revision: number; objectId?: string };
+  }
+
+  private async historyHead(sessionId: string): Promise<{ revision: number; objectId?: string }> {
+    return this.historyHeadAuthoritative(sessionId);
   }
 
   private orderedHistory<T>(items: T[]): T[] {

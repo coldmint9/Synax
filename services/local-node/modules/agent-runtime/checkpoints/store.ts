@@ -114,6 +114,34 @@ export async function captureCheckpoint(
   stepId: string | null = null,
   omitRunId?: string,
 ): Promise<ConversationCheckpoint | null> {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
+    const head = await runtimeFacade.historyHeadAuthoritative(sessionId);
+    if (!head.objectId) return null;
+    const id = `rust_checkpoint_${kind}_${messageId}`;
+    const createdAt = new Date().toISOString();
+    await runtimeFacade.historyCommand({
+      sessionId,
+      requestId: `history-checkpoint:${id}`,
+      operation: "checkpoint",
+      payload: {
+        objectId: head.objectId,
+        pinId: id,
+        metadata: { sessionId, kind, messageId, stepId, createdAt, omitRunId: omitRunId ?? null },
+      },
+    });
+    return {
+      id,
+      sessionId,
+      ordinal: 0,
+      kind,
+      messageId,
+      stepId,
+      mutationCursor: 0,
+      payload: { version: 3, boundary: { sessionIds: [sessionId], messageCount: 0, cursor: head.revision } as unknown as HistoryBoundary },
+      createdAt,
+    };
+  }
   if (!nativeCheckpointSession(sessionId)) return null;
   if (versionedSession(sessionId))
     return versionRepository().capture(

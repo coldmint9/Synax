@@ -9,7 +9,7 @@ import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
 import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
 import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
-import type { AgentRun, AgentRuntimeMessage, AgentSession, RuntimeEvent } from "../../modules/agent-runtime/contracts.js";
+import type { AgentRun, AgentRuntimeMessage, AgentSession, PermissionDecision, RuntimeEvent } from "../../modules/agent-runtime/contracts.js";
 import {
   boundaryOnlySession,
   versionRepository,
@@ -97,6 +97,7 @@ import {
   streamTurnRequestSchema,
   toHttpError,
   applySessionPermissionUpdate,
+  applySessionPermissionUpdateAuthoritative,
   updateSessionPermissionRequestSchema,
 } from "../../modules/agent-runtime/index.js";
 import {
@@ -266,7 +267,9 @@ async function archiveSessionAfterShutdown(
     );
     await closeAcpAgentSessions(sessionIds);
     await stopSessionBackgroundProcesses(sessionIds);
-    agentSessionRuntime.interrupt(sessionId);
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await Promise.all(sessionIds.map((id) => runtimeFacade.stopSessionAuthoritative(id, "interrupted", "Session archived by user.")));
+    } else agentSessionRuntime.interrupt(sessionId);
 
     return { ...agentSessionRuntime.archive(sessionId), parentId };
   });
@@ -630,7 +633,7 @@ agentRuntimeRoutes.get("/sessions/search", async (c) => {
     if (runtimeFacade.streamMode() === "authoritative") {
       const sessions = (await runtimeFacade.listSessionProjection())
         .map(item => projectSessionState(item as never))
-        .filter(session => session.projectId === projectId && !session.parentSessionId && !session.sessionMetadata?.archivedAt);
+        .filter(session => session.projectId === projectId && !session.parentSessionId && !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt);
       const lowered = q.toLocaleLowerCase();
       const matches = (await Promise.all(sessions.map(async session => {
         if (session.title?.toLocaleLowerCase().includes(lowered) || session.prompt.toLocaleLowerCase().includes(lowered))
@@ -666,7 +669,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
     try {
       const all = (await runtimeFacade.listSessionProjection())
         .map(item => projectSessionState(item as never))
-        .filter(session => !session.sessionMetadata?.archivedAt)
+        .filter(session => !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt)
         .filter(session => !filter.projectId || session.projectId === filter.projectId)
         .filter(session => !filter.nodeId || session.nodeId === filter.nodeId)
         .filter(session => !status || session.status === status)
@@ -705,7 +708,7 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
       const selected = new Set(projectIds);
       return c.json({ items: (await runtimeFacade.listSessionProjection())
         .map(item => projectSessionState(item as never))
-        .filter(session => selected.has(session.projectId) && !session.sessionMetadata?.archivedAt)
+        .filter(session => selected.has(session.projectId) && !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt)
         .map(session => ({ id: session.id, projectId: session.projectId, status: session.status, updatedAt: session.updatedAt })) });
     }
     return c.json({ items: agentRuntimeStore.listSessionBadges(projectIds) });
@@ -753,7 +756,7 @@ agentRuntimeRoutes.get("/session-archives", async (c) => {
         const metadata = session.sessionMetadata ?? {};
         const archivedAt = typeof metadata.archivedAt === "string" ? metadata.archivedAt : undefined;
         const archiveBatchId = typeof metadata.archiveBatchId === "string" ? metadata.archiveBatchId : undefined;
-        if (!archivedAt || !archiveBatchId || (projectId && session.projectId !== projectId)) continue;
+        if (!archivedAt || !archiveBatchId || session.sessionMetadata?.deletedAt || (projectId && session.projectId !== projectId)) continue;
         if (query && !session.title?.toLocaleLowerCase().includes(query) && !session.prompt.toLocaleLowerCase().includes(query)) continue;
         const existing = groups.get(archiveBatchId);
         if (existing) existing.sessionCount += 1;
@@ -815,7 +818,7 @@ agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
       await Promise.all(projected.map(session => runtimeFacade.sessionPatch(
         session.id,
         `restore:${batchId}:${session.id}`,
-        { sessionMetadata: { archivedAt: null, archiveBatchId: null } },
+        { sessionMetadata: { archivedAt: null, archiveBatchId: null, deletedAt: null } },
       )));
       let restoredSessionIds = projected.map(session => session.id);
       try {
@@ -835,8 +838,23 @@ agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
   }
 });
 
-agentRuntimeRoutes.delete("/session-archives/:batchId", (c) => {
+agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const batchId = c.req.param("batchId");
+      const archived = (await runtimeFacade.listSessionProjection())
+        .map(item => projectSessionState(item as never) as AgentSession)
+        .filter(session => session.sessionMetadata?.archiveBatchId === batchId && session.sessionMetadata?.archivedAt);
+      if (!archived.some(session => session.id === batchId)) throw new AgentNotFoundError(batchId);
+      const deletedAt = new Date().toISOString();
+      await Promise.all(archived.map(session => runtimeFacade.sessionPatch(
+        session.id,
+        `archive-delete:${batchId}:${session.id}`,
+        { sessionMetadata: { deletedAt } },
+      )));
+      for (const session of archived) invalidateSessionEnvironment(session.id);
+      return c.json({ ok: true, deletedSessionIds: archived.map(session => session.id) });
+    }
     const deletedSessionIds = agentRuntimeStore.deleteArchivedBatch(
       c.req.param("batchId"),
     );
@@ -867,8 +885,10 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
     await runCoordinator.interrupt(
       id,
       "User requested session stop.",
-      () => {
-        agentSessionRuntime.interrupt(id);
+      async () => {
+        if (runtimeFacade.streamMode() === "authoritative") {
+          await Promise.all(agentRuntimeStore.listSessionTree(id).map((session) => runtimeFacade.stopSessionAuthoritative(session.id, "interrupted", "User requested session stop.")));
+        } else agentSessionRuntime.interrupt(id);
         for (const session of agentRuntimeStore.listSessionTree(id))
           invalidateSessionEnvironment(session.id);
         if (parentId) invalidateSessionEnvironment(parentId);
@@ -2107,7 +2127,9 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
         409,
       );
     validateBackendTurnInput(resolveSessionBackend(sessionId).id, parsed.data);
-    const session = applySessionPermissionUpdate(sessionId, parsed.data);
+    const session = runtimeFacade.streamMode() === "authoritative"
+      ? await applySessionPermissionUpdateAuthoritative(sessionId, parsed.data)
+      : applySessionPermissionUpdate(sessionId, parsed.data);
     return c.json(withSessionPayload(session.id));
   } catch (error) {
     return runtimeError(c, error);
@@ -2123,10 +2145,14 @@ agentRuntimeRoutes.post(
     if (!parsed.success) return validationError(c, parsed.error);
     const sessionId = c.req.param("sessionId");
     try {
-      const session = agentRuntimeStore.getSession(sessionId);
-      const previous = permissionPolicy
-        .list(sessionId)
-        .find((item) => item.id === c.req.param("permissionId"));
+      const authoritative = runtimeFacade.streamMode() === "authoritative";
+      const session = authoritative
+        ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never)
+        : agentRuntimeStore.getSession(sessionId);
+      const previous = authoritative
+        ? (((await runtimeFacade.controlState(sessionId)) as { permissions?: unknown[] }).permissions ?? [])
+            .find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === c.req.param("permissionId")) as PermissionDecision | undefined
+        : permissionPolicy.list(sessionId).find((item) => item.id === c.req.param("permissionId"));
       if (previous?.resolvedAt) {
         return previous.userReply === parsed.data.reply
           ? c.json(previous)
@@ -2163,8 +2189,9 @@ agentRuntimeRoutes.post(
           409,
         );
       }
-      if (runtimeFacade.streamMode() === "authoritative") {
-        await runtimeFacade.controlCommand({
+      let decision: PermissionDecision;
+      if (authoritative) {
+        const nextState = await runtimeFacade.controlCommand({
           sessionId,
           requestId: `permission-reply:${c.req.param("permissionId")}:${parsed.data.reply}`,
           operation: "permission_reply",
@@ -2174,14 +2201,18 @@ agentRuntimeRoutes.post(
             message: parsed.data.message,
           },
         });
+        const updated = (nextState as { permissions?: unknown[] }).permissions?.find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === c.req.param("permissionId"));
+        if (!updated || typeof updated !== "object") throw new AgentRuntimeError("Permission response was not persisted.", "STORAGE_UNAVAILABLE", 503);
+        decision = updated as PermissionDecision;
+      } else {
+        decision = permissionPolicy.reply(
+          sessionId,
+          c.req.param("permissionId"),
+          parsed.data.reply,
+          parsed.data.message,
+          backendId === "native",
+        );
       }
-      const decision = permissionPolicy.reply(
-        sessionId,
-        c.req.param("permissionId"),
-        parsed.data.reply,
-        parsed.data.message,
-        backendId === "native",
-      );
       if (backendId !== "native") {
         backend.replyPermission?.(sessionId, decision.id, parsed.data.reply);
         return c.json(decision);
@@ -2196,7 +2227,7 @@ agentRuntimeRoutes.post(
         },
         "[agent-runtime] permission reply received",
       );
-      agentEventService.append({
+      if (!authoritative) agentEventService.append({
         sessionId,
         type: "permission_resolved",
         summary: decision.reason,
@@ -2626,10 +2657,43 @@ const forkActionSchema = historyActionSchema.extend({
   includeFiles: z.literal(false).default(false),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]),
 });
-agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
   try {
     const encoded = c.req.query("messageIds");
     const messageIds = encoded === undefined ? undefined : z.array(z.string().min(1).max(256)).max(64).parse(JSON.parse(encoded));
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const sessionId = c.req.param("sessionId");
+      const [head, checkpoints, messages] = await Promise.all([
+        runtimeFacade.historyHeadAuthoritative(sessionId),
+        runtimeFacade.listHistoryCheckpoints(sessionId),
+        runtimeFacade.listMessageHistory(sessionId) as Promise<AgentRuntimeMessage[]>,
+      ]);
+      const messageSet = messageIds ? new Set(messageIds) : undefined;
+      const latestMessageId = messages.at(-1)?.id;
+      return c.json({
+        sessionId,
+        revision: head.revision,
+        recoveryRequired: false,
+        reason: null,
+        forkReason: null,
+        stopRequired: false,
+        rollbackEnabled: checkpoints.length > 0,
+        checkpoints: checkpoints
+          .filter((checkpoint) => !messageSet || messageSet.has(String(checkpoint.metadata.messageId ?? "")))
+          .map((checkpoint) => ({
+            id: checkpoint.id,
+            kind: checkpoint.metadata.kind === "input" ? "input" : "reply",
+            messageId: typeof checkpoint.metadata.messageId === "string" ? checkpoint.metadata.messageId : null,
+            stepId: typeof checkpoint.metadata.stepId === "string" ? checkpoint.metadata.stepId : null,
+            available: true,
+            reason: null,
+            transcriptOnly: false,
+            destructive: true,
+            hasLaterHistory: checkpoint.metadata.messageId !== latestMessageId,
+            initialInput: checkpoint.metadata.kind === "input" && messages[0]?.id === checkpoint.metadata.messageId,
+          })),
+      });
+    }
     return c.json(checkpointSummary(c.req.param("sessionId"), messageIds));
   } catch (error) {
     return runtimeError(c, error);
@@ -2649,6 +2713,16 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      if (parsed.data.action === "fork") {
+        throw new AgentValidationError("Fork preview is handled by the Rust history head and does not restore workspace files yet.");
+      }
+      return c.json(await runtimeFacade.previewHistoryAuthoritative(
+        sessionId,
+        parsed.data.checkpointId,
+        parsed.data.includeFiles,
+      ));
+    }
     if (parsed.data.action !== "fork")
       return c.json(
         await previewHistory(
@@ -2685,6 +2759,26 @@ for (const action of ["rollback", "edit", "fork"] as const) {
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
+        if (runtimeFacade.streamMode() === "authoritative") {
+          if (action === "fork") throw new AgentValidationError("Fork mutation requires a dedicated Rust session clone command.");
+          const result = await runtimeFacade.applyHistoryAuthoritative({
+            sessionId,
+            checkpointId: input.checkpointId,
+            revision: input.revision,
+            requestId: input.requestId,
+            action,
+            message: input.message,
+          });
+          if (result.input && action === "edit") {
+            await runCoordinator.submitAsync(
+              sessionId,
+              result.input,
+              editRunRequestId(sessionId, input.requestId),
+              "turn",
+            );
+          }
+          return c.json({ sessionId: result.sessionId, revision: result.revision, runId: undefined });
+        }
         if (action === "fork")
           return c.json(
             await forkSimpleConversation(
@@ -2729,8 +2823,17 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   }
 });
 
-agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", (c) => {
+agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await runtimeFacade.historyCommand({
+        sessionId: c.req.param("sessionId"),
+        requestId: `history-visit:${c.req.param("sessionId")}`,
+        operation: "head_read",
+        payload: {},
+      });
+      return c.json({ visited: true });
+    }
     visitConversation(c.req.param("sessionId"));
     return c.json({ visited: true });
   } catch (error) {

@@ -657,6 +657,11 @@ export function mapLegacyHistoryRow(
 export class AgentRuntimeStore {
   createSession(session: AgentSession): AgentSession {
     this.upsertSession(session);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      void import("./sidecar/runtime-facade.js")
+        .then(({ runtimeFacade }) => runtimeFacade.ensureUiProjection(session.id))
+        .catch((error) => logger.debug({ sessionId: session.id, error }, "[session-store] authoritative projection seed deferred"));
+    }
     if (session.parentSessionId) {
       const parent = this.tryGetSession(session.parentSessionId);
       if (parent && !parent.childSessionIds.includes(session.id)) {

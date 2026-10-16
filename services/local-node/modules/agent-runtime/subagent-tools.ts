@@ -10,6 +10,7 @@ import {
 } from "./subagent-orchestrator.js";
 import { nowIso } from "./runtime-ids.js";
 import { interruptAgentSessionsAndWait } from "./agent-stream-proxy.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 const activeRuns = new Set<string>();
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "interrupted"]);
@@ -264,19 +265,28 @@ export const subagentLifecycleTool: RegisteredTool = {
       if (terminalStatuses.has(child.status)) throw new AgentValidationError("A terminal subagent cannot be paused.");
       await interruptAgentSessionsAndWait([child.id], reason);
       activeRuns.delete(child.id);
+      if (runtimeFacade.streamMode() === "authoritative") {
+        await runtimeFacade.stopSessionAuthoritative(child.id, "paused", reason);
+        return result(childView(child.id, input.sessionId), "Paused subagent.");
+      }
       return result(agentSessionRuntime.cancel(child.id), "Paused subagent.");
     }
     if (args.action === "cancel") {
       if (terminalStatuses.has(child.status)) return result(childView(child.id, input.sessionId), "Subagent already stopped.");
       await interruptAgentSessionsAndWait([child.id], reason);
       activeRuns.delete(child.id);
-      agentSessionRuntime.interrupt(child.id);
-      agentRuntimeStore.updateSession(child.id, { status: "cancelled", updatedAt: nowIso(), completedAt: nowIso(), resultSummary: reason });
+      if (runtimeFacade.streamMode() === "authoritative") {
+        await runtimeFacade.stopSessionAuthoritative(child.id, "cancelled", reason);
+      } else agentSessionRuntime.interrupt(child.id);
+      if (runtimeFacade.streamMode() !== "authoritative")
+        agentRuntimeStore.updateSession(child.id, { status: "cancelled", updatedAt: nowIso(), completedAt: nowIso(), resultSummary: reason });
       return result(childView(child.id, input.sessionId), "Cancelled subagent.");
     }
     await interruptAgentSessionsAndWait([child.id], reason);
     activeRuns.delete(child.id);
-    agentSessionRuntime.interrupt(child.id);
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await runtimeFacade.stopSessionAuthoritative(child.id, "interrupted", reason);
+    } else agentSessionRuntime.interrupt(child.id);
     return result(childView(child.id, input.sessionId), "Terminated subagent.");
   },
 };

@@ -50,6 +50,12 @@ async function recoverAuthoritativeRuntime(
         ),
       );
     const leases = Array.isArray(control.processLeases) ? control.processLeases : [];
+    const permissions = Array.isArray((control as { permissions?: unknown[] }).permissions)
+      ? (control as { permissions: unknown[] }).permissions
+      : [];
+    const interactions = Array.isArray((control as { interactions?: unknown[] }).interactions)
+      ? (control as { interactions: unknown[] }).interactions
+      : [];
     const processUnknown =
       leases.length > 0 || unresolved.some((record) => record.session_id === session.id);
     const localRuns = local ? agentRuntimeStore.listRuns(session.id) : [];
@@ -59,12 +65,13 @@ async function recoverAuthoritativeRuntime(
       isDurableRuntimeCheckpoint(active.status) &&
       !processUnknown
     ) {
-      if (
-        checkpoint &&
-        ((active.status === "waiting_input" && interactionService.ready(session.id)) ||
-          (active.status === "waiting_permission" &&
-            permissionPolicy.list(session.id).some((permission) => permission.userReply !== null)))
-      )
+      const answeredInteraction = interactions.some((item) =>
+        item && typeof item === "object" && (item as { runId?: unknown }).runId === active.id &&
+        (item as { status?: unknown }).status !== "pending" && Boolean((item as { response?: unknown }).response));
+      const answeredPermission = permissions.some((item) =>
+        item && typeof item === "object" && (item as { runId?: unknown }).runId === active.id &&
+        Boolean((item as { userReply?: unknown }).userReply));
+      if ((active.status === "waiting_input" && answeredInteraction) || (active.status === "waiting_permission" && answeredPermission))
         resumable.push(session.id);
       continue;
     }

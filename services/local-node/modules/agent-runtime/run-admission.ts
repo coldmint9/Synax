@@ -4,9 +4,9 @@ import {
   assertHistoryUnlocked,
   historyRevision,
 } from "./checkpoints/guards.js";
-import { applySessionPermissionUpdate } from "./session-permissions.js";
+import { applySessionPermissionUpdate, applySessionPermissionUpdateAuthoritative } from "./session-permissions.js";
 import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
-import { bindValidatedAssets, validateAssets } from "./media-assets.js";
+import { bindValidatedAssets, bindValidatedAssetsAuthoritative, validateAssets } from "./media-assets.js";
 import { prepareTurnReferences } from "./turn-references.js";
 import { profileService } from "./profile-service.js";
 import { createHash } from "node:crypto";
@@ -299,13 +299,6 @@ export async function acceptRuntimeRunAuthoritative(
   if (runtimeFacade.streamMode() !== "authoritative")
     return acceptRuntimeRun(sessionId, input, requestId, mode);
 
-  prepareFlatHistory(sessionId);
-  if (versionRuntimeMode(sessionId) === "transcript")
-    throw new AgentRuntimeError(
-      "Version transcript rollout is not yet ready for execution.",
-      "VERSION_RUNTIME_NOT_READY",
-      409,
-    );
   input = normalizeInput(input);
   if (input.contentParts && !hasInput(input))
     throw new AgentValidationError("Input is empty.");
@@ -321,6 +314,7 @@ export async function acceptRuntimeRunAuthoritative(
     .digest("hex");
   await runtimeFacade.ensureUiProjection(sessionId);
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+  const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);
   const existingRun = authoritative.run as AgentRun | null | undefined;
   if (existingRun && ["queued", "running", "waiting_permission", "waiting_input"].includes(existingRun.status))
     throw new AgentRuntimeError(
@@ -418,15 +412,15 @@ export async function acceptRuntimeRunAuthoritative(
   if (mode === "continue" && preparedSession.status === "completed" && !hasInput(input))
     throw new AgentValidationError("Completed sessions require a new message to continue.");
 
-  bindValidatedAssets(sessionId, preparedAssets);
+  await bindValidatedAssetsAuthoritative(sessionId, preparedAssets);
   const workDir = bindSessionWorkDir(sessionId);
   let session = preparedSession;
-  if (permissionChangeRequested) session = applySessionPermissionUpdate(sessionId, input);
+  if (permissionChangeRequested) session = await applySessionPermissionUpdateAuthoritative(sessionId, input);
   const binding = resolveSessionBackend(sessionId);
   const model = preparedModel;
   const runtime: AcceptedRuntimeInput = {
     version: 1,
-    historyRevision: historyRevision(sessionId),
+    historyRevision: historyHead.revision,
     requestId,
     inputHash,
     mode,
