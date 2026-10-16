@@ -3230,4 +3230,39 @@ mod tests {
         drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
+
+    #[test]
+    fn session_patch_can_close_a_recovery_fence_atomically() {
+        let path = temp_path("session-patch-recovery");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store
+            .control_command(
+                "s",
+                "stopping",
+                1,
+                0,
+                "stop_begin",
+                br#"{"runId":"r","reason":"restart"}"#,
+            )
+            .unwrap();
+        let patched = store
+            .control_command(
+                "s",
+                "recovered",
+                1,
+                1,
+                "session_patch",
+                br#"{"patch":{"status":"paused","activeRunId":null,"completedAt":null,"updatedAt":"2026-10-17T00:00:00Z","blockedReason":"restart"}}"#,
+            )
+            .unwrap();
+        assert_eq!(patched.snapshot.revision, 2);
+        let projection: crate::projection::UiSnapshot =
+            serde_json::from_slice(&store.ui_snapshot("s", None).unwrap()).unwrap();
+        assert_eq!(projection.session["status"], "paused");
+        assert_eq!(projection.session["activeRunId"], serde_json::Value::Null);
+        assert_eq!(projection.session["blockedReason"], "restart");
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
