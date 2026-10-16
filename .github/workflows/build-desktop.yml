@@ -131,6 +131,10 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:desktop:smoke
 
+      - name: Smoke test Rust sidecar transport (Windows)
+        if: runner.os == 'Windows'
+        run: npm run runtime-sidecar:smoke
+
       - name: Smoke test packaged UI update and rollback (macOS / Windows)
         if: runner.os != 'Linux'
         run: npm run test:desktop:ui-update-smoke

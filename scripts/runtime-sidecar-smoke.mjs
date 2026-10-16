@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const root = mkdtempSync(join(tmpdir(), 'synax-runtime-sidecar-smoke-'));
-const socketPath = join(root, 'runtime.sock');
+const socketPath = process.platform === 'win32'
+  ? `\\\\.\\pipe\\synax-runtime-smoke-${process.pid}`
+  : join(root, 'runtime.sock');
 const binary = join(process.cwd(), 'runtime-sidecar', 'target', 'release', 'synax-runtime-sidecar');
 const child = spawn(binary, [], {
   env: {
@@ -13,13 +15,14 @@ const child = spawn(binary, [], {
     SYNAX_RUNTIME_SIDECAR_SOCKET: socketPath,
     SYNAX_RUNTIME_SIDECAR_TOKEN: 'smoke-token',
     SYNAX_RUNTIME_HOT_PATH: join(root, 'runtime-hot'),
+    SYNAX_RUNTIME_HISTORY_PATH: join(root, 'runtime-history'),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
 const cleanup = () => {
   if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
-  try { unlinkSync(socketPath); } catch {}
+  if (process.platform !== 'win32') { try { unlinkSync(socketPath); } catch {} }
   rmSync(root, { recursive: true, force: true });
 };
 process.once('exit', cleanup);
