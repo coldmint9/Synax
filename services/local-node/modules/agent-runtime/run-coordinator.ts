@@ -423,6 +423,18 @@ export class RunCoordinator {
       ? `goal-force-input:${forced.id}`
       : `goal-continuation:${previousRunId}`;
 
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const accepted = await acceptRuntimeRunAuthoritative(
+        sessionId,
+        input,
+        requestId,
+        "continue",
+        forced,
+      );
+      this.launchAccepted(sessionId, accepted, "continue");
+      return;
+    }
+
     const accepted = forced
       ? getRawSqlite().transaction(() => {
           const next = this.acceptRun(sessionId, input, requestId, "continue");

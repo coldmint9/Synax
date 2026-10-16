@@ -2648,7 +2648,7 @@ for (const action of ["rollback", "edit", "fork"] as const) {
           result.runId &&
           historyRevision(sessionId) === result.revision
         )
-          runCoordinator.submit(
+          await runCoordinator.submitAsync(
             sessionId,
             result.input,
             editRunRequestId(sessionId, input.requestId),

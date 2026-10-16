@@ -294,6 +294,7 @@ export async function acceptRuntimeRunAuthoritative(
   input: StreamTurnRequest,
   requestId: string,
   mode: AgentSessionStreamMode = "turn",
+  queueItem?: import("./input-queue-service.js").QueuedInput,
 ): Promise<{ run: AgentRun; reused: boolean }> {
   if (runtimeFacade.streamMode() !== "authoritative")
     return acceptRuntimeRun(sessionId, input, requestId, mode);
@@ -440,6 +441,7 @@ export async function acceptRuntimeRunAuthoritative(
     backendId: binding.id,
     workDir,
     previousSessionStatus: session.status,
+    ...(queueItem ? { queueItem } : {}),
   };
   const run: AgentRun = {
     id: makeRuntimeId("run"),

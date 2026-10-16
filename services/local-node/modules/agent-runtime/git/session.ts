@@ -20,7 +20,7 @@ async function startInitialReview(sessionId: string): Promise<void> {
   assertLlmProviderConfigured(session.projectId);
   const { runCoordinator } = await import('../run-coordinator.js');
   // Durable run admission deduplicates this fixed request ID even after process restart.
-  runCoordinator.submit(sessionId, {}, GIT_INITIAL_REVIEW_REQUEST_ID, 'turn');
+  await runCoordinator.submitAsync(sessionId, {}, GIT_INITIAL_REVIEW_REQUEST_ID, 'turn');
 }
 
 /** Create/reuse the bound conversation and dispatch its first review exactly once. */
