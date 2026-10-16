@@ -25,6 +25,8 @@ const electron = vi.hoisted(() => ({
   shell: { openExternal: vi.fn() },
 }));
 const spawn = vi.hoisted(() => vi.fn());
+const stageRuntimeSidecar = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../scripts/stage-runtime-sidecar.js", () => ({ stageRuntimeSidecar }));
 const stageCuaDriver = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../scripts/stage-cua-driver.js", () => ({ stageCuaDriver }));
 const validateCuaArtifact = vi.hoisted(() => vi.fn());
@@ -569,6 +571,7 @@ describe("desktop platform contract", () => {
     await expect(
       prePackage({}, process.platform, process.arch),
     ).resolves.toBeUndefined();
+    expect(stageRuntimeSidecar).toHaveBeenCalledExactlyOnceWith(process.platform, process.arch);
     expect(stageCuaDriver).toHaveBeenCalledExactlyOnceWith(
       process.platform,
       process.arch,
@@ -601,6 +604,7 @@ describe("desktop platform contract", () => {
       ...args: any[]
     ) => Promise<void>;
     await expect(prePackage({}, "darwin", process.arch)).resolves.toBeUndefined();
+    expect(stageRuntimeSidecar).toHaveBeenCalledExactlyOnceWith(process.platform, process.arch);
     expect(stageCuaDriver).toHaveBeenCalledExactlyOnceWith("darwin", process.arch);
     expect(validateCuaArtifact).toHaveBeenCalledExactlyOnceWith({
       helperRoot: expect.stringMatching(/cua-helper-dist$/),

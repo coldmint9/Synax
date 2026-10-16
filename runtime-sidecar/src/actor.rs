@@ -48,6 +48,12 @@ pub struct StreamAppendReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
+    #[error("storage disk full")]
+    DiskFull,
+    #[error("durability could not be confirmed: {0}")]
+    DurabilityUnknown(String),
+    #[error("storage unavailable: {0}")]
+    StorageUnavailable(String),
     #[error("actor mailbox or subscriber is full")]
     Backpressure,
     #[error("session actor is unavailable")]
@@ -100,6 +106,15 @@ enum ActorCommand {
         run_id: String,
         epoch: u64,
         expected_revision: u64,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    FinishRun {
+        session_id: String,
+        request_id: String,
+        run_id: String,
+        status: String,
+        epoch: u64,
+        revision: u64,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
     AppendStream {
@@ -188,12 +203,6 @@ impl SessionState {
         self.active_run_id = snapshot.active_run_id.clone();
         self.cursor = snapshot.cursor;
         self.retained_from = snapshot.retained_from;
-    }
-
-    fn apply_admission(&mut self, admission: &RunAdmission) {
-        self.epoch = admission.epoch;
-        self.revision = admission.revision;
-        self.active_run_id = Some(admission.run_id.clone());
     }
 
     fn publish_persisted_events(
@@ -405,6 +414,37 @@ impl SessionShardRouter {
         }
     }
 
+    pub async fn finish_run(
+        &self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        run_id: impl Into<String>,
+        status: impl Into<String>,
+        epoch: u64,
+        revision: u64,
+    ) -> Result<SessionSnapshot, RuntimeError> {
+        let session_id = session_id.into();
+        let (response, receiver) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::FinishRun {
+                session_id: session_id.clone(),
+                request_id: request_id.into(),
+                run_id: run_id.into(),
+                status: status.into(),
+                epoch,
+                revision,
+                response,
+            },
+        )?;
+        match receiver.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected completion response".into(),
+            )),
+        }
+    }
+
     pub async fn append_stream(
         &self,
         session_id: impl Into<String>,
@@ -586,13 +626,16 @@ async fn run_shard(
                         )
                         .await
                     {
-                        Ok(admission) => {
-                            sessions
-                                .get_mut(&session_id)
-                                .unwrap()
-                                .apply_admission(&admission);
-                            Ok(admission)
-                        }
+                        Ok(admission) => match store.snapshot_async(session_id.clone()).await {
+                            Ok(snapshot) => {
+                                sessions
+                                    .get_mut(&session_id)
+                                    .unwrap()
+                                    .sync_snapshot(&snapshot);
+                                Ok(admission)
+                            }
+                            Err(error) => Err(storage_error_to_runtime(error)),
+                        },
                         Err(error) => Err(storage_error_to_runtime(error)),
                     }
                 } else {
@@ -606,6 +649,62 @@ async fn run_shard(
                     )
                 };
                 let _ = response.send(result.map(CommandResult::RunAdmission));
+            }
+            ActorCommand::FinishRun {
+                session_id,
+                request_id,
+                run_id,
+                status,
+                epoch,
+                revision,
+                response,
+            } => {
+                if let Err(error) = ensure_session_state(
+                    &mut sessions,
+                    &session_id,
+                    event_retention,
+                    store.as_ref(),
+                )
+                .await
+                {
+                    let _ = response.send(Err(error));
+                    continue;
+                }
+                let result = if let Some(store) = store.as_ref() {
+                    match store
+                        .finish_run_async(
+                            session_id.clone(),
+                            request_id,
+                            run_id,
+                            status,
+                            epoch,
+                            revision,
+                        )
+                        .await
+                    {
+                        Ok(receipt) => match store.snapshot_async(session_id.clone()).await {
+                            Ok(current) => {
+                                sessions
+                                    .get_mut(&session_id)
+                                    .unwrap()
+                                    .sync_snapshot(&current);
+                                Ok(receipt)
+                            }
+                            Err(error) => Err(storage_error_to_runtime(error)),
+                        },
+                        Err(error) => Err(storage_error_to_runtime(error)),
+                    }
+                } else {
+                    finish_run(
+                        sessions.get_mut(&session_id).unwrap(),
+                        request_id,
+                        run_id,
+                        status,
+                        epoch,
+                        revision,
+                    )
+                };
+                let _ = response.send(result.map(CommandResult::Snapshot));
             }
             ActorCommand::AppendStream {
                 session_id,
@@ -803,7 +902,8 @@ async fn ensure_session_state(
 fn storage_error_to_runtime(error: StorageError) -> RuntimeError {
     match error {
         StorageError::Runtime(error) => error,
-        other => RuntimeError::InvalidCommand(format!("storage error: {other}")),
+        StorageError::DiskFull => RuntimeError::DiskFull,
+        other => RuntimeError::StorageUnavailable(other.to_string()),
     }
 }
 
@@ -852,6 +952,56 @@ fn admit_run(
     Ok(admission)
 }
 
+pub fn validate_terminal_status(status: &str) -> Result<(), RuntimeError> {
+    if matches!(status, "completed" | "failed" | "cancelled" | "interrupted") {
+        Ok(())
+    } else {
+        Err(RuntimeError::InvalidCommand(
+            "invalid terminal run status".into(),
+        ))
+    }
+}
+
+fn finish_run(
+    state: &mut SessionState,
+    request_id: String,
+    run_id: String,
+    status: String,
+    epoch: u64,
+    revision: u64,
+) -> Result<SessionSnapshot, RuntimeError> {
+    validate_terminal_status(&status)?;
+    let key = format!("finish:{request_id}");
+    let identity = serde_json::to_string(&(&run_id, &status)).unwrap();
+    if let Some(receipt) = state.receipts.get(&key) {
+        if receipt.body_hash != identity {
+            return Err(RuntimeError::RequestConflict);
+        }
+        if let CommandResult::Snapshot(snapshot) = &receipt.result {
+            return Ok(snapshot.clone());
+        }
+        return Err(RuntimeError::RequestConflict);
+    }
+    state.ensure_epoch(epoch)?;
+    state.ensure_revision(revision)?;
+    if state.active_run_id.as_deref() != Some(&run_id) {
+        return Err(RuntimeError::InvalidCommand("run is not active".into()));
+    }
+    state.active_run_id = None;
+    state.epoch += 1;
+    state.revision += 1;
+    state.producer_sequences.clear();
+    let snapshot = state.snapshot();
+    state.receipts.insert(
+        key,
+        Receipt {
+            body_hash: identity,
+            result: CommandResult::Snapshot(snapshot.clone()),
+        },
+    );
+    Ok(snapshot)
+}
+
 fn append_stream(
     state: &mut SessionState,
     run_id: String,
@@ -861,6 +1011,9 @@ fn append_stream(
     events: Vec<PendingEvent>,
 ) -> Result<StreamAppendReceipt, RuntimeError> {
     state.ensure_epoch(epoch)?;
+    if state.active_run_id.as_deref() != Some(&run_id) {
+        return Err(RuntimeError::InvalidCommand("run is not active".into()));
+    }
     let expected = state
         .producer_sequences
         .get(&producer_id)
@@ -894,6 +1047,43 @@ mod tests {
             kind: kind.to_owned(),
             payload: kind.as_bytes().to_vec(),
         }
+    }
+
+    #[tokio::test]
+    async fn replayed_receipts_cannot_reactivate_finished_run() {
+        let path = std::env::temp_dir().join(format!("synax-receipt-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(HotStore::open(&path).unwrap());
+        let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
+        router
+            .admit_run("s", "start1", "body1", "r1", 1, 0)
+            .await
+            .unwrap();
+        router
+            .finish_run("s", "finish1", "r1", "completed", 1, 1)
+            .await
+            .unwrap();
+        router
+            .admit_run("s", "start2", "body2", "r2", 2, 2)
+            .await
+            .unwrap();
+        assert!(
+            router
+                .admit_run("s", "start1", "body1", "r1", 1, 0)
+                .await
+                .unwrap()
+                .reused
+        );
+        router
+            .finish_run("s", "finish1", "r1", "completed", 1, 1)
+            .await
+            .unwrap();
+        let current = router.snapshot("s").await.unwrap();
+        assert_eq!(current.active_run_id.as_deref(), Some("r2"));
+        assert_eq!((current.epoch, current.revision), (2, 3));
+        drop(router);
+        tokio::task::yield_now().await;
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[tokio::test]
@@ -970,6 +1160,10 @@ mod tests {
     #[tokio::test]
     async fn slow_subscriber_is_dropped_without_blocking_other_sessions() {
         let router = SessionShardRouter::with_limits(2, 16, 8, 1).unwrap();
+        router
+            .admit_run("slow-session", "start", "body", "run-slow", 1, 0)
+            .await
+            .unwrap();
         let (_, _slow_receiver) = router.subscribe("slow-session", 0).await.unwrap();
         router
             .append_stream(
@@ -1001,6 +1195,10 @@ mod tests {
     #[tokio::test]
     async fn appends_replays_and_subscribes_without_losing_order() {
         let router = SessionShardRouter::with_limits(1, 16, 3, 4).unwrap();
+        router
+            .admit_run("session-a", "start", "body", "run-a", 1, 0)
+            .await
+            .unwrap();
         let (snapshot, mut receiver) = router.subscribe("session-a", 0).await.unwrap();
         assert_eq!(snapshot.cursor, 0);
         router
@@ -1060,6 +1258,10 @@ mod tests {
     #[tokio::test]
     async fn cursor_expires_after_retention_window() {
         let router = SessionShardRouter::with_limits(1, 32, 2, 2).unwrap();
+        router
+            .admit_run("session-a", "start", "body", "run-a", 1, 0)
+            .await
+            .unwrap();
         for sequence in 1..=3 {
             router
                 .append_stream(

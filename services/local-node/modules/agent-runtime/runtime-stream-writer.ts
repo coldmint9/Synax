@@ -1,3 +1,5 @@
+import { logger } from '../../infrastructure/runtime/logger.js';
+import { randomUUID } from 'node:crypto';
 import { transcriptStorageEnabled } from "./transcript-repository.js";
 import { sessionLogClient } from "../../infrastructure/storage/log-client.js";
 import { versionedSession, versionRepository } from "./checkpoints/version-runtime/bridge.js";
@@ -26,7 +28,11 @@ export class RuntimeStreamWriter {
   private partialContent?: string;
   private partialStepId?: string;
   private sidecarProducerSequence = 0;
-  private readonly sidecarProducerId = `node:${process.pid}`;
+  private readonly sidecarProducerId = `node:${process.pid}:${randomUUID()}`;
+  private sidecarTail: Promise<void> = Promise.resolve();
+  private sidecarFence?: Promise<{ epoch: number; revision: number }>;
+  private sidecarPending = 0;
+  private shadowStopped = false;
   constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true,
     private readonly persist?: (sessionId: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) => Promise<void>,
   ) { this.revision = historyEpoch(sessionId); }
@@ -71,18 +77,8 @@ export class RuntimeStreamWriter {
       ? (sessionId: string, id: string, values: AgentRunStreamChunk[], revision: number) => runtimeJournal.appendDurable(sessionId, id, values, revision)
       : undefined);
     if (runtimeFacade.streamMode() === 'authoritative') {
-      const write = runtimeFacade.appendStreamAuthoritative({
-        sessionId: this.sessionId,
-        runId,
-        producerId: `${this.sidecarProducerId}:${runId}`,
-        producerSequence: ++this.sidecarProducerSequence,
-        epoch: 1,
-        revision: this.revision,
-        chunks,
-      })
-        .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
-        .finally(() => this.writes.delete(write));
-      this.writes.add(write);
+      if (this.sidecarPending >= 128) throw new Error('Runtime sidecar stream queue is full.');
+      this.enqueueSidecar(runId, chunks, true);
       return;
     }
     if (persist) {
@@ -90,19 +86,45 @@ export class RuntimeStreamWriter {
         .catch(error => { this.writeFailure = error instanceof Error ? error : new Error(String(error)); })
         .finally(() => this.writes.delete(write));
       this.writes.add(write);
+      if (runtimeFacade.streamMode() === 'shadow') this.enqueueSidecar(runId, chunks, false);
       return;
     }
     if (chunks.length === 1) runtimeJournal.append(this.sessionId, runId, chunks[0]);
     else runtimeJournal.appendBatch(this.sessionId, runId, chunks);
-    void runtimeFacade.shadowAppendStream({
-      sessionId: this.sessionId,
-      runId,
-      producerId: `${this.sidecarProducerId}:${runId}`,
-      producerSequence: ++this.sidecarProducerSequence,
-      epoch: 1,
-      revision: this.revision,
-      chunks,
-    });
+    if (runtimeFacade.streamMode() === 'shadow') this.enqueueSidecar(runId, chunks, false);
+  }
+
+  private enqueueSidecar(runId: string, chunks: AgentRunStreamChunk[], authoritative: boolean): void {
+    if (!authoritative && this.shadowStopped) return;
+    if (this.sidecarPending >= 128) {
+      if (authoritative) throw new Error('Runtime sidecar stream queue is full.');
+      this.shadowStopped = true;
+      logger.warn({ sessionId: this.sessionId, runId }, '[runtime-sidecar] shadow stream queue full; mirroring stopped');
+      return;
+    }
+    const producerSequence = ++this.sidecarProducerSequence;
+    this.sidecarPending++;
+    // Preserve producer order even when multiple flushes overlap. Capture the epoch once;
+    // never refresh an old writer to a new epoch after a rollback or completion.
+    const write = this.sidecarTail.then(async () => {
+      if (this.writeFailure) throw this.writeFailure;
+      if (!this.isCurrent()) return;
+      this.sidecarFence ??= runtimeFacade.streamFence(this.sessionId, runId);
+      const fence = await this.sidecarFence;
+      const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
+        producerSequence, ...fence, chunks };
+      if (authoritative) await runtimeFacade.appendStreamAuthoritative(input);
+      else await runtimeFacade.shadowAppendStream(input);
+    }).catch(error => {
+      if (authoritative) this.writeFailure = error instanceof Error ? error : new Error(String(error));
+      else {
+        this.shadowStopped = true;
+        logger.warn({ sessionId: this.sessionId, runId, error }, '[runtime-sidecar] shadow stream stopped');
+      }
+    }).finally(() => { this.sidecarPending--; this.writes.delete(write); });
+    this.sidecarTail = write;
+    // Finalization must wait for the shadow tail too, otherwise completion fences its writes.
+    this.writes.add(write);
   }
 
   async prepareFinish(): Promise<void> {

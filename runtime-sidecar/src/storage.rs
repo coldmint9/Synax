@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use moka::sync::Cache;
-use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch, WriteOptions};
+use moka::future::Cache;
+use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -11,11 +11,13 @@ use crate::actor::{
     Durability, PendingEvent, RunAdmission, RuntimeError, SessionSnapshot, StreamAppendReceipt,
     StreamEvent,
 };
+use crate::commit::Committer;
 
 const CF_SESSIONS: &str = "sessions";
 const CF_RUNS: &str = "runs";
 const CF_RECEIPTS: &str = "receipts";
 const CF_STREAMS: &str = "streams";
+const CF_TRANSITIONS: &str = "transitions";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
 
@@ -77,6 +79,8 @@ struct StoredReceipt {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredRun {
+    #[serde(default)]
+    terminal_status: Option<String>,
     run_id: String,
     session_id: String,
     epoch: u64,
@@ -93,6 +97,7 @@ struct FaultConfig {
 #[derive(Clone)]
 pub struct HotStore {
     db: Arc<DB>,
+    committer: Arc<Committer>,
     snapshots: Cache<String, SessionSnapshot>,
     faults: FaultConfig,
 }
@@ -115,13 +120,20 @@ impl HotStore {
         let mut options = Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
-        let descriptors = [CF_SESSIONS, CF_RUNS, CF_RECEIPTS, CF_STREAMS]
-            .into_iter()
-            .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
-            .collect::<Vec<_>>();
-        let db = DB::open_cf_descriptors(&options, path, descriptors)?;
+        let descriptors = [
+            CF_SESSIONS,
+            CF_RUNS,
+            CF_RECEIPTS,
+            CF_STREAMS,
+            CF_TRANSITIONS,
+        ]
+        .into_iter()
+        .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
+        .collect::<Vec<_>>();
+        let db = Arc::new(DB::open_cf_descriptors(&options, path, descriptors)?);
         Ok(Self {
-            db: Arc::new(db),
+            committer: Arc::new(Committer::new(db.clone())),
+            db,
             snapshots: Cache::builder()
                 .max_capacity(SNAPSHOT_CACHE_CAPACITY)
                 .build(),
@@ -133,14 +145,21 @@ impl HotStore {
         &self,
         session_id: String,
     ) -> Result<SessionSnapshot, StorageError> {
+        // The shard actor serializes reads and writes for a session, including cache fills.
+        if let Some(snapshot) = self.snapshots.get(&session_id).await {
+            return Ok(snapshot);
+        }
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.snapshot(&session_id))
+        let key = session_id.clone();
+        let snapshot = tokio::task::spawn_blocking(move || store.snapshot(&session_id))
             .await
             .map_err(|error| {
                 StorageError::Runtime(RuntimeError::InvalidCommand(format!(
                     "storage task failed: {error}"
                 )))
-            })?
+            })??;
+        self.snapshots.insert(key, snapshot.clone()).await;
+        Ok(snapshot)
     }
 
     pub async fn admit_run_async(
@@ -153,7 +172,8 @@ impl HotStore {
         expected_revision: u64,
     ) -> Result<RunAdmission, StorageError> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
             store.admit_run(
                 &session_id,
                 &request_id,
@@ -168,7 +188,10 @@ impl HotStore {
             StorageError::Runtime(RuntimeError::InvalidCommand(format!(
                 "storage task failed: {error}"
             )))
-        })?
+        });
+        // Also invalidate on acknowledgement loss: the write may have committed.
+        self.snapshots.invalidate(&key).await;
+        result?
     }
 
     pub async fn append_stream_async(
@@ -182,7 +205,8 @@ impl HotStore {
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, StorageError> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
             store.append_stream_with_durability(
                 &session_id,
                 &run_id,
@@ -198,7 +222,10 @@ impl HotStore {
             StorageError::Runtime(RuntimeError::InvalidCommand(format!(
                 "storage task failed: {error}"
             )))
-        })?
+        });
+        // Also invalidate on acknowledgement loss: the write may have committed.
+        self.snapshots.invalidate(&key).await;
+        result?
     }
 
     pub async fn replay_async(
@@ -217,14 +244,7 @@ impl HotStore {
     }
 
     pub fn snapshot(&self, session_id: &str) -> Result<SessionSnapshot, StorageError> {
-        if let Some(snapshot) = self.snapshots.get(session_id) {
-            return Ok(snapshot);
-        }
-        let state = self.read_session(session_id)?;
-        let snapshot = state.snapshot();
-        self.snapshots
-            .insert(session_id.to_owned(), snapshot.clone());
-        Ok(snapshot)
+        Ok(self.read_session(session_id)?.snapshot())
     }
 
     pub fn admit_run(
@@ -243,6 +263,9 @@ impl HotStore {
             if receipt.body_hash != body_hash {
                 return Err(RuntimeError::RequestConflict.into());
             }
+            // A prior write may have reached memory/WAL but lost its sync acknowledgement.
+            // Confirm the barrier before acknowledging an idempotent retry.
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
             let mut reused = receipt.admission;
             reused.reused = true;
             return Ok(reused);
@@ -251,6 +274,12 @@ impl HotStore {
         ensure_revision(&state, expected_revision)?;
         if state.active_run_id.is_some() {
             return Err(RuntimeError::SessionBusy.into());
+        }
+        if self
+            .get(CF_RUNS, run_key(session_id, run_id).as_bytes())?
+            .is_some()
+        {
+            return Err(RuntimeError::InvalidCommand("run id already exists".into()).into());
         }
         state.revision += 1;
         state.active_run_id = Some(run_id.to_owned());
@@ -266,6 +295,7 @@ impl HotStore {
             admission: admission.clone(),
         };
         let run = StoredRun {
+            terminal_status: None,
             run_id: run_id.to_owned(),
             session_id: session_id.to_owned(),
             epoch: state.epoch,
@@ -291,8 +321,86 @@ impl HotStore {
             &serde_json::to_vec(&run)?,
         )?;
         self.write_with_durability(batch, Durability::Sync)?;
-        self.update_snapshot_cache(&state);
         Ok(admission)
+    }
+
+    pub async fn finish_run_async(
+        &self,
+        session_id: String,
+        request_id: String,
+        run_id: String,
+        status: String,
+        epoch: u64,
+        revision: u64,
+    ) -> Result<SessionSnapshot, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            store.finish_run(&session_id, &request_id, &run_id, &status, epoch, revision)
+        })
+        .await
+        .map_err(|error| StorageError::Runtime(RuntimeError::InvalidCommand(error.to_string())));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+
+    fn finish_run(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        run_id: &str,
+        status: &str,
+        epoch: u64,
+        revision: u64,
+    ) -> Result<SessionSnapshot, StorageError> {
+        crate::actor::validate_terminal_status(status)?;
+        let key = receipt_key(session_id, request_id);
+        let identity = serde_json::to_string(&(run_id, status))?;
+        if let Some(bytes) = self.get(CF_TRANSITIONS, key.as_bytes())? {
+            let (previous, snapshot): (String, SessionSnapshot) = serde_json::from_slice(&bytes)?;
+            if previous != identity {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
+            return Ok(snapshot);
+        }
+        let mut state = self.read_session(session_id)?;
+        ensure_epoch(&state, epoch)?;
+        ensure_revision(&state, revision)?;
+        if state.active_run_id.as_deref() != Some(run_id) {
+            return Err(RuntimeError::InvalidCommand("run is not active".into()).into());
+        }
+        let bytes = self
+            .get(CF_RUNS, run_key(session_id, run_id).as_bytes())?
+            .ok_or_else(|| RuntimeError::InvalidCommand("active run is missing".into()))?;
+        let mut run: StoredRun = serde_json::from_slice(&bytes)?;
+        run.terminal_status = Some(status.into());
+        state.active_run_id = None;
+        state.epoch += 1;
+        state.revision += 1;
+        state.producer_sequences.clear();
+        let snapshot = state.snapshot();
+        let mut batch = WriteBatch::default();
+        self.put_batch(
+            &mut batch,
+            CF_SESSIONS,
+            session_key(session_id),
+            &serde_json::to_vec(&state)?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_RUNS,
+            run_key(session_id, run_id),
+            &serde_json::to_vec(&run)?,
+        )?;
+        self.put_batch(
+            &mut batch,
+            CF_TRANSITIONS,
+            key,
+            &serde_json::to_vec(&(identity, &snapshot))?,
+        )?;
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(snapshot)
     }
 
     pub fn compact_stream(&self, session_id: &str) -> Result<(), StorageError> {
@@ -354,6 +462,9 @@ impl HotStore {
         }
         let mut state = self.read_session(session_id)?;
         ensure_epoch(&state, epoch)?;
+        if state.active_run_id.as_deref() != Some(run_id) {
+            return Err(RuntimeError::InvalidCommand("run is not active".into()).into());
+        }
         let expected = state
             .producer_sequences
             .get(producer_id)
@@ -394,9 +505,10 @@ impl HotStore {
                 &serde_json::to_vec(&event)?,
             )?;
         }
+        let previous_retained_from = state.retained_from;
         state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
         let delete_until = state.retained_from.saturating_sub(1);
-        for sequence in 1..=delete_until {
+        for sequence in previous_retained_from..=delete_until {
             batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
         }
         self.put_batch(
@@ -406,7 +518,6 @@ impl HotStore {
             &serde_json::to_vec(&state)?,
         )?;
         self.write_with_durability(batch, durability)?;
-        self.update_snapshot_cache(&state);
         Ok(StreamAppendReceipt {
             session_id: session_id.to_owned(),
             run_id: run_id.to_owned(),
@@ -444,11 +555,6 @@ impl HotStore {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    fn update_snapshot_cache(&self, state: &StoredSession) {
-        self.snapshots
-            .insert(state.session_id.clone(), state.snapshot());
-    }
-
     fn cf(&self, name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {
         self.db
             .cf_handle(name)
@@ -475,23 +581,38 @@ impl HotStore {
         batch: WriteBatch,
         durability: Durability,
     ) -> Result<(), StorageError> {
-        let mut options = WriteOptions::default();
-        options.set_sync(matches!(durability, Durability::Sync));
+        if matches!(durability, Durability::Ephemeral) {
+            return Err(RuntimeError::InvalidCommand(
+                "ephemeral events require the live-only channel".into(),
+            )
+            .into());
+        }
         if self.faults.disk_full {
             return Err(StorageError::DiskFull);
         }
-        if let Err(error) = self.db.write_opt(batch, &options) {
+        if let Err(error) = self
+            .committer
+            .commit(batch, matches!(durability, Durability::Sync))
+        {
             let message = error.to_string().to_ascii_lowercase();
             if message.contains("no space") || message.contains("disk full") {
                 return Err(StorageError::DiskFull);
             }
-            return Err(StorageError::Rocks(error));
+            return Err(if error.starts_with("DURABILITY_UNKNOWN:") {
+                RuntimeError::DurabilityUnknown(error)
+            } else {
+                RuntimeError::StorageUnavailable(error)
+            }
+            .into());
         }
         if self.faults.abort_after_commit {
             std::process::abort();
         }
         if self.faults.ack_unknown_after_commit {
-            return Err(RuntimeError::InvalidCommand("DURABILITY_UNKNOWN".to_owned()).into());
+            return Err(RuntimeError::DurabilityUnknown(
+                "injected acknowledgement loss".to_owned(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -557,6 +678,85 @@ mod tests {
             kind: kind.to_owned(),
             payload: kind.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn completion_persists_fences_and_idempotent_receipt() {
+        let path = temp_path("finish");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start-1", "body", "r1", 1, 0).unwrap();
+        let done = store
+            .finish_run("s", "finish-1", "r1", "completed", 1, 1)
+            .unwrap();
+        assert_eq!(
+            (done.epoch, done.revision, done.active_run_id),
+            (2, 2, None)
+        );
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        store
+            .admit_run("s", "start-2", "body2", "r2", 2, 2)
+            .unwrap();
+        assert_eq!(
+            store
+                .finish_run("s", "finish-1", "r1", "completed", 1, 1)
+                .unwrap()
+                .epoch,
+            2
+        );
+        assert_eq!(
+            store.snapshot("s").unwrap().active_run_id.as_deref(),
+            Some("r2")
+        );
+        assert!(matches!(
+            store.finish_run("s", "finish-1", "r1", "failed", 1, 1),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
+        assert!(matches!(
+            store.append_stream("s", "r1", "old", 1, 1, vec![event("late")]),
+            Err(StorageError::Runtime(RuntimeError::StaleEpoch { .. }))
+        ));
+        assert!(
+            store
+                .append_stream("s", "r1", "old", 1, 2, vec![event("wrong-run")])
+                .is_err()
+        );
+        store
+            .append_stream("s", "r2", "new", 1, 2, vec![event("valid")])
+            .unwrap();
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn async_snapshot_cache_tracks_committed_cursor() {
+        let path = temp_path("async-cache");
+        let store = HotStore::open(&path).unwrap();
+        assert_eq!(store.snapshot_async("s".into()).await.unwrap().cursor, 0);
+        store
+            .admit_run_async("s".into(), "req".into(), "hash".into(), "r".into(), 1, 0)
+            .await
+            .unwrap();
+        let snapshot = store.snapshot_async("s".into()).await.unwrap();
+        assert_eq!(snapshot.active_run_id.as_deref(), Some("r"));
+        store
+            .append_stream_async(
+                "s".into(),
+                "r".into(),
+                "p".into(),
+                1,
+                1,
+                Durability::GroupCommit,
+                vec![event("delta")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.snapshot_async("s".into()).await.unwrap().cursor, 1);
+        drop(store);
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(reopened.snapshot_async("s".into()).await.unwrap().cursor, 1);
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]
@@ -638,7 +838,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             faulty.admit_run("s", "req", "body", "r", 1, 0),
-            Err(StorageError::Runtime(RuntimeError::InvalidCommand(message))) if message == "DURABILITY_UNKNOWN"
+            Err(StorageError::Runtime(RuntimeError::DurabilityUnknown(_)))
         ));
         drop(faulty);
 

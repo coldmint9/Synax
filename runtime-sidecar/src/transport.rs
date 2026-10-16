@@ -19,6 +19,7 @@ const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "health",
     "shutdown",
     "admit_run",
+    "finish_run",
     "append_stream",
     "snapshot",
     "replay",
@@ -404,6 +405,40 @@ async fn execute_wire(request: WireEnvelope, context: &TransportContext) -> (Wir
             ),
             Err(error) => (envelope(error_to_wire(error)), false),
         },
+        Some(wire_envelope::Body::FinishRun(finish)) => {
+            match context
+                .router
+                .finish_run(
+                    session_id.clone(),
+                    request_id.clone(),
+                    finish.run_id,
+                    finish.status,
+                    request.epoch,
+                    request.revision,
+                )
+                .await
+            {
+                Ok(snapshot) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: snapshot.epoch,
+                        revision: snapshot.revision,
+                        body: Some(wire_envelope::Body::SnapshotResponse(
+                            WireSnapshotResponse {
+                                epoch: snapshot.epoch,
+                                revision: snapshot.revision,
+                                active_run_id: snapshot.active_run_id,
+                                cursor: snapshot.cursor,
+                                retained_from: snapshot.retained_from,
+                            },
+                        )),
+                    },
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
         Some(wire_envelope::Body::AppendStream(WireAppendStream {
             run_id,
             producer_id,
@@ -528,6 +563,9 @@ fn decode_durability(value: u32) -> Durability {
 
 fn error_to_wire(error: RuntimeError) -> wire_envelope::Body {
     let (code, message, expected, actual) = match error {
+        RuntimeError::DiskFull => ("DISK_FULL", "storage disk full".into(), None, None),
+        RuntimeError::DurabilityUnknown(message) => ("DURABILITY_UNKNOWN", message, None, None),
+        RuntimeError::StorageUnavailable(message) => ("STORAGE_UNAVAILABLE", message, None, None),
         RuntimeError::Backpressure => (
             "BACKPRESSURE",
             "actor mailbox or subscriber is full".to_owned(),

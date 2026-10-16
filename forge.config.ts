@@ -1,6 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { stageRuntimeSidecar } from "./scripts/stage-runtime-sidecar.js";
 import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
@@ -49,12 +50,13 @@ const config: ForgeConfig = {
           ? { publisherName: [process.env.SYNAX_WINDOWS_PUBLISHER] }
           : {}),
       }));
-      await stageCuaDriver(platform, arch);
       if (platform !== process.platform || arch !== process.arch) {
         throw new Error(
           `Native dependencies must be built on ${platform}/${arch}; use the matching desktop CI runner, not ${process.platform}/${process.arch}.`,
         );
       }
+      await stageRuntimeSidecar(platform, arch);
+      await stageCuaDriver(platform, arch);
       validateCuaArtifact({
         helperRoot: path.resolve("cua-helper-dist"),
         driverPath: path.resolve("dist/cua-driver", platform === "win32" ? "cua-driver.exe" : "cua-driver"),

@@ -41,12 +41,13 @@ export class RuntimeSidecarClient {
   private readyReject: ((error: Error) => void) | undefined;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly requestTimeoutMs: number;
+  private handshakeTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private readonly options: RuntimeSidecarClientOptions) {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   }
 
-  async connect(): Promise<Extract<SidecarBody, { type: 'ready' }>> {
+  connect(): Promise<Extract<SidecarBody, { type: 'ready' }>> {
     if (this.ready) return this.ready;
     const ready = new Promise<Extract<SidecarBody, { type: 'ready' }>>((resolve, reject) => {
       this.readyResolve = resolve;
@@ -55,14 +56,17 @@ export class RuntimeSidecarClient {
     this.ready = ready;
     const socket = net.createConnection(this.options.socketPath);
     this.socket = socket;
-    socket.on('data', (chunk) => this.onData(chunk));
-    socket.on('error', (error) => this.fail(error));
-    socket.on('close', () => this.fail(new Error('Runtime sidecar connection closed.')));
-    await new Promise<void>((resolve, reject) => {
-      socket.once('connect', resolve);
-      socket.once('error', reject);
+    socket.unref();
+    const fail = (error: Error) => { if (this.socket === socket) this.fail(error); };
+    this.handshakeTimer = setTimeout(() => fail(new Error('Runtime sidecar handshake timed out.')), this.requestTimeoutMs);
+    socket.on('data', chunk => { if (this.socket === socket) this.onData(chunk); });
+    socket.on('error', fail);
+    socket.on('close', () => fail(new Error('Runtime sidecar connection closed.')));
+    socket.once('connect', () => {
+      try {
+        this.send({ requestId: '', sessionId: '', epoch: 0, revision: 0, body: { type: 'hello', token: this.options.token } });
+      } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
     });
-    this.send({ requestId: '', sessionId: '', epoch: 0, revision: 0, body: { type: 'hello', token: this.options.token } });
     return ready;
   }
 
@@ -80,6 +84,16 @@ export class RuntimeSidecarClient {
   }): Promise<Extract<SidecarBody, { type: 'run_admission' }>> {
     return this.request({ type: 'admit_run', bodyHash: input.bodyHash, runId: input.runId }, input.sessionId, input.epoch, input.revision, input.requestId)
       .then((envelope) => this.expect(envelope, 'run_admission'));
+  }
+
+  async finishRun(input: {
+    sessionId: string; requestId: string; runId: string;
+    status: 'completed' | 'failed' | 'cancelled' | 'interrupted';
+    epoch: number; revision: number;
+  }): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
+    return this.request({ type: 'finish_run', runId: input.runId, status: input.status },
+      input.sessionId, input.epoch, input.revision, input.requestId)
+      .then(envelope => this.expect(envelope, 'snapshot_response'));
   }
 
   async appendStream(input: {
@@ -112,14 +126,7 @@ export class RuntimeSidecarClient {
   }
 
   close(): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('Runtime sidecar client closed.'));
-    }
-    this.pending.clear();
-    this.socket?.destroy();
-    this.socket = undefined;
-    this.ready = undefined;
+    this.fail(new Error('Runtime sidecar client closed.'));
   }
 
   private async request(
@@ -130,6 +137,8 @@ export class RuntimeSidecarClient {
     requestId: string = randomUUID(),
   ): Promise<SidecarEnvelope> {
     await this.connect();
+    if (this.pending.has(requestId)) throw new Error('A sidecar request with this ID is already in flight.');
+    if (this.pending.size >= 128) throw new Error('Runtime sidecar request queue is full.');
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
@@ -155,6 +164,7 @@ export class RuntimeSidecarClient {
   private send(envelope: SidecarEnvelope): void {
     if (!this.socket || this.socket.destroyed) throw new Error('Runtime sidecar is not connected.');
     const body = Buffer.from(encodeEnvelope(envelope));
+    if (body.length > 1024 * 1024) throw new Error('Runtime sidecar frame exceeds the client limit.');
     const header = Buffer.alloc(4);
     header.writeUInt32BE(body.length);
     this.socket.write(Buffer.concat([header, body]));
@@ -182,13 +192,19 @@ export class RuntimeSidecarClient {
 
   private onEnvelope(envelope: SidecarEnvelope): void {
     if (envelope.body.type === 'ready' && this.readyResolve) {
+      if (envelope.body.protocol !== 'synax.runtime.v2') {
+        this.fail(new Error(`Unsupported runtime sidecar protocol: ${envelope.body.protocol}`));
+        return;
+      }
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = undefined;
       this.readyResolve(envelope.body);
       this.readyResolve = undefined;
       this.readyReject = undefined;
       return;
     }
     if (envelope.body.type === 'error' && envelope.requestId === '') {
-      this.readyReject?.(new RuntimeSidecarError(envelope.body));
+      this.fail(new RuntimeSidecarError(envelope.body));
       return;
     }
     const pending = this.pending.get(envelope.requestId);
@@ -199,6 +215,13 @@ export class RuntimeSidecarClient {
   }
 
   private fail(error: Error): void {
+    clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = undefined;
+    const socket = this.socket;
+    this.socket = undefined;
+    this.ready = undefined;
+    this.buffer = Buffer.alloc(0);
+    socket?.destroy();
     this.readyReject?.(error);
     this.readyResolve = undefined;
     this.readyReject = undefined;

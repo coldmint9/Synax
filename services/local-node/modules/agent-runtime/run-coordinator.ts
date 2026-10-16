@@ -130,14 +130,6 @@ export class RunCoordinator {
   ) {
     const accepted = this.acceptRun(sessionId, input, requestId, mode);
     this.launchAccepted(sessionId, accepted, mode);
-    if (!accepted.reused) {
-      const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
-      void runtimeFacade.shadowAdmit({
-        sessionId,
-        run: accepted.run,
-        runtime,
-      });
-    }
     return accepted;
   }
 
@@ -441,6 +433,8 @@ export class RunCoordinator {
     try {
       if (owner.controller.signal.aborted)
         throw new Error("Execution stopped before launch.");
+      const admittedRun = agentRuntimeStore.getRun(owner.runId);
+      await runtimeFacade.admitExecution({ sessionId, run: admittedRun, runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput });
       for await (const chunk of withinExecutionContext(
         owner.context,
         this.driver.execute(sessionId, mode, input, owner.controller.signal),
@@ -485,6 +479,7 @@ export class RunCoordinator {
         await flush();
         await writer.prepareFinish();
         runWithExecutionContext(owner.context, () => writer.finish());
+        if (this.ownsLease(owner)) await runtimeFacade.finishExecution(sessionId, agentRuntimeStore.getRun(owner.runId));
         // A replacement execution may have acquired the lease while the
         // persistence acknowledgement was in flight. Fence finalization too.
         ownsLease = getRawSqlite().transaction(() => {

@@ -3,6 +3,7 @@ export type SidecarBody =
   | { type: 'health' }
   | { type: 'shutdown' }
   | { type: 'ping' }
+  | { type: 'finish_run'; runId: string; status: string }
   | { type: 'admit_run'; bodyHash: string; runId: string }
   | {
       type: 'append_stream';
@@ -60,6 +61,7 @@ const BODY_FIELDS: Record<SidecarBody['type'], number> = {
   run_admission: 24,
   snapshot_response: 25,
   event_batch: 26,
+  finish_run: 27,
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -113,6 +115,8 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'ping':
     case 'snapshot':
       return new Uint8Array();
+    case 'finish_run':
+      return concat(fieldString(1, body.runId), fieldString(2, body.status));
     case 'admit_run':
       return concat(fieldString(1, body.bodyHash), fieldString(2, body.runId));
     case 'append_stream':
@@ -256,6 +260,7 @@ function firstBool(bytes: Uint8Array, field: number): boolean {
 
 function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
   switch (field) {
+    case 27: return { type: 'finish_run', runId: firstString(bytes, 1) ?? '', status: firstString(bytes, 2) ?? '' };
     case 10: return { type: 'hello', token: firstString(bytes, 1) ?? '' };
     case 11: return { type: 'health' };
     case 12: return { type: 'shutdown' };
@@ -296,7 +301,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.find((item) => item.field >= 10 && item.field <= 26 && item.wire === 2);
+  const bodyField = fields.find((item) => item.field >= 10 && item.field <= 27 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

@@ -1,4 +1,5 @@
 mod actor;
+mod commit;
 mod protocol;
 mod storage;
 mod transport;

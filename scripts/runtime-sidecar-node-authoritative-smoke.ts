@@ -46,6 +46,12 @@ try {
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM = 'authoritative';
 
   const { runtimeFacade } = await import('../services/local-node/modules/agent-runtime/sidecar/runtime-facade.ts');
+  const { RuntimeSidecarClient } = await import('../services/local-node/modules/agent-runtime/sidecar/sidecar-client.ts');
+  const client = new RuntimeSidecarClient({ socketPath, token });
+  try {
+    await client.admitRun({ sessionId: 'node-session', requestId: 'start', bodyHash: 'body', runId: 'node-run', epoch: 1, revision: 0 });
+  } finally { client.close(); }
+
   await runtimeFacade.appendStreamAuthoritative({
     sessionId: 'node-session',
     runId: 'node-run',

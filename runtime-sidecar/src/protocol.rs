@@ -54,21 +54,23 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
     )]
     pub body: Option<wire_envelope::Body>,
 }
 
 pub mod wire_envelope {
     use super::{
-        WireAck, WireAdmitRun, WireAppendStream, WireError, WireEventBatch, WireHealth,
-        WireHealthResponse, WireHello, WirePing, WirePong, WireReady, WireReplay, WireRunAdmission,
-        WireShutdown, WireSnapshot, WireSnapshotResponse, WireSubscribe,
+        WireAck, WireAdmitRun, WireAppendStream, WireError, WireEventBatch, WireFinishRun,
+        WireHealth, WireHealthResponse, WireHello, WirePing, WirePong, WireReady, WireReplay,
+        WireRunAdmission, WireShutdown, WireSnapshot, WireSnapshotResponse, WireSubscribe,
     };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "27")]
+        FinishRun(WireFinishRun),
         #[prost(message, tag = "10")]
         Hello(WireHello),
         #[prost(message, tag = "11")]
@@ -127,6 +129,14 @@ pub struct WireAdmitRun {
     pub body_hash: String,
     #[prost(string, tag = "2")]
     pub run_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireFinishRun {
+    #[prost(string, tag = "1")]
+    pub run_id: String,
+    #[prost(string, tag = "2")]
+    pub status: String,
 }
 
 #[derive(Clone, PartialEq, Message)]

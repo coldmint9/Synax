@@ -70,6 +70,12 @@ try {
     metadata: {},
   });
   agentRuntimeStore.updateSession(session.id, { activeRunId: run.id, status: 'running' });
+  const { RuntimeSidecarClient } = await import('../services/local-node/modules/agent-runtime/sidecar/sidecar-client.ts');
+  const client = new RuntimeSidecarClient({ socketPath, token });
+  try {
+    await client.admitRun({ sessionId: session.id, requestId: 'start', bodyHash: 'body', runId: run.id, epoch: 1, revision: 0 });
+  } finally { client.close(); }
+
 
   async function* source() {
     yield { type: 'run_started', run } as const;
@@ -84,7 +90,7 @@ try {
   const payloads = replay.map((event) => JSON.parse(Buffer.from(event.payload).toString('utf8')) as { type?: string });
   if (payloads.map((payload) => payload.type).join(',') !== 'run_started,message_delta,done')
     throw new Error(`unexpected worker replay: ${JSON.stringify(payloads)}`);
-  console.log('node worker authoritative stream smoke passed');
+  console.log('in-process stream-writer authoritative smoke passed (not a forked provider worker)');
 } finally {
   child.kill('SIGINT');
   await new Promise<void>((resolve) => {

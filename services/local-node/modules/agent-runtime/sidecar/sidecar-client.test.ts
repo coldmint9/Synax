@@ -67,6 +67,31 @@ describe('RuntimeSidecarClient', () => {
     client.close();
   });
 
+  it('bounds an unanswered handshake and permits a fresh connection', async () => {
+    let attempts = 0;
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello' && ++attempts > 1) send(socket, {
+        requestId: '', sessionId: '', epoch: 0, revision: 0,
+        body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: [] },
+      });
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token', requestTimeoutMs: 50 });
+    try {
+      await expect(client.connect()).rejects.toThrow('handshake timed out');
+      await expect(client.connect()).resolves.toMatchObject({ protocol: 'synax.runtime.v2' });
+    } finally { client.close(); }
+  });
+
+  it('rejects an incompatible server before sending commands', async () => {
+    const bound = await startServer((socket) => send(socket, {
+      requestId: '', sessionId: '', epoch: 0, revision: 0,
+      body: { type: 'ready', protocol: 'incompatible', transport: 'unix', capabilities: [] },
+    }));
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
+    try { await expect(client.health()).rejects.toThrow('Unsupported runtime sidecar protocol'); }
+    finally { client.close(); }
+  });
+
   it('maps sidecar errors while preserving expected and actual revisions', async () => {
     const bound = await startServer((socket, envelope) => {
       if (envelope.body.type === 'hello') {

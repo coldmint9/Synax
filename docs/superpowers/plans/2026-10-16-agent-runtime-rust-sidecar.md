@@ -6,6 +6,37 @@
 
 基线：`origin/main` / `22ed239a8939ae66bfd2fee650de16057521de1d`
 
+## 2026-10-16 实现审计与继续目标
+
+目标模式保持 active：升级 Electron，并完成整个 Rust runtime 重构；下面的基础验收不代表整个重构完成。
+
+| 要求 | 当前证据 / 真实状态 | 剩余工作 |
+| --- | --- | --- |
+| Electron 原生 WebSocket | 从 39.8.10 升级并固定 44.8.0；真实 Electron `app://` + sandbox Renderer 通过 JSON/Protobuf 直连 Rust probe，主进程原生 WebSocket 可用 | 业务会话页面还未切到 Rust，probe 不是业务接管 |
+| 桌面打包 | Forge prePackage 自动编译 locked release Rust，并收录 server-dist/workers；Electron 44 打包和桌面 smoke 已通过 | Windows 构建/传输尚未在目标机验收 |
+| Tokio + Moka | 多线程 Tokio；缓存现已改为 moka::future::Cache；写入完成/未知确认后失效 | 全局内存预算、负载下限流与压测 |
+| group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
+| run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
+| Node 执行接入 | Unix socket 连接复用，握手超时/协议校验/断线重连；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
+| 实时数据 | Rust WebSocket listener 与 subscribe 已存在 | 短期 ticket、UI bridge、信用窗口、snapshot+live 边界及业务 UI 接入未完成 |
+| 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
+| 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
+
+注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。不要把已有 checkbox 推断成上述功能已完成。
+
+本轮实测：22 项 Rust 测试、90 项 Node/Electron 回归、JSON/Protobuf/订阅与崩溃 receipt smoke、受控两轮 lifecycle、Electron app:// 原生 WebSocket probe 均通过；Electron 44 打包后的桌面 smoke 和 codesign 校验通过。真实 provider 子进程、Windows 和吞吐/ENOSPC 验收仍缺失。
+
+当前验收命令：
+
+- `npm run runtime-sidecar:electron-smoke`
+- `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
+- `npm run runtime-sidecar:test`
+- `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
+- `npm run typecheck`、`npm run test:desktop`、`npm run build:desktop`
+- `SYNAX_RUNTIME_SIDECAR_SUPERVISOR=1 SYNAX_RUNTIME_SIDECAR_ADMISSION=shadow SYNAX_RUNTIME_SIDECAR_STREAM=shadow npm run test:desktop:smoke`
+
+后续顺序：完成 UI ticket / 原生 WS transport / replay+live 与信用窗口；推进 session/run/control 的异步 Rust repository；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
+
 ## 总目标
 
 交付一个以 Rust + Tokio + RocksDB + Moka 为核心的 agent runtime sidecar：
@@ -85,7 +116,7 @@ G7 离线导入与旧实现清理
 
 ## 阶段 0：设计和基准冻结
 
-状态：已完成
+状态：文档与摸排已完成；性能基线和验收设计仍未完成。
 
 本阶段交付：
 
@@ -105,7 +136,7 @@ G7 离线导入与旧实现清理
 
 ## 阶段 1：Rust sidecar skeleton
 
-状态：已完成基础 skeleton，等待 Node/Electron supervisor 接入。
+状态：已接入 Node supervisor 与 Electron 自动打包；Windows、启动失败清理、崩溃恢复与优雅排空仍需完善。
 
 阶段 1 的 health/handshake stub 使用 JSON binary frame，目的是先冻结进程生命周期和 transport 行为；进入阶段 2 后，业务 command/event envelope 必须切换到 protobuf binary schema。
 
@@ -155,7 +186,7 @@ runtime-sidecar/
 
 ## 阶段 3：runtime-hot RocksDB 和 Moka
 
-状态：HotStore、WriteBatch、Moka snapshot cache 和 actor 持久路径已完成基础实现；group commit、崩溃注入和 compaction 验收仍在进行。
+状态：HotStore、WriteBatch、异步 Moka 和实际 WAL group commit 已实现；生命周期部分可用，完整状态模型与压力/故障验收未完成。
 
 目标：实现权威 session/run/stream/control 状态。
 
@@ -177,7 +208,7 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node client、supervisor、shadow 验证和 authoritative stream adapter code 已完成；完整 Node runtime 验证与 admission cutover 尚未完成。
+状态：Node client、supervisor、authoritative stream 与 coordinator admission/finalization 已接入；session/run repository 仍为 SQLite，完整权威状态切换未完成。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
@@ -194,7 +225,7 @@ runtime-sidecar/
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
 - [x] `runtime-journal.ts` 增加可配置 sidecar replay/snapshot projection；
 - [x] 通过真实 Node↔Rust authoritative stream smoke 验证 append/replay/payload/sequence；
-- [x] 通过真实 `recordRuntimeStream`/`RuntimeStreamWriter` agent worker smoke 验证 authoritative append/replay；
+- [x] 通过同进程 `recordRuntimeStream`/`RuntimeStreamWriter` 受控生成器 smoke 验证 authoritative append/replay；尚非真实 provider 子进程验收；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；
@@ -254,4 +285,4 @@ runtime-sidecar/
 
 ## 当前下一步
 
-下一步完成阶段 3 的高并发 compaction/ENOSPC 压测；同时继续把 Node shadow facade 推向 authoritative stream adapter，并验证 supervisor 下的真实 Node runtime。
+以本文顶部的实现审计和后续顺序为准；完整目标保持 active。

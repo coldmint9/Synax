@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { decodeEnvelope, encodeEnvelope } from "./sidecar-protocol.js";
 
 describe("runtime sidecar protobuf codec", () => {
+  it("preserves a fenced completion command", () => {
+    const message = { requestId: "finish-1", sessionId: "s", epoch: 2, revision: 3,
+      body: { type: "finish_run" as const, runId: "r", status: "completed" } };
+    expect(decodeEnvelope(encodeEnvelope(message))).toEqual(message);
+  });
+
   it("round trips an admission command", () => {
     const encoded = encodeEnvelope({
       requestId: "req-1",
