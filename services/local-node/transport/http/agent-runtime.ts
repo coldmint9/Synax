@@ -989,6 +989,8 @@ agentRuntimeRoutes.post(
 
 agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json({ upgraded: false, backend: "runtime-history", authoritative: true });
     const result = SIMPLE_HISTORY_STORAGE ? migrateFlatHistory(c.req.param("sessionId")) : await migrateJsonlSession(c.req.param("sessionId"));
     return c.json({ upgraded: true, ...result });
   } catch (error) {
