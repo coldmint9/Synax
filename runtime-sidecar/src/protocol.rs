@@ -54,7 +54,7 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45"
     )]
     pub body: Option<wire_envelope::Body>,
 }
@@ -65,7 +65,7 @@ pub mod wire_envelope {
         WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
         WireControlCommand, WireControlState, WireHistoryCommand, WireHistoryState, WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady, WireSessionList, WireSessionListResponse,
         WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot, WireSnapshotResponse,
-        WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse,
+        WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse, WireImportProjection, WireImportProjectionResponse,
     };
     use prost::Oneof;
 
@@ -87,6 +87,10 @@ pub mod wire_envelope {
         SessionList(WireSessionList),
         #[prost(message, tag = "43")]
         SessionListResponse(WireSessionListResponse),
+        #[prost(message, tag = "44")]
+        ImportProjection(WireImportProjection),
+        #[prost(message, tag = "45")]
+        ImportProjectionResponse(WireImportProjectionResponse),
         #[prost(message, tag = "34")]
         ActivateRun(WireActivateRun),
         #[prost(message, tag = "35")]
@@ -199,6 +203,18 @@ pub struct WireSessionList {}
 pub struct WireSessionListResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub sessions_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireImportProjection {
+    #[prost(bytes = "vec", tag = "1")]
+    pub snapshot_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireImportProjectionResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub snapshot_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]

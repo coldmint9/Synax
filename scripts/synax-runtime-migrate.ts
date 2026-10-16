@@ -108,6 +108,49 @@ function validateBundle(bundle: MigrationBundle): Array<{ sessionId?: string; re
   return quarantine;
 }
 
+function jsonColumn(value: unknown, fallback: unknown): unknown {
+  if (typeof value !== 'string' || value.length === 0) return fallback;
+  try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function legacyProjection(item: SessionBundle): unknown {
+  const row = item.session;
+  const sessionId = String(row.id);
+  const metadata = jsonColumn(row.session_metadata_json, {});
+  const runs = item.tables.agent_runtime_runs ?? [];
+  const latest = runs.at(-1);
+  const run = latest ? {
+    id: latest.id,
+    sessionId,
+    status: latest.status ?? 'completed',
+    startedAt: latest.started_at ?? null,
+    completedAt: latest.completed_at ?? null,
+    currentStep: latest.current_step ?? 0,
+    stopReason: latest.stop_reason ?? null,
+    metadata: jsonColumn(latest.metadata_json, {}),
+  } : null;
+  return {
+    session: {
+      id: sessionId,
+      projectId: row.project_id ?? 'unknown',
+      nodeId: row.node_id ?? null,
+      status: row.status ?? 'completed',
+      title: row.title ?? null,
+      prompt: row.prompt ?? '',
+      createdAt: row.created_at ?? row.updated_at ?? new Date().toISOString(),
+      updatedAt: row.updated_at ?? new Date().toISOString(),
+      activeRunId: row.active_run_id ?? null,
+      pendingResumeToken: row.pending_resume_token ?? null,
+      blockedReason: row.blocked_reason ?? null,
+      sessionMetadata: metadata,
+    },
+    run,
+    cursor: 0,
+    liveChunks: [],
+    completedStepIds: [],
+  };
+}
+
 async function verifyBundle(): Promise<void> {
   const bundle = await loadBundle();
   const quarantine = validateBundle(bundle);
@@ -141,6 +184,7 @@ async function importBundle(): Promise<void> {
       const sessionId = String(item.session.id);
       const existing = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId, requestId: `migrate:${sessionId}:head-read`, operation: 'head_read', payload: {} }))) as { objectId?: string };
       if (existing.objectId) { count++; continue; }
+      await client.importProjection(sessionId, new TextEncoder().encode(JSON.stringify(legacyProjection(item))));
       const chunks: string[] = [];
       for (const [table, rows] of Object.entries(item.tables)) {
         for (let offset = 0; offset < rows.length; offset += 128) {

@@ -438,6 +438,16 @@ impl HotStore {
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
+    pub async fn import_ui_projection_async(&self, session_id: String, snapshot_json: Vec<u8>) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || store.import_ui_projection(&session_id, &snapshot_json))
+            .await
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+
     pub async fn control_state_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.control_state(&session_id))
@@ -1644,6 +1654,27 @@ impl HotStore {
             items.push(projection.session);
         }
         Ok(serde_json::to_vec(&serde_json::json!({"items": items}))?)
+    }
+
+    fn import_ui_projection(&self, session_id: &str, snapshot_json: &[u8]) -> Result<Vec<u8>, StorageError> {
+        let projection: UiSnapshot = serde_json::from_slice(snapshot_json)
+            .map_err(|_| RuntimeError::InvalidCommand("invalid UI projection import".into()))?;
+        if projection.session["id"].as_str() != Some(session_id) { return Err(RuntimeError::InvalidCommand("projection session identity mismatch".into()).into()); }
+        let bytes = projection.encode()?;
+        if let Some(existing) = self.get(CF_UI, session_key(session_id).as_bytes())? {
+            if existing != bytes { return Err(RuntimeError::RequestConflict.into()); }
+            return Ok(existing);
+        }
+        let mut state = self.read_session(session_id)?;
+        state.active_run_id = projection.session["activeRunId"].as_str().map(str::to_owned);
+        state.cursor = projection.cursor;
+        state.retained_from = projection.cursor.saturating_sub(EVENT_RETENTION) + 1;
+        state.revision = state.revision.max(projection.cursor);
+        let mut batch = WriteBatch::default();
+        self.put_batch(&mut batch, CF_UI, session_key(session_id), &bytes)?;
+        self.put_batch(&mut batch, CF_SESSIONS, session_key(session_id), &serde_json::to_vec(&state)?)?;
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(bytes)
     }
 
     fn cf(&self, name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {

@@ -207,6 +207,11 @@ export class RuntimeSidecarClient {
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 
+  async importProjection(sessionId: string, snapshotJson: Uint8Array): Promise<Uint8Array> {
+    const envelope = await this.request({ type: 'import_projection', snapshotJson }, sessionId, 0, 0, `import-projection:${sessionId}`);
+    return this.expect(envelope, 'import_projection_response').snapshotJson;
+  }
+
   async seedUi(sessionId: string, sessionJson: Uint8Array): Promise<Uint8Array> {
     return this.request({ type: 'seed_ui', sessionJson }, sessionId, 0, 0)
       .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);
