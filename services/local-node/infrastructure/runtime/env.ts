@@ -43,10 +43,9 @@ export const HISTORY_MODE = RUNTIME_SIDECAR_AUTHORITATIVE
   : env("SYNAX_HISTORY_MODE", NODE_ENV === "test" || process.env.VITEST ? "versioned" : "flat");
 export const SIMPLE_HISTORY_STORAGE =
   !RUNTIME_SIDECAR_AUTHORITATIVE && HISTORY_MODE !== "versioned";
-export const TRANSCRIPT_STORAGE = env(
-  "SYNAX_TRANSCRIPT_STORAGE",
-  "legacy",
-);
+export const TRANSCRIPT_STORAGE = RUNTIME_SIDECAR_AUTHORITATIVE
+  ? "legacy"
+  : env("SYNAX_TRANSCRIPT_STORAGE", "legacy");
 
 /** 是否为开发环境 */
 export const isDev = NODE_ENV === "development";
