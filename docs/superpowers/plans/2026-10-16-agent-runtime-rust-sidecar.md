@@ -18,12 +18,12 @@
 | group commit | 新增有界 WAL 提交线程，最多 64 请求/2ms 成组，flush_wal(true) 后才返回成功；阻塞刷盘、错误传播、合并测试 | 实际磁盘故障、负载 p99、停机排空验收 |
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
 | Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
-| 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复 | 首次空会话元数据仍从 Node seed；session 元数据修改/permission/control 尚未全量迁移；完整 session/lease 恢复未完成 |
+| 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复；session patch、permission/interaction/stop/resume control 已接入 Rust | 首次空会话元数据仍从 Node seed；完整 session/lease 恢复未完成 |
 | 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
-| 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC 基础；migration export/import/verify/rebuild-index 已有真实 smoke | 旧 history API 全量切换、消息/媒体 blob 分块、旧实现删除、真实用户数据全量导入验收 |
+| 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/tool index；terminal run 完成会镜像 run/message/tool call；migration export/import/verify/rebuild-index 与 benchmark smoke 已有 | 旧 history API 全量切换、step/part/media blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
-注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。不要把已有 checkbox 推断成上述功能已完成。
+注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
 
 2026-10-16 第二轮补充实现：
 
@@ -43,6 +43,8 @@
 - `npm run runtime-sidecar:electron-smoke`
 - `npm run runtime-sidecar:ui-smoke`（真实 Electron 原生 WS 与共享前端适配器，包含慢消费者/越权测试）
 - `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
+- `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（并发 session/append p50/p95/p99 基线）
+- `npm run runtime:migrate:smoke`（SQLite export/verify/import/rebuild-index）
 - `npm run runtime-sidecar:test`
 - `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
 - `npm run typecheck`、`npm run test:desktop`、`npm run build:desktop`
@@ -265,7 +267,7 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node client、supervisor、authoritative stream、coordinator admission/finalization、control command 和 history command 已接入；session/run/message compatibility repository 仍为 SQLite，完整权威状态切换未完成。
+状态：Node client、supervisor、authoritative stream、coordinator admission/finalization、control/session patch command、history command 已接入；terminal run 完成后 Rust history 可查询 run/message/tool call；session/run/message compatibility repository 仍为 SQLite，完整权威状态切换未完成。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
@@ -276,7 +278,7 @@ runtime-sidecar/
 - [x] 新增显式开关控制的 Rust sidecar supervisor 和 READY/shutdown 生命周期；
 - [x] 真实 Node `http-server` supervisor smoke 验证 sidecar startup、HTTP health 和 shutdown；
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
-- [ ] authoritative `RuntimeFacade` 取代 HTTP route 的 runtime SQLite；
+- [ ] authoritative `RuntimeFacade` 取代全部 HTTP route 的 runtime SQLite；当前 session snapshot、runs、messages、permissions/interactions 已有 Rust 路径，列表/step/part/history 仍在迁移；
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
@@ -308,7 +310,7 @@ runtime-sidecar/
 
 ## 阶段 6：runtime-history RocksDB
 
-当前进度：已完成 immutable object CAS、head/pin/checkpoint、fork/rollback、page、verify、GC、`rebuild_index` 和离线迁移 CLI 的最小可运行闭环；尚未替换全部旧 history API。
+当前进度：已完成 immutable object CAS、head/pin/checkpoint、fork/rollback、page、verify、GC、`rebuild_index`、run/message/tool index、terminal mirror 和离线迁移 CLI 的最小可运行闭环；尚未替换全部旧 history API。
 
 目标：统一旧 flat/versioned/JSONL history 为新的 immutable history store。
 

@@ -52,4 +52,4 @@ flowchart LR
 
 ## 当前边界
 
-Rust authoritative runtime-hot、control、history CAS、migration CLI 已有真实 smoke；旧 SQLite session/run/message 线上 read model、provider 全链路切换、旧 journal/legacy history 删除和 Windows Named Pipe 仍需在迁移验证完成后继续推进。
+Rust authoritative runtime-hot、control、history CAS、migration CLI 已有真实 smoke；terminal run 完成会镜像 run/message/tool call，Windows Named Pipe 已接入 Tokio transport 代码但尚未在 Windows 目标机验收。旧 SQLite session/run/message 线上 read model、provider 全链路切换和旧 journal/legacy history 删除仍需继续推进。
