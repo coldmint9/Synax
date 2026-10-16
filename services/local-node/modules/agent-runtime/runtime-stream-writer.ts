@@ -117,7 +117,10 @@ export class RuntimeStreamWriter {
       if (authoritative) await runtimeFacade.appendStreamAuthoritative(input);
       else await runtimeFacade.shadowAppendStream(input);
     }).catch(error => {
-      if (authoritative) this.writeFailure = error instanceof Error ? error : new Error(String(error));
+      if (authoritative) {
+        this.writeFailure = error instanceof Error ? error : new Error(String(error));
+        logger.error({ sessionId: this.sessionId, runId, error: this.writeFailure.message }, '[runtime-sidecar] authoritative stream stopped');
+      }
       else {
         this.shadowStopped = true;
         logger.warn({ sessionId: this.sessionId, runId, error }, '[runtime-sidecar] shadow stream stopped');

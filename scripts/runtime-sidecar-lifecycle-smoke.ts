@@ -74,6 +74,13 @@ try {
   const replay = await client.replay(session.id, 0);
   assert.deepEqual(replay.events.map(event => event.sequence), Array.from({ length: 18 }, (_, i) => i + 1));
   assert.deepEqual([...new Set(replay.events.map(event => event.runId))], runs);
+  const historyRuns = JSON.parse(new TextDecoder().decode(await client.historyCommand({
+    sessionId: session.id,
+    requestId: 'history-list-runs',
+    operation: 'list_runs',
+    payload: {},
+  }))) as { items: Array<{ id: string }> };
+  assert.deepEqual(historyRuns.items.map(item => item.id).sort(), [...runs].sort(), 'completed run documents must be queryable from Rust history');
   await assert.rejects(client.appendStream({ sessionId: session.id, runId: runs[0], producerId: 'late',
     producerSequence: 1, epoch: 1, revision: 1, events: [{ kind: 'late', payload: new Uint8Array() }] }),
     { code: 'STALE_EPOCH' });

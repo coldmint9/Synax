@@ -165,7 +165,8 @@ impl HistoryStore {
             "pin" => self.pin(session_id, &value)?,
             "unpin" => self.unpin(session_id, &value)?,
             "page" => self.page(&value)?,
-            "list_runs" => self.list_runs(session_id)?,
+            "list_runs" => self.list_indexed(session_id, "run")?,
+            "list_messages" => self.list_indexed(session_id, "message")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index()?,
             "gc" => self.gc()?,
@@ -210,14 +211,22 @@ impl HistoryStore {
         let mut batch = WriteBatch::default();
         if self.get(CF_OBJECTS, object_key(&object_id).as_bytes())?.is_none() {
             batch.put_cf(self.cf(CF_OBJECTS)?, object_key(&object_id).as_bytes(), &bytes);
-            if kind == "runtime.run" {
+            let index_kind = match kind {
+                "runtime.run" => Some("run"),
+                "runtime.message" => Some("message"),
+                "runtime.step" => Some("step"),
+                "runtime.part" => Some("part"),
+                "runtime.tool_call" => Some("tool"),
+                _ => None,
+            };
+            if let Some(index_kind) = index_kind {
                 if let (Some(session_id), Some(run_id)) = (
                     object.value["sessionId"].as_str(),
                     object.value["id"].as_str(),
                 ) {
                     batch.put_cf(
                         self.cf(CF_INDEXES)?,
-                        format!("run/{session_id}/{run_id}").as_bytes(),
+                        format!("{index_kind}/{session_id}/{run_id}").as_bytes(),
                         object_id.as_bytes(),
                     );
                 }
@@ -326,8 +335,8 @@ impl HistoryStore {
         Ok(serde_json::to_vec(&serde_json::json!({"items":objects,"next":queue.front()}))?)
     }
 
-    fn list_runs(&self, session_id: &str) -> Result<Vec<u8>, HistoryError> {
-        let prefix = format!("run/{session_id}/");
+    fn list_indexed(&self, session_id: &str, kind: &str) -> Result<Vec<u8>, HistoryError> {
+        let prefix = format!("{kind}/{session_id}/");
         let mut items = Vec::new();
         for item in self.db.iterator_cf(
             self.cf(CF_INDEXES)?,
@@ -397,12 +406,22 @@ impl HistoryStore {
         }
         let mut deleted = 0u64;
         let mut batch = WriteBatch::default();
+        let mut deleted_ids = Vec::new();
         for item in self.db.iterator_cf(self.cf(CF_OBJECTS)?, rocksdb::IteratorMode::Start) {
             let (key, _) = item?;
             let object_id = String::from_utf8_lossy(&key).trim_start_matches("o/").to_owned();
             if !marked.contains(&object_id) {
                 batch.delete_cf(self.cf(CF_OBJECTS)?, key);
+                deleted_ids.push(object_id);
                 deleted += 1;
+            }
+        }
+        if !deleted_ids.is_empty() {
+            for item in self.db.iterator_cf(self.cf(CF_INDEXES)?, rocksdb::IteratorMode::Start) {
+                let (key, value) = item?;
+                if deleted_ids.iter().any(|id| value.as_ref() == id.as_bytes()) {
+                    batch.delete_cf(self.cf(CF_INDEXES)?, key);
+                }
             }
         }
         if deleted > 0 { self.db.write(batch)?; }

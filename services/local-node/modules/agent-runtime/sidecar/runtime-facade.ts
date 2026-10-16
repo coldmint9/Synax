@@ -1,7 +1,9 @@
 import { decodeUiSnapshot, type RuntimeRecordState } from '../../../../../packages/runtime-protocol/stream.js';
 import { RuntimeSidecarClient, RuntimeSidecarError } from './sidecar-client.js';
+import { createHash } from 'node:crypto';
 import type { AcceptedRuntimeInput } from '../run-admission.js';
 import type { AgentRun, AgentSession, AgentRunStreamChunk } from '../contracts.js';
+import { agentRuntimeStore } from '../session-store.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
 
 export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
@@ -129,7 +131,13 @@ export class RuntimeFacade {
         try { await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`, status, epoch: state.epoch, revision: state.revision, run }); break; }
         catch (error) { if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error; }
       }
-      await this.persistRunHistory(run);
+      try {
+        await this.persistRunHistory(run);
+      } catch (error) {
+        logger.warn({ sessionId, runId: run.id, error: error instanceof Error ? error.message : String(error) }, '[runtime-sidecar] terminal run history persistence failed');
+        throw error;
+      }
+      await this.persistSessionHistory(sessionId);
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
@@ -225,17 +233,20 @@ export class RuntimeFacade {
   }): Promise<unknown> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
-    const bytes = await client.historyCommand(input);
+    let bytes: Uint8Array;
+    bytes = await client.historyCommand(input);
     return JSON.parse(Buffer.from(bytes).toString('utf8'));
   }
 
   async persistRunHistory(run: unknown & { id?: string; sessionId?: string }): Promise<void> {
+    const client = this.clientFactory() as (RuntimeSidecarClient & { historyCommand?: unknown }) | null;
+    if (!client || typeof client.historyCommand !== 'function') return;
     const sessionId = typeof run.sessionId === 'string' ? run.sessionId : undefined;
     const runId = typeof run.id === 'string' ? run.id : undefined;
     if (!sessionId || !runId) return;
     await this.historyCommand({
       sessionId,
-      requestId: `history-run:${runId}`,
+      requestId: `history-run:${runId}:${createHash('sha256').update(JSON.stringify(run)).digest('hex')}`,
       operation: 'put_object',
       payload: { kind: 'runtime.run', value: run },
     });
@@ -246,6 +257,47 @@ export class RuntimeFacade {
       sessionId,
       requestId: `history-list-runs:${sessionId}`,
       operation: 'list_runs',
+      payload: {},
+    }) as { items?: unknown[] };
+    return state.items ?? [];
+  }
+
+  async persistSessionHistory(sessionId: string): Promise<void> {
+    const client = this.clientFactory() as (RuntimeSidecarClient & { historyCommand?: unknown }) | null;
+    if (!client || typeof client.historyCommand !== 'function') return;
+    const messages = agentRuntimeStore.listMessages(sessionId);
+    const runs = agentRuntimeStore.listRuns(sessionId);
+    const tools = agentRuntimeStore.listToolCalls(sessionId);
+    const objects = [
+      ...messages.map(value => ({ kind: 'runtime.message', value })),
+      ...runs.map(value => ({ kind: 'runtime.run', value })),
+      ...tools.map(value => ({ kind: 'runtime.tool_call', value })),
+    ];
+    for (let index = 0; index < objects.length; index++) {
+      const object = objects[index];
+      const id = typeof (object.value as { id?: unknown }).id === 'string'
+        ? String((object.value as { id: string }).id)
+        : createHash('sha256').update(JSON.stringify(object.value)).digest('hex');
+      const contentHash = createHash('sha256').update(JSON.stringify(object.value)).digest('hex');
+      try {
+        await this.historyCommand({
+          sessionId,
+          requestId: `history:${sessionId}:${object.kind}:${id}:${contentHash}`,
+          operation: 'put_object',
+          payload: object,
+        });
+      } catch (error) {
+        logger.warn({ sessionId, kind: object.kind, id, error: error instanceof Error ? error.message : String(error) }, '[runtime-sidecar] history object persistence failed');
+        throw error;
+      }
+    }
+  }
+
+  async listMessageHistory(sessionId: string): Promise<unknown[]> {
+    const state = await this.historyCommand({
+      sessionId,
+      requestId: `history-list-messages:${sessionId}`,
+      operation: 'list_messages',
       payload: {},
     }) as { items?: unknown[] };
     return state.items ?? [];

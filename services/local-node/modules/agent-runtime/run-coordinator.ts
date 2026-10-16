@@ -345,7 +345,7 @@ export class RunCoordinator {
     owner.controller.abort();
     let reason = `Runtime could not persist the execution outcome: ${error instanceof Error ? error.message : String(error)}`;
     logger.error(
-      { sessionId, runId: owner.runId, error },
+      { sessionId, runId: owner.runId, error, errorMessage: error instanceof Error ? error.message : String(error) },
       "[run-coordinator] persistence failure requires recovery",
     );
     const markUnconfirmed = () => {

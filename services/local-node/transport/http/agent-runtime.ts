@@ -929,9 +929,12 @@ agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/visualization",
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/messages", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/messages", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      return c.json({ items: await runtimeFacade.listMessageHistory(sessionId) });
+    }
     if (versionedSession(sessionId))
       return c.json(
         versionRepository().page(sessionId, "messages", {

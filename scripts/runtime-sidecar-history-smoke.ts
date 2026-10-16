@@ -16,13 +16,17 @@ try {
 
   const first = await command('object-1', 'put_object', { kind: 'message', value: { role: 'user', text: 'hello' } });
   const second = await command('object-2', 'put_object', { kind: 'message', value: { role: 'assistant', text: 'world' }, refs: [first.objectId] });
+  await command('run-1', 'put_object', { kind: 'runtime.run', value: { id: 'run-1', sessionId: 's', status: 'completed' } });
+  await command('message-1', 'put_object', { kind: 'runtime.message', value: { id: 'message-1', sessionId: 's', role: 'user', content: 'hello' } });
+  assert.equal((await command('runs-1', 'list_runs', {})).items[0].id, 'run-1');
+  assert.equal((await command('messages-1', 'list_messages', {})).items[0].id, 'message-1');
   const head = await command('head-1', 'head_switch', { objectId: second.objectId, expectedRevision: 0 });
   assert.equal(head.revision, 1);
   await command('checkpoint-1', 'checkpoint', { objectId: second.objectId, pinId: 'checkpoint:1' });
   const page = await command('page-1', 'page', { objectId: second.objectId, limit: 8 });
   assert.deepEqual(page.items.map((item: { objectId: string }) => item.objectId), [second.objectId, first.objectId]);
   assert.equal((await command('verify-1', 'verify', {})).ok, true);
-  assert.equal((await command('gc-1', 'gc', {})).deleted, 0);
+  assert.equal((await command('gc-1', 'gc', {})).deleted, 2, 'unreachable indexed objects are collected');
 
   client.close(); client = undefined;
   const generation = supervisor.generation;
