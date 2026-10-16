@@ -403,7 +403,7 @@ runtime-sidecar/
 
 - `runtime-history` 新增独立 asset metadata、session binding、binding 查询、删除保护和 blob 删除命令；新资产创建、绑定和删除先提交 Rust，再维护 SQLite 兼容镜像。
 - history head 现在在存在 `runtime.session.root` 时按可达对象读取，checkpoint pin 支持 metadata/list，rollback/edit authoritative 路径会构造新的 immutable root 并切换 head；后续 stream append 会把新对象接到当前 head，避免 head 切换后新事件重新进入旧历史。
-- authoritative checkpoint capture 已改为 Rust pin；HTTP checkpoint summary、preview、rollback、edit 和 history visit 已有 Rust 分支。fork 仍需要独立的 Rust session clone command，不能把旧 `simple-fork` 误标成完成。
+- authoritative checkpoint capture 已改为 Rust pin；HTTP checkpoint summary、preview、rollback、edit、history visit 和 fork 已有 Rust 分支。fork 会创建目标 session、复制 checkpoint 之前的 immutable entities、重映射 session/run/step/tool/message identity，并把新 head 切到 Rust history；新 worktree 仍复用 Git workspace resolver。
 - permission timeout sweeper 已改为读取 Rust control state 并通过 `permission_reply` 自动拒绝；Rust permission reply 同批更新 session terminal projection、run blocked 文档和 live tool call 状态。
 - authoritative session permission 配置、archive delete、subagent pause/cancel/terminate 和 stop completion 已补 Rust-first 路径；SQLite 仅作为兼容镜像，下一步继续清理同步读取依赖。
 - 新增 Rust asset/checkpoint 单元覆盖；history smoke、Rust 57 项测试、typecheck 仍需以最新提交重新执行。
