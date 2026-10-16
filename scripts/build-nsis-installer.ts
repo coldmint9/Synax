@@ -19,8 +19,10 @@ export function nsisConfiguration(version: string, arch: string): Configuration 
       target: ["nsis"],
       icon: "electron/resources/synax-icon.ico",
       verifyUpdateCodeSignature: true,
-      publisherName: process.env.SYNAX_WINDOWS_PUBLISHER || undefined,
-      signtoolOptions: { signingHashAlgorithms: ["sha256"] },
+      signtoolOptions: {
+        signingHashAlgorithms: ["sha256"],
+        publisherName: process.env.SYNAX_WINDOWS_PUBLISHER || undefined,
+      },
     },
     nsis: {
       oneClick: false,

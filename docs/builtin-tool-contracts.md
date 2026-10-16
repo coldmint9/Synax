@@ -33,6 +33,8 @@
 | --- | --- | --- | --- |
 | `code.tools` | 项目默认关闭；query/offset 分页短目录，toolId 返回单工具 schema；仅已挂载、profile 允许的内置读取工具或逐项信任的只读 MCP | 保留普通工具；无需一次注入全部 Schema | code-mode/tools.ts、code-mode/policy.ts |
 | `code.run` | JavaScript async 函数体，await tools.call(id,args)，return 小 JSON；32KB 代码/参数、32 次调用、4 并发、15s、32MiB guest heap；无 Node、直接 FS/网络、模块加载器；不自动重试/重放 | 每次内调经过 Registry，ask 转 denied，结构化失败记录，父子审计，历史只投影外层结果 | code-mode/、tool-registry.ts、loop-model-messages.ts |
+| `code.result` | 读取当前 code mode 执行的结构化结果；只接受当前会话与当前 run 的结果引用 | 记录结果消费边界，避免把 code mode 内部调用重新暴露为顶层工具 | code-mode/results.ts、tool-registry.ts |
+| `presentation.select` | 选择当前会话可展示的结果形态；输入必须来自运行时已登记的 presentation 选项 | 保留运行时选项校验与会话边界，避免模型自行构造未登记的展示类型 | presentation-runtime.ts、tool-registry.ts |
 
 MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。允许的 MCP 请求仍可能发送代码组装的参数到外部服务器。全局运维关闭：SYNAX_CODE_MODE=0。
 

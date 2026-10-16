@@ -9,45 +9,38 @@
 ```mermaid
 flowchart LR
   subgraph Before[重构前：Node 单体运行时]
-    R1[Electron Renderer]
-    P1[preload IPC]
-    N1[Node Runtime Host]
-    W1[Node Agent / Provider Worker]
-    B1[in-process bus / SSE]
-    D1[(SQLite runtime tables + WAL)]
-    J1[journal writer]
+    E1[Electron Renderer]
+    N1[Node Runtime]
+    W1[Agent / Provider Worker]
+    J1[Journal writer]
+    D1[(SQLite + WAL)]
 
-    R1 <-->|事件与控制| P1
-    P1 <--> N1
+    E1 <-->|preload IPC / SSE| N1
     W1 --> N1
-    N1 <--> B1
-    B1 --> R1
     N1 --> J1 --> D1
     N1 <--> D1
   end
 
   subgraph After[重构后：Node 执行平面 + Rust 会话数据平面]
-    R2[Electron Renderer]
-    P2[preload / ticket]
-    N2[Node Runtime Host]
-    W2[Node Provider / Tool Worker]
-    U2[Rust UI Gateway\n127.0.0.1:<random-port>]
-    C2[Rust Control Gateway\nUnix socket / Named Pipe]
+    E2[Electron Renderer]
+    N2[Node Runtime Host\n执行平面]
+    W2[Agent / Provider / Tool Worker]
+    U2[Rust UI Gateway\n127.0.0.1:随机端口]
+    C2[Rust Control Gateway\nUnix socket / Windows Named Pipe]
     A2[Tokio multi-thread\nSession shard actors]
-    H2[(RocksDB runtime-hot)]
-    Y2[(RocksDB runtime-history\nimmutable CAS)]
+    K2[(RocksDB runtime-hot)]
+    H2[(RocksDB runtime-history\nimmutable CAS)]
     M2[Moka cache]
-    F2[replay + live fanout\ncredit window]
+    F2[Replay + live fanout\ncredit window]
 
-    R2 -->|短期 ticket 请求| P2 --> N2
-    N2 -->|IssueTicket / health| C2
-    R2 <-->|原生 WebSocket\nsnapshot / replay / live| U2
-    W2 -->|append stream / control / receipt| C2
-    N2 -->|admission / control / history| C2
+    E2 <-->|原生 WebSocket\nsnapshot / replay / live| U2
+    E2 -->|短期 ticket| N2
+    N2 <-->|protobuf control\nadmission / history / receipt| C2
+    W2 <-->|stream / control / receipt| C2
     U2 --> A2
     C2 --> A2
+    A2 --> K2
     A2 --> H2
-    A2 --> Y2
     A2 --> M2
     A2 --> F2 --> U2
   end

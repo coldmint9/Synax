@@ -12,7 +12,7 @@ it("keeps NSIS separate from Squirrel assets and preserves user data", () => {
 });
 it("retains the configured Windows publisher for signature verification", () => {
   vi.stubEnv("SYNAX_WINDOWS_PUBLISHER", "Synax Publisher");
-  expect(nsisConfiguration("1.12.0", "arm64").win?.publisherName).toBe("Synax Publisher");
+  expect(nsisConfiguration("1.12.0", "arm64").win?.signtoolOptions?.publisherName).toBe("Synax Publisher");
 });
 it("rejects invalid version and unsupported architecture", () => {
   expect(() => nsisConfiguration("../escape", "x64")).toThrow();

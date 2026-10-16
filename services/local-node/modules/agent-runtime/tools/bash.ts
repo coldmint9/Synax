@@ -465,7 +465,7 @@ async function executeBashCommand(
       const timeoutSeconds = input.timeoutMs / 1000;
       const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
       const timeoutMarker = `[TIMED OUT after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s): the command was killed, so its output is partial.]`;
-      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Inspect the partial output and change the approach before retrying; do not blindly repeat the same command. If it legitimately needs more time, raise timeoutMs once (max ${MAX_EXEC_TIMEOUT_MS / 1000}s).`;
+      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Inspect the partial output and change the approach before retrying; do not blindly repeat the same command. If it legitimately needs more time, raise timeoutMs once with a larger timeoutMs (max ${MAX_EXEC_TIMEOUT_MS / 1000}s).`;
       return {
         result: {
           command,

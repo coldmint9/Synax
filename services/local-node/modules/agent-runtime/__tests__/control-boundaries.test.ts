@@ -28,6 +28,7 @@ describe("control authority boundaries", () => {
       parent.id,
       "subagent.delegate",
       {
+        name: "专家",
         prompt: "Read files only",
         specialist: {
           name: "Expert",

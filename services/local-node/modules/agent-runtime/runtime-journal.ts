@@ -7,6 +7,7 @@ import type { AgentRun, AgentRunStreamChunk, AgentSession } from './contracts.js
 import { agentRuntimeStore } from './session-store.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
+import { historyEpoch } from './checkpoints/guards.js';
 
 const RETENTION = 1024;
 const MAX_READ_BYTES = 1024 * 1024;
@@ -53,6 +54,7 @@ class RuntimeJournal {
   private readonly records = new Map<string, RuntimeStreamRecord[]>();
   private readonly cursors = new Map<string, number>();
   private readonly producerSequences = new Map<string, number>();
+  private readonly recordEpochs = new Map<string, number>();
   private readonly waiters = new Map<string, Set<() => void>>();
 
   append(sessionId: string, runId: string, chunk: AgentRunStreamChunk): RuntimeStreamRecord { return this.appendBatch(sessionId, runId, [chunk])[0]; }
@@ -66,6 +68,7 @@ class RuntimeJournal {
     const projected = chunks.map(projectReplayChunk);
     assertBatchInput(projected);
     const state = runtimeRecordState(sessionId);
+    const epoch = historyEpoch(sessionId);
     let cursor = this.cursors.get(sessionId) ?? 0;
     const sessionRecords = this.records.get(sessionId) ?? [];
     const committed = projected.map(chunk => {
@@ -77,6 +80,7 @@ class RuntimeJournal {
     if (sessionRecords.length > RETENTION) sessionRecords.splice(0, sessionRecords.length - RETENTION);
     this.records.set(sessionId, sessionRecords);
     this.cursors.set(sessionId, cursor);
+    this.recordEpochs.set(sessionId, epoch);
     this.notifyCommitted(sessionId);
     return committed;
   }
@@ -95,12 +99,22 @@ class RuntimeJournal {
   }
 
   async readDurable(sessionId: string, after = 0, limit = 256, runId?: string): Promise<RuntimeStreamRecord[]> { return runtimeFacade.streamMode() === 'authoritative' ? readAuthoritative(sessionId, after, limit, runId) : this.read(sessionId, after, limit, runId); }
-  async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal['snapshot']>> { return runtimeFacade.streamMode() === 'authoritative' ? runtimeFacade.uiSnapshotAuthoritative(sessionId) : this.snapshot(sessionId); }
+  async snapshotDurable(sessionId: string): Promise<ReturnType<RuntimeJournal['snapshot']>> {
+    if (runtimeFacade.streamMode() === 'authoritative') {
+      const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+      return { ...snapshot, liveChunks: snapshot.liveChunks ?? [], completedStepIds: snapshot.completedStepIds ?? [] };
+    }
+    return this.snapshot(sessionId);
+  }
   notifyCommitted(sessionId: string): void { for (const wake of [...(this.waiters.get(sessionId) ?? [])]) wake(); }
-  cursor(sessionId: string): number { return this.cursors.get(sessionId) ?? 0; }
+  cursor(sessionId: string): number {
+    this.clearStaleEpoch(sessionId);
+    return this.cursors.get(sessionId) ?? 0;
+  }
 
   read(sessionId: string, after = 0, limit = 256, runId?: string): RuntimeStreamRecord[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256 || !Number.isSafeInteger(after) || after < 0) throw new AgentValidationError('Invalid stream cursor.');
+    this.clearStaleEpoch(sessionId);
     const result: RuntimeStreamRecord[] = [];
     let bytes = 0;
     for (const record of this.records.get(sessionId) ?? []) {
@@ -112,6 +126,14 @@ class RuntimeJournal {
       if (result.length === limit) break;
     }
     return result;
+  }
+
+  private clearStaleEpoch(sessionId: string): void {
+    if (this.recordEpochs.has(sessionId) && this.recordEpochs.get(sessionId) !== historyEpoch(sessionId)) {
+      this.records.delete(sessionId);
+      this.cursors.delete(sessionId);
+      this.recordEpochs.delete(sessionId);
+    }
   }
 
   async *observe(sessionId: string, after = 0, signal?: AbortSignal): AsyncGenerator<RuntimeStreamRecord> {
@@ -141,7 +163,7 @@ class RuntimeJournal {
     const liveChunks: AgentRunStreamChunk[] = [];
     if (run && current && !current.completedAt && ['running', 'waiting_permission', 'waiting_input'].includes(run.status)) {
       liveChunks.push({ type: 'step_started', step: current });
-      for (const record of this.read(sessionId, 0, RETENTION, run.id)) {
+      for (const record of this.read(sessionId, 0, 256, run.id)) {
         const chunk = record.chunk;
         if (!('stepId' in chunk) || chunk.stepId !== current.id) continue;
         if (chunk.type === 'retry_status' && ['waiting', 'group_wait'].includes(chunk.retry.phase)) liveChunks.length = 1;

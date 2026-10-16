@@ -1302,13 +1302,13 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-    else agentRuntimeStore.getSession(sessionId);
     // Remote web clients keep using the Node gateway; loopback discovery is desktop-only.
-    if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative')
+    agentRuntimeStore.getSession(sessionId);
+    if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative') {
       return c.json({ transport: 'node' as const });
-    c.header('Cache-Control', 'no-store');
+    }
     if (parsed.data.snapshot) await runtimeFacade.ensureUiProjection(sessionId);
+    c.header('Cache-Control', 'no-store');
     const ticket = await runtimeFacade.uiTicket(sessionId, parsed.data.clientId);
     if (!ticket) throw new Error('Runtime sidecar ticket is unavailable.');
     return c.json({ transport: 'rust' as const, ticket });
@@ -1317,7 +1317,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
 
 agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
   try {
-    return c.json(await runtimeJournal.snapshotDurable(c.req.param("sessionId")));
+    const snapshot = await runtimeJournal.snapshotDurable(c.req.param("sessionId"));
+    return c.json({
+      ...snapshot,
+      liveChunks: snapshot.liveChunks ?? [],
+      completedStepIds: snapshot.completedStepIds ?? [],
+    });
   } catch (error) {
     return runtimeError(c, error);
   }

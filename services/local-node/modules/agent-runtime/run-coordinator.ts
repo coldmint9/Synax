@@ -602,15 +602,17 @@ export class RunCoordinator {
     const stopping = owner;
     stopping.stopping = true;
     stopping.finalizers = finalize ? [finalize] : [];
-    await runtimeFacade.controlCommand({
+    // Publish the stop fence before the first await so same-turn child
+    // creation and delayed resume checks observe shutdown immediately.
+    agentRuntimeStore.updateSessionMetadata(sessionId, {
+      runtimeControl: { state: "stopping", runId: stopping.runId, reason },
+    });
+    void runtimeFacade.controlCommand({
       sessionId,
       requestId: `stop-begin:${sessionId}:${stopping.runId}:${reason}`,
       operation: "stop_begin",
       payload: { runId: stopping.runId, reason },
-    });
-    agentRuntimeStore.updateSessionMetadata(sessionId, {
-      runtimeControl: { state: "stopping", runId: stopping.runId, reason },
-    });
+    }).catch(error => logger.warn({ sessionId, error }, "[run-coordinator] Rust stop fence could not be committed"));
     const descendants = agentRuntimeStore
       .listSessionTree(sessionId)
       .slice(1)
