@@ -23,7 +23,7 @@
 | 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 与 benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
-注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
+注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append，但它仍是受控 provider stub，不是真实 LLM provider 全链路。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
 
 2026-10-16 第二轮补充实现：
 
@@ -44,6 +44,7 @@
 - `npm run runtime-sidecar:ui-smoke`（真实 Electron 原生 WS 与共享前端适配器，包含慢消费者/越权测试）
 - `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
 - `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（2026-10-17 当前 macOS arm64 证据：3500 operations，p50 25.233ms，p95 42.252ms，p99 55.637ms，max 65.890ms；不是发布承诺）
+- `npm run runtime-sidecar:worker-process-smoke`（真实 forked Node worker 通过 Unix IPC append Rust-authoritative stream）
 - `npm run runtime:migrate:smoke`（SQLite export/verify/import/rebuild-index）
 - `npm run runtime-sidecar:test`
 - `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
@@ -284,7 +285,8 @@ runtime-sidecar/
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
 - [x] `runtime-journal.ts` 增加可配置 sidecar replay/snapshot projection；
 - [x] 通过真实 Node↔Rust authoritative stream smoke 验证 append/replay/payload/sequence；
-- [x] 通过同进程 `recordRuntimeStream`/`RuntimeStreamWriter` 受控生成器 smoke 验证 authoritative append/replay；尚非真实 provider 子进程验收；
+- [x] 通过同进程 `recordRuntimeStream`/`RuntimeStreamWriter` 受控生成器 smoke 验证 authoritative append/replay；
+- [x] 通过真实 forked Node worker smoke 验证 child process → Unix IPC → Rust append/replay；真实 LLM provider 全链路仍待验收；
 - Node worker 可以直接向 sidecar 写 stream batch；
 - `/runs/:runId/stream` 可以从 sidecar cursor replay；
 - `/sessions/:sessionId/stream` 仍然支持 SSE；
