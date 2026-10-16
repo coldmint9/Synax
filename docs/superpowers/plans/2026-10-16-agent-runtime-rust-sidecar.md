@@ -21,7 +21,7 @@
 | 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复；session patch、permission/interaction/stop/resume control 已接入 Rust | 首次空会话元数据仍从 Node seed；完整 session/lease 恢复未完成 |
 | 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
 | 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 会导入 UI projection 与最近 1024 条 legacy canonical stream；migration/provider/benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
-| 旧链路移除 | authoritative 默认路径已禁止 legacy journal write/maintenance；legacy 路径只由 `SYNAX_RUNTIME_LEGACY=1` 显式启用 | 删除兼容代码、storage owner/journal writer 模块、多模式历史和双游标 |
+| 旧链路移除 | authoritative 默认路径已禁止 storage owner、legacy journal write/maintenance；legacy 路径只由 `SYNAX_RUNTIME_LEGACY=1` 显式启用 | 删除兼容代码、journal writer 模块、多模式历史和双游标 |
 
 注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append；provider-worker smoke 又覆盖了真实 agent-session-runner child → 本地 OpenAI-compatible HTTP streaming provider → Node coordinator → Rust history/stream，仍未替代外部真实凭证 provider 验收。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；物理 APFS 小容量镜像 ENOSPC smoke 已通过，Windows Named Pipe 已写入 Tokio transport 路径但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
 
