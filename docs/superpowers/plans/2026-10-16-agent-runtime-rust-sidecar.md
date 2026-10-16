@@ -20,7 +20,7 @@
 | Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
 | 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复；session patch、permission/interaction/stop/resume control 已接入 Rust | 首次空会话元数据仍从 Node seed；完整 session/lease 恢复未完成 |
 | 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
-| 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/tool index；terminal run 完成会镜像 run/message/tool call；migration export/import/verify/rebuild-index 与 benchmark smoke 已有 | 旧 history API 全量切换、step/part/media blob 分块、旧实现删除、真实用户数据全量导入验收 |
+| 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 与 benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
 注意：此前的 worker smoke 是同进程生成器经 RuntimeStreamWriter 的测试，不是 fork 出来的真实 provider worker；脚本输出已纠正。ephemeral 暂时显式拒绝进入持久事件通道，尚未实现 live-only 通道。Windows Named Pipe 已写入 Tokio transport 路径，但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
@@ -43,7 +43,7 @@
 - `npm run runtime-sidecar:electron-smoke`
 - `npm run runtime-sidecar:ui-smoke`（真实 Electron 原生 WS 与共享前端适配器，包含慢消费者/越权测试）
 - `npm run runtime-sidecar:lifecycle-smoke`（真实 Node coordinator + Rust，受控执行器，无外部模型）
-- `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（并发 session/append p50/p95/p99 基线）
+- `SYNAX_RUNTIME_BENCH_SESSIONS=100 SYNAX_RUNTIME_BENCH_BATCHES=32 npm run runtime-sidecar:benchmark`（2026-10-17 当前 macOS arm64 证据：3500 operations，p50 25.233ms，p95 42.252ms，p99 55.637ms，max 65.890ms；不是发布承诺）
 - `npm run runtime:migrate:smoke`（SQLite export/verify/import/rebuild-index）
 - `npm run runtime-sidecar:test`
 - `npm run runtime-sidecar:smoke`、`npm run runtime-sidecar:crash-smoke`
@@ -267,7 +267,7 @@ runtime-sidecar/
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
-状态：Node client、supervisor、authoritative stream、coordinator admission/finalization、control/session patch command、history command 已接入；terminal run 完成后 Rust history 可查询 run/message/tool call；session/run/message compatibility repository 仍为 SQLite，完整权威状态切换未完成。
+状态：Node client、supervisor、authoritative stream、coordinator admission/finalization、control/session patch command、history command 已接入；terminal run 完成后 Rust history 可查询 run/message/step/part/tool call；authoritative session/run/message/steps/tool route 已有 Rust 读路径，兼容 repository 仍为 SQLite，完整权威状态切换未完成。
 
 目标：Node agent loop 使用 sidecar 作为 runtime 状态源，外部 API 行为保持不变。
 
@@ -293,7 +293,7 @@ runtime-sidecar/
 
 ## 阶段 5：Electron WebSocket
 
-状态：ticket、preload、业务页面原生 WS、窗口/重连/重同步已落地并完成真实 Electron 验收。初始 UI 快照已由 Rust 物化并通过 WebSocket 读取，真实进程重启恢复已验收；session 元数据 seed 仍为过渡依赖，默认切换未完成。
+状态：ticket、preload、业务页面原生 WS、窗口/重连/重同步已落地并完成真实 Electron 验收；Unix control 与 Windows Named Pipe transport 代码已接入。初始 UI 快照已由 Rust 物化并通过 WebSocket 读取，真实进程重启恢复已验收；Windows 目标机 smoke、session 元数据 seed 清理和默认切换未完成。
 
 目标：桌面端实时会话切换到 Rust sidecar WebSocket。
 
