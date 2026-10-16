@@ -730,13 +730,55 @@ const listArchivesQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-agentRuntimeRoutes.get("/session-archives", (c) => {
+agentRuntimeRoutes.get("/session-archives", async (c) => {
   const parsed = listArchivesQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId, q, limit, offset } = parsed.data;
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const query = q?.toLocaleLowerCase();
+      const groups = new Map<string, {
+        archiveBatchId: string;
+        rootSessionId: string;
+        title: string | null;
+        prompt: string;
+        projectId: string;
+        archivedAt: string;
+        sessionCount: number;
+      }>();
+      for (const raw of await runtimeFacade.listSessionProjection()) {
+        const session = projectSessionState(raw as never) as AgentSession;
+        const metadata = session.sessionMetadata ?? {};
+        const archivedAt = typeof metadata.archivedAt === "string" ? metadata.archivedAt : undefined;
+        const archiveBatchId = typeof metadata.archiveBatchId === "string" ? metadata.archiveBatchId : undefined;
+        if (!archivedAt || !archiveBatchId || (projectId && session.projectId !== projectId)) continue;
+        if (query && !session.title?.toLocaleLowerCase().includes(query) && !session.prompt.toLocaleLowerCase().includes(query)) continue;
+        const existing = groups.get(archiveBatchId);
+        if (existing) existing.sessionCount += 1;
+        else groups.set(archiveBatchId, {
+          archiveBatchId,
+          rootSessionId: archiveBatchId,
+          title: session.title,
+          prompt: session.prompt,
+          projectId: session.projectId,
+          archivedAt,
+          sessionCount: 1,
+        });
+      }
+      const all = [...groups.values()].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt) || a.rootSessionId.localeCompare(b.rootSessionId));
+      const page = all.slice(offset, offset + limit);
+      const retentionDays = getGlobalConfig().sessionArchiveRetentionDays;
+      const retention = retentionDays === undefined ? 7 : retentionDays;
+      return c.json({
+        totalCount: all.length,
+        items: page.map(item => ({
+          ...item,
+          scheduledDeletionAt: retention === null ? null : new Date(Date.parse(item.archivedAt) + retention * 86_400_000).toISOString(),
+        })),
+      });
+    }
     const result = agentRuntimeStore.listArchivedBatches(
       { projectId, query: q },
       { limit, offset },
