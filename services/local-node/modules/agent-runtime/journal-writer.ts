@@ -24,6 +24,7 @@ export class JournalWriter {
   private fileWrites = new Set<Promise<void>>();
   private fileBytes = 0;
   private sequence = 0;
+  private readonly producerSequences = new Map<string, number>();
   private bytes = 0;
   private closed = false;
   private idleWaiters = new Set<() => void>();
@@ -42,6 +43,21 @@ export class JournalWriter {
     if (chunks.length > 256) throw new Error("Replay burst limit exceeded.");
     chunks = chunks.map(projectReplayChunk);
     const bytes = assertBatchInput(chunks);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+      const fence = await runtimeFacade.streamFence(sessionId, runId);
+      await runtimeFacade.appendStreamAuthoritative({
+        sessionId,
+        runId,
+        producerId: `journal-writer:${process.pid}`,
+        producerSequence: (this.producerSequences.set(sessionId, (this.producerSequences.get(sessionId) ?? 0) + 1), this.producerSequences.get(sessionId)!),
+        epoch: fence.epoch,
+        revision: fence.revision,
+        chunks,
+        state: (await import("./runtime-journal.js")).runtimeRecordState(sessionId),
+      });
+      return;
+    }
     if (this.pending.size >= MAX_PENDING_JOURNAL_COMMITS || this.bytes + bytes > 4 * 1024 * 1024)
       throw new Error("Journal writer is busy; bounded queue is full.");
     if (process.env.SYNAX_STORAGE_OWNER_ENDPOINT) {

@@ -56,12 +56,14 @@ export function planMaintenance(db: NativeDatabase.Database, dataRoot = DATA_ROO
   } catch { /* optional table */ }
   let replayRows = 0, replayBytes = 0, replayRetainRows = 0;
   try {
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return { orphanScanCacheRows, orphanScanCacheBytes, closedOwnerlessProcessRows, closedOwnerlessProcessBytes, replayRows: 0, replayBytes: 0, replayRetainRows: 0, ftsTables: dbstat(db).map(row => row.name).filter(name => FTS_NAMES.has(name) || name.startsWith("agent_search_")), warnings: ["Rust authoritative runtime owns replay retention; SQLite stream records were not planned for deletion."] };
     const rows = db.prepare("SELECT r.session_id,count(*) AS n,coalesce(sum(length(CAST(r.chunk_json AS BLOB))),0) AS bytes FROM agent_runtime_stream_records r JOIN agent_runtime_sessions s ON s.id=r.session_id WHERE s.status NOT IN ('running','queued','waiting_permission','waiting_input') GROUP BY r.session_id").all() as Array<{ session_id: string; n: number; bytes: number }>;
     replayRows = rows.reduce((sum, row) => sum + Math.max(0, row.n - 1024), 0); replayBytes = rows.reduce((sum, row) => sum + row.bytes, 0); replayRetainRows = rows.length * 1024;
   } catch { /* optional table */ }
   return { orphanScanCacheRows, orphanScanCacheBytes, closedOwnerlessProcessRows, closedOwnerlessProcessBytes, replayRows, replayBytes, replayRetainRows, ftsTables: dbstat(db).map(row => row.name).filter(name => FTS_NAMES.has(name) || name.startsWith("agent_search_")), warnings: ["This plan never deletes authoritative messages, events, checkpoints, billing, undo, fork, or asset rows.", "Apply requires an offline runtime lock check and a consistent backup."] };
 }
 export function applyMaintenance(db: NativeDatabase.Database, plan: MaintenancePlan, dataRoot = DATA_ROOT, now = Date.now()): { deletedCacheRows: number; deletedProcessRows: number; deletedReplayRows: number; optimizedFts: string[] } {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return { deletedCacheRows: 0, deletedProcessRows: 0, deletedReplayRows: 0, optimizedFts: [] };
   const active = activeProjectIds(dataRoot); const deletedCacheRows = 0;
   // No generated-document cache remains after the documentation module removal.
   let deletedProcessRows = 0;

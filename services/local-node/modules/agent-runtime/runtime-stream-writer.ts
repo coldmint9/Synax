@@ -132,7 +132,7 @@ export class RuntimeStreamWriter {
   }
 
   async prepareFinish(): Promise<void> {
-    if (!process.env.SYNAX_STORAGE_OWNER_ENDPOINT || !this.runId || !this.isCurrent()) return;
+    if (runtimeFacade.streamMode() === 'authoritative' || !process.env.SYNAX_STORAGE_OWNER_ENDPOINT || !this.runId || !this.isCurrent()) return;
     const step = agentRuntimeStore.listRunSteps(this.runId).at(-1);
     if (!step) return;
     const cursor = await sessionLogClient.cursor(this.sessionId);
