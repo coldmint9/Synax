@@ -43,6 +43,23 @@ const INTERNAL_ENV = [
   "SYNAX_TERMINAL_HOST_ORIGIN",
 ];
 
+function mirrorProcessLease(
+  operation: "lease_open" | "lease_close",
+  record: { id: string; sessionId?: string | null; runId?: string | null; pid?: number | null; state?: string; commandLabel?: string },
+): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" || !record.sessionId) return;
+  void import("./sidecar/runtime-facade.js").then(({ runtimeFacade }) =>
+    runtimeFacade.controlCommand({
+      sessionId: record.sessionId!,
+      requestId: `lease:${record.id}:${operation}:${record.pid ?? "none"}`,
+      operation,
+      payload: { leaseId: record.id, runId: record.runId, pid: record.pid, state: record.state, commandLabel: record.commandLabel },
+    }),
+  ).catch(() => {
+    // Rust recovery reads the SQLite compatibility row until the next owner reconciliation.
+  });
+}
+
 export function externalCommandEnvironment(
   overrides?: NodeJS.ProcessEnv,
   inherit = true,
@@ -88,6 +105,7 @@ export function prepareOwnedProcess(
       nowIso(),
       options.background ? "background" : "command",
     );
+  mirrorProcessLease("lease_open", { id: ticket.id, sessionId: context?.sessionId ?? options.sessionId ?? null, runId: context?.runId ?? null, state: "preparing", commandLabel });
   return ticket;
 }
 export function recordOwnedPid(id: string, pid: number | undefined): void {
@@ -97,6 +115,8 @@ export function recordOwnedPid(id: string, pid: number | undefined): void {
       "UPDATE agent_runtime_processes SET pid=?, state='active' WHERE id=?",
     )
     .run(pid, id);
+  const row = tryGetRawSqlite()?.prepare("SELECT session_id,run_id,state,command_label FROM agent_runtime_processes WHERE id=?").get(id) as { session_id: string | null; run_id: string | null; state: string; command_label: string } | undefined;
+  mirrorProcessLease("lease_open", { id, sessionId: row?.session_id, runId: row?.run_id, pid, state: row?.state, commandLabel: row?.command_label });
   emitProcessChange(id);
 }
 export function recordOwnedRuntimeTarget(
@@ -133,6 +153,8 @@ export function releaseOwnedProcess(
           "UPDATE agent_runtime_processes SET state='closed', ended_at=?, exit_code=COALESCE(exit_code, ?) WHERE id=?",
         )
         .run(nowIso(), exitCode, id);
+      const row = tryGetRawSqlite()?.prepare("SELECT session_id,run_id,state,command_label,pid FROM agent_runtime_processes WHERE id=?").get(id) as { session_id: string | null; run_id: string | null; state: string; command_label: string; pid: number | null } | undefined;
+      mirrorProcessLease("lease_close", { id, sessionId: row?.session_id, runId: row?.run_id, pid: row?.pid, state: row?.state, commandLabel: row?.command_label });
     } catch {
       /* Host recovery can recheck a receipt if shutdown already closed this connection. */
     }
