@@ -19,12 +19,14 @@ try {
     CREATE TABLE agent_runtime_messages (id TEXT PRIMARY KEY, session_id TEXT, content TEXT);
     CREATE TABLE agent_runtime_permissions (id TEXT PRIMARY KEY, session_id TEXT, metadata_json TEXT);
     CREATE TABLE agent_runtime_interactions (id TEXT PRIMARY KEY, session_id TEXT, request_json TEXT);
+    CREATE TABLE agent_runtime_stream_records (sequence INTEGER, session_id TEXT, run_id TEXT, kind TEXT, chunk_json TEXT, created_at TEXT);
   `);
   db.prepare('INSERT INTO agent_runtime_sessions VALUES (?, ?, ?, ?)').run('s', 'p', 'completed', '2026-10-16T00:00:00Z');
   db.prepare('INSERT INTO agent_runtime_runs VALUES (?, ?, ?, ?)').run('r', 's', 'completed', '{}');
   db.prepare('INSERT INTO agent_runtime_messages VALUES (?, ?, ?)').run('m', 's', 'hello');
   db.prepare('INSERT INTO agent_runtime_permissions VALUES (?, ?, ?)').run('p1', 's', '{}');
   db.prepare('INSERT INTO agent_runtime_interactions VALUES (?, ?, ?)').run('i1', 's', '{}');
+  db.prepare('INSERT INTO agent_runtime_stream_records VALUES (?, ?, ?, ?, ?, ?)').run(1, 's', 'r', 'message_delta', JSON.stringify({ chunk: { type: 'message_delta', sessionId: 's', runId: 'r', stepId: 'step', delta: 'legacy' }, state: { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null, updatedAt: '2026-10-16T00:00:00Z' } }), '2026-10-16T00:00:00Z');
   db.close();
 
   const cli = path.resolve('scripts/synax-runtime-migrate.ts');

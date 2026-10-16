@@ -2,7 +2,7 @@ use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
 use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WireImportProjectionResponse, WirePong, WireQueueState, WireSessionListResponse,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WireImportProjectionResponse, WireImportStreamResponse, WirePong, WireQueueState, WireSessionListResponse,
     WireReady, WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket,
     WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
     wire_envelope,
@@ -857,6 +857,14 @@ async fn execute_wire(
                 Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
             }
         }
+        Some(wire_envelope::Body::ImportStream(stream)) => {
+            if !local_control { return (envelope(wire_error("FORBIDDEN", "stream import requires private control transport")), false); }
+            let Some(store) = context.hot_store.as_ref() else { return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false); };
+            match store.import_stream_async(session_id.clone(), stream.events_json).await {
+                Ok(snapshot_json) => (WireEnvelope { request_id, session_id, epoch: 0, revision: 0, body: Some(wire_envelope::Body::ImportStreamResponse(WireImportStreamResponse { snapshot_json })) }, false),
+                Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+            }
+        }
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router
@@ -1026,6 +1034,7 @@ async fn execute_wire(
         | Some(wire_envelope::Body::HistoryState(_))
         | Some(wire_envelope::Body::SessionListResponse(_))
         | Some(wire_envelope::Body::ImportProjectionResponse(_))
+        | Some(wire_envelope::Body::ImportStreamResponse(_))
         | Some(wire_envelope::Body::UiSnapshotResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))

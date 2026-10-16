@@ -448,6 +448,16 @@ impl HotStore {
         result?
     }
 
+    pub async fn import_stream_async(&self, session_id: String, events_json: Vec<u8>) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || store.import_stream(&session_id, &events_json))
+            .await
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+
     pub async fn control_state_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.control_state(&session_id))
@@ -1680,6 +1690,37 @@ impl HotStore {
         self.put_batch(&mut batch, CF_SESSIONS, session_key(session_id), &serde_json::to_vec(&state)?)?;
         self.write_with_durability(batch, Durability::Sync)?;
         Ok(bytes)
+    }
+
+    fn import_stream(&self, session_id: &str, events_json: &[u8]) -> Result<Vec<u8>, StorageError> {
+        let pending: Vec<PendingEvent> = serde_json::from_slice(events_json)
+            .map_err(|_| RuntimeError::InvalidCommand("invalid stream import JSON".into()))?;
+        if pending.is_empty() || pending.len() > 1024 || events_json.len() > 4 * 1024 * 1024 {
+            return Err(RuntimeError::InvalidCommand("stream import exceeds bounds".into()).into());
+        }
+        let mut state = self.read_session(session_id)?;
+        if state.cursor != 0 { return Err(RuntimeError::RequestConflict.into()); }
+        let mut projection = self.read_ui_projection(session_id)?.ok_or(RuntimeError::ProjectionMissing)?;
+        let mut batch = WriteBatch::default();
+        for item in pending {
+            let value: serde_json::Value = serde_json::from_slice(&item.payload)?;
+            let run_id = value["chunk"]["runId"].as_str()
+                .or_else(|| value["chunk"]["run"]["id"].as_str())
+                .or_else(|| projection.session["activeRunId"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            state.cursor += 1;
+            projection.apply(state.cursor, &run_id, &item)?;
+            let event = StreamEvent { sequence: state.cursor, run_id, kind: item.kind, payload: item.payload, ephemeral: false };
+            self.put_batch(&mut batch, CF_STREAMS, stream_key(session_id, state.cursor), &serde_json::to_vec(&event)?)?;
+        }
+        state.revision = state.revision.max(state.cursor);
+        state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
+        for sequence in 1..state.retained_from { batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence)); }
+        self.put_batch(&mut batch, CF_SESSIONS, session_key(session_id), &serde_json::to_vec(&state)?)?;
+        self.put_batch(&mut batch, CF_UI, session_key(session_id), &projection.encode()?)?;
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(serde_json::to_vec(&projection)?)
     }
 
     fn cf(&self, name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {

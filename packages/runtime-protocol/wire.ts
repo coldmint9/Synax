@@ -13,6 +13,8 @@ export type SidecarBody =
   | { type: 'session_list_response'; sessionsJson: Uint8Array }
   | { type: 'import_projection'; snapshotJson: Uint8Array }
   | { type: 'import_projection_response'; snapshotJson: Uint8Array }
+  | { type: 'import_stream'; eventsJson: Uint8Array }
+  | { type: 'import_stream_response'; snapshotJson: Uint8Array }
   | { type: 'queue_mutation'; operation: string; payload: Uint8Array }
   | { type: 'hello'; token: string; clientId?: string }
   | { type: 'issue_ticket'; clientId: string }
@@ -98,6 +100,8 @@ const BODY_FIELDS: Record<SidecarBody['type'], number> = {
   session_list_response: 43,
   import_projection: 44,
   import_projection_response: 45,
+  import_stream: 46,
+  import_stream_response: 47,
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -161,6 +165,8 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'session_list_response': return fieldBytes(1, body.sessionsJson);
     case 'import_projection': return fieldBytes(1, body.snapshotJson);
     case 'import_projection_response': return fieldBytes(1, body.snapshotJson);
+    case 'import_stream': return fieldBytes(1, body.eventsJson);
+    case 'import_stream_response': return fieldBytes(1, body.snapshotJson);
     case 'queue_mutation': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
     case 'hello': return concat(fieldString(1, body.token), body.clientId ? fieldString(2, body.clientId) : new Uint8Array());
     case 'issue_ticket': return fieldString(1, body.clientId);
@@ -332,6 +338,8 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 43: return { type: 'session_list_response', sessionsJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 44: return { type: 'import_projection', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 45: return { type: 'import_projection_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 46: return { type: 'import_stream', eventsJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 47: return { type: 'import_stream_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 31: return { type: 'seed_ui', sessionJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 32: return { type: 'ui_snapshot' };
     case 33: return { type: 'ui_snapshot_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
@@ -381,7 +389,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 45 && item.wire === 2);
+  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 47 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

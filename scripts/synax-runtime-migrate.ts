@@ -151,6 +151,19 @@ function legacyProjection(item: SessionBundle): unknown {
   };
 }
 
+function legacyStreamEvents(item: SessionBundle): Array<{ kind: string; payload: unknown }> {
+  return (item.tables.agent_runtime_stream_records ?? []).slice(-1024).map(row => {
+    const raw = jsonColumn(row.chunk_json, {});
+    const payload = raw && typeof raw === 'object' && (raw as { schema?: unknown }).schema === 1
+      ? raw
+      : { schema: 1, chunk: (raw as { chunk?: unknown }).chunk ?? raw, state: (raw as { state?: unknown }).state ?? { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null, updatedAt: row.created_at ?? new Date().toISOString() } };
+    return {
+      kind: String(row.kind ?? (payload as { chunk?: { type?: unknown } }).chunk?.type ?? 'event'),
+      payload: Array.from(new TextEncoder().encode(JSON.stringify(payload))),
+    };
+  });
+}
+
 async function verifyBundle(): Promise<void> {
   const bundle = await loadBundle();
   const quarantine = validateBundle(bundle);
@@ -185,6 +198,8 @@ async function importBundle(): Promise<void> {
       const existing = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId, requestId: `migrate:${sessionId}:head-read`, operation: 'head_read', payload: {} }))) as { objectId?: string };
       if (existing.objectId) { count++; continue; }
       await client.importProjection(sessionId, new TextEncoder().encode(JSON.stringify(legacyProjection(item))));
+      const streamEvents = legacyStreamEvents(item);
+      if (streamEvents.length) await client.importStream(sessionId, new TextEncoder().encode(JSON.stringify(streamEvents)));
       const chunks: string[] = [];
       for (const [table, rows] of Object.entries(item.tables)) {
         for (let offset = 0; offset < rows.length; offset += 128) {
