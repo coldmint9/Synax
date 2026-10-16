@@ -27,6 +27,7 @@ import { interactionService } from "./interaction-service.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -280,6 +281,199 @@ export function acceptRuntimeRun(
       });
     return { run, reused: false };
   })();
+}
+
+/**
+ * Authoritative admission path. Rust owns the admission fence and durable
+ * queued run document first; SQLite is updated afterwards only as a temporary
+ * compatibility mirror for the synchronous execution code that is still being
+ * removed.
+ */
+export async function acceptRuntimeRunAuthoritative(
+  sessionId: string,
+  input: StreamTurnRequest,
+  requestId: string,
+  mode: AgentSessionStreamMode = "turn",
+): Promise<{ run: AgentRun; reused: boolean }> {
+  if (runtimeFacade.streamMode() !== "authoritative")
+    return acceptRuntimeRun(sessionId, input, requestId, mode);
+
+  prepareFlatHistory(sessionId);
+  if (versionRuntimeMode(sessionId) === "transcript")
+    throw new AgentRuntimeError(
+      "Version transcript rollout is not yet ready for execution.",
+      "VERSION_RUNTIME_NOT_READY",
+      409,
+    );
+  input = normalizeInput(input);
+  if (input.contentParts && !hasInput(input))
+    throw new AgentValidationError("Input is empty.");
+  if (!requestId.trim() || requestId.length > 128)
+    throw new AgentValidationError("A request ID of 1–128 characters is required.");
+  if (mode === "resume")
+    throw new AgentValidationError(
+      "Resume the pending interaction instead of submitting a new Run.",
+    );
+
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(stable({ input, mode })))
+    .digest("hex");
+  await runtimeFacade.ensureUiProjection(sessionId);
+  const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+  const existingRun = authoritative.run as AgentRun | null | undefined;
+  if (existingRun && ["queued", "running", "waiting_permission", "waiting_input"].includes(existingRun.status))
+    throw new AgentRuntimeError(
+      "This session already has an active or pending execution.",
+      "SESSION_BUSY",
+      409,
+    );
+
+  const preparedSession = agentRuntimeStore.getSession(sessionId);
+  const preparedBinding = resolveSessionBackend(sessionId);
+  if (profileService.getForSession(preparedSession).executionHost === "embedded")
+    throw new AgentRuntimeError(
+      "This session belongs to an embedded job host. Use that job’s controls.",
+      "EMBEDDED_HOST_REQUIRED",
+      409,
+    );
+  if (
+    tryResolveSessionWorkspaceLocation(sessionId, preparedSession.projectId)?.kind ===
+      "wsl" &&
+    preparedBinding.id !== "native"
+  )
+    throw new AgentRuntimeError(
+      "WSL2 projects currently support only the Synax native backend.",
+      "WSL_BACKEND_UNSUPPORTED",
+      409,
+    );
+  validateBackendTurnInput(preparedBinding.id, input);
+  const preparedModel = resolveBackendModel(sessionId, input);
+  const preparedAssets = validateAssets(inputParts(input), preparedSession.projectId);
+  let preparedWorkDir: string;
+  try {
+    preparedWorkDir = resolveSessionWorkDir(sessionId, preparedSession.projectId);
+  } catch (error) {
+    throw new AgentValidationError(
+      error instanceof Error ? error.message : "Invalid execution workspace.",
+    );
+  }
+  const permissionChangeRequested =
+    input.permissionTier !== undefined || input.permissionOverrides !== undefined;
+  const preparedReferenceContext = permissionChangeRequested
+    ? undefined
+    : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
+
+  const db = getRawSqlite();
+  const previous = db
+    .prepare(
+      `SELECT id FROM agent_runtime_runs WHERE session_id = ?
+       AND json_extract(metadata_json, '$.runtime.requestId') = ?`,
+    )
+    .get(sessionId, requestId) as { id: string } | undefined;
+  if (previous) {
+    const run = agentRuntimeStore.listRuns(sessionId).find(item => item.id === previous.id);
+    if (run) {
+      const runtime = run.metadata.runtime as AcceptedRuntimeInput;
+      if (runtime.inputHash !== inputHash)
+        throw new AgentRuntimeError(
+          "This request ID was already used for different input.",
+          "REQUEST_CONFLICT",
+          409,
+        );
+      return { run, reused: true };
+    }
+    if (existingRun?.id === previous.id) return { run: existingRun, reused: true };
+  }
+  if (preparedSession.sessionMetadata?.runtimeControl)
+    throw new AgentRuntimeError(
+      "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
+      "RECOVERY_REQUIRED",
+      409,
+    );
+  let parentId = preparedSession.parentSessionId;
+  while (parentId) {
+    const parent = agentRuntimeStore.getSession(parentId);
+    if (parent.sessionMetadata?.runtimeControl)
+      throw new AgentRuntimeError(
+        "An ancestor execution is stopping or requires recovery.",
+        "ANCESTOR_STOPPING",
+        409,
+      );
+    parentId = parent.parentSessionId;
+  }
+  if (
+    (preparedSession.sessionMetadata?.contextCompaction as { status?: string } | undefined)?.status ===
+    "running"
+  )
+    throw new AgentRuntimeError("Wait for context compaction to finish.", "COMPACTION_BUSY", 409);
+  const pending = interactionService.pending(sessionId);
+  const defersPlan = pending?.kind === "plan_approval" && hasInput(input);
+  if ((pending && !defersPlan) || preparedSession.status === "waiting_permission")
+    throw new AgentRuntimeError(
+      "Resolve the pending interaction before submitting another execution.",
+      "INTERACTION_PENDING",
+      409,
+    );
+  if (mode === "continue" && preparedSession.status === "completed" && !hasInput(input))
+    throw new AgentValidationError("Completed sessions require a new message to continue.");
+
+  bindValidatedAssets(sessionId, preparedAssets);
+  const workDir = bindSessionWorkDir(sessionId);
+  let session = preparedSession;
+  if (permissionChangeRequested) session = applySessionPermissionUpdate(sessionId, input);
+  const binding = resolveSessionBackend(sessionId);
+  const model = preparedModel;
+  const runtime: AcceptedRuntimeInput = {
+    version: 1,
+    historyRevision: historyRevision(sessionId),
+    requestId,
+    inputHash,
+    mode,
+    input: {
+      ...input,
+      referenceContext:
+        preparedReferenceContext && preparedWorkDir === workDir
+          ? preparedReferenceContext
+          : prepareTurnReferences(sessionId, input.references, workDir),
+      ...(model ? { model } : {}),
+    },
+    backendId: binding.id,
+    workDir,
+    previousSessionStatus: session.status,
+  };
+  const run: AgentRun = {
+    id: makeRuntimeId("run"),
+    sessionId,
+    status: "queued",
+    startedAt: nowIso(),
+    completedAt: null,
+    triggerMessageId: null,
+    currentStep: 0,
+    stopReason: null,
+    model,
+    metadata: { runtime },
+  };
+
+  const admission = await runtimeFacade.admitExecution(
+    { sessionId, run, runtime },
+    false,
+  );
+  if (admission.reused) {
+    const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+    const reusedRun = snapshot.run?.id === run.id ? (snapshot.run as AgentRun) : run;
+    return { run: reusedRun, reused: true };
+  }
+
+  // Compatibility mirror only. The durable fence and queued document already
+  // exist in Rust, so a mirror failure cannot make a second Rust admission.
+  if (!agentRuntimeStore.listRuns(sessionId).some(item => item.id === run.id)) agentRuntimeStore.appendRun(run);
+  if (!defersPlan)
+    agentRuntimeStore.updateSession(sessionId, {
+      status: "queued",
+      activeRunId: run.id,
+      updatedAt: nowIso(),
+    });
+  return { run, reused: false };
 }
 
 /** Persist this identity on the input itself before any message event can be observed. */

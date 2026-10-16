@@ -1022,10 +1022,7 @@ impl HotStore {
         let receipt_key = receipt_key(session_id, request_id);
         if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
             let receipt: StoredReceipt = serde_json::from_slice(&bytes)?;
-            if receipt.body_hash != body_hash
-                || receipt.queue_item != queue_item
-                || receipt.run_hash != run_hash
-            {
+            if receipt.body_hash != body_hash || receipt.queue_item != queue_item {
                 return Err(RuntimeError::RequestConflict.into());
             }
             // A prior write may have reached memory/WAL but lost its sync acknowledgement.

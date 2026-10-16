@@ -77,13 +77,13 @@ export class RuntimeFacade {
   }
 
   /** Admission is awaited before starting provider/tool execution. */
-  async admitExecution(input: ShadowAdmissionInput): Promise<void> {
+  async admitExecution(input: ShadowAdmissionInput, activate = true): Promise<{ reused: boolean; epoch: number; revision: number }> {
     const authoritative = streamMode() === 'authoritative';
-    if (!authoritative && this.mode() !== 'shadow' && streamMode() !== 'shadow') return;
+    if (!authoritative && this.mode() !== 'shadow' && streamMode() !== 'shadow') return { reused: false, epoch: 0, revision: 0 };
     const client = this.clientFactory();
     if (!client) {
       if (authoritative) throw new Error('Runtime sidecar client is not configured.');
-      return;
+      return { reused: false, epoch: 0, revision: 0 };
     }
     try {
       if (authoritative) await this.ensureUiProjection(input.sessionId);
@@ -100,7 +100,7 @@ export class RuntimeFacade {
         }
       }
       if (admission.runId !== input.run.id) throw new Error('Runtime admission returned a different run identity.');
-      if (authoritative && input.run.status === 'queued') {
+      if (authoritative && activate && input.run.status === 'queued') {
         for (let attempt = 0; ; attempt++) {
           const fence = await client.snapshot(input.sessionId);
           if (fence.activeRunId !== input.run.id || fence.epoch !== admission.epoch) throw new Error('Runtime activation fence changed.');
@@ -117,9 +117,11 @@ export class RuntimeFacade {
       const current = await client.snapshot(input.sessionId);
       if (current.activeRunId !== input.run.id || current.epoch !== admission.epoch)
         throw new Error('Cannot relaunch a completed or superseded run.');
+      return { reused: admission.reused, epoch: current.epoch, revision: current.revision };
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId: input.sessionId, runId: input.run.id, error }, '[runtime-sidecar] shadow admission failed');
+      return { reused: false, epoch: 0, revision: 0 };
     }
   }
 

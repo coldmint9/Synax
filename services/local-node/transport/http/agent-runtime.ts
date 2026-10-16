@@ -1243,7 +1243,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runs", async (c) => {
     const { requestId, mode, ...input } = parsed.data;
     await validateInputMedia(sessionId, input);
     return c.json(
-      runCoordinator.submit(sessionId, input, requestId, mode),
+      await runCoordinator.submitAsync(sessionId, input, requestId, mode),
       202,
     );
   } catch (error) {
@@ -1415,7 +1415,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
     const id = c.req.param("sessionId");
     requireSessionBackendConfig(id);
     await validateInputMedia(id, parsed.data);
-    const accepted = runCoordinator.submit(
+    const accepted = await runCoordinator.submitAsync(
       id,
       parsed.data,
       c.req.header("Idempotency-Key") ?? randomUUID(),
@@ -1496,7 +1496,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
     const id = c.req.param("sessionId");
     requireSessionBackendConfig(id);
     await validateInputMedia(id, parsed.data);
-    const accepted = runCoordinator.submit(
+    const accepted = await runCoordinator.submitAsync(
       id,
       parsed.data,
       c.req.header("Idempotency-Key") ?? randomUUID(),

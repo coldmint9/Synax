@@ -17,6 +17,7 @@ import type { AgentRun, AgentRunStreamChunk, StreamTurnRequest } from "./contrac
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import {
   acceptRuntimeRun,
+  acceptRuntimeRunAuthoritative,
   type AcceptedRuntimeInput,
 } from "./run-admission.js";
 import { executeBackendSession } from "./backend-execution.js";
@@ -130,6 +131,19 @@ export class RunCoordinator {
     mode: AgentSessionStreamMode = "turn",
   ) {
     const accepted = this.acceptRun(sessionId, input, requestId, mode);
+    this.launchAccepted(sessionId, accepted, mode);
+    return accepted;
+  }
+
+  async submitAsync(
+    sessionId: string,
+    input: StreamTurnRequest,
+    requestId: string,
+    mode: AgentSessionStreamMode = "turn",
+  ) {
+    if (runtimeFacade.streamMode() !== "authoritative")
+      return this.submit(sessionId, input, requestId, mode);
+    const accepted = await acceptRuntimeRunAuthoritative(sessionId, input, requestId, mode);
     this.launchAccepted(sessionId, accepted, mode);
     return accepted;
   }

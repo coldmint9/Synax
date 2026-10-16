@@ -47,7 +47,7 @@ try {
   const session = agentSessionRuntime.create({ ...plannerSessionInput, workDir: tmpdir() });
   const runs: string[] = [];
   for (let turn = 1; turn <= 3; turn++) {
-    const accepted = coordinator.submit(session.id, { message: `turn ${turn}` }, `request-${turn}`);
+    const accepted = await coordinator.submitAsync(session.id, { message: `turn ${turn}` }, `request-${turn}`);
     runs.push(accepted.run.id);
     await coordinator.waitForIdle();
     const state = await client.snapshot(session.id);
