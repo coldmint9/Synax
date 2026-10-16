@@ -11,7 +11,6 @@ import {
   type RuntimeExecutionContext,
 } from "../../infrastructure/runtime/execution-context.js";
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
-import { journalWriter } from "./journal-writer.js";
 import { agentEventService } from "./event-service.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
@@ -439,12 +438,15 @@ export class RunCoordinator {
     mode: AgentSessionStreamMode,
     input: StreamTurnRequest,
   ): Promise<void> {
+    const legacyJournal = runtimeFacade.streamMode() === "authoritative"
+      ? undefined
+      : async (id: string, runId: string, chunks: AgentRunStreamChunk[], revision: number) =>
+        (await import("./journal-writer.js")).journalWriter.append(id, runId, chunks, revision, owner.context);
     const writer = new RuntimeStreamWriter(
       sessionId,
       owner.runId,
       () => this.ownsLease(owner),
-      (id, runId, chunks, revision) =>
-        journalWriter.append(id, runId, chunks, revision, owner.context),
+      legacyJournal,
     );
     const record = async (chunk: AgentRunStreamChunk) => {
       writer.write(chunk);
