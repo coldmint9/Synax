@@ -15,6 +15,7 @@ import { permissionPolicy } from '../permission-policy.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { makeRuntimeId } from '../runtime-ids.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
+import { runtimeFacade } from '../sidecar/runtime-facade.js';
 
 type PermissionResolver = (response: RequestPermissionResponse) => void;
 
@@ -102,6 +103,15 @@ export class AcpPermissionBridge {
         acpKind: params.toolCall.kind ?? null,
       },
     });
+
+    if (runtimeFacade.streamMode() === 'authoritative') {
+      await runtimeFacade.controlCommand({
+        sessionId: context.sessionId,
+        requestId: `acp-permission-request:${decision.id}`,
+        operation: 'permission_request',
+        payload: decision,
+      });
+    }
 
     agentRuntimeStore.updateToolCall(context.sessionId, toolCallRecord.id, {
       permissionDecisionId: decision.id,
