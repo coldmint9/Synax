@@ -362,7 +362,6 @@ export const agentPlanArtifacts = sqliteTable('agent_plan_artifacts', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   uniqueIndex('agent_plan_artifacts_session_revision').on(table.sessionId, table.revision),
-  index('idx_agent_plan_artifacts_session_revision').on(table.sessionId, table.revision),
   index('idx_agent_plan_artifacts_project_updated').on(table.projectId, table.updatedAt),
 ]);
 

@@ -64,6 +64,7 @@
     "prebuild:electron": "node -e \"require('node:fs').rmSync('dist-electron', {recursive:true, force:true})\"",
     "test:realtime:web": "tsx scripts/realtime-web-smoke.ts",
     "storage:report": "tsx scripts/storage-maintenance.ts",
+    "storage:index-audit": "tsx scripts/storage-index-audit.ts",
     "storage:maintain": "tsx scripts/storage-maintenance.ts --apply",
     "storage:compact": "tsx scripts/storage-maintenance.ts --compact",
     "version:sync": "node scripts/release-version.mjs sync",

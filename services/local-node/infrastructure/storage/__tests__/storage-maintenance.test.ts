@@ -30,12 +30,15 @@ afterEach(() => {
 describe("storage maintenance", () => {
   it("reports free pages and runtime lifecycle categories", () => {
     const { root, db } = dbFixture();
+    fs.mkdirSync(path.join(root, "session-logs", "session"), { recursive: true });
+    fs.writeFileSync(path.join(root, "session-logs", "session", "segment-000001.log"), "replay");
     db.prepare("INSERT INTO agent_runtime_events VALUES(?,?,?)").run("event", "session", "{}");
     const report = reportStorage(db, path.join(root, "context.db"));
     expect(report.categories.some((entry) => entry.category === "events")).toBe(true);
     expect(report.rows.agent_runtime_events).toBe(1);
     expect(report.pageSize).toBeGreaterThan(0);
     expect(report.integrity).toBe("ok");
+    expect(report.replayFileBytes).toBe(6);
   });
 
   it("plans bounded cleanup without mutating rows and preserves authoritative events", () => {

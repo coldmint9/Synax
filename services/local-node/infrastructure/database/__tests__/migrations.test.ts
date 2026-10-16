@@ -84,7 +84,9 @@ describe('runMigrations ledger', () => {
     expect(db.prepare("SELECT status FROM agent_runtime_runs WHERE id='historical-run'").get()).toMatchObject({ status: 'blocked' });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='agent_runtime_stream_records'").get()).toBeTruthy();
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_arr_runtime_request'").get()).toBeTruthy();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_agent_plan_artifacts_session_revision'").get()).toBeUndefined();
     expect(ledger.some(row => row.file === '0029_runtime_stream_journal.sql')).toBe(true);
+    expect(ledger.some(row => row.file === '0079_remove_redundant_plan_index.sql')).toBe(true);
 
   });
 
