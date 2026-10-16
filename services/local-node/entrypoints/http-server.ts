@@ -209,6 +209,10 @@ let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 let stopFileUndoRetention = () => {};
 let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
+  if (process.env.SYNAX_RUNTIME_LEGACY !== '1') {
+    process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
+    process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
+  }
   rustRuntimeSidecar = await startRustRuntimeSidecar();
   const recovery = await recoverRuntime(runtimeHost.hostId);
   const mediaJobs = recoverMediaJobs();

@@ -13,6 +13,14 @@ it('reads a persisted projection without touching legacy session storage', async
   expect(await facade.uiSnapshotAuthoritative('s')).toEqual(snapshot);
   expect(read).not.toHaveBeenCalled(); expect(client.seedUi).not.toHaveBeenCalled();
 });
+
+it('defaults a supervised host to authoritative mode while preserving an explicit legacy escape hatch', () => {
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SUPERVISOR', '1');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', '');
+  expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
+  vi.stubEnv('SYNAX_RUNTIME_LEGACY', '1');
+  expect(new RuntimeFacade(() => null).streamMode()).toBe('disabled');
+});
 it('uses the persisted result of create-if-absent when another command wins seed initialization', async () => {
   const initial = { id: 's', projectId: 'p', status: 'running', updatedAt: 'now' };
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockReturnValue(initial as never);

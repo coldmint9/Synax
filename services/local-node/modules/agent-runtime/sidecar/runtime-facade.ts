@@ -10,10 +10,13 @@ export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
 export type RuntimeSidecarStreamMode = 'disabled' | 'shadow' | 'authoritative';
 
 function streamMode(): RuntimeSidecarStreamMode {
+  if (process.env.SYNAX_RUNTIME_LEGACY === '1') return 'disabled';
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') return 'authoritative';
   return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'shadow'
     ? 'shadow'
-    : 'disabled';
+    : process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR === '1'
+      ? 'authoritative'
+      : 'disabled';
 }
 
 function admissionMode(): RuntimeSidecarAdmissionMode {
