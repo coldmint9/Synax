@@ -406,6 +406,7 @@ runtime-sidecar/
 - authoritative checkpoint capture 已改为 Rust pin；HTTP checkpoint summary、preview、rollback、edit、history visit 和 fork 已有 Rust 分支。fork 会创建目标 session、复制 checkpoint 之前的 immutable entities、重映射 session/run/step/tool/message identity，并把新 head 切到 Rust history；新 worktree 仍复用 Git workspace resolver。
 - permission timeout sweeper 已改为读取 Rust control state 并通过 `permission_reply` 自动拒绝；Rust permission reply 同批更新 session terminal projection、run blocked 文档和 live tool call 状态。
 - authoritative session permission 配置、archive delete、subagent pause/cancel/terminate 和 stop completion 已补 Rust-first 路径；SQLite 仅作为兼容镜像，下一步继续清理同步读取依赖。
+- answered interaction recovery 已在 authoritative host 读取 Rust projection/control state，避免启动恢复扫描 SQLite interaction rows；非 authoritative fixture 仍保留旧扫描实现。
 - 新增 Rust asset/checkpoint 单元覆盖；最新 Rust 测试为 59 项全部通过，history smoke、typecheck、相关 lifecycle/subagent 套件和完整 Vitest 均已通过。完整 Vitest 结果：369 个测试文件，2973 项通过，1 项跳过。
 - 最新本地 macOS arm64 DMG 已由 commit `49c16f53` 构建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `4473d1b44e981eacbe024419a8b7372f776fd7a69374240a1cbb3bdf5e808626`，大小 `285089636` bytes。
 - workflow `38977935108` 已按当前 HEAD 重新触发；macOS arm64、Linux 已完成成功，Windows 和 macOS x64 仍在目标机打包/sidecar 检查，完成前不把跨平台发布验收标成完成。
