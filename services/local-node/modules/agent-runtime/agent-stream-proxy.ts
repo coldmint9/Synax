@@ -13,6 +13,7 @@ import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated }
 import type { AgentSessionStreamMode } from '../../infrastructure/runtime/ipc/agent-session-protocol.js';
 import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
 import { agentRuntimeStore } from './session-store.js';
+import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 function useInProcessAgentSessions(): boolean {
   return agentSessionsRunInProcess();
@@ -150,8 +151,28 @@ async function* observeBackgroundRun(
 }
 
 export function recoverAnsweredInteractions(): void {
+  if (runtimeFacade.streamMode() === 'authoritative') {
+    void recoverAnsweredInteractionsAuthoritative().catch(() => {});
+    return;
+  }
   const rows = getRawSqlite().prepare("SELECT DISTINCT i.session_id FROM agent_runtime_interactions i JOIN agent_runtime_sessions s ON s.id=i.session_id WHERE i.consumed_at IS NULL AND i.response_json IS NOT NULL AND s.archived_at IS NULL AND s.status='waiting_input' LIMIT 100").all() as Array<{session_id:string}>;
   for(const row of rows)if(interactionService.ready(row.session_id))resumeAgentSessionInBackground(row.session_id);
+}
+
+async function recoverAnsweredInteractionsAuthoritative(): Promise<void> {
+  const projections = await runtimeFacade.listSessionProjection();
+  for (const raw of projections) {
+    if (!raw || typeof raw !== 'object') continue;
+    const session = raw as { id?: unknown; status?: unknown; activeRunId?: unknown; sessionMetadata?: unknown };
+    if (typeof session.id !== 'string' || session.status !== 'waiting_input' || typeof session.activeRunId !== 'string') continue;
+    const control = await runtimeFacade.controlState(session.id) as { interactions?: unknown[] };
+    const answered = (control.interactions ?? []).some((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const interaction = item as { runId?: unknown; status?: unknown; response?: unknown; consumedAt?: unknown };
+      return interaction.runId === session.activeRunId && interaction.status !== 'pending' && interaction.response != null && !interaction.consumedAt;
+    });
+    if (answered) resumeAgentSessionInBackground(session.id);
+  }
 }
 export function startInteractionRecovery(): () => void {
   const tick=()=>{try{recoverAnsweredInteractions();}catch{/* startup/shutdown DB lifetime; next tick retries durable markers */}};
