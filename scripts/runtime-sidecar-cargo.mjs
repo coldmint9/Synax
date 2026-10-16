@@ -11,13 +11,18 @@ if (!command) {
 const env = { ...process.env };
 if (process.platform === 'darwin' && !env.LIBCLANG_PATH) {
   const candidates = [
+    '/opt/homebrew/opt/llvm/lib',
+    '/usr/local/opt/llvm/lib',
     '/Library/Developer/CommandLineTools/usr/lib',
     '/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib',
   ];
   const libclang = candidates.find(path => existsSync(join(path, 'libclang.dylib')));
   if (libclang) {
     env.LIBCLANG_PATH = libclang;
-    env.DYLD_LIBRARY_PATH = [libclang, env.DYLD_LIBRARY_PATH].filter(Boolean).join(':');
+    // Keep rustc's own LLVM isolated. DYLD_LIBRARY_PATH can make rustc load
+    // Homebrew LLVM and crash; libclang's transitive dependencies are found
+    // through the fallback path without replacing the compiler's runtime.
+    env.DYLD_FALLBACK_LIBRARY_PATH = [libclang, env.DYLD_FALLBACK_LIBRARY_PATH].filter(Boolean).join(':');
   }
 }
 
