@@ -9,6 +9,13 @@ const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId:
   chunk: { type: 'message_delta', stepId: 'step', delta: ' rest' } }
 
 describe('runtime stream projection', () => {
+  it('refreshes a queue on Rust admission consumption even when the session has no active run', () => {
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot({ ...snapshot, session: { ...session, status: 'completed', activeRunId: null }, liveChunks: [] });
+    const event = { ...record, runId: '', state: { ...session, status: 'completed' as const, activeRunId: null }, chunk: { type: 'input_queue_changed', queueRevision: 3 } };
+    expect(projector.record(event)).toEqual([{ type: 'input_queue_changed', sessionId: 'session', queueRevision: 3 }]);
+    expect(projector.record(event)).toEqual([]);
+  });
   it('ends live output from a committed Rust finish command and ignores receipt replay', () => {
     const projector = new RuntimeStreamProjector();
     projector.snapshot(snapshot);

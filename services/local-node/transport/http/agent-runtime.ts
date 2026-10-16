@@ -1,3 +1,4 @@
+import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
 import { runtimeFacade } from '../../modules/agent-runtime/sidecar/runtime-facade.js';
 import { readFlatHistoryWindow, readFlatTimeline } from "../../modules/agent-runtime/flat-history-reader.js";
 import { simpleHistorySession, simpleHistoryRevision } from "../../modules/agent-runtime/simple-history.js";
@@ -86,7 +87,6 @@ import {
   clearInactiveSessionsBodySchema,
   createSessionRequestSchema,
   enqueueInputRequestSchema,
-  inputQueueService,
   listEventsQuerySchema,
   listSessionsQuerySchema,
   permissionPolicy,
@@ -2003,9 +2003,10 @@ agentRuntimeRoutes.post(
   },
 );
 
-agentRuntimeRoutes.get("/sessions/:sessionId/input-queue", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/input-queue", async (c) => {
   try {
-    return c.json({ items: inputQueueService.list(c.req.param("sessionId")) });
+    const queue = await inputQueueRuntime.snapshot(c.req.param("sessionId"));
+    return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId, projectionRevision: queue.revision });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2019,13 +2020,11 @@ agentRuntimeRoutes.post("/sessions/:sessionId/input-queue", async (c) => {
   try {
     await validateInputMedia(c.req.param("sessionId"), parsed.data);
     const sessionId = c.req.param("sessionId");
-    inputQueueService.enqueue(sessionId, parsed.data);
-    // The active run may have completed while media validation was in flight.
-    runCoordinator.dispatchQueuedInput(sessionId);
-    return c.json({ items: inputQueueService.list(sessionId) });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
+    await inputQueueRuntime.enqueue(sessionId, parsed.data);
+    await runCoordinator.dispatchQueuedInput(sessionId);
+    const queue = await inputQueueRuntime.snapshot(sessionId);
+    return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId, projectionRevision: queue.revision });
+  } catch (error) { return runtimeError(c, error); }
 });
 
 agentRuntimeRoutes.patch(
@@ -2057,28 +2056,16 @@ agentRuntimeRoutes.patch(
     )
       return c.json({ error: "toIndex must be an integer." }, 400);
     try {
-      return c.json({
-        items: inputQueueService.move(
-          c.req.param("sessionId"),
-          c.req.param("itemId"),
-          payload.direction !== undefined
-            ? { direction: payload.direction }
-            : { toIndex: payload.toIndex as number },
-        ),
-      });
+      return c.json({ items: await inputQueueRuntime.move(c.req.param("sessionId"), c.req.param("itemId"),
+        payload.direction !== undefined ? { direction: payload.direction } : { toIndex: payload.toIndex as number }) });
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
 
-agentRuntimeRoutes.delete("/sessions/:sessionId/input-queue/:itemId", (c) => {
-  try {
-    const items = inputQueueService.remove(
-      c.req.param("sessionId"),
-      c.req.param("itemId"),
-    );
-    return c.json({ items });
+agentRuntimeRoutes.delete("/sessions/:sessionId/input-queue/:itemId", async (c) => {
+  try { return c.json({ items: await inputQueueRuntime.remove(c.req.param("sessionId"), c.req.param("itemId")) });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2089,14 +2076,9 @@ agentRuntimeRoutes.post(
   async (c) => {
     try {
       const sessionId = c.req.param("sessionId");
-      await runCoordinator.forceQueuedInput(
-        sessionId,
-        c.req.param("itemId"),
-      );
-      return c.json({
-        items: inputQueueService.list(sessionId),
-        forceInjectItemId: inputQueueService.getForceInjectId(sessionId),
-      });
+      await runCoordinator.forceQueuedInput(sessionId, c.req.param("itemId"));
+      const queue = await inputQueueRuntime.snapshot(sessionId);
+      return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId });
     } catch (error) {
       return runtimeError(c, error);
     }

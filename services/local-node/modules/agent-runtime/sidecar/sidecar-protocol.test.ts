@@ -8,6 +8,10 @@ describe("runtime sidecar protobuf codec", () => {
       { type: 'seed_ui' as const, sessionJson: new Uint8Array([0, 128, 255]) },
       { type: 'ui_snapshot_response' as const, snapshotJson: new Uint8Array([0, 128, 255]) },
       { type: 'activate_run' as const, runJson: new Uint8Array([0, 128, 255]) },
+      { type: 'queue_mutation' as const, operation: 'force', payload: new Uint8Array([0, 128, 255]) },
+      { type: 'queue_read' as const },
+      { type: 'queue_state' as const, queueJson: new Uint8Array([0, 128, 255]) },
+      { type: 'admit_run' as const, bodyHash: 'hash', runId: 'r', queueItemJson: new Uint8Array([0, 128, 255]) },
       { type: 'finish_run' as const, runId: 'r', status: 'failed', runJson: new Uint8Array([0, 128, 255]) },
     ]) {
       const envelope = { requestId: 'ui', sessionId: 's', epoch: 0, revision: 0, body };

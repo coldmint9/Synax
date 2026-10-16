@@ -168,8 +168,8 @@ try {
     });
     return [await connect(), await connect()];
   }, { port: runtime.port, hello: envelope({ type: 'hello', token: limited.token, clientId: 'limited' }),
-    forbidden: [envelope({ type: 'snapshot' }, 'other', 'other-session'), envelope({ type: 'ui_snapshot' }, 'other-ui', 'other-session'), envelope({ type: 'seed_ui', sessionJson: new TextEncoder().encode('{}') }, 'seed'), envelope({ type: 'shutdown' }, 'shutdown')] });
-  assert.deepEqual(codes, [['FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN'], ['UNAUTHENTICATED']]);
+    forbidden: [envelope({ type: 'snapshot' }, 'other', 'other-session'), envelope({ type: 'ui_snapshot' }, 'other-ui', 'other-session'), envelope({ type: 'seed_ui', sessionJson: new TextEncoder().encode('{}') }, 'seed'), envelope({ type: 'queue_mutation', operation: 'clear_force', payload: new TextEncoder().encode('null') }, 'queue-write'), envelope({ type: 'shutdown' }, 'shutdown')] });
+  assert.deepEqual(codes, [['FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN', 'FORBIDDEN'], ['UNAUTHENTICATED']]);
   // A newly attached real renderer must observe command-driven completion without reconnecting.
   await page.evaluate(() => {
     const w = window as any;

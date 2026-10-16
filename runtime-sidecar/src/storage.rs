@@ -16,6 +16,7 @@ use crate::commit::Committer;
 use crate::projection::UiSnapshot;
 
 const CF_ACTIVATIONS: &str = "run_activations";
+const CF_CONTROLS: &str = "control_receipts";
 const CF_UI: &str = "ui_projections";
 const CF_SESSIONS: &str = "sessions";
 const CF_RUNS: &str = "runs";
@@ -80,6 +81,8 @@ impl StoredSession {
 struct StoredReceipt {
     body_hash: String,
     admission: RunAdmission,
+    #[serde(default)]
+    queue_item: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +136,19 @@ enum FinishRecord {
 struct StoredAppendReceipt {
     fingerprint: String,
     receipt: StreamAppendReceipt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredControlReceipt {
+    identity: String,
+    result: QueueMutationReceipt,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueueMutationReceipt {
+    pub queue: crate::input_queue::QueueState,
+    pub snapshot: SessionSnapshot,
+    pub event: Option<StreamEvent>,
+    pub reused: bool,
 }
 
 /// Versioned, length-delimited digest; stable across processes and Rust releases.
@@ -216,6 +232,7 @@ impl HotStore {
             CF_APPENDS,
             CF_UI,
             CF_ACTIVATIONS,
+            CF_CONTROLS,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -260,17 +277,19 @@ impl HotStore {
         run_id: String,
         epoch: u64,
         expected_revision: u64,
+        queue_item: Vec<u8>,
     ) -> Result<RunAdmission, StorageError> {
         let store = self.clone();
         let key = session_id.clone();
         let result = tokio::task::spawn_blocking(move || {
-            store.admit_run(
+            store.admit_run_with_queue(
                 &session_id,
                 &request_id,
                 &body_hash,
                 &run_id,
                 epoch,
                 expected_revision,
+                &queue_item,
             )
         })
         .await
@@ -355,6 +374,172 @@ impl HotStore {
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
+    pub async fn queue_mutation_async(
+        &self,
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
+    ) -> Result<QueueMutationReceipt, StorageError> {
+        let store = self.clone();
+        let key = session_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            store.queue_mutation(
+                &session_id,
+                &request_id,
+                epoch,
+                revision,
+                &operation,
+                &payload,
+            )
+        })
+        .await
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
+        self.snapshots.invalidate(&key).await;
+        result?
+    }
+    pub async fn queue_read_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let projection = store
+                .read_ui_projection(&session_id)?
+                .ok_or(RuntimeError::ProjectionMissing)?;
+            Ok(serde_json::to_vec(&projection.queue())?)
+        })
+        .await
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+    fn queue_mutation(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        epoch: u64,
+        revision: u64,
+        operation: &str,
+        payload: &[u8],
+    ) -> Result<QueueMutationReceipt, StorageError> {
+        if request_id.is_empty()
+            || request_id.len() > 256
+            || operation.len() > 32
+            || payload.len() > 512 * 1024
+        {
+            return Err(RuntimeError::InvalidCommand("queue command exceeds bounds".into()).into());
+        }
+        let value: serde_json::Value = serde_json::from_slice(payload)?;
+        let identity = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&("queue.v1", operation, &value))?)
+        );
+        let key = serde_json::to_vec(&(session_id, request_id))?;
+        if let Some(bytes) = self.get(CF_CONTROLS, &key)? {
+            let saved: StoredControlReceipt = serde_json::from_slice(&bytes)?;
+            if saved.identity != identity {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            self.write_with_durability(WriteBatch::default(), Durability::Sync)?;
+            let mut result = saved.result;
+            result.reused = true;
+            return Ok(result);
+        }
+        let mut state = self.read_session(session_id)?;
+        ensure_epoch(&state, epoch)?;
+        ensure_revision(&state, revision)?;
+        if operation == "consume" {
+            let run = value["runId"].as_str().ok_or_else(|| {
+                RuntimeError::InvalidCommand("consumption requires active run".into())
+            })?;
+            if state.active_run_id.as_deref() != Some(run) {
+                return Err(RuntimeError::InvalidCommand(
+                    "input consumer is not active run".into(),
+                )
+                .into());
+            }
+        }
+        let mut projection = self
+            .read_ui_projection(session_id)?
+            .ok_or(RuntimeError::ProjectionMissing)?;
+        if operation == "consume"
+            && projection.force_inject_item_id.as_deref() != value["id"].as_str()
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "forced input changed before consumption".into(),
+            )
+            .into());
+        }
+        let (queue, changed) = projection.queue_mutation(operation, payload)?;
+        let mut batch = WriteBatch::default();
+        let mut event = None;
+        if changed {
+            state.cursor += 1;
+            state.revision += 1;
+            let run_id = projection.session["activeRunId"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            let payload = serde_json::to_vec(&serde_json::json!({ "schema":1,
+                "chunk":{"type":"input_queue_changed","sessionId":session_id,"queueSize":queue.items.len(),"forceInjectItemId":queue.force_inject_item_id,"queueRevision":queue.revision},
+                "state":{"status":projection.session["status"],"activeRunId":projection.session["activeRunId"],"pendingResumeToken":projection.session["pendingResumeToken"],"blockedReason":projection.session["blockedReason"],"updatedAt":projection.session["updatedAt"]}
+            }))?;
+            projection.apply(
+                state.cursor,
+                &run_id,
+                &PendingEvent {
+                    kind: "input_queue_changed".into(),
+                    payload: payload.clone(),
+                },
+            )?;
+            let record = StreamEvent {
+                sequence: state.cursor,
+                run_id,
+                kind: "input_queue_changed".into(),
+                payload,
+            };
+            self.put_batch(
+                &mut batch,
+                CF_STREAMS,
+                stream_key(session_id, state.cursor),
+                &serde_json::to_vec(&record)?,
+            )?;
+            let retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
+            for sequence in state.retained_from..retained_from {
+                batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
+            }
+            state.retained_from = retained_from;
+            event = Some(record);
+            self.put_batch(
+                &mut batch,
+                CF_SESSIONS,
+                session_key(session_id),
+                &serde_json::to_vec(&state)?,
+            )?;
+            self.put_batch(
+                &mut batch,
+                CF_UI,
+                session_key(session_id),
+                &projection.encode()?,
+            )?;
+        }
+        let result = QueueMutationReceipt {
+            queue,
+            snapshot: state.snapshot(),
+            event,
+            reused: false,
+        };
+        self.put_batch(
+            &mut batch,
+            CF_CONTROLS,
+            key,
+            &serde_json::to_vec(&StoredControlReceipt {
+                identity,
+                result: result.clone(),
+            })?,
+        )?;
+        self.write_with_durability(batch, Durability::Sync)?;
+        Ok(result)
+    }
+
     pub fn ui_snapshot(
         &self,
         session_id: &str,
@@ -388,6 +573,7 @@ impl HotStore {
         Ok(self.read_session(session_id)?.snapshot())
     }
 
+    #[cfg(test)]
     pub fn admit_run(
         &self,
         session_id: &str,
@@ -395,13 +581,39 @@ impl HotStore {
         body_hash: &str,
         run_id: &str,
         epoch: u64,
-        expected_revision: u64,
+        revision: u64,
     ) -> Result<RunAdmission, StorageError> {
+        self.admit_run_with_queue(
+            session_id,
+            request_id,
+            body_hash,
+            run_id,
+            epoch,
+            revision,
+            &[],
+        )
+    }
+
+    pub fn admit_run_with_queue(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        body_hash: &str,
+        run_id: &str,
+        epoch: u64,
+        expected_revision: u64,
+        queue_item_json: &[u8],
+    ) -> Result<RunAdmission, StorageError> {
+        let queue_item: Option<serde_json::Value> = if queue_item_json.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_slice(queue_item_json)?)
+        };
         let mut state = self.read_session(session_id)?;
         let receipt_key = receipt_key(session_id, request_id);
         if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
             let receipt: StoredReceipt = serde_json::from_slice(&bytes)?;
-            if receipt.body_hash != body_hash {
+            if receipt.body_hash != body_hash || receipt.queue_item != queue_item {
                 return Err(RuntimeError::RequestConflict.into());
             }
             // A prior write may have reached memory/WAL but lost its sync acknowledgement.
@@ -422,6 +634,68 @@ impl HotStore {
         {
             return Err(RuntimeError::InvalidCommand("run id already exists".into()).into());
         }
+        let mut projection = self.read_ui_projection(session_id)?;
+        if projection
+            .as_ref()
+            .is_some_and(|projection| projection.pending_queue_input.is_some())
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "previous input delivery requires recovery before admission".into(),
+            )
+            .into());
+        }
+        let mut queue_event = None;
+        let mut batch = WriteBatch::default();
+        if let Some(item) = queue_item.as_ref() {
+            let projection = projection.as_mut().ok_or(RuntimeError::ProjectionMissing)?;
+            let id = crate::input_queue::item_id(item)?;
+            let mut queue = projection.queue();
+            let persisted = queue
+                .items
+                .iter()
+                .find(|entry| entry["id"].as_str() == Some(id))
+                .ok_or_else(|| {
+                    RuntimeError::InvalidCommand("queued input no longer exists".into())
+                })?;
+            if persisted != item {
+                return Err(RuntimeError::RequestConflict.into());
+            }
+            queue.apply("consume", &serde_json::json!({"id":id, "runId":run_id}))?;
+            // Admission is the durable owner of this input; no intermediate delivery remains.
+            queue.delivery = None;
+            projection.set_queue(&queue);
+            state.cursor += 1;
+            let payload = serde_json::to_vec(&serde_json::json!({"schema":1,
+                "chunk":{"type":"input_queue_changed","sessionId":session_id,"queueSize":queue.items.len(),"forceInjectItemId":queue.force_inject_item_id,"queueRevision":queue.revision},
+                "state":{"status":projection.session["status"],"activeRunId":projection.session["activeRunId"],"pendingResumeToken":projection.session["pendingResumeToken"],"blockedReason":projection.session["blockedReason"],"updatedAt":projection.session["updatedAt"]}
+            }))?;
+            let event = StreamEvent {
+                sequence: state.cursor,
+                run_id: run_id.into(),
+                kind: "input_queue_changed".into(),
+                payload,
+            };
+            projection.apply(
+                state.cursor,
+                run_id,
+                &PendingEvent {
+                    kind: event.kind.clone(),
+                    payload: event.payload.clone(),
+                },
+            )?;
+            self.put_batch(
+                &mut batch,
+                CF_STREAMS,
+                stream_key(session_id, state.cursor),
+                &serde_json::to_vec(&event)?,
+            )?;
+            let retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
+            for sequence in state.retained_from..retained_from {
+                batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
+            }
+            state.retained_from = retained_from;
+            queue_event = Some(event);
+        }
         state.revision += 1;
         state.active_run_id = Some(run_id.to_owned());
         let admission = RunAdmission {
@@ -430,10 +704,12 @@ impl HotStore {
             epoch: state.epoch,
             revision: state.revision,
             reused: false,
+            queue_event,
         };
         let receipt = StoredReceipt {
             body_hash: body_hash.to_owned(),
             admission: admission.clone(),
+            queue_item,
         };
         let run = StoredRun {
             activation_request: None,
@@ -444,7 +720,6 @@ impl HotStore {
             epoch: state.epoch,
             revision: state.revision,
         };
-        let mut batch = WriteBatch::default();
         self.put_batch(
             &mut batch,
             CF_SESSIONS,
@@ -463,7 +738,7 @@ impl HotStore {
             run_key(session_id, run_id),
             &serde_json::to_vec(&run)?,
         )?;
-        if let Some(mut projection) = self.read_ui_projection(session_id)? {
+        if let Some(mut projection) = projection {
             projection.admitted(run_id);
             self.put_batch(
                 &mut batch,
@@ -1392,6 +1667,318 @@ mod tests {
         let _ = std::fs::remove_dir_all(path);
     }
 
+    fn queued_item(id: &str) -> serde_json::Value {
+        serde_json::json!({"id":id,"message":id,"enqueuedAt":"2026-10-16T00:00:00Z"})
+    }
+
+    #[test]
+    fn queued_admission_consumption_is_atomic_idempotent_and_survives_reopen() {
+        let path = temp_path("queued-admit");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let item = queued_item("input");
+        let bytes = serde_json::to_vec(&item).unwrap();
+        store
+            .queue_mutation("s", "enqueue", 1, 0, "enqueue", &bytes)
+            .unwrap();
+        let mut failed = store.clone();
+        failed.faults.disk_full = true;
+        assert!(matches!(
+            failed.admit_run_with_queue("s", "admit", "hash", "r", 1, 1, &bytes),
+            Err(StorageError::DiskFull)
+        ));
+        assert_eq!(ui_read(&store).queued_inputs, vec![item.clone()]);
+        assert!(store.receipt("s", "admit").unwrap().is_none());
+        failed.faults.disk_full = false;
+        failed.faults.ack_unknown_after_commit = true;
+        assert!(matches!(
+            failed.admit_run_with_queue("s", "admit", "hash", "r", 1, 1, &bytes),
+            Err(StorageError::Runtime(RuntimeError::DurabilityUnknown(_)))
+        ));
+        drop(failed);
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        let retry = store
+            .admit_run_with_queue("s", "admit", "hash", "r", 1, 1, &bytes)
+            .unwrap();
+        assert!(retry.reused);
+        assert_eq!(store.snapshot("s").unwrap().cursor, 2);
+        assert_eq!(
+            store.snapshot("s").unwrap().active_run_id.as_deref(),
+            Some("r")
+        );
+        assert!(ui_read(&store).queued_inputs.is_empty());
+        assert!(ui_read(&store).pending_queue_input.is_none());
+        assert_eq!(store.replay("s", 0).unwrap().len(), 2);
+        let mut changed = item;
+        changed["message"] = serde_json::json!("changed");
+        assert!(matches!(
+            store.admit_run_with_queue(
+                "s",
+                "admit",
+                "hash",
+                "r",
+                1,
+                1,
+                &serde_json::to_vec(&changed).unwrap()
+            ),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn forced_delivery_and_ack_are_durable_and_fenced() {
+        let path = temp_path("queued-delivery");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "admit", "hash", "r", 1, 0).unwrap();
+        store
+            .queue_mutation(
+                "s",
+                "enqueue",
+                1,
+                1,
+                "enqueue",
+                &serde_json::to_vec(&queued_item("q")).unwrap(),
+            )
+            .unwrap();
+        store
+            .queue_mutation("s", "force", 1, 2, "force", br#"{"id":"q"}"#)
+            .unwrap();
+        assert!(
+            store
+                .queue_mutation(
+                    "s",
+                    "wrong",
+                    1,
+                    3,
+                    "consume",
+                    br#"{"id":"q","runId":"wrong"}"#
+                )
+                .is_err()
+        );
+        let receipt = store
+            .queue_mutation(
+                "s",
+                "consume",
+                1,
+                3,
+                "consume",
+                br#"{"id":"q","runId":"r"}"#,
+            )
+            .unwrap();
+        assert_eq!(receipt.queue.consumed.unwrap()["id"], "q");
+        assert!(receipt.queue.items.is_empty());
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        assert_eq!(
+            ui_read(&store).pending_queue_input.as_ref().unwrap()["item"]["id"],
+            "q"
+        );
+        assert!(
+            store
+                .queue_mutation(
+                    "s",
+                    "wrong-ack",
+                    1,
+                    4,
+                    "ack_consume",
+                    br#"{"id":"q","runId":"wrong"}"#
+                )
+                .is_err()
+        );
+        store
+            .queue_mutation(
+                "s",
+                "ack",
+                1,
+                4,
+                "ack_consume",
+                br#"{"id":"q","runId":"r"}"#,
+            )
+            .unwrap();
+        assert!(
+            store
+                .queue_mutation(
+                    "s",
+                    "ack",
+                    1,
+                    4,
+                    "ack_consume",
+                    br#"{"id":"q","runId":"r"}"#
+                )
+                .unwrap()
+                .reused
+        );
+        assert!(ui_read(&store).pending_queue_input.is_none());
+        assert_eq!(store.snapshot("s").unwrap().cursor, 4);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn queue_bounds_conflicts_and_noops_do_not_change_committed_state() {
+        let path = temp_path("queue-bounds");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        for index in 0..20 {
+            store
+                .queue_mutation(
+                    "s",
+                    &format!("e{index}"),
+                    1,
+                    index,
+                    "enqueue",
+                    &serde_json::to_vec(&queued_item(&format!("q{index}"))).unwrap(),
+                )
+                .unwrap();
+        }
+        assert!(
+            store
+                .queue_mutation(
+                    "s",
+                    "full",
+                    1,
+                    20,
+                    "enqueue",
+                    &serde_json::to_vec(&queued_item("q20")).unwrap()
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .queue_mutation(
+                    "s",
+                    "bad-id",
+                    1,
+                    20,
+                    "enqueue",
+                    br#"{"id":"","message":"x","enqueuedAt":"2026-10-16T00:00:00Z"}"#
+                )
+                .is_err()
+        );
+        let boundary = store
+            .queue_mutation(
+                "s",
+                "boundary",
+                1,
+                20,
+                "move",
+                br#"{"id":"q0","direction":"up"}"#,
+            )
+            .unwrap();
+        assert!(boundary.event.is_none());
+        assert_eq!(boundary.snapshot.cursor, 20);
+        assert!(matches!(
+            store.queue_mutation(
+                "s",
+                "e0",
+                1,
+                0,
+                "enqueue",
+                &serde_json::to_vec(&queued_item("changed")).unwrap()
+            ),
+            Err(StorageError::Runtime(RuntimeError::RequestConflict))
+        ));
+        assert_eq!(ui_read(&store).queued_inputs.len(), 20);
+        assert_eq!(store.snapshot("s").unwrap().revision, 20);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn queue_command_is_persisted_fenced_and_idempotent_across_reopen() {
+        let path = temp_path("queue-command");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let item = serde_json::json!({ "id":"inq_1", "message":"queued", "enqueuedAt":"2026-10-16T00:00:00Z" });
+        let first = store
+            .queue_mutation_async(
+                "s".into(),
+                "q1".into(),
+                1,
+                0,
+                "enqueue".into(),
+                serde_json::to_vec(&item).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.queue.items.len(), 1);
+        let retry = store
+            .queue_mutation_async(
+                "s".into(),
+                "q1".into(),
+                1,
+                0,
+                "enqueue".into(),
+                serde_json::to_vec(&item).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retry.queue, first.queue);
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        let moved = store
+            .queue_mutation_async(
+                "s".into(),
+                "q2".into(),
+                1,
+                1,
+                "force".into(),
+                br#"{"id":"inq_1"}"#.to_vec(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(moved.queue.force_inject_item_id.as_deref(), Some("inq_1"));
+        assert_eq!(
+            store
+                .queue_mutation_async(
+                    "s".into(),
+                    "q2".into(),
+                    1,
+                    1,
+                    "force".into(),
+                    br#"{"id":"inq_1"}"#.to_vec()
+                )
+                .await
+                .unwrap()
+                .queue
+                .force_inject_item_id
+                .as_deref(),
+            Some("inq_1")
+        );
+        assert!(matches!(
+            store
+                .queue_mutation_async(
+                    "s".into(),
+                    "q3".into(),
+                    1,
+                    1,
+                    "remove".into(),
+                    br#"{"id":"inq_1"}"#.to_vec()
+                )
+                .await,
+            Err(StorageError::Runtime(RuntimeError::RevisionConflict { .. }))
+        ));
+        assert!(matches!(
+            store
+                .queue_mutation_async(
+                    "s".into(),
+                    "q3".into(),
+                    2,
+                    2,
+                    "remove".into(),
+                    br#"{"id":"inq_1"}"#.to_vec()
+                )
+                .await,
+            Err(StorageError::Runtime(RuntimeError::StaleEpoch { .. }))
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
     #[test]
     fn append_retry_returns_the_original_receipt_after_reopen_and_completion() {
         let path = temp_path("append-receipt");
@@ -1776,7 +2363,15 @@ mod tests {
         let store = HotStore::open(&path).unwrap();
         assert_eq!(store.snapshot_async("s".into()).await.unwrap().cursor, 0);
         store
-            .admit_run_async("s".into(), "req".into(), "hash".into(), "r".into(), 1, 0)
+            .admit_run_async(
+                "s".into(),
+                "req".into(),
+                "hash".into(),
+                "r".into(),
+                1,
+                0,
+                Vec::new(),
+            )
             .await
             .unwrap();
         let snapshot = store.snapshot_async("s".into()).await.unwrap();

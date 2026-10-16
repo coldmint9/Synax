@@ -118,7 +118,7 @@ describe("headless Run coordinator", () => {
     inputQueueService.enqueue(session.id, { message: "Third" });
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     expect(inputQueueService.list(session.id)).toHaveLength(2);
-    expect(coordinator.dispatchQueuedInput(session.id)).toBe(false);
+    expect(await coordinator.dispatchQueuedInput(session.id)).toBe(false);
     release();
     await coordinator.waitForIdle();
     expect(execute.mock.calls.map((call) => call[2].message)).toEqual([
@@ -277,7 +277,7 @@ describe("headless Run coordinator", () => {
       "Later",
     );
     expect(inputQueueService.list(session.id)).toHaveLength(1);
-    expect(coordinator.dispatchQueuedInput(session.id)).toBe(false);
+    expect(await coordinator.dispatchQueuedInput(session.id)).toBe(false);
   });
 
   it("dispatches an input arriving after completion and does not submit it twice", async () => {
@@ -286,8 +286,8 @@ describe("headless Run coordinator", () => {
     release();
     await coordinator.waitForIdle();
     inputQueueService.enqueue(session.id, { message: "Late input" });
-    expect(coordinator.dispatchQueuedInput(session.id)).toBe(true);
-    expect(coordinator.dispatchQueuedInput(session.id)).toBe(false);
+    expect(await coordinator.dispatchQueuedInput(session.id)).toBe(true);
+    expect(await coordinator.dispatchQueuedInput(session.id)).toBe(false);
     await coordinator.waitForIdle();
     expect(execute.mock.calls.map((call) => call[2].message)).toEqual([
       "Original",
@@ -307,14 +307,14 @@ describe("headless Run coordinator", () => {
         throw new Error("Queue write failed");
       });
     try {
-      expect(coordinator.dispatchQueuedInput(session.id)).toBe(false);
+      expect(await coordinator.dispatchQueuedInput(session.id)).toBe(false);
       expect(inputQueueService.list(session.id)).toHaveLength(1);
       expect(agentRuntimeStore.listRuns(session.id)).toHaveLength(1);
       expect(agentRuntimeStore.getSession(session.id).status).toBe("completed");
     } finally {
       take.mockRestore();
     }
-    expect(coordinator.dispatchQueuedInput(session.id)).toBe(true);
+    expect(await coordinator.dispatchQueuedInput(session.id)).toBe(true);
     await coordinator.waitForIdle();
     expect(execute).toHaveBeenCalledTimes(2);
   });

@@ -19,6 +19,7 @@
 | run 生命周期 | 新增 finish_run Protobuf，原子完成 run/清除 active/推进 epoch 与 revision/写 receipt；旧 run 写入被拒绝；重试旧 receipt 不复活 run | stop/resume/recovery/lease 的完整状态机仍未完成 |
 | Node 执行接入 | Unix control connection 复用、每连接/全局有界并发、关闭排空、握手与 health 校验、断线重连；append receipt 支持提交后确认丢失的幂等重试；coordinator 在执行前 await Rust admission，流写入固定 admission epoch 并按 producer 顺序排队，收尾等待写入并完成 run；受控 driver 连续两轮真实 Node→Rust smoke | submit 本身和业务 session/run 记录仍依赖 SQLite；其它 embedded/backend 路径仍需统一；不是纯 Rust admission |
 | 实时数据 | 已接入 ticket/preload/原生 WS、流控/重连；Rust 物化 UI 快照与事件在同一 WriteBatch 提交，首次快照由 WS 读取；真实崩溃后 supervisor 与 UI 可恢复 | 首次空会话元数据仍从 Node seed；session 元数据修改/permission/control 尚未全量迁移；完整 session/lease 恢复未完成 |
+| 输入队列 | authoritative 模式已改为 Rust 队列；HTTP/自动续跑/goal continuation/force/loop 走异步边界；队列消费与 admission 原子提交 | 旧 session/run/消息行仍为 SQLite，跨 run 未确认 delivery 的恢复界面与离线迁移未完成 |
 | 历史与数据迁移 | 只有 runtime-hot 实现；canonical events 仍受 1024 条保留窗口限制 | runtime-history、CAS、pins/checkpoints、fork/rollback、GC、离线导入 |
 | 旧链路移除 | 尚未执行 | 删除 runtime SQLite、storage owner/journal writer 会话路径、多模式历史和双游标 |
 
@@ -80,7 +81,18 @@
 - 真实 lifecycle、finish 后 abort/restart、Electron online completion、旧 receipt、错误回滚和 blocked terminal 测试均通过；Rust 测试扩展到 45 项。
 - SQLite 仍作为 Node compatibility read model；permission/interaction/input queue/stop/resume/history 写路径还未全部迁移。
 
-后续顺序：推进 session/run/control 的异步 Rust repository，把剩余 session 元数据写入/permission/interaction/stop/resume 迁成 Rust command；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
+2026-10-16 第七轮：Rust input queue cutover
+
+- `ui_projections` 保存最多 20 条 / 512 KiB 的 input queue、force marker、queue revision 和未确认 delivery。queue 更新生成 `input_queue_changed` canonical event，并与 session revision、projection、receipt 同一 WriteBatch 提交。
+- 私有 IPC `queue_read`/`queue_mutation` 已接通；支持 enqueue/remove/move/force/clear_force/consume/ack_consume、幂等 request receipt 和 epoch/revision 校验。越界 reorder 沿用原有 no-op 语义，队列满/无效项不会提交。
+- authoritative 模式的 HTTP、coordinator、goal continuation、loop 和 work.yield 均通过 `inputQueueRuntime` 异步接口。Rust 是队列唯一读写源；旧同步 `inputQueueService` 被显式禁止。非 cutover 模式保留旧实现，尚未全项目默认切换。
+- coordinator 将选中 item 放入已接受 run 的 runtime metadata；Rust admission 校验该 item 与持久队列一致，在同一 WriteBatch 消费并保存 admission receipt。失败时队列仍保留，提交后确认丢失时 receipt 可恢复且不重复消费。
+- 强制输入采用 durable delivery → 本地消息保存 → ACK，使用确定性消息 ID 防止重复插入。中断/重启后可重取未确认 delivery；若该 delivery 的 run 已经终止，当前会保留恢复阻塞，尚需接入完整跨 host/lease recovery UI。
+- 前端从 Rust canonical queue event 刷新队列，即使消费发生在 admission 而不是 Node HTTP 请求中也能更新。
+- 验证：51 项 Rust 测试；最终 Node/domain 套件 152 项（含 loop suite 74 项）通过；27 项前端相关测试通过。真实 queue smoke 覆盖 HTTP、排序、重启、原子 admission 消费、FIFO coordinator、forced delivery 恢复/重复 ACK，并断言 SQLite 无 inputQueue/inputForceInjectId 写入。该 smoke 使用受控执行器，没有外部模型。最终服务器注入边界补测 77 项（含 loop 74 项）通过；重建的 Electron 44 arm64 应用、业务会话 preload→Rust 快照/订阅、退出清理和 codesign 校验通过；打包复用了本机已校验的 Electron 44.8.0 缓存 zip。
+- 剩余边界：run admission 的 Node 预检/业务行仍在 SQLite，媒体引用和输入消息内容也尚未迁移；旧数据 offline import、permission/interaction/stop/resume、history/CAS、Windows 和吞吐验证未完成。
+
+后续顺序：推进 session/run/control 的异步 Rust repository，把剩余 session 元数据写入/permission/interaction/stop/resume 迁成 Rust command，完成旧数据和未确认 delivery 恢复；接入所有执行后端和故障恢复；实现 history 与迁移；删除旧实现；最后执行真实业务、故障、吞吐的全量验收。任何阶段未验收都不得标记整体完成。
 
 ## 总目标
 

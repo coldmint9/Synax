@@ -748,6 +748,7 @@ export interface CompactionRecord {
 }
 
 export type AgentRunStreamChunk =
+  | { type: "input_queue_changed"; sessionId: string; queueSize: number; queueRevision: number; forceInjectItemId: string | null }
   | { type: "run_activated"; run: AgentRun }
   | { type: "run_finished"; runId: string; run?: AgentRun }
   | {

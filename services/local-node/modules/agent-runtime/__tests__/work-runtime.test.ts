@@ -203,18 +203,12 @@ describe("incremental goal acceptance gates", () => {
 });
 
 describe("durable cooperative work runtime", () => {
-  it("keeps ordinary queued input waiting across an approved goal round handoff", () => {
+  it("keeps ordinary queued input waiting across an approved goal round handoff", async () => {
     const { session, run } = setup();
     const items = inputQueueService.enqueue(session.id, {
       message: "Next independent task",
     });
-    expect(() =>
-      workRuntime.yieldRound(
-        input(session.id, run.id, {}),
-        "Continue the current task",
-        "Finish remaining work",
-      ),
-    ).not.toThrow();
+    await expect(workRuntime.yieldRound(input(session.id, run.id, {}), "Continue the current task", "Finish remaining work")).resolves.toBeDefined();
     store.updateSessionMetadata(session.id, {
       mode: "goal",
       goal: { objective: "Finish current task", status: "executing" },
@@ -255,15 +249,13 @@ describe("durable cooperative work runtime", () => {
     );
   });
 
-  it("requires a forced steering message to be processed before yielding", () => {
+  it("requires a forced steering message to be processed before yielding", async () => {
     const { session, run } = setup();
     const items = inputQueueService.enqueue(session.id, {
       message: "Change current direction",
     });
     inputQueueService.markForceInject(session.id, items[0].id);
-    expect(() =>
-      workRuntime.yieldRound(input(session.id, run.id, {}), "Pause"),
-    ).toThrow(/user input is waiting/i);
+    await expect(workRuntime.yieldRound(input(session.id, run.id, {}), "Pause")).rejects.toThrow(/user input is waiting/i);
   });
 
   it("reuses work and stall state across continue runs", () => {

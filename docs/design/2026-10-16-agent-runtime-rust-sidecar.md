@@ -323,6 +323,16 @@ control transport 为每连接 32 个任务、全局 128 个任务、8 MiB 响�
 
 `blocked` 是 terminal run status，但兼容 session projection 仍可映射为 completed；Rust run document 保留 blocked，projection 保留 blockedReason，active run fence 会释放，避免后续 turn 被 stale active run 卡住。SQLite 仍作为 Node compatibility read model；permission、interaction、input queue、stop/resume 和 history 写路径仍需迁移。
 
+### 6.6 Input queue boundary
+
+在 authoritative 模式，Rust 是 input queue 和 force marker 的唯一读写源。HTTP、coordinator、goal continuation、模型 loop/work.yield 统一使用异步 `inputQueueRuntime`，不会先写 SQLite metadata 或在 Rust 失败后回退旧队列。
+
+`queue_read`/`queue_mutation` 支持 bounded enqueue/remove/move/force/clear_force/consume/ack_consume。命令由 session actor 串行处理，携带 epoch/revision 和 request receipt；queue/projection/session revision/canonical event 一次 WriteBatch 提交。队列最多 20 条 / 512 KiB，projection 的总大小上限仍独立生效。
+
+队列转为新 run 时，admission 携带预备的完整 queue item；Rust 比对持久 item 后原子消费并持久化 receipt。模型执行中的 forced input 则先变为持久 delivery，Node 保存确定性 ID 的用户消息后 ACK；同一 run 重试可恢复 delivery，不会因消费与消息保存之间的崩溃丢输入。若 owner run 已终止，pending delivery 会阻止后续 admission，完整 recovery UI 仍待补齐。
+
+非 authoritative 模式保留旧队列实现；SQLite run/session 业务行、媒体引用和输入消息存储尚未迁出，因此不能称为整个 runtime 已完成去 SQLite。
+
 ## 7. Node 侧职责调整
 
 新增：

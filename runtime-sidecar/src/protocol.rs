@@ -54,7 +54,7 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37"
     )]
     pub body: Option<wire_envelope::Body>,
 }
@@ -63,16 +63,22 @@ pub mod wire_envelope {
     use super::{
         WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireCredit, WireError,
         WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
-        WirePing, WirePong, WireReady, WireReplay, WireRunAdmission, WireSeedUi, WireShutdown,
-        WireSnapshot, WireSnapshotResponse, WireSubscribe, WireTicket, WireUiSnapshot,
-        WireUiSnapshotResponse,
+        WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady,
+        WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot, WireSnapshotResponse,
+        WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse,
     };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "36")]
+        QueueRead(WireQueueRead),
+        #[prost(message, tag = "37")]
+        QueueState(WireQueueState),
         #[prost(message, tag = "34")]
         ActivateRun(WireActivateRun),
+        #[prost(message, tag = "35")]
+        QueueMutation(WireQueueMutation),
         #[prost(message, tag = "31")]
         SeedUi(WireSeedUi),
         #[prost(message, tag = "32")]
@@ -139,6 +145,22 @@ pub struct WireActivateRun {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct WireQueueRead {}
+#[derive(Clone, PartialEq, Message)]
+pub struct WireQueueState {
+    #[prost(bytes = "vec", tag = "1")]
+    pub queue_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireQueueMutation {
+    #[prost(string, tag = "1")]
+    pub operation: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct WireSeedUi {
     #[prost(bytes = "vec", tag = "1")]
     pub session_json: Vec<u8>,
@@ -184,6 +206,8 @@ pub struct WireAdmitRun {
     pub body_hash: String,
     #[prost(string, tag = "2")]
     pub run_id: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub queue_item_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -361,6 +385,7 @@ mod tests {
             body: Some(wire_envelope::Body::AdmitRun(WireAdmitRun {
                 body_hash: "hash".to_owned(),
                 run_id: "run-1".to_owned(),
+                queue_item_json: Vec::new(),
             })),
         };
         let decoded = decode_wire(&encode_wire(&envelope)).unwrap();

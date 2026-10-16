@@ -62,7 +62,12 @@ function readQueue(
   return parsed.success ? parsed.data : [];
 }
 
+function assertLegacyQueue(): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') throw new Error('Synchronous SQLite input queue is disabled; use inputQueueRuntime.');
+}
+
 function writeQueue(sessionId: string, items: QueuedInput[]): QueuedInput[] {
+  assertLegacyQueue();
   agentRuntimeStore.updateSessionMetadata(sessionId, {
     [INPUT_QUEUE_METADATA_KEY]: items,
   });
@@ -75,6 +80,7 @@ function writeQueue(sessionId: string, items: QueuedInput[]): QueuedInput[] {
 }
 
 function assertSessionExists(sessionId: string): void {
+  assertLegacyQueue();
   agentRuntimeStore.getSession(sessionId);
 }
 
@@ -182,6 +188,7 @@ export const inputQueueService = {
   },
 
   getForceInjectId(sessionId: string): string | null {
+    assertLegacyQueue();
     const session = agentRuntimeStore.getSession(sessionId);
     return readForceInjectId(session.sessionMetadata);
   },
@@ -207,6 +214,7 @@ export const inputQueueService = {
   },
 
   clearForceInject(sessionId: string): void {
+    assertLegacyQueue();
     return runtimeTransaction(() => {
       agentRuntimeStore.updateSessionMetadata(sessionId, {
         [FORCE_INJECT_METADATA_KEY]: null,

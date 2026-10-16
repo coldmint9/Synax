@@ -1,6 +1,7 @@
 //! UI materialization committed in the same batch as its canonical stream cursor.
 //! Session metadata is seeded once by the host during the repository cutover.
 use crate::actor::{PendingEvent, RuntimeError};
+use crate::input_queue::QueueState;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -29,6 +30,14 @@ pub struct UiSnapshot {
     pub cursor: u64,
     pub live_chunks: Vec<Value>,
     pub completed_step_ids: Vec<String>,
+    #[serde(default)]
+    pub queued_inputs: Vec<Value>,
+    #[serde(default)]
+    pub force_inject_item_id: Option<String>,
+    #[serde(default)]
+    pub queue_revision: u64,
+    #[serde(default)]
+    pub pending_queue_input: Option<Value>,
 }
 impl UiSnapshot {
     pub fn seed(session_id: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
@@ -53,7 +62,48 @@ impl UiSnapshot {
             cursor: 0,
             live_chunks: vec![],
             completed_step_ids: vec![],
+            queued_inputs: vec![],
+            force_inject_item_id: None,
+            queue_revision: 0,
+            pending_queue_input: None,
         };
+        let items = snapshot
+            .session
+            .pointer("/sessionMetadata/inputQueue")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value::<Vec<Value>>(value.clone()))
+            .transpose()
+            .map_err(|_| RuntimeError::InvalidCommand("invalid seed input queue".into()))?
+            .unwrap_or_default();
+        let force = snapshot
+            .session
+            .pointer("/sessionMetadata/inputForceInjectId")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| RuntimeError::InvalidCommand("invalid seed force marker".into()))
+            })
+            .transpose()?;
+        let queue = QueueState {
+            items,
+            force_inject_item_id: force,
+            ..Default::default()
+        };
+        queue.validate()?;
+        snapshot.set_queue(&queue);
+        snapshot.session["pendingResumeToken"] = snapshot
+            .session
+            .get("pendingResumeToken")
+            .cloned()
+            .unwrap_or(Value::Null);
+        snapshot.session["blockedReason"] = snapshot
+            .session
+            .get("blockedReason")
+            .cloned()
+            .unwrap_or(Value::Null);
         snapshot.session["activeRunId"] = Value::Null;
         snapshot.encode()?;
         Ok(snapshot)
@@ -65,6 +115,41 @@ impl UiSnapshot {
             return Err(RuntimeError::ProjectionTooLarge);
         }
         Ok(bytes)
+    }
+
+    pub fn queue(&self) -> QueueState {
+        QueueState {
+            items: self.queued_inputs.clone(),
+            force_inject_item_id: self.force_inject_item_id.clone(),
+            revision: self.queue_revision,
+            consumed: None,
+            delivery: self.pending_queue_input.clone(),
+        }
+    }
+    pub fn set_queue(&mut self, queue: &QueueState) {
+        self.queued_inputs = queue.items.clone();
+        self.force_inject_item_id = queue.force_inject_item_id.clone();
+        self.queue_revision = queue.revision;
+        self.pending_queue_input = queue.delivery.clone();
+        // One source in the persisted projection, with legacy field names for existing UI readers.
+        if !self.session["sessionMetadata"].is_object() {
+            self.session["sessionMetadata"] = json!({});
+        }
+        self.session["sessionMetadata"]["inputQueue"] = json!(queue.items);
+        self.session["sessionMetadata"]["inputForceInjectId"] = json!(queue.force_inject_item_id);
+    }
+    pub fn queue_mutation(
+        &mut self,
+        operation: &str,
+        payload: &[u8],
+    ) -> Result<(QueueState, bool), RuntimeError> {
+        let payload = serde_json::from_slice(payload)
+            .map_err(|_| RuntimeError::InvalidCommand("invalid queue JSON".into()))?;
+        let mut queue = self.queue();
+        let changed = queue.apply(operation, &payload)?;
+        self.set_queue(&queue);
+        self.encode()?;
+        Ok((queue, changed))
     }
     pub fn admitted(&mut self, run_id: &str) {
         if self.run["id"].as_str() != Some(run_id) {
@@ -314,6 +399,38 @@ mod tests {
                         "running"
                     )
                 )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn queue_mutations_are_bounded_ordered_and_force_inject_is_atomic() {
+        let mut snapshot = snapshot();
+        let first = json!({ "id":"inq_1", "message":"first", "enqueuedAt":"2026-10-16T00:00:00Z" });
+        let second =
+            json!({ "id":"inq_2", "message":"second", "enqueuedAt":"2026-10-16T00:00:01Z" });
+        snapshot
+            .queue_mutation("enqueue", &serde_json::to_vec(&first).unwrap())
+            .unwrap();
+        snapshot
+            .queue_mutation("enqueue", &serde_json::to_vec(&second).unwrap())
+            .unwrap();
+        snapshot
+            .queue_mutation("move", br#"{"id":"inq_2","toIndex":0}"#)
+            .unwrap();
+        assert_eq!(snapshot.queued_inputs[0]["id"], "inq_2");
+        snapshot
+            .queue_mutation("force", br#"{"id":"inq_1"}"#)
+            .unwrap();
+        assert_eq!(snapshot.force_inject_item_id.as_deref(), Some("inq_1"));
+        snapshot
+            .queue_mutation("consume", br#"{"id":"inq_1","runId":"r"}"#)
+            .unwrap();
+        assert!(snapshot.force_inject_item_id.is_none());
+        assert_eq!(snapshot.queued_inputs.len(), 1);
+        assert!(
+            snapshot
+                .queue_mutation("remove", br#"{"id":"missing"}"#)
                 .is_err()
         );
     }

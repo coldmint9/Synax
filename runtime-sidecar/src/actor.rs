@@ -35,6 +35,8 @@ pub struct RunAdmission {
     pub epoch: u64,
     pub revision: u64,
     pub reused: bool,
+    #[serde(default)]
+    pub queue_event: Option<StreamEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +93,7 @@ pub enum CommandResult {
     Snapshot(SessionSnapshot),
     Replay(Vec<StreamEvent>),
     UiSnapshot(Vec<u8>),
+    QueueState(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +115,7 @@ enum ActorCommand {
         session_id: String,
         request_id: String,
         body_hash: String,
+        queue_item: Vec<u8>,
         run_id: String,
         epoch: u64,
         expected_revision: u64,
@@ -148,6 +152,19 @@ enum ActorCommand {
     UiSnapshot {
         session_id: String,
         seed: Option<Vec<u8>>,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    QueueRead {
+        session_id: String,
+        response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
+    },
+    QueueMutation {
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
         response: oneshot::Sender<Result<CommandResult, RuntimeError>>,
     },
     Snapshot {
@@ -412,6 +429,7 @@ impl SessionShardRouter {
         })
     }
 
+    #[cfg(test)]
     pub async fn admit_run(
         &self,
         session_id: impl Into<String>,
@@ -419,7 +437,29 @@ impl SessionShardRouter {
         body_hash: impl Into<String>,
         run_id: impl Into<String>,
         epoch: u64,
+        revision: u64,
+    ) -> Result<RunAdmission, RuntimeError> {
+        self.admit_run_with_queue(
+            session_id,
+            request_id,
+            body_hash,
+            run_id,
+            epoch,
+            revision,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn admit_run_with_queue(
+        &self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
+        body_hash: impl Into<String>,
+        run_id: impl Into<String>,
+        epoch: u64,
         expected_revision: u64,
+        queue_item: Vec<u8>,
     ) -> Result<RunAdmission, RuntimeError> {
         let session_id = session_id.into();
         let (response, receiver) = oneshot::channel();
@@ -429,6 +469,7 @@ impl SessionShardRouter {
                 session_id: session_id.clone(),
                 request_id: request_id.into(),
                 body_hash: body_hash.into(),
+                queue_item,
                 run_id: run_id.into(),
                 epoch,
                 expected_revision,
@@ -607,6 +648,52 @@ impl SessionShardRouter {
         }
     }
 
+    pub async fn queue_read(&self, session_id: String) -> Result<Vec<u8>, RuntimeError> {
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::QueueRead {
+                session_id: session_id.clone(),
+                response,
+            },
+        )?;
+        match result.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::QueueState(bytes) => Ok(bytes),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected queue response".into(),
+            )),
+        }
+    }
+    pub async fn queue_mutation(
+        &self,
+        session_id: String,
+        request_id: String,
+        epoch: u64,
+        revision: u64,
+        operation: String,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let (response, result) = oneshot::channel();
+        self.dispatch(
+            &session_id,
+            ActorCommand::QueueMutation {
+                session_id: session_id.clone(),
+                request_id,
+                epoch,
+                revision,
+                operation,
+                payload,
+                response,
+            },
+        )?;
+        match result.await.map_err(|_| RuntimeError::SessionClosed)?? {
+            CommandResult::QueueState(bytes) => Ok(bytes),
+            _ => Err(RuntimeError::InvalidCommand(
+                "unexpected queue mutation response".into(),
+            )),
+        }
+    }
+
     pub async fn snapshot(
         &self,
         session_id: impl Into<String>,
@@ -708,6 +795,7 @@ async fn run_shard(
                 session_id,
                 request_id,
                 body_hash,
+                queue_item,
                 run_id,
                 epoch,
                 expected_revision,
@@ -733,6 +821,7 @@ async fn run_shard(
                             run_id.clone(),
                             epoch,
                             expected_revision,
+                            queue_item,
                         )
                         .await
                     {
@@ -742,6 +831,14 @@ async fn run_shard(
                                     .get_mut(&session_id)
                                     .unwrap()
                                     .sync_snapshot(&snapshot);
+                                if !admission.reused {
+                                    if let Some(event) = &admission.queue_event {
+                                        let shared = Arc::new(event.clone());
+                                        sessions.get_mut(&session_id).unwrap().subscribers.retain(
+                                            |sender| sender.try_send(shared.clone()).is_ok(),
+                                        );
+                                    }
+                                }
                                 Ok(admission)
                             }
                             Err(error) => {
@@ -758,6 +855,10 @@ async fn run_shard(
                             Err(storage_error_to_runtime(error))
                         }
                     }
+                } else if !queue_item.is_empty() {
+                    Err(RuntimeError::StorageUnavailable(
+                        "queue admission requires RocksDB".into(),
+                    ))
                 } else {
                     admit_run(
                         sessions.get_mut(&session_id).unwrap(),
@@ -979,6 +1080,82 @@ async fn run_shard(
                 };
                 let _ = response.send(result.map(CommandResult::UiSnapshot));
             }
+            ActorCommand::QueueRead {
+                session_id,
+                response,
+            } => {
+                let result = match store.as_ref() {
+                    Some(store) => store
+                        .queue_read_async(session_id)
+                        .await
+                        .map_err(storage_error_to_runtime),
+                    None => Err(RuntimeError::StorageUnavailable(
+                        "queue requires persistent storage".into(),
+                    )),
+                };
+                let _ = response.send(result.map(CommandResult::QueueState));
+            }
+            ActorCommand::QueueMutation {
+                session_id,
+                request_id,
+                epoch,
+                revision,
+                operation,
+                payload,
+                response,
+            } => {
+                let result = match store.as_ref() {
+                    Some(store) => {
+                        match ensure_session_state(
+                            &mut sessions,
+                            &session_id,
+                            event_retention,
+                            Some(store),
+                        )
+                        .await
+                        {
+                            Err(error) => Err(error),
+                            Ok(()) => match store
+                                .queue_mutation_async(
+                                    session_id.clone(),
+                                    request_id,
+                                    epoch,
+                                    revision,
+                                    operation,
+                                    payload,
+                                )
+                                .await
+                            {
+                                Ok(receipt) => {
+                                    if !receipt.reused {
+                                        let state = sessions.get_mut(&session_id).unwrap();
+                                        state.sync_snapshot(&receipt.snapshot);
+                                        if let Some(event) = receipt.event {
+                                            let event = Arc::new(event);
+                                            state.subscribers.retain(|subscriber| {
+                                                subscriber.try_send(event.clone()).is_ok()
+                                            });
+                                        }
+                                    }
+                                    serde_json::to_vec(&receipt.queue).map_err(|error| {
+                                        RuntimeError::StorageUnavailable(error.to_string())
+                                    })
+                                }
+                                Err(error) => {
+                                    if storage_state_uncertain(&error) {
+                                        sessions.remove(&session_id);
+                                    }
+                                    Err(storage_error_to_runtime(error))
+                                }
+                            },
+                        }
+                    }
+                    None => Err(RuntimeError::StorageUnavailable(
+                        "queue mutations require persistent storage".into(),
+                    )),
+                };
+                let _ = response.send(result.map(CommandResult::QueueState));
+            }
             ActorCommand::Snapshot {
                 session_id,
                 response,
@@ -1185,6 +1362,7 @@ fn admit_run(
         epoch: state.epoch,
         revision: state.revision,
         reused: false,
+        queue_event: None,
     };
     state.receipts.insert(
         request_key,
@@ -1485,6 +1663,59 @@ mod tests {
             drop(store);
             let _ = std::fs::remove_dir_all(path);
         }
+    }
+
+    #[tokio::test]
+    async fn queue_updates_fan_out_once_and_do_not_rewind_actor_state_on_receipt_retry() {
+        let path = std::env::temp_dir().join(format!("synax-queue-actor-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(HotStore::open(&path).unwrap());
+        let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
+        router
+            .ui_snapshot(
+                "s".into(),
+                Some(
+                    br#"{"id":"s","projectId":"p","status":"queued","updatedAt":"2026-10-16"}"#
+                        .to_vec(),
+                ),
+            )
+            .await
+            .unwrap();
+        let (_, _, mut live) = router.subscribe("s", 0).await.unwrap();
+        let item = br#"{"id":"q","message":"queued","enqueuedAt":"2026-10-16T00:00:00Z"}"#.to_vec();
+        router
+            .queue_mutation(
+                "s".into(),
+                "enqueue".into(),
+                1,
+                0,
+                "enqueue".into(),
+                item.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(live.recv().await.unwrap().sequence, 1);
+        router
+            .queue_mutation(
+                "s".into(),
+                "force".into(),
+                1,
+                1,
+                "force".into(),
+                br#"{"id":"q"}"#.to_vec(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(live.recv().await.unwrap().sequence, 2);
+        router
+            .queue_mutation("s".into(), "enqueue".into(), 1, 0, "enqueue".into(), item)
+            .await
+            .unwrap();
+        assert!(live.try_recv().is_err());
+        assert_eq!(router.snapshot("s").await.unwrap().revision, 2);
+        drop(router);
+        tokio::task::yield_now().await;
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[tokio::test]

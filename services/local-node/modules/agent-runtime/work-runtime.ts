@@ -7,7 +7,7 @@ import { agentRuntimeStore as store } from './session-store.js';
 import { workStore, type WorkRecord, type WorkEvidence } from './work-store.js';
 import { TaskStore } from './tools/task-tools.js';
 import { interactionService } from './interaction-service.js';
-import { inputQueueService } from './input-queue-service.js';
+import { inputQueueRuntime as inputQueueService } from './input-queue-runtime.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { completeGoalCheckpoint } from './goal-completion.js';
 import { getGoalState, mergeGoalEvidence } from './goal-control.js';
@@ -262,7 +262,7 @@ class WorkRuntime {
     return workStore.save(work);
   }
 
-  yieldRound(input: ToolExecutionInput, summary: string, nextAction?: string): ToolExecutionResult {
+  async yieldRound(input: ToolExecutionInput, summary: string, nextAction?: string): Promise<ToolExecutionResult> {
     const work = workStore.current(input.sessionId);
     const session = store.getSession(input.sessionId);
     if (!work || !input.runId || !input.stepId || session.activeRunId !== input.runId || session.status !== 'running')
@@ -270,7 +270,7 @@ class WorkRuntime {
     if (TERMINAL.has(work.status))
       throw new AgentValidationError('A terminal work cannot yield another round.');
     if (!summary.trim()) throw new AgentValidationError('Report completed work, remaining work and the next action before yielding.');
-    if (inputQueueService.getForceInjectId(input.sessionId))
+    if (await inputQueueService.getForceInjectId(input.sessionId))
       throw new AgentValidationError('New user input is waiting. Process it before yielding this round.');
     if (this.pendingChildren(work) || interactionService.pending(input.sessionId))
       throw new AgentValidationError('Resolve active children and pending interactions before yielding the round.');

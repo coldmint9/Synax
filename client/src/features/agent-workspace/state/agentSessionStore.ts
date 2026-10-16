@@ -2647,6 +2647,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "input_queue_changed": {
+          void get().loadInputQueue(event.sessionId);
+          break;
+        }
         case "runtime_snapshot": {
           if (!streamVisible || get().selectedSessionId !== event.sessionId)
             break;

@@ -3,6 +3,7 @@ mod commit;
 mod completion;
 mod control;
 mod flow;
+mod input_queue;
 mod projection;
 mod protocol;
 mod storage;

@@ -78,26 +78,30 @@ export class RuntimeFacade {
     }
     try {
       if (authoritative) await this.ensureUiProjection(input.sessionId);
-      const state = await client.snapshot(input.sessionId);
-      const admission = await client.admitRun({
-        sessionId: input.sessionId,
-        requestId: input.runtime.requestId,
-        bodyHash: input.runtime.inputHash,
-        runId: input.run.id,
-        epoch: state.epoch,
-        revision: state.revision,
-      });
+      let admission: Awaited<ReturnType<RuntimeSidecarClient['admitRun']>>;
+      for (let attempt = 0; ; attempt++) {
+        const state = await client.snapshot(input.sessionId);
+        try {
+          admission = await client.admitRun({ sessionId: input.sessionId, requestId: input.runtime.requestId,
+            bodyHash: input.runtime.inputHash, runId: input.run.id, epoch: state.epoch, revision: state.revision, queueItem: input.runtime.queueItem });
+          break;
+        } catch (error) {
+          if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+        }
+      }
       if (admission.runId !== input.run.id) throw new Error('Runtime admission returned a different run identity.');
       if (authoritative && input.run.status === 'queued') {
-        const activated = await client.activateRun({
-          requestId: `${input.runtime.requestId}:activate`,
-          sessionId: input.sessionId,
-          epoch: admission.epoch,
-          revision: admission.revision,
-          run: input.run,
-        });
-        if (activated.activeRunId !== input.run.id || activated.epoch !== admission.epoch) {
-          throw new Error('Runtime activation returned an invalid run fence.');
+        for (let attempt = 0; ; attempt++) {
+          const fence = await client.snapshot(input.sessionId);
+          if (fence.activeRunId !== input.run.id || fence.epoch !== admission.epoch) throw new Error('Runtime activation fence changed.');
+          try {
+            const activated = await client.activateRun({ requestId: `${input.runtime.requestId}:activate`, sessionId: input.sessionId,
+              epoch: fence.epoch, revision: fence.revision, run: input.run });
+            if (activated.activeRunId !== input.run.id || activated.epoch !== admission.epoch) throw new Error('Runtime activation returned an invalid run fence.');
+            break;
+          } catch (error) {
+            if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+          }
         }
       }
       const current = await client.snapshot(input.sessionId);
@@ -120,9 +124,11 @@ export class RuntimeFacade {
       return;
     }
     try {
-      const state = await client.snapshot(sessionId);
-      await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`,
-        status, epoch: state.epoch, revision: state.revision, run });
+      for (let attempt = 0; ; attempt++) {
+        const state = await client.snapshot(sessionId);
+        try { await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`, status, epoch: state.epoch, revision: state.revision, run }); break; }
+        catch (error) { if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error; }
+      }
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
@@ -134,9 +140,38 @@ export class RuntimeFacade {
     await this.uiSnapshotAuthoritative(sessionId);
   }
 
+  async queueMutation(input: {
+    sessionId: string; requestId: string;
+    operation: 'enqueue' | 'remove' | 'move' | 'force' | 'clear_force' | 'consume' | 'ack_consume'; payload?: unknown;
+  }): Promise<Uint8Array | null> {
+    if (streamMode() !== 'authoritative') return null;
+    await this.ensureUiProjection(input.sessionId);
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    for (let attempt = 0; ; attempt++) {
+      const snapshot = await client.snapshot(input.sessionId);
+      try { return await client.queueMutation({ ...input, epoch: snapshot.epoch, revision: snapshot.revision, payload: input.payload ?? null }); }
+      catch (error) {
+        // No write occurred on revision conflict; retry the same semantic command against fresh state.
+        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+      }
+    }
+  }
+  async queueSnapshot(sessionId: string): Promise<unknown> {
+    if (streamMode() !== 'authoritative') throw new Error('Runtime sidecar queue is not authoritative.');
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    try { return JSON.parse(Buffer.from(await client.queueRead(sessionId)).toString('utf8')); }
+    catch (error) {
+      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
+      await this.ensureUiProjection(sessionId);
+      return JSON.parse(Buffer.from(await client.queueRead(sessionId)).toString('utf8'));
+    }
+  }
+
   async uiSnapshotAuthoritative(sessionId: string): Promise<{
     session: AgentSession; run: AgentRun | null; cursor: number;
-    liveChunks: AgentRunStreamChunk[]; completedStepIds: string[];
+    liveChunks: AgentRunStreamChunk[]; completedStepIds: string[]; queuedInputs?: unknown[]; forceInjectItemId?: string | null;
   }> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');

@@ -139,7 +139,7 @@ import {
   CONTEXT_TOOL_CLEAR_KEEP_RECENT,
   CONTEXT_TOOL_CLEAR_EXCLUDE,
 } from "../../infrastructure/runtime/env.js";
-import { inputQueueService } from "./input-queue-service.js";
+import { inputQueueRuntime as inputQueueService } from "./input-queue-runtime.js";
 import { warmupMcpForSession } from "../../infrastructure/mcp/mcp-session-tool-provider.js";
 
 const LOG_TEXT_LIMIT = 2000;
@@ -968,7 +968,7 @@ export class AgentLoopRuntime {
               }),
             runAbortSignal,
           )) {
-            if (inputQueueService.getForceInjectId(sessionId)) {
+            if (await inputQueueService.getForceInjectId(sessionId)) {
               stepForceInjectRequested = true;
               break;
             }
@@ -1173,7 +1173,7 @@ export class AgentLoopRuntime {
           }
 
           const presentationCheck = modelResult.step.toolCalls.length === 0 &&
-            pendingPermission?.userReply !== "reject" && !inputQueueService.getForceInjectId(sessionId)
+            pendingPermission?.userReply !== "reject" && !(await inputQueueService.getForceInjectId(sessionId))
             ? checkPresentationCompletion(sessionId, modelResult.step.message ?? "")
             : undefined;
           if (presentationCheck) modelResult.step.message = presentationCheck.content;
@@ -1285,7 +1285,7 @@ export class AgentLoopRuntime {
 
           if (
             modelResult.step.toolCalls.length === 0 &&
-            inputQueueService.getForceInjectId(sessionId)
+            (await inputQueueService.getForceInjectId(sessionId))
           ) {
             const injected = await this.injectQueuedInput(sessionId, run);
             if (injected) {
@@ -1337,7 +1337,7 @@ export class AgentLoopRuntime {
               await waitForChildSessions(
                 sessionId,
                 runAbortSignal,
-                () => Boolean(inputQueueService.getForceInjectId(sessionId)),
+                async () => Boolean(await inputQueueService.getForceInjectId(sessionId)),
                 { store: this.store },
               );
               this.store.updateRunStep(step.id, {
@@ -1358,7 +1358,7 @@ export class AgentLoopRuntime {
                 usesGoalWorkflow(this.store.getSession(sessionId)) &&
                 shouldConverge(step.index, convergenceThreshold)
               ) {
-                workRuntime.yieldRound(
+                await workRuntime.yieldRound(
                   {
                     sessionId,
                     runId: run.id,
@@ -1508,7 +1508,7 @@ export class AgentLoopRuntime {
             return;
           }
 
-          if (inputQueueService.getForceInjectId(sessionId)) {
+          if (await inputQueueService.getForceInjectId(sessionId)) {
             this.store.updateRunStep(step.id, {
               status: "interrupted",
               completedAt: nowIso(),
@@ -1891,7 +1891,7 @@ export class AgentLoopRuntime {
           currentPrompt = prompt;
           pendingPermission = null;
 
-          if (inputQueueService.getForceInjectId(sessionId)) {
+          if (await inputQueueService.getForceInjectId(sessionId)) {
             const injected = await this.injectQueuedInput(sessionId, run);
             if (injected) {
               yield {
@@ -2439,22 +2439,23 @@ export class AgentLoopRuntime {
     userMessage: AgentRuntimeMessage;
     queueItemId: string;
   } | null> {
-    const queuedMessageId = makeRuntimeId("msg");
-    if (inputQueueService.getForceInjectId(sessionId))
+    const forcedId = await inputQueueService.getForceInjectId(sessionId);
+    const queuedMessageId = forcedId ? `msg-input:${run.id}:${forcedId}` : makeRuntimeId("msg");
+    if (forcedId)
       await captureCheckpoint(sessionId, "input", queuedMessageId);
-    const injected = runtimeTransaction(() => {
-      const item = inputQueueService.consumeForced(sessionId);
-      if (!item) return null;
-
+    const injected = await inputQueueService.withForcedInput(sessionId, run.id, forcedId, item => {
+      const deliveryMessageId = `msg-input:${run.id}:${item.id}`;
+      const previous = this.store.getMessage(sessionId, deliveryMessageId);
+      if (previous) return { message: item.message, model: item.model ?? null, userMessage: previous, queueItemId: item.id };
       this.store.updateRun(run.id, {
         metadata: {
           ...this.store.getRun(run.id).metadata,
           turnReferences: item.referenceContext ?? null,
-          turnReferenceInputId: queuedMessageId,
+          turnReferenceInputId: deliveryMessageId,
         },
       });
       const userMessage = this.store.appendMessage({
-        id: queuedMessageId,
+        id: deliveryMessageId,
         sessionId,
         runId: run.id,
         stepId: null,

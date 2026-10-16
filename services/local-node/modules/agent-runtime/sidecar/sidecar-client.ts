@@ -100,11 +100,12 @@ export class RuntimeSidecarClient {
     sessionId: string;
     requestId: string;
     bodyHash: string;
+    queueItem?: unknown;
     runId: string;
     epoch: number;
     revision: number;
   }): Promise<Extract<SidecarBody, { type: 'run_admission' }>> {
-    return this.request({ type: 'admit_run', bodyHash: input.bodyHash, runId: input.runId }, input.sessionId, input.epoch, input.revision, input.requestId)
+    return this.request({ type: 'admit_run', bodyHash: input.bodyHash, runId: input.runId, queueItemJson: input.queueItem ? new TextEncoder().encode(JSON.stringify(input.queueItem)) : undefined }, input.sessionId, input.epoch, input.revision, input.requestId)
       .then((envelope) => this.expect(envelope, 'run_admission'));
   }
 
@@ -145,6 +146,16 @@ export class RuntimeSidecarClient {
   async activateRun(input: { requestId?: string; sessionId: string; epoch: number; revision: number; run: unknown }): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
     return this.request({ type: 'activate_run', runJson: new TextEncoder().encode(JSON.stringify(input.run)) }, input.sessionId, input.epoch, input.revision, input.requestId)
       .then(envelope => this.expect(envelope, 'snapshot_response'));
+  }
+
+  async queueRead(sessionId: string): Promise<Uint8Array> {
+    return this.request({ type: 'queue_read' }, sessionId, 0, 0).then(envelope => this.expect(envelope, 'queue_state').queueJson);
+  }
+
+  async queueMutation(input: { sessionId: string; requestId: string; epoch: number; revision: number; operation: string; payload: unknown }): Promise<Uint8Array> {
+    return this.request({ type: 'queue_mutation', operation: input.operation,
+      payload: new TextEncoder().encode(JSON.stringify(input.payload)) }, input.sessionId, input.epoch, input.revision, input.requestId)
+      .then(envelope => this.expect(envelope, 'queue_state').queueJson);
   }
 
   async seedUi(sessionId: string, sessionJson: Uint8Array): Promise<Uint8Array> {

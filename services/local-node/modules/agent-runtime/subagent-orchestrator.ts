@@ -189,11 +189,11 @@ function reapUnresolvableChild(
 export async function waitForChildSessions(
   parentSessionId: string,
   abortSignal: AbortSignal,
-  shouldYield: () => boolean = () => false,
+  shouldYield: () => boolean | Promise<boolean> = () => false,
   deps: Pick<OrchestratorDeps, "store"> = defaultDeps,
 ): Promise<boolean> {
   let waited = false;
-  while (!shouldYield()) {
+  while (!(await shouldYield())) {
     if (abortSignal.aborted)
       throw abortSignal.reason ?? new Error("Parent aborted while waiting for subagents.");
     const children = deps.store.listSessionTree(parentSessionId).filter(child =>

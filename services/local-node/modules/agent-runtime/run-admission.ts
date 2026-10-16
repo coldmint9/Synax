@@ -30,6 +30,7 @@ import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
+  queueItem?: import("./input-queue-service.js").QueuedInput;
   historyRevision?: number;
   requestId: string;
   inputHash: string;

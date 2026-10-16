@@ -3,6 +3,9 @@ export type SidecarBody =
   | { type: 'ui_snapshot' }
   | { type: 'ui_snapshot_response'; snapshotJson: Uint8Array }
   | { type: 'activate_run'; runJson: Uint8Array }
+  | { type: 'queue_read' }
+  | { type: 'queue_state'; queueJson: Uint8Array }
+  | { type: 'queue_mutation'; operation: string; payload: Uint8Array }
   | { type: 'hello'; token: string; clientId?: string }
   | { type: 'issue_ticket'; clientId: string }
   | { type: 'ticket'; token: string; expiresAtMs: number }
@@ -11,7 +14,7 @@ export type SidecarBody =
   | { type: 'shutdown' }
   | { type: 'ping' }
   | { type: 'finish_run'; runId: string; status: string; runJson?: Uint8Array }
-  | { type: 'admit_run'; bodyHash: string; runId: string }
+  | { type: 'admit_run'; bodyHash: string; runId: string; queueItemJson?: Uint8Array }
   | {
       type: 'append_stream';
       runId: string;
@@ -76,6 +79,9 @@ const BODY_FIELDS: Record<SidecarBody['type'], number> = {
   ui_snapshot: 32,
   ui_snapshot_response: 33,
   activate_run: 34,
+  queue_mutation: 35,
+  queue_read: 36,
+  queue_state: 37,
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -129,6 +135,9 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'ui_snapshot': return new Uint8Array();
     case 'ui_snapshot_response': return fieldBytes(1, body.snapshotJson);
     case 'activate_run': return fieldBytes(1, body.runJson);
+    case 'queue_read': return new Uint8Array();
+    case 'queue_state': return fieldBytes(1, body.queueJson);
+    case 'queue_mutation': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
     case 'hello': return concat(fieldString(1, body.token), body.clientId ? fieldString(2, body.clientId) : new Uint8Array());
     case 'issue_ticket': return fieldString(1, body.clientId);
     case 'ticket': return concat(fieldString(1, body.token), fieldUint(2, body.expiresAtMs));
@@ -141,7 +150,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'finish_run':
       return concat(fieldString(1, body.runId), fieldString(2, body.status), body.runJson ? fieldBytes(3, body.runJson) : new Uint8Array());
     case 'admit_run':
-      return concat(fieldString(1, body.bodyHash), fieldString(2, body.runId));
+      return concat(fieldString(1, body.bodyHash), fieldString(2, body.runId), body.queueItemJson ? fieldBytes(3, body.queueItemJson) : new Uint8Array());
     case 'append_stream':
       return concat(
         fieldString(1, body.runId),
@@ -288,10 +297,13 @@ function firstBool(bytes: Uint8Array, field: number): boolean {
 
 function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
   switch (field) {
+    case 36: return { type: 'queue_read' };
+    case 37: return { type: 'queue_state', queueJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 31: return { type: 'seed_ui', sessionJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 32: return { type: 'ui_snapshot' };
     case 33: return { type: 'ui_snapshot_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 34: return { type: 'activate_run', runJson: firstBytes(bytes, 1) ?? new Uint8Array() };
+    case 35: return { type: 'queue_mutation', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
     case 27: return { type: 'finish_run', runId: firstString(bytes, 1) ?? '', status: firstString(bytes, 2) ?? '', ...(firstBytes(bytes, 3) ? { runJson: firstBytes(bytes, 3) } : {}) };
     case 10: return { type: 'hello', token: firstString(bytes, 1) ?? '', ...(firstString(bytes, 2) ? { clientId: firstString(bytes, 2) } : {}) };
     case 28: return { type: 'issue_ticket', clientId: firstString(bytes, 1) ?? '' };
@@ -300,7 +312,7 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 11: return { type: 'health' };
     case 12: return { type: 'shutdown' };
     case 13: return { type: 'ping' };
-    case 14: return { type: 'admit_run', bodyHash: firstString(bytes, 1) ?? '', runId: firstString(bytes, 2) ?? '' };
+    case 14: return { type: 'admit_run', bodyHash: firstString(bytes, 1) ?? '', runId: firstString(bytes, 2) ?? '', ...(firstBytes(bytes, 3) ? { queueItemJson: firstBytes(bytes, 3) } : {}) };
     case 15: return {
       type: 'append_stream',
       runId: firstString(bytes, 1) ?? '',
@@ -336,7 +348,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 34 && item.wire === 2);
+  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 37 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

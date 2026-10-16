@@ -2,9 +2,10 @@ use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
 use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireReady,
-    WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket, WireUiSnapshotResponse,
-    decode_client_message, decode_wire, encode_server_message, encode_wire, wire_envelope,
+    WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WirePong, WireQueueState,
+    WireReady, WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket,
+    WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
+    wire_envelope,
 };
 use crate::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
@@ -30,6 +31,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "admit_run",
     "finish_run",
     "activate_run",
+    "queue_mutation",
+    "queue_read",
     "append_stream",
     "append_receipts",
     "control_multiplex",
@@ -205,6 +208,7 @@ async fn handle_websocket(
                         "subscribe",
                         "credit_window",
                         "ui_projection",
+                        "queue_read",
                     ]
                     .iter()
                     .map(|value| (*value).into())
@@ -301,7 +305,8 @@ async fn handle_wire_websocket(
 fn ui_command_allowed(request: &WireEnvelope, scope: &UiScope) -> bool {
     match request.body {
         Some(wire_envelope::Body::Health(_)) | Some(wire_envelope::Body::Ping(_)) => true,
-        Some(wire_envelope::Body::UiSnapshot(_))
+        Some(wire_envelope::Body::QueueRead(_))
+        | Some(wire_envelope::Body::UiSnapshot(_))
         | Some(wire_envelope::Body::Snapshot(_))
         | Some(wire_envelope::Body::Replay(_))
         | Some(wire_envelope::Body::Subscribe(_)) => request.session_id == scope.session_id,
@@ -607,15 +612,20 @@ async fn execute_wire(
             })),
             true,
         ),
-        Some(wire_envelope::Body::AdmitRun(WireAdmitRun { body_hash, run_id })) => match context
+        Some(wire_envelope::Body::AdmitRun(WireAdmitRun {
+            body_hash,
+            run_id,
+            queue_item_json,
+        })) => match context
             .router
-            .admit_run(
+            .admit_run_with_queue(
                 session_id.clone(),
                 request_id.clone(),
                 body_hash,
                 run_id,
                 request.epoch,
                 request.revision,
+                queue_item_json,
             )
             .await
         {
@@ -673,6 +683,48 @@ async fn execute_wire(
                             },
                         )),
                     },
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
+        Some(wire_envelope::Body::QueueRead(_)) => {
+            match context.router.queue_read(session_id.clone()).await {
+                Ok(queue_json) => (
+                    envelope(wire_envelope::Body::QueueState(WireQueueState {
+                        queue_json,
+                    })),
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
+        Some(wire_envelope::Body::QueueMutation(queue)) => {
+            if !local_control {
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "queue mutations require private control transport",
+                    )),
+                    false,
+                );
+            }
+            match context
+                .router
+                .queue_mutation(
+                    session_id.clone(),
+                    request_id.clone(),
+                    request.epoch,
+                    request.revision,
+                    queue.operation,
+                    queue.payload,
+                )
+                .await
+            {
+                Ok(queue_json) => (
+                    envelope(wire_envelope::Body::QueueState(WireQueueState {
+                        queue_json,
+                    })),
                     false,
                 ),
                 Err(error) => (envelope(error_to_wire(error)), false),
@@ -841,6 +893,7 @@ async fn execute_wire(
         | Some(wire_envelope::Body::RunAdmission(_))
         | Some(wire_envelope::Body::SnapshotResponse(_))
         | Some(wire_envelope::Body::EventBatch(_))
+        | Some(wire_envelope::Body::QueueState(_))
         | Some(wire_envelope::Body::UiSnapshotResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))

@@ -20,6 +20,7 @@ import type {
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | { type: "input_queue_changed"; sessionId: string; queueRevision: number }
   | RuntimeSnapshotEvent
   | { type: "media_job"; jobId: string; status: string; resultAssetIds: string[] }
   | {

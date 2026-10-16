@@ -1,3 +1,4 @@
+import { inputQueueRuntime } from "./input-queue-runtime.js";
 import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
@@ -72,6 +73,7 @@ const defaultDriver: Driver = {
 
 export class RunCoordinator {
   private readonly owners = new Map<string, Owner>();
+  private readonly queueDispatches = new Map<string, Promise<boolean>>();
   private readonly pendingResumes = new Map<string, StreamTurnRequest>();
   constructor(private readonly driver: Driver = defaultDriver) {}
 
@@ -190,9 +192,21 @@ export class RunCoordinator {
   }
 
   /** Start one queued turn only after the previous conversation work has settled. */
-  dispatchQueuedInput(sessionId: string, forced = false): boolean {
+  dispatchQueuedInput(sessionId: string, forced = false): Promise<boolean> {
+    const pending = this.queueDispatches.get(sessionId);
+    if (pending) return pending;
+    const task = this.dispatchQueuedInputOnce(sessionId, forced).finally(() => {
+      if (this.queueDispatches.get(sessionId) === task) this.queueDispatches.delete(sessionId);
+    });
+    this.queueDispatches.set(sessionId, task);
+    return task;
+  }
+
+  private async dispatchQueuedInputOnce(sessionId: string, forced: boolean): Promise<boolean> {
     if (this.isActive(sessionId)) return false;
     try {
+      const queued = await inputQueueRuntime.snapshot(sessionId);
+      if (this.isActive(sessionId)) return false;
       const accepted = getRawSqlite().transaction(() => {
         const session = agentRuntimeStore.getSession(sessionId);
         const work = workStore.current(sessionId);
@@ -221,12 +235,8 @@ export class RunCoordinator {
           (!forced && interactionService.pending(sessionId))
         )
           return null;
-        const forcedId = inputQueueService.getForceInjectId(sessionId);
-        const item =
-          inputQueueService
-            .list(sessionId)
-            .find((item) => item.id === forcedId) ??
-          inputQueueService.peek(sessionId);
+        const forcedId = queued.forceInjectItemId;
+        const item = queued.items.find(item => item.id === forcedId) ?? queued.items[0];
         if (!item) return null;
         const accepted = acceptRuntimeRun(
           sessionId,
@@ -240,8 +250,13 @@ export class RunCoordinator {
           },
           `input-queue:${item.id}`,
         );
-        inputQueueService.take(sessionId, item.id);
-        if (forcedId) inputQueueService.clearForceInject(sessionId);
+        if (inputQueueRuntime.enabled()) {
+          const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
+          accepted.run = agentRuntimeStore.updateRun(accepted.run.id, { metadata: { ...accepted.run.metadata, runtime: { ...runtime, queueItem: item } } });
+        } else {
+          inputQueueService.take(sessionId, item.id);
+          if (forcedId) inputQueueService.clearForceInject(sessionId);
+        }
         return accepted;
       })();
       if (!accepted) return false;
@@ -268,7 +283,7 @@ export class RunCoordinator {
    * The queue item remains durable until the new run is admitted successfully.
    */
   async forceQueuedInput(sessionId: string, itemId: string): Promise<boolean> {
-    inputQueueService.markForceInject(sessionId, itemId);
+    await inputQueueRuntime.markForceInject(sessionId, itemId);
     if (this.isActive(sessionId))
       await this.interrupt(
         sessionId,
@@ -362,16 +377,15 @@ export class RunCoordinator {
     }
   }
 
-  private submitGoalContinuation(
+  private async submitGoalContinuation(
     sessionId: string,
     previousRunId: string,
     continuation: StreamTurnRequest,
-  ): void {
-    const forceId = inputQueueService.getForceInjectId(sessionId);
-    const forced = forceId
-      ? inputQueueService.list(sessionId).find((item) => item.id === forceId)
-      : undefined;
-    if (forceId && !forced) inputQueueService.clearForceInject(sessionId);
+  ): Promise<void> {
+    const queue = await inputQueueRuntime.snapshot(sessionId);
+    const forceId = queue.forceInjectItemId;
+    const forced = forceId ? queue.items.find(item => item.id === forceId) : undefined;
+    if (forceId && !forced) await inputQueueRuntime.clearForceInject(sessionId);
 
     const input: StreamTurnRequest = forced
       ? {
@@ -393,6 +407,11 @@ export class RunCoordinator {
     const accepted = forced
       ? getRawSqlite().transaction(() => {
           const next = this.acceptRun(sessionId, input, requestId, "continue");
+          if (inputQueueRuntime.enabled()) {
+            const runtime = next.run.metadata.runtime as AcceptedRuntimeInput;
+            next.run = agentRuntimeStore.updateRun(next.run.id, { metadata: { ...next.run.metadata, runtime: { ...runtime, queueItem: forced } } });
+            return next;
+          }
           const taken = inputQueueService.take(sessionId, forced.id);
           if (!taken) {
             throw new AgentRuntimeError(
@@ -519,8 +538,8 @@ export class RunCoordinator {
         try {
           const continuation = goalContinuationInput(sessionId, owner.runId);
           if (continuation)
-            this.submitGoalContinuation(sessionId, owner.runId, continuation);
-          else this.dispatchQueuedInput(sessionId);
+            await this.submitGoalContinuation(sessionId, owner.runId, continuation);
+          else await this.dispatchQueuedInput(sessionId);
         } catch (error) {
           logger.warn(
             { sessionId, runId: owner.runId, error },
@@ -719,7 +738,7 @@ export class RunCoordinator {
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.owners.size) {
+    while (this.owners.size || this.queueDispatches.size) {
       const owners = [...this.owners.values()];
       if (owners.some((owner) => owner.stopFailed && !owner.stopTask)) {
         throw new AgentRuntimeError(
@@ -728,7 +747,7 @@ export class RunCoordinator {
           409,
         );
       }
-      await Promise.all(owners.map((owner) => owner.stopTask ?? owner.task));
+      await Promise.all([...owners.map((owner) => owner.stopTask ?? owner.task), ...this.queueDispatches.values()]);
     }
   }
 

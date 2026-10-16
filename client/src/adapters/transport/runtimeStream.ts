@@ -8,6 +8,7 @@ export interface RuntimeChunk {
   retry?: LlmRetryState
   delta?: string
   step?: AgentRunStep
+  queueRevision?: number
   toolCall?: ToolCallRecord
 }
 export interface RuntimeStreamRecord {
@@ -23,6 +24,8 @@ export interface RuntimeSnapshot {
   cursor: number
   liveChunks: RuntimeChunk[]
   completedStepIds: string[]
+  queuedInputs?: unknown[]
+  forceInjectItemId?: string | null
 }
 
 /** Keep reconnect hydration as one render transaction on the client. */
@@ -43,6 +46,7 @@ const LOCAL_CHUNK_TYPES = new Set([
   'tool_result',
   'step_started',
   'retry_status',
+  'input_queue_changed',
 ])
 
 /** Cursors order transport; authoritative state in the same record prevents stale chunks reopening old Runs. */
@@ -81,7 +85,9 @@ export class RuntimeStreamProjector {
     // chunks are applied locally and must not re-fetch the whole detail.
     const stateChanged = key !== this.stateKey
     const refresh = stateChanged || !LOCAL_CHUNK_TYPES.has(value.chunk.type)
-    const output: SessionLiveEvent[] = []
+    const output: SessionLiveEvent[] = value.chunk.type === 'input_queue_changed'
+      ? [{ type: 'input_queue_changed', sessionId: value.sessionId, queueRevision: value.chunk.queueRevision ?? 0 }]
+      : []
     if (stateChanged || refresh || reset) {
       output.push({ type: 'runtime_state', sessionId: value.sessionId, patch: value.state, reset, refresh })
       this.stateKey = key
