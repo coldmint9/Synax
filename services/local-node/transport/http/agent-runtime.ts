@@ -823,6 +823,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
       },
       control.runId,
     );
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json(projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session));
     return c.json(projectSessionState(agentRuntimeStore.getSession(id)));
   } catch (error) {
     return runtimeError(c, error);
@@ -1284,7 +1286,9 @@ agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
     await runCoordinator.reconcileFailedStop(id);
     await acknowledgeRuntimeRecovery(id);
     return c.json({
-      session: projectSessionState(agentRuntimeStore.getSession(id)),
+      session: runtimeFacade.streamMode() === "authoritative"
+        ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session)
+        : projectSessionState(agentRuntimeStore.getSession(id)),
     });
   } catch (error) {
     return runtimeError(c, error);
