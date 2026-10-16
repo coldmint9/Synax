@@ -44,6 +44,8 @@ try {
   const projected = JSON.parse(new TextDecoder().decode(await client.uiSnapshot('s')));
   assert.equal(projected.session.sessionMetadata.pinned, true);
   assert.equal(projected.session.title, 'Rust control session');
+  const sessions = JSON.parse(new TextDecoder().decode(await client.sessionList())) as { items: Array<{ id: string }> };
+  assert.deepEqual(sessions.items.map(item => item.id), ['s']);
 
   const events = await client.replay('s', 0);
   assert.deepEqual(events.events.map(event => event.kind), [

@@ -70,11 +70,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
         .map(HotStore::open)
         .transpose()?;
+    let hot_store = hot_store.map(Arc::new);
     let history_store = std::env::var_os("SYNAX_RUNTIME_HISTORY_PATH")
         .map(history::HistoryStore::open)
         .transpose()?;
-    let router = match hot_store {
-        Some(store) => SessionShardRouter::with_store(16, 1024, Arc::new(store))?,
+    let router = match hot_store.clone() {
+        Some(store) => SessionShardRouter::with_store(16, 1024, store.clone())?,
         None => SessionShardRouter::new(16, 1024)?,
     };
     let context = TransportContext {
@@ -83,6 +84,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
+        hot_store: hot_store.clone(),
         history: history_store.map(Arc::new),
     };
 

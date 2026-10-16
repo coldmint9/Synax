@@ -311,6 +311,14 @@ export class RuntimeFacade {
     return state.items ?? [];
   }
 
+  async listSessionProjection(): Promise<unknown[]> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    const bytes = await client.sessionList();
+    const state = JSON.parse(Buffer.from(bytes).toString('utf8')) as { items?: unknown[] };
+    return state.items ?? [];
+  }
+
   async listHistoryObjects(sessionId: string, operation: 'list_steps' | 'list_parts' | 'list_tool_calls'): Promise<unknown[]> {
     const state = await this.historyCommand({ sessionId, requestId: `history-${operation}:${sessionId}`, operation, payload: {} }) as { items?: unknown[] };
     return state.items ?? [];

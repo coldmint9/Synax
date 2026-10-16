@@ -431,6 +431,13 @@ impl HotStore {
         .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
+    pub async fn session_list_async(&self) -> Result<Vec<u8>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.session_list())
+            .await
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+
     pub async fn control_state_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.control_state(&session_id))
@@ -1627,6 +1634,16 @@ impl HotStore {
             return Ok(ControlState::default());
         };
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    fn session_list(&self) -> Result<Vec<u8>, StorageError> {
+        let mut items = Vec::new();
+        for entry in self.db.iterator_cf(self.cf(CF_UI)?, rocksdb::IteratorMode::Start) {
+            let (_, value) = entry?;
+            let projection: UiSnapshot = serde_json::from_slice(&value)?;
+            items.push(projection.session);
+        }
+        Ok(serde_json::to_vec(&serde_json::json!({"items": items}))?)
     }
 
     fn cf(&self, name: &str) -> Result<&rocksdb::ColumnFamily, StorageError> {

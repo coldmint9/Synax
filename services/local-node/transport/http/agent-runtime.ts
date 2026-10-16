@@ -383,6 +383,17 @@ function withSessionPayload(sessionId: string) {
   };
 }
 
+async function withAuthoritativeSessionPayload(sessionId: string) {
+  const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+  const session = projectSessionState(snapshot.session as never);
+  return {
+    session,
+    profile: profileService.getForSession(session),
+    work: workStore.current(sessionId),
+    context: session.contextSnapshotId ? agentRuntimeStore.getContextBundle(session.contextSnapshotId) : null,
+  };
+}
+
 // Provider-pipeline metadata kept in step rows for debugging; none of it has a
 // timeline consumer (the UI reads reasoningEffort and ids/status fields only).
 const STEP_METADATA_WIRE_OMISSIONS = [
@@ -580,6 +591,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         updatedAt: new Date().toISOString(),
       });
     }
+    if (runtimeFacade.streamMode() === "authoritative") await runtimeFacade.ensureUiProjection(session.id);
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
@@ -628,12 +640,27 @@ agentRuntimeRoutes.get("/sessions/search", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions", (c) => {
+agentRuntimeRoutes.get("/sessions", async (c) => {
   const parsed = listSessionsQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
   if (!parsed.success) return validationError(c, parsed.error);
   const { limit, offset, status, ...filter } = parsed.data;
+  if (runtimeFacade.streamMode() === "authoritative") {
+    try {
+      const all = (await runtimeFacade.listSessionProjection())
+        .map(item => projectSessionState(item as never))
+        .filter(session => session.sessionMetadata?.archivedAt === undefined)
+        .filter(session => !filter.projectId || session.projectId === filter.projectId)
+        .filter(session => !filter.nodeId || session.nodeId === filter.nodeId)
+        .filter(session => !status || session.status === status)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
+      const countByStatus = Object.fromEntries(all.reduce((counts, session) => counts.set(session.status, (counts.get(session.status) ?? 0) + 1), new Map<string, number>()));
+      return c.json({ items: all.slice(offset, offset + limit).map(projectSessionSummary), totalCount: all.length, countByStatus });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  }
   // status filtering, paging and the status histogram are resolved in SQL against
   // the projected runtimeControl state; only the requested page is materialized.
   const page = agentRuntimeStore.listSessionsPage(
@@ -664,8 +691,9 @@ agentRuntimeRoutes.get("/sessions/badges", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") return c.json(await withAuthoritativeSessionPayload(c.req.param("sessionId")));
     return c.json(withSessionPayload(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);

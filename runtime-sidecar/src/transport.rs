@@ -2,7 +2,7 @@ use crate::actor::{Durability, PendingEvent, RuntimeError, SessionShardRouter};
 use crate::flow::CreditWindow;
 use crate::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WirePong, WireQueueState,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WirePong, WireQueueState, WireSessionListResponse,
     WireReady, WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket,
     WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
     wire_envelope,
@@ -35,6 +35,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "queue_read",
     "control_command",
     "control_state",
+    "history_command",
+    "session_list",
     "append_stream",
     "append_receipts",
     "control_multiplex",
@@ -65,6 +67,7 @@ pub struct TransportContext {
     pub tickets: Arc<TicketStore>,
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
+    pub hot_store: Option<Arc<crate::storage::HotStore>>,
     pub history: Option<Arc<crate::history::HistoryStore>>,
 }
 
@@ -215,6 +218,7 @@ async fn handle_websocket(
                         "control_state",
     "history_command",
     "history_state",
+    "session_list",
                     ]
                     .iter()
                     .map(|value| (*value).into())
@@ -814,6 +818,22 @@ async fn execute_wire(
                 ),
             }
         }
+        Some(wire_envelope::Body::SessionList(_)) => {
+            if !local_control {
+                return (envelope(wire_error("FORBIDDEN", "session listing requires private control transport")), false);
+            }
+            let Some(store) = context.hot_store.as_ref() else {
+                return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+            };
+            match store.session_list_async().await {
+                Ok(sessions_json) => (
+                    WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
+                        body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) },
+                    false,
+                ),
+                Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+            }
+        }
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router
@@ -980,6 +1000,7 @@ async fn execute_wire(
         | Some(wire_envelope::Body::QueueState(_))
         | Some(wire_envelope::Body::ControlState(_))
         | Some(wire_envelope::Body::HistoryState(_))
+        | Some(wire_envelope::Body::SessionListResponse(_))
         | Some(wire_envelope::Body::UiSnapshotResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))
