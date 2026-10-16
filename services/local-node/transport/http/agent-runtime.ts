@@ -9,7 +9,7 @@ import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
 import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
 import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
-import type { AgentRun, AgentRuntimeMessage, AgentSession, PermissionDecision, RuntimeEvent } from "../../modules/agent-runtime/contracts.js";
+import type { AgentRun, AgentRuntimeMessage, AgentSession, CreateSessionRequest, PermissionDecision, RuntimeEvent } from "../../modules/agent-runtime/contracts.js";
 import {
   boundaryOnlySession,
   versionRepository,
@@ -2715,7 +2715,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     const sessionId = c.req.param("sessionId");
     if (runtimeFacade.streamMode() === "authoritative") {
       if (parsed.data.action === "fork") {
-        throw new AgentValidationError("Fork preview is handled by the Rust history head and does not restore workspace files yet.");
+        if (!parsed.data.workspaceMode) throw new AgentValidationError("Choose a new worktree or the existing worktree before forking.");
+        return c.json({
+          ...(await runtimeFacade.previewHistoryAuthoritative(sessionId, parsed.data.checkpointId, false)),
+          workspaceMode: parsed.data.workspaceMode,
+          warnings: ["The fork copies the immutable Rust history head. Workspace files are copied only when a new worktree is selected."],
+        });
       }
       return c.json(await runtimeFacade.previewHistoryAuthoritative(
         sessionId,
@@ -2760,7 +2765,63 @@ for (const action of ["rollback", "edit", "fork"] as const) {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
         if (runtimeFacade.streamMode() === "authoritative") {
-          if (action === "fork") throw new AgentValidationError("Fork mutation requires a dedicated Rust session clone command.");
+          if (action === "fork") {
+            const source = agentRuntimeStore.getSession(sessionId);
+            const sourceBackend = (source.sessionMetadata?.backend ?? {}) as { id?: string; model?: string; workDir?: string; workspaceLocation?: unknown };
+            let workDir = sourceBackend.workDir;
+            let sessionMetadata: Record<string, unknown> = {
+              ...(source.sessionMetadata ?? {}),
+              forkedFromSessionId: sessionId,
+              forkedFromCheckpointId: input.checkpointId,
+            };
+            if (input.workspaceMode === "new_worktree") {
+              const projectLocation = resolveProjectWorkspaceLocation(source.projectId);
+              const selected = await resolveGitWorkspaceSelection(
+                projectLocation ?? resolveRegisteredProjectWorkDir(source.projectId),
+                source.projectId,
+                { kind: "new-worktree" },
+              );
+              workDir = selected.workDir;
+              sessionMetadata = {
+                ...sessionMetadata,
+                ...(selected.location ? { workspaceLocation: selected.location } : {}),
+                gitWorkspace: { kind: selected.kind, branch: selected.branch, path: selected.workDir },
+              };
+            } else if (!workDir) {
+              throw new AgentValidationError("The source session has no reusable workspace.");
+            }
+            const target = agentSessionRuntime.create({
+              projectId: source.projectId,
+              nodeId: source.nodeId,
+              profileId: source.profileId,
+              prompt: source.prompt,
+              backendId: sourceBackend.id as CreateSessionRequest["backendId"],
+              model: sourceBackend.model,
+              workDir,
+              thinkingMode: source.thinkingMode,
+              reasoningEffort: source.reasoningEffort ?? undefined,
+              skillIds: source.skillIds,
+              mcpServerIds: source.mcpServerIds,
+              sessionMetadata,
+            });
+            await runtimeFacade.ensureUiProjection(target.id);
+            const forked = await runtimeFacade.cloneHistoryAuthoritative({
+              sourceSessionId: sessionId,
+              targetSessionId: target.id,
+              checkpointId: input.checkpointId,
+              revision: input.revision,
+              requestId: input.requestId,
+            });
+            const updated = await runtimeFacade.sessionPatch(target.id, `fork-session:${input.requestId}`, {
+              status: "completed",
+              activeRunId: null,
+              completedAt: null,
+              resultSummary: null,
+              updatedAt: new Date().toISOString(),
+              sessionMetadata: { forkedFromSessionId: sessionId, forkedFromCheckpointId: input.checkpointId },
+            });
+            return c.json({ sessionId: target.id, workspaceMode: input.workspaceMode, rollbackEnabled: true, revision: forked.revision, session: updated }, 201);
+          }
           const result = await runtimeFacade.applyHistoryAuthoritative({
             sessionId,
             checkpointId: input.checkpointId,

@@ -811,6 +811,82 @@ export class RuntimeFacade {
     };
   }
 
+  async cloneHistoryAuthoritative(input: {
+    sourceSessionId: string;
+    targetSessionId: string;
+    checkpointId: string;
+    revision: number;
+    requestId: string;
+  }): Promise<{ revision: number; objectCount: number }> {
+    const [head, checkpoints, messages, runs, steps, parts, tools, events] = await Promise.all([
+      this.historyHeadAuthoritative(input.sourceSessionId),
+      this.listHistoryCheckpoints(input.sourceSessionId),
+      this.listHistoryObjects(input.sourceSessionId, 'list_messages'),
+      this.listHistoryObjects(input.sourceSessionId, 'list_runs'),
+      this.listHistoryObjects(input.sourceSessionId, 'list_steps'),
+      this.listHistoryObjects(input.sourceSessionId, 'list_parts'),
+      this.listHistoryObjects(input.sourceSessionId, 'list_tool_calls'),
+      this.listHistoryObjects(input.sourceSessionId, 'list_events'),
+    ]);
+    if (head.revision !== input.revision) throw new AgentRuntimeError('Conversation changed. Refresh the fork preview.', 'HISTORY_STALE', 409);
+    const checkpoint = checkpoints.find((item) => item.id === input.checkpointId);
+    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    const orderedMessages = this.orderedHistory(messages as AgentRuntimeMessage[]);
+    const boundary = orderedMessages.findIndex((item) => item.id === checkpoint.metadata.messageId);
+    if (boundary < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    const keepMessages = orderedMessages.slice(0, boundary + 1);
+    const runIds = new Set(keepMessages.map((item) => item.runId).filter((id): id is string => Boolean(id)));
+    const keepRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
+    const keepSteps = (steps as AgentRunStep[]).filter((step) => runIds.has(step.runId));
+    const stepIds = new Set(keepSteps.map((step) => step.id));
+    const keepParts = (parts as Array<{ stepId?: string }>).filter((part) => part.stepId && stepIds.has(part.stepId));
+    const keepTools = (tools as Array<{ stepId?: string }>).filter((tool) => tool.stepId && stepIds.has(tool.stepId));
+    const keepEvents = (events as Array<{ runId?: string }>).filter((event) => !event.runId || runIds.has(event.runId));
+    const hashId = (kind: string, id: string) => `fork_${createHash('sha256').update(`${input.requestId}:${kind}:${id}`).digest('hex').slice(0, 24)}`;
+    const maps = new Map<string, string>();
+    const remap = (kind: string, id: unknown): unknown => {
+      if (typeof id !== 'string') return id;
+      const key = `${kind}:${id}`;
+      const existing = maps.get(key);
+      if (existing) return existing;
+      const mapped = hashId(kind, id);
+      maps.set(key, mapped);
+      return mapped;
+    };
+    const transform = (kind: string, value: unknown): unknown => {
+      const copy = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+      if (typeof copy.id === 'string') copy.id = remap(kind, copy.id);
+      if ('sessionId' in copy) copy.sessionId = input.targetSessionId;
+      if ('runId' in copy) copy.runId = remap('run', copy.runId);
+      if ('stepId' in copy) copy.stepId = remap('step', copy.stepId);
+      if ('toolCallId' in copy) copy.toolCallId = remap('tool', copy.toolCallId);
+      if ('triggerMessageId' in copy) copy.triggerMessageId = remap('message', copy.triggerMessageId);
+      if (copy.payload && typeof copy.payload === 'object') {
+        const payload = copy.payload as Record<string, unknown>;
+        if (typeof payload.sessionId === 'string') payload.sessionId = input.targetSessionId;
+        if (typeof payload.runId === 'string') payload.runId = remap('run', payload.runId);
+      }
+      return copy;
+    };
+    const objects: Array<{ kind: string; value: unknown }> = [
+      ...keepMessages.map((value) => ({ kind: 'runtime.message', value: transform('message', value) })),
+      ...keepRuns.map((value) => ({ kind: 'runtime.run', value: transform('run', value) })),
+      ...keepSteps.map((value) => ({ kind: 'runtime.step', value: transform('step', value) })),
+      ...keepParts.map((value) => ({ kind: 'runtime.part', value: transform('part', value) })),
+      ...keepTools.map((value) => ({ kind: 'runtime.tool_call', value: transform('tool', value) })),
+      ...keepEvents.map((value) => ({ kind: 'runtime.event', value: transform('event', value) })),
+    ];
+    const root = await this.writeHistoryRoot(input.targetSessionId, objects, `history-fork:${input.requestId}`);
+    const targetHead = await this.historyHeadAuthoritative(input.targetSessionId);
+    const switched = await this.historyCommand({
+      sessionId: input.targetSessionId,
+      requestId: `history-fork-head:${input.requestId}`,
+      operation: 'head_switch',
+      payload: { objectId: root, expectedRevision: targetHead.revision },
+    }) as { revision?: number };
+    return { revision: Number(switched.revision ?? targetHead.revision + 1), objectCount: objects.length };
+  }
+
   async historyHeadAuthoritative(sessionId: string): Promise<{ revision: number; objectId?: string }> {
     return await this.historyCommand({
       sessionId,
