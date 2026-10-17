@@ -2503,15 +2503,9 @@ agentRuntimeRoutes.post(
         !backend.hasPendingInteraction?.(sessionId, id)
       )
         return c.json({ error: "Native input request expired." }, 409);
-      if (runtimeFacade.streamMode() === "authoritative") {
-        await runtimeFacade.controlCommand({
-          sessionId,
-          requestId: `interaction-reply:${id}:${parsed.data.revision}:${parsed.data.action}`,
-          operation: "interaction_reply",
-          payload: { id, revision: parsed.data.revision, reply: parsed.data },
-        });
-      }
-      const interaction = interactionService.reply(sessionId, id, parsed.data);
+      const interaction = runtimeFacade.streamMode() === "authoritative"
+        ? await interactionService.replyAuthoritative(sessionId, id, parsed.data)
+        : interactionService.reply(sessionId, id, parsed.data);
       if (backendId === "native") {
         if (interactionService.ready(sessionId))
           resumeAgentSessionInBackground(sessionId);

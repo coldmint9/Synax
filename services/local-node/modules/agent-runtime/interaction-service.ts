@@ -531,6 +531,23 @@ export const interactionService = {
     }).catch(() => {});
     return interaction;
   },
+  async replyAuthoritative(sessionId: string, id: string, raw: unknown): Promise<AgentInteraction> {
+    const reply = interactionReplySchema.parse(raw);
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `interaction-reply:${id}:${reply.revision}:${reply.action}`,
+      operation: "interaction_reply",
+      payload: { id, revision: reply.revision, reply },
+    });
+    const control = await runtimeFacade.controlState(sessionId) as { interactions?: unknown[] };
+    const updated = (control.interactions ?? []).find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === id);
+    if (!updated || typeof updated !== "object") throw new AgentRuntimeError("Interaction response was not persisted.", "STORAGE_UNAVAILABLE", 503);
+    try {
+      return this.reply(sessionId, id, raw);
+    } catch {
+      return updated as AgentInteraction;
+    }
+  },
   deferPlan(sessionId: string, id: string): AgentInteraction {
     const interaction = getRawSqlite().transaction(() => {
       const row = getRawSqlite()
