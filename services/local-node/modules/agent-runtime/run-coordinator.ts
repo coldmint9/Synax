@@ -367,12 +367,8 @@ export class RunCoordinator {
     };
     const run = agentRuntimeStore.getRun(runId);
     const leasePatch = { executionLease: { ...context, closed: false } };
-    if (runtimeFacade.streamMode() === "authoritative") {
-      void runtimeFacade.runPatch(sessionId, runId, `lease-open:${runId}:${context.epoch}`, { metadata: leasePatch })
-        .catch((error) => logger.warn({ sessionId, runId, error }, "[run-coordinator] Rust execution lease could not be opened"));
-    } else {
+    if (runtimeFacade.streamMode() !== "authoritative")
       agentRuntimeStore.updateRun(runId, { metadata: { ...run.metadata, ...leasePatch } });
-    }
     input = { ...input, executionContext: context };
     const owner: Owner = {
       context,
