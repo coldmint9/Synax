@@ -534,11 +534,20 @@ export class RuntimeFacade {
     const id = (value as { id?: unknown }).id;
     if (typeof id !== 'string') return;
     const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
-    await this.historyCommand({
+    const result = await this.historyCommand({
       sessionId,
       requestId: `history-entity:${kind}:${id}:${digest}`,
       operation: 'put_object',
       payload: { kind, value },
+    }) as { objectId?: string };
+    if (!result.objectId) return;
+    const head = await this.historyHeadAuthoritative(sessionId);
+    const root = await this.writeHistoryRootRefs(sessionId, head.objectId ? [head.objectId, result.objectId] : [result.objectId], `history-entity-root:${kind}:${id}`);
+    await this.historyCommand({
+      sessionId,
+      requestId: `history-entity-head:${kind}:${id}:${root}:${head.revision}`,
+      operation: 'head_switch',
+      payload: { objectId: root, expectedRevision: head.revision },
     });
   }
 
