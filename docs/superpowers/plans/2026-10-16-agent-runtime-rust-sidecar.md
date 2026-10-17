@@ -190,7 +190,7 @@ G7 离线导入与旧实现清理
 - [x] 完成最新 HEAD runtime、Electron sidecar、前端 stream 结构摸排；
 - [x] 写入 `docs/design/2026-10-16-agent-runtime-rust-sidecar.md`；
 - [x] 写入协议消息清单和错误码表；
-- [ ] 写入性能、故障和兼容性验收脚本设计；
+- [x] 写入性能、故障和兼容性验收脚本设计；已落地 benchmark、storage fault、physical ENOSPC、migration verify-runtime、cutover smoke 和跨平台 packaging gates。
 - [x] 确认 sidecar binary 的桌面打包路径；
 - [x] 确认第一阶段只做 runtime-hot，不迁移 history。
 
@@ -267,10 +267,10 @@ runtime-sidecar/
 - [x] 基础 compaction 后 canonical event 可 replay；
 - [x] 多线程 group-commit 写入后并行 compaction/replay 保持 cursor 和 sequence 完整；
 - [x] 磁盘满/写入不可用映射为稳定 `DiskFull` 错误且不创建 receipt；
-- [ ] 真实 ENOSPC 压测。
+- [x] 真实 ENOSPC 压测（macOS APFS 256 MiB volume；实测填充 248.0 MiB，Rust 返回稳定存储错误且 health 仍可用）。
 - [x] 注入提交后 ack unknown 后，receipt 查询和幂等重试结果稳定；
 - [x] 真实进程在 commit 后 ack 前崩溃，重启后 request receipt/reused admission 收敛；
-- [ ] ENOSPC 和高并发 compaction 压测。
+- [x] ENOSPC 和高并发 compaction/stream pressure 验收：物理 APFS ENOSPC、storage fault smoke、并发 compaction/replay Rust 测试和 5000 session benchmark 均通过。
 
 ## 阶段 4：Node RuntimeFacade 和 stream cutover
 
@@ -285,7 +285,7 @@ runtime-sidecar/
 - [x] 新增显式开关控制的 Rust sidecar supervisor 和 READY/shutdown 生命周期；
 - [x] 真实 Node `http-server` supervisor smoke 验证 sidecar startup、HTTP health 和 shutdown；
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
-- [ ] authoritative `RuntimeFacade` 取代全部 HTTP route 的 runtime SQLite；当前 session snapshot、runs、messages、permissions/interactions 已有 Rust 路径，列表/step/part/history 仍在迁移；
+- [ ] authoritative `RuntimeFacade` 取代全部 HTTP route 的 runtime SQLite；session snapshot、runs、messages、permissions/interactions、steps/parts/tool/events、history mutation 和 media blob 已有 Rust 路径，stats/work/plan/environment 及部分执行上下文仍保留 SQLite 兼容读取。
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；

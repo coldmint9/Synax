@@ -3269,6 +3269,71 @@ mod tests {
         let _ = std::fs::remove_dir_all(path);
     }
 
+    #[test]
+    fn run_patch_persists_execution_lease_in_projection_and_run_document() {
+        let path = temp_path("run-patch");
+        let store = HotStore::open(&path).unwrap();
+        store
+            .ui_snapshot(
+                "s",
+                Some(br#"{"id":"s","projectId":"p","status":"queued","updatedAt":"2026-10-17T00:00:00Z"}"#),
+            )
+            .unwrap();
+        let run = serde_json::json!({
+            "id":"r",
+            "sessionId":"s",
+            "status":"queued",
+            "startedAt":"2026-10-17T00:00:00Z",
+            "completedAt":null,
+            "metadata":{}
+        });
+        store
+            .admit_run_with_document(
+                "s",
+                "admit",
+                "body",
+                "r",
+                1,
+                0,
+                &[],
+                &serde_json::to_vec(&run).unwrap(),
+            )
+            .unwrap();
+        let result = store
+            .control_command(
+                "s",
+                "lease",
+                1,
+                1,
+                "run_patch",
+                br#"{"runId":"r","patch":{"status":"running","metadata":{"executionLease":{"epoch":"lease-1","closed":false}}}}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.state_json).unwrap()["runtimeControl"],
+            serde_json::Value::Null
+        );
+        let projection = store.read_ui_projection("s").unwrap().unwrap();
+        assert_eq!(projection.run["status"], "running");
+        assert_eq!(
+            projection.run["metadata"]["executionLease"]["epoch"],
+            "lease-1"
+        );
+        let stored: StoredRun = serde_json::from_slice(
+            &store
+                .get(CF_RUNS, run_key("s", "r").as_bytes())
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            stored.document.unwrap()["metadata"]["executionLease"]["closed"],
+            false
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
     #[tokio::test]
     async fn async_snapshot_cache_tracks_committed_cursor() {
         let path = temp_path("async-cache");
