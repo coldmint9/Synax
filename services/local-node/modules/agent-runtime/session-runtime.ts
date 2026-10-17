@@ -206,7 +206,7 @@ export class AgentSessionRuntime {
     };
     const saved = getRawSqlite().transaction(() => {
       const saved = this.store.createSession(session);
-      initializeLegacySessionHistory(saved, parent, input);
+      initializeLegacySessionHistory(this.store, saved, parent, input);
       return saved;
     })();
     const bundle = agentContextBuilder.build(input.projectId, {
@@ -420,16 +420,12 @@ function assertLegacyHistoryUnlocked(sessionId: string): void {
 }
 
 function initializeLegacySessionHistory(
+  store: AgentRuntimeStore,
   saved: AgentSession,
   parent: AgentSession | undefined,
   input: CreateSessionRequest,
 ): void {
-  if (
-    process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" ||
-    process.env.VITEST ||
-    process.env.NODE_ENV === "test"
-  )
-    return;
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
   if (
     !SIMPLE_HISTORY_STORAGE &&
     TRANSCRIPT_STORAGE !== "jsonl" &&
@@ -438,17 +434,16 @@ function initializeLegacySessionHistory(
       process.env.SYNAX_VERSION_HISTORY === "legacy")
   )
     return;
-  const legacy = loadLegacySessionHistoryModules();
-  if (SIMPLE_HISTORY_STORAGE) legacy.simpleHistory.initializeSimpleHistory(saved.id);
-  else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl")
-    legacy.versionBridge.initializeFreshJsonlHistory(saved);
+  if (SIMPLE_HISTORY_STORAGE) store.initializeFreshHistory(saved, "flat");
+  else if (TRANSCRIPT_STORAGE === "jsonl")
+    store.initializeFreshHistory(saved, "jsonl");
   else if (
     !SIMPLE_HISTORY_STORAGE &&
     !parent &&
     (!input.backendId || input.backendId === "native") &&
     process.env.SYNAX_VERSION_HISTORY !== "legacy"
   )
-    legacy.versionBridge.initializeFreshVersionNative(saved);
+    store.initializeFreshHistory(saved, "versioned");
 }
 
 export const agentSessionRuntime = new AgentSessionRuntime();

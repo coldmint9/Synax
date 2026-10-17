@@ -85,6 +85,10 @@ export function initializeFreshVersionNative(session: AgentSession): void {
   const db = getRawSqlite();
   if (!db.inTransaction || session.parentSessionId || session.activeRunId || session.contextSnapshotId)
     throw new AgentRuntimeError("Fresh root initialization requires its creation transaction.", "HISTORY_SESSION_BUSY", 409);
+  // Session creation may initialize the boundary root eagerly. Test fixtures
+  // and retrying callers can then repeat the explicit initializer; once the
+  // root exists, the operation is already complete and must remain idempotent.
+  if (versionedSession(session.id)) return;
   versionRepository().create(session.id, historySessionFields(session));
   db.prepare("UPDATE conversation_v3_heads SET runtime_mode='native',boundary_only=1 WHERE session_id=?").run(session.id);
 }
@@ -108,6 +112,9 @@ export function initializeVersionNative(
   events: readonly RuntimeEvent[] = [],
   context?: AgentContextBundle,
 ): void {
+  // A fresh root may already have been initialized by session creation. The
+  // explicit fixture/migration call is then a safe retry of the same setup.
+  if (versionedSession(session.id)) return;
   atomicVersionWrite(getRawSqlite(), () => {
     if (
       session.contextSnapshotId &&

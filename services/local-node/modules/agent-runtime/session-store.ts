@@ -16,6 +16,8 @@ import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import {
   appendOnlySession,
   boundaryOnlySession,
+  initializeFreshJsonlHistory,
+  initializeFreshVersionNative,
   versionRepository,
   versionedSession,
   versionSessionView,
@@ -54,7 +56,11 @@ import { AgentNotFoundError, AgentRuntimeError } from "./runtime-errors.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { transcriptRepository } from "./transcript-repository.js";
 import { transcriptStorageEnabled } from "./transcript-repository.js";
-import { bumpSimpleHistoryRevision, simpleHistorySession } from "./simple-history.js";
+import {
+  bumpSimpleHistoryRevision,
+  initializeSimpleHistory,
+  simpleHistorySession,
+} from "./simple-history.js";
 import {
   retryWriteLockAcquisition,
   runtimeWriteLockPolicy,
@@ -655,6 +661,15 @@ export function mapLegacyHistoryRow(
 }
 
 export class AgentRuntimeStore {
+  initializeFreshHistory(
+    session: AgentSession,
+    kind: "flat" | "jsonl" | "versioned",
+  ): void {
+    if (kind === "flat") initializeSimpleHistory(session.id);
+    else if (kind === "jsonl") initializeFreshJsonlHistory(session);
+    else initializeFreshVersionNative(session);
+  }
+
   createSession(session: AgentSession): AgentSession {
     this.upsertSession(session);
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
