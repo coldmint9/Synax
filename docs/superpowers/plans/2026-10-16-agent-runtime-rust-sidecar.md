@@ -433,6 +433,7 @@ runtime-sidecar/
 - 最终本地回归：Rust 63 项通过；history、lifecycle、provider-worker smoke 通过；全量 Vitest 370 个文件 / 2988 项通过 / 1 项跳过；typecheck 通过。上述证据覆盖本轮改动，不覆盖尚未完成的 terminal compatibility rows、旧 history 模块清理、跨 DB 双故障恢复、outbox GC、外部 provider 凭证和 workspace 文件回滚。
 - 当前 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `ff864150cfaac5820e8536d9a92315d83626e23f7a496c287814c7f76a07f917`，大小 `285097763` bytes。
 - 最新 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `d212617191ccde5a4fc872c7fe366ed5f38cb68d753b8e891db8a9d785b671a9`，大小 `285172706` bytes。
+- 当前 HEAD `fc643bf5` 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `f945e24dee00b07d5f4184892edc722da6bfcd5dcc6e65af281cbb4019028895`，大小 `285161064` bytes。
 
 ## 2026-10-17 第十三轮：authoritative process ownership recovery
 

@@ -34,7 +34,7 @@
 | checkpoint/fork/rollback 原功能 | Rust preview/apply 明确只处理 conversation；workspace 文件回滚尚未等价；fork 仍在 Node 复制并重映射对象 | 文件恢复、冲突保护、原子恢复流程，以及结构共享 fork 的功能与复杂度证据 |
 | 旧 history 清理 | flat/versioned/JSONL/checkpoint 模块仍被线上路径导入 | 在线依赖图不含旧模式；旧实现仅供离线迁移，迁移与 purge 后完成无 SQL runtime 启动验收 |
 | 真实外部 provider | 本地兼容 HTTP provider + 独立 worker 验收已通过 | 使用外部 provider 凭证的一次实际会话与工具/permission/input/recovery 验收；不能以本地 fixture 替代 |
-| 最终平台与包 | workflow `39025558762` 对 commit `79a703c1` 已成功：Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64、Linux 和 Rust release tests 均通过；当前 HEAD `e804acb3` 的 DMG 已重建并通过 packaged smoke | 最终实现 commit 的 Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64 和 Linux；保留外部 provider 凭证和旧 history 清理证据 |
+| 最终平台与包 | workflow `39028912468` 对当前代码线 `fc643bf5` 及其父提交已成功：Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64、Linux 和 Rust release tests 均通过；当前 HEAD DMG 已重建并通过 packaged smoke | 最终实现 commit 的 Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64 和 Linux；保留外部 provider 凭证和旧 history 清理证据 |
 
 ## 验证范围
 
@@ -45,5 +45,6 @@
 - 全量 Vitest：370 个测试文件，2988 项通过，1 项跳过。
 - process ownership/recovery focused suite：16 项通过；managed command/terminal focused suite 13 项通过；真实 recovery smoke、forked worker smoke 通过。WSL 和 terminal compatibility metadata 仍需独立验收。
 - Windows protobuf smoke 的 race 修复已由 workflow `39025558762` 验证；Windows Named Pipe smoke 通过。
+- 最新 workflow `39028912468` 已再次验证四平台和 Windows Named Pipe smoke；当前 HEAD DMG SHA-256 为 `f945e24dee00b07d5f4184892edc722da6bfcd5dcc6e65af281cbb4019028895`。
 
 后续依赖顺序：先完成 session/run/work/context/ownership 的异步权威 repository 和 awaited writes，删除 terminal SQL 扫描；再完成 hot/history 恢复、分页/GC、文件 checkpoint 等价与旧模块清理；最后用无 runtime SQL 表的完整业务路径、外部 provider、长会话压测与最终平台包证明目标完成。
