@@ -130,6 +130,7 @@ function dimensions(cols: number, rows: number) {
 class TerminalManager {
   private live = new Map<string, LiveTerminal>();
   private readonly authoritativeHistory = new Map<string, TerminalInfo>();
+  private readonly authoritativeOutput = new Map<string, { sequence: number; data: string }>();
   private async persistAuthoritative(info: TerminalInfo): Promise<void> {
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return;
     if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
@@ -137,7 +138,8 @@ class TerminalManager {
       return;
     }
     const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
-    await runtimeFacade.persistTerminalInfo(info.projectId, info as unknown as Record<string, unknown>);
+    const output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" };
+    await runtimeFacade.persistTerminalInfo(info.projectId, info as unknown as Record<string, unknown>, output.data, output.sequence);
     this.authoritativeHistory.set(info.id, { ...info });
   }
   private flushTimer?: ReturnType<typeof setInterval>;
@@ -184,6 +186,9 @@ class TerminalManager {
       const item = raw as Partial<TerminalInfo>;
       if (typeof item.id === "string" && typeof item.projectId === "string")
         this.authoritativeHistory.set(item.id, item as TerminalInfo);
+      const rawRecord = raw as { id?: unknown; outputSequence?: unknown; outputTail?: unknown };
+      if (typeof rawRecord.id === "string" && typeof rawRecord.outputSequence === "number" && typeof rawRecord.outputTail === "string")
+        this.authoritativeOutput.set(rawRecord.id, { sequence: rawRecord.outputSequence, data: rawRecord.outputTail });
     }
     return this.list(projectId);
   }
@@ -417,6 +422,8 @@ class TerminalManager {
           entry.info.state = "closed";
           entry.info.exitCode = entry.stopping || signal ? null : exitCode;
           entry.info.endedAt = new Date().toISOString();
+          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
+            this.authoritativeOutput.set(ticket.id, { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") });
           releaseOwnedProcess(
             ticket.id,
             entry.stopping || signal ? null : exitCode,
@@ -510,6 +517,8 @@ class TerminalManager {
         sequence: entry.sequence,
         data: entry.frames.map((frame) => frame.data).join(""),
       };
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
+      return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
     const row = getRawSqlite()
       .prepare(
         "SELECT output_tail, output_sequence FROM terminal_sessions WHERE id=?",

@@ -642,14 +642,14 @@ export class RuntimeFacade {
     return state.items ?? [];
   }
 
-  async persistTerminalInfo(projectId: string, terminal: Record<string, unknown>): Promise<void> {
+  async persistTerminalInfo(projectId: string, terminal: Record<string, unknown>, outputTail = "", outputSequence = 0): Promise<void> {
     if (streamMode() !== 'authoritative') return;
     const scopeId = `terminals:${projectId}`;
     await this.historyCommandGlobal({
       scopeId,
       requestId: `terminal:${terminal.id}:${terminal.state}:${terminal.endedAt ?? 'active'}`,
       operation: 'append_entities',
-      payload: { objects: [{ kind: 'runtime.terminal', value: { ...terminal, sessionId: scopeId } }] },
+      payload: { objects: [{ kind: 'runtime.terminal', value: { ...terminal, outputTail, outputSequence, sessionId: scopeId } }] },
     });
   }
 
