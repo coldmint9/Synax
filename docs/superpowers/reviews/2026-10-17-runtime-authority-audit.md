@@ -41,6 +41,7 @@
 - Rust unit suite：63 项通过，其中新增并发追加/重复请求、整批拒绝无部分写入、重启 receipt、查询不落 receipt、旧 query receipt 忽略、回滚可见性。
 - `runtime-sidecar-history-smoke.ts`：真实私有 IPC 32 路并发追加、同实体更新只返回最新版、重复请求、稳定 conflict code、SIGKILL 后 head/receipt/history 恢复。
 - 真实 coordinator lifecycle 和本地 provider-worker smoke 通过；provider-worker 仍不等于外部凭证验收。
+- D6 外部 provider harness 已加入：仅在 `SYNAX_EXTERNAL_PROVIDER_BASE_URL`、`SYNAX_EXTERNAL_PROVIDER_API_KEY`、`SYNAX_EXTERNAL_PROVIDER_MODEL` 三项都设置时运行；缺少任一项以 exit code 2 明确退出，不启动 sidecar，也不回退到本地 provider。凭证齐全时配置临时 `DATA_ROOT`，通过 forked `agent-session-runner` / Node coordinator 发起一次真实 streaming turn，验证 Rust authoritative replay 的 `message_delta` 与 terminal finish，并通过 `list_runs`、`list_messages`、`head_read`、`verify` 验证 history。该 harness 证明的是指定凭证对应的单次 provider turn、终态和 Rust history 链路；未配置凭证时不提供外部 provider 行为证据。
 - focused Node/HTTP suite：56 项通过。新增 HTTP gate 禁止 session/history SQL 查询；明确允许尚未迁移的 `agent_runtime_processes` 子进程登记，不能据此声称整个 environment 路径无 SQLite。
 - 全量 Vitest：370 个测试文件，2988 项通过，1 项跳过。
 - process ownership/recovery focused suite：16 项通过；managed command/terminal focused suite 13 项通过；真实 recovery smoke、forked worker smoke 通过。WSL 和 terminal compatibility metadata 仍需独立验收。
