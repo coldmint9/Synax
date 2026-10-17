@@ -1,7 +1,5 @@
-import { initializeSimpleHistory } from "./simple-history.js";
+import { createRequire } from "node:module";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { initializeFreshVersionNative, initializeFreshJsonlHistory } from "./checkpoints/version-runtime/bridge.js";
-import { assertHistoryUnlocked } from "./checkpoints/guards.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { normalizeSessionPromptMetadata } from "./session-metadata.js";
 import {
@@ -208,16 +206,7 @@ export class AgentSessionRuntime {
     };
     const saved = getRawSqlite().transaction(() => {
       const saved = this.store.createSession(session);
-      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
-        if (SIMPLE_HISTORY_STORAGE) initializeSimpleHistory(saved.id);
-        else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl") initializeFreshJsonlHistory(saved);
-        else if (
-          !SIMPLE_HISTORY_STORAGE && !parent &&
-          (!input.backendId || input.backendId === "native") &&
-          process.env.SYNAX_VERSION_HISTORY !== "legacy"
-        )
-          initializeFreshVersionNative(saved);
-      }
+      initializeLegacySessionHistory(saved, parent, input);
       return saved;
     })();
     const bundle = agentContextBuilder.build(input.projectId, {
@@ -370,14 +359,95 @@ export class AgentSessionRuntime {
   }
 
   delete(sessionId: string): string[] {
-    assertHistoryUnlocked(sessionId);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" && process.env.SYNAX_VERSION_HISTORY !== "legacy")
+      assertLegacyHistoryUnlocked(sessionId);
     return this.store.deleteSessionTree(sessionId);
   }
 
   archive(sessionId: string) {
-    assertHistoryUnlocked(sessionId);
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" && process.env.SYNAX_VERSION_HISTORY !== "legacy")
+      assertLegacyHistoryUnlocked(sessionId);
     return this.store.archiveSessionTree(sessionId);
   }
+}
+
+type LegacySessionHistoryModules = {
+  simpleHistory: typeof import("./simple-history.js");
+  versionBridge: typeof import("./checkpoints/version-runtime/bridge.js");
+};
+
+const legacyRequire = createRequire(
+  typeof import.meta.url === "string"
+    ? new URL("./session-runtime.ts", import.meta.url)
+    : __filename,
+);
+const loadLegacyModule = (specifier: string) => {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    const testRequire = legacyRequire("tsx/cjs/api").require as (
+      id: string,
+      fromFile: string | URL,
+    ) => unknown;
+    return testRequire(specifier, new URL("./session-runtime.ts", import.meta.url));
+  }
+  return legacyRequire(specifier);
+};
+function loadLegacySessionHistoryModules(): LegacySessionHistoryModules {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
+    throw new AgentValidationError(
+      "Legacy history is unavailable on the authoritative runtime path.",
+    );
+  const requireSource = (sourcePath: string) => {
+    try {
+      return loadLegacyModule(sourcePath);
+    } catch (error) {
+      if (!sourcePath.endsWith(".js")) throw error;
+      return loadLegacyModule(sourcePath.slice(0, -3) + ".ts");
+    }
+  };
+  return {
+    simpleHistory: requireSource("./simple-history.js"),
+    versionBridge: requireSource("./checkpoints/version-runtime/bridge.js"),
+  } as LegacySessionHistoryModules;
+}
+
+function assertLegacyHistoryUnlocked(sessionId: string): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
+  const requireSource = (sourcePath: string) => {
+    try {
+      return loadLegacyModule(sourcePath);
+    } catch (error) {
+      if (!sourcePath.endsWith(".js")) throw error;
+      return loadLegacyModule(sourcePath.slice(0, -3) + ".ts");
+    }
+  };
+  (requireSource("./checkpoints/guards.js") as typeof import("./checkpoints/guards.js")).assertHistoryUnlocked(sessionId);
+}
+
+function initializeLegacySessionHistory(
+  saved: AgentSession,
+  parent: AgentSession | undefined,
+  input: CreateSessionRequest,
+): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
+  if (
+    !SIMPLE_HISTORY_STORAGE &&
+    TRANSCRIPT_STORAGE !== "jsonl" &&
+    (Boolean(parent) ||
+      (Boolean(input.backendId) && input.backendId !== "native") ||
+      process.env.SYNAX_VERSION_HISTORY === "legacy")
+  )
+    return;
+  const legacy = loadLegacySessionHistoryModules();
+  if (SIMPLE_HISTORY_STORAGE) legacy.simpleHistory.initializeSimpleHistory(saved.id);
+  else if (!SIMPLE_HISTORY_STORAGE && TRANSCRIPT_STORAGE === "jsonl")
+    legacy.versionBridge.initializeFreshJsonlHistory(saved);
+  else if (
+    !SIMPLE_HISTORY_STORAGE &&
+    !parent &&
+    (!input.backendId || input.backendId === "native") &&
+    process.env.SYNAX_VERSION_HISTORY !== "legacy"
+  )
+    legacy.versionBridge.initializeFreshVersionNative(saved);
 }
 
 export const agentSessionRuntime = new AgentSessionRuntime();

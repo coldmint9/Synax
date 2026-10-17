@@ -1,38 +1,15 @@
 import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
 import { runtimeFacade } from '../../modules/agent-runtime/sidecar/runtime-facade.js';
 import { RuntimeSidecarError } from '../../modules/agent-runtime/sidecar/sidecar-client.js';
-import { readFlatHistoryWindow, readFlatTimeline } from "../../modules/agent-runtime/flat-history-reader.js";
-import { simpleHistorySession, simpleHistoryRevision } from "../../modules/agent-runtime/simple-history.js";
-import { migrateFlatHistory, prepareFlatHistory } from "../../modules/agent-runtime/flat-history-migration.js";
 import { SIMPLE_HISTORY_STORAGE } from "../../infrastructure/runtime/env.js";
 import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
-import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
 import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
 import type { AgentRun, AgentRuntimeMessage, AgentSession, CreateSessionRequest, PermissionDecision, RuntimeEvent, ToolCallRecord } from "../../modules/agent-runtime/contracts.js";
-import {
-  boundaryOnlySession,
-  versionRepository,
-  versionedSession,
-} from "../../modules/agent-runtime/checkpoints/version-runtime/bridge.js";
 import {
   optimizeInput,
   MAX_OPTIMIZATION_INPUT_CHARS,
 } from "../../modules/agent-runtime/input-optimization.js";
-import { visitConversation } from "../../modules/agent-runtime/checkpoints/retention.js";
-import {
-  checkpointSummary,
-  previewHistory,
-  applyHistory,
-  recoverHistoryOperation,
-  editRunRequestId,
-} from "../../modules/agent-runtime/checkpoints/operations.js";
-import {
-  forkSimpleConversation,
-  previewSimpleFork,
-} from "../../modules/agent-runtime/checkpoints/simple-fork.js";
-import { historyRevision } from "../../modules/agent-runtime/checkpoints/guards.js";
 import { workRuntime } from "../../modules/agent-runtime/work-runtime.js";
 import { workflowMode } from "../../modules/agent-runtime/workflow-mode.js";
 import { searchSessions } from "../../modules/agent-runtime/session-search.js";
@@ -53,7 +30,7 @@ import {
   projectSessionState,
   projectSessionSummary,
 } from "../../modules/agent-runtime/session-projection.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { runCoordinator } from "../../modules/agent-runtime/run-coordinator.js";
 import { runtimeJournal } from "../../modules/agent-runtime/runtime-journal.js";
 import {
@@ -176,6 +153,64 @@ import {
 } from "../../modules/agent-runtime/project-tool-grants.js";
 
 export const agentRuntimeRoutes = new Hono();
+
+const authoritativeEditRequestId = (sessionId: string, requestId: string) =>
+  `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
+
+/**
+ * The Rust sidecar is the only online history authority. Keep the historical
+ * SQLite/JSONL/checkpoint stack behind an explicit compatibility boundary so
+ * importing this route module in authoritative mode cannot load its readers or
+ * writers. The migration command and legacy fixtures enter this boundary
+ * deliberately by running with a non-authoritative stream mode.
+ */
+type LegacyHistoryModules = {
+  flatReader: typeof import("../../modules/agent-runtime/flat-history-reader.js");
+  simpleHistory: typeof import("../../modules/agent-runtime/simple-history.js");
+  flatMigration: typeof import("../../modules/agent-runtime/flat-history-migration.js");
+  jsonlMigration: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js");
+  versionWindow: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/window.js");
+  versionBridge: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/bridge.js");
+  retention: typeof import("../../modules/agent-runtime/checkpoints/retention.js");
+  operations: typeof import("../../modules/agent-runtime/checkpoints/operations.js");
+  simpleFork: typeof import("../../modules/agent-runtime/checkpoints/simple-fork.js");
+  guards: typeof import("../../modules/agent-runtime/checkpoints/guards.js");
+};
+
+let legacyHistoryModulesPromise: Promise<LegacyHistoryModules> | undefined;
+async function loadLegacyHistoryModules(): Promise<LegacyHistoryModules> {
+  if (runtimeFacade.streamMode() === "authoritative")
+    throw new AgentRuntimeError(
+      "Legacy history is unavailable on the authoritative runtime path.",
+      "HISTORY_BACKEND_MISMATCH",
+      409,
+    );
+  legacyHistoryModulesPromise ??= Promise.all([
+    import("../../modules/agent-runtime/flat-history-reader.js"),
+    import("../../modules/agent-runtime/simple-history.js"),
+    import("../../modules/agent-runtime/flat-history-migration.js"),
+    import("../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js"),
+    import("../../modules/agent-runtime/checkpoints/version-runtime/window.js"),
+    import("../../modules/agent-runtime/checkpoints/version-runtime/bridge.js"),
+    import("../../modules/agent-runtime/checkpoints/retention.js"),
+    import("../../modules/agent-runtime/checkpoints/operations.js"),
+    import("../../modules/agent-runtime/checkpoints/simple-fork.js"),
+    import("../../modules/agent-runtime/checkpoints/guards.js"),
+  ]).then(([flatReader, simpleHistory, flatMigration, jsonlMigration, versionWindow, versionBridge, retention, operations, simpleFork, guards]) => ({
+    flatReader,
+    simpleHistory,
+    flatMigration,
+    jsonlMigration,
+    versionWindow,
+    versionBridge,
+    retention,
+    operations,
+    simpleFork,
+    guards,
+  }));
+  return legacyHistoryModulesPromise;
+}
+
 agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
   try {
     return c.json({ items: listProjectToolGrants(c.req.param("projectId")) });
@@ -389,8 +424,9 @@ agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs/:jobId/cancel", async (
   } catch (error) { return runtimeError(c, error); }
 });
 
-function withSessionPayload(sessionId: string) {
-  prepareFlatHistory(sessionId);
+async function withSessionPayload(sessionId: string) {
+  const legacy = await loadLegacyHistoryModules();
+  legacy.flatMigration.prepareFlatHistory(sessionId);
   const session = projectSessionState(agentSessionRuntime.get(sessionId));
   const profile = profileService.getForSession(session);
   return {
@@ -628,7 +664,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
       await runtimeFacade.ensureUiProjection(session.id);
       return c.json(await withAuthoritativeSessionPayload(session.id), 201);
     }
-    return c.json(withSessionPayload(session.id), 201);
+    return c.json(await withSessionPayload(session.id), 201);
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
       return c.json(
@@ -753,7 +789,7 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   try {
     if (runtimeFacade.streamMode() === "authoritative") return c.json(await withAuthoritativeSessionPayload(c.req.param("sessionId")));
-    return c.json(withSessionPayload(c.req.param("sessionId")));
+    return c.json(await withSessionPayload(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1044,7 +1080,10 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
   try {
     if (runtimeFacade.streamMode() === "authoritative")
       return c.json({ upgraded: false, backend: "runtime-history", authoritative: true });
-    const result = SIMPLE_HISTORY_STORAGE ? migrateFlatHistory(c.req.param("sessionId")) : await migrateJsonlSession(c.req.param("sessionId"));
+    const legacy = await loadLegacyHistoryModules();
+    const result = SIMPLE_HISTORY_STORAGE
+      ? legacy.flatMigration.migrateFlatHistory(c.req.param("sessionId"))
+      : await legacy.jsonlMigration.migrateJsonlSession(c.req.param("sessionId"));
     return c.json({ upgraded: true, ...result });
   } catch (error) {
     return runtimeError(c, error);
@@ -1056,16 +1095,17 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
     const id = c.req.param("sessionId");
     if (runtimeFacade.streamMode() === "authoritative")
       return c.json(await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor")));
+    const legacy = await loadLegacyHistoryModules();
     agentRuntimeStore.getSession(id);
-    prepareFlatHistory(id);
-    if (simpleHistorySession(id)) return c.json(readFlatHistoryWindow(id, c.req.query("cursor")));
-    if (!versionedSession(id))
+    legacy.flatMigration.prepareFlatHistory(id);
+    if (legacy.simpleHistory.simpleHistorySession(id)) return c.json(legacy.flatReader.readFlatHistoryWindow(id, c.req.query("cursor")));
+    if (!legacy.versionBridge.versionedSession(id))
       throw new AgentRuntimeError(
         "Upgrade history before using version windows.",
         "HISTORY_MIGRATION_REQUIRED",
         409,
       );
-    return c.json(readHistoryWindow(id, c.req.query("cursor")));
+    return c.json(legacy.versionWindow.readHistoryWindow(id, c.req.query("cursor")));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1076,11 +1116,12 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-timeline", async (c) => {
     const id = c.req.param("sessionId");
     if (runtimeFacade.streamMode() === "authoritative")
       return c.json(await runtimeFacade.historyTimelineAuthoritative(id, Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER)));
+    const legacy = await loadLegacyHistoryModules();
     agentRuntimeStore.getSession(id);
     const before = Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER);
-    if (!simpleHistorySession(id)) throw new AgentRuntimeError("Flat timeline unavailable", "HISTORY_UNSUPPORTED", 409);
+    if (!legacy.simpleHistory.simpleHistorySession(id)) throw new AgentRuntimeError("Flat timeline unavailable", "HISTORY_UNSUPPORTED", 409);
     if (!Number.isSafeInteger(before) || before < 1) throw new AgentRuntimeError("Invalid timeline cursor", "INVALID_INPUT", 400);
-    return c.json(readFlatTimeline(id, before));
+    return c.json(legacy.flatReader.readFlatTimeline(id, before));
   } catch (error) { return runtimeError(c, error); }
 });
 
@@ -1103,10 +1144,11 @@ agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/visualization",
         return c.json({ error: "Preview exceeds the response size limit." }, 413);
       return c.json({ message });
     }
+    const legacy = await loadLegacyHistoryModules();
     agentRuntimeStore.getSession(sessionId);
     const messageId = c.req.param("messageId");
-    const message = versionedSession(sessionId)
-      ? versionRepository().get(sessionId, "messages", messageId, 8 * 1024 * 1024) as unknown as AgentRuntimeMessage | undefined
+    const message = legacy.versionBridge.versionedSession(sessionId)
+      ? legacy.versionBridge.versionRepository().get(sessionId, "messages", messageId, 8 * 1024 * 1024) as unknown as AgentRuntimeMessage | undefined
       : agentRuntimeStore.getMessage(sessionId, messageId);
     if (!message) return c.json({ error: "Message not found." }, 404);
     if (message.role !== "assistant" || message.metadata.partial)
@@ -1129,9 +1171,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/messages", async (c) => {
     if (runtimeFacade.streamMode() === "authoritative") {
       return c.json({ items: await runtimeFacade.listMessageHistory(sessionId) });
     }
-    if (versionedSession(sessionId))
+    const legacy = await loadLegacyHistoryModules();
+    if (legacy.versionBridge.versionedSession(sessionId))
       return c.json(
-        versionRepository().page(sessionId, "messages", {
+        legacy.versionBridge.versionRepository().page(sessionId, "messages", {
           limit:
             c.req.query("limit") === undefined
               ? 64
@@ -1161,8 +1204,9 @@ agentRuntimeRoutes.get(
         return c.json(await runtimeFacade.messageContentAuthoritative(sessionId, c.req.param("messageId"), cursor, revision));
       }
       agentRuntimeStore.getSession(sessionId);
-      if (simpleHistorySession(sessionId)) {
-        const revision = simpleHistoryRevision(sessionId);
+      const legacy = await loadLegacyHistoryModules();
+      if (legacy.simpleHistory.simpleHistorySession(sessionId)) {
+        const revision = legacy.simpleHistory.simpleHistoryRevision(sessionId);
         const offset = Number(c.req.query("cursor") ?? 0);
         if (!Number.isSafeInteger(offset) || offset < 0) throw new AgentRuntimeError("Invalid content cursor", "INVALID_INPUT", 400);
         if ((offset > 0 || c.req.query("revision") !== undefined) && Number(c.req.query("revision")) !== revision)
@@ -1172,12 +1216,12 @@ agentRuntimeRoutes.get(
         if (!row) throw new AgentRuntimeError("Message missing", "NOT_FOUND", 404);
         return c.json({ text: row.text, next: offset + 8192 < row.size ? offset + 8192 : undefined, revision });
       }
-      if (!versionedSession(sessionId))
+      if (!legacy.versionBridge.versionedSession(sessionId))
         return c.json(
           { error: "Content paging requires a versioned session." },
           409,
         );
-      const repo = versionRepository();
+      const repo = legacy.versionBridge.versionRepository();
       if (
         Number(c.req.query("cursor") ?? 0) > 0 &&
         c.req.query("revision") === undefined
@@ -1549,9 +1593,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/events", async (c) => {
       return runtimeError(c, error);
     }
   }
+  const legacy = await loadLegacyHistoryModules();
   if (
-    versionedSession(c.req.param("sessionId")) &&
-    !boundaryOnlySession(c.req.param("sessionId"))
+    legacy.versionBridge.versionedSession(c.req.param("sessionId")) &&
+    !legacy.versionBridge.boundaryOnlySession(c.req.param("sessionId"))
   ) {
     try {
       if (c.req.query("after"))
@@ -1564,7 +1609,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/events", async (c) => {
           409,
         );
       return c.json(
-        versionRepository().page(c.req.param("sessionId"), "events", {
+        legacy.versionBridge.versionRepository().page(c.req.param("sessionId"), "events", {
           limit:
             c.req.query("limit") === undefined
               ? 64
@@ -2791,7 +2836,8 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
           })),
       });
     }
-    return c.json(checkpointSummary(c.req.param("sessionId"), messageIds));
+    const legacy = await loadLegacyHistoryModules();
+    return c.json(legacy.operations.checkpointSummary(c.req.param("sessionId"), messageIds));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2825,9 +2871,10 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
         parsed.data.includeFiles,
       ));
     }
+    const legacy = await loadLegacyHistoryModules();
     if (parsed.data.action !== "fork")
       return c.json(
-        await previewHistory(
+        await legacy.operations.previewHistory(
           sessionId,
           parsed.data.checkpointId,
           parsed.data.includeFiles,
@@ -2838,7 +2885,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
         "Choose a new worktree or the existing worktree before forking.",
       );
     return c.json(
-      await previewSimpleFork(
+      await legacy.simpleFork.previewSimpleFork(
         sessionId,
         parsed.data.checkpointId,
         parsed.data.workspaceMode,
@@ -2931,15 +2978,16 @@ for (const action of ["rollback", "edit", "fork"] as const) {
             await runCoordinator.submitAsync(
               sessionId,
               result.input,
-              editRunRequestId(sessionId, input.requestId),
+              authoritativeEditRequestId(sessionId, input.requestId),
               "turn",
             );
           }
           return c.json({ sessionId: result.sessionId, revision: result.revision, runId: undefined });
         }
+        const legacy = await loadLegacyHistoryModules();
         if (action === "fork")
           return c.json(
-            await forkSimpleConversation(
+            await legacy.simpleFork.forkSimpleConversation(
               sessionId,
               input.checkpointId,
               input.revision,
@@ -2949,16 +2997,16 @@ for (const action of ["rollback", "edit", "fork"] as const) {
             201,
           );
         if (action === "edit") requireSessionBackendConfig(sessionId);
-        const result = await applyHistory(sessionId, { ...input, action });
+        const result = await legacy.operations.applyHistory(sessionId, { ...input, action });
         if (
           result.input &&
           result.runId &&
-          historyRevision(sessionId) === result.revision
+          legacy.guards.historyRevision(sessionId) === result.revision
         )
           await runCoordinator.submitAsync(
             sessionId,
             result.input,
-            editRunRequestId(sessionId, input.requestId),
+            legacy.operations.editRunRequestId(sessionId, input.requestId),
             "turn",
           );
         return c.json({
@@ -2974,7 +3022,8 @@ for (const action of ["rollback", "edit", "fork"] as const) {
 }
 agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   try {
-    await recoverHistoryOperation(c.req.param("sessionId"));
+    const legacy = await loadLegacyHistoryModules();
+    await legacy.operations.recoverHistoryOperation(c.req.param("sessionId"));
     return c.json({ recovered: true });
   } catch (error) {
     return runtimeError(c, error);
@@ -2992,7 +3041,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", async (c) => {
       });
       return c.json({ visited: true });
     }
-    visitConversation(c.req.param("sessionId"));
+    const legacy = await loadLegacyHistoryModules();
+    legacy.retention.visitConversation(c.req.param("sessionId"));
     return c.json({ visited: true });
   } catch (error) {
     return runtimeError(c, error);
