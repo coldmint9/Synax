@@ -13,6 +13,7 @@ import { agentRuntimeStore } from '../../../modules/agent-runtime/session-store.
 import { agentSessionRuntime } from '../../../modules/agent-runtime/session-runtime.js';
 import { ensureSynaxAgentRegistered } from '../../../modules/agent-runtime/synax/index.js';
 import { prepareOwnedProcess, releaseOwnedProcess } from '../../../modules/agent-runtime/process-ownership.js';
+import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
 
 let root: string, token: string, app: Hono;
 let registry: string | undefined;
@@ -61,6 +62,48 @@ it('retains a completed service transcript and exposes it through authenticated 
   const response = await request(`/projects/p/${item.id}/stream`);
   const output = await response.text(); expect(output).toContain('retained output'); expect(output).toContain('terminal-state');
   expect(output).toContain('"state":"closed"');
+});
+
+it('hydrates HTTP metadata and SSE replay from Rust history after a host restart', async () => {
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SOCKET', 'mock-sidecar.sock');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_TOKEN', 'mock-token');
+  const terminal = {
+    id: 'rust-http-terminal',
+    projectId: 'rust-http-project',
+    rootId: 'primary',
+    ownerSessionId: null,
+    kind: 'service',
+    title: 'rust http service',
+    cwd: root,
+    shell: '/bin/sh',
+    command: 'printf http-replay',
+    pid: null,
+    state: 'closed',
+    exitCode: 0,
+    startedAt: '2026-10-17T00:00:00.000Z',
+    endedAt: '2026-10-17T00:00:01.000Z',
+    cols: 100,
+    rows: 30,
+    outputTail: 'http replay output',
+    outputSequence: 3,
+  };
+  const history = vi.spyOn(runtimeFacade, 'listTerminalHistory').mockResolvedValue([terminal]);
+  try {
+    const metadata = await request(`/projects/${terminal.projectId}/${terminal.id}`);
+    expect(metadata.status).toBe(200);
+    expect(await metadata.json()).toMatchObject({ id: terminal.id, state: 'closed' });
+
+    const stream = await request(`/projects/${terminal.projectId}/${terminal.id}/stream`);
+    expect(stream.status).toBe(200);
+    const body = await stream.text();
+    expect(body).toContain('http replay output');
+    expect(body).toContain('"sequence":3');
+    expect(history).toHaveBeenCalledTimes(1);
+  } finally {
+    history.mockRestore();
+    vi.unstubAllEnvs();
+  }
 });
 it('does not restart legacy services without explicit confirmation and validates the directory before stopping', async () => {
   const session = agentSessionRuntime.create({ projectId: 'p', profileId: 'synax', prompt: 'test' });

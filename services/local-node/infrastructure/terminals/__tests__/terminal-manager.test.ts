@@ -170,6 +170,47 @@ it("hydrates closed metadata and bounded output from Rust after a Node restart",
   }
 });
 
+it("flushes active authoritative PTY output to Rust in bounded batches", async () => {
+  vi.stubEnv("SYNAX_RUNTIME_SIDECAR_STREAM", "authoritative");
+  const history = vi
+    .spyOn(runtimeFacade, "historyCommandGlobal")
+    .mockResolvedValue({});
+  let item: Awaited<ReturnType<typeof start>> | undefined;
+  try {
+    item = await start();
+    // Do not make the process-ownership lease wait for a fake socket during
+    // PTY creation. Enable the mocked history transport only after spawn.
+    vi.stubEnv("SYNAX_RUNTIME_SIDECAR_SOCKET", "mock-sidecar.sock");
+    vi.stubEnv("SYNAX_RUNTIME_SIDECAR_TOKEN", "mock-token");
+    terminalManager.write(
+      item.id,
+      "printf '\\nD3_ACTIVE_FLUSH\\n'\r",
+      randomUUID(),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          history.mock.calls.some(([input]) => {
+            const payload = input.payload as { objects?: Array<{ value?: { outputTail?: string; outputSequence?: number } }> };
+            const value = payload.objects?.[0]?.value;
+            return value?.outputTail?.includes("D3_ACTIVE_FLUSH") &&
+              typeof value.outputSequence === "number";
+          }),
+        ).toBe(true),
+      { timeout: 5_000 },
+    );
+    expect(history.mock.calls.some(([input]) => {
+      const payload = input.payload as { objects?: Array<{ value?: { outputTail?: string } }> };
+      return Buffer.byteLength(payload.objects?.[0]?.value?.outputTail ?? "") <= 128 * 1024;
+    })).toBe(true);
+    await terminalManager.stop(item.id);
+  } finally {
+    if (item) await terminalManager.stop(item.id).catch(() => {});
+    history.mockRestore();
+    vi.unstubAllEnvs();
+  }
+});
+
 it.skipIf(process.platform === "win32")(
   "captures background-service output, exit status, and terminates its descendants",
   async () => {

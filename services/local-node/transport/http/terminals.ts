@@ -64,8 +64,11 @@ async function json<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
     );
   return parsed.data;
 }
-function scoped(c: Context) {
-  return terminalManager.get(c.req.param("id")!, c.req.param("projectId"));
+async function scoped(c: Context) {
+  return terminalManager.getAuthoritative(
+    c.req.param("id")!,
+    c.req.param("projectId"),
+  );
 }
 terminalRoutes.get("/projects/:projectId", async (c) =>
   c.json({ items: await terminalManager.listAuthoritative(c.req.param("projectId")) }),
@@ -79,9 +82,11 @@ terminalRoutes.post("/projects/:projectId", async (c) =>
     201,
   ),
 );
-terminalRoutes.get("/projects/:projectId/:id", (c) => c.json(scoped(c)));
-terminalRoutes.post("/projects/:projectId/:id/connection", (c) => {
-  const item = scoped(c);
+terminalRoutes.get("/projects/:projectId/:id", async (c) =>
+  c.json(await scoped(c)),
+);
+terminalRoutes.post("/projects/:projectId/:id/connection", async (c) => {
+  const item = await scoped(c);
   return c.json({
     ticket: issueTerminalTicket(
       item.projectId,
@@ -91,7 +96,7 @@ terminalRoutes.post("/projects/:projectId/:id/connection", (c) => {
   });
 });
 terminalRoutes.post("/projects/:projectId/:id/input", async (c) => {
-  const item = scoped(c);
+  const item = await scoped(c);
   const body = await json(
     c,
     z.object({
@@ -104,7 +109,7 @@ terminalRoutes.post("/projects/:projectId/:id/input", async (c) => {
   return c.json({ ok: true });
 });
 terminalRoutes.post("/projects/:projectId/:id/resize", async (c) => {
-  const item = scoped(c);
+  const item = await scoped(c);
   const body = await json(
     c,
     z.object({
@@ -116,17 +121,17 @@ terminalRoutes.post("/projects/:projectId/:id/resize", async (c) => {
   return c.json({ ok: true });
 });
 terminalRoutes.post("/projects/:projectId/:id/stop", async (c) => {
-  const item = scoped(c);
+  const item = await scoped(c);
   await terminalManager.stop(item.id);
-  return c.json(terminalManager.get(item.id));
+  return c.json(await terminalManager.getAuthoritative(item.id, item.projectId));
 });
-terminalRoutes.delete("/projects/:projectId/:id", (c) => {
-  const item = scoped(c);
+terminalRoutes.delete("/projects/:projectId/:id", async (c) => {
+  const item = await scoped(c);
   terminalManager.remove(item.id);
   return c.json({ ok: true });
 });
 terminalRoutes.post("/projects/:projectId/:id/ack", async (c) => {
-  const item = scoped(c);
+  const item = await scoped(c);
   const body = await json(
     c,
     z.object({ clientId: requestId, sequence: z.number().int().nonnegative() }),
@@ -134,8 +139,8 @@ terminalRoutes.post("/projects/:projectId/:id/ack", async (c) => {
   terminalManager.acknowledge(item.id, body.clientId, body.sequence);
   return c.json({ ok: true });
 });
-terminalRoutes.get("/projects/:projectId/:id/stream", (c) => {
-  const item = scoped(c);
+terminalRoutes.get("/projects/:projectId/:id/stream", async (c) => {
+  const item = await scoped(c);
   const clientId = c.req.query("clientId");
   if (clientId && !/^[\w:-]{8,128}$/.test(clientId))
     throw new AgentRuntimeError("Invalid reader ID.", "INVALID_INPUT", 400);
@@ -182,7 +187,11 @@ terminalRoutes.get("/projects/:projectId/:id/stream", (c) => {
         push({ event: "terminal-state", data: JSON.stringify(event.terminal) });
       }
     });
-    const replay = terminalManager.replay(item.id, after);
+    const replay = await terminalManager.replayAuthoritative(
+      item.id,
+      item.projectId,
+      after,
+    );
     if (replay.reset)
       push({
         event: "terminal-reset",

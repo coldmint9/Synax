@@ -30,6 +30,11 @@ import {
 
 const MAX_OUTPUT = 2 * 1024 * 1024;
 const MAX_LIVE = 16;
+const AUTHORITATIVE_FLUSH_INTERVAL_MS = 250;
+// Keep the serialized terminal snapshot comfortably below the 1 MiB private
+// sidecar frame budget. The live PTY may retain more output in memory; Rust
+// history receives a bounded replay tail on every flush.
+const AUTHORITATIVE_OUTPUT_LIMIT = 128 * 1024;
 const execFileAsync = promisify(execFile);
 export interface TerminalInfo {
   id: string;
@@ -76,6 +81,8 @@ interface LiveTerminal {
   finish: () => void;
   closed: boolean;
   identityReady: Promise<void>;
+  authoritativePersisting?: Promise<void>;
+  authoritativeFlushQueued: boolean;
 }
 interface TerminalRow extends OwnedProcessRecord {
   project_id: string;
@@ -166,7 +173,7 @@ class TerminalManager {
     this.authoritativeHistory.set(item.id, item);
     const outputSequence = record.outputSequence;
     const outputTail = record.outputTail;
-    if (typeof outputSequence === "number" && typeof outputTail === "string")
+    if (typeof outputSequence === "number" && Number.isSafeInteger(outputSequence) && outputSequence >= 0 && typeof outputTail === "string")
       this.authoritativeOutput.set(item.id, {
         sequence: outputSequence,
         data: outputTail.length > MAX_OUTPUT ? outputTail.slice(-MAX_OUTPUT) : outputTail,
@@ -231,17 +238,100 @@ class TerminalManager {
     return { reset: true, sequence: snapshot.sequence, frames: [{ sequence: snapshot.sequence, data: snapshot.data }] };
   }
 
-  private async persistAuthoritative(info: TerminalInfo): Promise<void> {
+  private boundedAuthoritativeOutput(data: string): string {
+    const bytes = Buffer.from(data);
+    if (bytes.length <= AUTHORITATIVE_OUTPUT_LIMIT) return data;
+    return bytes.subarray(-AUTHORITATIVE_OUTPUT_LIMIT).toString("utf8");
+  }
+
+  private authoritativeSnapshot(entry: LiveTerminal): {
+    info: TerminalInfo;
+    output: { sequence: number; data: string };
+  } {
+    return {
+      info: { ...entry.info },
+      output: {
+        sequence: entry.sequence,
+        data: this.boundedAuthoritativeOutput(
+          entry.frames.map((frame) => frame.data).join(""),
+        ),
+      },
+    };
+  }
+
+  private async persistAuthoritative(
+    info: TerminalInfo,
+    output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" },
+  ): Promise<void> {
     if (!this.authoritativeEnabled()) return;
     if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
       this.authoritativeHistory.set(info.id, { ...info });
+      this.authoritativeOutput.set(info.id, { ...output });
       return;
     }
     const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
-    const output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" };
-    await runtimeFacade.persistTerminalInfo(info.projectId, info as unknown as Record<string, unknown>, output.data, output.sequence);
+    const scopeId = `terminals:${info.projectId}`;
+    const value = {
+      ...info,
+      outputTail: output.data,
+      outputSequence: output.sequence,
+      sessionId: scopeId,
+    };
+    // The existing RuntimeFacade helper intentionally keeps a stable request
+    // id for a terminal finish. Streaming snapshots need a new id per content
+    // version, otherwise history correctly rejects a changed payload as a
+    // request conflict. The content hash keeps retries idempotent.
+    const digest = createHash("sha256")
+      .update(JSON.stringify(value))
+      .digest("hex");
+    await runtimeFacade.historyCommandGlobal({
+      scopeId,
+      requestId: `terminal:${info.id}:${output.sequence}:${digest}`,
+      operation: "append_entities",
+      payload: { objects: [{ kind: "runtime.terminal", value }] },
+    });
     this.authoritativeHistory.set(info.id, { ...info });
+    this.authoritativeOutput.set(info.id, { ...output });
     this.authoritativeHydratedProjects.add(info.projectId);
+  }
+
+  private queueAuthoritativeFlush(entry: LiveTerminal): void {
+    if (!this.authoritativeEnabled() || !entry.dirty) return;
+    entry.authoritativeFlushQueued = true;
+    if (entry.authoritativePersisting) return;
+    entry.authoritativePersisting = (async () => {
+      while (entry.authoritativeFlushQueued) {
+        entry.authoritativeFlushQueued = false;
+        const snapshot = this.authoritativeSnapshot(entry);
+        try {
+          await this.persistAuthoritative(snapshot.info, snapshot.output);
+          if (
+            entry.sequence === snapshot.output.sequence &&
+            entry.info.state === snapshot.info.state &&
+            entry.info.endedAt === snapshot.info.endedAt &&
+            entry.info.cols === snapshot.info.cols &&
+            entry.info.rows === snapshot.info.rows
+          ) {
+            entry.dirty = false;
+          } else {
+            entry.authoritativeFlushQueued = true;
+          }
+        } catch {
+          // Keep dirty so the bounded timer retries after a sidecar restart.
+          entry.dirty = true;
+          return;
+        }
+      }
+    })().finally(() => {
+      entry.authoritativePersisting = undefined;
+      if (
+        entry.closed &&
+        !entry.dirty &&
+        this.live.get(entry.info.id) === entry
+      ) {
+        this.live.delete(entry.info.id);
+      }
+    });
   }
   private flushTimer?: ReturnType<typeof setInterval>;
   private stopping = new Map<string, Promise<void>>();
@@ -457,6 +547,7 @@ class TerminalManager {
         clients: new Map(),
         paused: false,
         closed: false,
+        authoritativeFlushQueued: false,
         identityReady: new Promise<void>((resolve) => {
           identityReadyResolve = resolve;
         }),
@@ -516,6 +607,7 @@ class TerminalManager {
           entry.info.state = "closed";
           entry.info.exitCode = entry.stopping || signal ? null : exitCode;
           entry.info.endedAt = new Date().toISOString();
+          entry.dirty = true;
           if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
             this.authoritativeOutput.set(ticket.id, { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") });
           releaseOwnedProcess(
@@ -524,16 +616,17 @@ class TerminalManager {
           );
           this.flush(ticket.id, entry);
           if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-            void this.persistAuthoritative(entry.info).catch(() => {});
-          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
             this.authoritativeHistory.set(ticket.id, { ...entry.info });
           const terminal = this.has(ticket.id) ? this.get(ticket.id) : { ...entry.info };
           if (terminal)
             for (const listener of entry.listeners)
               listener({ type: "state", terminal });
           entry.finish();
-          // Closed terminals are restored from their bounded on-disk transcript.
-          this.live.delete(ticket.id);
+          // Keep a closed terminal in the live map until its authoritative
+          // snapshot is durably accepted. A sidecar restart must leave the
+          // dirty entry eligible for the retry timer.
+          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
+            this.live.delete(ticket.id);
         }),
       );
       // node-pty 1.1 exposes the slave path on its Unix handle. It is only
@@ -570,12 +663,16 @@ class TerminalManager {
               for (const [id, value] of this.live)
                 if (value.dirty) this.flush(id, value);
             }),
-          3000,
+          process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
+            ? AUTHORITATIVE_FLUSH_INTERVAL_MS
+            : 3000,
         );
         this.flushTimer.unref();
       }
       if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-        await this.persistAuthoritative(entry.info);
+        const snapshot = this.authoritativeSnapshot(entry);
+        await this.persistAuthoritative(snapshot.info, snapshot.output);
+        entry.dirty = false;
         return { ...entry.info };
       }
       return this.get(ticket.id);
@@ -590,7 +687,7 @@ class TerminalManager {
   private flush(id: string, entry: LiveTerminal) {
     if (!entry.dirty) return;
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-      entry.dirty = false;
+      this.queueAuthoritativeFlush(entry);
       return;
     }
     getRawSqlite()
@@ -713,6 +810,9 @@ class TerminalManager {
     const entry = this.live.get(id);
     if (!entry || entry.closed) return;
     entry.pty.resize(cols, rows);
+    entry.info.cols = cols;
+    entry.info.rows = rows;
+    entry.dirty = true;
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
       getRawSqlite()
         .prepare("UPDATE terminal_sessions SET cols=?, rows=? WHERE id=?")
