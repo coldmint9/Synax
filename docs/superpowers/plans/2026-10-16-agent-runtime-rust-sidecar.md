@@ -410,6 +410,7 @@ runtime-sidecar/
 - human.ask 和 plan.propose 在 authoritative host 已通过异步 `requestAuthoritative` 先提交 Rust `interaction_request`，成功后才写入 SQLite 兼容镜像；loop resume 的 interaction consume 也先提交 Rust `interaction_consume`，兼容行缺失时仍可用 Rust 返回的交互恢复执行。
 - external ACP turn 的 human input request 也改为 Rust-first；HTTP reply 已先提交 Rust control，再唤醒兼容 backend waiter。
 - execution lease open/close 现在由 Rust `run_patch` 先持久化并更新 projected run；coordinator 在 provider 执行前等待 lease durable，terminal close 也保留 Rust-first 语义。
+- lifecycle smoke 已更新为覆盖 lease canonical events；三轮 admission → activation → lease → provider → finish（含 blocked terminal）通过，replay sequence 连续且终态 fence 正确。
 - 新增 Rust asset/checkpoint/run-patch 单元覆盖；最新 Rust 测试为 60 项全部通过，history smoke、typecheck、interaction/lifecycle/subagent 套件和完整 Vitest 均已通过。完整 Vitest 结果：369 个测试文件，2973 项通过，1 项跳过。5000 session benchmark：35000 operations，p50 1.492ms、p95 3.605ms、p99 8.521ms、max 29.674ms。
 - 最新本地 macOS arm64 DMG 已由 commit `49c16f53` 构建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `4473d1b44e981eacbe024419a8b7372f776fd7a69374240a1cbb3bdf5e808626`，大小 `285089636` bytes。
 - workflow `38977935108` 已按当前 HEAD 重新触发；macOS arm64、Linux 已完成成功，Windows 和 macOS x64 仍在目标机打包/sidecar 检查，完成前不把跨平台发布验收标成完成。
