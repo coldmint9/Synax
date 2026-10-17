@@ -212,14 +212,16 @@ try {
   });
 
   const control = await connectWebSocket(ready.port);
+  const healthWait = control.waitFor(message => Boolean(hasField(message, 20)));
   control.socket.send(health());
-  await control.waitFor(message => Boolean(hasField(message, 20)));
+  await healthWait;
   control.socket.close();
   console.log('websocket protobuf health passed');
 
   const subscription = await connectWebSocket(ready.port);
+  const snapshotWait = subscription.waitFor(message => Boolean(hasField(message, 25)));
   subscription.socket.send(subscribe({ requestId: 'sub-1', sessionId: 'unix-session', after: 0 }));
-  const snapshotResponse = await subscription.waitFor(message => Boolean(hasField(message, 25)));
+  const snapshotResponse = await snapshotWait;
   if (!hasField(snapshotResponse, 25)) throw new Error('subscription snapshot missing');
 
   const unix = connectUnix();
@@ -228,9 +230,10 @@ try {
   if (!hasField(await unix.readFrame(), 19)) throw new Error('unix READY missing');
   unix.sendFrame(admitRun({ requestId: 'unix-req', sessionId: 'unix-session', epoch: 1, revision: 0, bodyHash: 'unix-body', runId: 'unix-run' }));
   if (!hasField(await unix.readFrame(), 24)) throw new Error('unix admission missing');
+  const liveWait = subscription.waitFor(message => Boolean(hasField(message, 26)));
   unix.sendFrame(appendStream({ requestId: 'unix-append', sessionId: 'unix-session', epoch: 1, revision: 1, runId: 'unix-run', producerId: 'producer-1', producerSequence: 1, kind: 'message_delta', payload: 'hello', durability: 'group_commit' }));
   if (!hasField(await unix.readFrame(), 22)) throw new Error('unix append ack missing');
-  const liveEvent = await subscription.waitFor(message => Boolean(hasField(message, 26)));
+  const liveEvent = await liveWait;
   if (!hasField(liveEvent, 26)) throw new Error('subscription live event missing');
   subscription.socket.close();
 
