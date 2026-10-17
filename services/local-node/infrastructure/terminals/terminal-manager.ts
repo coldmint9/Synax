@@ -130,6 +130,16 @@ function dimensions(cols: number, rows: number) {
 class TerminalManager {
   private live = new Map<string, LiveTerminal>();
   private readonly authoritativeHistory = new Map<string, TerminalInfo>();
+  private async persistAuthoritative(info: TerminalInfo): Promise<void> {
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return;
+    if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
+      this.authoritativeHistory.set(info.id, { ...info });
+      return;
+    }
+    const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
+    await runtimeFacade.persistTerminalInfo(info.projectId, info as unknown as Record<string, unknown>);
+    this.authoritativeHistory.set(info.id, { ...info });
+  }
   private flushTimer?: ReturnType<typeof setInterval>;
   private stopping = new Map<string, Promise<void>>();
   private row(id: string): TerminalRow {
@@ -165,6 +175,17 @@ class TerminalManager {
         )
         .all(projectId) as TerminalRow[]
     ).map(info);
+  }
+  async listAuthoritative(projectId: string): Promise<TerminalInfo[]> {
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return this.list(projectId);
+    const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
+    for (const raw of await runtimeFacade.listTerminalHistory(projectId)) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = raw as Partial<TerminalInfo>;
+      if (typeof item.id === "string" && typeof item.projectId === "string")
+        this.authoritativeHistory.set(item.id, item as TerminalInfo);
+    }
+    return this.list(projectId);
   }
   has(id: string): boolean {
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
@@ -402,6 +423,8 @@ class TerminalManager {
           );
           this.flush(ticket.id, entry);
           if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
+            void this.persistAuthoritative(entry.info).catch(() => {});
+          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
             this.authoritativeHistory.set(ticket.id, { ...entry.info });
           const terminal = this.has(ticket.id) ? this.get(ticket.id) : { ...entry.info };
           if (terminal)
@@ -450,9 +473,11 @@ class TerminalManager {
         );
         this.flushTimer.unref();
       }
-      return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
-        ? { ...entry.info }
-        : this.get(ticket.id);
+      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+        await this.persistAuthoritative(entry.info);
+        return { ...entry.info };
+      }
+      return this.get(ticket.id);
     } catch (error) {
       identityReadyResolve?.();
       if (this.live.has(ticket.id))

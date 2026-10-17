@@ -289,6 +289,7 @@ impl HistoryStore {
             "list_work" => self.list_indexed(session_id, "work")?,
             "list_contexts" => self.list_indexed(session_id, "context")?,
             "list_aux_usage" => self.list_indexed(session_id, "aux")?,
+            "list_terminals" => self.list_indexed(session_id, "terminal")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index(&mut batch)?,
             "gc" => self.gc(&mut batch)?,
@@ -1215,6 +1216,7 @@ fn entity_index_kind(kind: &str) -> Option<&'static str> {
         "runtime.work" => Some("work"),
         "runtime.context" => Some("context"),
         "runtime.aux_usage" => Some("aux"),
+        "runtime.terminal" => Some("terminal"),
         _ => None,
     }
 }

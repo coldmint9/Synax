@@ -429,6 +429,7 @@ runtime-sidecar/
 - authoritative UI snapshot 读取不再隐式 seed SQLite；HTTP tombstone、环境内容、input-source 与 invocation usage 改读 Rust。显式 session 创建 seed、Git subprocess SQL 登记、stats/work/context 仍未切完。
 - 63 项 Rust 测试、56 项 focused Node/HTTP 测试、typecheck、history/lifecycle/provider-worker smoke 通过。完整 Vitest 与新打包结果待追加。
 - workflow `39025558762` 已确认四个平台成功，head 为 `79a703c1`；Windows Named Pipe/NSIS/packaged smoke、Rust release storage/concurrency 和 history IPC/restart smoke 均通过。
+- authoritative terminal metadata 已写入 `runtime.terminal` history，project terminal list 可从 Rust history hydration；活跃 output transcript 和重启后的 PTY 恢复仍未完成。
 - 最终本地回归：Rust 63 项通过；history、lifecycle、provider-worker smoke 通过；全量 Vitest 370 个文件 / 2988 项通过 / 1 项跳过；typecheck 通过。上述证据覆盖本轮改动，不覆盖尚未完成的 terminal compatibility rows、旧 history 模块清理、跨 DB 双故障恢复、outbox GC、外部 provider 凭证和 workspace 文件回滚。
 - 当前 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `ff864150cfaac5820e8536d9a92315d83626e23f7a496c287814c7f76a07f917`，大小 `285097763` bytes。
 - 最新 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `d212617191ccde5a4fc872c7fe366ed5f38cb68d753b8e891db8a9d785b671a9`，大小 `285172706` bytes。

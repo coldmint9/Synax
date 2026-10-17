@@ -642,6 +642,29 @@ export class RuntimeFacade {
     return state.items ?? [];
   }
 
+  async persistTerminalInfo(projectId: string, terminal: Record<string, unknown>): Promise<void> {
+    if (streamMode() !== 'authoritative') return;
+    const scopeId = `terminals:${projectId}`;
+    await this.historyCommandGlobal({
+      scopeId,
+      requestId: `terminal:${terminal.id}:${terminal.state}:${terminal.endedAt ?? 'active'}`,
+      operation: 'append_entities',
+      payload: { objects: [{ kind: 'runtime.terminal', value: { ...terminal, sessionId: scopeId } }] },
+    });
+  }
+
+  async listTerminalHistory(projectId: string): Promise<unknown[]> {
+    if (streamMode() !== 'authoritative') return [];
+    const scopeId = `terminals:${projectId}`;
+    const state = await this.historyCommandGlobal({
+      scopeId,
+      requestId: `terminal-list:${projectId}`,
+      operation: 'list_terminals',
+      payload: {},
+    }) as { items?: unknown[] };
+    return state.items ?? [];
+  }
+
   async sessionStatsAuthoritative(
     sessionId: string,
     configuredContextLimit?: number | null,

@@ -67,8 +67,8 @@ async function json<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
 function scoped(c: Context) {
   return terminalManager.get(c.req.param("id")!, c.req.param("projectId"));
 }
-terminalRoutes.get("/projects/:projectId", (c) =>
-  c.json({ items: terminalManager.list(c.req.param("projectId")) }),
+terminalRoutes.get("/projects/:projectId", async (c) =>
+  c.json({ items: await terminalManager.listAuthoritative(c.req.param("projectId")) }),
 );
 terminalRoutes.post("/projects/:projectId", async (c) =>
   c.json(
