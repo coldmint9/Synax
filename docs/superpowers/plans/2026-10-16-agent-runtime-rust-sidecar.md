@@ -285,7 +285,7 @@ runtime-sidecar/
 - [x] 新增显式开关控制的 Rust sidecar supervisor 和 READY/shutdown 生命周期；
 - [x] 真实 Node `http-server` supervisor smoke 验证 sidecar startup、HTTP health 和 shutdown；
 - [x] 新增 `RuntimeFacade` shadow admission 验证边界；
-- [ ] authoritative `RuntimeFacade` 取代全部 HTTP route 的 runtime SQLite；session snapshot、runs、messages、permissions/interactions、steps/parts/tool/events、history mutation 和 media blob 已有 Rust 路径，stats/work/plan/environment 及部分执行上下文仍保留 SQLite 兼容读取。
+- [ ] authoritative `RuntimeFacade` 取代全部 HTTP route 的 runtime SQLite；session snapshot、runs、messages、permissions/interactions、steps/parts/tool/events、plan reads、history mutation 和 media blob 已有 Rust 路径，stats/work/environment 及部分执行上下文仍保留 SQLite 兼容读取。
 - `run-coordinator.ts` 使用 sidecar admission/stop/finalize；
 - [x] `runtime-stream-writer.ts` 增加 shadow sidecar append 验证边界；
 - [x] `runtime-stream-writer.ts` 增加可配置 authoritative append；
