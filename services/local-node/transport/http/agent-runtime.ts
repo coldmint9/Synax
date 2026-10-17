@@ -624,7 +624,10 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         updatedAt: new Date().toISOString(),
       });
     }
-    if (runtimeFacade.streamMode() === "authoritative") await runtimeFacade.ensureUiProjection(session.id);
+    if (runtimeFacade.streamMode() === "authoritative") {
+      await runtimeFacade.ensureUiProjection(session.id);
+      return c.json(await withAuthoritativeSessionPayload(session.id), 201);
+    }
     return c.json(withSessionPayload(session.id), 201);
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
