@@ -326,6 +326,42 @@ export class RuntimeFacade {
     return JSON.parse(Buffer.from(bytes).toString('utf8'));
   }
 
+  async historyOutboxStatus(sessionId: string, limit = 4096): Promise<{
+    pending: number;
+    firstSequence?: number;
+    lastSequence?: number;
+    truncated: boolean;
+  }> {
+    return await this.historyCommand({
+      sessionId,
+      requestId: `history-outbox-status:${sessionId}:${limit}`,
+      operation: 'history_outbox_status',
+      payload: { limit },
+    }) as {
+      pending: number;
+      firstSequence?: number;
+      lastSequence?: number;
+      truncated: boolean;
+    };
+  }
+
+  async maintainHistoryOutbox(sessionId: string, maxEntries = 256): Promise<{
+    ackedThrough: number;
+    removed: number;
+    hasMoreAcked: boolean;
+  }> {
+    return await this.historyCommand({
+      sessionId,
+      requestId: `history-outbox-maintain:${sessionId}:${maxEntries}`,
+      operation: 'maintain_history_outbox',
+      payload: { maxEntries },
+    }) as {
+      ackedThrough: number;
+      removed: number;
+      hasMoreAcked: boolean;
+    };
+  }
+
   async putAssetBlob(assetId: string, asset: unknown, bytes: Uint8Array): Promise<void> {
     const scopeId = `asset:${assetId}`;
     await this.historyCommandGlobal({

@@ -48,6 +48,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "ui_ticket",
     "ui_projection",
     "credit_window",
+    "history_outbox_maintenance",
 ];
 
 type WebSocket = WebSocketStream<TcpStream>;
@@ -148,6 +149,8 @@ pub struct TransportContext {
     pub router: Arc<SessionShardRouter>,
     pub hot_store: Option<Arc<crate::storage::HotStore>>,
     pub history: Option<Arc<crate::history::HistoryStore>>,
+    pub outbox_sessions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    pub outbox_maintenance_cursor: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl TransportContext {
@@ -176,6 +179,105 @@ impl TransportContext {
                     .map(|value| (*value).to_owned())
                     .collect(),
             })),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HistoryOutboxMaintenanceReport {
+    pub sessions_scanned: usize,
+    pub sessions_with_work: usize,
+    pub removed: usize,
+    pub sessions_with_more: usize,
+}
+
+impl TransportContext {
+    fn remember_outbox_session(&self, session_id: &str) {
+        if session_id.is_empty() {
+            return;
+        }
+        if let Ok(mut sessions) = self.outbox_sessions.lock() {
+            sessions.insert(session_id.to_owned());
+        }
+    }
+
+    fn remembered_outbox_sessions(&self) -> Vec<String> {
+        self.outbox_sessions
+            .lock()
+            .map(|sessions| sessions.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+pub async fn maintain_history_outbox_once(
+    context: &TransportContext,
+    max_sessions: usize,
+    max_entries: usize,
+) -> Result<HistoryOutboxMaintenanceReport, String> {
+    let Some(hot) = context.hot_store.as_ref() else {
+        return Ok(HistoryOutboxMaintenanceReport::default());
+    };
+
+    let listed = hot
+        .session_list_async()
+        .await
+        .map_err(|error| error.to_string())?;
+    let listed: Value = serde_json::from_slice(&listed).map_err(|error| error.to_string())?;
+    if let Some(items) = listed.get("items").and_then(Value::as_array) {
+        for item in items {
+            if let Some(session_id) = item.get("id").and_then(Value::as_str) {
+                context.remember_outbox_session(session_id);
+            }
+        }
+    }
+    let mut sessions = context.remembered_outbox_sessions();
+    sessions.sort_unstable();
+    sessions.dedup();
+    if sessions.is_empty() || max_sessions == 0 {
+        return Ok(HistoryOutboxMaintenanceReport::default());
+    }
+
+    let count = sessions.len().min(max_sessions);
+    let start = context
+        .outbox_maintenance_cursor
+        .fetch_add(count, std::sync::atomic::Ordering::Relaxed)
+        % sessions.len();
+    let mut report = HistoryOutboxMaintenanceReport::default();
+    for offset in 0..count {
+        let session_id = &sessions[(start + offset) % sessions.len()];
+        let result = hot
+            .history_outbox_maintain_async(session_id.clone(), max_entries)
+            .await
+            .map_err(|error| error.to_string())?;
+        report.sessions_scanned += 1;
+        report.removed += result.removed;
+        if result.removed > 0 || result.has_more_acked {
+            report.sessions_with_work += 1;
+        }
+        if result.has_more_acked {
+            report.sessions_with_more += 1;
+        }
+    }
+    Ok(report)
+}
+
+pub async fn run_history_outbox_maintenance(
+    context: TransportContext,
+    mut shutdown: watch::Receiver<bool>,
+    interval: Duration,
+    max_sessions: usize,
+    max_entries: usize,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            _ = ticker.tick() => {
+                if let Err(error) = maintain_history_outbox_once(&context, max_sessions, max_entries).await {
+                    eprintln!("[runtime-sidecar] history outbox maintenance deferred: {error}");
+                }
+            }
         }
     }
 }
@@ -877,6 +979,51 @@ async fn execute_wire(
                     false,
                 );
             }
+            if command.operation == "history_outbox_status" {
+                let Some(hot) = context.hot_store.as_ref() else {
+                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+                };
+                context.remember_outbox_session(&session_id);
+                let payload: Value = match serde_json::from_slice(&command.payload) {
+                    Ok(value) => value,
+                    Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
+                };
+                let limit = payload.get("limit").and_then(Value::as_u64).unwrap_or(4096).clamp(1, 4096) as usize;
+                return match hot.history_outbox_async(session_id.clone(), limit).await {
+                    Ok(events) => {
+                        let state = serde_json::json!({
+                            "pending": events.len(),
+                            "firstSequence": events.first().map(|event| event.sequence),
+                            "lastSequence": events.last().map(|event| event.sequence),
+                            "truncated": events.len() >= limit,
+                        });
+                        (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&state).unwrap_or_default() })) }, false)
+                    }
+                    Err(error) => (envelope(storage_error_to_wire(error)), false),
+                };
+            }
+            if command.operation == "maintain_history_outbox" {
+                let Some(hot) = context.hot_store.as_ref() else {
+                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+                };
+                context.remember_outbox_session(&session_id);
+                let payload: Value = match serde_json::from_slice(&command.payload) {
+                    Ok(value) => value,
+                    Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
+                };
+                let max_entries = payload.get("maxEntries").and_then(Value::as_u64).unwrap_or(256).clamp(1, 256) as usize;
+                return match hot.history_outbox_maintain_async(session_id.clone(), max_entries).await {
+                    Ok(result) => {
+                        let state = serde_json::json!({
+                            "ackedThrough": result.acked_through,
+                            "removed": result.removed,
+                            "hasMoreAcked": result.has_more_acked,
+                        });
+                        (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&state).unwrap_or_default() })) }, false)
+                    }
+                    Err(error) => (envelope(storage_error_to_wire(error)), false),
+                };
+            }
             let Some(history) = context.history.as_ref() else {
                 return (
                     envelope(wire_error("HISTORY_UNAVAILABLE", "runtime history is not configured")),
@@ -887,6 +1034,7 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
+                context.remember_outbox_session(&session_id);
                 return match reconcile_history_from_hot(hot, history, &session_id, &request_id).await {
                     Ok(state_json) => (
                         WireEnvelope {
@@ -905,6 +1053,7 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
+                context.remember_outbox_session(&session_id);
                 let payload: Value = match serde_json::from_slice(&command.payload) {
                     Ok(value) => value,
                     Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
@@ -914,7 +1063,7 @@ async fn execute_wire(
                 };
                 return match hot.history_outbox_ack_async(session_id.clone(), through).await {
                     Ok(()) => (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ackedThrough": through})).unwrap_or_default() })) }, false),
-                    Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+                    Err(error) => (envelope(storage_error_to_wire(error)), false),
                 };
             }
             match history
@@ -1020,7 +1169,9 @@ async fn execute_wire(
             producer_sequence,
             events,
             durability,
-        })) => match context
+        })) => {
+            context.remember_outbox_session(&session_id);
+            match context
             .router
             .append_stream_with_durability(
                 session_id.clone(),
@@ -1055,7 +1206,8 @@ async fn execute_wire(
                 false,
             ),
             Err(error) => (envelope(error_to_wire(error)), false),
-        },
+        }
+        }
         Some(wire_envelope::Body::Snapshot(_)) => {
             match context.router.snapshot(session_id.clone()).await {
                 Ok(snapshot) => (
@@ -1180,6 +1332,14 @@ fn history_error_to_wire(error: crate::history::HistoryError) -> wire_envelope::
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
         HistoryError::Rocks(error) => wire_error("STORAGE_UNAVAILABLE", &error.to_string()),
         HistoryError::Serialization(error) => wire_error("HISTORY_ERROR", &error.to_string()),
+    }
+}
+
+fn storage_error_to_wire(error: crate::storage::StorageError) -> wire_envelope::Body {
+    match error {
+        crate::storage::StorageError::Runtime(error) => error_to_wire(error),
+        crate::storage::StorageError::DiskFull => wire_error("DISK_FULL", "storage disk full"),
+        other => wire_error("STORAGE_UNAVAILABLE", &other.to_string()),
     }
 }
 

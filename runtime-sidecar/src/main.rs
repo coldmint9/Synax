@@ -12,6 +12,7 @@ mod tickets;
 mod transport;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::actor::SessionShardRouter;
 use crate::storage::HotStore;
@@ -57,6 +58,24 @@ async fn terminate_signal() -> std::io::Result<()> {
     }
 }
 
+fn env_duration_ms(name: &str, default_ms: u64) -> Duration {
+    let milliseconds = std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_ms);
+    Duration::from_millis(milliseconds)
+}
+
+fn env_usize(name: &str, default: usize, max: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+        .min(max)
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("SYNAX_RUNTIME_SIDECAR_TOKEN")
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
@@ -86,6 +105,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         router: Arc::new(router),
         hot_store: hot_store.clone(),
         history: history_store.map(Arc::new),
+        outbox_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        outbox_maintenance_cursor: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
 
     #[cfg(unix)]
@@ -114,6 +135,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_rx.clone(),
     ));
 
+    let maintenance_task = hot_store.as_ref().map(|_| {
+        tokio::spawn(transport::run_history_outbox_maintenance(
+            context.clone(),
+            shutdown_rx.clone(),
+            env_duration_ms("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_MS", 5_000),
+            env_usize(
+                "SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_SESSIONS",
+                128,
+                4_096,
+            ),
+            env_usize("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_BATCH", 256, 256),
+        ))
+    });
+
     #[cfg(unix)]
     let unix_task = unix_listener.map(|listener| {
         tokio::spawn(transport::serve_unix(
@@ -141,6 +176,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _ = shutdown_tx.send(true);
     let _ = websocket_task.await;
+    if let Some(task) = maintenance_task {
+        let _ = task.await;
+    }
     #[cfg(unix)]
     if let Some(task) = unix_task {
         let _ = task.await;
