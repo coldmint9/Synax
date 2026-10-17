@@ -73,3 +73,12 @@ flowchart LR
 - 已落地：Tokio multi-thread、session shard、RocksDB hot/history、Moka、Rust control、Electron WebSocket、Unix socket、Windows Named Pipe 代码路径、迁移与故障 smoke；runtime-history 增加内容寻址的分块 blob/manifest 校验。
 - 仍在收口：Node SQLite session/run/message 兼容镜像、旧 checkpoint/history mode、完整 recovery authority、完整 history part/media API、Windows 目标机实际执行验收，以及真实外部 provider 凭证验收。
 - 数据权威方向：新 authoritative host 由 Rust 管理 runtime-hot、control、history；产品 host 已移除 legacy 环境开关，旧同步路径只作为测试 fixture 的显式 disabled transport 保留，彻底删除安排在离线迁移与 purge 验收之后。
+
+
+## 2026-10-17 实现审计更新
+
+history 的对象、head 与 receipt 已改为 Rust 原子命令；查询不再缓存旧 receipt，当前 head 返回同一实体最新可达版本。会话环境内容、调用统计、stats 基础投影和 ticket 的读取边界继续切向 Rust。
+
+完整迁移尚未结束。当前 SQL 执行上下文、work/context/stats、process ownership、terminal history 扫描、跨 hot/history 故障恢复、长历史分页/增量 GC 和 workspace 文件回滚的缺口及验收标准，见 `../superpowers/reviews/2026-10-17-runtime-authority-audit.md`。此图中的 Rust 权威方向不能作为上述所有功能已完成的证明。
+
+当前本地试用包：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `ff864150cfaac5820e8536d9a92315d83626e23f7a496c287814c7f76a07f917`；packaged desktop smoke 已通过。

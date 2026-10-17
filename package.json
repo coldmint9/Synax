@@ -89,6 +89,7 @@
     "runtime:migrate": "tsx scripts/synax-runtime-migrate.ts",
     "runtime:migrate:smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-migration-smoke.ts",
     "runtime-sidecar:benchmark": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-benchmark.ts",
+    "runtime-sidecar:history-benchmark": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-history-benchmark.ts",
     "runtime-sidecar:worker-process-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-worker-process-smoke.ts",
     "runtime-sidecar:storage-fault-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-storage-fault-smoke.ts",
     "runtime-sidecar:provider-worker-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-provider-worker-smoke.ts",

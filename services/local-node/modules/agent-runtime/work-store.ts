@@ -122,15 +122,21 @@ export const workStore = {
         .run(work.id, work.sessionId, JSON.stringify(work), work.updatedAt);
       return work;
     };
-    if (versionedSession(work.sessionId))
-      return writeVersionEntity(
+    const saved = versionedSession(work.sessionId)
+      ? writeVersionEntity(
         work.sessionId,
         "work",
         work.id,
         work,
         writeControl,
-      );
-    return writeControl();
+      )
+      : writeControl();
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      void import("./sidecar/runtime-facade.js")
+        .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(work.sessionId, "runtime.work", saved))
+        .catch(() => {});
+    }
+    return saved;
   },
   create(sessionId: string, objective: string, legacy = false): WorkRecord {
     const session = store.getSession(sessionId);

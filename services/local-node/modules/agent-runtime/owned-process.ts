@@ -9,6 +9,7 @@ import {
   recordOwnedRuntime,
   recordOwnedRuntimeTarget,
   releaseOwnedProcess,
+  waitForAuthoritativeLease,
 } from "./process-ownership.js";
 import { parseWslUncPath } from "../workspace-location.js";
 import {
@@ -95,12 +96,8 @@ export function spawnOwnedProcess(
     if (message?.type === "finished" && typeof message.code === "number")
       completedCode = message.code;
   });
-  try {
-    recordOwnedPid(ticket.id, child.pid);
-    child.once("close", (code) =>
-      releaseOwnedProcess(ticket.id, completedCode ?? code),
-    );
-    child.once("error", () => releaseOwnedProcess(ticket.id));
+  const sendStart = () => {
+    if (child.killed || child.exitCode !== null) return;
     child.send({
       type: "start",
       command: target.command,
@@ -108,6 +105,17 @@ export function spawnOwnedProcess(
       cwd: wsl ? undefined : options.cwd,
       shell: wsl ? false : options.shell === true,
       background: options.background === true,
+    });
+  };
+  try {
+    recordOwnedPid(ticket.id, child.pid);
+    child.once("close", (code) =>
+      releaseOwnedProcess(ticket.id, completedCode ?? code),
+    );
+    child.once("error", () => releaseOwnedProcess(ticket.id));
+    void waitForAuthoritativeLease(ticket.id).then(sendStart).catch(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      releaseOwnedProcess(ticket.id);
     });
     if (wsl) {
       void (async () => {

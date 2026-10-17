@@ -287,6 +287,19 @@ import {
 import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
 import { usageFromAcpUpdate } from "../acp-engine/acp-usage.js";
 
+it("encodes the authoritative auxiliary session scope in the usage id", () => {
+  const previous = process.env.SYNAX_RUNTIME_SIDECAR_STREAM;
+  process.env.SYNAX_RUNTIME_SIDECAR_STREAM = "authoritative";
+  try {
+    const id = startAuxUsage("session-restart-safe", "fixture");
+    expect(id).toMatch(/^aux_[^:]+:[A-Za-z0-9_-]+$/);
+    finishAuxUsage(id, { inputTokens: 1, outputTokens: 1 });
+  } finally {
+    if (previous === undefined) delete process.env.SYNAX_RUNTIME_SIDECAR_STREAM;
+    else process.env.SYNAX_RUNTIME_SIDECAR_STREAM = previous;
+  }
+});
+
 function addUsageStep(
   sessionId: string,
   id: string,

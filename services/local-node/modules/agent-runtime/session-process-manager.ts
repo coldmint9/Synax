@@ -2,6 +2,7 @@ import {
   prepareOwnedProcess,
   recordOwnedPid,
   releaseOwnedProcess,
+  waitForAuthoritativeLease,
   hasBackgroundProcesses,
 } from "./process-ownership.js";
 import { fork, type ChildProcess } from "node:child_process";
@@ -696,6 +697,7 @@ class SessionProcessManager {
     });
 
     const ready = this.waitForChildReady(sessionId);
+    await waitForAuthoritativeLease(processTicket.id);
     child.send?.({ type: "session:initialize" });
     await ready;
     logger.info({ sessionId, pid: child.pid }, "[agent-session] child started");

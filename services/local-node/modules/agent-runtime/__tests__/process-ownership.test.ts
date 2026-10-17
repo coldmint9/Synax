@@ -1,11 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnOwnedProcess } from '../owned-process.js';
-import { externalCommandEnvironment, stopRecordedProcess, type OwnedProcessRecord } from '../process-ownership.js';
+import { externalCommandEnvironment, prepareOwnedProcess, recordOwnedPid, releaseOwnedProcess, stopRecordedProcess, type OwnedProcessRecord } from '../process-ownership.js';
 import { getRawSqlite } from '../../../infrastructure/database/index.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 beforeEach(resetAgentRuntimeFixtures);
 
 describe('durable owned process receipts', () => {
+  it('does not create a SQLite process authority on an authoritative host', () => {
+    vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
+    const db = getRawSqlite();
+    const prepare = vi.spyOn(db, 'prepare');
+    const ticket = prepareOwnedProcess('authoritative command', true, { sessionId: 'session' });
+    recordOwnedPid(ticket.id, 12345);
+    releaseOwnedProcess(ticket.id);
+    expect(prepare).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
   it('records identity before a command starts and verifies that identity during recovery', async () => {
     const child = spawnOwnedProcess(process.execPath, ['-e', "console.log('ready');setInterval(()=>{},1000)"]);
     try {

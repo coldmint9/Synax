@@ -56,7 +56,17 @@ function toolLabel(sessionId: string, toolId: string): string {
 
 export function resolveSessionInvocationUsage(sessionId: string): SessionInvocationUsageResponse {
   const session = agentRuntimeStore.getSession(sessionId);
-  const calls = agentRuntimeStore.listToolInvocationRows(sessionId);
+  return resolveSessionInvocationUsageFromRecords(session.projectId, agentRuntimeStore.listToolInvocationRows(sessionId), (id) => toolLabel(sessionId, id));
+}
+
+export function resolveSessionInvocationUsageFromRecords(
+  projectId: string,
+  calls: Array<Pick<ToolCallRecord, "startedAt" | "toolId" | "category" | "inputRef">>,
+  resolveToolLabel: (id: string) => string = (id) => {
+    try { return toolRegistry.get(id).label; }
+    catch { return readableId(id); }
+  },
+): SessionInvocationUsageResponse {
   const usage = new Map<string, SessionInvocationUsageItem>();
   for (const call of calls) {
     if (call.toolId === 'tools.invalid') continue;
@@ -76,15 +86,15 @@ export function resolveSessionInvocationUsage(sessionId: string): SessionInvocat
   const mcpNames = new Map<string, string>();
   if ([...usage.values()].some(item => item.kind === 'mcp')) {
     try {
-      for (const server of getProjectSettings(session.projectId).mcpServers ?? [])
+      for (const server of getProjectSettings(projectId).mcpServers ?? [])
         mcpNames.set(server.id, server.name?.trim() || server.id);
     } catch { /* Historical statistics survive removed project settings. */ }
   }
   for (const item of usage.values()) {
-    if (item.kind === 'tool') item.label = toolLabel(sessionId, item.id);
+    if (item.kind === 'tool') item.label = resolveToolLabel(item.id);
     else if (item.kind === 'mcp') item.label = mcpNames.get(item.id) ?? item.id;
     else {
-      try { item.label = skillRegistry.getSummary(item.id, session.projectId).label.trim() || item.id; }
+      try { item.label = skillRegistry.getSummary(item.id, projectId).label.trim() || item.id; }
       catch { item.label = item.id; }
     }
   }

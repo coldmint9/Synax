@@ -24,6 +24,7 @@ const CF_RECEIPTS: &str = "receipts";
 const CF_STREAMS: &str = "streams";
 const CF_APPENDS: &str = "append_receipts";
 const CF_TRANSITIONS: &str = "transitions";
+const CF_HISTORY_OUTBOX: &str = "history_outbox";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
 
@@ -254,6 +255,7 @@ impl HotStore {
             CF_UI,
             CF_ACTIVATIONS,
             CF_CONTROLS,
+            CF_HISTORY_OUTBOX,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -407,6 +409,28 @@ impl HotStore {
         .map_err(|error| {
             StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
         })?
+    }
+
+    pub async fn history_outbox_async(
+        &self,
+        session_id: String,
+        limit: usize,
+    ) -> Result<Vec<StreamEvent>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.history_outbox(&session_id, limit.min(4096)))
+            .await
+            .map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string())))?
+    }
+
+    pub async fn history_outbox_ack_async(
+        &self,
+        session_id: String,
+        through: u64,
+    ) -> Result<(), StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.history_outbox_ack(&session_id, through))
+            .await
+            .map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string())))?
     }
 
     pub async fn ui_snapshot_async(
@@ -1043,6 +1067,12 @@ impl HotStore {
                 &mut batch,
                 CF_STREAMS,
                 stream_key(session_id, state.cursor),
+                &serde_json::to_vec(&event)?,
+            )?;
+            self.put_batch(
+                &mut batch,
+                CF_HISTORY_OUTBOX,
+                history_outbox_key(session_id, state.cursor),
                 &serde_json::to_vec(&event)?,
             )?;
             for sequence in 1..state.retained_from {
@@ -1941,6 +1971,12 @@ impl HotStore {
                 stream_key(session_id, state.cursor),
                 &serde_json::to_vec(&event)?,
             )?;
+            self.put_batch(
+                &mut batch,
+                CF_HISTORY_OUTBOX,
+                history_outbox_key(session_id, state.cursor),
+                &serde_json::to_vec(&event)?,
+            )?;
         }
         let previous_retained_from = state.retained_from;
         state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
@@ -1988,6 +2024,37 @@ impl HotStore {
 
     pub fn replay(&self, session_id: &str, after: u64) -> Result<Vec<StreamEvent>, StorageError> {
         self.replay_bounded(session_id, after, EVENT_RETENTION as usize, 4 * 1024 * 1024)
+    }
+
+    fn history_outbox(&self, session_id: &str, limit: usize) -> Result<Vec<StreamEvent>, StorageError> {
+        let prefix = format!("o/{session_id}/");
+        let mut items = Vec::new();
+        for entry in self.db.iterator_cf(
+            self.cf(CF_HISTORY_OUTBOX)?,
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
+        ) {
+            let (key, value) = entry?;
+            if !key.starts_with(prefix.as_bytes()) || items.len() >= limit { break; }
+            items.push(serde_json::from_slice::<StreamEvent>(&value)?);
+        }
+        Ok(items)
+    }
+
+    fn history_outbox_ack(&self, session_id: &str, through: u64) -> Result<(), StorageError> {
+        let prefix = format!("o/{session_id}/");
+        let mut batch = WriteBatch::default();
+        for entry in self.db.iterator_cf(
+            self.cf(CF_HISTORY_OUTBOX)?,
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
+        ) {
+            let (key, _) = entry?;
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            let sequence = String::from_utf8_lossy(&key).rsplit('/').next().and_then(|value| value.parse::<u64>().ok());
+            if sequence.is_some_and(|value| value <= through) {
+                batch.delete_cf(self.cf(CF_HISTORY_OUTBOX)?, key);
+            }
+        }
+        self.write_with_durability(batch, Durability::Sync)
     }
 
     fn replay_bounded(
@@ -2252,6 +2319,10 @@ fn run_key(session_id: &str, run_id: &str) -> String {
 
 fn stream_key(session_id: &str, sequence: u64) -> String {
     format!("e/{session_id}/{sequence:020}")
+}
+
+fn history_outbox_key(session_id: &str, sequence: u64) -> String {
+    format!("o/{session_id}/{sequence:020}")
 }
 
 fn control_state_key(session_id: &str) -> String {
@@ -3692,6 +3763,35 @@ mod tests {
         assert_eq!(projection.session["activeRunId"], serde_json::Value::Null);
         assert_eq!(projection.session["blockedReason"], "restart");
         drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn durable_history_outbox_survives_stream_retention_until_ack() {
+        let path = temp_path("history-outbox");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        store
+            .append_stream_with_durability("s", "r", "p", 1, 1, Durability::Sync, vec![ui_event(serde_json::json!({
+                "type": "step_started", "step": {"id":"step","sessionId":"s","runId":"r","index":1}
+            }))])
+            .unwrap();
+        assert_eq!(store.replay("s", 0).unwrap().len(), 1);
+        assert_eq!(store.history_outbox("s", 10).unwrap().len(), 1);
+        store
+            .append_stream_with_durability("s", "r", "p", 2, 1, Durability::Sync, vec![ui_event(serde_json::json!({
+                "type": "message_delta", "runId":"r", "stepId":"step", "delta":"x"
+            }))])
+            .unwrap();
+        store.history_outbox_ack("s", 1).unwrap();
+        assert_eq!(store.history_outbox("s", 10).unwrap().len(), 1);
+        drop(store);
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(reopened.history_outbox("s", 10).unwrap().len(), 1);
+        reopened.history_outbox_ack("s", 2).unwrap();
+        assert!(reopened.history_outbox("s", 10).unwrap().is_empty());
+        drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
 }

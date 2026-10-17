@@ -96,3 +96,20 @@ describe('resolveSessionInvocationUsage', () => {
   });
 
 });
+
+it('projects Rust history records without consulting session or tool-call SQL mirrors', async () => {
+  const { resolveSessionInvocationUsageFromRecords } = await import('../session-invocation-usage.js');
+  const sessionRead = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('SQL disabled'); });
+  const callRead = vi.spyOn(agentRuntimeStore, 'listToolInvocationRows').mockImplementation(() => { throw new Error('SQL disabled'); });
+  const scopedLabels = vi.spyOn(toolRegistry, 'getForSession').mockImplementation(() => { throw new Error('SQL disabled'); });
+  try {
+    const result = resolveSessionInvocationUsageFromRecords('p1', [
+      { toolId: 'file.read', category: 'read', startedAt: '2026-10-17T00:00:00Z', inputRef: { path: 'README.md' } },
+      { toolId: 'file.read', category: 'read', startedAt: '2026-10-17T00:00:01Z', inputRef: {} },
+    ]);
+    expect(result).toMatchObject({ totalCalls: 2, items: [{ id: 'file.read', label: 'Read File', callCount: 2, lastCalledAt: '2026-10-17T00:00:01Z' }] });
+    expect(sessionRead).not.toHaveBeenCalled();
+    expect(callRead).not.toHaveBeenCalled();
+    expect(scopedLabels).not.toHaveBeenCalled();
+  } finally { vi.restoreAllMocks(); }
+});

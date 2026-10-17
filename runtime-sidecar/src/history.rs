@@ -5,13 +5,14 @@
 //! fork, rollback and garbage collection never copy the full conversation.
 
 use moka::future::Cache;
-use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
+use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch, WriteOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 
 const CF_OBJECTS: &str = "objects";
 const CF_HEADS: &str = "heads";
@@ -72,6 +73,10 @@ struct HistoryReceipt {
 pub struct HistoryStore {
     db: Arc<DB>,
     object_cache: Cache<String, Vec<u8>>,
+    command_locks: Arc<[Mutex<()>; 64]>,
+    asset_lock: Arc<Mutex<()>>,
+    maintenance_lock: Arc<RwLock<()>>,
+    blocking_slots: Arc<Semaphore>,
 }
 
 impl HistoryStore {
@@ -96,6 +101,10 @@ impl HistoryStore {
         Ok(Self {
             db,
             object_cache: Cache::builder().max_capacity(4096).build(),
+            command_locks: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
+            asset_lock: Arc::new(Mutex::new(())),
+            maintenance_lock: Arc::new(RwLock::new(())),
+            blocking_slots: Arc::new(Semaphore::new(32)),
         })
     }
 
@@ -106,9 +115,16 @@ impl HistoryStore {
         operation: String,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, HistoryError> {
+        let permit = self
+            .blocking_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| HistoryError::InvalidCommand("history executor closed".into()))?;
         let store = self.clone();
         let operation_for_task = operation.clone();
         let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             store.command(&session_id, &request_id, &operation_for_task, &payload)
         })
         .await
@@ -157,6 +173,60 @@ impl HistoryStore {
         } else {
             serde_json::from_slice(payload)?
         };
+        // GC must not collect a newly staged object or a root being published.
+        // Ordinary sessions use independent stripes; blocking never occupies a Tokio worker.
+        let exclusive = matches!(operation, "gc" | "rebuild_index");
+        let _maintenance_write = if exclusive {
+            Some(self.maintenance_lock.write().map_err(|_| {
+                HistoryError::InvalidCommand("history maintenance lock poisoned".into())
+            })?)
+        } else {
+            None
+        };
+        let _maintenance_read = if exclusive {
+            None
+        } else {
+            Some(self.maintenance_lock.read().map_err(|_| {
+                HistoryError::InvalidCommand("history maintenance lock poisoned".into())
+            })?)
+        };
+        let _assets =
+            if operation.starts_with("asset_") || operation.contains("blob") {
+                Some(self.asset_lock.lock().map_err(|_| {
+                    HistoryError::InvalidCommand("history asset lock poisoned".into())
+                })?)
+            } else {
+                None
+            };
+        let stripe =
+            usize::from(Sha256::digest(session_id.as_bytes())[0]) % self.command_locks.len();
+        let _session = self.command_locks[stripe]
+            .lock()
+            .map_err(|_| HistoryError::InvalidCommand("history session lock poisoned".into()))?;
+        let readonly = matches!(
+            operation,
+            "head_read"
+                | "get_object"
+                | "get_blob_chunk"
+                | "get_blob_manifest"
+                | "asset_get"
+                | "asset_has_binding"
+                | "asset_list_bindings"
+                | "list_checkpoints"
+                | "page"
+                | "list_runs"
+                | "list_messages"
+                | "list_steps"
+                | "list_parts"
+                | "list_tool_calls"
+                | "list_events"
+                | "list_artifacts"
+                | "list_plans"
+                | "list_work"
+                | "list_contexts"
+                | "list_aux_usage"
+                | "verify"
+        );
         let identity = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&(
@@ -167,39 +237,46 @@ impl HistoryStore {
             ))?)
         );
         let receipt_key = format!("r/{session_id}/{request_id}");
-        if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
-            let receipt: HistoryReceipt = serde_json::from_slice(&bytes)?;
-            if receipt.identity != identity {
-                return Err(HistoryError::RequestConflict);
+        // Query ids are correlation only. Old versions persisted query results:
+        // ignoring those receipts also repairs stale reads after upgrade.
+        if !readonly {
+            if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
+                let receipt: HistoryReceipt = serde_json::from_slice(&bytes)?;
+                if receipt.identity != identity {
+                    return Err(HistoryError::RequestConflict);
+                }
+                return Ok(receipt.result);
             }
-            return Ok(receipt.result);
         }
-
+        let mut batch = WriteBatch::default();
         let result = match operation {
-            "put_object" => self.put_object(&value)?,
-            "put_blob_chunk" => self.put_blob_chunk(&value)?,
-            "put_blob_manifest" => self.put_blob_manifest(&value)?,
+            "append_entities" => self.append_entities(session_id, &value, &mut batch)?,
+            "put_object" => self.put_object(&value, &mut batch)?,
+            "put_blob_chunk" => self.put_blob_chunk(&value, &mut batch)?,
+            "put_blob_manifest" => self.put_blob_manifest(&value, &mut batch)?,
             "get_blob_chunk" => self.get_blob_chunk(&value)?,
             "get_blob_manifest" => self.get_blob_manifest(&value)?,
-            "delete_blob" => self.delete_blob(&value)?,
-            "asset_put" => self.asset_put(&value)?,
+            "delete_blob" => self.delete_blob(&value, &mut batch)?,
+            "asset_put" => self.asset_put(&value, &mut batch)?,
             "asset_get" => self.asset_get(&value)?,
-            "asset_bind" => self.asset_bind(&value)?,
-            "asset_unbind" => self.asset_unbind(&value)?,
+            "asset_bind" => self.asset_bind(&value, &mut batch)?,
+            "asset_unbind" => self.asset_unbind(&value, &mut batch)?,
             "asset_has_binding" => self.asset_has_binding(&value)?,
             "asset_list_bindings" => self.asset_list_bindings(&value)?,
-            "asset_delete" => self.asset_delete(&value)?,
+            "asset_delete" => self.asset_delete(&value, &mut batch)?,
             "get_object" => {
                 let object_id = required_string(&value, "objectId")?;
                 self.read_object(object_id)?
             }
             "head_read" => self.head_read(session_id)?,
-            "head_switch" | "checkpoint" => self.head_switch(session_id, &value, operation)?,
+            "head_switch" | "checkpoint" => {
+                self.head_switch(session_id, &value, operation, &mut batch)?
+            }
             "list_checkpoints" => self.list_checkpoints(session_id)?,
-            "fork" => self.fork(session_id, &value)?,
-            "rollback" => self.head_switch(session_id, &value, "head_switch")?,
-            "pin" => self.pin(session_id, &value)?,
-            "unpin" => self.unpin(session_id, &value)?,
+            "fork" => self.fork(session_id, &value, &mut batch)?,
+            "rollback" => self.head_switch(session_id, &value, "head_switch", &mut batch)?,
+            "pin" => self.pin(session_id, &value, &mut batch)?,
+            "unpin" => self.unpin(session_id, &value, &mut batch)?,
             "page" => self.page(&value)?,
             "list_runs" => self.list_indexed(session_id, "run")?,
             "list_messages" => self.list_indexed(session_id, "message")?,
@@ -209,26 +286,37 @@ impl HistoryStore {
             "list_events" => self.list_indexed(session_id, "event")?,
             "list_artifacts" => self.list_indexed(session_id, "artifact")?,
             "list_plans" => self.list_indexed(session_id, "plan")?,
+            "list_work" => self.list_indexed(session_id, "work")?,
+            "list_contexts" => self.list_indexed(session_id, "context")?,
+            "list_aux_usage" => self.list_indexed(session_id, "aux")?,
             "verify" => self.verify()?,
-            "rebuild_index" => self.rebuild_index()?,
-            "gc" => self.gc()?,
+            "rebuild_index" => self.rebuild_index(&mut batch)?,
+            "gc" => self.gc(&mut batch)?,
             _ => {
                 return Err(HistoryError::InvalidCommand(format!(
                     "unknown history operation: {operation}"
                 )));
             }
         };
+        if readonly {
+            return Ok(result);
+        }
         let receipt = serde_json::to_vec(&HistoryReceipt {
             identity,
             result: result.clone(),
         })?;
-        let mut batch = WriteBatch::default();
         batch.put_cf(self.cf(CF_RECEIPTS)?, receipt_key.as_bytes(), receipt);
-        self.db.write(batch)?;
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        self.db.write_opt(batch, &options)?;
         Ok(result)
     }
 
-    fn put_object(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn put_object(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let kind = required_string(value, "kind")?;
         let object_value = value
             .get("value")
@@ -262,47 +350,106 @@ impl HistoryStore {
             refs,
         };
         let bytes = serde_json::to_vec(&object)?;
-        let mut batch = WriteBatch::default();
-        if self
-            .get(CF_OBJECTS, object_key(&object_id).as_bytes())?
-            .is_none()
-        {
-            batch.put_cf(
-                self.cf(CF_OBJECTS)?,
-                object_key(&object_id).as_bytes(),
-                &bytes,
-            );
-            let index_kind = match kind {
-                "runtime.run" => Some("run"),
-                "runtime.message" => Some("message"),
-                "runtime.step" => Some("step"),
-                "runtime.part" => Some("part"),
-                "runtime.tool_call" => Some("tool"),
-                "runtime.event" => Some("event"),
-                "runtime.artifact" => Some("artifact"),
-                "runtime.plan" => Some("plan"),
-                _ => None,
-            };
-            if let Some(index_kind) = index_kind {
-                if let (Some(session_id), Some(run_id)) = (
-                    object.value["sessionId"].as_str(),
-                    object.value["id"].as_str(),
-                ) {
-                    batch.put_cf(
-                        self.cf(CF_INDEXES)?,
-                        format!("{index_kind}/{session_id}/{run_id}").as_bytes(),
-                        object_id.as_bytes(),
-                    );
-                }
+        batch.put_cf(
+            self.cf(CF_OBJECTS)?,
+            object_key(&object_id).as_bytes(),
+            &bytes,
+        );
+        if let Some(index_kind) = entity_index_kind(kind) {
+            if let (Some(session_id), Some(entity_id)) = (
+                object.value["sessionId"].as_str(),
+                object.value["id"].as_str(),
+            ) {
+                batch.put_cf(
+                    self.cf(CF_INDEXES)?,
+                    format!("{index_kind}/{session_id}/{entity_id}").as_bytes(),
+                    object_id.as_bytes(),
+                );
             }
-            self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(
-            &serde_json::json!({"objectId": object_id, "bytes": bytes.len()}),
+            &serde_json::json!({"objectId":object_id,"bytes":bytes.len()}),
         )?)
     }
 
-    fn put_blob_chunk(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    /// Persist bounded entity updates, the root that retains them and the
+    /// command receipt in the same WAL-synced batch (committed by command()).
+    fn append_entities(
+        &self,
+        session_id: &str,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
+        let objects = value["objects"]
+            .as_array()
+            .filter(|objects| !objects.is_empty() && objects.len() <= PAGE_LIMIT)
+            .ok_or_else(|| {
+                HistoryError::InvalidCommand("append requires 1..256 entities".into())
+            })?;
+        let mut head = self.read_head(session_id)?;
+        if let Some(expected) = value.get("expectedRevision").and_then(|v| v.as_u64()) {
+            if expected != head.revision {
+                return Err(HistoryError::RevisionConflict {
+                    expected,
+                    actual: head.revision,
+                });
+            }
+        }
+        // New entities come first so bounded graph pages can serve the latest
+        // transcript without walking the entire historical root chain.
+        let mut refs = Vec::with_capacity(objects.len() + 1);
+        for object in objects {
+            let kind = required_string(object, "kind")?;
+            if entity_index_kind(kind).is_none()
+                || object["value"]["sessionId"].as_str() != Some(session_id)
+            {
+                return Err(HistoryError::InvalidCommand(
+                    "entity kind or session does not match append scope".into(),
+                ));
+            }
+            required_string(&object["value"], "id")?;
+            let result: serde_json::Value =
+                serde_json::from_slice(&self.put_object(object, batch)?)?;
+            refs.push(required_string(&result, "objectId")?.to_owned());
+        }
+        if let Some(previous) = &head.object_id {
+            self.read_object(previous)?;
+            refs.push(previous.clone());
+        }
+        head.revision = head
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| HistoryError::InvalidCommand("history revision overflow".into()))?;
+        let kind = "runtime.session.root";
+        let root_value = serde_json::json!({"sessionId":session_id,"revision":head.revision});
+        let identity = serde_json::to_vec(&(kind, &root_value, &refs))?;
+        let root = HistoryObject {
+            object_id: format!("sha256:{:x}", Sha256::digest(&identity)),
+            kind: kind.into(),
+            value: root_value,
+            refs,
+        };
+        batch.put_cf(
+            self.cf(CF_OBJECTS)?,
+            object_key(&root.object_id).as_bytes(),
+            serde_json::to_vec(&root)?,
+        );
+        head.session_id = session_id.to_owned();
+        head.object_id = Some(root.object_id);
+        head.updated_at = now_iso();
+        batch.put_cf(
+            self.cf(CF_HEADS)?,
+            head_key(session_id).as_bytes(),
+            serde_json::to_vec(&head)?,
+        );
+        Ok(serde_json::to_vec(&head)?)
+    }
+
+    fn put_blob_chunk(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let blob_id = required_string(value, "blobId")?;
         let index = required_u64(value, "index")?;
         let total = required_u64(value, "total")?;
@@ -327,16 +474,18 @@ impl HistoryStore {
                 return Err(HistoryError::RequestConflict);
             }
         } else {
-            let mut batch = WriteBatch::default();
             batch.put_cf(self.cf(CF_BLOBS)?, key.as_bytes(), bytes.as_slice());
-            self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(
             &serde_json::json!({"blobId":blob_id,"index":index,"total":total,"bytes":bytes.len()}),
         )?)
     }
 
-    fn put_blob_manifest(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn put_blob_manifest(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let blob_id = required_string(value, "blobId")?;
         let total = required_u64(value, "total")?;
         let size = required_u64(value, "size")?;
@@ -372,13 +521,11 @@ impl HistoryStore {
         }
         let manifest =
             serde_json::json!({"blobId":blob_id,"total":total,"size":size,"sha256":actual_sha256});
-        let mut batch = WriteBatch::default();
         batch.put_cf(
             self.cf(CF_BLOBS)?,
             blob_manifest_key(blob_id).as_bytes(),
             serde_json::to_vec(&manifest)?,
         );
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(&manifest)?)
     }
 
@@ -413,10 +560,13 @@ impl HistoryStore {
             .transpose()
     }
 
-    fn delete_blob(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn delete_blob(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let blob_id = required_string(value, "blobId")?;
         let prefix = format!("c/{blob_id}/");
-        let mut batch = WriteBatch::default();
         let mut deleted = 0u64;
         for item in self.db.iterator_cf(
             self.cf(CF_BLOBS)?,
@@ -434,15 +584,16 @@ impl HistoryStore {
             batch.delete_cf(self.cf(CF_BLOBS)?, manifest_key.as_bytes());
             deleted += 1;
         }
-        if deleted > 0 {
-            self.db.write(batch)?;
-        }
         Ok(serde_json::to_vec(
             &serde_json::json!({"blobId":blob_id,"deleted":deleted}),
         )?)
     }
 
-    fn asset_put(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn asset_put(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let asset = value
             .get("asset")
             .cloned()
@@ -475,13 +626,11 @@ impl HistoryStore {
                 return Err(HistoryError::RequestConflict);
             }
         } else {
-            let mut batch = WriteBatch::default();
             batch.put_cf(
                 self.cf(CF_ASSETS)?,
                 key.as_bytes(),
                 serde_json::to_vec(&asset)?,
             );
-            self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(&serde_json::json!({
             "asset": asset,
@@ -495,7 +644,11 @@ impl HistoryStore {
             .ok_or_else(|| HistoryError::ObjectMissing(format!("asset {id}")))
     }
 
-    fn asset_bind(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn asset_bind(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let asset_id = required_string(value, "assetId")?;
         let session_id = required_string(value, "sessionId")?;
         if self
@@ -505,23 +658,23 @@ impl HistoryStore {
             return Err(HistoryError::ObjectMissing(format!("asset {asset_id}")));
         }
         let key = format!("b/{session_id}/{asset_id}");
-        let mut batch = WriteBatch::default();
         batch.put_cf(self.cf(CF_ASSET_BINDINGS)?, key.as_bytes(), b"1");
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"assetId":asset_id,"sessionId":session_id,"bound":true}),
         )?)
     }
 
-    fn asset_unbind(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn asset_unbind(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let asset_id = required_string(value, "assetId")?;
         let session_id = required_string(value, "sessionId")?;
-        let mut batch = WriteBatch::default();
         batch.delete_cf(
             self.cf(CF_ASSET_BINDINGS)?,
             format!("b/{session_id}/{asset_id}").as_bytes(),
         );
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"assetId":asset_id,"sessionId":session_id,"bound":false}),
         )?)
@@ -563,7 +716,11 @@ impl HistoryStore {
         Ok(serde_json::to_vec(&serde_json::json!({"items":assets}))?)
     }
 
-    fn asset_delete(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn asset_delete(
+        &self,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let asset_id = required_string(value, "assetId")?;
         let asset_key = format!("a/{asset_id}");
         if self.get(CF_ASSETS, asset_key.as_bytes())?.is_none() {
@@ -582,9 +739,7 @@ impl HistoryStore {
                 ));
             }
         }
-        let mut batch = WriteBatch::default();
         batch.delete_cf(self.cf(CF_ASSETS)?, asset_key.as_bytes());
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"assetId":asset_id,"deleted":true}),
         )?)
@@ -600,6 +755,7 @@ impl HistoryStore {
         session_id: &str,
         value: &serde_json::Value,
         operation: &str,
+        batch: &mut WriteBatch,
     ) -> Result<Vec<u8>, HistoryError> {
         let object_id = required_string(value, "objectId")?;
         if self
@@ -618,7 +774,6 @@ impl HistoryStore {
             }
         }
         head.session_id = session_id.to_owned();
-        let mut batch = WriteBatch::default();
         if operation == "checkpoint" {
             let pin_id = value
                 .get("pinId")
@@ -633,7 +788,6 @@ impl HistoryStore {
                 pin_key(session_id, pin_id).as_bytes(),
                 serde_json::to_vec(&serde_json::json!({"objectId":object_id,"metadata":metadata}))?,
             );
-            self.db.write(batch)?;
             return Ok(serde_json::to_vec(
                 &serde_json::json!({"pinId":pin_id,"objectId":object_id,"metadata":metadata}),
             )?);
@@ -646,7 +800,6 @@ impl HistoryStore {
             head_key(session_id).as_bytes(),
             serde_json::to_vec(&head)?,
         );
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(&head)?)
     }
 
@@ -682,7 +835,12 @@ impl HistoryStore {
         Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?)
     }
 
-    fn pin(&self, session_id: &str, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn pin(
+        &self,
+        session_id: &str,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let pin_id = required_string(value, "pinId")?;
         let object_id = required_string(value, "objectId")?;
         if self
@@ -691,13 +849,11 @@ impl HistoryStore {
         {
             return Err(HistoryError::ObjectMissing(object_id.to_owned()));
         }
-        let mut batch = WriteBatch::default();
         batch.put_cf(
             self.cf(CF_PINS)?,
             pin_key(session_id, pin_id).as_bytes(),
             object_id.as_bytes(),
         );
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"pinId":pin_id,"objectId":object_id}),
         )?)
@@ -707,6 +863,7 @@ impl HistoryStore {
         &self,
         target_session_id: &str,
         value: &serde_json::Value,
+        batch: &mut WriteBatch,
     ) -> Result<Vec<u8>, HistoryError> {
         let source_session_id = required_string(value, "sourceSessionId")?;
         let source = self.read_head(source_session_id)?;
@@ -727,44 +884,52 @@ impl HistoryStore {
             revision: 1,
             updated_at: now_iso(),
         };
-        let mut batch = WriteBatch::default();
         batch.put_cf(
             self.cf(CF_HEADS)?,
             head_key(target_session_id).as_bytes(),
             serde_json::to_vec(&next)?,
         );
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"sourceSessionId":source_session_id,"head":next}),
         )?)
     }
 
-    fn unpin(&self, session_id: &str, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+    fn unpin(
+        &self,
+        session_id: &str,
+        value: &serde_json::Value,
+        batch: &mut WriteBatch,
+    ) -> Result<Vec<u8>, HistoryError> {
         let pin_id = required_string(value, "pinId")?;
-        let mut batch = WriteBatch::default();
         batch.delete_cf(self.cf(CF_PINS)?, pin_key(session_id, pin_id).as_bytes());
-        self.db.write(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"pinId":pin_id,"removed":true}),
         )?)
     }
 
     fn page(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
-        let object_id = required_string(value, "objectId")?;
         let limit = value
             .get("limit")
             .and_then(|item| item.as_u64())
             .unwrap_or(64)
             .min(PAGE_LIMIT as u64) as usize;
-        let mut queue = VecDeque::from([object_id.to_owned()]);
-        let mut seen = HashSet::new();
+        let (mut queue, mut seen) = if let Some(cursor) = value.get("cursor") {
+            let queue = cursor["queue"].as_array().ok_or_else(|| HistoryError::InvalidCommand("history page cursor queue is required".into()))?
+                .iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()
+                .ok_or_else(|| HistoryError::InvalidCommand("history page cursor queue is invalid".into()))?;
+            let seen = cursor["seen"].as_array().ok_or_else(|| HistoryError::InvalidCommand("history page cursor seen is required".into()))?
+                .iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()
+                .ok_or_else(|| HistoryError::InvalidCommand("history page cursor seen is invalid".into()))?;
+            if queue.len() > 4096 || seen.len() > 4096 { return Err(HistoryError::InvalidCommand("history page cursor exceeds bounds".into())); }
+            (VecDeque::from(queue), seen.into_iter().collect())
+        } else {
+            (VecDeque::from([required_string(value, "objectId")?.to_owned()]), HashSet::new())
+        };
         let mut objects = Vec::new();
-        while let Some(current) = queue.pop_front() {
+        while objects.len() < limit {
+            let Some(current) = queue.pop_front() else { break; };
             if !seen.insert(current.clone()) {
                 continue;
-            }
-            if objects.len() >= limit {
-                break;
             }
             let bytes = self.read_object(&current)?;
             let object: HistoryObject = serde_json::from_slice(&bytes)?;
@@ -773,9 +938,14 @@ impl HistoryStore {
             }
             objects.push(object);
         }
-        Ok(serde_json::to_vec(
-            &serde_json::json!({"items":objects,"next":queue.front()}),
-        )?)
+        let cursor = if queue.is_empty() { None } else {
+            Some(serde_json::json!({"queue":queue,"seen":seen.into_iter().collect::<Vec<_>>() }))
+        };
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "items": objects,
+            "next": cursor.as_ref().and_then(|value| value["queue"].as_array()).and_then(|items| items.first()),
+            "cursor": cursor,
+        }))?)
     }
 
     fn list_indexed(&self, session_id: &str, kind: &str) -> Result<Vec<u8>, HistoryError> {
@@ -791,33 +961,28 @@ impl HistoryStore {
             if !head_is_root {
                 return self.list_indexed_legacy(session_id, kind);
             }
-            let mut queue = VecDeque::from([head_id]);
+            let mut stack = vec![head_id];
+            let mut entity_ids = HashSet::new();
             let mut seen = HashSet::new();
             let mut items = Vec::new();
-            while let Some(object_id) = queue.pop_front() {
+            while let Some(object_id) = stack.pop() {
                 if !seen.insert(object_id.clone()) {
                     continue;
                 }
                 let bytes = self.read_object(&object_id)?;
                 let object: HistoryObject = serde_json::from_slice(&bytes)?;
-                for reference in &object.refs {
-                    queue.push_back(reference.clone());
-                }
-                let matches = match kind {
-                    "run" => object.kind == "runtime.run",
-                    "message" => object.kind == "runtime.message",
-                    "step" => object.kind == "runtime.step",
-                    "part" => object.kind == "runtime.part",
-                    "tool" => object.kind == "runtime.tool_call",
-                    "event" => object.kind == "runtime.event",
-                    "artifact" => object.kind == "runtime.artifact",
-                    "plan" => object.kind == "runtime.plan",
-                    _ => false,
-                };
-                if matches {
-                    items.push(object.value);
+                // The root stores newest refs first; DFS stack order must push
+                // them in reverse so the newest entity is visited first.
+                stack.extend(object.refs.iter().rev().cloned());
+                if entity_index_kind(&object.kind) == Some(kind) {
+                    let id = required_string(&object.value, "id")?;
+                    let owner = required_string(&object.value, "sessionId")?;
+                    if entity_ids.insert((owner.to_owned(), id.to_owned())) {
+                        items.push(object.value);
+                    }
                 }
             }
+            order_entities(kind, &mut items);
             return Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?);
         }
         self.list_indexed_legacy(session_id, kind)
@@ -841,6 +1006,7 @@ impl HistoryStore {
                 }
             }
         }
+        order_entities(kind, &mut items);
         Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?)
     }
 
@@ -921,8 +1087,7 @@ impl HistoryStore {
         )?)
     }
 
-    fn rebuild_index(&self) -> Result<Vec<u8>, HistoryError> {
-        let mut batch = WriteBatch::default();
+    fn rebuild_index(&self, batch: &mut WriteBatch) -> Result<Vec<u8>, HistoryError> {
         let mut sessions = 0u64;
         for item in self
             .db
@@ -939,15 +1104,12 @@ impl HistoryStore {
             );
             sessions += 1;
         }
-        if sessions > 0 {
-            self.db.write(batch)?;
-        }
         Ok(serde_json::to_vec(
             &serde_json::json!({"sessions":sessions,"rebuilt":true}),
         )?)
     }
 
-    fn gc(&self) -> Result<Vec<u8>, HistoryError> {
+    fn gc(&self, batch: &mut WriteBatch) -> Result<Vec<u8>, HistoryError> {
         let mut roots = Vec::new();
         for item in self
             .db
@@ -983,7 +1145,6 @@ impl HistoryStore {
             }
         }
         let mut deleted = 0u64;
-        let mut batch = WriteBatch::default();
         let mut deleted_ids = Vec::new();
         for item in self
             .db
@@ -1009,9 +1170,6 @@ impl HistoryStore {
                     batch.delete_cf(self.cf(CF_INDEXES)?, key);
                 }
             }
-        }
-        if deleted > 0 {
-            self.db.write(batch)?;
         }
         Ok(serde_json::to_vec(
             &serde_json::json!({"marked":marked.len(),"deleted":deleted}),
@@ -1042,6 +1200,48 @@ impl HistoryStore {
     fn get(&self, cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>, HistoryError> {
         Ok(self.db.get_cf(self.cf(cf)?, key)?)
     }
+}
+
+fn entity_index_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "runtime.run" => Some("run"),
+        "runtime.message" => Some("message"),
+        "runtime.step" => Some("step"),
+        "runtime.part" => Some("part"),
+        "runtime.tool_call" => Some("tool"),
+        "runtime.event" => Some("event"),
+        "runtime.artifact" => Some("artifact"),
+        "runtime.plan" => Some("plan"),
+        "runtime.work" => Some("work"),
+        "runtime.context" => Some("context"),
+        "runtime.aux_usage" => Some("aux"),
+        _ => None,
+    }
+}
+
+fn order_entities(kind: &str, items: &mut [serde_json::Value]) {
+    fn timestamp(value: &serde_json::Value) -> &str {
+        ["createdAt", "startedAt", "timestamp"]
+            .iter()
+            .find_map(|field| value[*field].as_str())
+            .unwrap_or("")
+    }
+    items.sort_by(|a, b| {
+        let numeric = match kind {
+            "message" | "part" => a["sequence"].as_u64().zip(b["sequence"].as_u64()),
+            "plan" => a["revision"].as_u64().zip(b["revision"].as_u64()),
+            _ => None,
+        };
+        let order = numeric
+            .map(|(a, b)| a.cmp(&b))
+            .unwrap_or_else(|| timestamp(a).cmp(timestamp(b)))
+            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()));
+        if matches!(kind, "run" | "plan") {
+            order.reverse()
+        } else {
+            order
+        }
+    });
 }
 
 fn required_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, HistoryError> {
@@ -1113,6 +1313,238 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    fn invoke(
+        store: &HistoryStore,
+        session: &str,
+        request: &str,
+        operation: &str,
+        payload: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::from_slice(
+            &store
+                .command(
+                    session,
+                    request,
+                    operation,
+                    &serde_json::to_vec(&payload).unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn entity(id: &str, text: &str) -> serde_json::Value {
+        serde_json::json!({"kind":"runtime.message","value":{"id":id,"sessionId":"s","content":text,"sequence":1}})
+    }
+
+    #[test]
+    fn append_is_atomic_replayable_and_reachable_after_restart() {
+        let path = temp_path("append-atomic");
+        let store = HistoryStore::open(&path).unwrap();
+        let payload = serde_json::json!({"objects":[entity("m", "hello")]});
+        let first = invoke(&store, "s", "append", "append_entities", payload.clone());
+        assert_eq!(first["revision"], 1);
+        assert_eq!(
+            invoke(&store, "s", "read", "list_messages", serde_json::json!({}))["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        // No subset of a rejected multi-entity command may be published, even
+        // though the first object has already been staged in its WriteBatch.
+        assert!(store.command("s", "bad", "append_entities", &serde_json::to_vec(&serde_json::json!({"objects":[entity("orphan", "no"), {"kind":"runtime.message","value":{"id":"foreign","sessionId":"other"}}]})).unwrap()).is_err());
+        assert_eq!(
+            invoke(&store, "s", "read", "head_read", serde_json::json!({})),
+            first
+        );
+        assert_eq!(
+            invoke(&store, "s", "verify", "verify", serde_json::json!({}))["objects"],
+            2
+        );
+        assert!(store.get(CF_RECEIPTS, b"r/s/bad").unwrap().is_none());
+        drop(store);
+        let store = HistoryStore::open(&path).unwrap();
+        assert_eq!(
+            invoke(&store, "s", "append", "append_entities", payload),
+            first
+        );
+        assert!(matches!(
+            store.command(
+                "s",
+                "append",
+                "append_entities",
+                &serde_json::to_vec(&serde_json::json!({"objects":[entity("m", "changed")]}))
+                    .unwrap()
+            ),
+            Err(HistoryError::RequestConflict)
+        ));
+        assert_eq!(
+            invoke(&store, "s", "gc", "gc", serde_json::json!({}))["deleted"],
+            0
+        );
+        assert_eq!(
+            invoke(&store, "s", "read", "list_messages", serde_json::json!({}))["items"][0]["content"],
+            "hello"
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_appends_do_not_lose_entities_and_duplicate_commands_commit_once() {
+        let path = temp_path("append-concurrent");
+        let store = HistoryStore::open(&path).unwrap();
+        let mut tasks = tokio::task::JoinSet::new();
+        for i in 0..64 {
+            let clone = store.clone();
+            tasks.spawn(async move {
+                clone.command_async("s".into(), format!("append-{}", i % 32), "append_entities".into(),
+                    serde_json::to_vec(&serde_json::json!({"objects":[entity(&format!("m-{}", i % 32), "value")]})).unwrap()).await.unwrap();
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+        assert_eq!(
+            invoke(&store, "s", "read", "head_read", serde_json::json!({}))["revision"],
+            32
+        );
+        assert_eq!(
+            invoke(&store, "s", "read", "list_messages", serde_json::json!({}))["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            32
+        );
+        assert_eq!(
+            invoke(&store, "s", "verify", "verify", serde_json::json!({}))["ok"],
+            true
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn reads_are_fresh_without_receipts_and_history_selects_latest_reachable_versions() {
+        let path = temp_path("fresh-reads");
+        let store = HistoryStore::open(&path).unwrap();
+        let read = serde_json::json!({});
+        assert_eq!(
+            invoke(&store, "s", "same-query-id", "list_messages", read.clone())["items"],
+            serde_json::json!([])
+        );
+        // Simulate a persisted query receipt from the old implementation.
+        let key = b"r/s/same-query-id";
+        store
+            .db
+            .put_cf(
+                store.cf(CF_RECEIPTS).unwrap(),
+                key,
+                serde_json::to_vec(&HistoryReceipt {
+                    identity: "old".into(),
+                    result: b"{\"items\":[]}".to_vec(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let first = invoke(
+            &store,
+            "s",
+            "first",
+            "append_entities",
+            serde_json::json!({"objects":[entity("m", "old")]}),
+        );
+        invoke(
+            &store,
+            "s",
+            "pin",
+            "checkpoint",
+            serde_json::json!({"pinId":"cp", "objectId":first["objectId"]}),
+        );
+        invoke(
+            &store,
+            "s",
+            "next",
+            "append_entities",
+            serde_json::json!({"objects":[entity("m", "new"), entity("n", "second")]}),
+        );
+        let messages = invoke(&store, "s", "same-query-id", "list_messages", read.clone());
+        assert_eq!(messages["items"].as_array().unwrap().len(), 2);
+        assert_eq!(messages["items"][0]["content"], "new");
+        let before = store
+            .db
+            .iterator_cf(store.cf(CF_RECEIPTS).unwrap(), rocksdb::IteratorMode::Start)
+            .count();
+        for i in 0..50 {
+            invoke(&store, "s", &format!("poll-{i}"), "head_read", read.clone());
+        }
+        assert_eq!(
+            store
+                .db
+                .iterator_cf(store.cf(CF_RECEIPTS).unwrap(), rocksdb::IteratorMode::Start)
+                .count(),
+            before
+        );
+        let rolled = invoke(
+            &store,
+            "s",
+            "rollback",
+            "head_switch",
+            serde_json::json!({"objectId":first["objectId"], "expectedRevision":2}),
+        );
+        assert_eq!(
+            invoke(&store, "s", "same-query-id", "list_messages", read.clone())["items"],
+            serde_json::json!([entity("m", "old")["value"]])
+        );
+        assert_eq!(
+            invoke(
+                &store,
+                "s",
+                "rollback",
+                "head_switch",
+                serde_json::json!({"objectId":first["objectId"], "expectedRevision":2})
+            ),
+            rolled
+        );
+        assert!(matches!(store.command("s", "stale-append", "append_entities", &serde_json::to_vec(&serde_json::json!({"expectedRevision":2,"objects":[entity("n", "wrong branch")]})).unwrap()), Err(HistoryError::RevisionConflict { .. })));
+        invoke(
+            &store,
+            "s",
+            "branch",
+            "append_entities",
+            serde_json::json!({"objects":[entity("n", "branch")]}),
+        );
+        assert_eq!(
+            invoke(&store, "s", "same-query-id", "list_messages", read)["items"][0]["content"],
+            "old"
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn page_cursor_walks_the_entire_graph_without_repeating_nodes() {
+        let path = temp_path("page-cursor");
+        let store = HistoryStore::open(&path).unwrap();
+        let first = invoke(&store, "s", "first", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m1","sessionId":"s","sequence":1}}));
+        let second = invoke(&store, "s", "second", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m2","sessionId":"s","sequence":2},"refs":[first["objectId"]]}));
+        let third = invoke(&store, "s", "third", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m3","sessionId":"s","sequence":3},"refs":[second["objectId"], first["objectId"]]}));
+        let first_page = invoke(&store, "s", "page-1", "page", serde_json::json!({"objectId":third["objectId"],"limit":2}));
+        assert_eq!(first_page["items"].as_array().unwrap().len(), 2);
+        let cursor = first_page["cursor"].clone();
+        assert!(cursor.is_object());
+        let second_page = invoke(&store, "s", "page-2", "page", serde_json::json!({"cursor":cursor,"limit":2}));
+        assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
+        assert!(second_page["cursor"].is_null());
+        let mut ids = first_page["items"].as_array().unwrap().iter().chain(second_page["items"].as_array().unwrap()).map(|item| item["objectId"].as_str().unwrap()).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 3);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]

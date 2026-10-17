@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { openSystemTerminal } from "../../infrastructure/file-openers/index.js";
 import path from "node:path";
 import { agentRuntimeStore } from "./session-store.js";
-import { resolveSessionWorkspaceRoots } from "./tools/workspace.js";
+import { resolveSessionWorkspaceRoots, resolveWorkspaceRootsFromSession } from "./tools/workspace.js";
 import {
   canonicalWorkspaceDirectory,
   isWithinWorkspace,
@@ -13,7 +13,12 @@ import {
 } from "../project-workspace.js";
 import { patchFilePaths } from "./tools/patch-format.js";
 import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
-import type { AgentSessionStatus } from "./contracts.js";
+import type {
+  AgentRuntimeMessage,
+  AgentSession,
+  AgentSessionStatus,
+  ToolCallRecord,
+} from "./contracts.js";
 import { runCommand } from "./tools/exec-async.js";
 import { detectMediaType, getAsset } from "./media-assets.js";
 
@@ -312,9 +317,12 @@ function readInputSources(
   sessionId: string,
   workspacePath: string,
   primaryPath: string,
+  toolCalls: ToolCallRecord[] = agentRuntimeStore.listToolCalls(sessionId),
+  messages: AgentRuntimeMessage[] = agentRuntimeStore.listMessages(sessionId),
+  assetNames?: ReadonlyMap<string, string>,
 ): SessionEnvironmentInputSource[] {
   const sources = new Map<string, SessionEnvironmentInputSource>();
-  for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
+  for (const call of toolCalls) {
     if (call.status !== "completed" || call.mutability !== "read") continue;
     const envelope =
       call.inputRef && typeof call.inputRef === "object"
@@ -362,7 +370,7 @@ function readInputSources(
     });
   }
   // Files the user attached to their messages count as input sources too.
-  for (const message of agentRuntimeStore.listMessages(sessionId)) {
+  for (const message of messages) {
     if (message.role !== "user" || !Array.isArray(message.contentParts))
       continue;
     for (const part of message.contentParts) {
@@ -371,7 +379,7 @@ function readInputSources(
       if (typeof assetId !== "string" || !assetId) continue;
       let label = assetId;
       try {
-        const filename = getAsset(assetId).filename;
+        const filename = assetNames ? assetNames.get(assetId) : getAsset(assetId).filename;
         if (filename) label = filename;
       } catch {
         // Asset metadata is gone; fall back to the raw asset id.
@@ -398,6 +406,7 @@ function readAgentEditedPaths(
   sessionId: string,
   workspacePath: string,
   primaryPath: string,
+  toolCalls: ToolCallRecord[] = agentRuntimeStore.listToolCalls(sessionId),
 ): Set<string> {
   const paths = new Set<string>();
   const add = (candidate: unknown) => {
@@ -408,7 +417,7 @@ function readAgentEditedPaths(
       /* Ignore paths outside this workspace member. */
     }
   };
-  for (const call of agentRuntimeStore.listToolCalls(sessionId)) {
+  for (const call of toolCalls) {
     if (call.status !== "completed") continue;
     const raw = call.inputRef;
     if (!raw || typeof raw !== "object") continue;
@@ -476,27 +485,28 @@ function getSession(sessionId: string) {
 const ENVIRONMENT_CACHE_TTL_MS = 5_000;
 const environmentCache = new Map<
   string,
-  { at: number; value: SessionEnvironment }
+  { at: number; value: SessionEnvironment; authoritative: boolean }
 >();
 const environmentInFlight = new Map<string, Promise<SessionEnvironment>>();
 
 export async function getSessionEnvironment(
   sessionId: string,
+  runtime?: SessionEnvironmentRuntimeRecords,
 ): Promise<SessionEnvironment> {
   const cached = environmentCache.get(sessionId);
-  if (cached && Date.now() - cached.at < ENVIRONMENT_CACHE_TTL_MS) {
+  if (cached && cached.authoritative === Boolean(runtime) && Date.now() - cached.at < ENVIRONMENT_CACHE_TTL_MS) {
     return cached.value;
   }
   const pending = environmentInFlight.get(sessionId);
   if (pending) return pending;
 
-  const task = computeSessionEnvironment(sessionId);
+  const task = computeSessionEnvironment(sessionId, runtime);
   environmentInFlight.set(sessionId, task);
   try {
     const value = await task;
     if (environmentInFlight.get(sessionId) === task) {
       environmentCache.delete(sessionId);
-      environmentCache.set(sessionId, { at: Date.now(), value });
+      environmentCache.set(sessionId, { at: Date.now(), value, authoritative: Boolean(runtime) });
       if (environmentCache.size > 64) {
         const oldest = environmentCache.keys().next().value!;
         environmentCache.delete(oldest); sessionRoots.delete(oldest);
@@ -528,6 +538,9 @@ async function computeRepository(
   sessionId: string,
   root: ProjectWorkspaceRoot,
   primaryPath: string,
+  toolCalls: ToolCallRecord[] = agentRuntimeStore.listToolCalls(sessionId),
+  messages: AgentRuntimeMessage[] = agentRuntimeStore.listMessages(sessionId),
+  assetNames?: ReadonlyMap<string, string>,
 ): Promise<SessionEnvironmentRepository> {
   const empty: SessionEnvironmentRepository = {
     rootId: root.id,
@@ -553,7 +566,7 @@ async function computeRepository(
   }
   const dependencies = sessionRoots.get(sessionId) ?? new Set<string>();
   dependencies.add(workspacePath); sessionRoots.set(sessionId, dependencies);
-  const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath);
+  const edited = readAgentEditedPaths(sessionId, workspacePath, primaryPath, toolCalls);
   const outputFiles = [...edited].filter((relativePath) => {
     try {
       return fs.statSync(resolveSafeFile(workspacePath, relativePath)).isFile();
@@ -575,7 +588,7 @@ async function computeRepository(
     return {
       ...empty,
       outputFiles,
-      inputSources: readInputSources(sessionId, workspacePath, primaryPath),
+      inputSources: readInputSources(sessionId, workspacePath, primaryPath, toolCalls, messages, assetNames),
       status: "not_repository",
     };
   }
@@ -650,28 +663,33 @@ async function computeRepository(
     changedFiles,
     agentChangedFiles: changedFiles.filter((file) => edited.has(file.path)),
     outputFiles,
-    inputSources: readInputSources(sessionId, workspacePath, primaryPath),
+    inputSources: readInputSources(sessionId, workspacePath, primaryPath, toolCalls, messages, assetNames),
   };
 }
 
 async function computeSessionEnvironment(
   sessionId: string,
+  runtime?: SessionEnvironmentRuntimeRecords,
 ): Promise<SessionEnvironment> {
-  const session = getSession(sessionId);
-  const roots = resolveSessionWorkspaceRoots(sessionId, session.projectId);
+  const session = runtime?.session ?? getSession(sessionId);
+  const toolCalls = runtime?.toolCalls ?? agentRuntimeStore.listToolCalls(sessionId);
+  const messages = runtime?.messages ?? agentRuntimeStore.listMessages(sessionId);
+  const roots = runtime ? resolveWorkspaceRootsFromSession(session) : resolveSessionWorkspaceRoots(sessionId, session.projectId);
   const primary = roots.find((root) => root.role === "primary");
   if (!primary)
     throw new AgentValidationError("The session has no workspace projects.");
   const repositories = await Promise.all(
     roots.map((root) =>
-      computeRepository(sessionId, root, workspaceRootHostPath(primary)),
+      computeRepository(sessionId, root, workspaceRootHostPath(primary), toolCalls, messages, runtime?.assetNames),
     ),
   );
   const main = repositories.find((root) => root.role === "primary")!;
   const subagents: SessionEnvironmentSubagent[] = [];
-  for (const childId of session.childSessionIds ?? []) {
+  const childIds = runtime ? runtime.children.map((child) => child.id) : session.childSessionIds;
+  for (const childId of childIds ?? []) {
     try {
-      const child = agentRuntimeStore.getSession(childId);
+      const child = runtime ? runtime.children.find((item) => item.id === childId) : agentRuntimeStore.getSession(childId);
+      if (!child) continue;
       subagents.push({
         id: child.id,
         parentSessionId: child.parentSessionId,
@@ -710,12 +728,24 @@ async function computeSessionEnvironment(
   };
 }
 
+export interface SessionEnvironmentRuntimeRecords {
+  session: AgentSession;
+  toolCalls: ToolCallRecord[];
+  messages: AgentRuntimeMessage[];
+  children: AgentSession[];
+  assetNames: ReadonlyMap<string, string>;
+}
+
 export function getSessionInputSourceContent(
   sessionId: string,
   toolCallId: string,
 ) {
   getSession(sessionId);
   const call = agentRuntimeStore.getToolCall(sessionId, toolCallId);
+  return getSessionInputSourceContentFromRecord(call);
+}
+
+export function getSessionInputSourceContentFromRecord(call: ToolCallRecord) {
   if (call.status !== "completed" || call.mutability !== "read") {
     throw new AgentValidationError(
       "Only completed input reads can be previewed.",

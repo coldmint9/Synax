@@ -38,6 +38,8 @@ export class AgentProviderNotConfiguredError extends AgentRuntimeError {
 export function toRuntimeError(error: unknown): AgentRuntimeError {
   if (error instanceof AgentRuntimeError) return error;
   if (error instanceof RuntimeSidecarError) {
+    if (error.code === 'HISTORY_NOT_FOUND') return new AgentRuntimeError(error.message, error.code, 404);
+    if (error.code === 'HISTORY_ERROR') return new AgentRuntimeError(error.message, error.code, 500);
     const status = error.code === 'INVALID_COMMAND' ? 400 : ['STORAGE_UNAVAILABLE','DISK_FULL','DURABILITY_UNKNOWN','BACKPRESSURE'].includes(error.code) ? 503 : 409;
     return new AgentRuntimeError(error.message, error.code, status);
   }

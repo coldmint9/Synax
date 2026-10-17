@@ -8,6 +8,7 @@ import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { profileService } from "./profile-service.js";
 import {
   recoverOwnedProcesses,
+  registerAuthoritativeLease,
   stopRecordedProcess,
   type OwnedProcessRecord,
 } from "./process-ownership.js";
@@ -24,8 +25,36 @@ async function recoverAuthoritativeRuntime(
   hostId: string,
 ): Promise<{ reviewed: number; resumable: string[] }> {
   const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const unresolved = await recoverOwnedProcesses(hostId);
   const projections = await runtimeFacade.listSessionProjection();
+  const controls = await Promise.all(projections.map(async (item) => ({
+    sessionId: (item as AgentSession).id,
+    state: await runtimeFacade.controlState((item as AgentSession).id) as { processLeases?: unknown[] },
+  })));
+  const unresolved: OwnedProcessRecord[] = [];
+  for (const item of controls) {
+    for (const raw of Array.isArray(item.state.processLeases) ? item.state.processLeases : []) {
+      if (!raw || typeof raw !== "object") continue;
+      const lease = raw as Record<string, unknown>;
+      if (lease.hostId === hostId) continue;
+      const record: OwnedProcessRecord = {
+        id: String(lease.leaseId ?? ""),
+        host_id: typeof lease.hostId === "string" ? lease.hostId : "unknown",
+        session_id: item.sessionId,
+        run_id: typeof lease.runId === "string" ? lease.runId : null,
+        pid: typeof lease.pid === "number" ? lease.pid : null,
+        process_group: typeof lease.processGroup === "number" ? lease.processGroup : 0,
+        command_label: typeof lease.commandLabel === "string" ? lease.commandLabel : "runtime process",
+        state: typeof lease.state === "string" ? lease.state : "active",
+        runtime_kind: lease.runtimeKind === "wsl" ? "wsl" : undefined,
+        runtime_distribution: typeof lease.runtimeDistribution === "string" ? lease.runtimeDistribution : null,
+        runtime_pid: typeof lease.runtimePid === "number" ? lease.runtimePid : null,
+        runtime_pgid: typeof lease.runtimePgid === "number" ? lease.runtimePgid : null,
+      };
+      if (!record.id) continue;
+      registerAuthoritativeLease(record);
+      if (!(await stopRecordedProcess(record))) unresolved.push(record);
+    }
+  }
   const resumable: string[] = [];
   let reviewed = 0;
   for (const item of projections) {
@@ -56,8 +85,7 @@ async function recoverAuthoritativeRuntime(
     const interactions = Array.isArray((control as { interactions?: unknown[] }).interactions)
       ? (control as { interactions: unknown[] }).interactions
       : [];
-    const processUnknown =
-      leases.length > 0 || unresolved.some((record) => record.session_id === session.id);
+    const processUnknown = unresolved.some((record) => record.session_id === session.id);
     const localRuns = local ? agentRuntimeStore.listRuns(session.id) : [];
     const checkpoint = local ? findDurableCheckpoint(session.id, localRuns) : null;
     if (
@@ -391,27 +419,36 @@ export function restoreUnlaunchedInput(
 export async function acknowledgeRuntimeRecovery(
   sessionId: string,
 ): Promise<void> {
-  const session = agentRuntimeStore.getSession(sessionId);
-  const records = getRawSqlite()
-    .prepare(
-      "SELECT * FROM agent_runtime_processes WHERE session_id=? AND state<>'closed'",
-    )
-    .all(sessionId) as OwnedProcessRecord[];
-  for (const record of records)
+  const session = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
+    ? (await import("./sidecar/runtime-facade.js")).runtimeFacade.uiSnapshotAuthoritative(sessionId).then((snapshot) => snapshot.session as AgentSession)
+    : Promise.resolve(agentRuntimeStore.getSession(sessionId));
+  const resolvedSession = await session;
+  const records = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
+    ? (((await import("./sidecar/runtime-facade.js")).runtimeFacade.controlState(sessionId) as Promise<{ processLeases?: unknown[] }>).then((state) => (Array.isArray(state.processLeases) ? state.processLeases : []).flatMap((raw) => {
+        if (!raw || typeof raw !== "object") return [];
+        const lease = raw as Record<string, unknown>;
+        if (typeof lease.leaseId !== "string") return [];
+        const record = { id: lease.leaseId, host_id: String(lease.hostId ?? "unknown"), session_id: sessionId, run_id: typeof lease.runId === "string" ? lease.runId : null, pid: typeof lease.pid === "number" ? lease.pid : null, process_group: typeof lease.processGroup === "number" ? lease.processGroup : 0, command_label: typeof lease.commandLabel === "string" ? lease.commandLabel : "runtime process", state: typeof lease.state === "string" ? lease.state : "active", runtime_kind: lease.runtimeKind === "wsl" ? "wsl" : undefined, runtime_distribution: typeof lease.runtimeDistribution === "string" ? lease.runtimeDistribution : null, runtime_pid: typeof lease.runtimePid === "number" ? lease.runtimePid : null, runtime_pgid: typeof lease.runtimePgid === "number" ? lease.runtimePgid : null } as OwnedProcessRecord;
+        registerAuthoritativeLease(record);
+        return [record];
+      })))
+    : Promise.resolve(getRawSqlite().prepare("SELECT * FROM agent_runtime_processes WHERE session_id=? AND state<>'closed'").all(sessionId) as OwnedProcessRecord[]);
+  const resolvedRecords = await records;
+  for (const record of resolvedRecords)
     if (!(await stopRecordedProcess(record)))
       throw new AgentRuntimeError(
         "A recorded process is still unconfirmed; this session cannot resume yet. Retry process cleanup.",
         "PROCESS_UNCONFIRMED",
         409,
       );
-  if (!session.sessionMetadata?.runtimeControl) return;
+  if (!resolvedSession.sessionMetadata?.runtimeControl) return;
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
     const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
     await runtimeFacade.controlCommand({
       sessionId,
       requestId: `recovery-ack:${sessionId}`,
       operation: "resume",
-      payload: { runId: session.activeRunId },
+      payload: { runId: resolvedSession.activeRunId },
     });
   }
   agentRuntimeStore.updateSessionMetadata(sessionId, {

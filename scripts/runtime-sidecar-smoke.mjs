@@ -166,7 +166,10 @@ function connectUnix() {
 async function connectWebSocket(port) {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/runtime`);
   const messages = [];
-  const waitFor = predicate => new Promise((resolve, reject) => {
+  const waitFor = predicate => {
+    const existing = messages.find(predicate);
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('WebSocket response timed out')), 5_000);
     const onMessage = async event => {
       try {
@@ -181,7 +184,8 @@ async function connectWebSocket(port) {
     };
     socket.addEventListener('message', onMessage);
     socket.addEventListener('error', reject, { once: true });
-  });
+    });
+  };
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', reject, { once: true });

@@ -300,7 +300,19 @@ export function startAuxUsage(
   purpose: string,
   runId?: string | null,
 ): string {
-  const id = makeRuntimeId("aux");
+  const id = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
+    ? `${makeRuntimeId("aux")}:${Buffer.from(sessionId).toString("base64url")}`
+    : makeRuntimeId("aux");
+  const authoritativeAuxSessions = getAuthoritativeAuxSessionMap();
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    authoritativeAuxSessions.set(id, sessionId);
+    void import("./sidecar/runtime-facade.js")
+      .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(sessionId, "runtime.aux_usage", {
+        id, sessionId, runId: runId ?? null, purpose, startedAt: nowIso(), completedAt: null, usage: null,
+      }))
+      .catch(() => {});
+    return id;
+  }
   getRawSqlite()
     .prepare(
       "INSERT INTO agent_runtime_aux_usage (id, session_id, run_id, purpose, started_at) VALUES (?, ?, ?, ?, ?)",
@@ -309,9 +321,32 @@ export function startAuxUsage(
   return id;
 }
 export function finishAuxUsage(id: string, usage?: unknown): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    const sessionId = getAuthoritativeAuxSessionMap().get(id) ?? (() => {
+      if (!id.startsWith("aux_")) return undefined;
+      const encoded = id.split(":").at(-1);
+      if (!encoded) return undefined;
+      try { return Buffer.from(encoded, "base64url").toString("utf8"); }
+      catch { return undefined; }
+    })();
+    getAuthoritativeAuxSessionMap().delete(id);
+    void import("./sidecar/runtime-facade.js")
+      .then(async ({ runtimeFacade }) => {
+        if (sessionId) await runtimeFacade.persistHistoryObject(sessionId, "runtime.aux_usage", {
+          id, sessionId, completedAt: nowIso(), usage: usage ? normalizeUsage(usage) : null,
+        });
+      })
+      .catch(() => {});
+    return;
+  }
   getRawSqlite()
     .prepare(
       "UPDATE agent_runtime_aux_usage SET completed_at=?, usage_json=? WHERE id=?",
     )
     .run(nowIso(), usage ? JSON.stringify(normalizeUsage(usage)) : null, id);
+}
+
+const authoritativeAuxSessionMap = new Map<string, string>();
+function getAuthoritativeAuxSessionMap(): Map<string, string> {
+  return authoritativeAuxSessionMap;
 }

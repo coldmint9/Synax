@@ -95,6 +95,9 @@ jobs:
       - name: Check Rust runtime sidecar for the target platform
         run: npm run runtime-sidecar:check
 
+      - name: Test Rust runtime storage and concurrency on the target platform
+        run: npm run runtime-sidecar:test -- --release --locked
+
       - name: Import macOS signing certificate
         if: runner.os == 'macOS'
         env:
@@ -147,6 +150,9 @@ jobs:
       - name: Smoke test Rust sidecar transport (Windows)
         if: runner.os == 'Windows'
         run: npm run runtime-sidecar:smoke
+
+      - name: Smoke test Rust history IPC and restart recovery
+        run: npm run runtime-sidecar:history-smoke
 
       - name: Smoke test packaged UI update and rollback (macOS / Windows)
         if: runner.os != 'Linux'

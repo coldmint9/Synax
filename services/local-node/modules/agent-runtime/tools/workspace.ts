@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
 import { agentRuntimeStore } from "../session-store.js";
+import type { AgentSession } from "../contracts.js";
 import { sandboxConfigForSession, sandboxPolicy } from "../sandbox/index.js";
 import {
   projectSourceLocation,
@@ -196,6 +197,28 @@ function withSessionPrimary(
       configurable: true, enumerable: false, value: location,
     });
   return [normalized, ...roots.filter((item) => item.role !== "primary")];
+}
+
+/** Resolve persisted Rust session metadata without looking up a SQLite mirror. */
+export function resolveWorkspaceRootsFromSession(
+  session: AgentSession,
+): ProjectWorkspaceRoot[] {
+  const binding = session.sessionMetadata?.backend as {
+    workspaceRoots?: ProjectWorkspaceRoot[];
+    workspaceLocation?: WorkspaceLocation;
+    workDir?: string | null;
+  } | undefined;
+  const workDir = binding?.workDir ?? tryGetSessionWorkspaceRoot(session.id);
+  const location = binding?.workspaceLocation
+    ?? (workDir ? parseWslUncPath(workDir) ?? { kind: "host" as const, path: workDir } : undefined)
+    ?? resolveProjectWorkspaceLocation(session.projectId);
+  if (!location) throw new Error("The session has no registered workspace. Select an existing working directory before executing.");
+  const project = readWorkspaceProject(session.projectId);
+  return withSessionPrimary(
+    binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []),
+    location,
+    session.projectId,
+  );
 }
 
 /** A persisted membership snapshot also works in session worker processes. */

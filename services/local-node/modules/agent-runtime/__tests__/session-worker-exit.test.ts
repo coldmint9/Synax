@@ -11,7 +11,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 vi.mock("../process-ownership.js", () => ({
   prepareOwnedProcess: () => ({ id: "test-worker" }),
-  recordOwnedPid: vi.fn(), releaseOwnedProcess: vi.fn(), hasBackgroundProcesses: () => false,
+  recordOwnedPid: vi.fn(), releaseOwnedProcess: vi.fn(), waitForAuthoritativeLease: vi.fn(async () => {}), hasBackgroundProcesses: () => false,
 }));
 
 class TestWorker extends EventEmitter {

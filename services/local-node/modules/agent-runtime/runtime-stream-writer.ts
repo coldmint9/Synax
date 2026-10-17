@@ -99,8 +99,8 @@ export class RuntimeStreamWriter {
       const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
         producerSequence, ...fence, chunks, state };
       if (authoritative) {
-        await runtimeFacade.appendStreamAuthoritative(input);
-        await runtimeFacade.persistStreamHistory(this.sessionId, chunks);
+        const receiptThrough = await runtimeFacade.appendStreamAuthoritative(input);
+        await runtimeFacade.persistStreamHistory(this.sessionId, chunks, receiptThrough);
       }
       else await runtimeFacade.shadowAppendStream(input);
     }).catch(error => {

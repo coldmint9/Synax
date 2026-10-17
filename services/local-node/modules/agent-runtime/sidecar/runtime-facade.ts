@@ -6,6 +6,8 @@ import type { AgentRun, AgentSession, AgentRunStreamChunk, AgentRunStep, AgentRu
 import { agentRuntimeStore } from '../session-store.js';
 import { logger } from '../../../infrastructure/runtime/logger.js';
 import { AgentRuntimeError } from '../runtime-errors.js';
+import { normalizeUsage } from '../../../infrastructure/llm-runtime/usage.js';
+import { projectCacheUsage } from '../cache-usage.js';
 
 export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
 export type RuntimeSidecarStreamMode = 'disabled' | 'shadow' | 'authoritative';
@@ -63,6 +65,7 @@ export interface ShadowStreamInput {
 }
 
 export class RuntimeFacade {
+  private readonly pendingHistoryWrites = new Map<string, Set<Promise<void>>>();
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
     private readonly mode: () => RuntimeSidecarAdmissionMode = admissionMode,
@@ -136,6 +139,7 @@ export class RuntimeFacade {
       return;
     }
     try {
+      if (authoritative) await this.flushHistoryWrites(sessionId);
       for (let attempt = 0; ; attempt++) {
         const state = await client.snapshot(sessionId);
         try { await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`, status, epoch: state.epoch, revision: state.revision, run }); break; }
@@ -147,16 +151,30 @@ export class RuntimeFacade {
         logger.warn({ sessionId, runId: run.id, error: error instanceof Error ? error.message : String(error) }, '[runtime-sidecar] terminal run history persistence failed');
         throw error;
       }
-      await this.persistSessionHistory(sessionId);
+      // Authoritative stream/entity writes are submitted at their lifecycle
+      // boundaries. Scanning the SQLite mirror here would reintroduce a
+      // hidden read-after-commit fallback and could publish stale entities.
+      if (!authoritative) await this.persistSessionHistory(sessionId);
     } catch (error) {
       if (authoritative) throw error;
       logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
     }
   }
 
-  /** Seed only an empty Rust session during cutover. Existing projections never read SQL. */
+  /** Explicit creation boundary until the Node session creator is fully migrated. */
   async ensureUiProjection(sessionId: string): Promise<void> {
-    await this.uiSnapshotAuthoritative(sessionId);
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    try { await client.uiSnapshot(sessionId); }
+    catch (error) {
+      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
+      const session = agentRuntimeStore.getSession(sessionId);
+      if (agentRuntimeStore.listRuns(sessionId).some(run => run.status !== 'queued')) {
+        throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MIGRATION_REQUIRED',
+          message: 'Existing executed runs require offline projection migration.' });
+      }
+      await client.seedUi(sessionId, Buffer.from(JSON.stringify(session)));
+    }
   }
 
   async queueMutation(input: {
@@ -439,17 +457,41 @@ export class RuntimeFacade {
     const sessionId = typeof run.sessionId === 'string' ? run.sessionId : undefined;
     const runId = typeof run.id === 'string' ? run.id : undefined;
     if (!sessionId || !runId) return;
-    await this.historyCommand({
-      sessionId,
-      requestId: `history-run:${runId}:${createHash('sha256').update(JSON.stringify(run)).digest('hex')}`,
-      operation: 'put_object',
-      payload: { kind: 'runtime.run', value: run },
-    });
+    await this.appendHistoryEntities(sessionId, [{ kind: 'runtime.run', value: run }]);
+  }
+
+  /** One bounded command publishes entities, head and receipt atomically in Rust. */
+  private async appendHistoryEntities(sessionId: string, objects: Array<{ kind: string; value: unknown }>): Promise<void> {
+    // Leave room for the protobuf envelope below the 1 MiB control frame limit.
+    const budget = 768 * 1024;
+    let batch: typeof objects = [];
+    let bytes = 16;
+    const flush = async () => {
+      if (!batch.length) return;
+      const payload = { objects: batch };
+      await this.historyCommand({
+        sessionId,
+        requestId: `history-append:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+        operation: 'append_entities',
+        payload,
+      });
+      batch = [];
+      bytes = 16;
+    };
+    for (const object of objects) {
+      const size = Buffer.byteLength(JSON.stringify(object)) + 1;
+      if (size > budget) throw new AgentRuntimeError('History entity exceeds the control frame budget; blob storage is required.', 'HISTORY_ENTITY_TOO_LARGE', 413);
+      if (batch.length >= 256 || bytes + size > budget) await flush();
+      batch.push(object);
+      bytes += size;
+    }
+    await flush();
   }
 
   async persistStreamHistory(
     sessionId: string,
     chunks: AgentRunStreamChunk[],
+    outboxThrough?: number,
   ): Promise<void> {
     if (streamMode() !== 'authoritative') return;
     const objects: Array<{ kind: string; value: unknown }> = [];
@@ -488,67 +530,56 @@ export class RuntimeFacade {
           break;
       }
     }
-    const seen = new Set<string>();
-    const objectIds: string[] = [];
-    for (const object of objects) {
-      const value = object.value as { id: string };
-      const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
-      const identity = `${object.kind}:${value.id}:${digest}`;
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      const result = await this.historyCommand({
-        sessionId,
-        requestId: `history-stream:${identity}`,
-        operation: 'put_object',
-        payload: object,
-      }) as { objectId?: string };
-      if (result.objectId) objectIds.push(result.objectId);
-    }
-    if (objectIds.length) {
-      const head = await this.historyHeadAuthoritative(sessionId);
-      const refs = head.objectId ? [head.objectId, ...objectIds] : objectIds;
-      const root = await this.writeHistoryRootRefs(sessionId, refs, `history-stream-root:${sessionId}`);
-      for (let attempt = 0; ; attempt++) {
-        const current = await this.historyHeadAuthoritative(sessionId);
-        try {
-          await this.historyCommand({
-            sessionId,
-            requestId: `history-stream-head:${sessionId}:${root}:${current.revision}`,
-            operation: 'head_switch',
-            payload: { objectId: root, expectedRevision: current.revision },
-          });
-          break;
-        } catch (error) {
-          if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
-        }
+    try {
+      await this.appendHistoryEntities(sessionId, objects);
+      if (outboxThrough !== undefined) {
+        await this.historyCommand({
+          sessionId,
+          requestId: `history-outbox-ack:${sessionId}:${outboxThrough}`,
+          operation: 'ack_history_outbox',
+          payload: { through: outboxThrough },
+        });
+      }
+    } catch (error) {
+      // HotStore is the durable event source. If the separate history commit
+      // failed, ask the Rust sidecar to rebuild canonical history from its
+      // retained hot stream before surfacing the failure.
+      try {
+        await this.historyCommand({
+          sessionId,
+          requestId: `history-reconcile:${sessionId}:${createHash('sha256').update(JSON.stringify(objects)).digest('hex')}`,
+          operation: 'reconcile_stream',
+          payload: {},
+        });
+        return;
+      } catch {
+        throw error;
       }
     }
   }
 
-  async persistHistoryObject(
-    sessionId: string,
-    kind: string,
-    value: unknown,
-  ): Promise<void> {
+  async persistHistoryObject(sessionId: string, kind: string, value: unknown): Promise<void> {
     if (streamMode() !== 'authoritative' || !value || typeof value !== 'object') return;
-    const id = (value as { id?: unknown }).id;
-    if (typeof id !== 'string') return;
-    const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex');
-    const result = await this.historyCommand({
-      sessionId,
-      requestId: `history-entity:${kind}:${id}:${digest}`,
-      operation: 'put_object',
-      payload: { kind, value },
-    }) as { objectId?: string };
-    if (!result.objectId) return;
-    const head = await this.historyHeadAuthoritative(sessionId);
-    const root = await this.writeHistoryRootRefs(sessionId, head.objectId ? [head.objectId, result.objectId] : [result.objectId], `history-entity-root:${kind}:${id}`);
-    await this.historyCommand({
-      sessionId,
-      requestId: `history-entity-head:${kind}:${id}:${root}:${head.revision}`,
-      operation: 'head_switch',
-      payload: { objectId: root, expectedRevision: head.revision },
-    });
+    if (typeof (value as { id?: unknown }).id !== 'string') return;
+    const write = this.appendHistoryEntities(sessionId, [{ kind, value }]);
+    let pending = this.pendingHistoryWrites.get(sessionId);
+    if (!pending) {
+      pending = new Set();
+      this.pendingHistoryWrites.set(sessionId, pending);
+    }
+    pending.add(write);
+    try {
+      await write;
+    } finally {
+      pending.delete(write);
+      if (!pending.size) this.pendingHistoryWrites.delete(sessionId);
+    }
+  }
+
+  async flushHistoryWrites(sessionId: string): Promise<void> {
+    const pending = this.pendingHistoryWrites.get(sessionId);
+    if (!pending?.size) return;
+    await Promise.all([...pending]);
   }
 
   async listRunHistory(sessionId: string): Promise<unknown[]> {
@@ -578,78 +609,7 @@ export class RuntimeFacade {
       ...tools.map(value => ({ kind: 'runtime.tool_call', value })),
       ...events.map(value => ({ kind: 'runtime.event', value })),
     ];
-    const objectIds: string[] = [];
-    for (let index = 0; index < objects.length; index++) {
-      const object = objects[index];
-      const id = typeof (object.value as { id?: unknown }).id === 'string'
-        ? String((object.value as { id: string }).id)
-        : createHash('sha256').update(JSON.stringify(object.value)).digest('hex');
-      const contentHash = createHash('sha256').update(JSON.stringify(object.value)).digest('hex');
-      try {
-        const result = await this.historyCommand({
-          sessionId,
-          requestId: `history:${sessionId}:${object.kind}:${id}:${contentHash}`,
-          operation: 'put_object',
-          payload: object,
-        });
-        if (typeof (result as { objectId?: unknown }).objectId === 'string')
-          objectIds.push((result as { objectId: string }).objectId);
-      } catch (error) {
-        logger.warn({ sessionId, kind: object.kind, id, error: error instanceof Error ? error.message : String(error) }, '[runtime-sidecar] history object persistence failed');
-        throw error;
-      }
-    }
-    if (!objectIds.length) return;
-
-    // Keep the immutable object graph reachable. A flat root with thousands of
-    // refs would eventually hit the object budget, so build bounded fan-in
-    // root chunks before switching the session head.
-    let refs = objectIds;
-    let chunk = 0;
-    while (refs.length > 256) {
-      const next: string[] = [];
-      for (let offset = 0; offset < refs.length; offset += 256) {
-        const group = refs.slice(offset, offset + 256);
-        const result = await this.historyCommand({
-          sessionId,
-          requestId: `history-root-chunk:${sessionId}:${chunk++}:${createHash('sha256').update(group.join('\0')).digest('hex')}`,
-          operation: 'put_object',
-          payload: {
-            kind: 'runtime.session.root.chunk',
-            value: { sessionId, count: group.length },
-            refs: group,
-          },
-        });
-        if (typeof (result as { objectId?: unknown }).objectId !== 'string') throw new Error('runtime-history root chunk did not return an object id');
-        next.push((result as { objectId: string }).objectId);
-      }
-      refs = next;
-    }
-    const rootResult = await this.historyCommand({
-      sessionId,
-      requestId: `history-root:${sessionId}:${createHash('sha256').update(refs.join('\0')).digest('hex')}`,
-      operation: 'put_object',
-      payload: {
-        kind: 'runtime.session.root',
-        value: { sessionId, objectCount: objectIds.length, updatedAt: new Date().toISOString() },
-        refs,
-      },
-    }) as { objectId?: string };
-    if (!rootResult.objectId) throw new Error('runtime-history root did not return an object id');
-    for (let attempt = 0; ; attempt++) {
-      const head = await this.historyHead(sessionId);
-      try {
-        await this.historyCommand({
-          sessionId,
-          requestId: `history-head-switch:${sessionId}:${rootResult.objectId}:${head.revision}`,
-          operation: 'head_switch',
-          payload: { objectId: rootResult.objectId, expectedRevision: head.revision },
-        });
-        break;
-      } catch (error) {
-        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
-      }
-    }
+    await this.appendHistoryEntities(sessionId, objects);
   }
 
   async listMessageHistory(sessionId: string): Promise<unknown[]> {
@@ -677,9 +637,125 @@ export class RuntimeFacade {
     return JSON.parse(new TextDecoder().decode(bytes));
   }
 
-  async listHistoryObjects(sessionId: string, operation: 'list_runs' | 'list_messages' | 'list_steps' | 'list_parts' | 'list_tool_calls' | 'list_events' | 'list_artifacts' | 'list_plans'): Promise<unknown[]> {
+  async listHistoryObjects(sessionId: string, operation: 'list_runs' | 'list_messages' | 'list_steps' | 'list_parts' | 'list_tool_calls' | 'list_events' | 'list_artifacts' | 'list_plans' | 'list_work' | 'list_contexts' | 'list_aux_usage'): Promise<unknown[]> {
     const state = await this.historyCommand({ sessionId, requestId: historyReadRequest(operation, sessionId), operation, payload: {} }) as { items?: unknown[] };
     return state.items ?? [];
+  }
+
+  async sessionStatsAuthoritative(
+    sessionId: string,
+    configuredContextLimit?: number | null,
+  ): Promise<Record<string, unknown>> {
+    const [snapshot, allSessions] = await Promise.all([
+      this.uiSnapshotAuthoritative(sessionId),
+      this.listSessionProjection(),
+    ]);
+    const session = snapshot.session as AgentSession;
+    const projections = allSessions as AgentSession[];
+    const tree = new Set<string>([sessionId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const candidate of projections) {
+        if (candidate.parentSessionId && tree.has(candidate.parentSessionId) && !tree.has(candidate.id)) {
+          tree.add(candidate.id);
+          changed = true;
+        }
+      }
+    }
+    const records = await Promise.all([...tree].map(async (id) => {
+      const [runs, steps, tools, work, auxiliary] = await Promise.all([
+        this.listHistoryObjects(id, 'list_runs'),
+        this.listHistoryObjects(id, 'list_steps'),
+        this.listHistoryObjects(id, 'list_tool_calls'),
+        this.listHistoryObjects(id, 'list_work'),
+        this.listHistoryObjects(id, 'list_aux_usage'),
+      ]);
+      return { id, runs: runs as AgentRun[], steps: steps as AgentRunStep[], tools: tools as ToolCallRecord[], work, auxiliary };
+    }));
+    const root = records.find((item) => item.id === sessionId) ?? { id: sessionId, runs: [], steps: [], tools: [], work: [], auxiliary: [] };
+    const zeroTotals = () => ({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, cacheReadMatched: 0, cacheInputMatched: 0, cacheReadRatio: null });
+    const zeroCoverage = () => ({ requests: 0, recorded: 0, missing: 0, complete: true, cacheReadKnown: 0, cacheReadUnknown: 0, cacheWriteKnown: 0, cacheWriteUnknown: 0, cacheMatched: 0 });
+    const usage = { self: zeroTotals(), tree: zeroTotals(), steps: { self: zeroTotals(), tree: zeroTotals() }, auxiliary: { self: zeroTotals(), tree: zeroTotals() } };
+    const coverage = { self: zeroCoverage(), tree: zeroCoverage(), steps: { self: zeroCoverage(), tree: zeroCoverage() }, auxiliary: { self: zeroCoverage(), tree: zeroCoverage() } };
+    let contextInput: number | null = null;
+    let contextMeasuredAt: string | null = null;
+    let contextRequestId: string | null = null;
+    let reportedWindow: number | null = null;
+    let runningDuration = 0;
+    const addStep = (step: AgentRunStep, isSelf: boolean) => {
+      const metadata = step.metadata && typeof step.metadata === 'object' ? step.metadata as Record<string, unknown> : {};
+      const normalized = normalizeUsage(metadata.usage);
+      const groups = isSelf ? ['self', 'tree'] as const : ['tree'] as const;
+      for (const group of groups) {
+        const target = usage.steps[group];
+        const targetCoverage = coverage.steps[group];
+        targetCoverage.requests++;
+        if (normalized?.normalization.input.status === 'known') targetCoverage.recorded++;
+        else { targetCoverage.missing++; targetCoverage.complete = false; }
+        target.input += normalized?.normalization.input.value ?? 0;
+        target.output += normalized?.normalization.output.value ?? 0;
+        target.reasoning += normalized?.normalization.reasoning.value ?? 0;
+        target.cacheRead += normalized?.normalization.cacheRead.value ?? 0;
+        target.cacheWrite += normalized?.normalization.cacheWrite.value ?? 0;
+        target.total = target.input + target.output;
+      }
+      if (isSelf && normalized?.normalization.input.status === 'known') {
+        contextInput = normalized.normalization.input.value ?? null;
+        contextRequestId = typeof normalized.requestId === 'string' ? normalized.requestId : step.id;
+        contextMeasuredAt = typeof normalized.measuredAt === 'string' ? normalized.measuredAt : step.completedAt ?? step.startedAt;
+      }
+      const start = Date.parse(step.startedAt);
+      const run = root.runs.find((item) => item.id === step.runId);
+      const end = step.completedAt ?? run?.completedAt;
+      runningDuration += Math.max(0, (end ? Date.parse(end) : Date.now()) - start) || 0;
+      const candidateWindow = metadata.contextLimit;
+      if (typeof candidateWindow === 'number' && Number.isFinite(candidateWindow)) reportedWindow = candidateWindow;
+    };
+    for (const record of records) for (const step of record.steps) addStep(step, record.id === sessionId);
+    for (const record of records) {
+      for (const item of record.auxiliary as Array<{ sessionId?: unknown; usage?: unknown }>) {
+        const normalized = normalizeUsage(item.usage);
+        for (const group of record.id === sessionId ? ['self', 'tree'] as const : ['tree'] as const) {
+          const target = usage.auxiliary[group];
+          const targetCoverage = coverage.auxiliary[group];
+          targetCoverage.requests++;
+          if (normalized?.normalization.input.status === 'known') targetCoverage.recorded++;
+          else { targetCoverage.missing++; targetCoverage.complete = false; }
+          target.input += normalized?.normalization.input.value ?? 0;
+          target.output += normalized?.normalization.output.value ?? 0;
+          target.reasoning += normalized?.normalization.reasoning.value ?? 0;
+          target.cacheRead += normalized?.normalization.cacheRead.value ?? 0;
+          target.cacheWrite += normalized?.normalization.cacheWrite.value ?? 0;
+          target.total = target.input + target.output;
+        }
+      }
+    }
+    const currentWork = (root.work as Array<{ id?: unknown; sessionId?: unknown; updatedAt?: unknown; status?: unknown; remaining?: unknown; reason?: unknown }>)
+      .filter((item) => item.sessionId === sessionId && (!session.sessionMetadata?.activeWorkId || item.id === session.sessionMetadata.activeWorkId))
+      .sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))[0];
+    const completedRuns = root.runs.filter((run) => run.status === 'completed');
+    const averageSteps = completedRuns.length ? completedRuns.reduce((sum, run) => sum + root.steps.filter((step) => step.runId === run.id).length, 0) / completedRuns.length : null;
+    const input = contextInput ?? 0;
+    const contextLimit = typeof configuredContextLimit === 'number' && configuredContextLimit > 0 ? configuredContextLimit : reportedWindow ?? 200_000;
+    return {
+      work: currentWork && typeof currentWork.id === 'string' ? { id: currentWork.id, status: String(currentWork.status ?? 'active'), remaining: Array.isArray(currentWork.remaining) ? currentWork.remaining : [], reason: typeof currentWork.reason === 'string' ? currentWork.reason : null } : null,
+      roundCount: root.steps.length,
+      averageStepsPerCompletedRun: averageSteps,
+      contextComposition: null,
+      context: { inputTokens: contextInput, source: contextInput === null ? null : 'provider', stale: false, requestId: contextRequestId, measuredAt: contextMeasuredAt, latestRequestUsageAvailable: contextInput !== null },
+      cache: projectCacheUsage([]),
+      usage,
+      coverage,
+      tokenUsage: { input, output: usage.self.output, total: input },
+      contextLimit,
+      contextLimitKnown: contextInput !== null || reportedWindow !== null || configuredContextLimit != null,
+      contextUsedPercent: Math.min(Math.round((input / contextLimit) * 100), 100),
+      toolCallCount: root.tools.length,
+      runningDuration,
+      status: session.status,
+      activeSubAgentCount: projections.filter((item) => item.parentSessionId === sessionId && item.status === 'running').length,
+    };
   }
 
   async listHistoryCheckpoints(sessionId: string): Promise<Array<{ id: string; objectId: string; metadata: Record<string, unknown> }>> {
@@ -929,21 +1005,50 @@ export class RuntimeFacade {
     });
   }
 
-  private encodeHistoryCursor(sessionId: string, revision: number, before: number): string {
-    return Buffer.from(JSON.stringify({ sessionId, revision, before })).toString('base64url');
+  private encodeGraphCursor(sessionId: string, revision: number, cursor: unknown): string {
+    return Buffer.from(JSON.stringify({ sessionId, revision, cursor })).toString('base64url');
   }
 
-  private decodeHistoryCursor(sessionId: string, revision: number, cursor: string | undefined): number | undefined {
+  private decodeGraphCursor(sessionId: string, revision: number, cursor?: string): unknown | undefined {
     if (!cursor) return undefined;
     try {
-      if (cursor.length > 2048) throw new Error('cursor too long');
-      const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { sessionId?: unknown; revision?: unknown; before?: unknown };
-      if (value.sessionId !== sessionId || value.revision !== revision || !Number.isSafeInteger(value.before) || Number(value.before) < 0)
-        throw new Error('cursor does not match the current history revision');
-      return Number(value.before);
+      const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { sessionId?: unknown; revision?: unknown; cursor?: unknown };
+      if (value.sessionId !== sessionId || value.revision !== revision || !value.cursor) throw new Error('stale history cursor');
+      return value.cursor;
     } catch {
       throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
     }
+  }
+
+  async historyEntityPageAuthoritative(
+    sessionId: string,
+    operation: 'list_messages' | 'list_runs' | 'list_steps' | 'list_tool_calls' | 'list_events',
+    cursor?: string,
+    limit = 256,
+  ): Promise<{ items: unknown[]; cursor?: string; revision: number }> {
+    const head = await this.historyHeadAuthoritative(sessionId);
+    const revision = Number.isSafeInteger(head.revision) ? head.revision : 0;
+    if (!head.objectId) return { items: [], revision };
+    const graphCursor = this.decodeGraphCursor(sessionId, revision, cursor);
+    const page = await this.historyCommand({
+      sessionId,
+      requestId: `history-page:${operation}:${sessionId}:${revision}:${cursor ?? 'root'}`,
+      operation: 'page',
+      payload: graphCursor ? { cursor: graphCursor, limit } : { objectId: head.objectId, limit },
+    }) as { items?: Array<{ kind?: unknown; value?: unknown }>; cursor?: unknown };
+    const kinds: Record<string, string> = {
+      list_messages: 'runtime.message', list_runs: 'runtime.run', list_steps: 'runtime.step',
+      list_tool_calls: 'runtime.tool_call', list_events: 'runtime.event',
+    };
+    const items = (page.items ?? [])
+      .filter((item) => item.kind === kinds[operation])
+      .map((item) => item.value)
+      .filter((item) => item !== undefined);
+    return {
+      items,
+      revision,
+      ...(page.cursor ? { cursor: this.encodeGraphCursor(sessionId, revision, page.cursor) } : {}),
+    };
   }
 
   async historyWindowAuthoritative(sessionId: string, cursor?: string): Promise<{
@@ -963,21 +1068,27 @@ export class RuntimeFacade {
       detailsTruncated: boolean;
     };
   }> {
-    const [head, hot, messagesRaw, runsRaw, stepsRaw, toolsRaw, eventsRaw] = await Promise.all([
+    const [head, hot, runsRaw, stepsRaw, toolsRaw, eventsRaw] = await Promise.all([
       this.historyHead(sessionId),
       this.snapshotAuthoritative(sessionId),
-      this.listHistoryObjects(sessionId, 'list_messages'),
       this.listHistoryObjects(sessionId, 'list_runs'),
       this.listHistoryObjects(sessionId, 'list_steps'),
       this.listHistoryObjects(sessionId, 'list_tool_calls'),
       this.listHistoryObjects(sessionId, 'list_events'),
     ]);
     const revision = Number.isSafeInteger(head.revision) ? head.revision : 0;
-    const before = this.decodeHistoryCursor(sessionId, revision, cursor) ?? messagesRaw.length;
-    if (before > messagesRaw.length) throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
-    const messages = this.orderedHistory(messagesRaw as AgentRuntimeMessage[]);
-    const pageStart = Math.max(0, before - 24);
-    const pageMessages = messages.slice(pageStart, before);
+    const messagePage: AgentRuntimeMessage[] = [];
+    let graphCursor = cursor;
+    for (let page = 0; page < 32 && messagePage.length < 24; page++) {
+      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', graphCursor, 256);
+      messagePage.push(...(result.items as AgentRuntimeMessage[]));
+      if (!result.cursor) {
+        graphCursor = undefined;
+        break;
+      }
+      graphCursor = result.cursor;
+    }
+    const pageMessages = this.orderedHistory(messagePage).slice(-24);
     const stepIds = new Set(pageMessages.map(message => message.stepId).filter((id): id is string => Boolean(id)));
     const runIds = new Set(pageMessages.map(message => message.runId).filter((id): id is string => Boolean(id)));
     const steps = this.orderedHistory((stepsRaw as AgentRunStep[]).filter(step => stepIds.has(step.id) || runIds.has(step.runId))).slice(-48);
@@ -1003,8 +1114,8 @@ export class RuntimeFacade {
         revision,
         epoch,
         cursor,
-        olderCursor: pageStart > 0 ? this.encodeHistoryCursor(sessionId, revision, pageStart) : undefined,
-        hasEarlier: pageStart > 0,
+        olderCursor: graphCursor,
+        hasEarlier: Boolean(graphCursor),
         latest: !cursor,
         detailsTruncated: false,
       },
@@ -1012,25 +1123,35 @@ export class RuntimeFacade {
   }
 
   async historyTimelineAuthoritative(sessionId: string, before = Number.MAX_SAFE_INTEGER): Promise<{ items: AgentRuntimeMessage[]; next?: number; epoch: number }> {
-    const [hot, messagesRaw] = await Promise.all([
-      this.snapshotAuthoritative(sessionId),
-      this.listHistoryObjects(sessionId, 'list_messages'),
-    ]);
-    const messages = this.orderedHistory(messagesRaw as AgentRuntimeMessage[])
-      .filter(message => message.role === 'user' || message.role === 'assistant');
-    const numeric = messages.map((message, index) => ({ message, order: Number((message as unknown as { sequence?: unknown }).sequence ?? index + 1) }));
-    const filtered = numeric.filter(item => item.order < before);
-    const page = filtered.slice(-256);
-    const next = filtered.length > page.length ? page[0]?.order : undefined;
-    return { items: page.map(item => item.message), next, epoch: hot?.epoch ?? 0 };
+    const hot = await this.snapshotAuthoritative(sessionId);
+    const messages: AgentRuntimeMessage[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 32 && messages.length < 256; page++) {
+      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', cursor, 256);
+      messages.push(...(result.items as AgentRuntimeMessage[]).filter((message) =>
+        (message.role === 'user' || message.role === 'assistant') && Number((message as { sequence?: unknown }).sequence ?? Number.MAX_SAFE_INTEGER) < before,
+      ));
+      if (!result.cursor) break;
+      cursor = result.cursor;
+    }
+    const ordered = this.orderedHistory(messages);
+    const page = ordered.slice(-256);
+    const next = ordered.length > page.length ? Number((page[0] as { sequence?: unknown } | undefined)?.sequence) : undefined;
+    return { items: page, next: Number.isSafeInteger(next) ? next : undefined, epoch: hot?.epoch ?? 0 };
   }
 
   async messageContentAuthoritative(sessionId: string, messageId: string, cursor = 0, expectedRevision?: number): Promise<{ text: string; next?: number; revision: number }> {
     const head = await this.historyHead(sessionId);
     if (expectedRevision !== undefined && expectedRevision !== head.revision) throw new AgentRuntimeError('Conversation changed.', 'HISTORY_STALE', 409);
     if (cursor > 0 && expectedRevision === undefined) throw new AgentRuntimeError('Content continuation requires the original revision.', 'HISTORY_STALE', 409);
-    const messages = this.orderedHistory(await this.listHistoryObjects(sessionId, 'list_messages') as AgentRuntimeMessage[]);
-    const message = messages.find(item => item.id === messageId);
+    let graphCursor: string | undefined;
+    let message: AgentRuntimeMessage | undefined;
+    for (let page = 0; page < 128 && !message; page++) {
+      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', graphCursor, 256);
+      message = (result.items as AgentRuntimeMessage[]).find((item) => item.id === messageId);
+      if (!result.cursor) break;
+      graphCursor = result.cursor;
+    }
     if (!message) throw new AgentRuntimeError('Message missing.', 'NOT_FOUND', 404);
     const text = typeof message.content === 'string' ? message.content : '';
     const pageSize = 8192;
@@ -1044,21 +1165,9 @@ export class RuntimeFacade {
   }> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
-    let bytes: Uint8Array;
-    try { bytes = await client.uiSnapshot(sessionId); }
-    catch (error) {
-      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
-      const { agentRuntimeStore } = await import('../session-store.js');
-      const session = agentRuntimeStore.getSession(sessionId);
-      if (agentRuntimeStore.listRuns(sessionId).some(run => run.status !== 'queued')) {
-        throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MIGRATION_REQUIRED',
-          message: 'Existing executed runs require offline projection migration.' });
-      }
-      // Seed is create-if-absent, serialized by the session actor. It cannot overwrite
-      // live data; pre-existing runs without a projection require offline migration.
-      bytes = await client.seedUi(sessionId, Buffer.from(JSON.stringify(session)));
-    }
-    return decodeUiSnapshot(bytes, sessionId);
+    // Reads never seed from SQLite: a missing Rust projection requires explicit
+    // session creation or offline migration, not an implicit authority switch.
+    return decodeUiSnapshot(await client.uiSnapshot(sessionId), sessionId);
   }
 
   async uiTicket(sessionId: string, clientId: string) {
@@ -1096,11 +1205,11 @@ export class RuntimeFacade {
     };
   }
 
-  async appendStreamAuthoritative(input: ShadowStreamInput): Promise<void> {
-    if (streamMode() !== 'authoritative') return;
+  async appendStreamAuthoritative(input: ShadowStreamInput): Promise<number> {
+    if (streamMode() !== 'authoritative') return 0;
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
-    await client.appendStream({
+    const ack = await client.appendStream({
       sessionId: input.sessionId,
       runId: input.runId,
       producerId: input.producerId,
@@ -1115,6 +1224,9 @@ export class RuntimeFacade {
         payload: Buffer.from(JSON.stringify({ schema: 1, chunk, state: input.state })),
       })),
     });
+    const match = /^stream:\d+-(\d+)$/.exec(ack.request);
+    if (!match) throw new Error('Runtime stream acknowledgement did not include a valid sequence range.');
+    return Number(match[1]);
   }
 
   async replayAuthoritative(

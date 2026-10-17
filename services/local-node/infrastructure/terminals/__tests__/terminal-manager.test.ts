@@ -104,6 +104,19 @@ it("retains output while detached, deduplicates retried input and rejects cross-
   ).toBeUndefined();
 });
 
+it("uses live Rust-owned terminal metadata without creating SQLite process rows", async () => {
+  vi.stubEnv("SYNAX_RUNTIME_SIDECAR_STREAM", "authoritative");
+  const db = getRawSqlite();
+  const prepare = vi.spyOn(db, "prepare");
+  const item = await start();
+  expect(terminalManager.get(item.id)).toMatchObject({ id: item.id, projectId: "pty-test", state: "active" });
+  expect(terminalManager.list("pty-test").some((terminal) => terminal.id === item.id)).toBe(true);
+  await terminalManager.stop(item.id);
+  expect(terminalManager.get(item.id).state).toBe("closed");
+  expect(prepare).not.toHaveBeenCalledWith(expect.stringContaining("agent_runtime_processes"));
+  vi.unstubAllEnvs();
+});
+
 it.skipIf(process.platform === "win32")(
   "captures background-service output, exit status, and terminates its descendants",
   async () => {

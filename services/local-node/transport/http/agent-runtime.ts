@@ -1,5 +1,6 @@
 import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
 import { runtimeFacade } from '../../modules/agent-runtime/sidecar/runtime-facade.js';
+import { RuntimeSidecarError } from '../../modules/agent-runtime/sidecar/sidecar-client.js';
 import { readFlatHistoryWindow, readFlatTimeline } from "../../modules/agent-runtime/flat-history-reader.js";
 import { simpleHistorySession, simpleHistoryRevision } from "../../modules/agent-runtime/simple-history.js";
 import { migrateFlatHistory, prepareFlatHistory } from "../../modules/agent-runtime/flat-history-migration.js";
@@ -9,7 +10,7 @@ import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { migrateJsonlSession } from "../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js";
 import { readHistoryWindow } from "../../modules/agent-runtime/checkpoints/version-runtime/window.js";
 import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
-import type { AgentRun, AgentRuntimeMessage, AgentSession, CreateSessionRequest, PermissionDecision, RuntimeEvent } from "../../modules/agent-runtime/contracts.js";
+import type { AgentRun, AgentRuntimeMessage, AgentSession, CreateSessionRequest, PermissionDecision, RuntimeEvent, ToolCallRecord } from "../../modules/agent-runtime/contracts.js";
 import {
   boundaryOnlySession,
   versionRepository,
@@ -94,6 +95,7 @@ import {
   profileService,
   resolveSessionCapabilities,
   resolveSessionInvocationUsage,
+  resolveSessionInvocationUsageFromRecords,
   streamTurnRequestSchema,
   toHttpError,
   applySessionPermissionUpdate,
@@ -138,6 +140,7 @@ import {
   trashSessionEnvironmentFile,
   openSessionFileInSystemTerminal,
   getSessionInputSourceContent,
+  getSessionInputSourceContentFromRecord,
   invalidateSessionEnvironment,
 } from "../../modules/agent-runtime/session-environment.js";
 import {
@@ -197,20 +200,34 @@ agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");
-    if (
-      id &&
-      (getRawSqlite()
-        .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
-        .get(id) ||
+    if (id) {
+      if (runtimeFacade.streamMode() === "authoritative") {
+        try {
+          const projected = projectSessionState(
+            (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
+          );
+          if (projected.sessionMetadata?.archivedAt || projected.sessionMetadata?.deletedAt)
+            return runtimeError(c, new AgentNotFoundError(id));
+        } catch (error) {
+          if (error instanceof RuntimeSidecarError && error.code === 'PROJECTION_MISSING')
+            return runtimeError(c, new AgentNotFoundError(id));
+          return runtimeError(c, error);
+        }
+      } else if (
+        getRawSqlite()
+          .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
+          .get(id) ||
         getRawSqlite()
           .prepare(
             "SELECT 1 FROM agent_runtime_sessions WHERE id=? AND archived_at IS NOT NULL",
           )
-          .get(id))
-    )
-      // The canonical gone-error: clients recognize this exact shape as the
-      // terminal "session no longer exists" signal instead of a failure.
-      return runtimeError(c, new AgentNotFoundError(id));
+          .get(id)
+      ) {
+        // The canonical gone-error: clients recognize this exact shape as the
+        // terminal "session no longer exists" signal instead of a failure.
+        return runtimeError(c, new AgentNotFoundError(id));
+      }
+    }
     await next();
   });
 }
@@ -389,11 +406,24 @@ function withSessionPayload(sessionId: string) {
 async function withAuthoritativeSessionPayload(sessionId: string) {
   const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const session = projectSessionState(snapshot.session as never);
+  const [workItems, contextItems] = await Promise.all([
+    runtimeFacade.listHistoryObjects(sessionId, "list_work"),
+    runtimeFacade.listHistoryObjects(sessionId, "list_contexts"),
+  ]);
+  const activeWorkId = typeof session.sessionMetadata?.activeWorkId === "string"
+    ? session.sessionMetadata.activeWorkId
+    : undefined;
+  const work = (workItems as Array<{ id?: unknown; sessionId?: unknown; updatedAt?: unknown }>)
+    .filter((item) => item.sessionId === sessionId && (!activeWorkId || item.id === activeWorkId))
+    .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0] ?? null;
+  const context = session.contextSnapshotId
+    ? (contextItems as Array<{ id?: unknown; sessionId?: unknown }>).find((item) => item.id === session.contextSnapshotId && item.sessionId === sessionId) ?? null
+    : null;
   return {
     session,
     profile: profileService.getForSession(session),
-    work: workStore.current(sessionId),
-    context: session.contextSnapshotId ? agentRuntimeStore.getContextBundle(session.contextSnapshotId) : null,
+    work,
+    context,
   };
 }
 
@@ -1377,11 +1407,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
     // Remote web clients keep using the Node gateway; loopback discovery is desktop-only.
-    agentRuntimeStore.getSession(sessionId);
+    if (runtimeFacade.streamMode() !== 'authoritative') agentRuntimeStore.getSession(sessionId);
     if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative') {
       return c.json({ transport: 'node' as const });
     }
-    if (parsed.data.snapshot) await runtimeFacade.ensureUiProjection(sessionId);
+    // The session middleware validated the persisted Rust projection. Issuing
+    // a read ticket must never create/seed a session from the SQL mirror.
     c.header('Cache-Control', 'no-store');
     const ticket = await runtimeFacade.uiTicket(sessionId, parsed.data.clientId);
     if (!ticket) throw new Error('Runtime sidecar ticket is unavailable.');
@@ -1724,7 +1755,29 @@ agentRuntimeRoutes.delete(
 
 agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
   try {
-    return c.json(await getSessionEnvironment(c.req.param("sessionId")));
+    const sessionId = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const [snapshot, tools, messages, projections, assets] = await Promise.all([
+        runtimeFacade.uiSnapshotAuthoritative(sessionId),
+        runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+        runtimeFacade.listMessageHistory(sessionId),
+        runtimeFacade.listSessionProjection(),
+        runtimeFacade.listBoundAssets(sessionId),
+      ]);
+      const session = projectSessionState(snapshot.session as never) as AgentSession;
+      const children = projections
+        .map((item) => projectSessionState(item as never) as AgentSession)
+        .filter((item) => !item.sessionMetadata?.archivedAt && !item.sessionMetadata?.deletedAt)
+        .filter((item) => item.parentSessionId === sessionId || session.childSessionIds.includes(item.id));
+      return c.json(await getSessionEnvironment(sessionId, {
+        session,
+        toolCalls: tools as ToolCallRecord[],
+        messages: messages as AgentRuntimeMessage[],
+        children,
+        assetNames: new Map((assets as Array<{ id: string; filename: string }>).map((asset) => [asset.id, asset.filename])),
+      }));
+    }
+    return c.json(await getSessionEnvironment(sessionId));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1732,8 +1785,15 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
 
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/input-source/:toolCallId",
-  (c) => {
+  async (c) => {
     try {
+      if (runtimeFacade.streamMode() === "authoritative") {
+        const sessionId = c.req.param("sessionId");
+        const calls = await runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls");
+        const call = (calls as Array<{ id?: unknown }>).find((item) => item.id === c.req.param("toolCallId"));
+        if (!call) return c.json({ error: "Input source not found." }, 404);
+        return c.json(getSessionInputSourceContentFromRecord(call as ToolCallRecord));
+      }
       return c.json(
         getSessionInputSourceContent(
           c.req.param("sessionId"),
@@ -2055,6 +2115,11 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
 agentRuntimeRoutes.get("/sessions/:sessionId/stats", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const session = projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never);
+      const configuredContextLimit = await resolveSessionConfiguredContextLimit(session);
+      return c.json(await runtimeFacade.sessionStatsAuthoritative(sessionId, configuredContextLimit));
+    }
     const session = agentSessionRuntime.get(sessionId);
     // Render the usage bar against the provider-configured context window.
     const configuredContextLimit =
@@ -2078,8 +2143,16 @@ agentRuntimeRoutes.get("/sessions/:sessionId/capabilities", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/invocation-usage", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/invocation-usage", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const sessionId = c.req.param("sessionId");
+      const [snapshot, calls] = await Promise.all([
+        runtimeFacade.uiSnapshotAuthoritative(sessionId),
+        runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+      ]);
+      return c.json(resolveSessionInvocationUsageFromRecords(snapshot.session.projectId, calls as ToolCallRecord[]));
+    }
     return c.json(resolveSessionInvocationUsage(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);
@@ -2123,11 +2196,11 @@ agentRuntimeRoutes.get("/sessions/:sessionId/todos", async (c) => {
 
 agentRuntimeRoutes.get("/sessions/:sessionId/permissions", async (c) => {
   try {
-    agentSessionRuntime.get(c.req.param("sessionId"));
     if (runtimeFacade.streamMode() === "authoritative") {
       const state = await runtimeFacade.controlState(c.req.param("sessionId")) as { permissions?: unknown[] };
       return c.json({ items: state.permissions ?? [] });
     }
+    agentSessionRuntime.get(c.req.param("sessionId"));
     return c.json({ items: permissionPolicy.list(c.req.param("sessionId")) });
   } catch (error) {
     return runtimeError(c, error);
@@ -2141,16 +2214,20 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   const sessionId = c.req.param("sessionId");
   try {
-    if (agentSessionRuntime.get(sessionId).sessionMetadata?.runtimeControl)
+    const authoritative = runtimeFacade.streamMode() === "authoritative";
+    const session = authoritative
+      ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never)
+      : agentSessionRuntime.get(sessionId);
+    if (session.sessionMetadata?.runtimeControl)
       return c.json(
         { error: "Wait for execution shutdown before changing permissions." },
         409,
       );
     validateBackendTurnInput(resolveSessionBackend(sessionId).id, parsed.data);
-    const session = runtimeFacade.streamMode() === "authoritative"
+    const updated = authoritative
       ? await applySessionPermissionUpdateAuthoritative(sessionId, parsed.data)
       : applySessionPermissionUpdate(sessionId, parsed.data);
-    return c.json(withSessionPayload(session.id));
+    return c.json(authoritative ? await withAuthoritativeSessionPayload(updated.id) : withSessionPayload(updated.id));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2571,12 +2648,15 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
     .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
-    const id = c.req.param("sessionId"),
-      session = agentRuntimeStore.getSession(id);
+    const id = c.req.param("sessionId");
+    const authoritative = runtimeFacade.streamMode() === "authoritative";
+    const session = authoritative
+      ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session as never)
+      : agentRuntimeStore.getSession(id);
     if (
       session.parentSessionId ||
       !["synax", "goal"].includes(session.profileId) ||
-      sessionUsesAcpEngine(id)
+      (!authoritative && sessionUsesAcpEngine(id))
     )
       return c.json(
         { error: "Modes are only available on primary native Synax sessions." },
@@ -2588,7 +2668,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
       ["running", "waiting_input", "waiting_permission"].includes(
         session.status,
       ) ||
-      interactionService.pending(id)
+      (!authoritative && interactionService.pending(id))
     )
       return c.json(
         {

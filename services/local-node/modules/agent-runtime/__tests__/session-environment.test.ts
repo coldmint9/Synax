@@ -11,11 +11,13 @@ const mocks = vi.hoisted(() => ({
   listMessages: vi.fn(),
   getToolCall: vi.fn(),
   resolveSessionWorkspaceRoots: vi.fn(),
+  resolveWorkspaceRootsFromSession: vi.fn(),
 }));
 
 vi.mock("../session-store.js", () => ({ agentRuntimeStore: mocks }));
 vi.mock("../tools/workspace.js", () => ({
   resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots,
+  resolveWorkspaceRootsFromSession: mocks.resolveWorkspaceRootsFromSession,
 }));
 vi.mock("../media-assets.js", () => ({
   detectMediaType: () => "application/octet-stream",
@@ -488,4 +490,34 @@ it("shares Git probes across sessions in one worktree, and invalidates both afte
   expect(next.changedFiles.some(file => file.path === "new.txt")).toBe(true);
   expect(statusCalls()).toBe(2);
   invalidateSessionEnvironment("same-worktree-other-session");
+});
+
+
+it("builds the environment from Rust records when all SQLite reads are disabled", async () => {
+  const session = mocks.getSession();
+  const roots = mocks.resolveSessionWorkspaceRoots();
+  const calls = [
+    { id: "write", toolId: "file.write", status: "completed", mutability: "write", inputRef: { path: "src/main.ts" } },
+    { id: "read", toolId: "file.read", status: "completed", mutability: "read", inputRef: { path: "src/main.ts" } },
+  ];
+  write("src/main.ts", "changed\n");
+  mocks.resolveWorkspaceRootsFromSession.mockReturnValue(roots);
+  for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages, mocks.resolveSessionWorkspaceRoots]) {
+    method.mockClear();
+    method.mockImplementation(() => { throw new Error("SQL disabled"); });
+  }
+  const env = await getSessionEnvironment(sessionId, {
+    session: { ...session, childSessionIds: ["deleted-child", "child"] },
+    toolCalls: calls as never[],
+    messages: [{ role: "user", contentParts: [{ type: "image", assetId: "rust-asset" }] }] as never[],
+    children: [{ id: "child", parentSessionId: sessionId, status: "running", profileId: "explorer" }] as never[],
+    assetNames: new Map([["rust-asset", "from-rocksdb.png"]]),
+  });
+  expect(env.agentChangedFiles.map(file => file.path)).toEqual(["src/main.ts"]);
+  expect(env.inputSources).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "file", path: "src/main.ts", toolCallId: "read" }),
+    expect.objectContaining({ kind: "attachment", label: "from-rocksdb.png" }),
+  ]));
+  expect(env.subagents.map(child => child.id)).toEqual(["child"]);
+  for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages, mocks.resolveSessionWorkspaceRoots]) expect(method).not.toHaveBeenCalled();
 });
