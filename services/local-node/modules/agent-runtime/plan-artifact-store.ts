@@ -3,6 +3,13 @@ import { agentPlanSchema, type AgentPlan } from './control-contracts.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { agentRuntimeStore as sessionStore } from './session-store.js';
 
+function mirrorPlanArtifact(plan: PlanArtifact): void {
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== 'authoritative') return;
+  void import('./sidecar/runtime-facade.js').then(({ runtimeFacade }) =>
+    runtimeFacade.persistHistoryObject(plan.sessionId, 'runtime.plan', plan)
+  ).catch(() => {});
+}
+
 export const PLAN_ARTIFACT_STATUSES = ['draft', 'saved', 'approved', 'superseded'] as const;
 export type PlanArtifactStatus = (typeof PLAN_ARTIFACT_STATUSES)[number];
 
@@ -138,7 +145,9 @@ export function createPlanArtifact(input: {
     json(input.plan.humanAcceptanceCriteria ?? []), json(input.plan.assumptions),
     json(input.plan.risks), now, now,
   );
-  return getPlanArtifact(input.sessionId, revision)!;
+  const artifact = getPlanArtifact(input.sessionId, revision)!;
+  mirrorPlanArtifact(artifact);
+  return artifact;
 }
 
 export function getPlanArtifact(sessionId: string, revision?: number): PlanArtifact | null {
@@ -175,7 +184,9 @@ export function updatePlanArtifact(
     next.approvedStepIndex ?? null, next.approvedByMessageId ?? null,
     next.updatedAt, sessionId, revision,
   );
-  return getPlanArtifact(sessionId, revision)!;
+  const artifact = getPlanArtifact(sessionId, revision)!;
+  mirrorPlanArtifact(artifact);
+  return artifact;
 }
 
 /** Create a new draft revision from an older report; old revisions remain immutable. */

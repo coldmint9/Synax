@@ -1582,8 +1582,12 @@ agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/plan", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/plan", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const plans = await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans");
+      return c.json({ plan: plans[0] ?? null });
+    }
     agentSessionRuntime.get(c.req.param("sessionId"));
     return c.json({ plan: getStoredPlan(c.req.param("sessionId")) });
   } catch (error) {
@@ -1591,8 +1595,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/plan", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/plans", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/plans", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative")
+      return c.json({ plans: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans") });
     agentSessionRuntime.get(c.req.param("sessionId"));
     return c.json({ plans: listPlanArtifacts(c.req.param("sessionId")) });
   } catch (error) {
@@ -1600,8 +1606,16 @@ agentRuntimeRoutes.get("/sessions/:sessionId/plans", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/plans/:revision", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/plans/:revision", async (c) => {
   try {
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const revision = Number(c.req.param("revision"));
+      if (!Number.isInteger(revision) || revision < 1)
+        return c.json({ error: "Plan revision must be a positive integer." }, 400);
+      const plan = (await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans"))
+        .find((item) => (item as { revision?: unknown }).revision === revision);
+      return plan ? c.json({ plan }) : c.json({ error: "Plan revision not found." }, 404);
+    }
     agentSessionRuntime.get(c.req.param("sessionId"));
     const revision = Number(c.req.param("revision"));
     if (!Number.isInteger(revision) || revision < 1)

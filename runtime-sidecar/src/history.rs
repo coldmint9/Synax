@@ -208,6 +208,7 @@ impl HistoryStore {
             "list_tool_calls" => self.list_indexed(session_id, "tool")?,
             "list_events" => self.list_indexed(session_id, "event")?,
             "list_artifacts" => self.list_indexed(session_id, "artifact")?,
+            "list_plans" => self.list_indexed(session_id, "plan")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index()?,
             "gc" => self.gc()?,
@@ -279,6 +280,7 @@ impl HistoryStore {
                 "runtime.tool_call" => Some("tool"),
                 "runtime.event" => Some("event"),
                 "runtime.artifact" => Some("artifact"),
+                "runtime.plan" => Some("plan"),
                 _ => None,
             };
             if let Some(index_kind) = index_kind {
@@ -809,6 +811,7 @@ impl HistoryStore {
                     "tool" => object.kind == "runtime.tool_call",
                     "event" => object.kind == "runtime.event",
                     "artifact" => object.kind == "runtime.artifact",
+                    "plan" => object.kind == "runtime.plan",
                     _ => false,
                 };
                 if matches {
