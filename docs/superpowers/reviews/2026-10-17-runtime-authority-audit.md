@@ -34,7 +34,7 @@
 | checkpoint/fork/rollback 原功能 | Rust preview/apply 明确只处理 conversation；workspace 文件回滚尚未等价；fork 仍在 Node 复制并重映射对象 | 文件恢复、冲突保护、原子恢复流程，以及结构共享 fork 的功能与复杂度证据 |
 | 旧 history 清理 | flat/versioned/JSONL/checkpoint 模块仍被线上路径导入 | 在线依赖图不含旧模式；旧实现仅供离线迁移，迁移与 purge 后完成无 SQL runtime 启动验收 |
 | 真实外部 provider | 本地兼容 HTTP provider + 独立 worker 验收已通过 | 使用外部 provider 凭证的一次实际会话与工具/permission/input/recovery 验收；不能以本地 fixture 替代 |
-| 最终平台与包 | workflow `39025558762` 对 commit `79a703c1` 已成功：Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64、Linux 和 Rust release tests 均通过；当前 HEAD 的本地 DMG仍需重建 | 最终实现 commit 的 Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64 和 Linux；重新生成 DMG 并记录 hash |
+| 最终平台与包 | workflow `39025558762` 对 commit `79a703c1` 已成功：Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64、Linux 和 Rust release tests 均通过；当前 HEAD `e804acb3` 的 DMG 已重建并通过 packaged smoke | 最终实现 commit 的 Windows Named Pipe/NSIS/packaged smoke、macOS arm64/x64 和 Linux；保留外部 provider 凭证和旧 history 清理证据 |
 
 ## 验证范围
 

@@ -23,7 +23,7 @@
 | 历史与数据迁移 | runtime-history 已有 immutable CAS/head/pin/checkpoint/fork/rollback/page/verify/GC、run/message/step/part/tool index；terminal run 完成会镜像 transcript；migration export/import/verify/rebuild-index 会导入 UI projection 与最近 1024 条 legacy canonical stream；migration/provider/benchmark smoke 已有 | 旧 history API 全量切换、media blob 分块、旧实现删除、真实用户数据全量导入验收 |
 | 旧链路移除 | authoritative host 已删除 storage owner、journal writer、SQLite replay 线上读写和 legacy 环境开关 | 删除剩余旧 checkpoint/history mode、旧迁移表和兼容测试 |
 
-注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append；provider-worker smoke 又覆盖了真实 agent-session-runner child → 本地 OpenAI-compatible HTTP streaming provider → Node coordinator → Rust history/stream，仍未替代外部真实凭证 provider 验收。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；物理 APFS 小容量镜像 ENOSPC smoke 已通过，Windows Named Pipe 已写入 Tokio transport 路径但尚未在 Windows 目标机执行构建/烟测。不要把已有 checkbox 推断成上述功能已完成。
+注意：forked worker smoke 已覆盖独立 Node child → Unix IPC → Rust append；provider-worker smoke 又覆盖了真实 agent-session-runner child → 本地 OpenAI-compatible HTTP streaming provider → Node coordinator → Rust history/stream，仍未替代外部真实凭证 provider 验收。ephemeral 已实现为不推进 durable cursor、不进入 replay、信用窗口满时可丢弃的 live-only event；物理 APFS 小容量镜像 ENOSPC smoke 已通过；workflow `39025558762` 已在 Windows 目标机执行 Named Pipe、NSIS 和 packaged smoke。不要把已有 checkbox 推断成上述功能已完成。
 
 2026-10-16 第二轮补充实现：
 
