@@ -5,7 +5,11 @@ $product = Get-Content (Join-Path $root 'package.json') | ConvertFrom-Json
 $app = Join-Path $root "out/Synax-win32-x64/Synax.exe"
 $installer = Join-Path $root "out/make/nsis/Synax-$($product.version)-win32-x64-NSIS.exe"
 $expected = $env:SYNAX_WINDOWS_PUBLISHER
-if (!$expected) { throw 'SYNAX_WINDOWS_PUBLISHER is missing.' }
+if (!$expected) {
+  if ($env:SYNAX_REQUIRE_SIGNED_UPDATES -eq '1') { throw 'SYNAX_WINDOWS_PUBLISHER is missing.' }
+  Write-Host 'Skipping Authenticode verification for unsigned preview artifacts.'
+  exit 0
+}
 $certificate = Join-Path $root '.signing/windows/Synax.cer'
 if (!(Test-Path -LiteralPath $certificate)) { throw "Missing self-signed publisher certificate: $certificate" }
 certutil.exe -user -addstore -f TrustedPublisher $certificate | Out-Null
