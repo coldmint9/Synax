@@ -27,6 +27,7 @@ const CF_TRANSITIONS: &str = "transitions";
 const CF_HISTORY_OUTBOX: &str = "history_outbox";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
+const HISTORY_OUTBOX_MAINTENANCE_BATCH: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -121,6 +122,17 @@ pub struct FinishReceipt {
     pub event: Option<StreamEvent>,
     #[serde(default)]
     pub reused: bool,
+}
+
+/// Result of one bounded history-outbox maintenance pass.
+///
+/// Only entries at or below the durable acknowledgement watermark are eligible
+/// for removal.  An unacknowledged event is never removed by maintenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryOutboxMaintenance {
+    pub acked_through: u64,
+    pub removed: usize,
+    pub has_more_acked: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredFinish {
@@ -419,7 +431,9 @@ impl HotStore {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.history_outbox(&session_id, limit.min(4096)))
             .await
-            .map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string())))?
+            .map_err(|error| {
+                StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
+            })?
     }
 
     pub async fn history_outbox_ack_async(
@@ -430,7 +444,27 @@ impl HotStore {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.history_outbox_ack(&session_id, through))
             .await
-            .map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string())))?
+            .map_err(|error| {
+                StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
+            })?
+    }
+
+    pub async fn history_outbox_maintain_async(
+        &self,
+        session_id: String,
+        max_entries: usize,
+    ) -> Result<HistoryOutboxMaintenance, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.history_outbox_maintain(
+                &session_id,
+                max_entries.min(HISTORY_OUTBOX_MAINTENANCE_BATCH),
+            )
+        })
+        .await
+        .map_err(|error| {
+            StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
+        })?
     }
 
     pub async fn ui_snapshot_async(
@@ -2026,35 +2060,113 @@ impl HotStore {
         self.replay_bounded(session_id, after, EVENT_RETENTION as usize, 4 * 1024 * 1024)
     }
 
-    fn history_outbox(&self, session_id: &str, limit: usize) -> Result<Vec<StreamEvent>, StorageError> {
+    fn history_outbox(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<StreamEvent>, StorageError> {
         let prefix = format!("o/{session_id}/");
+        let acked_through = self.history_outbox_acked_through(session_id)?;
         let mut items = Vec::new();
         for entry in self.db.iterator_cf(
             self.cf(CF_HISTORY_OUTBOX)?,
             rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
         ) {
             let (key, value) = entry?;
-            if !key.starts_with(prefix.as_bytes()) || items.len() >= limit { break; }
+            if !key.starts_with(prefix.as_bytes()) || items.len() >= limit {
+                break;
+            }
+            let Some(sequence) = history_outbox_sequence(&key) else {
+                continue;
+            };
+            if sequence <= acked_through {
+                continue;
+            }
             items.push(serde_json::from_slice::<StreamEvent>(&value)?);
         }
         Ok(items)
     }
 
     fn history_outbox_ack(&self, session_id: &str, through: u64) -> Result<(), StorageError> {
+        let state = self.read_session(session_id)?;
+        if through > state.cursor {
+            return Err(RuntimeError::InvalidCommand(
+                "history outbox acknowledgement exceeds stream cursor".into(),
+            )
+            .into());
+        }
+        let current = self.history_outbox_acked_through(session_id)?;
+        let next = current.max(through);
+        let mut batch = WriteBatch::default();
+        self.put_batch(
+            &mut batch,
+            CF_HISTORY_OUTBOX,
+            history_outbox_ack_key(session_id),
+            &next.to_be_bytes(),
+        )?;
+        self.write_with_durability(batch, Durability::Sync)
+    }
+
+    fn history_outbox_maintain(
+        &self,
+        session_id: &str,
+        max_entries: usize,
+    ) -> Result<HistoryOutboxMaintenance, StorageError> {
+        let max_entries = max_entries.min(HISTORY_OUTBOX_MAINTENANCE_BATCH);
+        let acked_through = self.history_outbox_acked_through(session_id)?;
         let prefix = format!("o/{session_id}/");
         let mut batch = WriteBatch::default();
+        let mut removed = 0usize;
+        let mut has_more_acked = false;
         for entry in self.db.iterator_cf(
             self.cf(CF_HISTORY_OUTBOX)?,
             rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
         ) {
             let (key, _) = entry?;
-            if !key.starts_with(prefix.as_bytes()) { break; }
-            let sequence = String::from_utf8_lossy(&key).rsplit('/').next().and_then(|value| value.parse::<u64>().ok());
-            if sequence.is_some_and(|value| value <= through) {
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+            let Some(sequence) = history_outbox_sequence(&key) else {
+                continue;
+            };
+            if sequence > acked_through {
+                break;
+            }
+            if removed < max_entries {
                 batch.delete_cf(self.cf(CF_HISTORY_OUTBOX)?, key);
+                removed += 1;
+            } else {
+                has_more_acked = true;
+                break;
             }
         }
-        self.write_with_durability(batch, Durability::Sync)
+        if removed > 0 {
+            self.write_with_durability(batch, Durability::Sync)?;
+        }
+        Ok(HistoryOutboxMaintenance {
+            acked_through,
+            removed,
+            has_more_acked,
+        })
+    }
+
+    fn history_outbox_acked_through(&self, session_id: &str) -> Result<u64, StorageError> {
+        let Some(bytes) = self.get(
+            CF_HISTORY_OUTBOX,
+            history_outbox_ack_key(session_id).as_bytes(),
+        )?
+        else {
+            return Ok(0);
+        };
+        if bytes.len() != std::mem::size_of::<u64>() {
+            return Err(RuntimeError::StorageUnavailable(
+                "invalid history outbox acknowledgement watermark".into(),
+            )
+            .into());
+        }
+        let mut raw = [0u8; std::mem::size_of::<u64>()];
+        raw.copy_from_slice(&bytes);
+        Ok(u64::from_be_bytes(raw))
     }
 
     fn replay_bounded(
@@ -2323,6 +2435,17 @@ fn stream_key(session_id: &str, sequence: u64) -> String {
 
 fn history_outbox_key(session_id: &str, sequence: u64) -> String {
     format!("o/{session_id}/{sequence:020}")
+}
+
+fn history_outbox_ack_key(session_id: &str) -> String {
+    format!("a/{session_id}")
+}
+
+fn history_outbox_sequence(key: &[u8]) -> Option<u64> {
+    String::from_utf8_lossy(key)
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
 }
 
 fn control_state_key(session_id: &str) -> String {
@@ -3780,9 +3903,17 @@ mod tests {
         assert_eq!(store.replay("s", 0).unwrap().len(), 1);
         assert_eq!(store.history_outbox("s", 10).unwrap().len(), 1);
         store
-            .append_stream_with_durability("s", "r", "p", 2, 1, Durability::Sync, vec![ui_event(serde_json::json!({
-                "type": "message_delta", "runId":"r", "stepId":"step", "delta":"x"
-            }))])
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                2,
+                1,
+                Durability::Sync,
+                vec![ui_event(serde_json::json!({
+                    "type": "message_delta", "runId":"r", "stepId":"step", "delta":"x"
+                }))],
+            )
             .unwrap();
         store.history_outbox_ack("s", 1).unwrap();
         assert_eq!(store.history_outbox("s", 10).unwrap().len(), 1);
@@ -3791,6 +3922,253 @@ mod tests {
         assert_eq!(reopened.history_outbox("s", 10).unwrap().len(), 1);
         reopened.history_outbox_ack("s", 2).unwrap();
         assert!(reopened.history_outbox("s", 10).unwrap().is_empty());
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_maintenance_is_bounded_and_preserves_unacknowledged_events() {
+        let path = temp_path("history-outbox-maintenance");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        for (producer_sequence, chunk) in (0..300)
+            .map(|index| event(&format!("event-{index}")))
+            .collect::<Vec<_>>()
+            .chunks(256)
+            .enumerate()
+        {
+            store
+                .append_stream_with_durability(
+                    "s",
+                    "r",
+                    "p",
+                    producer_sequence as u64 + 1,
+                    1,
+                    Durability::Sync,
+                    chunk.to_vec(),
+                )
+                .unwrap();
+        }
+
+        store.history_outbox_ack("s", 300).unwrap();
+        let first = store.history_outbox_maintain("s", 10).unwrap();
+        assert_eq!(first.acked_through, 300);
+        assert_eq!(first.removed, 10);
+        assert!(first.has_more_acked);
+        let mut passes = 1;
+        let mut last = first;
+        while last.has_more_acked {
+            last = store.history_outbox_maintain("s", 10).unwrap();
+            passes += 1;
+        }
+        assert_eq!(passes, 30);
+        assert_eq!(last.removed, 10);
+        assert!(store.history_outbox("s", 10).unwrap().is_empty());
+
+        // Repeating maintenance is idempotent and cannot delete anything new.
+        let repeated = store.history_outbox_maintain("s", 10).unwrap();
+        assert_eq!(repeated.removed, 0);
+        assert!(!repeated.has_more_acked);
+
+        // A watermark cannot make an unacknowledged event disappear.
+        store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                3,
+                1,
+                Durability::Sync,
+                vec![event("unacknowledged")],
+            )
+            .unwrap();
+        let pending = store.history_outbox("s", 10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].sequence, 301);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_ack_watermark_survives_restart_and_duplicate_reconcile() {
+        let path = temp_path("history-outbox-restart-idempotent");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::Sync,
+                vec![event("one"), event("two")],
+            )
+            .unwrap();
+        assert_eq!(store.history_outbox("s", 10).unwrap().len(), 2);
+
+        // A reconcile pass can read the same durable batch more than once.
+        let first_pass = store.history_outbox("s", 10).unwrap();
+        let second_pass = store.history_outbox("s", 10).unwrap();
+        assert_eq!(first_pass, second_pass);
+        store.history_outbox_ack("s", 2).unwrap();
+        // A duplicate ack is monotonic and safe.
+        store.history_outbox_ack("s", 1).unwrap();
+        drop(store);
+
+        let reopened = HotStore::open(&path).unwrap();
+        assert!(reopened.history_outbox("s", 10).unwrap().is_empty());
+        let maintenance = reopened.history_outbox_maintain("s", 10).unwrap();
+        assert_eq!(maintenance.acked_through, 2);
+        assert_eq!(maintenance.removed, 2);
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_unknown_ack_is_recoverable_without_losing_pending_events() {
+        let path = temp_path("history-outbox-unknown-ack");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::Sync,
+                vec![event("one"), event("two")],
+            )
+            .unwrap();
+
+        let mut faulty = store.clone();
+        faulty.faults.ack_unknown_after_commit = true;
+        assert!(matches!(
+            faulty.history_outbox_ack("s", 1),
+            Err(StorageError::Runtime(RuntimeError::DurabilityUnknown(_)))
+        ));
+        drop(faulty);
+        drop(store);
+
+        // The acknowledgement may have committed despite the lost reply. The
+        // first event may therefore be gone, but the unacknowledged tail must
+        // remain available after restart and repeated reconciliation.
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(reopened.replay("s", 0).unwrap().len(), 2);
+        let pending = reopened.history_outbox("s", 10).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        let again = reopened.history_outbox("s", 10).unwrap();
+        assert_eq!(pending, again);
+        reopened.history_outbox_ack("s", 2).unwrap();
+        assert!(reopened.history_outbox("s", 10).unwrap().is_empty());
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_disk_fault_keeps_ack_and_pending_events_retryable() {
+        let path = temp_path("history-outbox-disk-fault");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        store
+            .append_stream_with_durability(
+                "s",
+                "r",
+                "p",
+                1,
+                1,
+                Durability::Sync,
+                vec![event("one"), event("two")],
+            )
+            .unwrap();
+        drop(store);
+
+        let faulty = HotStore::open_with_faults(
+            &path,
+            FaultConfig {
+                ack_unknown_after_commit: false,
+                abort_after_commit: false,
+                abort_after_append: false,
+                abort_after_finish: false,
+                disk_full: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            faulty.history_outbox_ack("s", 1),
+            Err(StorageError::DiskFull)
+        ));
+        drop(faulty);
+
+        let reopened = HotStore::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .history_outbox("s", 10)
+                .unwrap()
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(matches!(
+            reopened.history_outbox_ack("s", 3),
+            Err(StorageError::Runtime(RuntimeError::InvalidCommand(_)))
+        ));
+        reopened.history_outbox_ack("s", 2).unwrap();
+        let maintenance = reopened.history_outbox_maintain("s", 10).unwrap();
+        assert_eq!(maintenance.removed, 2);
+        assert!(reopened.history_outbox("s", 10).unwrap().is_empty());
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_retention_is_independent_from_stream_retention_after_restart() {
+        let path = temp_path("history-outbox-retention");
+        let store = HotStore::open(&path).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let events = (0..(EVENT_RETENTION as usize + 32))
+            .map(|index| event(&format!("retained-{index}")))
+            .collect::<Vec<_>>();
+        for (producer_sequence, chunk) in events.chunks(256).enumerate() {
+            store
+                .append_stream_with_durability(
+                    "s",
+                    "r",
+                    "p",
+                    producer_sequence as u64 + 1,
+                    1,
+                    Durability::Sync,
+                    chunk.to_vec(),
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            store.replay("s", 0).unwrap().len(),
+            EVENT_RETENTION as usize
+        );
+        assert_eq!(
+            store
+                .history_outbox("s", EVENT_RETENTION as usize + 64)
+                .unwrap()
+                .len(),
+            EVENT_RETENTION as usize + 32
+        );
+        drop(store);
+
+        let reopened = HotStore::open(&path).unwrap();
+        let pending = reopened
+            .history_outbox("s", EVENT_RETENTION as usize + 64)
+            .unwrap();
+        assert_eq!(pending.first().unwrap().sequence, 1);
+        assert_eq!(pending.last().unwrap().sequence, EVENT_RETENTION + 32);
         drop(reopened);
         let _ = std::fs::remove_dir_all(path);
     }
