@@ -81,4 +81,4 @@ history 的对象、head 与 receipt 已改为 Rust 原子命令；查询不再�
 
 完整迁移尚未结束。当前 SQL 执行上下文、work/context/stats、process ownership、terminal history 扫描、跨 hot/history 故障恢复、长历史分页/增量 GC 和 workspace 文件回滚的缺口及验收标准，见 `../superpowers/reviews/2026-10-17-runtime-authority-audit.md`。此图中的 Rust 权威方向不能作为上述所有功能已完成的证明。
 
-当前本地试用包：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `ff864150cfaac5820e8536d9a92315d83626e23f7a496c287814c7f76a07f917`；packaged desktop smoke 已通过。
+当前本地试用包：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `d212617191ccde5a4fc872c7fe366ed5f38cb68d753b8e891db8a9d785b671a9`；大小 `285172706` bytes；packaged desktop smoke 已通过。

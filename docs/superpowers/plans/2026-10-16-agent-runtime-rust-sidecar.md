@@ -428,9 +428,10 @@ runtime-sidecar/
 - 查询不再保存/复用 receipt，旧 query receipt 不再污染新读；按当前 head 去重实体版本并稳定排序。通过真实 IPC 验证并发写入、重复请求、revision conflict 和重启恢复。
 - authoritative UI snapshot 读取不再隐式 seed SQLite；HTTP tombstone、环境内容、input-source 与 invocation usage 改读 Rust。显式 session 创建 seed、Git subprocess SQL 登记、stats/work/context 仍未切完。
 - 63 项 Rust 测试、56 项 focused Node/HTTP 测试、typecheck、history/lifecycle/provider-worker smoke 通过。完整 Vitest 与新打包结果待追加。
-- workflow `39010803578` 已确认四个平台成功，head 为 `dada553e`；不作为本轮新代码的跨平台证据。
-- 最终本地回归：Rust 63 项通过；history、lifecycle、provider-worker smoke 通过；全量 Vitest 370 个文件 / 2983 项通过 / 1 项跳过；typecheck 通过。上述证据覆盖本轮改动，不覆盖尚未完成的 SQL execution lease、完整 work/context 写入、跨 DB 故障恢复、增量 GC 和 workspace 文件回滚。
+- workflow `39025558762` 已确认四个平台成功，head 为 `79a703c1`；Windows Named Pipe/NSIS/packaged smoke、Rust release storage/concurrency 和 history IPC/restart smoke 均通过。
+- 最终本地回归：Rust 63 项通过；history、lifecycle、provider-worker smoke 通过；全量 Vitest 370 个文件 / 2988 项通过 / 1 项跳过；typecheck 通过。上述证据覆盖本轮改动，不覆盖尚未完成的 terminal compatibility rows、旧 history 模块清理、跨 DB 双故障恢复、outbox GC、外部 provider 凭证和 workspace 文件回滚。
 - 当前 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `ff864150cfaac5820e8536d9a92315d83626e23f7a496c287814c7f76a07f917`，大小 `285097763` bytes。
+- 最新 HEAD 的 macOS arm64 DMG 已重建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `d212617191ccde5a4fc872c7fe366ed5f38cb68d753b8e891db8a9d785b671a9`，大小 `285172706` bytes。
 
 ## 2026-10-17 第十三轮：authoritative process ownership recovery
 
@@ -446,7 +447,7 @@ runtime-sidecar/
 - authoritative history window 也已使用 graph cursor 读取消息页；message content、详情实体和其余全量 list API 仍需继续迁移。
 - authoritative message content 已通过 graph cursor 定位消息，避免直接 materialize 全部 message history；详情实体和其余全量 list API 仍需继续迁移。
 - 新增 Rust durable history outbox：durable append 与 hot stream/session/projection 同一 WriteBatch 写 outbox，正常 history append 按 receipt ack，`reconcile_stream` 成功写 history 后也 ack；history smoke 已覆盖缺 history → reconcile → 可查询，并新增 outbox retention/ack 单测。outbox 长期 GC、旧数据迁移和双故障恢复仍未完成。
-- Windows sidecar smoke 的 timeout 已定位并修复为 WebSocket smoke harness 的 queued-response race；本机 protobuf health/subscription/replay smoke 通过，新的 Windows workflow run 仍需触发确认。
+- Windows sidecar smoke 的 timeout 已定位并修复为 WebSocket smoke harness 的 queued-response race；workflow `39025558762` 已验证 Windows Named Pipe protobuf health/subscription/replay smoke。
 
 - 新增 `npm run runtime-sidecar:history-benchmark`。本机 arm64 基线：100 sessions / concurrency 32 / 16 batches × 8 entities / 512-byte content，共 12800 个当前实体；1700 次原子追加，p50 2.170ms、p95 4.906ms、p99 6.291ms；100 次 history 查询 p99 7.520ms。该轮与 Vitest 同机运行，只度量 history IPC（包含 Node snapshot 往返），不是完整 provider 会话或长期增长 SLA。原始结果在 `out/runtime-history-benchmark-2026-10-17.json`。
 - 跨平台 build workflow 新增 release Rust unit suite 和 history IPC/restart smoke；ticket 入口移除隐式 SQL seed，相关 HTTP gate 7 项通过。
