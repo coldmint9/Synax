@@ -240,6 +240,12 @@ export class RuntimeFacade {
     return (await this.uiSnapshotAuthoritative(sessionId)).session;
   }
 
+  async runPatch(sessionId: string, runId: string, requestId: string, patch: Record<string, unknown>): Promise<unknown> {
+    if (streamMode() !== 'authoritative') return null;
+    await this.controlCommand({ sessionId, requestId, operation: 'run_patch', payload: { runId, patch } });
+    return (await this.uiSnapshotAuthoritative(sessionId)).run;
+  }
+
   async stopSessionAuthoritative(sessionId: string, status: 'paused' | 'interrupted' | 'cancelled', reason: string): Promise<void> {
     if (streamMode() !== 'authoritative') return;
     const snapshot = await this.uiSnapshotAuthoritative(sessionId);

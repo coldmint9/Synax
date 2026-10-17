@@ -869,6 +869,56 @@ impl HotStore {
                 changed = true;
                 event_name = operation.into();
             }
+            "run_patch" => {
+                let run_id = required_string(&value, "runId")?;
+                let patch = value["patch"].as_object().ok_or_else(|| {
+                    RuntimeError::InvalidCommand("run patch must be an object".into())
+                })?;
+                if projection.run["id"].as_str() != Some(run_id) {
+                    return Err(RuntimeError::InvalidCommand(
+                        "run patch does not target the projected run".into(),
+                    )
+                    .into());
+                }
+                for key in patch.keys() {
+                    if !matches!(
+                        key.as_str(),
+                        "status"
+                            | "currentStep"
+                            | "completedAt"
+                            | "stopReason"
+                            | "triggerMessageId"
+                            | "metadata"
+                            | "model"
+                    ) {
+                        return Err(RuntimeError::InvalidCommand(format!(
+                            "run field cannot be patched: {key}"
+                        ))
+                        .into());
+                    }
+                }
+                let target = projection.run.as_object_mut().ok_or_else(|| {
+                    RuntimeError::InvalidCommand("projected run is not an object".into())
+                })?;
+                for (key, patch_value) in patch {
+                    if key == "metadata"
+                        && target.get(key).is_some_and(|item| item.is_object())
+                        && patch_value.is_object()
+                    {
+                        let metadata = target[key].as_object_mut().expect("metadata object");
+                        for (nested, nested_value) in
+                            patch_value.as_object().expect("patch metadata object")
+                        {
+                            metadata.insert(nested.clone(), nested_value.clone());
+                        }
+                    } else {
+                        target.insert(key.clone(), patch_value.clone());
+                    }
+                }
+                event_run_id = run_id.to_owned();
+                changed = true;
+                event_name = "run_updated".into();
+            }
             "session_patch" => {
                 let patch = value["patch"].as_object().ok_or_else(|| {
                     RuntimeError::InvalidCommand("session patch must be an object".into())
@@ -942,7 +992,7 @@ impl HotStore {
             let event = StreamEvent {
                 sequence: state.cursor,
                 run_id: event_run_id.clone(),
-                kind: event_name,
+                kind: event_name.clone(),
                 payload: serde_json::to_vec(&state_payload)?,
                 ephemeral: false,
             };
@@ -956,6 +1006,21 @@ impl HotStore {
             )?;
             state.retained_from = state.cursor.saturating_sub(EVENT_RETENTION) + 1;
             let mut batch = WriteBatch::default();
+            if event_name == "run_updated" {
+                if let Some(existing) =
+                    self.get(CF_RUNS, run_key(session_id, &event_run_id).as_bytes())?
+                {
+                    let mut stored: StoredRun = serde_json::from_slice(&existing)?;
+                    stored.document = Some(projection.run.clone());
+                    stored.revision = state.revision;
+                    self.put_batch(
+                        &mut batch,
+                        CF_RUNS,
+                        run_key(session_id, &event_run_id),
+                        &serde_json::to_vec(&stored)?,
+                    )?;
+                }
+            }
             self.put_batch(
                 &mut batch,
                 CF_SESSIONS,

@@ -366,12 +366,13 @@ export class RunCoordinator {
       hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`,
     };
     const run = agentRuntimeStore.getRun(runId);
-    agentRuntimeStore.updateRun(runId, {
-      metadata: {
-        ...run.metadata,
-        executionLease: { ...context, closed: false },
-      },
-    });
+    const leasePatch = { executionLease: { ...context, closed: false } };
+    if (runtimeFacade.streamMode() === "authoritative") {
+      void runtimeFacade.runPatch(sessionId, runId, `lease-open:${runId}:${context.epoch}`, { metadata: leasePatch })
+        .catch((error) => logger.warn({ sessionId, runId, error }, "[run-coordinator] Rust execution lease could not be opened"));
+    } else {
+      agentRuntimeStore.updateRun(runId, { metadata: { ...run.metadata, ...leasePatch } });
+    }
     input = { ...input, executionContext: context };
     const owner: Owner = {
       context,
@@ -524,6 +525,11 @@ export class RunCoordinator {
       if (owner.controller.signal.aborted)
         throw new Error("Execution stopped before launch.");
       const admittedRun = agentRuntimeStore.getRun(owner.runId);
+      if (runtimeFacade.streamMode() === "authoritative") {
+        await runtimeFacade.runPatch(sessionId, owner.runId, `lease-open-await:${owner.runId}:${owner.context?.epoch ?? "none"}`, {
+          metadata: { executionLease: { ...(owner.context ?? {}), closed: false } },
+        });
+      }
       await runtimeFacade.admitExecution({ sessionId, run: admittedRun, runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput });
       for await (const chunk of withinExecutionContext(
         owner.context,
@@ -576,12 +582,16 @@ export class RunCoordinator {
         ownsLease = getRawSqlite().transaction(() => {
           if (!this.ownsLease(owner)) return false;
           const run = agentRuntimeStore.getRun(owner.runId);
-          agentRuntimeStore.updateRun(run.id, {
-            metadata: {
-              ...run.metadata,
-              executionLease: { ...owner.context, closed: true },
-            },
-          });
+          if (runtimeFacade.streamMode() === "authoritative") {
+            const context = owner.context;
+            void runtimeFacade.runPatch(sessionId, run.id, `lease-close:${run.id}:${context?.epoch ?? "none"}`, {
+              metadata: { executionLease: { ...(context ?? {}), closed: true } },
+            }).catch((error) => logger.warn({ sessionId, runId: run.id, error }, "[run-coordinator] Rust execution lease close could not be committed"));
+          } else {
+            agentRuntimeStore.updateRun(run.id, {
+              metadata: { ...run.metadata, executionLease: { ...owner.context, closed: true } },
+            });
+          }
           return true;
         })();
         if (!ownsLease) writer.abandon();
