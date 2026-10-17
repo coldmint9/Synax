@@ -131,8 +131,108 @@ class TerminalManager {
   private live = new Map<string, LiveTerminal>();
   private readonly authoritativeHistory = new Map<string, TerminalInfo>();
   private readonly authoritativeOutput = new Map<string, { sequence: number; data: string }>();
+  private readonly authoritativeHydratedProjects = new Set<string>();
+  private readonly authoritativeHydration = new Map<string, Promise<void>>();
+
+  private authoritativeEnabled(): boolean {
+    return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative";
+  }
+
+  private mergeAuthoritativeRecord(raw: unknown): string | undefined {
+    if (!raw || typeof raw !== "object") return undefined;
+    const record = raw as Record<string, unknown>;
+    const required = ["id", "projectId", "rootId", "kind", "title", "cwd", "shell", "state", "startedAt"];
+    if (required.some((key) => typeof record[key] !== "string")) return undefined;
+    if (record.ownerSessionId !== null && record.ownerSessionId !== undefined && typeof record.ownerSessionId !== "string") return undefined;
+    if (record.command !== null && record.command !== undefined && typeof record.command !== "string") return undefined;
+    const item: TerminalInfo = {
+      id: record.id as string,
+      projectId: record.projectId as string,
+      rootId: record.rootId as string,
+      ownerSessionId: (record.ownerSessionId as string | null | undefined) ?? null,
+      kind: record.kind === "service" ? "service" : "terminal",
+      title: record.title as string,
+      cwd: record.cwd as string,
+      shell: record.shell as string,
+      command: (record.command as string | null | undefined) ?? null,
+      pid: typeof record.pid === "number" ? record.pid : null,
+      state: record.state as string,
+      exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
+      startedAt: record.startedAt as string,
+      endedAt: typeof record.endedAt === "string" ? record.endedAt : null,
+      cols: typeof record.cols === "number" ? record.cols : 100,
+      rows: typeof record.rows === "number" ? record.rows : 30,
+    };
+    this.authoritativeHistory.set(item.id, item);
+    const outputSequence = record.outputSequence;
+    const outputTail = record.outputTail;
+    if (typeof outputSequence === "number" && typeof outputTail === "string")
+      this.authoritativeOutput.set(item.id, {
+        sequence: outputSequence,
+        data: outputTail.length > MAX_OUTPUT ? outputTail.slice(-MAX_OUTPUT) : outputTail,
+      });
+    return item.id;
+  }
+
+  private async hydrateAuthoritativeProject(projectId: string): Promise<void> {
+    if (!this.authoritativeEnabled() || this.authoritativeHydratedProjects.has(projectId)) return;
+    const pending = this.authoritativeHydration.get(projectId);
+    if (pending) return pending;
+    const hydration = (async () => {
+      if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
+        this.authoritativeHydratedProjects.add(projectId);
+        return;
+      }
+      const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
+      const records = await runtimeFacade.listTerminalHistory(projectId);
+      for (const raw of records) this.mergeAuthoritativeRecord(raw);
+      this.authoritativeHydratedProjects.add(projectId);
+    })();
+    this.authoritativeHydration.set(projectId, hydration);
+    try {
+      await hydration;
+    } finally {
+      this.authoritativeHydration.delete(projectId);
+    }
+  }
+
+  async hydrateAuthoritative(projectId: string): Promise<void> {
+    await this.hydrateAuthoritativeProject(projectId);
+  }
+
+  async getAuthoritative(id: string, projectId?: string): Promise<TerminalInfo> {
+    if (!this.authoritativeEnabled()) return this.get(id, projectId);
+    const live = this.live.get(id)?.info;
+    const cached = live ?? this.authoritativeHistory.get(id);
+    if (cached && (!projectId || cached.projectId === projectId)) return { ...cached };
+    if (projectId) await this.hydrateAuthoritativeProject(projectId);
+    const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
+    if (!item || (projectId && item.projectId !== projectId)) failure("Terminal not found.", 404);
+    return { ...item };
+  }
+
+  async snapshotAuthoritative(id: string, projectId?: string): Promise<{ sequence: number; data: string }> {
+    if (!this.authoritativeEnabled()) return this.snapshot(id);
+    if (!this.live.has(id) && !this.authoritativeHistory.has(id) && projectId)
+      await this.hydrateAuthoritativeProject(projectId);
+    const entry = this.live.get(id);
+    if (entry) return { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") };
+    if (!this.authoritativeHistory.has(id)) failure("Terminal not found.", 404);
+    return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
+  }
+
+  async replayAuthoritative(id: string, projectId?: string, after?: number): Promise<{ reset: boolean; sequence: number; frames: TerminalFrame[] }> {
+    if (!this.authoritativeEnabled()) return this.replay(id, after);
+    const entry = this.live.get(id);
+    const snapshot = await this.snapshotAuthoritative(id, projectId);
+    if (after !== undefined && after === snapshot.sequence) return { reset: false, sequence: after, frames: [] };
+    if (entry && after !== undefined && after >= (entry.frames[0]?.sequence ?? 1) - 1 && after <= entry.sequence)
+      return { reset: false, sequence: entry.sequence, frames: entry.frames.filter((frame) => frame.sequence > after) };
+    return { reset: true, sequence: snapshot.sequence, frames: [{ sequence: snapshot.sequence, data: snapshot.data }] };
+  }
+
   private async persistAuthoritative(info: TerminalInfo): Promise<void> {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return;
+    if (!this.authoritativeEnabled()) return;
     if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
       this.authoritativeHistory.set(info.id, { ...info });
       return;
@@ -141,6 +241,7 @@ class TerminalManager {
     const output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" };
     await runtimeFacade.persistTerminalInfo(info.projectId, info as unknown as Record<string, unknown>, output.data, output.sequence);
     this.authoritativeHistory.set(info.id, { ...info });
+    this.authoritativeHydratedProjects.add(info.projectId);
   }
   private flushTimer?: ReturnType<typeof setInterval>;
   private stopping = new Map<string, Promise<void>>();
@@ -164,7 +265,9 @@ class TerminalManager {
   }
   list(projectId: string): TerminalInfo[] {
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-      return [...this.authoritativeHistory.values(), ...[...this.live.values()].map((entry) => entry.info)]
+      const items = new Map<string, TerminalInfo>(this.authoritativeHistory);
+      for (const entry of this.live.values()) items.set(entry.info.id, entry.info);
+      return [...items.values()]
         .filter((item) => item.projectId === projectId)
         .sort((a, b) => Number(b.state !== "closed") - Number(a.state !== "closed") || b.startedAt.localeCompare(a.startedAt))
         .slice(0, 100)
@@ -180,16 +283,7 @@ class TerminalManager {
   }
   async listAuthoritative(projectId: string): Promise<TerminalInfo[]> {
     if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return this.list(projectId);
-    const { runtimeFacade } = await import("../../modules/agent-runtime/sidecar/runtime-facade.js");
-    for (const raw of await runtimeFacade.listTerminalHistory(projectId)) {
-      if (!raw || typeof raw !== "object") continue;
-      const item = raw as Partial<TerminalInfo>;
-      if (typeof item.id === "string" && typeof item.projectId === "string")
-        this.authoritativeHistory.set(item.id, item as TerminalInfo);
-      const rawRecord = raw as { id?: unknown; outputSequence?: unknown; outputTail?: unknown };
-      if (typeof rawRecord.id === "string" && typeof rawRecord.outputSequence === "number" && typeof rawRecord.outputTail === "string")
-        this.authoritativeOutput.set(rawRecord.id, { sequence: rawRecord.outputSequence, data: rawRecord.outputTail });
-    }
+    await this.hydrateAuthoritativeProject(projectId);
     return this.list(projectId);
   }
   has(id: string): boolean {

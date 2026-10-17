@@ -17,6 +17,7 @@ import { terminalRoutes } from '../../../transport/http/terminals.js';
 import { DATA_ROOT } from '../../runtime/env.js';
 import { agentSessionRuntime } from '../../../modules/agent-runtime/session-runtime.js';
 import { ensureSynaxAgentRegistered } from '../../../modules/agent-runtime/synax/index.js';
+import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
 
 let cwd: string, server: Server, stopSockets: () => void, port: number;
 const clients: WebSocket[] = [];
@@ -60,6 +61,52 @@ it('expires unclaimed connection grants', async () => {
   const ticket = issueTerminalTicket('p', terminal.id);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
   try { expect(() => consumeTerminalTicket(ticket)).toThrow(); } finally { clock.mockRestore(); }
+});
+
+it('hydrates a closed terminal from Rust history before websocket replay after Node restart', async () => {
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SOCKET', 'mock-sidecar.sock');
+  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_TOKEN', 'mock-token');
+  const terminal = {
+    id: 'rust-socket-terminal',
+    projectId: 'p',
+    rootId: 'r',
+    ownerSessionId: null,
+    kind: 'service',
+    title: 'persisted socket service',
+    cwd,
+    shell: '/bin/sh',
+    command: 'printf socket-persisted',
+    pid: null,
+    state: 'closed',
+    exitCode: 0,
+    startedAt: '2026-10-17T00:00:00.000Z',
+    endedAt: '2026-10-17T00:00:01.000Z',
+    cols: 100,
+    rows: 30,
+    outputTail: 'socket persisted output',
+    outputSequence: 4,
+  };
+  const history = vi.spyOn(runtimeFacade, 'listTerminalHistory').mockResolvedValue([terminal]);
+  try {
+    const ticket = issueTerminalTicket('p', terminal.id, 'http://trusted.test');
+    const valid = await connect();
+    valid.ws.send(JSON.stringify({ type: 'attach', ticket, after: 0 }));
+    await vi.waitFor(() => expect(valid.frames.some((frame) => frame.type === 'ready')).toBe(true));
+    const ready = valid.frames.find((frame) => frame.type === 'ready');
+    expect(ready).toMatchObject({
+      terminal: { id: terminal.id, state: 'closed' },
+      replay: {
+        reset: true,
+        sequence: 4,
+        frames: [{ sequence: 4, data: 'socket persisted output' }],
+      },
+    });
+    expect(history).toHaveBeenCalledTimes(1);
+  } finally {
+    history.mockRestore();
+    vi.unstubAllEnvs();
+  }
 });
 it('hosts worker-created services after their requesting worker has exited', async () => {
   ensureSynaxAgentRegistered();

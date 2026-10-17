@@ -17,7 +17,10 @@ export function issueTerminalTicket(
   terminalId: string,
   origin?: string,
 ): string {
-  terminalManager.get(terminalId, projectId);
+  // The record may only exist in Rust history after this Node process has
+  // restarted. Validation is repeated asynchronously when the socket attaches.
+  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
+    terminalManager.get(terminalId, projectId);
   for (const [key, ticket] of tickets)
     if (ticket.expires < Date.now()) tickets.delete(key);
   if (tickets.size >= 128)
@@ -120,7 +123,11 @@ export function attachTerminalSockets(server: Server): () => void {
       unsubscribe();
       disconnectReader();
     });
+    let messageQueue = Promise.resolve();
     socket.on("message", (raw, binary) => {
+      messageQueue = messageQueue.then(() => handleMessage(raw, binary));
+    });
+    async function handleMessage(raw: import("ws").RawData, binary: boolean) {
       try {
         if (binary) throw new Error("Expected a terminal protocol frame.");
         const message = JSON.parse(raw.toString());
@@ -131,7 +138,7 @@ export function attachTerminalSockets(server: Server): () => void {
             message.ticket,
             request.headers.origin,
           );
-          const terminal = terminalManager.get(
+          const terminal = await terminalManager.getAuthoritative(
             ticket.terminalId,
             ticket.projectId,
           );
@@ -156,7 +163,11 @@ export function attachTerminalSockets(server: Server): () => void {
           send({
             type: "ready",
             terminal,
-            replay: terminalManager.replay(terminalId, after),
+            replay: await terminalManager.replayAuthoritative(
+              terminalId,
+              ticket.projectId,
+              after,
+            ),
           });
           if (terminal.state === "closed")
             socket.close(1000, "Terminal exited.");
@@ -202,7 +213,7 @@ export function attachTerminalSockets(server: Server): () => void {
                 : "Terminal operation failed.",
           });
       }
-    });
+    }
   });
   return () => {
     server.off("upgrade", upgrade);

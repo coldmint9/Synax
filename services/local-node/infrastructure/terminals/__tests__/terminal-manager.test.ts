@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { terminalManager } from "../terminal-manager.js";
 import { getRawSqlite } from "../../database/index.js";
+import { runtimeFacade } from "../../../modules/agent-runtime/sidecar/runtime-facade.js";
 
 let cwd: string;
 beforeEach(() => {
@@ -115,6 +116,58 @@ it("uses live Rust-owned terminal metadata without creating SQLite process rows"
   expect(terminalManager.get(item.id).state).toBe("closed");
   expect(prepare).not.toHaveBeenCalledWith(expect.stringContaining("agent_runtime_processes"));
   vi.unstubAllEnvs();
+});
+
+it("hydrates closed metadata and bounded output from Rust after a Node restart", async () => {
+  vi.stubEnv("SYNAX_RUNTIME_SIDECAR_STREAM", "authoritative");
+  vi.stubEnv("SYNAX_RUNTIME_SIDECAR_SOCKET", "mock-sidecar.sock");
+  vi.stubEnv("SYNAX_RUNTIME_SIDECAR_TOKEN", "mock-token");
+  const terminal = {
+    id: "rust-closed-terminal",
+    projectId: "rust-restart-project",
+    rootId: "primary",
+    ownerSessionId: null,
+    kind: "service",
+    title: "persisted service",
+    cwd,
+    shell: "/bin/sh",
+    command: "printf persisted",
+    pid: null,
+    state: "closed",
+    exitCode: 0,
+    startedAt: "2026-10-17T00:00:00.000Z",
+    endedAt: "2026-10-17T00:00:01.000Z",
+    cols: 100,
+    rows: 30,
+    outputTail: "persisted output",
+    outputSequence: 7,
+  };
+  const history = vi.spyOn(runtimeFacade, "listTerminalHistory").mockResolvedValue([terminal]);
+  try {
+    expect(await terminalManager.getAuthoritative(terminal.id, terminal.projectId)).toMatchObject({
+      id: terminal.id,
+      state: "closed",
+      title: terminal.title,
+    });
+    expect(await terminalManager.listAuthoritative(terminal.projectId)).toEqual([
+      expect.objectContaining({ id: terminal.id, state: "closed" }),
+    ]);
+    expect(await terminalManager.snapshotAuthoritative(terminal.id, terminal.projectId)).toEqual({
+      sequence: 7,
+      data: "persisted output",
+    });
+    expect(await terminalManager.replayAuthoritative(terminal.id, terminal.projectId, 0)).toEqual({
+      reset: true,
+      sequence: 7,
+      frames: [{ sequence: 7, data: "persisted output" }],
+    });
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(getRawSqlite().prepare("SELECT id FROM terminal_sessions WHERE id=?").get(terminal.id)).toBeUndefined();
+    expect(getRawSqlite().prepare("SELECT id FROM agent_runtime_processes WHERE id=?").get(terminal.id)).toBeUndefined();
+  } finally {
+    history.mockRestore();
+    vi.unstubAllEnvs();
+  }
 });
 
 it.skipIf(process.platform === "win32")(
