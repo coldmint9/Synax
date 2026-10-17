@@ -2086,9 +2086,15 @@ agentRuntimeRoutes.get("/sessions/:sessionId/invocation-usage", (c) => {
   }
 });
 
-agentRuntimeRoutes.get("/sessions/:sessionId/todos", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/todos", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
+    if (runtimeFacade.streamMode() === "authoritative") {
+      const events = await runtimeFacade.listHistoryObjects(sessionId, "list_events") as Array<{ type?: string; payload?: { tasks?: unknown } }>;
+      const latestTaskEvent = [...events].reverse().find((event) => event.type === "task_state_updated");
+      const tasks = Array.isArray(latestTaskEvent?.payload?.tasks) ? latestTaskEvent.payload.tasks as Array<{ id: string; subject: string; status: string }> : [];
+      return c.json({ items: tasks.filter((task) => task.status !== "deleted").map((task) => ({ id: task.id, label: task.subject, status: task.status === "completed" ? "done" : task.status })) });
+    }
     agentSessionRuntime.get(sessionId);
     // Read only the newest task snapshot: scanning the full event log here
     // blocked the profile panel's polling during long runs.
