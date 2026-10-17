@@ -22,11 +22,18 @@ const CF_INDEXES: &str = "indexes";
 const CF_BLOBS: &str = "blobs";
 const CF_ASSETS: &str = "assets";
 const CF_ASSET_BINDINGS: &str = "asset_bindings";
+const CF_OUTBOX: &str = "outbox";
+const CF_GC_STATE: &str = "gc_state";
+const CF_GC_MARKS: &str = "gc_marks";
+const CF_GC_QUEUE: &str = "gc_queue";
 const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BLOB_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_BLOB_CHUNKS: u64 = 16_384;
 const PAGE_LIMIT: usize = 256;
+const PAGE_CURSOR_MAX_ITEMS: usize = 4096;
+const GC_DEFAULT_BATCH: usize = 128;
+const GC_MAX_BATCH: usize = 512;
 
 #[derive(Debug, Error)]
 pub enum HistoryError {
@@ -69,6 +76,20 @@ struct HistoryReceipt {
     result: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GcState {
+    phase: String,
+    source: usize,
+    key: Vec<u8>,
+    queue_head: u64,
+    queue_tail: u64,
+    root_epoch: String,
+    marked: u64,
+    scanned: u64,
+    deleted: u64,
+}
+
 #[derive(Clone)]
 pub struct HistoryStore {
     db: Arc<DB>,
@@ -93,6 +114,10 @@ impl HistoryStore {
             CF_BLOBS,
             CF_ASSETS,
             CF_ASSET_BINDINGS,
+            CF_OUTBOX,
+            CF_GC_STATE,
+            CF_GC_MARKS,
+            CF_GC_QUEUE,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -175,6 +200,10 @@ impl HistoryStore {
         };
         // GC must not collect a newly staged object or a root being published.
         // Ordinary sessions use independent stripes; blocking never occupies a Tokio worker.
+        // GC takes this read-side maintenance lock only for one bounded
+        // invocation. The lock prevents a root publication from racing the
+        // mark/sweep step, while the persisted cursor keeps the lock window
+        // independent of total history size.
         let exclusive = matches!(operation, "gc" | "rebuild_index");
         let _maintenance_write = if exclusive {
             Some(self.maintenance_lock.write().map_err(|_| {
@@ -292,7 +321,7 @@ impl HistoryStore {
             "list_terminals" => self.list_indexed(session_id, "terminal")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index(&mut batch)?,
-            "gc" => self.gc(&mut batch)?,
+            "gc" => self.gc(&value)?,
             _ => {
                 return Err(HistoryError::InvalidCommand(format!(
                     "unknown history operation: {operation}"
@@ -443,6 +472,7 @@ impl HistoryStore {
             head_key(session_id).as_bytes(),
             serde_json::to_vec(&head)?,
         );
+        self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(&head)?)
     }
 
@@ -789,6 +819,7 @@ impl HistoryStore {
                 pin_key(session_id, pin_id).as_bytes(),
                 serde_json::to_vec(&serde_json::json!({"objectId":object_id,"metadata":metadata}))?,
             );
+            self.bump_root_epoch(batch)?;
             return Ok(serde_json::to_vec(
                 &serde_json::json!({"pinId":pin_id,"objectId":object_id,"metadata":metadata}),
             )?);
@@ -801,6 +832,7 @@ impl HistoryStore {
             head_key(session_id).as_bytes(),
             serde_json::to_vec(&head)?,
         );
+        self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(&head)?)
     }
 
@@ -855,6 +887,7 @@ impl HistoryStore {
             pin_key(session_id, pin_id).as_bytes(),
             object_id.as_bytes(),
         );
+        self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"pinId":pin_id,"objectId":object_id}),
         )?)
@@ -890,6 +923,7 @@ impl HistoryStore {
             head_key(target_session_id).as_bytes(),
             serde_json::to_vec(&next)?,
         );
+        self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"sourceSessionId":source_session_id,"head":next}),
         )?)
@@ -903,32 +937,103 @@ impl HistoryStore {
     ) -> Result<Vec<u8>, HistoryError> {
         let pin_id = required_string(value, "pinId")?;
         batch.delete_cf(self.cf(CF_PINS)?, pin_key(session_id, pin_id).as_bytes());
+        self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"pinId":pin_id,"removed":true}),
         )?)
     }
 
     fn page(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
-        let limit = value
-            .get("limit")
-            .and_then(|item| item.as_u64())
-            .unwrap_or(64)
-            .min(PAGE_LIMIT as u64) as usize;
+        if value.get("cursor").is_some() && value.get("objectId").is_some() {
+            return Err(HistoryError::InvalidCommand(
+                "history page cursor cannot be combined with objectId".into(),
+            ));
+        }
+        let limit = match value.get("limit") {
+            None => 64,
+            Some(item) => item
+                .as_u64()
+                .filter(|limit| (1..=PAGE_LIMIT as u64).contains(limit))
+                .ok_or_else(|| {
+                    HistoryError::InvalidCommand(format!(
+                        "history page limit must be between 1 and {PAGE_LIMIT}"
+                    ))
+                })? as usize,
+        };
         let (mut queue, mut seen) = if let Some(cursor) = value.get("cursor") {
-            let queue = cursor["queue"].as_array().ok_or_else(|| HistoryError::InvalidCommand("history page cursor queue is required".into()))?
-                .iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()
-                .ok_or_else(|| HistoryError::InvalidCommand("history page cursor queue is invalid".into()))?;
-            let seen = cursor["seen"].as_array().ok_or_else(|| HistoryError::InvalidCommand("history page cursor seen is required".into()))?
-                .iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()
-                .ok_or_else(|| HistoryError::InvalidCommand("history page cursor seen is invalid".into()))?;
-            if queue.len() > 4096 || seen.len() > 4096 { return Err(HistoryError::InvalidCommand("history page cursor exceeds bounds".into())); }
+            if !cursor.is_object() {
+                return Err(HistoryError::InvalidCommand(
+                    "history page cursor must be an object".into(),
+                ));
+            }
+            if cursor.get("version").and_then(|item| item.as_u64()) != Some(1) {
+                return Err(HistoryError::InvalidCommand(
+                    "history page cursor version is invalid".into(),
+                ));
+            }
+            let queue = cursor["queue"]
+                .as_array()
+                .ok_or_else(|| {
+                    HistoryError::InvalidCommand("history page cursor queue is required".into())
+                })?
+                .iter()
+                .map(|item| item.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    HistoryError::InvalidCommand("history page cursor queue is invalid".into())
+                })?;
+            let seen = cursor["seen"]
+                .as_array()
+                .ok_or_else(|| {
+                    HistoryError::InvalidCommand("history page cursor seen is required".into())
+                })?
+                .iter()
+                .map(|item| item.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    HistoryError::InvalidCommand("history page cursor seen is invalid".into())
+                })?;
+            if queue.is_empty()
+                || queue.len() > PAGE_CURSOR_MAX_ITEMS
+                || seen.len() > PAGE_CURSOR_MAX_ITEMS
+                || queue.len().saturating_add(seen.len()) > PAGE_CURSOR_MAX_ITEMS * 2
+            {
+                return Err(HistoryError::InvalidCommand(
+                    "history page cursor exceeds bounds".into(),
+                ));
+            }
+            let mut unique_seen = HashSet::with_capacity(seen.len());
+            for object_id in queue.iter().chain(seen.iter()) {
+                validate_object_id(object_id)?;
+            }
+            for object_id in &seen {
+                if !unique_seen.insert(object_id) {
+                    return Err(HistoryError::InvalidCommand(
+                        "history page cursor seen contains duplicates".into(),
+                    ));
+                }
+            }
             (VecDeque::from(queue), seen.into_iter().collect())
         } else {
-            (VecDeque::from([required_string(value, "objectId")?.to_owned()]), HashSet::new())
+            if value.get("cursor").is_none() && value.get("objectId").is_none() {
+                return Err(HistoryError::InvalidCommand(
+                    "history page objectId is required without a cursor".into(),
+                ));
+            }
+            if value.get("objectId").is_none() {
+                return Err(HistoryError::InvalidCommand(
+                    "history page objectId is required without a cursor".into(),
+                ));
+            }
+            let object_id = required_string(value, "objectId")?;
+            validate_object_id(object_id)?;
+            (VecDeque::from([object_id.to_owned()]), HashSet::new())
         };
         let mut objects = Vec::new();
         while objects.len() < limit {
-            let Some(current) = queue.pop_front() else { break; };
+            let Some(current) = queue.pop_front() else {
+                break;
+            };
             if !seen.insert(current.clone()) {
                 continue;
             }
@@ -939,8 +1044,12 @@ impl HistoryStore {
             }
             objects.push(object);
         }
-        let cursor = if queue.is_empty() { None } else {
-            Some(serde_json::json!({"queue":queue,"seen":seen.into_iter().collect::<Vec<_>>() }))
+        let cursor = if queue.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::json!({"version":1,"queue":queue,"seen":seen.into_iter().collect::<Vec<_>>() }),
+            )
         };
         Ok(serde_json::to_vec(&serde_json::json!({
             "items": objects,
@@ -1110,71 +1219,319 @@ impl HistoryStore {
         )?)
     }
 
-    fn gc(&self, batch: &mut WriteBatch) -> Result<Vec<u8>, HistoryError> {
+    /// Advance a resumable mark/sweep GC by a bounded number of records.
+    ///
+    /// The queue, mark set, phase and iterator keys are all persisted in
+    /// RocksDB. A process crash therefore resumes the current phase instead
+    /// of restarting a full graph walk. Each invocation performs only a small
+    /// batch while holding the maintenance lock, so normal history operations
+    /// are blocked for a bounded window rather than for a full database scan.
+    fn gc(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let budget = value
+            .get("batchSize")
+            .or_else(|| value.get("limit"))
+            .map(|item| {
+                item.as_u64()
+                    .filter(|size| (1..=GC_MAX_BATCH as u64).contains(size))
+                    .ok_or_else(|| {
+                        HistoryError::InvalidCommand(format!(
+                            "history gc batchSize must be between 1 and {GC_MAX_BATCH}"
+                        ))
+                    })
+            })
+            .transpose()?
+            .unwrap_or(GC_DEFAULT_BATCH as u64) as usize;
+        let epoch = self.gc_epoch()?;
+        let state_key = b"state";
+        let mut state = self
+            .get(CF_GC_STATE, state_key)?
+            .map(|bytes| serde_json::from_slice::<GcState>(&bytes))
+            .transpose()?;
+        let restart = state
+            .as_ref()
+            .is_some_and(|saved| saved.phase == "done" || saved.root_epoch != epoch);
+        if restart {
+            state = Some(GcState {
+                phase: "reset".into(),
+                source: 0,
+                key: Vec::new(),
+                queue_head: 0,
+                queue_tail: 0,
+                root_epoch: epoch.clone(),
+                marked: 0,
+                scanned: 0,
+                deleted: 0,
+            });
+        } else if state.is_none() {
+            state = Some(GcState {
+                phase: "reset".into(),
+                source: 0,
+                key: Vec::new(),
+                queue_head: 0,
+                queue_tail: 0,
+                root_epoch: epoch.clone(),
+                marked: 0,
+                scanned: 0,
+                deleted: 0,
+            });
+        }
+        let mut state = state.expect("gc state initialized");
+        let mut steps = 0usize;
+        while steps < budget {
+            let progressed = match state.phase.as_str() {
+                "reset" => self.gc_reset_step(&mut state)?,
+                "roots" => self.gc_roots_step(&mut state)?,
+                "mark" => self.gc_mark_step(&mut state)?,
+                "sweep" => self.gc_sweep_step(&mut state)?,
+                "index" => self.gc_index_step(&mut state)?,
+                "done" => false,
+                phase => {
+                    return Err(HistoryError::InvalidCommand(format!(
+                        "invalid persisted history gc phase: {phase}"
+                    )));
+                }
+            };
+            self.persist_gc_state(&state)?;
+            steps += 1;
+            if !progressed {
+                break;
+            }
+        }
+        let pending = state.phase != "done";
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "phase": state.phase,
+            "pending": pending,
+            "marked": state.marked,
+            "scanned": state.scanned,
+            "deleted": state.deleted,
+            "batchSize": budget,
+            "queueDepth": state.queue_tail.saturating_sub(state.queue_head),
+        }))?)
+    }
+
+    fn gc_reset_step(&self, state: &mut GcState) -> Result<bool, HistoryError> {
+        let (cf_name, next_source) = if state.source == 0 {
+            (CF_GC_MARKS, 1)
+        } else {
+            (CF_GC_QUEUE, 2)
+        };
+        let item = self.next_after(cf_name, &state.key)?;
+        let Some((key, _)) = item else {
+            if state.source == 0 {
+                state.source = next_source;
+                state.key.clear();
+                return Ok(true);
+            }
+            state.phase = "roots".into();
+            state.source = 0;
+            state.key.clear();
+            return Ok(true);
+        };
+        let mut batch = WriteBatch::default();
+        batch.delete_cf(self.cf(cf_name)?, &key);
+        state.key = key;
+        self.commit_gc_step(batch, state)?;
+        Ok(true)
+    }
+
+    fn gc_roots_step(&self, state: &mut GcState) -> Result<bool, HistoryError> {
+        let cf_name = match state.source {
+            0 => CF_HEADS,
+            1 => CF_PINS,
+            2 => CF_OUTBOX,
+            _ => {
+                state.phase = "mark".into();
+                state.source = 0;
+                state.key.clear();
+                return Ok(true);
+            }
+        };
+        let item = self.next_after(cf_name, &state.key)?;
+        let Some((key, value)) = item else {
+            state.source += 1;
+            state.key.clear();
+            return Ok(true);
+        };
         let mut roots = Vec::new();
-        for item in self
-            .db
-            .iterator_cf(self.cf(CF_HEADS)?, rocksdb::IteratorMode::Start)
-        {
-            let (_, value) = item?;
-            if let Some(object_id) = serde_json::from_slice::<HistoryHead>(&value)?.object_id {
+        if cf_name == CF_HEADS {
+            if let Ok(head) = serde_json::from_slice::<HistoryHead>(&value) {
+                if let Some(object_id) = head.object_id {
+                    roots.push(object_id);
+                }
+            }
+        } else if cf_name == CF_PINS {
+            if let Ok(saved) = serde_json::from_slice::<serde_json::Value>(&value) {
+                collect_object_roots(&saved, &mut roots);
+            } else if let Ok(object_id) = String::from_utf8(value.clone()) {
                 roots.push(object_id);
             }
+        } else if let Ok(saved) = serde_json::from_slice::<serde_json::Value>(&value) {
+            collect_object_roots(&saved, &mut roots);
         }
-        for item in self
-            .db
-            .iterator_cf(self.cf(CF_PINS)?, rocksdb::IteratorMode::Start)
-        {
-            let (_, value) = item?;
-            let object_id = serde_json::from_slice::<serde_json::Value>(&value)
-                .ok()
-                .and_then(|saved| saved["objectId"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| String::from_utf8_lossy(&value).to_string());
-            roots.push(object_id);
-        }
-        let mut marked = HashSet::new();
-        let mut queue: VecDeque<String> = roots.into_iter().collect();
-        while let Some(object_id) = queue.pop_front() {
-            if !marked.insert(object_id.clone()) {
-                continue;
+        let mut batch = WriteBatch::default();
+        for object_id in roots {
+            if validate_object_id(&object_id).is_ok() {
+                let key = format!("q/{:020}", state.queue_tail);
+                batch.put_cf(self.cf(CF_GC_QUEUE)?, key.as_bytes(), object_id.as_bytes());
+                state.queue_tail = state.queue_tail.saturating_add(1);
             }
-            let Ok(bytes) = self.read_object(&object_id) else {
-                continue;
-            };
+        }
+        state.key = key;
+        self.commit_gc_step(batch, state)?;
+        Ok(true)
+    }
+
+    fn gc_mark_step(&self, state: &mut GcState) -> Result<bool, HistoryError> {
+        if state.queue_head >= state.queue_tail {
+            state.phase = "sweep".into();
+            state.source = 0;
+            state.key.clear();
+            return Ok(true);
+        }
+        let queue_key = format!("q/{:020}", state.queue_head);
+        state.queue_head = state.queue_head.saturating_add(1);
+        let object_id = self
+            .get(CF_GC_QUEUE, queue_key.as_bytes())?
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string());
+        let mut batch = WriteBatch::default();
+        batch.delete_cf(self.cf(CF_GC_QUEUE)?, queue_key.as_bytes());
+        let Some(object_id) = object_id else {
+            self.commit_gc_step(batch, state)?;
+            return Ok(true);
+        };
+        if validate_object_id(&object_id).is_err()
+            || self
+                .get(CF_GC_MARKS, mark_key(&object_id).as_bytes())?
+                .is_some()
+        {
+            self.commit_gc_step(batch, state)?;
+            return Ok(true);
+        }
+        batch.put_cf(self.cf(CF_GC_MARKS)?, mark_key(&object_id).as_bytes(), b"1");
+        state.marked = state.marked.saturating_add(1);
+        if let Ok(bytes) = self.read_object(&object_id) {
             if let Ok(object) = serde_json::from_slice::<HistoryObject>(&bytes) {
-                queue.extend(object.refs);
-            }
-        }
-        let mut deleted = 0u64;
-        let mut deleted_ids = Vec::new();
-        for item in self
-            .db
-            .iterator_cf(self.cf(CF_OBJECTS)?, rocksdb::IteratorMode::Start)
-        {
-            let (key, _) = item?;
-            let object_id = String::from_utf8_lossy(&key)
-                .trim_start_matches("o/")
-                .to_owned();
-            if !marked.contains(&object_id) {
-                batch.delete_cf(self.cf(CF_OBJECTS)?, key);
-                deleted_ids.push(object_id);
-                deleted += 1;
-            }
-        }
-        if !deleted_ids.is_empty() {
-            for item in self
-                .db
-                .iterator_cf(self.cf(CF_INDEXES)?, rocksdb::IteratorMode::Start)
-            {
-                let (key, value) = item?;
-                if deleted_ids.iter().any(|id| value.as_ref() == id.as_bytes()) {
-                    batch.delete_cf(self.cf(CF_INDEXES)?, key);
+                for reference in object.refs {
+                    if validate_object_id(&reference).is_ok() {
+                        let key = format!("q/{:020}", state.queue_tail);
+                        batch.put_cf(self.cf(CF_GC_QUEUE)?, key.as_bytes(), reference.as_bytes());
+                        state.queue_tail = state.queue_tail.saturating_add(1);
+                    }
                 }
             }
         }
-        Ok(serde_json::to_vec(
-            &serde_json::json!({"marked":marked.len(),"deleted":deleted}),
-        )?)
+        self.commit_gc_step(batch, state)?;
+        Ok(true)
+    }
+
+    fn gc_sweep_step(&self, state: &mut GcState) -> Result<bool, HistoryError> {
+        let item = self.next_after(CF_OBJECTS, &state.key)?;
+        let Some((key, _)) = item else {
+            state.phase = "index".into();
+            state.key.clear();
+            return Ok(true);
+        };
+        let object_id = String::from_utf8_lossy(&key)
+            .strip_prefix("o/")
+            .unwrap_or_default()
+            .to_owned();
+        let mut batch = WriteBatch::default();
+        if self
+            .get(CF_GC_MARKS, mark_key(&object_id).as_bytes())?
+            .is_none()
+        {
+            batch.delete_cf(self.cf(CF_OBJECTS)?, &key);
+            state.deleted = state.deleted.saturating_add(1);
+        }
+        state.scanned = state.scanned.saturating_add(1);
+        state.key = key;
+        self.commit_gc_step(batch, state)?;
+        Ok(true)
+    }
+
+    fn gc_index_step(&self, state: &mut GcState) -> Result<bool, HistoryError> {
+        let item = self.next_after(CF_INDEXES, &state.key)?;
+        let Some((key, value)) = item else {
+            state.phase = "done".into();
+            state.key.clear();
+            return Ok(true);
+        };
+        let mut batch = WriteBatch::default();
+        if self
+            .get(
+                CF_OBJECTS,
+                object_key(&String::from_utf8_lossy(&value)).as_bytes(),
+            )?
+            .is_none()
+        {
+            batch.delete_cf(self.cf(CF_INDEXES)?, &key);
+        }
+        state.key = key;
+        self.commit_gc_step(batch, state)?;
+        Ok(true)
+    }
+
+    fn persist_gc_state(&self, state: &GcState) -> Result<(), HistoryError> {
+        let mut batch = WriteBatch::default();
+        batch.put_cf(self.cf(CF_GC_STATE)?, b"state", serde_json::to_vec(state)?);
+        self.commit_gc_batch(batch)
+    }
+
+    fn commit_gc_step(
+        &self,
+        mut batch: WriteBatch,
+        state: &GcState,
+    ) -> Result<(), HistoryError> {
+        batch.put_cf(self.cf(CF_GC_STATE)?, b"state", serde_json::to_vec(state)?);
+        self.commit_gc_batch(batch)
+    }
+
+    fn commit_gc_batch(&self, batch: WriteBatch) -> Result<(), HistoryError> {
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        self.db.write_opt(batch, &options)?;
+        Ok(())
+    }
+
+    fn next_after(
+        &self,
+        cf_name: &str,
+        key: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, HistoryError> {
+        let start = if key.is_empty() {
+            rocksdb::IteratorMode::Start
+        } else {
+            rocksdb::IteratorMode::From(key, rocksdb::Direction::Forward)
+        };
+        for item in self.db.iterator_cf(self.cf(cf_name)?, start) {
+            let (candidate, value) = item?;
+            if key.is_empty() || candidate.as_ref() > key {
+                return Ok(Some((candidate.to_vec(), value.to_vec())));
+            }
+        }
+        Ok(None)
+    }
+
+    fn gc_epoch(&self) -> Result<String, HistoryError> {
+        Ok(self
+            .get(CF_GC_STATE, b"epoch")?
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .unwrap_or_else(|| "0".into()))
+    }
+
+    fn bump_root_epoch(&self, batch: &mut WriteBatch) -> Result<(), HistoryError> {
+        let current = self
+            .get(CF_GC_STATE, b"epoch")?
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+            .saturating_add(1);
+        batch.put_cf(
+            self.cf(CF_GC_STATE)?,
+            b"epoch",
+            current.to_string().as_bytes(),
+        );
+        Ok(())
     }
 
     fn read_object(&self, object_id: &str) -> Result<Vec<u8>, HistoryError> {
@@ -1257,6 +1614,44 @@ fn required_u64(value: &serde_json::Value, key: &str) -> Result<u64, HistoryErro
     value[key]
         .as_u64()
         .ok_or_else(|| HistoryError::InvalidCommand(format!("{key} is required")))
+}
+
+fn validate_object_id(object_id: &str) -> Result<(), HistoryError> {
+    let digest = object_id
+        .strip_prefix("sha256:")
+        .filter(|digest| digest.len() == 64)
+        .ok_or_else(|| HistoryError::InvalidCommand("history object id is invalid".into()))?;
+    if !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(HistoryError::InvalidCommand(
+            "history object id is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn mark_key(object_id: &str) -> String {
+    format!("m/{object_id}")
+}
+
+fn collect_object_roots(value: &serde_json::Value, roots: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                if matches!(key.as_str(), "objectId" | "object_id") {
+                    if let Some(object_id) = child.as_str() {
+                        roots.push(object_id.to_owned());
+                    }
+                }
+                collect_object_roots(child, roots);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                collect_object_roots(child, roots);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, HistoryError> {
@@ -1531,20 +1926,214 @@ mod tests {
     fn page_cursor_walks_the_entire_graph_without_repeating_nodes() {
         let path = temp_path("page-cursor");
         let store = HistoryStore::open(&path).unwrap();
-        let first = invoke(&store, "s", "first", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m1","sessionId":"s","sequence":1}}));
-        let second = invoke(&store, "s", "second", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m2","sessionId":"s","sequence":2},"refs":[first["objectId"]]}));
-        let third = invoke(&store, "s", "third", "put_object", serde_json::json!({"kind":"runtime.message","value":{"id":"m3","sessionId":"s","sequence":3},"refs":[second["objectId"], first["objectId"]]}));
-        let first_page = invoke(&store, "s", "page-1", "page", serde_json::json!({"objectId":third["objectId"],"limit":2}));
+        let first = invoke(
+            &store,
+            "s",
+            "first",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"m1","sessionId":"s","sequence":1}}),
+        );
+        let second = invoke(
+            &store,
+            "s",
+            "second",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"m2","sessionId":"s","sequence":2},"refs":[first["objectId"]]}),
+        );
+        let third = invoke(
+            &store,
+            "s",
+            "third",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"m3","sessionId":"s","sequence":3},"refs":[second["objectId"], first["objectId"]]}),
+        );
+        let first_page = invoke(
+            &store,
+            "s",
+            "page-1",
+            "page",
+            serde_json::json!({"objectId":third["objectId"],"limit":2}),
+        );
         assert_eq!(first_page["items"].as_array().unwrap().len(), 2);
         let cursor = first_page["cursor"].clone();
         assert!(cursor.is_object());
-        let second_page = invoke(&store, "s", "page-2", "page", serde_json::json!({"cursor":cursor,"limit":2}));
+        let second_page = invoke(
+            &store,
+            "s",
+            "page-2",
+            "page",
+            serde_json::json!({"cursor":cursor,"limit":2}),
+        );
         assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
         assert!(second_page["cursor"].is_null());
-        let mut ids = first_page["items"].as_array().unwrap().iter().chain(second_page["items"].as_array().unwrap()).map(|item| item["objectId"].as_str().unwrap()).collect::<Vec<_>>();
+        let mut ids = first_page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(second_page["items"].as_array().unwrap())
+            .map(|item| item["objectId"].as_str().unwrap())
+            .collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), 3);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn page_cursor_rejects_invalid_bounds_and_ambiguous_boundaries() {
+        let path = temp_path("page-cursor-bounds");
+        let store = HistoryStore::open(&path).unwrap();
+        let object = invoke(
+            &store,
+            "s",
+            "object",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"m","sessionId":"s"}}),
+        )["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for payload in [
+            serde_json::json!({"objectId":object,"limit":0}),
+            serde_json::json!({"objectId":object,"limit":PAGE_LIMIT + 1}),
+            serde_json::json!({"cursor":{"version":2,"queue":[object],"seen":[]}}),
+            serde_json::json!({"cursor":{"version":1,"queue":["bad"],"seen":[]}}),
+            serde_json::json!({"cursor":{"version":1,"queue":[],"seen":[]}}),
+            serde_json::json!({"cursor":{"version":1,"queue":[object],"seen":[object, object]}}),
+            serde_json::json!({"objectId":object,"cursor":{"version":1,"queue":[object],"seen":[]}}),
+        ] {
+            assert!(matches!(
+                store.command(
+                    "s",
+                    &format!("invalid-{}", uuid::Uuid::new_v4()),
+                    "page",
+                    &serde_json::to_vec(&payload).unwrap(),
+                ),
+                Err(HistoryError::InvalidCommand(_))
+            ));
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn gc_is_bounded_resumable_and_protects_heads_pins_and_outbox_roots() {
+        let path = temp_path("gc-resumable");
+        let store = HistoryStore::open(&path).unwrap();
+        let head_object = invoke(
+            &store,
+            "s",
+            "head-object",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"head","sessionId":"s"}}),
+        )["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        invoke(
+            &store,
+            "s",
+            "head-switch",
+            "head_switch",
+            serde_json::json!({"objectId":head_object}),
+        );
+        let pinned_object = invoke(
+            &store,
+            "s",
+            "pinned-object",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"pinned","sessionId":"s"}}),
+        )["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        invoke(
+            &store,
+            "s",
+            "pin",
+            "pin",
+            serde_json::json!({"pinId":"checkpoint","objectId":pinned_object}),
+        );
+        let outbox_object = invoke(
+            &store,
+            "s",
+            "outbox-object",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"outbox","sessionId":"s"}}),
+        )["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .db
+            .put_cf(
+                store.cf(CF_OUTBOX).unwrap(),
+                b"s/0000000001",
+                serde_json::to_vec(&serde_json::json!({"objectId":outbox_object})).unwrap(),
+            )
+            .unwrap();
+        let orphan = invoke(
+            &store,
+            "s",
+            "orphan",
+            "put_object",
+            serde_json::json!({"kind":"runtime.message","value":{"id":"orphan","sessionId":"s"}}),
+        )["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let first = invoke(
+            &store,
+            "s",
+            "gc-0",
+            "gc",
+            serde_json::json!({"batchSize":1}),
+        );
+        assert!(first["pending"].as_bool().unwrap());
+        drop(store);
+
+        let store = HistoryStore::open(&path).unwrap();
+        let mut last = first;
+        for index in 1..4096 {
+            if !last["pending"].as_bool().unwrap() {
+                break;
+            }
+            last = invoke(
+                &store,
+                "s",
+                &format!("gc-{index}"),
+                "gc",
+                serde_json::json!({"batchSize":8}),
+            );
+        }
+        assert_eq!(last["pending"], false);
+        assert!(matches!(
+            store.command(
+                "s",
+                "orphan-read",
+                "get_object",
+                &serde_json::to_vec(&serde_json::json!({"objectId":orphan})).unwrap(),
+            ),
+            Err(HistoryError::ObjectMissing(_))
+        ));
+        for (request, object_id) in [
+            ("head-read", head_object),
+            ("pin-read", pinned_object),
+            ("outbox-read", outbox_object),
+        ] {
+            assert!(
+                store
+                    .command(
+                        "s",
+                        request,
+                        "get_object",
+                        &serde_json::to_vec(&serde_json::json!({"objectId":object_id})).unwrap(),
+                    )
+                    .is_ok()
+            );
+        }
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
