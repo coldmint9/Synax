@@ -415,6 +415,6 @@ runtime-sidecar/
 - lifecycle smoke 已更新为覆盖 lease canonical events；三轮 admission → activation → lease → provider → finish（含 blocked terminal）通过，replay sequence 连续且终态 fence 正确。
 - 新增 Rust asset/checkpoint/run-patch 单元覆盖；最新 Rust 测试为 60 项全部通过，history smoke、typecheck、interaction/lifecycle/subagent 套件和完整 Vitest 均已通过。完整 Vitest 结果：369 个测试文件，2973 项通过，1 项跳过。5000 session benchmark：35000 operations，p50 1.492ms、p95 3.605ms、p99 8.521ms、max 29.674ms。
 - 最新本地 macOS arm64 DMG 已由 commit `dada553e` 构建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `014cde0e3f74c1d6f89c7c374e68830a6068ec4b8cf9c0b4d9711af6e519a53c`，大小 `285089731` bytes。
-- workflow `38977935108` 已按当前 HEAD 重新触发；macOS arm64、Linux 已完成成功，Windows 和 macOS x64 仍在目标机打包/sidecar 检查，完成前不把跨平台发布验收标成完成。
+- workflow `39008668017` 已完成成功：Windows、macOS arm64、macOS x64、Ubuntu 全部通过；其 Windows preview 签名门已允许无 publisher 的 unsigned preview，正式 signed release 仍强制要求 publisher。最新 HEAD 的 workflow `39010803578` 仍在等待目标机结果。
 
-本轮剩余硬边界：fork 的 Rust session clone、session/run/step/tool 的同步兼容读取、旧 checkpoint/history 模块的离线清理、真实外部 provider 凭证验收，以及 Windows packaged smoke。未完成前目标保持 active。
+本轮剩余硬边界：session/run/step/tool 的同步兼容读取、旧 checkpoint/history 模块的离线清理、真实外部 provider 凭证验收，以及最终 HEAD 的跨平台 workflow 结果。fork 的 Rust session clone、Windows packaged smoke、Rust lease/interaction/history/pressure 验收已经有证据，不再列为未完成项。
