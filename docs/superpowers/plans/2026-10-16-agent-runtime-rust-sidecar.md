@@ -410,6 +410,7 @@ runtime-sidecar/
 - human.ask 和 plan.propose 在 authoritative host 已通过异步 `requestAuthoritative` 先提交 Rust `interaction_request`，成功后才写入 SQLite 兼容镜像；loop resume 的 interaction consume 也先提交 Rust `interaction_consume`，兼容行缺失时仍可用 Rust 返回的交互恢复执行。
 - external ACP turn 的 human input request 也改为 Rust-first；HTTP reply 已先提交 Rust control，再唤醒兼容 backend waiter。
 - focused external turn/ACP/coordinator/lifecycle suites remain green after the Rust-first interaction and lease changes; lifecycle smoke now validates canonical lease events rather than fixed revision counts.
+- provider-worker smoke rerun passed after the lease and interaction changes: forked `agent-session-runner` → local OpenAI-compatible streaming provider → Node coordinator → Rust authoritative stream/history.
 - execution lease open/close 现在由 Rust `run_patch` 先持久化并更新 projected run；coordinator 在 provider 执行前等待 lease durable，terminal close 也保留 Rust-first 语义。
 - lifecycle smoke 已更新为覆盖 lease canonical events；三轮 admission → activation → lease → provider → finish（含 blocked terminal）通过，replay sequence 连续且终态 fence 正确。
 - 新增 Rust asset/checkpoint/run-patch 单元覆盖；最新 Rust 测试为 60 项全部通过，history smoke、typecheck、interaction/lifecycle/subagent 套件和完整 Vitest 均已通过。完整 Vitest 结果：369 个测试文件，2973 项通过，1 项跳过。5000 session benchmark：35000 operations，p50 1.492ms、p95 3.605ms、p99 8.521ms、max 29.674ms。
