@@ -149,8 +149,7 @@ pub struct TransportContext {
     pub router: Arc<SessionShardRouter>,
     pub hot_store: Option<Arc<crate::storage::HotStore>>,
     pub history: Option<Arc<crate::history::HistoryStore>>,
-    pub outbox_sessions: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    pub outbox_maintenance_cursor: Arc<std::sync::atomic::AtomicUsize>,
+    pub outbox_scan_cursor: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl TransportContext {
@@ -191,24 +190,6 @@ pub struct HistoryOutboxMaintenanceReport {
     pub sessions_with_more: usize,
 }
 
-impl TransportContext {
-    fn remember_outbox_session(&self, session_id: &str) {
-        if session_id.is_empty() {
-            return;
-        }
-        if let Ok(mut sessions) = self.outbox_sessions.lock() {
-            sessions.insert(session_id.to_owned());
-        }
-    }
-
-    fn remembered_outbox_sessions(&self) -> Vec<String> {
-        self.outbox_sessions
-            .lock()
-            .map(|sessions| sessions.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-}
-
 pub async fn maintain_history_outbox_once(
     context: &TransportContext,
     max_sessions: usize,
@@ -218,33 +199,25 @@ pub async fn maintain_history_outbox_once(
         return Ok(HistoryOutboxMaintenanceReport::default());
     };
 
-    let listed = hot
-        .session_list_async()
-        .await
-        .map_err(|error| error.to_string())?;
-    let listed: Value = serde_json::from_slice(&listed).map_err(|error| error.to_string())?;
-    if let Some(items) = listed.get("items").and_then(Value::as_array) {
-        for item in items {
-            if let Some(session_id) = item.get("id").and_then(Value::as_str) {
-                context.remember_outbox_session(session_id);
-            }
-        }
-    }
-    let mut sessions = context.remembered_outbox_sessions();
-    sessions.sort_unstable();
-    sessions.dedup();
-    if sessions.is_empty() || max_sessions == 0 {
+    if max_sessions == 0 {
         return Ok(HistoryOutboxMaintenanceReport::default());
     }
-
+    let cursor = context
+        .outbox_scan_cursor
+        .lock()
+        .ok()
+        .and_then(|cursor| cursor.clone());
+    let page = hot
+        .history_outbox_sessions_async(cursor, max_sessions)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Ok(mut scan_cursor) = context.outbox_scan_cursor.lock() {
+        *scan_cursor = page.next_key.clone();
+    }
+    let sessions = page.session_ids;
     let count = sessions.len().min(max_sessions);
-    let start = context
-        .outbox_maintenance_cursor
-        .fetch_add(count, std::sync::atomic::Ordering::Relaxed)
-        % sessions.len();
     let mut report = HistoryOutboxMaintenanceReport::default();
-    for offset in 0..count {
-        let session_id = &sessions[(start + offset) % sessions.len()];
+    for session_id in sessions.iter().take(count) {
         let result = hot
             .history_outbox_maintain_async(session_id.clone(), max_entries)
             .await
@@ -983,7 +956,6 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
-                context.remember_outbox_session(&session_id);
                 let payload: Value = match serde_json::from_slice(&command.payload) {
                     Ok(value) => value,
                     Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
@@ -1006,7 +978,6 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
-                context.remember_outbox_session(&session_id);
                 let payload: Value = match serde_json::from_slice(&command.payload) {
                     Ok(value) => value,
                     Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
@@ -1034,7 +1005,6 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
-                context.remember_outbox_session(&session_id);
                 return match reconcile_history_from_hot(hot, history, &session_id, &request_id).await {
                     Ok(state_json) => (
                         WireEnvelope {
@@ -1053,7 +1023,6 @@ async fn execute_wire(
                 let Some(hot) = context.hot_store.as_ref() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
-                context.remember_outbox_session(&session_id);
                 let payload: Value = match serde_json::from_slice(&command.payload) {
                     Ok(value) => value,
                     Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
@@ -1170,7 +1139,6 @@ async fn execute_wire(
             events,
             durability,
         })) => {
-            context.remember_outbox_session(&session_id);
             match context
             .router
             .append_stream_with_durability(

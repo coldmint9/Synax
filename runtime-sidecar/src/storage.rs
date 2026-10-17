@@ -29,6 +29,12 @@ const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
 const HISTORY_OUTBOX_MAINTENANCE_BATCH: usize = 256;
 
+#[derive(Debug, Clone, Default)]
+pub struct HistoryOutboxSessionPage {
+    pub session_ids: Vec<String>,
+    pub next_key: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("rocksdb: {0}")]
@@ -460,6 +466,25 @@ impl HotStore {
                 &session_id,
                 max_entries.min(HISTORY_OUTBOX_MAINTENANCE_BATCH),
             )
+        })
+        .await
+        .map_err(|error| {
+            StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string()))
+        })?
+    }
+
+    /// Return a bounded page of sessions that have durable outbox records.
+    /// The cursor is a RocksDB key, so a caller can walk the keyspace without
+    /// repeatedly rescanning already visited sessions or relying on a UI
+    /// projection to discover old runtime data.
+    pub async fn history_outbox_sessions_async(
+        &self,
+        start_after: Option<String>,
+        limit: usize,
+    ) -> Result<HistoryOutboxSessionPage, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.history_outbox_sessions(start_after.as_deref(), limit)
         })
         .await
         .map_err(|error| {
@@ -2085,6 +2110,56 @@ impl HotStore {
             items.push(serde_json::from_slice::<StreamEvent>(&value)?);
         }
         Ok(items)
+    }
+
+    fn history_outbox_sessions(
+        &self,
+        start_after: Option<&str>,
+        limit: usize,
+    ) -> Result<HistoryOutboxSessionPage, StorageError> {
+        let limit = limit.min(4096);
+        if limit == 0 {
+            return Ok(HistoryOutboxSessionPage::default());
+        }
+        let prefix = b"o/";
+        let start = start_after
+            .map(|key| key.as_bytes())
+            .unwrap_or(prefix);
+        let mut session_ids = Vec::with_capacity(limit);
+        let mut seen = std::collections::HashSet::with_capacity(limit);
+        for entry in self.db.iterator_cf(
+            self.cf(CF_HISTORY_OUTBOX)?,
+            rocksdb::IteratorMode::From(start, rocksdb::Direction::Forward),
+        ) {
+            let (key, _) = entry?;
+            if !key.starts_with(prefix) {
+                break;
+            }
+            if start_after.is_some_and(|cursor| key.as_ref() <= cursor.as_bytes()) {
+                continue;
+            }
+            let Some(rest) = key.strip_prefix(prefix) else {
+                continue;
+            };
+            let Some(separator) = rest.iter().position(|byte| *byte == b'/') else {
+                continue;
+            };
+            let session_id = String::from_utf8_lossy(&rest[..separator]).into_owned();
+            if session_id.is_empty() || !seen.insert(session_id.clone()) {
+                continue;
+            }
+            session_ids.push(session_id);
+            if session_ids.len() >= limit {
+                return Ok(HistoryOutboxSessionPage {
+                    session_ids,
+                    next_key: Some(String::from_utf8_lossy(&key).into_owned()),
+                });
+            }
+        }
+        Ok(HistoryOutboxSessionPage {
+            session_ids,
+            next_key: None,
+        })
     }
 
     fn history_outbox_ack(&self, session_id: &str, through: u64) -> Result<(), StorageError> {
@@ -4170,6 +4245,42 @@ mod tests {
         assert_eq!(pending.first().unwrap().sequence, 1);
         assert_eq!(pending.last().unwrap().sequence, EVENT_RETENTION + 32);
         drop(reopened);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn history_outbox_session_scan_finds_records_without_ui_projections() {
+        let path = temp_path("history-outbox-session-scan");
+        let store = HotStore::open(&path).unwrap();
+        for session_id in ["alpha", "beta"] {
+            store
+                .admit_run(session_id, "start", "hash", "r", 1, 0)
+                .unwrap();
+            store
+                .append_stream_with_durability(
+                    session_id,
+                    "r",
+                    "p",
+                    1,
+                    1,
+                    Durability::Sync,
+                    vec![event(session_id)],
+                )
+                .unwrap();
+        }
+
+        let first = store.history_outbox_sessions(None, 1).unwrap();
+        assert_eq!(first.session_ids, vec!["alpha"]);
+        let cursor = first.next_key.clone().expect("bounded page cursor");
+        let second = store.history_outbox_sessions(Some(&cursor), 1).unwrap();
+        assert_eq!(second.session_ids, vec!["beta"]);
+        let final_page = store
+            .history_outbox_sessions(second.next_key.as_deref(), 1)
+            .unwrap();
+        assert!(final_page.session_ids.is_empty());
+        assert!(final_page.next_key.is_none());
+
+        drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
 }

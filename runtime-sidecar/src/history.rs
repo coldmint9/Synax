@@ -254,6 +254,7 @@ impl HistoryStore {
                 | "list_work"
                 | "list_contexts"
                 | "list_aux_usage"
+                | "list_terminals"
                 | "verify"
         );
         let identity = format!(

@@ -105,8 +105,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         router: Arc::new(router),
         hot_store: hot_store.clone(),
         history: history_store.map(Arc::new),
-        outbox_sessions: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-        outbox_maintenance_cursor: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        outbox_scan_cursor: Arc::new(std::sync::Mutex::new(None)),
     };
 
     #[cfg(unix)]
