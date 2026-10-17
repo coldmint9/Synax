@@ -408,6 +408,7 @@ runtime-sidecar/
 - authoritative session permission 配置、archive delete、subagent pause/cancel/terminate 和 stop completion 已补 Rust-first 路径；SQLite 仅作为兼容镜像，下一步继续清理同步读取依赖。
 - answered interaction recovery 已在 authoritative host 读取 Rust projection/control state，避免启动恢复扫描 SQLite interaction rows；非 authoritative fixture 仍保留旧扫描实现。
 - human.ask 和 plan.propose 在 authoritative host 已通过异步 `requestAuthoritative` 先提交 Rust `interaction_request`，成功后才写入 SQLite 兼容镜像；loop resume 的 interaction consume 也先提交 Rust `interaction_consume`，兼容行缺失时仍可用 Rust 返回的交互恢复执行。
+- execution lease open/close 现在由 Rust `run_patch` 先持久化并更新 projected run；coordinator 在 provider 执行前等待 lease durable，terminal close 也保留 Rust-first 语义。
 - 新增 Rust asset/checkpoint 单元覆盖；最新 Rust 测试为 59 项全部通过，history smoke、typecheck、相关 lifecycle/subagent 套件和完整 Vitest 均已通过。完整 Vitest 结果：369 个测试文件，2973 项通过，1 项跳过。
 - 最新本地 macOS arm64 DMG 已由 commit `49c16f53` 构建并通过 packaged desktop smoke：`out/make/Synax-1.26.3-darwin-arm64.dmg`，SHA-256 `4473d1b44e981eacbe024419a8b7372f776fd7a69374240a1cbb3bdf5e808626`，大小 `285089636` bytes。
 - workflow `38977935108` 已按当前 HEAD 重新触发；macOS arm64、Linux 已完成成功，Windows 和 macOS x64 仍在目标机打包/sidecar 检查，完成前不把跨平台发布验收标成完成。
