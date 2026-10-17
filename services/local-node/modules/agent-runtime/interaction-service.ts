@@ -72,6 +72,122 @@ const conflict = (message: string): never => {
   throw new AgentRuntimeError(message, "INTERACTION_CONFLICT", 409);
 };
 
+type InteractionRequestInput = {
+  sessionId: string;
+  runId: string;
+  stepId: string;
+  toolCallId: string;
+  kind: AgentInteraction["kind"];
+  request: unknown;
+};
+
+function prepareInteraction(input: InteractionRequestInput): {
+  request: AgentInteraction["request"];
+  session: ReturnType<typeof store.getSession>;
+  call: ReturnType<typeof store.getToolCall>;
+  interaction: AgentInteraction;
+} {
+  const request: AgentInteraction["request"] =
+    input.kind === "clarification"
+      ? humanAskSchema.parse(input.request)
+      : (() => {
+          const raw = input.request as { plan: unknown };
+          const plan = agentPlanSchema.parse(raw.plan);
+          return { title: plan.title, plan };
+        })();
+  const session = store.getSession(input.sessionId);
+  if (
+    session.parentSessionId ||
+    (!["synax", "goal"].includes(session.profileId) &&
+      ((session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? "native") === "native")
+  ) throw new AgentValidationError("Only the primary Synax agent can ask the user.");
+  if (session.status !== "running" || session.activeRunId !== input.runId)
+    conflict("The run is not active.");
+  const call = store.getToolCall(input.sessionId, input.toolCallId);
+  const approval = (request as AgentInteraction["request"]).approvalFor;
+  if (approval && call.toolId === "goal.finish") {
+    const plan = session.sessionMetadata?.plan as { revision: number; humanAcceptanceCriteria?: string[] } | undefined;
+    if (!plan || approval.planRevision !== plan.revision || approval.criteria.some((c) => !plan.humanAcceptanceCriteria?.includes(c)))
+      conflict("Invalid human acceptance request.");
+    (request as AgentInteraction["request"]).approvalFor = approval;
+  }
+  if (call.runId !== input.runId || call.stepId !== input.stepId)
+    conflict("Interaction checkpoint does not match the tool call.");
+  const oldPlan = session.sessionMetadata?.plan as { revision?: number } | undefined;
+  const revision = input.kind === "plan_approval"
+    ? (getPlanArtifact(input.sessionId)?.revision ?? oldPlan?.revision ?? 0) + 1
+    : 1;
+  const interaction: AgentInteraction = {
+    sessionId: input.sessionId,
+    runId: input.runId,
+    stepId: input.stepId,
+    toolCallId: input.toolCallId,
+    kind: input.kind,
+    request,
+    revision,
+    id: makeRuntimeId("hitl"),
+    status: "pending",
+    response: null,
+    createdAt: nowIso(),
+    resolvedAt: null,
+  };
+  return { request, session, call, interaction };
+}
+
+function persistLocalInteraction(
+  interaction: AgentInteraction,
+  request: AgentInteraction["request"],
+  call: ReturnType<typeof store.getToolCall>,
+): AgentInteraction {
+  return getRawSqlite().transaction(() => {
+    persistInteraction(interaction, () => {
+      getRawSqlite().prepare(
+        "INSERT INTO agent_runtime_interactions (id,session_id,run_id,step_id,tool_call_id,kind,revision,status,request_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      ).run(
+        interaction.id,
+        interaction.sessionId,
+        interaction.runId,
+        interaction.stepId,
+        interaction.toolCallId,
+        interaction.kind,
+        interaction.revision,
+        interaction.status,
+        JSON.stringify(interaction.request),
+        interaction.createdAt,
+      );
+    });
+    if ("plan" in request) persistPlanProposal(interaction.sessionId, request.plan!);
+    if (!store.listRunParts(interaction.stepId).some((p) => p.kind === "tool_call" && p.toolCallId === interaction.toolCallId))
+      store.appendRunPart({
+        id: makeRuntimeId("prt"),
+        runId: interaction.runId,
+        stepId: interaction.stepId,
+        sessionId: interaction.sessionId,
+        kind: "tool_call",
+        sequence: store.nextRunPartSequence(interaction.stepId),
+        content: `${call.toolId} ${call.inputSummary}`,
+        toolCallId: interaction.toolCallId,
+        metadata: { modelToolCallId: call.modelToolCallId },
+        createdAt: nowIso(),
+      });
+    store.updateToolCall(interaction.sessionId, interaction.toolCallId, { status: "pending", endedAt: null });
+    store.updateRunStep(interaction.stepId, { status: "waiting_input", finishReason: "human_input" });
+    store.updateRun(interaction.runId, { status: "waiting_input", stopReason: "human_input" });
+    store.updateSession(interaction.sessionId, {
+      status: "waiting_input",
+      pendingResumeToken: `interaction:${interaction.id}`,
+      blockedReason: interaction.request.title,
+    });
+    events.append({
+      sessionId: interaction.sessionId,
+      type: "interaction_requested",
+      summary: interaction.request.title,
+      payload: { interactionId: interaction.id, runId: interaction.runId, stepId: interaction.stepId, toolCallId: interaction.toolCallId },
+    });
+    return interaction;
+  })();
+}
+
 export function persistPlanProposal(sessionId: string, plan: AgentPlan) {
   const artifact = createPlanArtifact({
     sessionId,
@@ -285,6 +401,19 @@ export const interactionService = {
       payload: interaction,
     }).catch(() => {});
     return interaction;
+  },
+  async requestAuthoritative(input: InteractionRequestInput): Promise<AgentInteraction> {
+    const prepared = prepareInteraction(input);
+    const control = await runtimeFacade.controlState(input.sessionId) as { interactions?: unknown[] };
+    if ((control.interactions ?? []).some((item) => item && typeof item === "object" && (item as { status?: unknown }).status === "pending"))
+      conflict("Resolve the current interaction first.");
+    await runtimeFacade.controlCommand({
+      sessionId: input.sessionId,
+      requestId: `interaction-request:${prepared.interaction.id}`,
+      operation: "interaction_request",
+      payload: prepared.interaction,
+    });
+    return persistLocalInteraction(prepared.interaction, prepared.request, prepared.call);
   },
   reply(sessionId: string, id: string, raw: unknown): AgentInteraction {
     const reply = interactionReplySchema.parse(raw);
@@ -522,6 +651,26 @@ export const interactionService = {
       }).catch(() => {});
     }
     return interaction;
+  },
+  async consumeAuthoritative(sessionId: string): Promise<AgentInteraction | null> {
+    const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+    const control = await runtimeFacade.controlState(sessionId) as { interactions?: unknown[] };
+    const raw = (control.interactions ?? []).find((item) => {
+      if (!item || typeof item !== "object") return false;
+      const value = item as { runId?: unknown; status?: unknown; response?: unknown; consumedAt?: unknown };
+      return value.runId === snapshot.session.activeRunId && value.status !== "pending" && value.response != null && !value.consumedAt;
+    });
+    if (!raw || typeof raw !== "object") return null;
+    const value = raw as AgentInteraction;
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `interaction-consume:${value.id}`,
+      operation: "interaction_consume",
+      payload: { id: value.id },
+    });
+    // Refresh the compatibility mirror when it is present. Rust remains the
+    // authority, so a missing/stale SQLite row cannot block resume.
+    return this.consume(sessionId) ?? value;
   },
   cancel(sessionId: string): void {
     if (versionedSession(sessionId)) {

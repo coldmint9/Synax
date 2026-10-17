@@ -59,6 +59,7 @@ import { maybeLlmCompactContext } from "./llm-context-compaction.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { INVALID_TOOL_ID } from "./tool-invalid.js";
 import { interactionService } from "./interaction-service.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import {
   CONTROL_TOOLS,
   validateControlBatch,
@@ -378,7 +379,9 @@ export class AgentLoopRuntime {
       const pending = interactionService.pending(sessionId);
       if (pending?.kind === "plan_approval" && hasInput(input)) {
         interactionService.deferPlan(sessionId, pending.id);
-        const resolved = interactionService.consume(sessionId);
+        const resolved = runtimeFacade.streamMode() === "authoritative"
+          ? await interactionService.consumeAuthoritative(sessionId)
+          : interactionService.consume(sessionId);
         if (!resolved)
           throw new AgentValidationError(
             "Plan approval could not be converted into a saved plan.",
@@ -498,7 +501,9 @@ export class AgentLoopRuntime {
       );
 
       if (inputResume) {
-        const resolved = interactionService.consume(sessionId);
+        const resolved = runtimeFacade.streamMode() === "authoritative"
+          ? await interactionService.consumeAuthoritative(sessionId)
+          : interactionService.consume(sessionId);
         if (!resolved)
           throw new AgentValidationError(
             "The input checkpoint was already consumed.",

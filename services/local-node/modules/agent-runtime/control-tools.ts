@@ -20,6 +20,7 @@ import {
   getUserInstructionText,
 } from "./plan-execution.js";
 import { AgentValidationError } from "./runtime-errors.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 export const humanAskTool: RegisteredTool = {
   id: "human.ask",
@@ -32,12 +33,20 @@ export const humanAskTool: RegisteredTool = {
   mutability: "task",
   resumeBehavior: "auto",
   inputSchema: humanAskSchema,
-  execute(input) {
+  async execute(input) {
     if (!input.runId || !input.stepId)
       throw new AgentValidationError(
         "Human input requires an active run step.",
       );
-    const interaction = interactionService.request({
+    const interaction = runtimeFacade.streamMode() === "authoritative"
+      ? await interactionService.requestAuthoritative({
+          ...input,
+          runId: input.runId,
+          stepId: input.stepId,
+          kind: "clarification",
+          request: input.args,
+        })
+      : interactionService.request({
       ...input,
       runId: input.runId,
       stepId: input.stepId,
@@ -63,7 +72,7 @@ export const planProposeTool: RegisteredTool = {
   mutability: "task",
   resumeBehavior: "auto",
   inputSchema: agentPlanSchema,
-  execute(input) {
+  async execute(input) {
     if (!input.runId || !input.stepId)
       throw new AgentValidationError("A plan requires an active run step.");
     const session = store.getSession(input.sessionId);
@@ -87,7 +96,15 @@ export const planProposeTool: RegisteredTool = {
         }],
       };
     }
-    const interaction = interactionService.request({
+    const interaction = runtimeFacade.streamMode() === "authoritative"
+      ? await interactionService.requestAuthoritative({
+          ...input,
+          runId: input.runId,
+          stepId: input.stepId,
+          kind: "plan_approval",
+          request: { plan: input.args },
+        })
+      : interactionService.request({
       ...input,
       runId: input.runId,
       stepId: input.stepId,
