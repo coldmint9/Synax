@@ -35,7 +35,16 @@ describe.each(["boundary", "full", "legacy"])(
         workDir: process.cwd(),
       });
       sessionId = session.id;
-      if (mode === "full") {
+      if (mode === "boundary") {
+        store.updateSession(sessionId, { status: "completed" });
+        initializeVersionNative(
+          store.getSession(sessionId),
+          store.listEvents(sessionId),
+          session.contextSnapshotId
+            ? store.getContextBundle(session.contextSnapshotId)
+            : undefined,
+        );
+      } else if (mode === "full") {
         store.updateSession(sessionId, { status: "completed" });
         initializeVersionNative(
           store.getSession(sessionId),

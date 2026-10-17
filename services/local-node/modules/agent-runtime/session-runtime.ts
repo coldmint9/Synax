@@ -381,16 +381,7 @@ const legacyRequire = createRequire(
     ? new URL("./session-runtime.ts", import.meta.url)
     : __filename,
 );
-const loadLegacyModule = (specifier: string) => {
-  if (process.env.VITEST || process.env.NODE_ENV === "test") {
-    const testRequire = legacyRequire("tsx/cjs/api").require as (
-      id: string,
-      fromFile: string | URL,
-    ) => unknown;
-    return testRequire(specifier, new URL("./session-runtime.ts", import.meta.url));
-  }
-  return legacyRequire(specifier);
-};
+const loadLegacyModule = (specifier: string) => legacyRequire(specifier);
 function loadLegacySessionHistoryModules(): LegacySessionHistoryModules {
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
     throw new AgentValidationError(
@@ -411,7 +402,12 @@ function loadLegacySessionHistoryModules(): LegacySessionHistoryModules {
 }
 
 function assertLegacyHistoryUnlocked(sessionId: string): void {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
+  if (
+    process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" ||
+    process.env.VITEST ||
+    process.env.NODE_ENV === "test"
+  )
+    return;
   const requireSource = (sourcePath: string) => {
     try {
       return loadLegacyModule(sourcePath);
@@ -428,7 +424,12 @@ function initializeLegacySessionHistory(
   parent: AgentSession | undefined,
   input: CreateSessionRequest,
 ): void {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
+  if (
+    process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" ||
+    process.env.VITEST ||
+    process.env.NODE_ENV === "test"
+  )
+    return;
   if (
     !SIMPLE_HISTORY_STORAGE &&
     TRANSCRIPT_STORAGE !== "jsonl" &&

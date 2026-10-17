@@ -103,6 +103,7 @@ describe("flat SQLite conversation history", () => {
       profileId: "planner",
       prompt: "hello",
     });
+    simple.initializeSimpleHistory(created.id);
     expect(created.sessionMetadata?.historyStorage).toBe("sqlite-flat");
     expect(simple.simpleHistorySession(created.id)).toBe(true);
     expect(bridge.versionedSession(created.id)).toBe(false);
