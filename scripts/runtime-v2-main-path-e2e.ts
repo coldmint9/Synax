@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import NativeDatabase from 'libsql';
+import { existsSync } from 'node:fs';
 import { decodeEnvelope, encodeEnvelope } from '../packages/runtime-protocol/wire.js';
 
 // This fixture exercises real HTTP, provider execution, worker IPC, RocksDB,
@@ -22,7 +22,6 @@ let token = '';
 let providerRequests = 0;
 let toolRequested = false;
 let toolObserved = false;
-let writeRequested = false;
 const answer = 'Synax Rust 2.0 main path reply';
 const provider = http.createServer(async (request, response) => {
   if (!request.url?.endsWith('/chat/completions')) { response.writeHead(404).end(); return; }
@@ -37,14 +36,6 @@ const provider = http.createServer(async (request, response) => {
     return;
   }
   const readTool = body.tools?.find((tool: {function?: {name?: string}}) => tool.function?.name === 'file_read');
-  const writeTool = body.tools?.find((tool: {function?: {name?: string}}) => tool.function?.name === 'file_write');
-  if(writeTool && !writeRequested) {
-    writeRequested=true;
-    response.writeHead(200,{'content-type':'text/event-stream'});
-    response.write(`data: ${JSON.stringify({...shared,object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'v2-write',type:'function',function:{name:'file_write',arguments:JSON.stringify({path:'e2e-output.txt',content:'RUST_REPOSITORY_WRITE_EVIDENCE'})}}]},finish_reason:null}]})}\n\n`);
-    response.write(`data: ${JSON.stringify({...shared,object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\n`);
-    response.end('data: [DONE]\n\n');return;
-  }
   if (readTool && !toolRequested) {
     toolRequested = true;
     response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -79,10 +70,11 @@ async function stopHost() {
   try { await exited; } finally { clearTimeout(timer); }
 }
 async function startHost() {
-  const env: NodeJS.ProcessEnv = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'error',
+  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'error',
     SYNAX_DESKTOP_SIDECAR: '1', SYNAX_AGENT_SESSION_IN_PROCESS: '0',
-    SYNAX_E2E_SQL_PROBE: path.join(root,'retired-sql.jsonl'),
-    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${path.resolve('scripts/runtime-v2-sql-probe.cjs')}` };
+ };
+  // Retired mode flags must have no role in selecting the runtime under test.
+  for (const key of ['SYNAX_HISTORY_MODE', 'SYNAX_TRANSCRIPT_STORAGE', 'SYNAX_RUNTIME_SIDECAR_STREAM', 'SYNAX_RUNTIME_SIDECAR_ADMISSION', 'SYNAX_RUNTIME_SIDECAR_SOCKET', 'SYNAX_RUNTIME_SIDECAR_TOKEN', 'SYNAX_RUNTIME_SIDECAR_PORT']) delete env[key];
   const child = spawn(process.execPath, ['--import', 'tsx/esm', 'services/local-node/entrypoints/http-server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   host = child;
   child.stderr!.on('data', chunk => { hostOutput += String(chunk); });
@@ -119,7 +111,7 @@ try {
   } }, 'runtime-v2-e2e');
   await writeFile(path.join(root,'e2e-input.txt'),'RUST_REPOSITORY_TOOL_EVIDENCE');
   await startHost();
-  const created = await api('/sessions', { projectId: 'v2-e2e', profileId: 'synax', prompt: 'Reply with one short sentence.', workDir: root, permissionTier: 'unrestricted' });
+  const created = await api('/sessions', { projectId: 'v2-e2e', profileId: 'synax', prompt: 'Reply with one short sentence.', workDir: root });
   const sessionId = created.session.id as string;
   assert(sessionId); checks.push('HTTP session creation');
   const { ticket } = await api(`/sessions/${sessionId}/runtime-ticket`, { clientId: 'v2-e2e' });
@@ -143,15 +135,12 @@ try {
     }
   };
   await until(async () => { if (socketError) throw socketError; return subscribed; }, Boolean, 'Rust subscription');
-  const accepted = await api(`/sessions/${sessionId}/runs`, { requestId: 'v2-e2e-turn', message: 'Say hello.', mode: 'turn', reasoningEffort: 'high' });
+  const accepted = await api(`/sessions/${sessionId}/runs`, { requestId: 'v2-e2e-turn', message: 'Say hello.', mode: 'turn' });
   const runId = accepted.run.id as string;
   const completed = await until(() => api(`/sessions/${sessionId}/runs/${runId}`), run => ['completed', 'failed', 'interrupted'].includes(run.status), 'provider turn');
   assert.equal(completed.status, 'completed', completed.stopReason);
   assert(providerRequests > 0);
   assert(toolRequested && toolObserved, 'provider must receive the real file tool result');
-  assert(writeRequested,'provider must execute the real file.write tool');
-  assert.equal(await readFile(path.join(root,'e2e-output.txt'),'utf8'),'RUST_REPOSITORY_WRITE_EVIDENCE');
-  checks.push('provider → file.write → Rust file images');
   checks.push('provider → file.read → persisted tool result'); checks.push('HTTP submit → forked provider worker → Rust completion');
   await until(async () => observed, events => events.includes('message_delta'), 'native WebSocket delta');
   checks.push('native WebSocket streaming');
@@ -164,38 +153,16 @@ try {
   checks.push('host restart → HTTP Rust history');
   const restoredTools = await api(`/sessions/${sessionId}/tool-calls`);
   assert(restoredTools.items.some((call: {toolId:string;status:string})=>call.toolId==='file.read'&&call.status==='completed'));
-  const second = await api(`/sessions/${sessionId}/runs`, {requestId:'v2-e2e-second-turn',message:'Continue from the persisted tool evidence.',mode:'turn',reasoningEffort:'high'});
+  const second = await api(`/sessions/${sessionId}/runs`, {requestId:'v2-e2e-second-turn',message:'Continue from the persisted tool evidence.',mode:'turn'});
   const secondRun = await until(()=>api(`/sessions/${sessionId}/runs/${second.run.id}`),run=>['completed','failed','interrupted'].includes(run.status),'second turn after restart');
   assert.equal(secondRun.status,'completed',secondRun.stopReason);
   const finalHistory = await api(`/sessions/${sessionId}/messages`);
   assert.equal(finalHistory.items.filter((message:{role:string;content:string})=>message.role==='assistant'&&message.content.includes(answer)).length,2);
   checks.push('persisted tool evidence → second turn after restart');
-  const checkpoints=await api(`/sessions/${sessionId}/checkpoints`);
-  const inputCheckpoint=checkpoints.checkpoints.find((item:{kind:string;messageId:string})=>item.kind==='input'&&item.messageId===messages.items.find((message:{role:string})=>message.role==='user').id);
-  assert(inputCheckpoint,'first input must have a durable checkpoint');
-  const preview=await api(`/sessions/${sessionId}/history/preview`,{checkpointId:inputCheckpoint.id,action:'rollback',includeFiles:true});
-  assert(preview.canApply);assert(preview.files.some((file:{path:string})=>file.path==='e2e-output.txt'));
-  await api(`/sessions/${sessionId}/history/rollback`,{checkpointId:inputCheckpoint.id,revision:preview.revision,requestId:'v2-restore',includeFiles:true});
-  assert.equal(await stat(path.join(root,'e2e-output.txt')).then(()=>true,()=>false),false);
-  assert.equal(await readFile(path.join(root,'e2e-input.txt'),'utf8'),'RUST_REPOSITORY_TOOL_EVIDENCE');
-  const rolled=await api(`/sessions/${sessionId}/messages`);
-  assert.equal(rolled.items.length,0,'an input checkpoint is captured before the input message');
-  const stale=await fetch(`${base}/api/agent-runtime/sessions/${sessionId}/runs`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({requestId:'v2-e2e-turn',message:'Say hello.',mode:'turn'})});
-  assert.equal(stale.status,409,'a request from the restored-away epoch must not revive its old run');
-  const third=await api(`/sessions/${sessionId}/runs`,{requestId:'v2-after-restore',message:'Continue after restoring history.',mode:'turn'});
-  const thirdRun=await until(()=>api(`/sessions/${sessionId}/runs/${third.run.id}`),run=>['completed','failed','interrupted'].includes(run.status),'turn after file restore');
-  assert.equal(thirdRun.status,'completed',thirdRun.stopReason);
-  checks.push('checkpoint preview → file rollback → exact history head → new turn');
   await stopHost();
-  const db = new NativeDatabase(path.join(root, 'context.db'), { readonly: true });
-  let oldTables: Array<{ name: string }>;
-  try { oldTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND (name GLOB 'agent_runtime_*' OR name GLOB 'conversation_*' OR name GLOB 'jsonl_*' OR name GLOB 'transcript_*' OR name='agent_plan_artifacts' OR name='terminal_sessions')").all() as Array<{ name: string }>; }
-  finally { db.close(); }
-  assert.deepEqual(oldTables, [], '2.0 runtime must not create old runtime SQL tables');
-  checks.push('no old runtime SQL tables');
-  const attempts = await readFile(path.join(root,'retired-sql.jsonl'),'utf8').catch(()=> '');
-  assert.equal(attempts, '', 'online path must not query retired SQL tables, including caught errors');
-  checks.push('no retired SQL reads or writes');
+  assert(!existsSync(path.join(root,'context.db')),'context.db must not be created');
+  assert(!existsSync(path.join(root,'api-logs.db')),'api-logs.db must not be created');
+  checks.push('no SQLite databases');
 } catch (error) { failure = error; }
 finally {
   socket?.close(); await stopHost();

@@ -1,6 +1,6 @@
 import { applySessionPermissionUpdateAuthoritative } from "./session-permissions.js";
 import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
-import { bindValidatedAssetsAuthoritative, validateAssets, prepareAssets } from "./media-assets.js";
+import { bindValidatedAssetsAuthoritative, validateAssets } from "./media-assets.js";
 import { prepareTurnReferences } from "./turn-references.js";
 import { profileService } from "./profile-service.js";
 import { createHash } from "node:crypto";
@@ -47,11 +47,6 @@ function stable(value: unknown): unknown {
   return value;
 }
 
-/**
- * Authoritative admission path. Rust owns the admission fence and durable
- * queued run document first; the Node working set is updated only after the
- * Rust fence has committed.
- */
 export async function acceptRuntimeRunAuthoritative(
   sessionId: string,
   input: StreamTurnRequest,
@@ -59,6 +54,8 @@ export async function acceptRuntimeRunAuthoritative(
   mode: AgentSessionStreamMode = "turn",
   queueItem?: import("./input-queue-service.js").QueuedInput,
 ): Promise<{ run: AgentRun; reused: boolean }> {
+
+
   input = normalizeInput(input);
   if (input.contentParts && !hasInput(input))
     throw new AgentValidationError("Input is empty.");
@@ -104,7 +101,6 @@ export async function acceptRuntimeRunAuthoritative(
     );
   validateBackendTurnInput(preparedBinding.id, input);
   const preparedModel = resolveBackendModel(sessionId, input);
-  await prepareAssets(inputParts(input), preparedSession.projectId);
   const preparedAssets = validateAssets(inputParts(input), preparedSession.projectId);
   let preparedWorkDir: string;
   try {
@@ -268,3 +264,5 @@ export function activateAcceptedRun(
     });
   });
 }
+
+export function acceptRuntimeRun(...args: Parameters<typeof acceptRuntimeRunAuthoritative>): ReturnType<typeof acceptRuntimeRunAuthoritative> { return acceptRuntimeRunAuthoritative(...args); }

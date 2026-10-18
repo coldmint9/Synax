@@ -1,3 +1,5 @@
+import { businessStore } from "../../infrastructure/persistence/business-store.js";
+import { hydrateRuntimeAssets } from "./media-assets.js";
 import { waitForCodeRead } from "./code-mode/cancellation.js";
 import { createCodeTools } from "./code-mode/tools.js";
 import { NativeCapabilities } from "./native-capabilities/service.js";
@@ -7,7 +9,7 @@ import { extensionStore } from "../extensions/extension-store.js";
 import { customToolProvider } from "../extensions/custom-tool-provider.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
 import { resolveWorkspacePath as resolveUndoPath } from "./tools/workspace.js";
-import { withRuntimeFileMutation } from "./runtime-files.js";
+import { withWorkspaceMutation } from "./workspace-mutation.js";
 import { assertHistoryUnlocked } from "./runtime-history.js";
 import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
@@ -18,7 +20,7 @@ import {
   type RuntimeContentPart,
 } from "./content-parts.js";
 import { bindAssets, validateAssets, sessionHasAsset } from "./media-assets.js";
-import { assertRuntimeExecutionCurrent } from "../../infrastructure/database/index.js";
+import { assertRuntimeExecutionCurrent } from "../../infrastructure/runtime/execution-context.js";
 import { workTools } from "./tools/work-tools.js";
 import { verificationTool } from "./tools/verification.js";
 import { workRuntime } from "./work-runtime.js";
@@ -215,7 +217,7 @@ export class ToolRegistry {
           .optional()
           .describe("Child session thinking mode."),
       }),
-      execute: (input) => {
+      execute: async (input) => {
         const MAX_CONCURRENT_SUBTASKS = 3;
 
         const parent = this.store.getSession(input.sessionId);
@@ -414,7 +416,7 @@ export class ToolRegistry {
             { type: "text", text: delegationContext },
             ...args.contentParts,
           ];
-          bindAssets(child.id, parts);
+          await bindAssets(child.id, parts);
           this.store.updateSessionMetadata(child.id, {
             initialContentParts: parts,
           });
@@ -571,6 +573,8 @@ export class ToolRegistry {
     permission: PermissionDecision,
     abortSignal?: AbortSignal,
   ): Promise<ExecuteToolResult> {
+    await businessStore.refresh();
+    await hydrateRuntimeAssets([sessionId]);
     if (permission.action !== "allow") {
       throw new AgentValidationError(
         "Only approved permission requests can be resumed.",
@@ -602,6 +606,8 @@ export class ToolRegistry {
     args: unknown,
     options: ExecuteToolOptions = {},
   ): Promise<ExecuteToolResult> {
+    await businessStore.refresh();
+    await hydrateRuntimeAssets([sessionId]);
     const session = this.store.getSession(sessionId);
     const profile = this.profiles.getForSession(session);
     const tool = this.getForSession(sessionId, toolId);
@@ -833,6 +839,8 @@ export class ToolRegistry {
     permission?: PermissionDecision,
     abortSignal?: AbortSignal,
   ): Promise<ExecuteToolResult> {
+    await businessStore.refresh();
+    await hydrateRuntimeAssets([sessionId]);
     try {
       abortSignal?.throwIfAborted();
       const freshSession = this.store.getSession(sessionId);
@@ -1005,21 +1013,23 @@ export class ToolRegistry {
           )
         : undefined;
       abortSignal?.throwIfAborted();
-      assertRuntimeExecutionCurrent();
+      await assertRuntimeExecutionCurrent();
       assertHistoryUnlocked(sessionId);
       const checkpointMutation =
         tool.mutability === "write" ||
         tool.id === "bash" ||
         tool.id === "verification.run" ||
         (tool.category === "mcp" && !codeParentId(record));
-      const executeTool = () => {
-        // Recording a large before-image may yield. Recheck cancellation and
+      const executeTool = async () => {
+        await businessStore.refresh(['tool-grants','extension-state']);
+        // Acquiring the write lease may yield. Recheck cancellation and
         // ownership immediately before the native tool is allowed to write.
         if (!extensionStore.active(this.store.getSession(sessionId).projectId, "tool", tool.id)) throw new AgentPermissionError(`Tool ${tool.id} has been removed or disabled.`);
         abortSignal?.throwIfAborted();
-        assertRuntimeExecutionCurrent();
+        await assertRuntimeExecutionCurrent();
         assertHistoryUnlocked(sessionId);
         assertGrantCurrent();
+        await businessStore.flush();
         const result = inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
         // Only reads may abandon their local wait. A writer retains its claim
         // until the underlying operation settles, even after cancellation.
@@ -1043,7 +1053,7 @@ export class ToolRegistry {
           ])
           .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
       const result = checkpointMutation
-        ? await withRuntimeFileMutation(
+        ? await withWorkspaceMutation(
             sessionId,
             executeTool,
             false,

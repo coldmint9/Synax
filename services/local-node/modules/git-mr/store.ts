@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { listOwnedProcesses } from "../agent-runtime/process-ownership.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { GitMrError } from "./errors.js";
 import type { MergeRequest, MergePreset, MergeProposal } from "./contracts.js";
@@ -126,6 +127,13 @@ export class GitMrStore {
         await fs.readFile(path.join(dir, "owner.json"), "utf8"),
       ) as { pid: number; hostId: string };
       if (!Number.isInteger(owner.pid) || owner.pid <= 0 || alive(owner.pid))
+        throw busy();
+      const processes = (await listOwnedProcesses()).filter(p=>p.host_id===(owner.hostId ?? `local:${owner.pid}`) && p.state!=='closed');
+      if (
+        processes.some(
+          (child) => child.runtime_pid || (child.pid && alive(child.pid)),
+        )
+      )
         throw busy();
       // Move the abandoned directory, never remove a newly acquired lock at the same path.
       const abandoned = dir + ".abandoned." + randomUUID();

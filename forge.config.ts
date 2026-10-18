@@ -96,7 +96,6 @@ const config: ForgeConfig = {
       "./dist/cua-driver",
       "./cua-helper-dist",
       "./client/dist",
-      "./services/local-node/infrastructure/database/migrations",
       "./electron/resources/synax-icon.png",
       "./electron/resources/synax-icon.ico",
     ],

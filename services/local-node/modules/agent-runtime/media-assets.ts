@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import { agentRuntimeStore } from "./session-store.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
-import { agentRuntimeStore } from "./session-store.js";
 import { decodeCharacterFile } from "./file-input/registry.js";
 import {
   MAX_FILE_BYTES,
@@ -14,8 +16,6 @@ import {
 } from "./content-parts.js";
 
 const root = () => path.resolve(DATA_ROOT, "runtime-media");
-const assetCache = new Map<string, RuntimeAsset>();
-const assetBindings = new Map<string, Set<string>>();
 const error = (
   message: string,
   code = "INVALID_MEDIA",
@@ -149,55 +149,38 @@ export function detectMediaType(
     error(`Unrecognized or invalid media file: ${filename}.`);
   return detected ?? "application/octet-stream";
 }
-export function getAsset(id: string, projectId?: string): RuntimeAsset {
-  if (!/^asset_[a-f0-9]{32}$/.test(id)) error("Invalid asset ID.");
-  const asset = assetCache.get(id);
-  if (!asset)
-    throw new AgentRuntimeError(
-      "Media resource no longer exists.",
-      "MEDIA_NOT_FOUND",
-      404,
-    );
-  if (projectId && asset.projectId !== projectId)
-    error(
-      "Media belongs to a different project.",
-      "MEDIA_PROJECT_MISMATCH",
-      403,
-    );
-  return asset;
+const assets = new Map<string, RuntimeAsset>();
+const bindings = new Map<string, Set<string>>();
+/** Metadata cache only. Asset bytes and binding authority are owned by Rust. */
+export async function hydrateRuntimeAssets(sessionIds: string[] = []): Promise<void> {
+  let after: string | undefined;
+  do {
+    const page=await runtimeFacade.historyCommandGlobal({scopeId:'assets',requestId:randomUUID(),operation:'asset_page',payload:{after}}) as {items:RuntimeAsset[];next?:string};
+    for(const asset of page.items) assets.set(asset.id,asset);
+    after=page.next;
+  } while(after);
+  for(const sessionId of sessionIds) {
+    const bound=await runtimeFacade.listBoundAssets(sessionId) as RuntimeAsset[];
+    bindings.set(sessionId,new Set(bound.map(a=>a.id)));
+    for(const asset of bound) assets.set(asset.id,asset);
+  }
 }
-/** Fetch exact metadata on demand; synchronous helpers use this execution cache. */
-export async function loadAsset(id: string, projectId?: string): Promise<RuntimeAsset> {
-  if (!/^asset_[a-f0-9]{32}$/.test(id)) return error("Invalid asset ID.");
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const asset = await runtimeFacade.getAssetMetadata(id) as RuntimeAsset;
-  assetCache.set(id, asset);
-  return getAsset(id, projectId);
-}
-export async function prepareAssets(parts: RuntimeContentPart[], projectId?: string): Promise<void> {
-  for (const part of parts) if (part.type !== "text") await loadAsset(part.assetId, projectId);
+export function getAsset(id:string,projectId?:string):RuntimeAsset {
+  if(!/^asset_[a-f0-9]{32}$/.test(id)) error('Invalid asset ID.');
+  const asset=assets.get(id);
+  if(!asset) return error('Media resource no longer exists.','MEDIA_NOT_FOUND',404);
+  if(projectId && asset.projectId!==projectId) error('Media belongs to a different project.','MEDIA_PROJECT_MISMATCH',403);
+  return {...asset};
 }
 export function assetPath(id: string): string {
   getAsset(id);
   return path.join(root(), id);
 }
-export async function readAsset(id: string, projectId?: string): Promise<Buffer> {
-  const asset = await loadAsset(id, projectId);
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const bytes = Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
-  if (bytes.length !== asset.size || createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
-    return error("Media content does not match its metadata.", "MEDIA_CHANGED", 409);
-  return bytes;
+export async function readAsset(id:string,projectId?:string):Promise<Buffer> {
+  const asset=getAsset(id,projectId);
+  return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
 }
-/** Local-path providers get a disposable materialization of the Rust blob. */
-export async function materializeAsset(id: string): Promise<string> {
-  const bytes = await readAsset(id);
-  await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
-  const destination = assetPath(id), temporary = `${destination}.${randomUUID()}.tmp`;
-  await fsp.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
-  await fsp.rename(temporary, destination);
-  return destination;
-}
+
 export async function createAsset(
   projectId: string,
   filename: string,
@@ -222,9 +205,10 @@ export async function createAsset(
     sha256,
     createdAt: new Date().toISOString(),
   };
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
-  assetCache.set(asset.id, asset);
+  await runtimeFacade.putAssetBlob(asset.id,asset,bytes);
+  await fsp.mkdir(root(),{recursive:true,mode:0o700});
+  await fsp.writeFile(path.join(root(),asset.id),bytes,{flag:'wx',mode:0o600});
+  assets.set(asset.id,asset);
   return asset;
 }
 export function validateAssets(
@@ -245,60 +229,36 @@ export function validateAssets(
       modalityForMime(getAsset(part.assetId, projectId).mediaType) !== part.type
     )
       error("Content part does not match the media type.");
+  for (const asset of assets) {
+    try {
+      const stat = fs.lstatSync(path.join(root(), asset.id));
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== asset.size)
+        error("Media file was changed.", "MEDIA_CHANGED", 409);
+    } catch (e) {
+      if (e instanceof AgentRuntimeError) throw e;
+      error("Media file is missing.", "MEDIA_NOT_FOUND", 404);
+    }
+  }
   return assets;
 }
-export function bindValidatedAssets(
-  sessionId: string,
-  assets: RuntimeAsset[],
-): void {
-  const bound = assetBindings.get(sessionId) ?? new Set<string>();
-  for (const asset of assets) bound.add(asset.id);
-  assetBindings.set(sessionId, bound);
-  for (const asset of assets) agentRuntimeStore.enqueueAssetBinding(sessionId, asset.id);
+export async function bindValidatedAssets(sessionId:string,values:RuntimeAsset[]):Promise<void> {
+  for(const asset of values) await runtimeFacade.bindAsset(sessionId,asset.id);
+  const ids=bindings.get(sessionId) ?? new Set<string>();
+  for(const asset of values) ids.add(asset.id);
+  bindings.set(sessionId,ids);
 }
-
-export async function bindValidatedAssetsAuthoritative(
-  sessionId: string,
-  assets: RuntimeAsset[],
-): Promise<void> {
-  bindValidatedAssets(sessionId, assets);
-  await agentRuntimeStore.flushSession(sessionId);
+export const bindValidatedAssetsAuthoritative=bindValidatedAssets;
+export async function bindAssets(sessionId:string,parts:RuntimeContentPart[]):Promise<void> {
+  const session=agentRuntimeStore.getSession(sessionId);
+  await bindValidatedAssets(sessionId,validateAssets(parts,session.projectId));
 }
-
-export function bindAssets(
-  sessionId: string,
-  parts: RuntimeContentPart[],
-): void {
-  const session = agentRuntimeStore.getSession(sessionId);
-  bindValidatedAssets(sessionId, validateAssets(parts, session.projectId));
-}
-export function sessionHasAsset(sessionId: string, id: string): boolean {
-  return assetBindings.get(sessionId)?.has(id) === true;
-}
-export async function deleteUnboundAsset(id: string): Promise<void> {
-  await loadAsset(id);
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  try { await runtimeFacade.deleteAssetMetadata(id); }
-  catch (caught) {
-    if (caught instanceof Error && caught.message.includes("asset is retained by a session"))
-      return error("Media is retained by a session.", "MEDIA_IN_USE", 409);
-    throw caught;
-  }
+export function sessionHasAsset(sessionId:string,id:string):boolean {return bindings.get(sessionId)?.has(id) ?? false;}
+export async function deleteUnboundAsset(id:string):Promise<void> {
+  await runtimeFacade.deleteAssetMetadata(id);
   await runtimeFacade.deleteAssetBlob(id);
-  assetCache.delete(id);
-  await fsp.unlink(path.join(root(), id)).catch((e) => {
-    if (e.code !== "ENOENT") throw e;
-  });
+  assets.delete(id);
+  await fsp.unlink(path.join(root(),id)).catch(e=>{if(e.code!=='ENOENT')throw e;});
 }
-
-/** Only load bindings for a session being executed, including in child workers. */
-export async function hydrateSessionAssets(sessionId: string): Promise<void> {
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const assets = await runtimeFacade.listBoundAssets(sessionId) as RuntimeAsset[];
-  for (const asset of assets) assetCache.set(asset.id, asset);
-  assetBindings.set(sessionId, new Set(assets.map(asset => asset.id)));
-}
-
 export async function sweepAssets(): Promise<void> {
   const { runtimeFacade } = await import('./sidecar/runtime-facade.js');
   const cutoff = new Date(Date.now() - 86_400_000).toISOString();
@@ -313,7 +273,7 @@ export async function sweepAssets(): Promise<void> {
         throw error;
       }
       await runtimeFacade.deleteAssetBlob(asset.id);
-      assetCache.delete(asset.id);
+      assets.delete(asset.id);
       await fsp.unlink(path.join(root(),asset.id)).catch(error=>{if(error.code!=='ENOENT')throw error});
     }
     after=page.next;

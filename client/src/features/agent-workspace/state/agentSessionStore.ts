@@ -1833,22 +1833,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         let timelineSteps = initial.timelineSteps ?? initial.steps;
         let timelineToolCalls = initial.timelineToolCalls ?? initial.toolCalls;
         try {
-          if (get().sessions.find(session => session.id === sessionId)?.sessionMetadata?.historyStorage === "sqlite-flat") {
-            let before: number | undefined;
-            const pages: AgentRuntimeMessage[][] = [];
-            do {
-              const page = await agentRuntimeApi.historyTimeline(sessionId, before);
-              if (get().selectedSessionId !== sessionId || page.epoch !== epoch) return;
-              pages.push(page.items);
-              if (page.next === before && before !== undefined) throw new Error("Timeline cursor did not advance");
-              before = page.next;
-            } while (before !== undefined);
-            const all = new Map<string, AgentRuntimeMessage>();
-            for (const page of pages.reverse()) for (const message of page) all.set(message.id, message);
-            for (const message of timelineMessages) all.set(message.id, message);
-            timelineMessages = [...all.values()];
-            cursor = undefined;
-          }
+
           while (cursor && get().selectedSessionId === sessionId) {
             let older: HistoryWindowResponse;
             try {
@@ -2076,7 +2061,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             const versioned =
               get().sessions.find((session) => session.id === targetSessionId)
                 ?.sessionMetadata?.historyStorage;
-            const windowed = versioned === 3 || versioned === "sqlite-flat";
+            const windowed = Boolean(versioned);
             const knownEventId =
               !windowed && cachedEntry?.events?.length
                 ? cachedEntry.events[cachedEntry.events.length - 1].id

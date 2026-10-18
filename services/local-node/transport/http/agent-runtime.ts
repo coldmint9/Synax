@@ -370,7 +370,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
       parsed.data.providerId,
       parsed.data.modelId,
     );
-    const job = createMediaJob(session.id, session.projectId, parsed.data);
+    const job = await createMediaJob(session.id, session.projectId, parsed.data);
     return c.json({ job }, 202);
   } catch (error) {
     return runtimeError(c, error);

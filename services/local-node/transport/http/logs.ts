@@ -14,7 +14,7 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional().default(100),
 });
 
-logRoutes.get('/stats/daily', (c) => {
+logRoutes.get('/stats/daily', async (c) => {
   const parsed = statsQuerySchema.safeParse({
     days: c.req.query('days') ?? String(LOG_RETENTION_DAYS),
   });
@@ -23,11 +23,11 @@ logRoutes.get('/stats/daily', (c) => {
   }
 
   return c.json({
-    items: listApiLogDailyStats(parsed.data.days),
+    items: await listApiLogDailyStats(parsed.data.days),
   });
 });
 
-logRoutes.get('/', (c) => {
+logRoutes.get('/', async (c) => {
   const parsed = listQuerySchema.safeParse({
     day: c.req.query('day') ?? undefined,
     limit: c.req.query('limit') ?? '100',
@@ -37,6 +37,6 @@ logRoutes.get('/', (c) => {
   }
 
   return c.json({
-    items: listApiLogs(parsed.data),
+    items: await listApiLogs(parsed.data),
   });
 });

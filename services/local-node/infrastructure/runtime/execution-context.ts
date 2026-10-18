@@ -1,7 +1,4 @@
-import { assertTransactionSafe } from '../database/transaction-safety.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import path from 'node:path';
-import type NativeDatabase from 'libsql';
 import { RuntimeSidecarClient } from '../../modules/agent-runtime/sidecar/sidecar-client.js';
 
 export interface RuntimeExecutionContext { sessionId: string; runId: string; epoch: string; hostId: string }
@@ -73,10 +70,7 @@ async function defaultAuthoritativeExecutionFence(context: RuntimeExecutionConte
 }
 
 /**
- * Async lease boundary for authoritative hosts. It runs before each provider
- * turn/stream advancement, so the synchronous SQLite guard never needs to
- * query the legacy run or history-head tables while a write transaction is
- * open.
+ * Validate the Rust execution lease before each provider turn/stream advancement.
  */
 export async function assertExecutionContextCurrent(context: RuntimeExecutionContext | undefined): Promise<void> {
   if (!context) return;
@@ -84,23 +78,9 @@ export async function assertExecutionContextCurrent(context: RuntimeExecutionCon
   await (authoritativeExecutionFence ?? defaultAuthoritativeExecutionFence)(context);
 }
 
-export function assertDatabaseWriteAllowed(sqlite: NativeDatabase.Database, databasePath: string): void {
-  assertTransactionSafe(sqlite);
-  const context = contexts.getStore();
-  if (context === null) return; // Trusted lifecycle bookkeeping, never model-facing tools.
-  const hostId = process.env.SYNAX_RUNTIME_HOST_ID;
-  const runtimeRoot = process.env.SYNAX_RUNTIME_DATA_ROOT;
-  if (hostId && runtimeRoot && path.resolve(databasePath) === path.resolve(runtimeRoot, 'context.db')) {
-    // runtime_host_lock is the process-level host fence. It is independent of
-    // the execution lease and remains valid for both authoritative and fixture
-    // databases.
-    const host = sqlite.prepare('SELECT host_id FROM runtime_host_lock WHERE id = 1').get() as { host_id: string } | undefined;
-    if (host?.host_id !== hostId) throw superseded('Runtime host has been superseded.');
-  }
-  if (!context) return;
-  // The Rust projection is the only execution fence. Legacy runtime tables
-  // are intentionally never consulted by the synchronous SQLite guard.
-
+/** Tool side effects must revalidate the Rust execution lease. */
+export async function assertRuntimeExecutionCurrent(): Promise<void> {
+  await assertExecutionContextCurrent(currentExecutionContext());
 }
 
 export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>): AsyncGenerator<T> {

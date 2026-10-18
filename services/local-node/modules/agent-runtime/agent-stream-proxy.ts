@@ -1,8 +1,10 @@
+import { logger } from "../../infrastructure/runtime/logger.js";
 import { runCoordinator } from './run-coordinator.js';
 import { getBackendAdapter } from './backends/backend-registry.js';
 import { resolveBackendModel, resolveSessionBackend } from './backends/backend-binding.js';
 import { AgentRuntimeError, AgentValidationError } from './runtime-errors.js';
 import { agentSessionsRunInProcess, MAX_AGENT_SESSION_PROCESSES } from '../../infrastructure/runtime/env.js';
+import { interactionService } from './interaction-service.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
 import { agentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
@@ -148,8 +150,8 @@ async function* observeBackgroundRun(
   }finally{detach();signal?.removeEventListener('abort',detach);}
 }
 
-export function recoverAnsweredInteractions(): void {
-  void recoverAnsweredInteractionsAuthoritative().catch(() => {});
+export function recoverAnsweredInteractions():void {
+  void recoverAnsweredInteractionsAuthoritative().catch(error => logger.warn({error}, 'Interaction recovery failed'));
 }
 
 async function recoverAnsweredInteractionsAuthoritative(): Promise<void> {

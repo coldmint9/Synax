@@ -6,7 +6,7 @@ import {
   currentExecutionContext,
   type RuntimeExecutionContext,
 } from "../runtime/execution-context.js";
-import { assertRuntimeExecutionCurrent } from "../database/index.js";
+import { assertRuntimeExecutionCurrent } from "../runtime/execution-context.js";
 import {
   canonicalWorkspaceDirectory,
   isWithinWorkspace,
@@ -119,7 +119,7 @@ export async function startBackgroundTerminal(
     throw Object.assign(new Error("Command cancelled."), {
       name: "AbortError",
     });
-  assertRuntimeExecutionCurrent();
+  await assertRuntimeExecutionCurrent();
   const requestId = randomUUID();
   const inWorker =
     process.env.SYNAX_AGENT_SESSION_CHILD === "1";

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as z from 'zod/v4';
-import { getRawSqlite } from '../../infrastructure/database/index.js';
+import { businessStore as store } from '../../infrastructure/persistence/business-store.js';
 import { fetchSkillText } from '../skills/skill-http.js';
 import { customExtensionSchema } from './schemas.js';
 import type { CustomExtensionInput, ExtensionItem } from './types.js';
@@ -17,9 +17,7 @@ interface CatalogEntry {
   definition: CustomExtensionInput;
 }
 export function remoteExtensionSources() {
-  return getRawSqlite()
-    .prepare('SELECT id, name, url FROM extension_remote_sources ORDER BY name')
-    .all() as Pick<SourceRow, 'id' | 'name' | 'url'>[];
+  return store.list<SourceRow>('extension-sources').sort((a,b)=>a.name.localeCompare(b.name)).map(({id,name,url})=>({id,name,url}));
 }
 export async function saveRemoteSource(input: {
   id: string;
@@ -63,18 +61,8 @@ export async function saveRemoteSource(input: {
       definition: { ...entry.definition, id: undefined },
     };
   });
-  getRawSqlite()
-    .prepare(
-      `INSERT INTO extension_remote_sources (id, name, url, catalog_json, updated_at) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name, url=excluded.url, catalog_json=excluded.catalog_json, updated_at=excluded.updated_at`,
-    )
-    .run(
-      id,
-      input.name,
-      input.url,
-      JSON.stringify(entries),
-      new Date().toISOString(),
-    );
+  store.put('extension-sources',id,{id,name:input.name,url:input.url,catalog_json:JSON.stringify(entries)});
+  await store.flush(['extension-sources']);
   return { id, count: entries.length };
 }
 export async function syncRemoteSource(id: string) {
@@ -83,9 +71,7 @@ export async function syncRemoteSource(id: string) {
   return saveRemoteSource(source);
 }
 export function remoteCatalogDefinition(id: string) {
-  const sources = getRawSqlite()
-    .prepare('SELECT * FROM extension_remote_sources')
-    .all() as SourceRow[];
+  const sources = store.list<SourceRow>('extension-sources');
   for (const source of sources) {
     const entry = (JSON.parse(source.catalog_json) as CatalogEntry[]).find(
       (entry) => entry.id === id,
@@ -95,9 +81,7 @@ export function remoteCatalogDefinition(id: string) {
   }
 }
 export function remoteCatalogItems(projectId: string): ExtensionItem[] {
-  const sources = getRawSqlite()
-    .prepare('SELECT * FROM extension_remote_sources')
-    .all() as SourceRow[];
+  const sources = store.list<SourceRow>('extension-sources');
   return sources.flatMap((source) =>
     (JSON.parse(source.catalog_json) as CatalogEntry[]).map((entry) => ({
       id: entry.id,

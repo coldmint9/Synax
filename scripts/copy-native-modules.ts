@@ -26,25 +26,6 @@ const dest = join(serverDist, "node_modules");
 rmSync(dest, { recursive: true, force: true });
 mkdirSync(dest, { recursive: true });
 
-// Copy libsql, @libsql/client, and their runtime dependencies.
-const libsqlPackages = [
-  "libsql",
-  "@neon-rs/load",
-  "detect-libc",
-  "js-base64",
-  "promise-limit",
-  "ws",
-];
-const libsqlPlatforms = readdirSync(src).filter((d) => d.startsWith("@libsql"));
-
-// Copy @libsql scoped packages (platform binaries)
-for (const scope of libsqlPlatforms) {
-  const scopeSrc = join(src, scope);
-  const scopeDest = join(dest, scope);
-  cpSync(scopeSrc, scopeDest, { recursive: true });
-  console.log(`  copied ${scope}`);
-}
-
 // Synax owns ripgrep; copy the universal package so both the CLI and desktop
 // server can resolve the binary without depending on the host machine.
 const ripgrepPackage = "@vscode/ripgrep-universal";
@@ -53,12 +34,6 @@ cpSync(join(src, ripgrepPackage), join(dest, ripgrepPackage), {
   recursive: true,
 });
 console.log(`  copied ${ripgrepPackage}`);
-
-// Copy libsql main package
-for (const pkg of libsqlPackages) {
-  cpSync(join(src, pkg), join(dest, pkg), { recursive: true });
-  console.log(`  copied ${pkg}`);
-}
 
 // These runtime packages resolve resources dynamically.
 const dynamicPackages = [
@@ -157,9 +132,7 @@ for (const name of ["analyzer-worker.cjs", "scan-pipeline-worker.thread.cjs"]) {
   rmSync(join(serverDist, "workers", name), { force: true });
 }
 rmSync(join(serverDist, "migrations"), { recursive: true, force: true });
-cpSync(join(root, "services/local-node/infrastructure/database/migrations"), join(serverDist, "migrations"), {
-  recursive: true,
-});
+
 mkdirSync(join(serverDist, "workers"), { recursive: true });
 cpSync(
   join(root, "services/worker/jobs/owned-process-runner.cjs"),

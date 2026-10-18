@@ -796,7 +796,7 @@ export interface SessionSearchResponse {
 }
 
 export interface HistoryWindowState {
-  storage?: "sqlite-flat";
+  storage?: "rust";
   revision: number;
   epoch: number;
   cursor?: string;

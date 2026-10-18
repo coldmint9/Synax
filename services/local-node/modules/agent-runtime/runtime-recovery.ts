@@ -1,11 +1,19 @@
+import { interruptContextCompaction } from "./context-compaction-state.js";
+import { hasInput } from "./content-parts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { interactionService } from "./interaction-service.js";
 import { permissionPolicy } from "./permission-policy.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
-import { registerAuthoritativeLease, stopRecordedProcess, type OwnedProcessRecord } from "./process-ownership.js";
+import { profileService } from "./profile-service.js";
+import {
+  registerAuthoritativeLease,
+  stopRecordedProcess,
+  type OwnedProcessRecord,
+} from "./process-ownership.js";
+import { runtimeTransaction } from "./runtime-transaction.js";
 import { nowIso } from "./runtime-ids.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
-import type { AgentRun, AgentSession } from "./contracts.js";
+import type { AgentRun, AgentSession, StreamTurnRequest } from "./contracts.js";
 
 export function isDurableRuntimeCheckpoint(status: string): boolean {
   return status === "waiting_permission" || status === "waiting_input";
@@ -216,21 +224,37 @@ export async function recoverRuntime(
   return recoverAuthoritativeRuntime(hostId);
 }
 
+export function restoreUnlaunchedInput(
+  sessionId: string,
+  input: StreamTurnRequest,
+): StreamTurnRequest {
+  if (hasInput(input)) return input;
+  const last = agentRuntimeStore.listRuns(sessionId)[0];
+  if (
+    (last?.metadata.recovery as { phase?: string } | undefined)?.phase !==
+    "queued"
+  )
+    return input;
+  const accepted = last.metadata.runtime as
+    | { input?: StreamTurnRequest }
+    | undefined;
+  return accepted?.input ? { ...accepted.input, ...input } : input;
+}
+
 export async function acknowledgeRuntimeRecovery(
   sessionId: string,
 ): Promise<void> {
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const resolvedSession = (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as AgentSession;
-  const state = await runtimeFacade.controlState(sessionId) as { processLeases?: unknown[] };
-  const records = (Array.isArray(state.processLeases) ? state.processLeases : []).flatMap((raw) => {
+  const session = (await import("./sidecar/runtime-facade.js")).runtimeFacade.uiSnapshotAuthoritative(sessionId).then((snapshot) => snapshot.session as AgentSession);
+  const resolvedSession = await session;
+  const records = (((await import("./sidecar/runtime-facade.js")).runtimeFacade.controlState(sessionId) as Promise<{ processLeases?: unknown[] }>).then((state) => (Array.isArray(state.processLeases) ? state.processLeases : []).flatMap((raw) => {
         if (!raw || typeof raw !== "object") return [];
         const lease = raw as Record<string, unknown>;
         if (typeof lease.leaseId !== "string") return [];
         const record = { id: lease.leaseId, host_id: String(lease.hostId ?? "unknown"), session_id: sessionId, run_id: typeof lease.runId === "string" ? lease.runId : null, pid: typeof lease.pid === "number" ? lease.pid : null, process_group: typeof lease.processGroup === "number" ? lease.processGroup : 0, command_label: typeof lease.commandLabel === "string" ? lease.commandLabel : "runtime process", state: typeof lease.state === "string" ? lease.state : "active", runtime_kind: lease.runtimeKind === "wsl" ? "wsl" : undefined, runtime_distribution: typeof lease.runtimeDistribution === "string" ? lease.runtimeDistribution : null, runtime_pid: typeof lease.runtimePid === "number" ? lease.runtimePid : null, runtime_pgid: typeof lease.runtimePgid === "number" ? lease.runtimePgid : null } as OwnedProcessRecord;
         registerAuthoritativeLease(record);
         return [record];
-      });
-  const resolvedRecords = records as OwnedProcessRecord[];
+      })));
+  const resolvedRecords = await records;
   for (const record of resolvedRecords)
     if (!(await stopRecordedProcess(record)))
       throw new AgentRuntimeError(
@@ -239,12 +263,15 @@ export async function acknowledgeRuntimeRecovery(
         409,
       );
   if (!resolvedSession.sessionMetadata?.runtimeControl) return;
-  await runtimeFacade.controlCommand({
-    sessionId,
-    requestId: `recovery-ack:${sessionId}`,
-    operation: "resume",
-    payload: { runId: resolvedSession.activeRunId },
-  });
+  {
+    const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `recovery-ack:${sessionId}`,
+      operation: "resume",
+      payload: { runId: resolvedSession.activeRunId },
+    });
+  }
   agentRuntimeStore.updateSessionMetadata(sessionId, {
     runtimeControl: null,
     lastRecoveryAcknowledgedAt: nowIso(),

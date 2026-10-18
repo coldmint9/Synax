@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   decodeUiSnapshot,
   type RuntimeRecordState,
@@ -522,7 +522,7 @@ export class RuntimeFacade {
   async getAssetMetadata(assetId: string): Promise<unknown> {
     return this.historyCommandGlobal({
       scopeId: "assets",
-      requestId: `asset-metadata-read:${assetId}`,
+      requestId: `asset-metadata-read:${randomUUID()}`,
       operation: "asset_get",
       payload: { assetId },
     });
@@ -546,7 +546,7 @@ export class RuntimeFacade {
   async hasAssetBinding(sessionId: string, assetId: string): Promise<boolean> {
     const result = (await this.historyCommandGlobal({
       scopeId: "assets",
-      requestId: `asset-binding-read:${sessionId}:${assetId}`,
+      requestId: `asset-binding-read:${randomUUID()}`,
       operation: "asset_has_binding",
       payload: { sessionId, assetId },
     })) as {
@@ -557,7 +557,7 @@ export class RuntimeFacade {
   async listBoundAssets(sessionId: string): Promise<unknown[]> {
     const result = (await this.historyCommandGlobal({
       scopeId: "assets",
-      requestId: `asset-bindings-list:${sessionId}`,
+      requestId: `asset-bindings-list:${randomUUID()}`,
       operation: "asset_list_bindings",
       payload: { sessionId },
     })) as {
@@ -585,7 +585,7 @@ export class RuntimeFacade {
     const scopeId = `asset:${assetId}`;
     const manifest = (await this.historyCommandGlobal({
       scopeId,
-      requestId: `asset-blob-manifest-read:${assetId}`,
+      requestId: `asset-blob-manifest-read:${randomUUID()}`,
       operation: "get_blob_manifest",
       payload: { blobId: assetId },
     })) as {
@@ -600,7 +600,7 @@ export class RuntimeFacade {
     for (let index = 0; index < total; index++) {
       const chunk = (await this.historyCommandGlobal({
         scopeId,
-        requestId: `asset-blob-chunk-read:${assetId}:${index}`,
+        requestId: `asset-blob-chunk-read:${randomUUID()}`,
         operation: "get_blob_chunk",
         payload: { blobId: assetId, index },
       })) as {

@@ -63,7 +63,7 @@ export const mediaReadTool: RegisteredTool = {
       };
     }
     const parts = [{ type: modalityForMime(asset.mediaType), assetId: asset.id }];
-    if (args.assetOnly) bindAssets(input.sessionId, parts);
+    if (args.assetOnly) await bindAssets(input.sessionId, parts);
     const contentParts = args.assetOnly ? [] : await resolveFileParts(parts, session.projectId,
       isVisualDocument(asset.mediaType) ? await sessionInputCapabilities(input.sessionId,
       input.runId ? agentRuntimeStore.getRun(input.runId).model ?? undefined : undefined) : undefined,
@@ -72,8 +72,8 @@ export const mediaReadTool: RegisteredTool = {
     // otherwise exceed the per-input ten-file validation limit.
     // The part must carry the modality derived from the MIME type: images and
     // videos are native visuals, so "file" is only correct for documents.
-    bindAssets(input.sessionId, parts);
-    bindAssets(input.sessionId, contentParts);
+    await bindAssets(input.sessionId, parts);
+    await bindAssets(input.sessionId, contentParts);
     const warnings = contentParts.filter(p => p.type === "text" && /无法识别|无法完整识别|未提供给模型识别/.test(p.text));
     return {
       result: { asset },

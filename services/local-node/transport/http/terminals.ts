@@ -4,6 +4,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { listOwnedProcesses } from "../../modules/agent-runtime/process-ownership.js";
 import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { terminalManager } from "../../infrastructure/terminals/terminal-manager.js";
 import {
@@ -11,7 +12,7 @@ import {
   createServiceTerminal,
 } from "../../infrastructure/terminals/terminal-service.js";
 import { agentRuntimeStore } from "../../modules/agent-runtime/session-store.js";
-import { listSessionBackgroundProcesses, stopSessionBackgroundProcess } from "../../modules/agent-runtime/session-background-processes.js";
+import { stopSessionBackgroundProcess } from "../../modules/agent-runtime/session-background-processes.js";
 import {
   AgentRuntimeError,
   toHttpError,
@@ -126,7 +127,7 @@ terminalRoutes.post("/projects/:projectId/:id/stop", async (c) => {
 });
 terminalRoutes.delete("/projects/:projectId/:id", async (c) => {
   const item = await scoped(c);
-  terminalManager.remove(item.id);
+  await terminalManager.remove(item.id);
   return c.json({ ok: true });
 });
 terminalRoutes.post("/projects/:projectId/:id/ack", async (c) => {
@@ -262,8 +263,8 @@ terminalRoutes.post(
     const sessionId = c.req.param("sessionId"),
       id = c.req.param("processId");
     agentRuntimeStore.getSession(sessionId);
-    const previous = await listSessionBackgroundProcesses(sessionId);
-    if (!previous.some(item => item.id === id && item.kind === "service"))
+    const previous=(await listOwnedProcesses(sessionId)).find(p=>p.id===id && p.kind==='background');
+    if (!previous)
       throw new AgentRuntimeError("Service not found.", "NOT_FOUND", 404);
     const body = await json(
       c,

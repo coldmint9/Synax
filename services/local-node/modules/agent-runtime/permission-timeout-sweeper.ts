@@ -4,7 +4,6 @@ import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 const SWEEP_INTERVAL_MS = 30_000;
 
-/** Read and resolve expired permissions from Rust control state. */
 export async function sweepExpiredPermissionsAuthoritative(): Promise<number> {
   const cutoff = Date.now() - PERMISSION_TIMEOUT_MS;
   let swept = 0;

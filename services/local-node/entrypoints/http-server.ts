@@ -4,11 +4,11 @@ import { attachTerminalSockets } from "../infrastructure/terminals/terminal-sock
 import { terminalRoutes } from "../transport/http/terminals.js";
 import { terminalManager } from "../infrastructure/terminals/terminal-manager.js";
 import { runtimeAssetRoutes } from "../transport/http/runtime-assets.js";
-import { sweepAssets } from "../modules/agent-runtime/media-assets.js";
+import { sweepAssets, hydrateRuntimeAssets } from "../modules/agent-runtime/media-assets.js";
 import type { Server } from "node:http";
-import { closeDb } from "../infrastructure/database/index.js";
 import { stopHostProcesses } from "../modules/agent-runtime/process-ownership.js";
-import { acquireRuntimeHost } from "../modules/agent-runtime/runtime-host.js";
+import { randomUUID } from "node:crypto";
+import { businessStore } from "../infrastructure/persistence/business-store.js";
 import {
   isDurableRuntimeCheckpoint,
   recoverRuntime,
@@ -38,7 +38,6 @@ import { projectSettingsRoutes } from "../transport/http/project-settings.js";
 import { fsRoutes } from "../transport/http/fs.js";
 import { wslRoutes } from "../transport/http/wsl.js";
 import { webSearchOAuthRoutes } from "../transport/http/web-search-oauth.js";
-import { getRawSqlite } from "../infrastructure/database/index.js";
 import { agentRuntimeStore } from "../modules/agent-runtime/session-store.js";
 import { recoverMediaJobs } from "../modules/media/jobs.js";
 import {
@@ -51,10 +50,7 @@ import { startSessionArchiveRetention } from "../modules/agent-runtime/session-a
 import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/browser-manager.js";
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
-import { readServiceOrigin, startReadService, stopReadService } from "../infrastructure/runtime/read-service.js";
 import { startRustRuntimeSidecar, stopRustRuntimeSidecar, type RustRuntimeSidecarHandle } from "../infrastructure/runtime/rust-sidecar.js";
-import { recoverAbandonedFileWriters } from '../modules/agent-runtime/runtime-files.js';
-import { runtimeFacade } from '../modules/agent-runtime/sidecar/runtime-facade.js';
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -78,59 +74,11 @@ installRuntimeAccess(app, {
     .filter(Boolean),
 });
 
-function shouldProxyRead(pathname: string, method: string): boolean {
-  if (method !== "GET" && method !== "HEAD") return false;
-  // Streaming endpoints stay on the primary runtime because their live buses
-  // and WebSocket upgrades are owned there. The read service handles bounded
-  // snapshots and lists only.
-  if (
-    pathname === "/api/context/sync" ||
-    pathname === "/api/notifications/stream" ||
-    pathname === "/api/agent-runtime/events/stream" ||
-    pathname.includes("/stream") ||
-    pathname.endsWith("/live") ||
-    pathname.includes("/visualization") ||
-    pathname.endsWith("/prune")
-  ) return false;
-  return [
-    "/api/projects",
-    "/api/context",
-    "/api/config",
-    "/api/agent-runtime",
-    "/api/skills",
-    "/api/skill-sources",
-    "/api/logs",
-    "/api/project-settings",
-    "/api/fs",
-    "/api/wsl",
-  ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
-
-app.use("*", async (c, next) => {
-  const readOrigin = readServiceOrigin();
-  if (!readOrigin || !shouldProxyRead(c.req.path, c.req.method)) return next();
-  try {
-    const requestUrl = new URL(c.req.url);
-    const headers = new Headers(c.req.raw.headers as HeadersInit);
-    headers.delete("host");
-    headers.delete("connection");
-    headers.delete("content-length");
-    const response = await fetch(`${readOrigin}${requestUrl.pathname}${requestUrl.search}`, {
-      method: c.req.method,
-      headers,
-      signal: c.req.raw.signal,
-    });
-    const responseHeaders = new Headers(response.headers);
-    responseHeaders.set("X-Synax-Read-Service", "1");
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: responseHeaders,
-    });
-  } catch (error) {
-    pinoLogger.warn({ error }, "read service proxy failed; falling back to primary API");
-    return next();
-  }
+// Refresh cross-process metadata before requests and commit before returning.
+app.use('/api/*', async (c, next) => {
+  await Promise.all([businessStore.refresh(),hydrateRuntimeAssets(),agentRuntimeStore.hydrateSessions()]);
+  await next();
+  await businessStore.flush();
 });
 
 // 请求日志
@@ -183,19 +131,12 @@ process.on('message', acceptParentMessage);
 const electronParentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data: unknown }) => void): void } }).parentPort;
 electronParentPort?.on('message', event => acceptParentMessage(event.data));
 
-const runtimeHost = acquireRuntimeHost(DATA_ROOT);
+// RocksDB holds the exclusive data-root lock for the lifetime of the Rust sidecar.
+const runtimeHost = { hostId: randomUUID() };
 process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
 process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
-
-// --- 初始化上下文数据库（提前触发 WAL 模式与迁移执行） ---
-try {
-  getRawSqlite();
-} catch (err) {
-  pinoLogger.error({ err }, "failed to initialize context db");
-  throw err;
-}
 
 ensureGitMrProfileRegistered();
 ensureSynaxAgentRegistered();
@@ -213,19 +154,11 @@ async function startRuntime(): Promise<void> {
   process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
   rustRuntimeSidecar = await startRustRuntimeSidecar();
+  await businessStore.refresh();
   await agentRuntimeStore.hydrateSessions();
-  const fileRestores=await recoverAbandonedFileWriters();
-  const restoreSessions=new Set(fileRestores);
-  for(const session of await runtimeFacade.listSessionProjection() as Array<{id:string;status:string}>) {
-    if(session.status==='stopping') {
-      const control=await runtimeFacade.controlState(session.id) as {runtimeControl?:{historyRequestId?:string}};
-      if(control.runtimeControl?.historyRequestId)restoreSessions.add(session.id);
-    }
-  }
-  for(const sessionId of restoreSessions)await runtimeFacade.recoverHistoryAuthoritative(sessionId);
+  await hydrateRuntimeAssets();
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   const recovery = await recoverRuntime(runtimeHost.hostId);
-  await recoverAbandonedFileWriters();
   const mediaJobs = recoverMediaJobs();
   if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
   if (recovery.reviewed)
@@ -237,11 +170,7 @@ async function startRuntime(): Promise<void> {
   stopSessionArchiveRetention = startSessionArchiveRetention();
   startInteractionRecovery();
 
-  // Let the primary API become ready immediately. The child may use the same
-  // WAL database, but its synchronous reads cannot occupy this process's event
-  // loop. Requests fall back to the primary API until the read service is ready.
   if (!shuttingDown) startServer(recovery.resumable);
-  void startReadService();
 }
 
 function startServer(resumable: string[]): void {
@@ -280,7 +209,6 @@ async function shutdownRuntime(): Promise<void> {
   shuttingDown = true;
   closeObservationSockets?.();
   closeTerminalSockets?.();
-  await stopReadService();
   httpServer?.closeAllConnections();
   httpServer?.close();
   let failed = false;
@@ -310,10 +238,9 @@ async function shutdownRuntime(): Promise<void> {
   }
   await closeAllBrowserSessions("Runtime host is shutting down.");
   mcpClientManager.closeAll();
+  await businessStore.flush();
   await stopRustRuntimeSidecar(rustRuntimeSidecar);
   rustRuntimeSidecar = null;
-  runtimeHost.release();
-  closeDb();
   process.exit(failed ? 1 : 0);
 }
 process.on("SIGINT", () => {
@@ -333,6 +260,5 @@ setInterval(() => {
 // --- 启动服务 ---
 void startRuntime().catch((error) => {
   pinoLogger.error({ error }, "runtime startup failed");
-  runtimeHost.release();
   process.exitCode = 1;
 });

@@ -29,20 +29,7 @@ export function mergeRefreshedHistory(
   previous: SessionDetailCacheEntry | undefined,
   latest: SessionDetailCacheEntry,
 ): SessionDetailCacheEntry {
-  if (latest.historyWindow?.storage === "sqlite-flat" && previous?.timelineIndexLoaded &&
-      previous.historyWindow?.epoch === latest.historyWindow.epoch &&
-      latest.messages.some(message => previous.timelineMessages?.some(old => old.id === message.id))) {
-    // Flat cursors survive append. Reuse the complete rail and merge the latest
-    // page instead of re-reading the whole navigation index on every revision.
-    const merged = mergeRefreshedHistory({ ...previous, timelineIndexLoaded: false }, latest);
-    return { ...merged,
-      timelineMessages: byId(previous.timelineMessages ?? [], latest.messages.map(previewTimelineMessage)),
-      timelineRuns: byId(previous.timelineRuns ?? [], latest.runs),
-      timelineSteps: byId(previous.timelineSteps ?? [], latest.steps),
-      timelineToolCalls: byId(previous.timelineToolCalls ?? [], latest.toolCalls),
-      timelineIndexLoaded: true, timelineIndexError: undefined,
-    };
-  }
+
   if (
     !previous?.historyPagesLoaded ||
     !previous.historyWindow ||

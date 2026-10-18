@@ -5,7 +5,7 @@ import { getGlobalConfig } from "../runtime/config/config-store.js";
 import { systemTerminalShell } from "./terminal-shell.js";
 import path from "node:path";
 import type { IPty } from "node-pty";
-import { assertRuntimeExecutionCurrent } from "../database/index.js";
+import { assertRuntimeExecutionCurrent } from "../runtime/execution-context.js";
 import { withoutExecutionContext } from "../runtime/execution-context.js";
 import { canonicalWorkspaceDirectory } from "../../modules/project-workspace.js";
 import {
@@ -53,6 +53,9 @@ export interface TerminalInfo {
   endedAt: string | null;
   cols: number;
   rows: number;
+  requestKey?: string;
+  processIdentity?: string;
+  deletedAt?: string;
 }
 export interface TerminalFrame {
   sequence: number;
@@ -105,11 +108,14 @@ class TerminalManager {
   private readonly authoritativeHydratedProjects = new Set<string>();
   private readonly authoritativeHydration = new Map<string, Promise<void>>();
 
-  private authoritativeEnabled(): boolean { return true; }
+  private authoritativeEnabled(): boolean {
+    return true;
+  }
 
   private mergeAuthoritativeRecord(raw: unknown): string | undefined {
     if (!raw || typeof raw !== "object") return undefined;
     const record = raw as Record<string, unknown>;
+    if(record.deletedAt && typeof record.id==='string') {this.authoritativeHistory.delete(record.id);return;}
     const required = ["id", "projectId", "rootId", "kind", "title", "cwd", "shell", "state", "startedAt"];
     if (required.some((key) => typeof record[key] !== "string")) return undefined;
     if (record.ownerSessionId !== null && record.ownerSessionId !== undefined && typeof record.ownerSessionId !== "string") return undefined;
@@ -131,6 +137,8 @@ class TerminalManager {
       endedAt: typeof record.endedAt === "string" ? record.endedAt : null,
       cols: typeof record.cols === "number" ? record.cols : 100,
       rows: typeof record.rows === "number" ? record.rows : 30,
+      requestKey: typeof record.requestKey === "string" ? record.requestKey:undefined,
+      processIdentity: typeof record.processIdentity === "string" ? record.processIdentity:undefined,
     };
     this.authoritativeHistory.set(item.id, item);
     const outputSequence = record.outputSequence;
@@ -170,14 +178,18 @@ class TerminalManager {
   }
 
   async getAuthoritative(id: string, projectId?: string): Promise<TerminalInfo> {
-    const cached = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
+
+    const live = this.live.get(id)?.info;
+    const cached = live ?? this.authoritativeHistory.get(id);
     if (cached && (!projectId || cached.projectId === projectId)) return { ...cached };
     if (projectId) await this.hydrateAuthoritativeProject(projectId);
     const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
     if (!item || (projectId && item.projectId !== projectId)) failure("Terminal not found.", 404);
     return { ...item };
   }
+
   async snapshotAuthoritative(id: string, projectId?: string): Promise<{ sequence: number; data: string }> {
+
     if (!this.live.has(id) && !this.authoritativeHistory.has(id) && projectId)
       await this.hydrateAuthoritativeProject(projectId);
     const entry = this.live.get(id);
@@ -185,7 +197,9 @@ class TerminalManager {
     if (!this.authoritativeHistory.has(id)) failure("Terminal not found.", 404);
     return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
   }
+
   async replayAuthoritative(id: string, projectId?: string, after?: number): Promise<{ reset: boolean; sequence: number; frames: TerminalFrame[] }> {
+
     const entry = this.live.get(id);
     const snapshot = await this.snapshotAuthoritative(id, projectId);
     if (after !== undefined && after === snapshot.sequence) return { reset: false, sequence: after, frames: [] };
@@ -219,7 +233,7 @@ class TerminalManager {
     info: TerminalInfo,
     output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" },
   ): Promise<void> {
-    if (!this.authoritativeEnabled()) return;
+
     if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
       this.authoritativeHistory.set(info.id, { ...info });
       this.authoritativeOutput.set(info.id, { ...output });
@@ -292,24 +306,31 @@ class TerminalManager {
   private flushTimer?: ReturnType<typeof setInterval>;
   private stopping = new Map<string, Promise<void>>();
   get(id: string, projectId?: string): TerminalInfo {
-    const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
-    if (!item || (projectId && item.projectId !== projectId)) failure("Terminal not found.", 404);
-    return { ...item };
+    {
+      const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
+      if (!item || (projectId && item.projectId !== projectId)) failure("Terminal not found.", 404);
+      return { ...item };
+    }
   }
   list(projectId: string): TerminalInfo[] {
-    const items = new Map<string, TerminalInfo>(this.authoritativeHistory);
-    for (const entry of this.live.values()) items.set(entry.info.id, entry.info);
-    return [...items.values()]
-      .filter((item) => item.projectId === projectId)
-      .sort((a, b) => Number(b.state !== "closed") - Number(a.state !== "closed") || b.startedAt.localeCompare(a.startedAt))
-      .slice(0, 100)
-      .map((item) => ({ ...item }));
+    {
+      const items = new Map<string, TerminalInfo>(this.authoritativeHistory);
+      for (const entry of this.live.values()) items.set(entry.info.id, entry.info);
+      return [...items.values()]
+        .filter((item) => item.projectId === projectId)
+        .sort((a, b) => Number(b.state !== "closed") - Number(a.state !== "closed") || b.startedAt.localeCompare(a.startedAt))
+        .slice(0, 100)
+        .map((item) => ({ ...item }));
+    }
   }
   async listAuthoritative(projectId: string): Promise<TerminalInfo[]> {
+
     await this.hydrateAuthoritativeProject(projectId);
     return this.list(projectId);
   }
-  has(id: string): boolean { return this.live.has(id) || this.authoritativeHistory.has(id); }
+  has(id: string): boolean {
+    return this.live.has(id) || this.authoritativeHistory.has(id);
+  }
   async create(input: {
     projectId: string;
     rootId: string;
@@ -326,6 +347,7 @@ class TerminalManager {
     requestKey?: string;
     stdin?: string;
   }): Promise<TerminalInfo> {
+
     if (
       [...this.live.values()].filter((value) => !value.closed).length >=
       MAX_LIVE
@@ -347,6 +369,12 @@ class TerminalManager {
             : undefined)) ||
         systemTerminalShell();
     const { spawn } = await import("node-pty");
+    // Recheck after loading the native module; no process is spawned before the record is committed.
+    if (input.requestKey) {
+      await this.hydrateAuthoritativeProject(input.projectId);
+      const found = this.list(input.projectId).find(t=>t.requestKey===input.requestKey);
+      if (found) return this.get(found.id, input.projectId);
+    }
     if (
       [...this.live.values()].filter((value) => !value.closed).length >=
       MAX_LIVE
@@ -361,6 +389,8 @@ class TerminalManager {
     if (wsl) recordOwnedRuntimeTarget(ticket.id, wsl.distribution);
     let identityReadyResolve: (() => void) | undefined;
     try {
+
+
       const localArgs =
         input.shellArgs ??
         (input.kind === "service"
@@ -416,6 +446,7 @@ class TerminalManager {
           shell,
           command: input.command ?? null,
           pid: pty.pid,
+          requestKey: input.requestKey,
           state: "active",
           exitCode: null,
           startedAt: new Date().toISOString(),
@@ -509,6 +540,10 @@ class TerminalManager {
             for (const listener of entry.listeners)
               listener({ type: "state", terminal });
           entry.finish();
+          // Keep a closed terminal in the live map until its authoritative
+          // snapshot is durably accepted. A sidecar restart must leave the
+          // dirty entry eligible for the retry timer.
+
         }),
       );
       // node-pty 1.1 exposes the slave path on its Unix handle. It is only
@@ -520,6 +555,7 @@ class TerminalManager {
           for (let attempt = 0; attempt < 25 && !entry.closed; attempt++) {
             const identity = await readProcessIdentity(pty.pid, tty);
             if (identity && !entry.closed) {
+              entry.info.processIdentity = identity;
               break;
             }
             await new Promise((resolve) => setTimeout(resolve, 20));
@@ -528,7 +564,7 @@ class TerminalManager {
       } finally {
         identityReadyResolve?.();
       }
-      assertRuntimeExecutionCurrent();
+      await assertRuntimeExecutionCurrent();
       if (input.stdin) pty.write(input.stdin);
       if (!this.flushTimer) {
         this.flushTimer = setInterval(
@@ -541,10 +577,12 @@ class TerminalManager {
         );
         this.flushTimer.unref();
       }
-      const snapshot = this.authoritativeSnapshot(entry);
-      await this.persistAuthoritative(snapshot.info, snapshot.output);
-      entry.dirty = false;
-      return { ...entry.info };
+      {
+        const snapshot = this.authoritativeSnapshot(entry);
+        await this.persistAuthoritative(snapshot.info, snapshot.output);
+        entry.dirty = false;
+        return { ...entry.info };
+      }
     } catch (error) {
       identityReadyResolve?.();
       if (this.live.has(ticket.id))
@@ -553,13 +591,20 @@ class TerminalManager {
       throw error;
     }
   }
-  private flush(_id: string, entry: LiveTerminal) {
+  private flush(id: string, entry: LiveTerminal) {
     if (!entry.dirty) return;
-    this.queueAuthoritativeFlush(entry);
+    {
+      this.queueAuthoritativeFlush(entry);
+      return;
+    }
   }
   snapshot(id: string): { sequence: number; data: string } {
     const entry = this.live.get(id);
-    if (entry) return { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") };
+    if (entry)
+      return {
+        sequence: entry.sequence,
+        data: entry.frames.map((frame) => frame.data).join(""),
+      };
     return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
   }
   replay(
@@ -657,6 +702,7 @@ class TerminalManager {
     entry.info.cols = cols;
     entry.info.rows = rows;
     entry.dirty = true;
+
   }
   redraw(id: string): void {
     const entry = this.live.get(id);
@@ -677,42 +723,131 @@ class TerminalManager {
     if (entry) {
       entry.stopping = true;
       await entry.identityReady;
-      if (!entry.closed) {
-        entry.pty.kill();
-        const exited = await Promise.race([
-          entry.exited.then(() => true),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
-        ]);
-        if (!exited) {
-          entry.stopping = false;
-          failure("Unable to confirm terminal shutdown. Retry before deleting the record.");
-        }
+    }
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && entry && !entry.closed) {
+      entry.pty.kill();
+      const exited = await Promise.race([
+        entry.exited.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+      ]);
+      if (!exited) {
+        entry.stopping = false;
+        failure("Unable to confirm terminal shutdown. Retry before deleting the record.");
       }
       return;
     }
-    const item = this.authoritativeHistory.get(id);
-    if (!item || item.state === "closed") return;
-    const record: OwnedProcessRecord = {
-      id,
-      host_id: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`,
-      session_id: item.ownerSessionId,
-      run_id: null,
-      pid: item.pid,
-      process_group: process.platform === "win32" ? 0 : 1,
-      command_label: item.command ?? item.title,
-      state: item.state,
-      kind: item.kind === "service" ? "background" : "terminal",
-    };
-    if (!(await stopRecordedProcess(record)))
-      failure("Unable to confirm terminal shutdown. Retry before deleting the record.");
+    const record:OwnedProcessRecord = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && entry
+      ? {
+          id,
+          host_id: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`,
+          session_id: entry.info.ownerSessionId,
+          run_id: null,
+          pid: entry.info.pid,
+          process_group: process.platform !== "win32" ? 1 : 0,
+          state: entry.info.state,
+          command_label: entry.info.title,
+          ...(entry.runtimeKind === "wsl" ? { runtime_kind: "wsl" as const, runtime_distribution: entry.runtimeDistribution } : {}),
+        } as OwnedProcessRecord
+      : (() => {
+          const info=this.get(id);
+          return {id,host_id:'recovered',session_id:info.ownerSessionId,run_id:null,pid:info.pid,process_group:1,state:info.state,command_label:info.command ?? info.title,process_identity:info.processIdentity} satisfies OwnedProcessRecord;
+        })();
+    if (record.runtime_kind === "wsl") {
+      if (!(await stopRecordedProcess(record))) {
+        entry && (entry.stopping = false);
+        failure(
+          "Unable to confirm WSL terminal shutdown. Retry before deleting the record.",
+        );
+      }
+      if (entry && !entry.closed) entry.pty.kill();
+      return;
+    }
+    if (process.platform === "win32" && entry && !entry.closed) {
+      // ConPTY owns native process handles; never guess ownership from a reused PID.
+      entry.pty.kill();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        entry.exited.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 5000);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!exited) {
+
+        entry.stopping = false;
+        failure(
+          "Unable to confirm terminal shutdown. Retry before deleting the record.",
+        );
+      }
+      return;
+    }
+    // Interactive shells put foreground jobs into distinct groups. Capture descendants
+    // before stopping the shell, and verify the ownership nonce before every signal.
+    if (record.pid && process.platform !== "win32") {
+      try {
+        const { stdout } = await execFileAsync(
+          "/bin/ps",
+          ["-axo", "pid=,ppid="],
+          { timeout: 3000, maxBuffer: 2 * 1024 * 1024 },
+        );
+        const rows = stdout
+          .trim()
+          .split("\n")
+          .map((line) => line.trim().split(/\s+/).map(Number));
+        const descendants = new Set<number>([record.pid]);
+        for (let count = 0; count < rows.length; count++) {
+          const oldSize = descendants.size;
+          for (const [pid, parent] of rows)
+            if (descendants.has(parent)) descendants.add(pid);
+          if (oldSize === descendants.size) break;
+        }
+        for (const pid of [...descendants].reverse())
+          if (pid !== record.pid)
+            await stopRecordedProcess({ ...record, pid, process_group: 0 });
+      } catch {
+        /* The verified group stop below remains the fallback. */
+      }
+    }
+    const confirmed = await stopRecordedProcess(record);
+    if (!confirmed) {
+
+      if (entry) entry.stopping = false;
+      failure(
+        "Unable to confirm terminal shutdown. The record has been kept for retry.",
+      );
+    }
+    if (entry) {
+      // stopRecordedProcess may report a recycled PID as already gone. Never
+      // follow that result with an unverified PID signal through IPty.kill().
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        entry.exited.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 2000);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!exited) {
+        entry.stopping = false;
+
+        failure(
+          "Terminal exit could not be confirmed. The process and its record were retained.",
+        );
+      }
+      this.flush(id, entry);
+    }
   }
-  remove(id: string): void {
-    const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
-    if (!item || item.state !== "closed" || (this.live.has(id) && !this.live.get(id)!.closed))
-      failure("Stop this terminal before deleting its record.");
-    this.live.delete(id);
-    this.authoritativeHistory.delete(id);
-    this.authoritativeOutput.delete(id);
+  async remove(id: string): Promise<void> {
+    {
+      const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
+      if (!item || item.state !== "closed" || (this.live.has(id) && !this.live.get(id)!.closed))
+        failure("Stop this terminal before deleting its record.");
+      await this.persistAuthoritative({...item,deletedAt:new Date().toISOString()});
+      this.live.delete(id);
+      this.authoritativeHistory.delete(id);
+      return;
+    }
   }
   async shutdown(): Promise<void> {
     if (this.flushTimer) clearInterval(this.flushTimer);

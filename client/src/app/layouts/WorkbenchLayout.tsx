@@ -6,8 +6,6 @@ import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import { projectApi } from "../../adapters/transport/project";
 import { addProject, useShellStore } from "../../shared/state/shellStore";
 import { useAgentDockStore } from "../../features/agent-workspace/state/agentDockStore";
-import { useContextStore } from "../../shared/state/contextStore";
-import { useContextStream } from "../../shared/hooks/useContextStream";
 import { useAgentPermissionNotifier } from "../../shared/hooks/useAgentPermissionNotifier";
 import { useDesktopNotification } from "../../shared/hooks/useDesktopNotification";
 import { useTaskNotificationListener } from "../../shared/hooks/useTaskNotificationListener";
@@ -80,16 +78,6 @@ function WorkbenchLayoutContent() {
   useEffect(() => {
     if (!projectsLoaded) void fetchProjects();
   }, [projectsLoaded, fetchProjects]);
-
-  const bindContext = useContextStore((s) => s.bind);
-  const boundProjectId = useContextStore((s) => s.projectId);
-  useEffect(() => {
-    if (!effectiveProjectId) return;
-    if (boundProjectId !== effectiveProjectId) {
-      bindContext(effectiveProjectId, "local-user");
-    }
-  }, [effectiveProjectId, boundProjectId, bindContext]);
-  useContextStream();
 
   // 单例 SSE 订阅 + 绑定 projectId 到 agentSessionStore
   const setSessionProjectId = useAgentSessionStore((s) => s.setProjectId);
@@ -215,7 +203,6 @@ function WorkbenchLayoutContent() {
     effectiveProjectId &&
     activePanel === "sessions";
 
-  const unbindContext = useContextStore((s) => s.unbind);
   const removeFromStore = useShellStore((s) => s.removeProject);
 
   const handleRemoveProject = useCallback(
@@ -223,7 +210,6 @@ function WorkbenchLayoutContent() {
       const isCurrentProject = projectId === effectiveProjectId;
       if (isCurrentProject) {
         removingProjectIdRef.current = projectId;
-        unbindContext();
         setCurrentProjectId(null);
       }
       try {
@@ -251,7 +237,7 @@ function WorkbenchLayoutContent() {
     [
       effectiveProjectId,
       location.pathname,
-      unbindContext,
+
       setCurrentProjectId,
       removeFromStore,
       navigate,

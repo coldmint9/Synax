@@ -52,9 +52,6 @@ vi.mock("../CachedWorkbenchPage", () => ({
   CachedWorkbenchPage: () => null,
   PageLoading: () => null,
 }));
-vi.mock("../../../shared/hooks/useContextStream", () => ({
-  useContextStream: () => {},
-}));
 vi.mock("../../../shared/hooks/useAgentPermissionNotifier", () => ({
   useAgentPermissionNotifier: () => {},
 }));

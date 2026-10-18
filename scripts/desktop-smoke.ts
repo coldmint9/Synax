@@ -322,10 +322,6 @@ try {
       process.send({ ok: true }); process.disconnect();
     } else {
       const assert = require('node:assert/strict');
-      const req = require('node:module').createRequire(process.argv[2]);
-      const Database = req('libsql');
-      const db = new Database(':memory:');
-      assert.equal(db.prepare('SELECT 1 AS ok').get().ok, 1); db.close();
       const child = require('node:child_process').fork(__filename, ['--child'], { execArgv: [], stdio: ['ignore','pipe','pipe','ipc'] });
       let replied = false;
       child.once('message', () => { replied = true; });
