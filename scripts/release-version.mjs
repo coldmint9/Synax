@@ -44,6 +44,14 @@ function sync(version) {
   writeJson(files.lock, lock);
   writeJson(files.clientLock, clientLock);
 
+  for (const file of ["runtime-sidecar/Cargo.toml", "runtime-sidecar/Cargo.lock"]) {
+    const path = resolve(root, file);
+    writeFileSync(path, readFileSync(path, "utf8").replace(
+      /(name = "synax-runtime-sidecar"\r?\nversion = ")[^"]+(")/,
+      (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
+    ));
+  }
+
   for (const file of [
     "cli/main.ts",
     "client/src/app/pages/AboutPage.tsx",
