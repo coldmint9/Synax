@@ -14,12 +14,12 @@ it('reads a persisted projection without touching legacy session storage', async
   expect(read).not.toHaveBeenCalled(); expect(client.seedUi).not.toHaveBeenCalled();
 });
 
-it('defaults a supervised host to authoritative mode while allowing an explicit disabled test transport', () => {
+it('uses only Rust regardless of retired transport flags', () => {
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SUPERVISOR', '1');
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', '');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'disabled');
-  expect(new RuntimeFacade(() => null).streamMode()).toBe('disabled');
+  expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
 });
 it('seeds only at the explicit creation boundary', async () => {
   const initial = { id: 's', projectId: 'p', status: 'running', updatedAt: 'now' };

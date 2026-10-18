@@ -1,34 +1,35 @@
-import { decodeUiSnapshot, type RuntimeRecordState } from '../../../../../packages/runtime-protocol/stream.js';
-import { RuntimeSidecarClient, RuntimeSidecarError } from './sidecar-client.js';
-import { createHash } from 'node:crypto';
-import type { AcceptedRuntimeInput } from '../run-admission.js';
-import type { AgentRun, AgentSession, AgentRunStreamChunk, AgentRunStep, AgentRuntimeMessage, RuntimeEvent, ToolCallRecord } from '../contracts.js';
-import { agentRuntimeStore } from '../session-store.js';
-import { logger } from '../../../infrastructure/runtime/logger.js';
-import { AgentRuntimeError } from '../runtime-errors.js';
-import { normalizeUsage } from '../../../infrastructure/llm-runtime/usage.js';
-import { projectCacheUsage } from '../cache-usage.js';
-
-export type RuntimeSidecarAdmissionMode = 'disabled' | 'shadow';
-export type RuntimeSidecarStreamMode = 'disabled' | 'shadow' | 'authoritative';
-
+import { createHash } from "node:crypto";
+import {
+  decodeUiSnapshot,
+  type RuntimeRecordState,
+} from "../../../../../packages/runtime-protocol/stream.js";
+import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
+import { logger } from "../../../infrastructure/runtime/logger.js";
+import { projectCacheUsage } from "../cache-usage.js";
+import type {
+  AgentRun,
+  AgentRunStep,
+  AgentRunStreamChunk,
+  AgentRuntimeMessage,
+  AgentSession,
+  RuntimeEvent,
+  ToolCallRecord,
+} from "../contracts.js";
+import type { AcceptedRuntimeInput } from "../run-admission.js";
+import { AgentRuntimeError } from "../runtime-errors.js";
+import { agentRuntimeStore } from "../session-store.js";
+import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
+export type RuntimeSidecarStreamMode = "authoritative";
 function streamMode(): RuntimeSidecarStreamMode {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') return 'authoritative';
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'disabled') return 'disabled';
-  return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'shadow'
-    ? 'shadow'
-    : process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR === '1'
-      ? 'authoritative'
-      : 'disabled';
+  return "authoritative";
 }
-
-function admissionMode(): RuntimeSidecarAdmissionMode {
-  return process.env.SYNAX_RUNTIME_SIDECAR_ADMISSION === 'shadow'
-    ? 'shadow'
-    : 'disabled';
-}
-
-let connection: { socketPath: string; token: string; client: RuntimeSidecarClient } | undefined;
+let connection:
+  | {
+      socketPath: string;
+      token: string;
+      client: RuntimeSidecarClient;
+    }
+  | undefined;
 let historyReadSequence = 0;
 const historyReadRequest = (operation: string, sessionId: string) =>
   `history-read:${operation}:${sessionId}:${++historyReadSequence}`;
@@ -40,20 +41,26 @@ function makeClient(): RuntimeSidecarClient | null {
     connection = undefined;
     return null;
   }
-  if (!connection || connection.socketPath !== socketPath || connection.token !== token) {
+  if (
+    !connection ||
+    connection.socketPath !== socketPath ||
+    connection.token !== token
+  ) {
     connection?.client.close();
-    connection = { socketPath, token, client: new RuntimeSidecarClient({ socketPath, token }) };
+    connection = {
+      socketPath,
+      token,
+      client: new RuntimeSidecarClient({ socketPath, token }),
+    };
   }
   return connection.client;
 }
-
-export interface ShadowAdmissionInput {
+export interface RuntimeAdmissionInput {
   sessionId: string;
   run: AgentRun;
   runtime: AcceptedRuntimeInput;
 }
-
-export interface ShadowStreamInput {
+export interface RuntimeStreamInput {
   sessionId: string;
   runId: string;
   producerId: string;
@@ -63,153 +70,244 @@ export interface ShadowStreamInput {
   chunks: unknown[];
   state: RuntimeRecordState;
 }
-
 export class RuntimeFacade {
   private readonly pendingHistoryWrites = new Map<string, Set<Promise<void>>>();
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
-    private readonly mode: () => RuntimeSidecarAdmissionMode = admissionMode,
   ) {}
-
   streamMode(): RuntimeSidecarStreamMode {
     return streamMode();
   }
-
   enabled(): boolean {
-    return this.mode() !== 'disabled' && this.clientFactory() !== null;
+    return this.clientFactory() !== null;
   }
-
   /** Admission is awaited before starting provider/tool execution. */
-  async admitExecution(input: ShadowAdmissionInput, activate = true): Promise<{ reused: boolean; epoch: number; revision: number }> {
-    const authoritative = streamMode() === 'authoritative';
-    if (!authoritative && this.mode() !== 'shadow' && streamMode() !== 'shadow') return { reused: false, epoch: 0, revision: 0 };
+  async admitExecution(
+    input: RuntimeAdmissionInput,
+    activate = true,
+  ): Promise<{
+    reused: boolean;
+    epoch: number;
+    revision: number;
+  }> {
     const client = this.clientFactory();
     if (!client) {
-      if (authoritative) throw new Error('Runtime sidecar client is not configured.');
-      return { reused: false, epoch: 0, revision: 0 };
+      throw new Error("Runtime sidecar client is not configured.");
     }
-    try {
-      if (authoritative) await this.ensureUiProjection(input.sessionId);
-      let admission: Awaited<ReturnType<RuntimeSidecarClient['admitRun']>>;
+    {
+      await this.ensureUiProjection(input.sessionId);
+      let admission: Awaited<ReturnType<RuntimeSidecarClient["admitRun"]>>;
       for (let attempt = 0; ; attempt++) {
         const state = await client.snapshot(input.sessionId);
         try {
-          admission = await client.admitRun({ sessionId: input.sessionId, requestId: input.runtime.requestId,
-            bodyHash: input.runtime.inputHash, runId: input.run.id, run: input.run,
-            epoch: state.epoch, revision: state.revision, queueItem: input.runtime.queueItem });
+          admission = await client.admitRun({
+            sessionId: input.sessionId,
+            requestId: input.runtime.requestId,
+            bodyHash: input.runtime.inputHash,
+            runId: input.run.id,
+            run: input.run,
+            epoch: state.epoch,
+            revision: state.revision,
+            queueItem: input.runtime.queueItem,
+          });
           break;
         } catch (error) {
-          if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+          if (
+            !(error instanceof RuntimeSidecarError) ||
+            error.code !== "REVISION_CONFLICT" ||
+            attempt >= 7
+          )
+            throw error;
         }
       }
-      if (admission.runId !== input.run.id) throw new Error('Runtime admission returned a different run identity.');
-      if (authoritative && activate && input.run.status === 'queued') {
+      if (admission.runId !== input.run.id)
+        throw new Error("Runtime admission returned a different run identity.");
+      if (activate && input.run.status === "queued") {
         for (let attempt = 0; ; attempt++) {
           const fence = await client.snapshot(input.sessionId);
-          if (fence.activeRunId !== input.run.id || fence.epoch !== admission.epoch) throw new Error('Runtime activation fence changed.');
+          if (
+            fence.activeRunId !== input.run.id ||
+            fence.epoch !== admission.epoch
+          )
+            throw new Error("Runtime activation fence changed.");
           try {
-            const activated = await client.activateRun({ requestId: `${input.runtime.requestId}:activate`, sessionId: input.sessionId,
-              epoch: fence.epoch, revision: fence.revision, run: input.run });
-            if (activated.activeRunId !== input.run.id || activated.epoch !== admission.epoch) throw new Error('Runtime activation returned an invalid run fence.');
+            const activated = await client.activateRun({
+              requestId: `${input.runtime.requestId}:activate`,
+              sessionId: input.sessionId,
+              epoch: fence.epoch,
+              revision: fence.revision,
+              run: input.run,
+            });
+            if (
+              activated.activeRunId !== input.run.id ||
+              activated.epoch !== admission.epoch
+            )
+              throw new Error(
+                "Runtime activation returned an invalid run fence.",
+              );
             break;
           } catch (error) {
-            if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+            if (
+              !(error instanceof RuntimeSidecarError) ||
+              error.code !== "REVISION_CONFLICT" ||
+              attempt >= 7
+            )
+              throw error;
           }
         }
       }
       const current = await client.snapshot(input.sessionId);
-      if (current.activeRunId !== input.run.id || current.epoch !== admission.epoch)
-        throw new Error('Cannot relaunch a completed or superseded run.');
-      return { reused: admission.reused, epoch: current.epoch, revision: current.revision };
-    } catch (error) {
-      if (authoritative) throw error;
-      logger.warn({ sessionId: input.sessionId, runId: input.run.id, error }, '[runtime-sidecar] shadow admission failed');
-      return { reused: false, epoch: 0, revision: 0 };
+      if (
+        current.activeRunId !== input.run.id ||
+        current.epoch !== admission.epoch
+      )
+        throw new Error("Cannot relaunch a completed or superseded run.");
+      return {
+        reused: admission.reused,
+        epoch: current.epoch,
+        revision: current.revision,
+      };
     }
   }
-
   async finishExecution(sessionId: string, run: AgentRun): Promise<void> {
-    const authoritative = streamMode() === 'authoritative';
-    if (!authoritative && this.mode() !== 'shadow' && streamMode() !== 'shadow') return;
     const status = run.status;
-    if (status !== 'completed' && status !== 'failed' && status !== 'cancelled' && status !== 'interrupted' && status !== 'blocked') return;
+    if (
+      status !== "completed" &&
+      status !== "failed" &&
+      status !== "cancelled" &&
+      status !== "interrupted" &&
+      status !== "blocked"
+    )
+      return;
     const client = this.clientFactory();
     if (!client) {
-      if (authoritative) throw new Error('Runtime sidecar client is not configured.');
-      return;
+      throw new Error("Runtime sidecar client is not configured.");
     }
-    try {
-      if (authoritative) await this.flushHistoryWrites(sessionId);
+    {
+      await this.flushHistoryWrites(sessionId);
       for (let attempt = 0; ; attempt++) {
         const state = await client.snapshot(sessionId);
-        try { await client.finishRun({ sessionId, runId: run.id, requestId: `finish:${run.id}`, status, epoch: state.epoch, revision: state.revision, run }); break; }
-        catch (error) { if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error; }
+        try {
+          await client.finishRun({
+            sessionId,
+            runId: run.id,
+            requestId: `finish:${run.id}`,
+            status,
+            epoch: state.epoch,
+            revision: state.revision,
+            run,
+          });
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof RuntimeSidecarError) ||
+            error.code !== "REVISION_CONFLICT" ||
+            attempt >= 7
+          )
+            throw error;
+        }
       }
       try {
         await this.persistRunHistory(run);
       } catch (error) {
-        logger.warn({ sessionId, runId: run.id, error: error instanceof Error ? error.message : String(error) }, '[runtime-sidecar] terminal run history persistence failed');
+        logger.warn(
+          {
+            sessionId,
+            runId: run.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "[runtime-sidecar] terminal run history persistence failed",
+        );
         throw error;
       }
-      // Authoritative stream/entity writes are submitted at their lifecycle
-      // boundaries. Scanning the SQLite mirror here would reintroduce a
-      // hidden read-after-commit fallback and could publish stale entities.
-      if (!authoritative) await this.persistSessionHistory(sessionId);
-    } catch (error) {
-      if (authoritative) throw error;
-      logger.warn({ sessionId, runId: run.id, error }, '[runtime-sidecar] shadow completion failed');
     }
   }
-
   /** Explicit creation boundary until the Node session creator is fully migrated. */
   async ensureUiProjection(sessionId: string): Promise<void> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
-    try { await client.uiSnapshot(sessionId); }
-    catch (error) {
-      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    try {
+      await client.uiSnapshot(sessionId);
+    } catch (error) {
+      if (
+        !(error instanceof RuntimeSidecarError) ||
+        error.code !== "PROJECTION_MISSING"
+      )
+        throw error;
       const session = agentRuntimeStore.getSession(sessionId);
-      if (agentRuntimeStore.listRuns(sessionId).some(run => run.status !== 'queued')) {
-        throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MIGRATION_REQUIRED',
-          message: 'Existing executed runs require offline projection migration.' });
+      if (
+        agentRuntimeStore
+          .listRuns(sessionId)
+          .some((run) => run.status !== "queued")
+      ) {
+        throw new RuntimeSidecarError({
+          type: "error",
+          code: "PROJECTION_MIGRATION_REQUIRED",
+          message:
+            "Existing executed runs require offline projection migration.",
+        });
       }
       await client.seedUi(sessionId, Buffer.from(JSON.stringify(session)));
     }
   }
-
   async queueMutation(input: {
-    sessionId: string; requestId: string;
-    operation: 'enqueue' | 'remove' | 'move' | 'force' | 'clear_force' | 'consume' | 'ack_consume'; payload?: unknown;
+    sessionId: string;
+    requestId: string;
+    operation:
+      | "enqueue"
+      | "remove"
+      | "move"
+      | "force"
+      | "clear_force"
+      | "consume"
+      | "ack_consume";
+    payload?: unknown;
   }): Promise<Uint8Array | null> {
-    if (streamMode() !== 'authoritative') return null;
     await this.ensureUiProjection(input.sessionId);
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     for (let attempt = 0; ; attempt++) {
       const snapshot = await client.snapshot(input.sessionId);
-      try { return await client.queueMutation({ ...input, epoch: snapshot.epoch, revision: snapshot.revision, payload: input.payload ?? null }); }
-      catch (error) {
+      try {
+        return await client.queueMutation({
+          ...input,
+          epoch: snapshot.epoch,
+          revision: snapshot.revision,
+          payload: input.payload ?? null,
+        });
+      } catch (error) {
         // No write occurred on revision conflict; retry the same semantic command against fresh state.
-        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+        if (
+          !(error instanceof RuntimeSidecarError) ||
+          error.code !== "REVISION_CONFLICT" ||
+          attempt >= 7
+        )
+          throw error;
       }
     }
   }
   async queueSnapshot(sessionId: string): Promise<unknown> {
-    if (streamMode() !== 'authoritative') throw new Error('Runtime sidecar queue is not authoritative.');
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
-    try { return JSON.parse(Buffer.from(await client.queueRead(sessionId)).toString('utf8')); }
-    catch (error) {
-      if (!(error instanceof RuntimeSidecarError) || error.code !== 'PROJECTION_MISSING') throw error;
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    try {
+      return JSON.parse(
+        Buffer.from(await client.queueRead(sessionId)).toString("utf8"),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof RuntimeSidecarError) ||
+        error.code !== "PROJECTION_MISSING"
+      )
+        throw error;
       await this.ensureUiProjection(sessionId);
-      return JSON.parse(Buffer.from(await client.queueRead(sessionId)).toString('utf8'));
+      return JSON.parse(
+        Buffer.from(await client.queueRead(sessionId)).toString("utf8"),
+      );
     }
   }
-
   async controlState(sessionId: string): Promise<unknown> {
-    if (streamMode() !== 'authoritative') throw new Error('Runtime sidecar controls are not authoritative.');
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     await this.ensureUiProjection(sessionId);
     for (let attempt = 0; ; attempt++) {
       const snapshot = await client.snapshot(sessionId);
@@ -219,24 +317,27 @@ export class RuntimeFacade {
           requestId: `control-read:${sessionId}:${snapshot.epoch}:${snapshot.revision}`,
           epoch: snapshot.epoch,
           revision: snapshot.revision,
-          operation: 'read',
+          operation: "read",
         });
-        return JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+        return JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
       } catch (error) {
-        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+        if (
+          !(error instanceof RuntimeSidecarError) ||
+          error.code !== "REVISION_CONFLICT" ||
+          attempt >= 7
+        )
+          throw error;
       }
     }
   }
-
   async controlCommand(input: {
     sessionId: string;
     requestId: string;
     operation: string;
     payload?: unknown;
   }): Promise<unknown> {
-    if (streamMode() !== 'authoritative') return null;
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     await this.ensureUiProjection(input.sessionId);
     for (let attempt = 0; ; attempt++) {
       const snapshot = await client.snapshot(input.sessionId);
@@ -246,56 +347,92 @@ export class RuntimeFacade {
           epoch: snapshot.epoch,
           revision: snapshot.revision,
         });
-        return JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+        return JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
       } catch (error) {
-        if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT' || attempt >= 7) throw error;
+        if (
+          !(error instanceof RuntimeSidecarError) ||
+          error.code !== "REVISION_CONFLICT" ||
+          attempt >= 7
+        )
+          throw error;
       }
     }
   }
-
-  async sessionPatch(sessionId: string, requestId: string, patch: Record<string, unknown>): Promise<unknown> {
-    await this.controlCommand({ sessionId, requestId, operation: 'session_patch', payload: { patch } });
+  async sessionPatch(
+    sessionId: string,
+    requestId: string,
+    patch: Record<string, unknown>,
+  ): Promise<unknown> {
+    await this.controlCommand({
+      sessionId,
+      requestId,
+      operation: "session_patch",
+      payload: { patch },
+    });
     return (await this.uiSnapshotAuthoritative(sessionId)).session;
   }
-
-  async runPatch(sessionId: string, runId: string, requestId: string, patch: Record<string, unknown>): Promise<unknown> {
-    if (streamMode() !== 'authoritative') return null;
-    await this.controlCommand({ sessionId, requestId, operation: 'run_patch', payload: { runId, patch } });
+  async runPatch(
+    sessionId: string,
+    runId: string,
+    requestId: string,
+    patch: Record<string, unknown>,
+  ): Promise<unknown> {
+    await this.controlCommand({
+      sessionId,
+      requestId,
+      operation: "run_patch",
+      payload: { runId, patch },
+    });
     return (await this.uiSnapshotAuthoritative(sessionId)).run;
   }
-
-  async stopSessionAuthoritative(sessionId: string, status: 'paused' | 'interrupted' | 'cancelled', reason: string): Promise<void> {
-    if (streamMode() !== 'authoritative') return;
+  async stopSessionAuthoritative(
+    sessionId: string,
+    status: "paused" | "interrupted" | "cancelled",
+    reason: string,
+  ): Promise<void> {
     const snapshot = await this.uiSnapshotAuthoritative(sessionId);
     const now = new Date().toISOString();
     const run = snapshot.run as AgentRun | null;
-    if (run && ['queued', 'running', 'waiting_permission', 'waiting_input'].includes(String(run.status))) {
+    if (
+      run &&
+      ["queued", "running", "waiting_permission", "waiting_input"].includes(
+        String(run.status),
+      )
+    ) {
       await this.finishExecution(sessionId, {
         ...run,
-        status: 'interrupted',
+        status: "interrupted",
         completedAt: now,
         stopReason: reason,
         metadata: {
           ...run.metadata,
           executionLease: {
-            ...((run.metadata?.executionLease as Record<string, unknown> | undefined) ?? {}),
+            ...((run.metadata?.executionLease as
+              | Record<string, unknown>
+              | undefined) ?? {}),
             closed: true,
           },
         },
       });
     }
-    await this.sessionPatch(sessionId, `stop-session:${sessionId}:${status}:${now}`, {
-      status,
-      activeRunId: null,
-      pendingResumeToken: null,
-      blockedReason: null,
-      resultSummary: reason,
-      completedAt: status === 'interrupted' ? now : null,
-      updatedAt: now,
-      sessionMetadata: { manualStop: { at: now, reason }, runtimeControl: null },
-    });
+    await this.sessionPatch(
+      sessionId,
+      `stop-session:${sessionId}:${status}:${now}`,
+      {
+        status,
+        activeRunId: null,
+        pendingResumeToken: null,
+        blockedReason: null,
+        resultSummary: reason,
+        completedAt: status === "interrupted" ? now : null,
+        updatedAt: now,
+        sessionMetadata: {
+          manualStop: { at: now, reason },
+          runtimeControl: null,
+        },
+      },
+    );
   }
-
   async historyCommand(input: {
     sessionId: string;
     requestId: string;
@@ -303,12 +440,11 @@ export class RuntimeFacade {
     payload?: unknown;
   }): Promise<unknown> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     let bytes: Uint8Array;
     bytes = await client.historyCommand(input);
-    return JSON.parse(Buffer.from(bytes).toString('utf8'));
+    return JSON.parse(Buffer.from(bytes).toString("utf8"));
   }
-
   async historyCommandGlobal(input: {
     scopeId: string;
     requestId: string;
@@ -316,188 +452,227 @@ export class RuntimeFacade {
     payload?: unknown;
   }): Promise<unknown> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     const bytes = await client.historyCommandGlobal({
       sessionId: input.scopeId,
       requestId: input.requestId,
       operation: input.operation,
       payload: input.payload,
     });
-    return JSON.parse(Buffer.from(bytes).toString('utf8'));
+    return JSON.parse(Buffer.from(bytes).toString("utf8"));
   }
-
-  async historyOutboxStatus(sessionId: string, limit = 4096): Promise<{
+  async historyOutboxStatus(
+    sessionId: string,
+    limit = 4096,
+  ): Promise<{
     pending: number;
     firstSequence?: number;
     lastSequence?: number;
     truncated: boolean;
   }> {
-    return await this.historyCommand({
+    return (await this.historyCommand({
       sessionId,
       requestId: `history-outbox-status:${sessionId}:${limit}`,
-      operation: 'history_outbox_status',
+      operation: "history_outbox_status",
       payload: { limit },
-    }) as {
+    })) as {
       pending: number;
       firstSequence?: number;
       lastSequence?: number;
       truncated: boolean;
     };
   }
-
-  async maintainHistoryOutbox(sessionId: string, maxEntries = 256): Promise<{
+  async maintainHistoryOutbox(
+    sessionId: string,
+    maxEntries = 256,
+  ): Promise<{
     ackedThrough: number;
     removed: number;
     hasMoreAcked: boolean;
   }> {
-    return await this.historyCommand({
+    return (await this.historyCommand({
       sessionId,
       requestId: `history-outbox-maintain:${sessionId}:${maxEntries}`,
-      operation: 'maintain_history_outbox',
+      operation: "maintain_history_outbox",
       payload: { maxEntries },
-    }) as {
+    })) as {
       ackedThrough: number;
       removed: number;
       hasMoreAcked: boolean;
     };
   }
-
-  async putAssetBlob(assetId: string, asset: unknown, bytes: Uint8Array): Promise<void> {
+  async putAssetBlob(
+    assetId: string,
+    asset: unknown,
+    bytes: Uint8Array,
+  ): Promise<void> {
     const scopeId = `asset:${assetId}`;
     await this.historyCommandGlobal({
-      scopeId: 'assets',
-      requestId: `asset-metadata:${assetId}:${createHash('sha256').update(JSON.stringify(asset)).digest('hex')}`,
-      operation: 'asset_put',
+      scopeId: "assets",
+      requestId: `asset-metadata:${assetId}:${createHash("sha256").update(JSON.stringify(asset)).digest("hex")}`,
+      operation: "asset_put",
       payload: { asset },
     });
     const chunkSize = 256 * 1024;
     const total = Math.max(1, Math.ceil(bytes.length / chunkSize));
-    const hex = (value: Uint8Array) => Buffer.from(value).toString('hex');
+    const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
     for (let index = 0; index < total; index++) {
-      const chunk = bytes.subarray(index * chunkSize, Math.min(bytes.length, (index + 1) * chunkSize));
+      const chunk = bytes.subarray(
+        index * chunkSize,
+        Math.min(bytes.length, (index + 1) * chunkSize),
+      );
       await this.historyCommandGlobal({
         scopeId,
         requestId: `asset-blob-chunk:${assetId}:${index}`,
-        operation: 'put_blob_chunk',
+        operation: "put_blob_chunk",
         payload: { blobId: assetId, index, total, bytesHex: hex(chunk) },
       });
     }
     await this.historyCommandGlobal({
       scopeId,
       requestId: `asset-blob-manifest:${assetId}`,
-      operation: 'put_blob_manifest',
-      payload: { blobId: assetId, total, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+      operation: "put_blob_manifest",
+      payload: {
+        blobId: assetId,
+        total,
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
     });
     await this.historyCommandGlobal({
       scopeId,
       requestId: `asset-object:${assetId}`,
-      operation: 'put_object',
-      payload: { kind: 'runtime.asset', value: asset },
+      operation: "put_object",
+      payload: { kind: "runtime.asset", value: asset },
     });
   }
-
   async getAssetMetadata(assetId: string): Promise<unknown> {
     return this.historyCommandGlobal({
-      scopeId: 'assets',
+      scopeId: "assets",
       requestId: `asset-metadata-read:${assetId}`,
-      operation: 'asset_get',
+      operation: "asset_get",
       payload: { assetId },
     });
   }
-
   async bindAsset(sessionId: string, assetId: string): Promise<void> {
     await this.historyCommandGlobal({
-      scopeId: 'assets',
+      scopeId: "assets",
       requestId: `asset-bind:${sessionId}:${assetId}`,
-      operation: 'asset_bind',
+      operation: "asset_bind",
       payload: { sessionId, assetId },
     });
   }
-
   async unbindAsset(sessionId: string, assetId: string): Promise<void> {
     await this.historyCommandGlobal({
-      scopeId: 'assets',
+      scopeId: "assets",
       requestId: `asset-unbind:${sessionId}:${assetId}`,
-      operation: 'asset_unbind',
+      operation: "asset_unbind",
       payload: { sessionId, assetId },
     });
   }
-
   async hasAssetBinding(sessionId: string, assetId: string): Promise<boolean> {
-    const result = await this.historyCommandGlobal({
-      scopeId: 'assets',
+    const result = (await this.historyCommandGlobal({
+      scopeId: "assets",
       requestId: `asset-binding-read:${sessionId}:${assetId}`,
-      operation: 'asset_has_binding',
+      operation: "asset_has_binding",
       payload: { sessionId, assetId },
-    }) as { bound?: boolean };
+    })) as {
+      bound?: boolean;
+    };
     return result.bound === true;
   }
-
   async listBoundAssets(sessionId: string): Promise<unknown[]> {
-    const result = await this.historyCommandGlobal({
-      scopeId: 'assets',
+    const result = (await this.historyCommandGlobal({
+      scopeId: "assets",
       requestId: `asset-bindings-list:${sessionId}`,
-      operation: 'asset_list_bindings',
+      operation: "asset_list_bindings",
       payload: { sessionId },
-    }) as { items?: unknown[] };
+    })) as {
+      items?: unknown[];
+    };
     return result.items ?? [];
   }
-
   async deleteAssetMetadata(assetId: string): Promise<void> {
     await this.historyCommandGlobal({
-      scopeId: 'assets',
+      scopeId: "assets",
       requestId: `asset-delete:${assetId}`,
-      operation: 'asset_delete',
+      operation: "asset_delete",
       payload: { assetId },
     });
   }
-
   async deleteAssetBlob(assetId: string): Promise<void> {
     await this.historyCommandGlobal({
       scopeId: `asset:${assetId}`,
       requestId: `asset-blob-delete:${assetId}`,
-      operation: 'delete_blob',
+      operation: "delete_blob",
       payload: { blobId: assetId },
     });
   }
-
   async readAssetBlob(assetId: string): Promise<Uint8Array> {
     const scopeId = `asset:${assetId}`;
-    const manifest = await this.historyCommandGlobal({
+    const manifest = (await this.historyCommandGlobal({
       scopeId,
       requestId: `asset-blob-manifest-read:${assetId}`,
-      operation: 'get_blob_manifest',
+      operation: "get_blob_manifest",
       payload: { blobId: assetId },
-    }) as { total?: number; size?: number; sha256?: string };
+    })) as {
+      total?: number;
+      size?: number;
+      sha256?: string;
+    };
     const total = Number(manifest.total);
-    if (!Number.isSafeInteger(total) || total < 1 || total > 2048) throw new Error('Invalid runtime asset blob manifest.');
+    if (!Number.isSafeInteger(total) || total < 1 || total > 2048)
+      throw new Error("Invalid runtime asset blob manifest.");
     const parts: Buffer[] = [];
     for (let index = 0; index < total; index++) {
-      const chunk = await this.historyCommandGlobal({
+      const chunk = (await this.historyCommandGlobal({
         scopeId,
         requestId: `asset-blob-chunk-read:${assetId}:${index}`,
-        operation: 'get_blob_chunk',
+        operation: "get_blob_chunk",
         payload: { blobId: assetId, index },
-      }) as { bytesHex?: string };
-      parts.push(Buffer.from(chunk.bytesHex ?? '', 'hex'));
+      })) as {
+        bytesHex?: string;
+      };
+      parts.push(Buffer.from(chunk.bytesHex ?? "", "hex"));
     }
     const bytes = Buffer.concat(parts);
-    if (manifest.size !== undefined && bytes.length !== manifest.size) throw new Error('Runtime asset blob size mismatch.');
-    if (manifest.sha256 && createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw new Error('Runtime asset blob digest mismatch.');
+    if (manifest.size !== undefined && bytes.length !== manifest.size)
+      throw new Error("Runtime asset blob size mismatch.");
+    if (
+      manifest.sha256 &&
+      createHash("sha256").update(bytes).digest("hex") !== manifest.sha256
+    )
+      throw new Error("Runtime asset blob digest mismatch.");
     return bytes;
   }
-
-  async persistRunHistory(run: unknown & { id?: string; sessionId?: string }): Promise<void> {
-    const client = this.clientFactory() as (RuntimeSidecarClient & { historyCommand?: unknown }) | null;
-    if (!client || typeof client.historyCommand !== 'function') return;
-    const sessionId = typeof run.sessionId === 'string' ? run.sessionId : undefined;
-    const runId = typeof run.id === 'string' ? run.id : undefined;
+  async persistRunHistory(
+    run: unknown & {
+      id?: string;
+      sessionId?: string;
+    },
+  ): Promise<void> {
+    const client = this.clientFactory() as
+      | (RuntimeSidecarClient & {
+          historyCommand?: unknown;
+        })
+      | null;
+    if (!client || typeof client.historyCommand !== "function") return;
+    const sessionId =
+      typeof run.sessionId === "string" ? run.sessionId : undefined;
+    const runId = typeof run.id === "string" ? run.id : undefined;
     if (!sessionId || !runId) return;
-    await this.appendHistoryEntities(sessionId, [{ kind: 'runtime.run', value: run }]);
+    await this.appendHistoryEntities(sessionId, [
+      { kind: "runtime.run", value: run },
+    ]);
   }
-
   /** One bounded command publishes entities, head and receipt atomically in Rust. */
-  private async appendHistoryEntities(sessionId: string, objects: Array<{ kind: string; value: unknown }>): Promise<void> {
+  private async appendHistoryEntities(
+    sessionId: string,
+    objects: Array<{
+      kind: string;
+      value: unknown;
+    }>,
+  ): Promise<void> {
     // Leave room for the protobuf envelope below the 1 MiB control frame limit.
     const budget = 768 * 1024;
     let batch: typeof objects = [];
@@ -507,8 +682,8 @@ export class RuntimeFacade {
       const payload = { objects: batch };
       await this.historyCommand({
         sessionId,
-        requestId: `history-append:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
-        operation: 'append_entities',
+        requestId: `history-append:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`,
+        operation: "append_entities",
         payload,
       });
       batch = [];
@@ -516,51 +691,64 @@ export class RuntimeFacade {
     };
     for (const object of objects) {
       const size = Buffer.byteLength(JSON.stringify(object)) + 1;
-      if (size > budget) throw new AgentRuntimeError('History entity exceeds the control frame budget; blob storage is required.', 'HISTORY_ENTITY_TOO_LARGE', 413);
+      if (size > budget)
+        throw new AgentRuntimeError(
+          "History entity exceeds the control frame budget; blob storage is required.",
+          "HISTORY_ENTITY_TOO_LARGE",
+          413,
+        );
       if (batch.length >= 256 || bytes + size > budget) await flush();
       batch.push(object);
       bytes += size;
     }
     await flush();
   }
-
   async persistStreamHistory(
     sessionId: string,
     chunks: AgentRunStreamChunk[],
     outboxThrough?: number,
   ): Promise<void> {
-    if (streamMode() !== 'authoritative') return;
-    const objects: Array<{ kind: string; value: unknown }> = [];
+    const objects: Array<{
+      kind: string;
+      value: unknown;
+    }> = [];
     const add = (kind: string, value: unknown) => {
-      if (!value || typeof value !== 'object') return;
-      const record = value as { id?: unknown; sessionId?: unknown };
-      if (typeof record.id !== 'string' || (record.sessionId !== undefined && record.sessionId !== sessionId)) return;
+      if (!value || typeof value !== "object") return;
+      const record = value as {
+        id?: unknown;
+        sessionId?: unknown;
+      };
+      if (
+        typeof record.id !== "string" ||
+        (record.sessionId !== undefined && record.sessionId !== sessionId)
+      )
+        return;
       objects.push({ kind, value });
     };
     for (const chunk of chunks) {
       switch (chunk.type) {
-        case 'run_started':
-        case 'run_activated':
-        case 'run_finished':
-        case 'run_completed':
-        case 'run_failed':
-        case 'run_resumed':
-          add('runtime.run', chunk.run);
+        case "run_started":
+        case "run_activated":
+        case "run_finished":
+        case "run_completed":
+        case "run_failed":
+        case "run_resumed":
+          add("runtime.run", chunk.run);
           break;
-        case 'step_started':
-          add('runtime.step', chunk.step);
+        case "step_started":
+          add("runtime.step", chunk.step);
           break;
-        case 'message':
-        case 'input_injected':
-          add('runtime.message', chunk.message);
+        case "message":
+        case "input_injected":
+          add("runtime.message", chunk.message);
           break;
-        case 'tool_call':
-        case 'tool_result':
-        case 'permission_requested':
-          add('runtime.tool_call', chunk.toolCall);
+        case "tool_call":
+        case "tool_result":
+        case "permission_requested":
+          add("runtime.tool_call", chunk.toolCall);
           break;
-        case 'event':
-          add('runtime.event', chunk.event);
+        case "event":
+          add("runtime.event", chunk.event);
           break;
         default:
           break;
@@ -572,7 +760,7 @@ export class RuntimeFacade {
         await this.historyCommand({
           sessionId,
           requestId: `history-outbox-ack:${sessionId}:${outboxThrough}`,
-          operation: 'ack_history_outbox',
+          operation: "ack_history_outbox",
           payload: { through: outboxThrough },
         });
       }
@@ -583,8 +771,8 @@ export class RuntimeFacade {
       try {
         await this.historyCommand({
           sessionId,
-          requestId: `history-reconcile:${sessionId}:${createHash('sha256').update(JSON.stringify(objects)).digest('hex')}`,
-          operation: 'reconcile_stream',
+          requestId: `history-reconcile:${sessionId}:${createHash("sha256").update(JSON.stringify(objects)).digest("hex")}`,
+          operation: "reconcile_stream",
           payload: {},
         });
         return;
@@ -593,10 +781,20 @@ export class RuntimeFacade {
       }
     }
   }
-
-  async persistHistoryObject(sessionId: string, kind: string, value: unknown): Promise<void> {
-    if (streamMode() !== 'authoritative' || !value || typeof value !== 'object') return;
-    if (typeof (value as { id?: unknown }).id !== 'string') return;
+  async persistHistoryObject(
+    sessionId: string,
+    kind: string,
+    value: unknown,
+  ): Promise<void> {
+    if (!value || typeof value !== "object") return;
+    if (
+      typeof (
+        value as {
+          id?: unknown;
+        }
+      ).id !== "string"
+    )
+      return;
     const write = this.appendHistoryEntities(sessionId, [{ kind, value }]);
     let pending = this.pendingHistoryWrites.get(sessionId);
     if (!pending) {
@@ -611,96 +809,117 @@ export class RuntimeFacade {
       if (!pending.size) this.pendingHistoryWrites.delete(sessionId);
     }
   }
-
   async flushHistoryWrites(sessionId: string): Promise<void> {
     const pending = this.pendingHistoryWrites.get(sessionId);
     if (!pending?.size) return;
     await Promise.all([...pending]);
   }
-
   async listRunHistory(sessionId: string): Promise<unknown[]> {
-    const state = await this.historyCommand({
+    const state = (await this.historyCommand({
       sessionId,
-      requestId: historyReadRequest('list-runs', sessionId),
-      operation: 'list_runs',
+      requestId: historyReadRequest("list-runs", sessionId),
+      operation: "list_runs",
       payload: {},
-    }) as { items?: unknown[] };
+    })) as {
+      items?: unknown[];
+    };
     return state.items ?? [];
   }
-
-  async persistSessionHistory(sessionId: string): Promise<void> {
-    const client = this.clientFactory() as (RuntimeSidecarClient & { historyCommand?: unknown }) | null;
-    if (!client || typeof client.historyCommand !== 'function') return;
-    const messages = agentRuntimeStore.listMessages(sessionId);
-    const runs = agentRuntimeStore.listRuns(sessionId);
-    const tools = agentRuntimeStore.listToolCalls(sessionId);
-    const events = agentRuntimeStore.listEvents(sessionId);
-    const steps = runs.flatMap(run => agentRuntimeStore.listRunSteps(run.id));
-    const parts = steps.flatMap(step => agentRuntimeStore.listRunParts(step.id));
-    const objects = [
-      ...messages.map(value => ({ kind: 'runtime.message', value })),
-      ...runs.map(value => ({ kind: 'runtime.run', value })),
-      ...steps.map(value => ({ kind: 'runtime.step', value })),
-      ...parts.map(value => ({ kind: 'runtime.part', value })),
-      ...tools.map(value => ({ kind: 'runtime.tool_call', value })),
-      ...events.map(value => ({ kind: 'runtime.event', value })),
-    ];
-    await this.appendHistoryEntities(sessionId, objects);
-  }
-
   async listMessageHistory(sessionId: string): Promise<unknown[]> {
-    const state = await this.historyCommand({
+    const state = (await this.historyCommand({
       sessionId,
-      requestId: historyReadRequest('list-messages', sessionId),
-      operation: 'list_messages',
+      requestId: historyReadRequest("list-messages", sessionId),
+      operation: "list_messages",
       payload: {},
-    }) as { items?: unknown[] };
+    })) as {
+      items?: unknown[];
+    };
     return state.items ?? [];
   }
-
   async listSessionProjection(): Promise<unknown[]> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     const bytes = await client.sessionList();
-    const state = JSON.parse(Buffer.from(bytes).toString('utf8')) as { items?: unknown[] };
+    const state = JSON.parse(Buffer.from(bytes).toString("utf8")) as {
+      items?: unknown[];
+    };
     return state.items ?? [];
   }
-
-  async importUiProjection(sessionId: string, snapshot: unknown): Promise<unknown> {
+  async importUiProjection(
+    sessionId: string,
+    snapshot: unknown,
+  ): Promise<unknown> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
-    const bytes = await client.importProjection(sessionId, new TextEncoder().encode(JSON.stringify(snapshot)));
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    const bytes = await client.importProjection(
+      sessionId,
+      new TextEncoder().encode(JSON.stringify(snapshot)),
+    );
     return JSON.parse(new TextDecoder().decode(bytes));
   }
-
-  async listHistoryObjects(sessionId: string, operation: 'list_runs' | 'list_messages' | 'list_steps' | 'list_parts' | 'list_tool_calls' | 'list_events' | 'list_artifacts' | 'list_plans' | 'list_work' | 'list_contexts' | 'list_aux_usage'): Promise<unknown[]> {
-    const state = await this.historyCommand({ sessionId, requestId: historyReadRequest(operation, sessionId), operation, payload: {} }) as { items?: unknown[] };
+  async listHistoryObjects(
+    sessionId: string,
+    operation:
+      | "list_runs"
+      | "list_messages"
+      | "list_steps"
+      | "list_parts"
+      | "list_tool_calls"
+      | "list_events"
+      | "list_artifacts"
+      | "list_plans"
+      | "list_work"
+      | "list_contexts"
+      | "list_aux_usage",
+  ): Promise<unknown[]> {
+    const state = (await this.historyCommand({
+      sessionId,
+      requestId: historyReadRequest(operation, sessionId),
+      operation,
+      payload: {},
+    })) as {
+      items?: unknown[];
+    };
     return state.items ?? [];
   }
-
-  async persistTerminalInfo(projectId: string, terminal: Record<string, unknown>, outputTail = "", outputSequence = 0): Promise<void> {
-    if (streamMode() !== 'authoritative') return;
+  async persistTerminalInfo(
+    projectId: string,
+    terminal: Record<string, unknown>,
+    outputTail = "",
+    outputSequence = 0,
+  ): Promise<void> {
     const scopeId = `terminals:${projectId}`;
     await this.historyCommandGlobal({
       scopeId,
-      requestId: `terminal:${terminal.id}:${terminal.state}:${terminal.endedAt ?? 'active'}`,
-      operation: 'append_entities',
-      payload: { objects: [{ kind: 'runtime.terminal', value: { ...terminal, outputTail, outputSequence, sessionId: scopeId } }] },
+      requestId: `terminal:${terminal.id}:${terminal.state}:${terminal.endedAt ?? "active"}`,
+      operation: "append_entities",
+      payload: {
+        objects: [
+          {
+            kind: "runtime.terminal",
+            value: {
+              ...terminal,
+              outputTail,
+              outputSequence,
+              sessionId: scopeId,
+            },
+          },
+        ],
+      },
     });
   }
-
   async listTerminalHistory(projectId: string): Promise<unknown[]> {
-    if (streamMode() !== 'authoritative') return [];
     const scopeId = `terminals:${projectId}`;
-    const state = await this.historyCommandGlobal({
+    const state = (await this.historyCommandGlobal({
       scopeId,
       requestId: `terminal-list:${projectId}`,
-      operation: 'list_terminals',
+      operation: "list_terminals",
       payload: {},
-    }) as { items?: unknown[] };
+    })) as {
+      items?: unknown[];
+    };
     return state.items ?? [];
   }
-
   async sessionStatsAuthoritative(
     sessionId: string,
     configuredContextLimit?: number | null,
@@ -716,42 +935,99 @@ export class RuntimeFacade {
     while (changed) {
       changed = false;
       for (const candidate of projections) {
-        if (candidate.parentSessionId && tree.has(candidate.parentSessionId) && !tree.has(candidate.id)) {
+        if (
+          candidate.parentSessionId &&
+          tree.has(candidate.parentSessionId) &&
+          !tree.has(candidate.id)
+        ) {
           tree.add(candidate.id);
           changed = true;
         }
       }
     }
-    const records = await Promise.all([...tree].map(async (id) => {
-      const [runs, steps, tools, work, auxiliary] = await Promise.all([
-        this.listHistoryObjects(id, 'list_runs'),
-        this.listHistoryObjects(id, 'list_steps'),
-        this.listHistoryObjects(id, 'list_tool_calls'),
-        this.listHistoryObjects(id, 'list_work'),
-        this.listHistoryObjects(id, 'list_aux_usage'),
-      ]);
-      return { id, runs: runs as AgentRun[], steps: steps as AgentRunStep[], tools: tools as ToolCallRecord[], work, auxiliary };
-    }));
-    const root = records.find((item) => item.id === sessionId) ?? { id: sessionId, runs: [], steps: [], tools: [], work: [], auxiliary: [] };
-    const zeroTotals = () => ({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, cacheReadMatched: 0, cacheInputMatched: 0, cacheReadRatio: null });
-    const zeroCoverage = () => ({ requests: 0, recorded: 0, missing: 0, complete: true, cacheReadKnown: 0, cacheReadUnknown: 0, cacheWriteKnown: 0, cacheWriteUnknown: 0, cacheMatched: 0 });
-    const usage = { self: zeroTotals(), tree: zeroTotals(), steps: { self: zeroTotals(), tree: zeroTotals() }, auxiliary: { self: zeroTotals(), tree: zeroTotals() } };
-    const coverage = { self: zeroCoverage(), tree: zeroCoverage(), steps: { self: zeroCoverage(), tree: zeroCoverage() }, auxiliary: { self: zeroCoverage(), tree: zeroCoverage() } };
+    const records = await Promise.all(
+      [...tree].map(async (id) => {
+        const [runs, steps, tools, work, auxiliary] = await Promise.all([
+          this.listHistoryObjects(id, "list_runs"),
+          this.listHistoryObjects(id, "list_steps"),
+          this.listHistoryObjects(id, "list_tool_calls"),
+          this.listHistoryObjects(id, "list_work"),
+          this.listHistoryObjects(id, "list_aux_usage"),
+        ]);
+        return {
+          id,
+          runs: runs as AgentRun[],
+          steps: steps as AgentRunStep[],
+          tools: tools as ToolCallRecord[],
+          work,
+          auxiliary,
+        };
+      }),
+    );
+    const root = records.find((item) => item.id === sessionId) ?? {
+      id: sessionId,
+      runs: [],
+      steps: [],
+      tools: [],
+      work: [],
+      auxiliary: [],
+    };
+    const zeroTotals = () => ({
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+      cacheReadMatched: 0,
+      cacheInputMatched: 0,
+      cacheReadRatio: null,
+    });
+    const zeroCoverage = () => ({
+      requests: 0,
+      recorded: 0,
+      missing: 0,
+      complete: true,
+      cacheReadKnown: 0,
+      cacheReadUnknown: 0,
+      cacheWriteKnown: 0,
+      cacheWriteUnknown: 0,
+      cacheMatched: 0,
+    });
+    const usage = {
+      self: zeroTotals(),
+      tree: zeroTotals(),
+      steps: { self: zeroTotals(), tree: zeroTotals() },
+      auxiliary: { self: zeroTotals(), tree: zeroTotals() },
+    };
+    const coverage = {
+      self: zeroCoverage(),
+      tree: zeroCoverage(),
+      steps: { self: zeroCoverage(), tree: zeroCoverage() },
+      auxiliary: { self: zeroCoverage(), tree: zeroCoverage() },
+    };
     let contextInput: number | null = null;
     let contextMeasuredAt: string | null = null;
     let contextRequestId: string | null = null;
     let reportedWindow: number | null = null;
     let runningDuration = 0;
     const addStep = (step: AgentRunStep, isSelf: boolean) => {
-      const metadata = step.metadata && typeof step.metadata === 'object' ? step.metadata as Record<string, unknown> : {};
+      const metadata =
+        step.metadata && typeof step.metadata === "object"
+          ? (step.metadata as Record<string, unknown>)
+          : {};
       const normalized = normalizeUsage(metadata.usage);
-      const groups = isSelf ? ['self', 'tree'] as const : ['tree'] as const;
+      const groups = isSelf ? (["self", "tree"] as const) : (["tree"] as const);
       for (const group of groups) {
         const target = usage.steps[group];
         const targetCoverage = coverage.steps[group];
         targetCoverage.requests++;
-        if (normalized?.normalization.input.status === 'known') targetCoverage.recorded++;
-        else { targetCoverage.missing++; targetCoverage.complete = false; }
+        if (normalized?.normalization.input.status === "known")
+          targetCoverage.recorded++;
+        else {
+          targetCoverage.missing++;
+          targetCoverage.complete = false;
+        }
         target.input += normalized?.normalization.input.value ?? 0;
         target.output += normalized?.normalization.output.value ?? 0;
         target.reasoning += normalized?.normalization.reasoning.value ?? 0;
@@ -759,28 +1035,49 @@ export class RuntimeFacade {
         target.cacheWrite += normalized?.normalization.cacheWrite.value ?? 0;
         target.total = target.input + target.output;
       }
-      if (isSelf && normalized?.normalization.input.status === 'known') {
+      if (isSelf && normalized?.normalization.input.status === "known") {
         contextInput = normalized.normalization.input.value ?? null;
-        contextRequestId = typeof normalized.requestId === 'string' ? normalized.requestId : step.id;
-        contextMeasuredAt = typeof normalized.measuredAt === 'string' ? normalized.measuredAt : step.completedAt ?? step.startedAt;
+        contextRequestId =
+          typeof normalized.requestId === "string"
+            ? normalized.requestId
+            : step.id;
+        contextMeasuredAt =
+          typeof normalized.measuredAt === "string"
+            ? normalized.measuredAt
+            : (step.completedAt ?? step.startedAt);
       }
       const start = Date.parse(step.startedAt);
       const run = root.runs.find((item) => item.id === step.runId);
       const end = step.completedAt ?? run?.completedAt;
-      runningDuration += Math.max(0, (end ? Date.parse(end) : Date.now()) - start) || 0;
+      runningDuration +=
+        Math.max(0, (end ? Date.parse(end) : Date.now()) - start) || 0;
       const candidateWindow = metadata.contextLimit;
-      if (typeof candidateWindow === 'number' && Number.isFinite(candidateWindow)) reportedWindow = candidateWindow;
+      if (
+        typeof candidateWindow === "number" &&
+        Number.isFinite(candidateWindow)
+      )
+        reportedWindow = candidateWindow;
     };
-    for (const record of records) for (const step of record.steps) addStep(step, record.id === sessionId);
+    for (const record of records)
+      for (const step of record.steps) addStep(step, record.id === sessionId);
     for (const record of records) {
-      for (const item of record.auxiliary as Array<{ sessionId?: unknown; usage?: unknown }>) {
+      for (const item of record.auxiliary as Array<{
+        sessionId?: unknown;
+        usage?: unknown;
+      }>) {
         const normalized = normalizeUsage(item.usage);
-        for (const group of record.id === sessionId ? ['self', 'tree'] as const : ['tree'] as const) {
+        for (const group of record.id === sessionId
+          ? (["self", "tree"] as const)
+          : (["tree"] as const)) {
           const target = usage.auxiliary[group];
           const targetCoverage = coverage.auxiliary[group];
           targetCoverage.requests++;
-          if (normalized?.normalization.input.status === 'known') targetCoverage.recorded++;
-          else { targetCoverage.missing++; targetCoverage.complete = false; }
+          if (normalized?.normalization.input.status === "known")
+            targetCoverage.recorded++;
+          else {
+            targetCoverage.missing++;
+            targetCoverage.complete = false;
+          }
           target.input += normalized?.normalization.input.value ?? 0;
           target.output += normalized?.normalization.output.value ?? 0;
           target.reasoning += normalized?.normalization.reasoning.value ?? 0;
@@ -790,47 +1087,125 @@ export class RuntimeFacade {
         }
       }
     }
-    const currentWork = (root.work as Array<{ id?: unknown; sessionId?: unknown; updatedAt?: unknown; status?: unknown; remaining?: unknown; reason?: unknown }>)
-      .filter((item) => item.sessionId === sessionId && (!session.sessionMetadata?.activeWorkId || item.id === session.sessionMetadata.activeWorkId))
-      .sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))[0];
-    const completedRuns = root.runs.filter((run) => run.status === 'completed');
-    const averageSteps = completedRuns.length ? completedRuns.reduce((sum, run) => sum + root.steps.filter((step) => step.runId === run.id).length, 0) / completedRuns.length : null;
+    const currentWork = (
+      root.work as Array<{
+        id?: unknown;
+        sessionId?: unknown;
+        updatedAt?: unknown;
+        status?: unknown;
+        remaining?: unknown;
+        reason?: unknown;
+      }>
+    )
+      .filter(
+        (item) =>
+          item.sessionId === sessionId &&
+          (!session.sessionMetadata?.activeWorkId ||
+            item.id === session.sessionMetadata.activeWorkId),
+      )
+      .sort((a, b) =>
+        String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+      )[0];
+    const completedRuns = root.runs.filter((run) => run.status === "completed");
+    const averageSteps = completedRuns.length
+      ? completedRuns.reduce(
+          (sum, run) =>
+            sum + root.steps.filter((step) => step.runId === run.id).length,
+          0,
+        ) / completedRuns.length
+      : null;
     const input = contextInput ?? 0;
-    const contextLimit = typeof configuredContextLimit === 'number' && configuredContextLimit > 0 ? configuredContextLimit : reportedWindow ?? 200_000;
+    const contextLimit =
+      typeof configuredContextLimit === "number" && configuredContextLimit > 0
+        ? configuredContextLimit
+        : (reportedWindow ?? 200000);
     return {
-      work: currentWork && typeof currentWork.id === 'string' ? { id: currentWork.id, status: String(currentWork.status ?? 'active'), remaining: Array.isArray(currentWork.remaining) ? currentWork.remaining : [], reason: typeof currentWork.reason === 'string' ? currentWork.reason : null } : null,
+      work:
+        currentWork && typeof currentWork.id === "string"
+          ? {
+              id: currentWork.id,
+              status: String(currentWork.status ?? "active"),
+              remaining: Array.isArray(currentWork.remaining)
+                ? currentWork.remaining
+                : [],
+              reason:
+                typeof currentWork.reason === "string"
+                  ? currentWork.reason
+                  : null,
+            }
+          : null,
       roundCount: root.steps.length,
       averageStepsPerCompletedRun: averageSteps,
       contextComposition: null,
-      context: { inputTokens: contextInput, source: contextInput === null ? null : 'provider', stale: false, requestId: contextRequestId, measuredAt: contextMeasuredAt, latestRequestUsageAvailable: contextInput !== null },
+      context: {
+        inputTokens: contextInput,
+        source: contextInput === null ? null : "provider",
+        stale: false,
+        requestId: contextRequestId,
+        measuredAt: contextMeasuredAt,
+        latestRequestUsageAvailable: contextInput !== null,
+      },
       cache: projectCacheUsage([]),
       usage,
       coverage,
       tokenUsage: { input, output: usage.self.output, total: input },
       contextLimit,
-      contextLimitKnown: contextInput !== null || reportedWindow !== null || configuredContextLimit != null,
-      contextUsedPercent: Math.min(Math.round((input / contextLimit) * 100), 100),
+      contextLimitKnown:
+        contextInput !== null ||
+        reportedWindow !== null ||
+        configuredContextLimit != null,
+      contextUsedPercent: Math.min(
+        Math.round((input / contextLimit) * 100),
+        100,
+      ),
       toolCallCount: root.tools.length,
       runningDuration,
       status: session.status,
-      activeSubAgentCount: projections.filter((item) => item.parentSessionId === sessionId && item.status === 'running').length,
+      activeSubAgentCount: projections.filter(
+        (item) =>
+          item.parentSessionId === sessionId && item.status === "running",
+      ).length,
     };
   }
-
-  async listHistoryCheckpoints(sessionId: string): Promise<Array<{ id: string; objectId: string; metadata: Record<string, unknown> }>> {
-    const state = await this.historyCommand({
+  async listHistoryCheckpoints(sessionId: string): Promise<
+    Array<{
+      id: string;
+      objectId: string;
+      metadata: Record<string, unknown>;
+    }>
+  > {
+    const state = (await this.historyCommand({
       sessionId,
-      requestId: historyReadRequest('list-checkpoints', sessionId),
-      operation: 'list_checkpoints',
+      requestId: historyReadRequest("list-checkpoints", sessionId),
+      operation: "list_checkpoints",
       payload: {},
-    }) as { items?: Array<{ id?: unknown; objectId?: unknown; metadata?: unknown }> };
+    })) as {
+      items?: Array<{
+        id?: unknown;
+        objectId?: unknown;
+        metadata?: unknown;
+      }>;
+    };
     return (state.items ?? []).flatMap((item) => {
-      if (typeof item.id !== 'string' || typeof item.objectId !== 'string') return [];
-      return [{ id: item.id, objectId: item.objectId, metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {} }];
+      if (typeof item.id !== "string" || typeof item.objectId !== "string")
+        return [];
+      return [
+        {
+          id: item.id,
+          objectId: item.objectId,
+          metadata:
+            item.metadata && typeof item.metadata === "object"
+              ? (item.metadata as Record<string, unknown>)
+              : {},
+        },
+      ];
     });
   }
-
-  async previewHistoryAuthoritative(sessionId: string, checkpointId: string, includeFiles = true): Promise<{
+  async previewHistoryAuthoritative(
+    sessionId: string,
+    checkpointId: string,
+    includeFiles = true,
+  ): Promise<{
     checkpointId: string;
     revision: number;
     removedMessages: number;
@@ -847,9 +1222,21 @@ export class RuntimeFacade {
       this.listMessageHistory(sessionId) as Promise<AgentRuntimeMessage[]>,
     ]);
     const checkpoint = checkpoints.find((item) => item.id === checkpointId);
-    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
-    const index = messages.findIndex((item) => item.id === checkpoint.metadata.messageId);
-    if (index < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    if (!checkpoint)
+      throw new AgentRuntimeError(
+        "History checkpoint was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
+    const index = messages.findIndex(
+      (item) => item.id === checkpoint.metadata.messageId,
+    );
+    if (index < 0)
+      throw new AgentRuntimeError(
+        "History checkpoint message was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
     return {
       checkpointId,
       revision: head.revision,
@@ -858,144 +1245,285 @@ export class RuntimeFacade {
       conflicts: [],
       canApply: true,
       warnings: [
-        'Rust history mutation changes the immutable conversation head.',
-        ...(includeFiles ? ['Workspace files are preserved; file rollback is not part of the runtime history command.'] : []),
+        "Rust history mutation changes the immutable conversation head.",
+        ...(includeFiles
+          ? [
+              "Workspace files are preserved; file rollback is not part of the runtime history command.",
+            ]
+          : []),
       ],
       preservedFiles: [],
-      exclusions: 'Conversation history only; workspace files are not changed.',
+      exclusions: "Conversation history only; workspace files are not changed.",
     };
   }
-
-  private async writeHistoryRootRefs(sessionId: string, refs: string[], requestPrefix: string): Promise<string> {
+  private async writeHistoryRootRefs(
+    sessionId: string,
+    refs: string[],
+    requestPrefix: string,
+  ): Promise<string> {
     let current = refs;
     let part = 0;
     while (current.length > 256) {
       const next: string[] = [];
       for (let offset = 0; offset < current.length; offset += 256) {
         const chunk = current.slice(offset, offset + 256);
-        const result = await this.historyCommand({
+        const result = (await this.historyCommand({
           sessionId,
-          requestId: `${requestPrefix}:chunk:${part++}:${createHash('sha256').update(chunk.join('\0')).digest('hex')}`,
-          operation: 'put_object',
-          payload: { kind: 'runtime.session.root.chunk', value: { sessionId, count: chunk.length }, refs: chunk },
-        }) as { objectId?: string };
-        if (!result.objectId) throw new Error('runtime-history root chunk did not return an object id');
+          requestId: `${requestPrefix}:chunk:${part++}:${createHash("sha256").update(chunk.join("\0")).digest("hex")}`,
+          operation: "put_object",
+          payload: {
+            kind: "runtime.session.root.chunk",
+            value: { sessionId, count: chunk.length },
+            refs: chunk,
+          },
+        })) as {
+          objectId?: string;
+        };
+        if (!result.objectId)
+          throw new Error(
+            "runtime-history root chunk did not return an object id",
+          );
         next.push(result.objectId);
       }
       current = next;
     }
-    const result = await this.historyCommand({
+    const result = (await this.historyCommand({
       sessionId,
-      requestId: `${requestPrefix}:root:${createHash('sha256').update(current.join('\0')).digest('hex')}`,
-      operation: 'put_object',
-      payload: { kind: 'runtime.session.root', value: { sessionId, objectCount: refs.length, updatedAt: new Date().toISOString() }, refs: current },
-    }) as { objectId?: string };
-    if (!result.objectId) throw new Error('runtime-history root did not return an object id');
+      requestId: `${requestPrefix}:root:${createHash("sha256").update(current.join("\0")).digest("hex")}`,
+      operation: "put_object",
+      payload: {
+        kind: "runtime.session.root",
+        value: {
+          sessionId,
+          objectCount: refs.length,
+          updatedAt: new Date().toISOString(),
+        },
+        refs: current,
+      },
+    })) as {
+      objectId?: string;
+    };
+    if (!result.objectId)
+      throw new Error("runtime-history root did not return an object id");
     return result.objectId;
   }
-
-  private async writeHistoryRoot(sessionId: string, objects: Array<{ kind: string; value: unknown }>, requestPrefix: string): Promise<string> {
+  private async writeHistoryRoot(
+    sessionId: string,
+    objects: Array<{
+      kind: string;
+      value: unknown;
+    }>,
+    requestPrefix: string,
+  ): Promise<string> {
     const refs: string[] = [];
     for (const object of objects) {
-      const result = await this.historyCommand({
+      const result = (await this.historyCommand({
         sessionId,
-        requestId: `${requestPrefix}:${object.kind}:${createHash('sha256').update(JSON.stringify(object.value)).digest('hex')}`,
-        operation: 'put_object',
+        requestId: `${requestPrefix}:${object.kind}:${createHash("sha256").update(JSON.stringify(object.value)).digest("hex")}`,
+        operation: "put_object",
         payload: object,
-      }) as { objectId?: string };
-      if (!result.objectId) throw new Error('runtime-history object did not return an object id');
+      })) as {
+        objectId?: string;
+      };
+      if (!result.objectId)
+        throw new Error("runtime-history object did not return an object id");
       refs.push(result.objectId);
     }
     return this.writeHistoryRootRefs(sessionId, refs, requestPrefix);
   }
-
   async applyHistoryAuthoritative(input: {
     sessionId: string;
     checkpointId: string;
     revision: number;
     requestId: string;
-    action: 'rollback' | 'edit';
+    action: "rollback" | "edit";
     message?: string;
-  }): Promise<{ sessionId: string; revision: number; input?: { message: string } }> {
-    const [head, checkpoints, messages, runs, steps, parts, tools, events] = await Promise.all([
-      this.historyHeadAuthoritative(input.sessionId),
-      this.listHistoryCheckpoints(input.sessionId),
-      this.listHistoryObjects(input.sessionId, 'list_messages'),
-      this.listHistoryObjects(input.sessionId, 'list_runs'),
-      this.listHistoryObjects(input.sessionId, 'list_steps'),
-      this.listHistoryObjects(input.sessionId, 'list_parts'),
-      this.listHistoryObjects(input.sessionId, 'list_tool_calls'),
-      this.listHistoryObjects(input.sessionId, 'list_events'),
-    ]);
-    if (head.revision !== input.revision) throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
-    const checkpoint = checkpoints.find((item) => item.id === input.checkpointId);
-    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
-    const orderedMessages = this.orderedHistory(messages as AgentRuntimeMessage[]);
-    const boundary = orderedMessages.findIndex((item) => item.id === checkpoint.metadata.messageId);
-    if (boundary < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+  }): Promise<{
+    sessionId: string;
+    revision: number;
+    input?: {
+      message: string;
+    };
+  }> {
+    const [head, checkpoints, messages, runs, steps, parts, tools, events] =
+      await Promise.all([
+        this.historyHeadAuthoritative(input.sessionId),
+        this.listHistoryCheckpoints(input.sessionId),
+        this.listHistoryObjects(input.sessionId, "list_messages"),
+        this.listHistoryObjects(input.sessionId, "list_runs"),
+        this.listHistoryObjects(input.sessionId, "list_steps"),
+        this.listHistoryObjects(input.sessionId, "list_parts"),
+        this.listHistoryObjects(input.sessionId, "list_tool_calls"),
+        this.listHistoryObjects(input.sessionId, "list_events"),
+      ]);
+    if (head.revision !== input.revision)
+      throw new AgentRuntimeError(
+        "Conversation changed. Refresh history.",
+        "HISTORY_STALE",
+        409,
+      );
+    const checkpoint = checkpoints.find(
+      (item) => item.id === input.checkpointId,
+    );
+    if (!checkpoint)
+      throw new AgentRuntimeError(
+        "History checkpoint was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
+    const orderedMessages = this.orderedHistory(
+      messages as AgentRuntimeMessage[],
+    );
+    const boundary = orderedMessages.findIndex(
+      (item) => item.id === checkpoint.metadata.messageId,
+    );
+    if (boundary < 0)
+      throw new AgentRuntimeError(
+        "History checkpoint message was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
     const keptMessages = orderedMessages.slice(0, boundary + 1);
     const keptIds = new Set(keptMessages.map((item) => item.id));
-    const runIds = new Set(keptMessages.map((item) => item.runId).filter((id): id is string => Boolean(id)));
+    const runIds = new Set(
+      keptMessages
+        .map((item) => item.runId)
+        .filter((id): id is string => Boolean(id)),
+    );
     const keptRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
-    const keptSteps = (steps as AgentRunStep[]).filter((step) => runIds.has(step.runId));
+    const keptSteps = (steps as AgentRunStep[]).filter((step) =>
+      runIds.has(step.runId),
+    );
     const keptStepIds = new Set(keptSteps.map((step) => step.id));
-    const objects: Array<{ kind: string; value: unknown }> = [
-      ...keptMessages.map((value) => ({ kind: 'runtime.message', value })),
-      ...keptRuns.map((value) => ({ kind: 'runtime.run', value })),
-      ...keptSteps.map((value) => ({ kind: 'runtime.step', value })),
-      ...(parts as Array<{ stepId?: string }>).filter((part) => part.stepId && keptStepIds.has(part.stepId)).map((value) => ({ kind: 'runtime.part', value })),
-      ...(tools as Array<{ stepId?: string }>).filter((tool) => tool.stepId && keptStepIds.has(tool.stepId)).map((value) => ({ kind: 'runtime.tool_call', value })),
-      ...(events as Array<{ runId?: string }>).filter((event) => !event.runId || runIds.has(event.runId)).map((value) => ({ kind: 'runtime.event', value })),
+    const objects: Array<{
+      kind: string;
+      value: unknown;
+    }> = [
+      ...keptMessages.map((value) => ({ kind: "runtime.message", value })),
+      ...keptRuns.map((value) => ({ kind: "runtime.run", value })),
+      ...keptSteps.map((value) => ({ kind: "runtime.step", value })),
+      ...(
+        parts as Array<{
+          stepId?: string;
+        }>
+      )
+        .filter((part) => part.stepId && keptStepIds.has(part.stepId))
+        .map((value) => ({ kind: "runtime.part", value })),
+      ...(
+        tools as Array<{
+          stepId?: string;
+        }>
+      )
+        .filter((tool) => tool.stepId && keptStepIds.has(tool.stepId))
+        .map((value) => ({ kind: "runtime.tool_call", value })),
+      ...(
+        events as Array<{
+          runId?: string;
+        }>
+      )
+        .filter((event) => !event.runId || runIds.has(event.runId))
+        .map((value) => ({ kind: "runtime.event", value })),
     ];
-    const root = await this.writeHistoryRoot(input.sessionId, objects, `history-mutation:${input.requestId}`);
-    const switched = await this.historyCommand({
+    const root = await this.writeHistoryRoot(
+      input.sessionId,
+      objects,
+      `history-mutation:${input.requestId}`,
+    );
+    const switched = (await this.historyCommand({
       sessionId: input.sessionId,
       requestId: `history-head:${input.requestId}`,
-      operation: 'head_switch',
+      operation: "head_switch",
       payload: { objectId: root, expectedRevision: input.revision },
-    }) as { revision?: number };
+    })) as {
+      revision?: number;
+    };
     return {
       sessionId: input.sessionId,
       revision: Number(switched.revision ?? input.revision + 1),
-      ...(input.action === 'edit' && input.message ? { input: { message: input.message } } : {}),
+      ...(input.action === "edit" && input.message
+        ? { input: { message: input.message } }
+        : {}),
     };
   }
-
   async cloneHistoryAuthoritative(input: {
     sourceSessionId: string;
     targetSessionId: string;
     checkpointId: string;
     revision: number;
     requestId: string;
-  }): Promise<{ revision: number; objectCount: number }> {
-    const [head, checkpoints, messages, runs, steps, parts, tools, events] = await Promise.all([
-      this.historyHeadAuthoritative(input.sourceSessionId),
-      this.listHistoryCheckpoints(input.sourceSessionId),
-      this.listHistoryObjects(input.sourceSessionId, 'list_messages'),
-      this.listHistoryObjects(input.sourceSessionId, 'list_runs'),
-      this.listHistoryObjects(input.sourceSessionId, 'list_steps'),
-      this.listHistoryObjects(input.sourceSessionId, 'list_parts'),
-      this.listHistoryObjects(input.sourceSessionId, 'list_tool_calls'),
-      this.listHistoryObjects(input.sourceSessionId, 'list_events'),
-    ]);
-    if (head.revision !== input.revision) throw new AgentRuntimeError('Conversation changed. Refresh the fork preview.', 'HISTORY_STALE', 409);
-    const checkpoint = checkpoints.find((item) => item.id === input.checkpointId);
-    if (!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.', 'CHECKPOINT_NOT_FOUND', 404);
-    const orderedMessages = this.orderedHistory(messages as AgentRuntimeMessage[]);
-    const boundary = orderedMessages.findIndex((item) => item.id === checkpoint.metadata.messageId);
-    if (boundary < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+  }): Promise<{
+    revision: number;
+    objectCount: number;
+  }> {
+    const [head, checkpoints, messages, runs, steps, parts, tools, events] =
+      await Promise.all([
+        this.historyHeadAuthoritative(input.sourceSessionId),
+        this.listHistoryCheckpoints(input.sourceSessionId),
+        this.listHistoryObjects(input.sourceSessionId, "list_messages"),
+        this.listHistoryObjects(input.sourceSessionId, "list_runs"),
+        this.listHistoryObjects(input.sourceSessionId, "list_steps"),
+        this.listHistoryObjects(input.sourceSessionId, "list_parts"),
+        this.listHistoryObjects(input.sourceSessionId, "list_tool_calls"),
+        this.listHistoryObjects(input.sourceSessionId, "list_events"),
+      ]);
+    if (head.revision !== input.revision)
+      throw new AgentRuntimeError(
+        "Conversation changed. Refresh the fork preview.",
+        "HISTORY_STALE",
+        409,
+      );
+    const checkpoint = checkpoints.find(
+      (item) => item.id === input.checkpointId,
+    );
+    if (!checkpoint)
+      throw new AgentRuntimeError(
+        "History checkpoint was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
+    const orderedMessages = this.orderedHistory(
+      messages as AgentRuntimeMessage[],
+    );
+    const boundary = orderedMessages.findIndex(
+      (item) => item.id === checkpoint.metadata.messageId,
+    );
+    if (boundary < 0)
+      throw new AgentRuntimeError(
+        "History checkpoint message was not found.",
+        "CHECKPOINT_NOT_FOUND",
+        404,
+      );
     const keepMessages = orderedMessages.slice(0, boundary + 1);
-    const runIds = new Set(keepMessages.map((item) => item.runId).filter((id): id is string => Boolean(id)));
+    const runIds = new Set(
+      keepMessages
+        .map((item) => item.runId)
+        .filter((id): id is string => Boolean(id)),
+    );
     const keepRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
-    const keepSteps = (steps as AgentRunStep[]).filter((step) => runIds.has(step.runId));
+    const keepSteps = (steps as AgentRunStep[]).filter((step) =>
+      runIds.has(step.runId),
+    );
     const stepIds = new Set(keepSteps.map((step) => step.id));
-    const keepParts = (parts as Array<{ stepId?: string }>).filter((part) => part.stepId && stepIds.has(part.stepId));
-    const keepTools = (tools as Array<{ stepId?: string }>).filter((tool) => tool.stepId && stepIds.has(tool.stepId));
-    const keepEvents = (events as Array<{ runId?: string }>).filter((event) => !event.runId || runIds.has(event.runId));
-    const hashId = (kind: string, id: string) => `fork_${createHash('sha256').update(`${input.requestId}:${kind}:${id}`).digest('hex').slice(0, 24)}`;
+    const keepParts = (
+      parts as Array<{
+        stepId?: string;
+      }>
+    ).filter((part) => part.stepId && stepIds.has(part.stepId));
+    const keepTools = (
+      tools as Array<{
+        stepId?: string;
+      }>
+    ).filter((tool) => tool.stepId && stepIds.has(tool.stepId));
+    const keepEvents = (
+      events as Array<{
+        runId?: string;
+      }>
+    ).filter((event) => !event.runId || runIds.has(event.runId));
+    const hashId = (kind: string, id: string) =>
+      `fork_${createHash("sha256").update(`${input.requestId}:${kind}:${id}`).digest("hex").slice(0, 24)}`;
     const maps = new Map<string, string>();
     const remap = (kind: string, id: unknown): unknown => {
-      if (typeof id !== 'string') return id;
+      if (typeof id !== "string") return id;
       const key = `${kind}:${id}`;
       const existing = maps.get(key);
       if (existing) return existing;
@@ -1005,99 +1533,204 @@ export class RuntimeFacade {
     };
     const transform = (kind: string, value: unknown): unknown => {
       const copy = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-      if (typeof copy.id === 'string') copy.id = remap(kind, copy.id);
-      if ('sessionId' in copy) copy.sessionId = input.targetSessionId;
-      if ('runId' in copy) copy.runId = remap('run', copy.runId);
-      if ('stepId' in copy) copy.stepId = remap('step', copy.stepId);
-      if ('toolCallId' in copy) copy.toolCallId = remap('tool', copy.toolCallId);
-      if ('triggerMessageId' in copy) copy.triggerMessageId = remap('message', copy.triggerMessageId);
-      if (copy.payload && typeof copy.payload === 'object') {
+      if (typeof copy.id === "string") copy.id = remap(kind, copy.id);
+      if ("sessionId" in copy) copy.sessionId = input.targetSessionId;
+      if ("runId" in copy) copy.runId = remap("run", copy.runId);
+      if ("stepId" in copy) copy.stepId = remap("step", copy.stepId);
+      if ("toolCallId" in copy)
+        copy.toolCallId = remap("tool", copy.toolCallId);
+      if ("triggerMessageId" in copy)
+        copy.triggerMessageId = remap("message", copy.triggerMessageId);
+      if (copy.payload && typeof copy.payload === "object") {
         const payload = copy.payload as Record<string, unknown>;
-        if (typeof payload.sessionId === 'string') payload.sessionId = input.targetSessionId;
-        if (typeof payload.runId === 'string') payload.runId = remap('run', payload.runId);
+        if (typeof payload.sessionId === "string")
+          payload.sessionId = input.targetSessionId;
+        if (typeof payload.runId === "string")
+          payload.runId = remap("run", payload.runId);
       }
       return copy;
     };
-    const objects: Array<{ kind: string; value: unknown }> = [
-      ...keepMessages.map((value) => ({ kind: 'runtime.message', value: transform('message', value) })),
-      ...keepRuns.map((value) => ({ kind: 'runtime.run', value: transform('run', value) })),
-      ...keepSteps.map((value) => ({ kind: 'runtime.step', value: transform('step', value) })),
-      ...keepParts.map((value) => ({ kind: 'runtime.part', value: transform('part', value) })),
-      ...keepTools.map((value) => ({ kind: 'runtime.tool_call', value: transform('tool', value) })),
-      ...keepEvents.map((value) => ({ kind: 'runtime.event', value: transform('event', value) })),
+    const objects: Array<{
+      kind: string;
+      value: unknown;
+    }> = [
+      ...keepMessages.map((value) => ({
+        kind: "runtime.message",
+        value: transform("message", value),
+      })),
+      ...keepRuns.map((value) => ({
+        kind: "runtime.run",
+        value: transform("run", value),
+      })),
+      ...keepSteps.map((value) => ({
+        kind: "runtime.step",
+        value: transform("step", value),
+      })),
+      ...keepParts.map((value) => ({
+        kind: "runtime.part",
+        value: transform("part", value),
+      })),
+      ...keepTools.map((value) => ({
+        kind: "runtime.tool_call",
+        value: transform("tool", value),
+      })),
+      ...keepEvents.map((value) => ({
+        kind: "runtime.event",
+        value: transform("event", value),
+      })),
     ];
-    const root = await this.writeHistoryRoot(input.targetSessionId, objects, `history-fork:${input.requestId}`);
-    const targetHead = await this.historyHeadAuthoritative(input.targetSessionId);
-    const switched = await this.historyCommand({
+    const root = await this.writeHistoryRoot(
+      input.targetSessionId,
+      objects,
+      `history-fork:${input.requestId}`,
+    );
+    const targetHead = await this.historyHeadAuthoritative(
+      input.targetSessionId,
+    );
+    const switched = (await this.historyCommand({
       sessionId: input.targetSessionId,
       requestId: `history-fork-head:${input.requestId}`,
-      operation: 'head_switch',
+      operation: "head_switch",
       payload: { objectId: root, expectedRevision: targetHead.revision },
-    }) as { revision?: number };
-    return { revision: Number(switched.revision ?? targetHead.revision + 1), objectCount: objects.length };
+    })) as {
+      revision?: number;
+    };
+    return {
+      revision: Number(switched.revision ?? targetHead.revision + 1),
+      objectCount: objects.length,
+    };
   }
-
-  async historyHeadAuthoritative(sessionId: string): Promise<{ revision: number; objectId?: string }> {
-    return await this.historyCommand({
+  async historyHeadAuthoritative(sessionId: string): Promise<{
+    revision: number;
+    objectId?: string;
+  }> {
+    return (await this.historyCommand({
       sessionId,
-      requestId: historyReadRequest('head', sessionId),
-      operation: 'head_read',
+      requestId: historyReadRequest("head", sessionId),
+      operation: "head_read",
       payload: {},
-    }) as { revision: number; objectId?: string };
+    })) as {
+      revision: number;
+      objectId?: string;
+    };
   }
-
-  private async historyHead(sessionId: string): Promise<{ revision: number; objectId?: string }> {
+  private async historyHead(sessionId: string): Promise<{
+    revision: number;
+    objectId?: string;
+  }> {
     return this.historyHeadAuthoritative(sessionId);
   }
-
   private orderedHistory<T>(items: T[]): T[] {
     return [...items].sort((left, right) => {
       const leftRecord = left as Record<string, unknown>;
       const rightRecord = right as Record<string, unknown>;
-      const leftSequence = Number(leftRecord.sequence ?? leftRecord.index ?? Number.NaN);
-      const rightSequence = Number(rightRecord.sequence ?? rightRecord.index ?? Number.NaN);
-      if (Number.isSafeInteger(leftSequence) && Number.isSafeInteger(rightSequence) && leftSequence !== rightSequence)
+      const leftSequence = Number(
+        leftRecord.sequence ?? leftRecord.index ?? Number.NaN,
+      );
+      const rightSequence = Number(
+        rightRecord.sequence ?? rightRecord.index ?? Number.NaN,
+      );
+      if (
+        Number.isSafeInteger(leftSequence) &&
+        Number.isSafeInteger(rightSequence) &&
+        leftSequence !== rightSequence
+      )
         return leftSequence - rightSequence;
-      const leftTime = String(leftRecord.createdAt ?? leftRecord.startedAt ?? leftRecord.timestamp ?? '');
-      const rightTime = String(rightRecord.createdAt ?? rightRecord.startedAt ?? rightRecord.timestamp ?? '');
-      return leftTime.localeCompare(rightTime) || String(leftRecord.id ?? '').localeCompare(String(rightRecord.id ?? ''));
+      const leftTime = String(
+        leftRecord.createdAt ??
+          leftRecord.startedAt ??
+          leftRecord.timestamp ??
+          "",
+      );
+      const rightTime = String(
+        rightRecord.createdAt ??
+          rightRecord.startedAt ??
+          rightRecord.timestamp ??
+          "",
+      );
+      return (
+        leftTime.localeCompare(rightTime) ||
+        String(leftRecord.id ?? "").localeCompare(String(rightRecord.id ?? ""))
+      );
     });
   }
-
-  private encodeGraphCursor(sessionId: string, revision: number, cursor: unknown): string {
-    return Buffer.from(JSON.stringify({ sessionId, revision, cursor })).toString('base64url');
+  private encodeGraphCursor(
+    sessionId: string,
+    revision: number,
+    cursor: unknown,
+  ): string {
+    return Buffer.from(
+      JSON.stringify({ sessionId, revision, cursor }),
+    ).toString("base64url");
   }
-
-  private decodeGraphCursor(sessionId: string, revision: number, cursor?: string): unknown | undefined {
+  private decodeGraphCursor(
+    sessionId: string,
+    revision: number,
+    cursor?: string,
+  ): unknown | undefined {
     if (!cursor) return undefined;
     try {
-      const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { sessionId?: unknown; revision?: unknown; cursor?: unknown };
-      if (value.sessionId !== sessionId || value.revision !== revision || !value.cursor) throw new Error('stale history cursor');
+      const value = JSON.parse(
+        Buffer.from(cursor, "base64url").toString("utf8"),
+      ) as {
+        sessionId?: unknown;
+        revision?: unknown;
+        cursor?: unknown;
+      };
+      if (
+        value.sessionId !== sessionId ||
+        value.revision !== revision ||
+        !value.cursor
+      )
+        throw new Error("stale history cursor");
       return value.cursor;
     } catch {
-      throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
+      throw new AgentRuntimeError(
+        "Conversation changed. Refresh history.",
+        "HISTORY_STALE",
+        409,
+      );
     }
   }
-
   async historyEntityPageAuthoritative(
     sessionId: string,
-    operation: 'list_messages' | 'list_runs' | 'list_steps' | 'list_tool_calls' | 'list_events',
+    operation:
+      | "list_messages"
+      | "list_runs"
+      | "list_steps"
+      | "list_tool_calls"
+      | "list_events",
     cursor?: string,
     limit = 256,
-  ): Promise<{ items: unknown[]; cursor?: string; revision: number }> {
+  ): Promise<{
+    items: unknown[];
+    cursor?: string;
+    revision: number;
+  }> {
     const head = await this.historyHeadAuthoritative(sessionId);
     const revision = Number.isSafeInteger(head.revision) ? head.revision : 0;
     if (!head.objectId) return { items: [], revision };
     const graphCursor = this.decodeGraphCursor(sessionId, revision, cursor);
-    const page = await this.historyCommand({
+    const page = (await this.historyCommand({
       sessionId,
-      requestId: `history-page:${operation}:${sessionId}:${revision}:${cursor ?? 'root'}`,
-      operation: 'page',
-      payload: graphCursor ? { cursor: graphCursor, limit } : { objectId: head.objectId, limit },
-    }) as { items?: Array<{ kind?: unknown; value?: unknown }>; cursor?: unknown };
+      requestId: `history-page:${operation}:${sessionId}:${revision}:${cursor ?? "root"}`,
+      operation: "page",
+      payload: graphCursor
+        ? { cursor: graphCursor, limit }
+        : { objectId: head.objectId, limit },
+    })) as {
+      items?: Array<{
+        kind?: unknown;
+        value?: unknown;
+      }>;
+      cursor?: unknown;
+    };
     const kinds: Record<string, string> = {
-      list_messages: 'runtime.message', list_runs: 'runtime.run', list_steps: 'runtime.step',
-      list_tool_calls: 'runtime.tool_call', list_events: 'runtime.event',
+      list_messages: "runtime.message",
+      list_runs: "runtime.run",
+      list_steps: "runtime.step",
+      list_tool_calls: "runtime.tool_call",
+      list_events: "runtime.event",
     };
     const items = (page.items ?? [])
       .filter((item) => item.kind === kinds[operation])
@@ -1106,11 +1739,15 @@ export class RuntimeFacade {
     return {
       items,
       revision,
-      ...(page.cursor ? { cursor: this.encodeGraphCursor(sessionId, revision, page.cursor) } : {}),
+      ...(page.cursor
+        ? { cursor: this.encodeGraphCursor(sessionId, revision, page.cursor) }
+        : {}),
     };
   }
-
-  async historyWindowAuthoritative(sessionId: string, cursor?: string): Promise<{
+  async historyWindowAuthoritative(
+    sessionId: string,
+    cursor?: string,
+  ): Promise<{
     messages: AgentRuntimeMessage[];
     runs: AgentRun[];
     steps: AgentRunStep[];
@@ -1127,19 +1764,25 @@ export class RuntimeFacade {
       detailsTruncated: boolean;
     };
   }> {
-    const [head, hot, runsRaw, stepsRaw, toolsRaw, eventsRaw] = await Promise.all([
-      this.historyHead(sessionId),
-      this.snapshotAuthoritative(sessionId),
-      this.listHistoryObjects(sessionId, 'list_runs'),
-      this.listHistoryObjects(sessionId, 'list_steps'),
-      this.listHistoryObjects(sessionId, 'list_tool_calls'),
-      this.listHistoryObjects(sessionId, 'list_events'),
-    ]);
+    const [head, hot, runsRaw, stepsRaw, toolsRaw, eventsRaw] =
+      await Promise.all([
+        this.historyHead(sessionId),
+        this.snapshotAuthoritative(sessionId),
+        this.listHistoryObjects(sessionId, "list_runs"),
+        this.listHistoryObjects(sessionId, "list_steps"),
+        this.listHistoryObjects(sessionId, "list_tool_calls"),
+        this.listHistoryObjects(sessionId, "list_events"),
+      ]);
     const revision = Number.isSafeInteger(head.revision) ? head.revision : 0;
     const messagePage: AgentRuntimeMessage[] = [];
     let graphCursor = cursor;
     for (let page = 0; page < 32 && messagePage.length < 24; page++) {
-      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', graphCursor, 256);
+      const result = await this.historyEntityPageAuthoritative(
+        sessionId,
+        "list_messages",
+        graphCursor,
+        256,
+      );
       messagePage.push(...(result.items as AgentRuntimeMessage[]));
       if (!result.cursor) {
         graphCursor = undefined;
@@ -1148,18 +1791,47 @@ export class RuntimeFacade {
       graphCursor = result.cursor;
     }
     const pageMessages = this.orderedHistory(messagePage).slice(-24);
-    const stepIds = new Set(pageMessages.map(message => message.stepId).filter((id): id is string => Boolean(id)));
-    const runIds = new Set(pageMessages.map(message => message.runId).filter((id): id is string => Boolean(id)));
-    const steps = this.orderedHistory((stepsRaw as AgentRunStep[]).filter(step => stepIds.has(step.id) || runIds.has(step.runId))).slice(-48);
+    const stepIds = new Set(
+      pageMessages
+        .map((message) => message.stepId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const runIds = new Set(
+      pageMessages
+        .map((message) => message.runId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const steps = this.orderedHistory(
+      (stepsRaw as AgentRunStep[]).filter(
+        (step) => stepIds.has(step.id) || runIds.has(step.runId),
+      ),
+    ).slice(-48);
     for (const step of steps) runIds.add(step.runId);
-    const runs = this.orderedHistory((runsRaw as AgentRun[]).filter(run => runIds.has(run.id))).slice(-48);
-    const relatedStepIds = new Set(steps.map(step => step.id));
-    const toolCalls = this.orderedHistory((toolsRaw as ToolCallRecord[]).filter(tool => tool.stepId && relatedStepIds.has(tool.stepId))).slice(-96);
-    const events = cursor ? [] : this.orderedHistory(eventsRaw as RuntimeEvent[]).slice(-32);
+    const runs = this.orderedHistory(
+      (runsRaw as AgentRun[]).filter((run) => runIds.has(run.id)),
+    ).slice(-48);
+    const relatedStepIds = new Set(steps.map((step) => step.id));
+    const toolCalls = this.orderedHistory(
+      (toolsRaw as ToolCallRecord[]).filter(
+        (tool) => tool.stepId && relatedStepIds.has(tool.stepId),
+      ),
+    ).slice(-96);
+    const events = cursor
+      ? []
+      : this.orderedHistory(eventsRaw as RuntimeEvent[]).slice(-32);
     let permissions: unknown[] = [];
     if (!cursor) {
-      try { permissions = ((await this.controlState(sessionId) as { permissions?: unknown[] }).permissions ?? []).slice(-32); }
-      catch { permissions = []; }
+      try {
+        permissions = (
+          (
+            (await this.controlState(sessionId)) as {
+              permissions?: unknown[];
+            }
+          ).permissions ?? []
+        ).slice(-32);
+      } catch {
+        permissions = [];
+      }
     }
     const epoch = hot?.epoch ?? 0;
     return {
@@ -1180,79 +1852,166 @@ export class RuntimeFacade {
       },
     };
   }
-
-  async historyTimelineAuthoritative(sessionId: string, before = Number.MAX_SAFE_INTEGER): Promise<{ items: AgentRuntimeMessage[]; next?: number; epoch: number }> {
+  async historyTimelineAuthoritative(
+    sessionId: string,
+    before = Number.MAX_SAFE_INTEGER,
+  ): Promise<{
+    items: AgentRuntimeMessage[];
+    next?: number;
+    epoch: number;
+  }> {
     const hot = await this.snapshotAuthoritative(sessionId);
     const messages: AgentRuntimeMessage[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 32 && messages.length < 256; page++) {
-      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', cursor, 256);
-      messages.push(...(result.items as AgentRuntimeMessage[]).filter((message) =>
-        (message.role === 'user' || message.role === 'assistant') && Number((message as { sequence?: unknown }).sequence ?? Number.MAX_SAFE_INTEGER) < before,
-      ));
+      const result = await this.historyEntityPageAuthoritative(
+        sessionId,
+        "list_messages",
+        cursor,
+        256,
+      );
+      messages.push(
+        ...(result.items as AgentRuntimeMessage[]).filter(
+          (message) =>
+            (message.role === "user" || message.role === "assistant") &&
+            Number(
+              (
+                message as {
+                  sequence?: unknown;
+                }
+              ).sequence ?? Number.MAX_SAFE_INTEGER,
+            ) < before,
+        ),
+      );
       if (!result.cursor) break;
       cursor = result.cursor;
     }
     const ordered = this.orderedHistory(messages);
     const page = ordered.slice(-256);
-    const next = ordered.length > page.length ? Number((page[0] as { sequence?: unknown } | undefined)?.sequence) : undefined;
-    return { items: page, next: Number.isSafeInteger(next) ? next : undefined, epoch: hot?.epoch ?? 0 };
+    const next =
+      ordered.length > page.length
+        ? Number(
+            (
+              page[0] as
+                | {
+                    sequence?: unknown;
+                  }
+                | undefined
+            )?.sequence,
+          )
+        : undefined;
+    return {
+      items: page,
+      next: Number.isSafeInteger(next) ? next : undefined,
+      epoch: hot?.epoch ?? 0,
+    };
   }
-
-  async messageContentAuthoritative(sessionId: string, messageId: string, cursor = 0, expectedRevision?: number): Promise<{ text: string; next?: number; revision: number }> {
+  async messageContentAuthoritative(
+    sessionId: string,
+    messageId: string,
+    cursor = 0,
+    expectedRevision?: number,
+  ): Promise<{
+    text: string;
+    next?: number;
+    revision: number;
+  }> {
     const head = await this.historyHead(sessionId);
-    if (expectedRevision !== undefined && expectedRevision !== head.revision) throw new AgentRuntimeError('Conversation changed.', 'HISTORY_STALE', 409);
-    if (cursor > 0 && expectedRevision === undefined) throw new AgentRuntimeError('Content continuation requires the original revision.', 'HISTORY_STALE', 409);
+    if (expectedRevision !== undefined && expectedRevision !== head.revision)
+      throw new AgentRuntimeError(
+        "Conversation changed.",
+        "HISTORY_STALE",
+        409,
+      );
+    if (cursor > 0 && expectedRevision === undefined)
+      throw new AgentRuntimeError(
+        "Content continuation requires the original revision.",
+        "HISTORY_STALE",
+        409,
+      );
     let graphCursor: string | undefined;
     let message: AgentRuntimeMessage | undefined;
     for (let page = 0; page < 128 && !message; page++) {
-      const result = await this.historyEntityPageAuthoritative(sessionId, 'list_messages', graphCursor, 256);
-      message = (result.items as AgentRuntimeMessage[]).find((item) => item.id === messageId);
+      const result = await this.historyEntityPageAuthoritative(
+        sessionId,
+        "list_messages",
+        graphCursor,
+        256,
+      );
+      message = (result.items as AgentRuntimeMessage[]).find(
+        (item) => item.id === messageId,
+      );
       if (!result.cursor) break;
       graphCursor = result.cursor;
     }
-    if (!message) throw new AgentRuntimeError('Message missing.', 'NOT_FOUND', 404);
-    const text = typeof message.content === 'string' ? message.content : '';
+    if (!message)
+      throw new AgentRuntimeError("Message missing.", "NOT_FOUND", 404);
+    const text = typeof message.content === "string" ? message.content : "";
     const pageSize = 8192;
-    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > text.length) throw new AgentRuntimeError('Invalid content cursor.', 'INVALID_INPUT', 400);
-    return { text: text.slice(cursor, cursor + pageSize), next: cursor + pageSize < text.length ? cursor + pageSize : undefined, revision: head.revision };
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > text.length)
+      throw new AgentRuntimeError(
+        "Invalid content cursor.",
+        "INVALID_INPUT",
+        400,
+      );
+    return {
+      text: text.slice(cursor, cursor + pageSize),
+      next: cursor + pageSize < text.length ? cursor + pageSize : undefined,
+      revision: head.revision,
+    };
   }
-
   async uiSnapshotAuthoritative(sessionId: string): Promise<{
-    session: AgentSession; run: AgentRun | null; cursor: number;
-    liveChunks: AgentRunStreamChunk[]; completedStepIds: string[]; queuedInputs?: unknown[]; forceInjectItemId?: string | null;
+    session: AgentSession;
+    run: AgentRun | null;
+    cursor: number;
+    liveChunks: AgentRunStreamChunk[];
+    completedStepIds: string[];
+    queuedInputs?: unknown[];
+    forceInjectItemId?: string | null;
   }> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     // Reads never seed from SQLite: a missing Rust projection requires explicit
     // session creation or offline migration, not an implicit authority switch.
     return decodeUiSnapshot(await client.uiSnapshot(sessionId), sessionId);
   }
-
   async uiTicket(sessionId: string, clientId: string) {
-    if (streamMode() !== 'authoritative') return null;
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar discovery is not ready.');
+    if (!client) throw new Error("Runtime sidecar discovery is not ready.");
     for (let attempt = 0; attempt < 2; attempt++) {
       const port = Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Runtime sidecar discovery is not ready.');
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        throw new Error("Runtime sidecar discovery is not ready.");
       const ticket = await client.issueTicket(sessionId, clientId);
       if (Number(process.env.SYNAX_RUNTIME_SIDECAR_PORT) !== port) continue;
-      return { url: `ws://127.0.0.1:${port}/runtime`, token: ticket.token,
-        expiresAtMs: ticket.expiresAtMs, clientId, sessionId, protocol: 'synax.runtime.v2' as const };
+      return {
+        url: `ws://127.0.0.1:${port}/runtime`,
+        token: ticket.token,
+        expiresAtMs: ticket.expiresAtMs,
+        clientId,
+        sessionId,
+        protocol: "synax.runtime.v2" as const,
+      };
     }
-    throw new Error('Runtime sidecar restarted during ticket issuance.');
+    throw new Error("Runtime sidecar restarted during ticket issuance.");
   }
-
-  async streamFence(sessionId: string, runId: string): Promise<{ epoch: number; revision: number }> {
+  async streamFence(
+    sessionId: string,
+    runId: string,
+  ): Promise<{
+    epoch: number;
+    revision: number;
+  }> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     const snapshot = await client.snapshot(sessionId);
-    if (snapshot.activeRunId !== runId) throw new Error('Runtime stream run is not active.');
+    if (snapshot.activeRunId !== runId)
+      throw new Error("Runtime stream run is not active.");
     return { epoch: snapshot.epoch, revision: snapshot.revision };
   }
-
-  async authoritativeRecordState(sessionId: string): Promise<RuntimeRecordState> {
+  async authoritativeRecordState(
+    sessionId: string,
+  ): Promise<RuntimeRecordState> {
     const snapshot = await this.uiSnapshotAuthoritative(sessionId);
     const session = snapshot.session;
     return {
@@ -1263,11 +2022,9 @@ export class RuntimeFacade {
       updatedAt: session.updatedAt,
     };
   }
-
-  async appendStreamAuthoritative(input: ShadowStreamInput): Promise<number> {
-    if (streamMode() !== 'authoritative') return 0;
+  async appendStreamAuthoritative(input: RuntimeStreamInput): Promise<number> {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     const ack = await client.appendStream({
       sessionId: input.sessionId,
       runId: input.runId,
@@ -1275,71 +2032,56 @@ export class RuntimeFacade {
       producerSequence: input.producerSequence,
       epoch: input.epoch,
       revision: input.revision,
-      durability: 'group_commit',
+      durability: "group_commit",
       events: input.chunks.map((chunk) => ({
-        kind: typeof chunk === 'object' && chunk && 'type' in chunk
-          ? String((chunk as { type: unknown }).type)
-          : 'runtime_chunk',
-        payload: Buffer.from(JSON.stringify({ schema: 1, chunk, state: input.state })),
+        kind:
+          typeof chunk === "object" && chunk && "type" in chunk
+            ? String(
+                (
+                  chunk as {
+                    type: unknown;
+                  }
+                ).type,
+              )
+            : "runtime_chunk",
+        payload: Buffer.from(
+          JSON.stringify({ schema: 1, chunk, state: input.state }),
+        ),
       })),
     });
     const match = /^stream:\d+-(\d+)$/.exec(ack.request);
-    if (!match) throw new Error('Runtime stream acknowledgement did not include a valid sequence range.');
+    if (!match)
+      throw new Error(
+        "Runtime stream acknowledgement did not include a valid sequence range.",
+      );
     return Number(match[1]);
   }
-
   async replayAuthoritative(
     sessionId: string,
     after: number,
     runId?: string,
-  ): Promise<Array<{ sequence: number; runId: string; payload: Uint8Array }>> {
-    if (streamMode() !== 'authoritative') return [];
+  ): Promise<
+    Array<{
+      sequence: number;
+      runId: string;
+      payload: Uint8Array;
+    }>
+  > {
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     const response = await client.replay(sessionId, after);
     return response.events
       .filter((event) => !runId || event.runId === runId)
-      .map((event) => ({ sequence: event.sequence, runId: event.runId, payload: event.payload }));
+      .map((event) => ({
+        sequence: event.sequence,
+        runId: event.runId,
+        payload: event.payload,
+      }));
   }
-
   async snapshotAuthoritative(sessionId: string) {
-    if (streamMode() !== 'authoritative') return null;
     const client = this.clientFactory();
-    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
     return await client.snapshot(sessionId);
   }
-
-  async shadowAppendStream(input: ShadowStreamInput): Promise<void> {
-    if (streamMode() !== 'shadow') return;
-    const client = this.clientFactory();
-    if (!client) return;
-    try {
-      await client.appendStream({
-        sessionId: input.sessionId,
-        runId: input.runId,
-        producerId: input.producerId,
-        producerSequence: input.producerSequence,
-        epoch: input.epoch,
-        revision: input.revision,
-        durability: 'group_commit',
-        events: input.chunks.map((chunk) => ({
-          kind: typeof chunk === 'object' && chunk && 'type' in chunk
-            ? String((chunk as { type: unknown }).type)
-            : 'runtime_chunk',
-          payload: Buffer.from(JSON.stringify({ schema: 1, chunk, state: input.state })),
-        })),
-      });
-    } catch (error) {
-      const details = error instanceof RuntimeSidecarError
-        ? { code: error.code, expected: error.expected, actual: error.actual }
-        : {};
-      logger.warn(
-        { ...details, sessionId: input.sessionId, runId: input.runId, producerSequence: input.producerSequence, error },
-        '[runtime-sidecar] shadow stream append failed',
-      );
-      throw error;
-    }
-  }
 }
-
 export const runtimeFacade = new RuntimeFacade();

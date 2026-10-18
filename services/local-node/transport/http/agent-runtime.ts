@@ -1,107 +1,90 @@
-import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
-import { runtimeFacade } from '../../modules/agent-runtime/sidecar/runtime-facade.js';
-import { RuntimeSidecarError } from '../../modules/agent-runtime/sidecar/sidecar-client.js';
-import { SIMPLE_HISTORY_STORAGE } from "../../infrastructure/runtime/env.js";
-import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
-import type { AgentRun, AgentRuntimeMessage, AgentSession, CreateSessionRequest, PermissionDecision, RuntimeEvent, ToolCallRecord } from "../../modules/agent-runtime/contracts.js";
-import {
-  optimizeInput,
-  MAX_OPTIMIZATION_INPUT_CHARS,
-} from "../../modules/agent-runtime/input-optimization.js";
-import { workRuntime } from "../../modules/agent-runtime/work-runtime.js";
-import { workflowMode } from "../../modules/agent-runtime/workflow-mode.js";
-import { searchSessions } from "../../modules/agent-runtime/session-search.js";
-import {
-  validateInputMedia,
-  sessionInputCapabilities,
-  draftInputCapabilities,
-} from "../../modules/agent-runtime/media-capabilities.js";
-import { listTurnReferenceOptions } from "../../modules/agent-runtime/turn-references.js";
-import { backendIdSchema } from "../../modules/agent-runtime/backends/backend-contracts.js";
-import { acknowledgeRuntimeRecovery } from "../../modules/agent-runtime/runtime-recovery.js";
-import {
-  AgentNotFoundError,
-  AgentRuntimeError,
-  AgentValidationError,
-} from "../../modules/agent-runtime/runtime-errors.js";
-import {
-  projectSessionState,
-  projectSessionSummary,
-} from "../../modules/agent-runtime/session-projection.js";
+import type { Context } from "hono";
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { createHash, randomUUID } from "node:crypto";
-import { runCoordinator } from "../../modules/agent-runtime/run-coordinator.js";
-import { runtimeJournal } from "../../modules/agent-runtime/runtime-journal.js";
+import * as z from "zod/v4";
+import { assertLlmProviderConfigured } from "../../infrastructure/llm-runtime/provider-check.js";
+import {
+  getGlobalConfig,
+  getGlobalConfigForRuntime,
+} from "../../infrastructure/runtime/config/config-store.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
+import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
+import { SseEventType } from "../../infrastructure/runtime/sse-events.js";
+import { sessionUsesAcpEngine } from "../../modules/agent-runtime/acp-engine/index.js";
+import {
+  closeAcpAgentSessions,
+  resumeAgentSessionInBackground,
+} from "../../modules/agent-runtime/agent-stream-proxy.js";
 import {
   resolveSessionBackend,
   validateBackendTurnInput,
 } from "../../modules/agent-runtime/backends/backend-binding.js";
+import { backendIdSchema } from "../../modules/agent-runtime/backends/backend-contracts.js";
 import {
   describeBackends,
   getBackendAdapter,
 } from "../../modules/agent-runtime/backends/backend-registry.js";
-import { workStore } from "../../modules/agent-runtime/work-store.js";
-import { interactionService } from "../../modules/agent-runtime/interaction-service.js";
+import type {
+  AgentRun,
+  AgentRuntimeMessage,
+  AgentSession,
+  CreateSessionRequest,
+  PermissionDecision,
+  RuntimeEvent,
+  ToolCallRecord,
+} from "../../modules/agent-runtime/contracts.js";
 import { interactionReplySchema } from "../../modules/agent-runtime/control-contracts.js";
-import { getStoredPlan } from "../../modules/agent-runtime/plan-execution.js";
-import {
-  getPlanArtifact,
-  listPlanArtifacts,
-  restorePlanArtifact,
-} from "../../modules/agent-runtime/plan-artifact-store.js";
 import { initializeGoal } from "../../modules/agent-runtime/goal-control.js";
-import { Hono } from "hono";
-import type { Context } from "hono";
-import { streamSSE } from "hono/streaming";
-import * as z from "zod/v4";
 import {
   agentContextBuilder,
-  agentEventService,
-  agentLoopRuntime,
   agentRuntimeStore,
   agentSessionRuntime,
+  applySessionPermissionUpdateAuthoritative,
   buildContextRequestSchema,
   clearInactiveSessionsBodySchema,
   createSessionRequestSchema,
   enqueueInputRequestSchema,
   listEventsQuerySchema,
   listSessionsQuerySchema,
-  permissionPolicy,
   permissionReplyRequestSchema,
   profileService,
   resolveSessionCapabilities,
-  resolveSessionInvocationUsage,
   resolveSessionInvocationUsageFromRecords,
   streamTurnRequestSchema,
   toHttpError,
-  applySessionPermissionUpdate,
-  applySessionPermissionUpdateAuthoritative,
   updateSessionPermissionRequestSchema,
 } from "../../modules/agent-runtime/index.js";
 import {
-  interruptAgentSessionsAndWait,
-  closeAcpAgentSessions,
-  resumeAgentSessionInBackground,
-} from "../../modules/agent-runtime/agent-stream-proxy.js";
-import { acpPermissionBridge } from "../../modules/agent-runtime/acp-engine/index.js";
-import { sessionUsesAcpEngine } from "../../modules/agent-runtime/acp-engine/index.js";
-import { ensureSessionTitleGenerated } from "../../modules/agent-runtime/session-title-service.js";
-import { runtimeBus } from "../../modules/agent-runtime/runtime-bus.js";
-import { withSessionEventsQuiesced } from "../../modules/agent-runtime/runtime-event-quiesce.js";
+  MAX_OPTIMIZATION_INPUT_CHARS,
+  optimizeInput,
+} from "../../modules/agent-runtime/input-optimization.js";
+import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
+import { interactionService } from "../../modules/agent-runtime/interaction-service.js";
 import {
-  sessionLiveBus,
-  type SessionLiveEvent,
-} from "../../modules/agent-runtime/session-live-bus.js";
-import { sessionProcessManager } from "../../modules/agent-runtime/session-process-manager.js";
-import { logger } from "../../infrastructure/runtime/logger.js";
-import { getGlobalConfig } from "../../infrastructure/runtime/config/config-store.js";
-import { getGlobalConfigForRuntime } from "../../infrastructure/runtime/config/config-store.js";
-import { mediaModels, findMediaModel, discoverOpenRouterModels } from "../../modules/media/catalog.js";
-import { createMediaJob, getMediaJob, listMediaJobs, cancelJob } from "../../modules/media/jobs.js";
-import { mediaJobInputSchema } from "../../modules/media/schema.js";
-import { SseEventType } from "../../infrastructure/runtime/sse-events.js";
-import { assertLlmProviderConfigured } from "../../infrastructure/llm-runtime/provider-check.js";
+  draftInputCapabilities,
+  sessionInputCapabilities,
+  validateInputMedia,
+} from "../../modules/agent-runtime/media-capabilities.js";
+import { restorePlanArtifact } from "../../modules/agent-runtime/plan-artifact-store.js";
+import {
+  listProjectToolGrants,
+  revokeProjectToolGrant,
+} from "../../modules/agent-runtime/project-tool-grants.js";
+import { runCoordinator } from "../../modules/agent-runtime/run-coordinator.js";
+import { runtimeBus } from "../../modules/agent-runtime/runtime-bus.js";
+import {
+  AgentNotFoundError,
+  AgentRuntimeError,
+  AgentValidationError,
+} from "../../modules/agent-runtime/runtime-errors.js";
+import { withSessionEventsQuiesced } from "../../modules/agent-runtime/runtime-event-quiesce.js";
+import { runtimeJournal } from "../../modules/agent-runtime/runtime-journal.js";
+import {
+  RUNTIME_PROTOCOL_SCHEMA,
+  RUNTIME_PROTOCOL_VERSION,
+} from "../../modules/agent-runtime/runtime-protocol.js";
+import { acknowledgeRuntimeRecovery } from "../../modules/agent-runtime/runtime-recovery.js";
 import {
   deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
@@ -109,108 +92,75 @@ import {
   stopSessionBackgroundProcesses,
 } from "../../modules/agent-runtime/session-background-processes.js";
 import {
-  getSessionEnvironment,
-  getSessionEnvironmentFile,
-  getSessionEnvironmentFileMedia,
-  saveSessionEnvironmentFile,
-  renameSessionEnvironmentFile,
-  trashSessionEnvironmentFile,
-  openSessionFileInSystemTerminal,
-  getSessionInputSourceContent,
-  getSessionInputSourceContentFromRecord,
-  invalidateSessionEnvironment,
-} from "../../modules/agent-runtime/session-environment.js";
-import {
-  listSessionGitBranches,
-  switchSessionGitBranch,
-  createSessionGitBranch,
-} from "../../modules/agent-runtime/session-git-branches.js";
-import { commitSessionWorkspace, pushSessionWorkspace } from "../../modules/agent-runtime/session-git-commit.js";
-import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
-import {
   prepareCommitMessageGeneration,
   streamSessionCommitMessage,
 } from "../../modules/agent-runtime/session-commit-message-stream.js";
 import { resolveSessionConfiguredContextLimit } from "../../modules/agent-runtime/session-context-limit.js";
 import {
-  RUNTIME_PROTOCOL_SCHEMA,
-  RUNTIME_PROTOCOL_VERSION,
-} from "../../modules/agent-runtime/runtime-protocol.js";
+  getSessionEnvironment,
+  getSessionEnvironmentFile,
+  getSessionEnvironmentFileMedia,
+  getSessionInputSourceContentFromRecord,
+  invalidateSessionEnvironment,
+  openSessionFileInSystemTerminal,
+  renameSessionEnvironmentFile,
+  saveSessionEnvironmentFile,
+  trashSessionEnvironmentFile,
+} from "../../modules/agent-runtime/session-environment.js";
+import {
+  createSessionGitBranch,
+  listSessionGitBranches,
+  switchSessionGitBranch,
+} from "../../modules/agent-runtime/session-git-branches.js";
+import {
+  commitSessionWorkspace,
+  pushSessionWorkspace,
+} from "../../modules/agent-runtime/session-git-commit.js";
+import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
+import {
+  sessionLiveBus,
+  type SessionLiveEvent,
+} from "../../modules/agent-runtime/session-live-bus.js";
+import { sessionProcessManager } from "../../modules/agent-runtime/session-process-manager.js";
+import {
+  projectSessionState,
+  projectSessionSummary,
+} from "../../modules/agent-runtime/session-projection.js";
+import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
+import { RuntimeSidecarError } from "../../modules/agent-runtime/sidecar/sidecar-client.js";
 import {
   resolveProjectWorkspaceLocation,
   resolveRegisteredProjectWorkDir,
 } from "../../modules/agent-runtime/tools/workspace.js";
-import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
-import { readWorkspaceProject, projectWorkspaceRoots, workspaceRootLocation } from "../../modules/project-workspace.js";
+import { listTurnReferenceOptions } from "../../modules/agent-runtime/turn-references.js";
+import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
+import { workRuntime } from "../../modules/agent-runtime/work-runtime.js";
+import { workflowMode } from "../../modules/agent-runtime/workflow-mode.js";
 import {
   GitWorkspaceError,
   resolveGitWorkspaceSelection,
 } from "../../modules/git-workspaces.js";
-
 import {
-  listProjectToolGrants,
-  revokeProjectToolGrant,
-} from "../../modules/agent-runtime/project-tool-grants.js";
-
+  discoverOpenRouterModels,
+  findMediaModel,
+  mediaModels,
+} from "../../modules/media/catalog.js";
+import {
+  cancelJob,
+  createMediaJob,
+  getMediaJob,
+  listMediaJobs,
+} from "../../modules/media/jobs.js";
+import { mediaJobInputSchema } from "../../modules/media/schema.js";
+import {
+  projectWorkspaceRoots,
+  readWorkspaceProject,
+  workspaceRootLocation,
+} from "../../modules/project-workspace.js";
+import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
 export const agentRuntimeRoutes = new Hono();
-
 const authoritativeEditRequestId = (sessionId: string, requestId: string) =>
   `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
-
-/**
- * The Rust sidecar is the only online history authority. Keep the historical
- * SQLite/JSONL/checkpoint stack behind an explicit compatibility boundary so
- * importing this route module in authoritative mode cannot load its readers or
- * writers. The migration command and legacy fixtures enter this boundary
- * deliberately by running with a non-authoritative stream mode.
- */
-type LegacyHistoryModules = {
-  flatReader: typeof import("../../modules/agent-runtime/flat-history-reader.js");
-  simpleHistory: typeof import("../../modules/agent-runtime/simple-history.js");
-  flatMigration: typeof import("../../modules/agent-runtime/flat-history-migration.js");
-  jsonlMigration: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js");
-  versionWindow: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/window.js");
-  versionBridge: typeof import("../../modules/agent-runtime/checkpoints/version-runtime/bridge.js");
-  retention: typeof import("../../modules/agent-runtime/checkpoints/retention.js");
-  operations: typeof import("../../modules/agent-runtime/checkpoints/operations.js");
-  simpleFork: typeof import("../../modules/agent-runtime/checkpoints/simple-fork.js");
-  guards: typeof import("../../modules/agent-runtime/checkpoints/guards.js");
-};
-
-let legacyHistoryModulesPromise: Promise<LegacyHistoryModules> | undefined;
-async function loadLegacyHistoryModules(): Promise<LegacyHistoryModules> {
-  if (runtimeFacade.streamMode() === "authoritative")
-    throw new AgentRuntimeError(
-      "Legacy history is unavailable on the authoritative runtime path.",
-      "HISTORY_BACKEND_MISMATCH",
-      409,
-    );
-  legacyHistoryModulesPromise ??= Promise.all([
-    import("../../modules/agent-runtime/flat-history-reader.js"),
-    import("../../modules/agent-runtime/simple-history.js"),
-    import("../../modules/agent-runtime/flat-history-migration.js"),
-    import("../../modules/agent-runtime/checkpoints/version-runtime/jsonl-migration.js"),
-    import("../../modules/agent-runtime/checkpoints/version-runtime/window.js"),
-    import("../../modules/agent-runtime/checkpoints/version-runtime/bridge.js"),
-    import("../../modules/agent-runtime/checkpoints/retention.js"),
-    import("../../modules/agent-runtime/checkpoints/operations.js"),
-    import("../../modules/agent-runtime/checkpoints/simple-fork.js"),
-    import("../../modules/agent-runtime/checkpoints/guards.js"),
-  ]).then(([flatReader, simpleHistory, flatMigration, jsonlMigration, versionWindow, versionBridge, retention, operations, simpleFork, guards]) => ({
-    flatReader,
-    simpleHistory,
-    flatMigration,
-    jsonlMigration,
-    versionWindow,
-    versionBridge,
-    retention,
-    operations,
-    simpleFork,
-    guards,
-  }));
-  return legacyHistoryModulesPromise;
-}
-
 agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
   try {
     return c.json({ items: listProjectToolGrants(c.req.param("projectId")) });
@@ -231,44 +181,34 @@ agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
     return runtimeError(c, error);
   }
 });
-
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");
     if (id) {
-      if (runtimeFacade.streamMode() === "authoritative") {
+      {
         try {
           const projected = projectSessionState(
             (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
           );
-          if (projected.sessionMetadata?.archivedAt || projected.sessionMetadata?.deletedAt)
+          if (
+            projected.sessionMetadata?.archivedAt ||
+            projected.sessionMetadata?.deletedAt
+          )
             return runtimeError(c, new AgentNotFoundError(id));
         } catch (error) {
-          if (error instanceof RuntimeSidecarError && error.code === 'PROJECTION_MISSING')
+          if (
+            error instanceof RuntimeSidecarError &&
+            error.code === "PROJECTION_MISSING"
+          )
             return runtimeError(c, new AgentNotFoundError(id));
           return runtimeError(c, error);
         }
-      } else if (
-        getRawSqlite()
-          .prepare("SELECT 1 FROM conversation_v3_deletions WHERE session_id=?")
-          .get(id) ||
-        getRawSqlite()
-          .prepare(
-            "SELECT 1 FROM agent_runtime_sessions WHERE id=? AND archived_at IS NOT NULL",
-          )
-          .get(id)
-      ) {
-        // The canonical gone-error: clients recognize this exact shape as the
-        // terminal "session no longer exists" signal instead of a failure.
-        return runtimeError(c, new AgentNotFoundError(id));
       }
     }
     await next();
   });
 }
-
-const AGENT_RUNTIME_HEARTBEAT_MS = 10_000;
-
+const AGENT_RUNTIME_HEARTBEAT_MS = 10000;
 async function readJson(c: Context) {
   try {
     return { ok: true as const, data: await c.req.json() };
@@ -276,11 +216,9 @@ async function readJson(c: Context) {
     return { ok: false as const, error: "Invalid JSON body" };
   }
 }
-
 function validationError(c: Context, error: z.ZodError) {
   return c.json({ error: "Validation failed", details: error.flatten() }, 400);
 }
-
 function runtimeError(c: Context, error: unknown) {
   const mapped = toHttpError(error);
   return c.json(
@@ -288,7 +226,6 @@ function runtimeError(c: Context, error: unknown) {
     mapped.status as 400 | 401 | 403 | 404 | 409 | 500,
   );
 }
-
 async function archiveSessionAfterShutdown(
   sessionId: string,
   expectedRunId?: string,
@@ -302,7 +239,6 @@ async function archiveSessionAfterShutdown(
   const sessionIds = agentSessionRuntime
     .listSessionTree(sessionId)
     .map((session) => session.id);
-
   // Archiving is a lifecycle operation, not just a visibility mutation. Stop the
   // active runtime, ACP sessions, and every owned background process first;
   // then mark the whole subtree stopped before hiding it. The shutdown pipeline
@@ -319,14 +255,20 @@ async function archiveSessionAfterShutdown(
     );
     await closeAcpAgentSessions(sessionIds);
     await stopSessionBackgroundProcesses(sessionIds);
-    if (runtimeFacade.streamMode() === "authoritative") {
-      await Promise.all(sessionIds.map((id) => runtimeFacade.stopSessionAuthoritative(id, "interrupted", "Session archived by user.")));
-    } else agentSessionRuntime.interrupt(sessionId);
-
+    {
+      await Promise.all(
+        sessionIds.map((id) =>
+          runtimeFacade.stopSessionAuthoritative(
+            id,
+            "interrupted",
+            "Session archived by user.",
+          ),
+        ),
+      );
+    }
     return { ...agentSessionRuntime.archive(sessionId), parentId };
   });
 }
-
 const inputOptimizationSchema = z
   .object({
     projectId: z.string().trim().min(1).max(256),
@@ -339,7 +281,6 @@ const inputOptimizationSchema = z
     backendId: backendIdSchema.optional(),
   })
   .strict();
-
 agentRuntimeRoutes.post("/input/optimize", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -351,15 +292,27 @@ agentRuntimeRoutes.post("/input/optimize", async (c) => {
       stream.onAbort(() => controller.abort());
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal]);
       try {
-        const result = await optimizeInput(parsed.data, signal, async (text) => {
-          await stream.writeSSE({ event: "delta", data: JSON.stringify({ text }) });
+        const result = await optimizeInput(
+          parsed.data,
+          signal,
+          async (text) => {
+            await stream.writeSSE({
+              event: "delta",
+              data: JSON.stringify({ text }),
+            });
+          },
+        );
+        await stream.writeSSE({
+          event: "result",
+          data: JSON.stringify(result),
         });
-        await stream.writeSSE({ event: "result", data: JSON.stringify(result) });
       } catch (error) {
         if (!signal.aborted) {
           await stream.writeSSE({
             event: "error",
-            data: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+            data: JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+            }),
           });
         }
       }
@@ -371,74 +324,79 @@ agentRuntimeRoutes.post("/input/optimize", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/media/models/discover", async (c) => {
   try {
     const providerId = c.req.query("providerId") ?? "custom-api:openrouter";
     const config = getGlobalConfigForRuntime();
     const connection = config.providerConnections[providerId];
-    if (!connection?.apiKey) return c.json({ error: "Provider API key is not configured." }, 422);
+    if (!connection?.apiKey)
+      return c.json({ error: "Provider API key is not configured." }, 422);
     if (providerId !== "custom-api:openrouter") return c.json({ models: [] });
     const baseUrl = connection.baseUrl ?? "https://openrouter.ai/api/v1";
-    return c.json({ models: await discoverOpenRouterModels(baseUrl, connection.apiKey) });
-  } catch (error) { return runtimeError(c, error); }
+    return c.json({
+      models: await discoverOpenRouterModels(baseUrl, connection.apiKey),
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.get("/media/models", (c) => {
-  try { return c.json({ models: mediaModels(getGlobalConfigForRuntime()) }); }
-  catch (error) { return runtimeError(c, error); }
+  try {
+    return c.json({ models: mediaModels(getGlobalConfigForRuntime()) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
   try {
     const session = agentSessionRuntime.get(c.req.param("sessionId"));
     const body = await c.req.json();
     const parsed = mediaJobInputSchema.safeParse(body);
     if (!parsed.success) return validationError(c, parsed.error);
-    findMediaModel(getGlobalConfigForRuntime(), parsed.data.providerId, parsed.data.modelId);
+    findMediaModel(
+      getGlobalConfigForRuntime(),
+      parsed.data.providerId,
+      parsed.data.modelId,
+    );
     const job = createMediaJob(session.id, session.projectId, parsed.data);
     return c.json({ job }, 202);
-  } catch (error) { return runtimeError(c, error); }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/media-jobs", (c) => {
-  try { agentSessionRuntime.get(c.req.param("sessionId")); return c.json({ jobs: listMediaJobs(c.req.param("sessionId")) }); }
-  catch (error) { return runtimeError(c, error); }
+  try {
+    agentSessionRuntime.get(c.req.param("sessionId"));
+    return c.json({ jobs: listMediaJobs(c.req.param("sessionId")) });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/media-jobs/:jobId", (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
     const job = getMediaJob(c.req.param("jobId"));
-    if (!job || job.sessionId !== c.req.param("sessionId")) return c.json({ error: "Media job not found." }, 404);
+    if (!job || job.sessionId !== c.req.param("sessionId"))
+      return c.json({ error: "Media job not found." }, 404);
     return c.json({ job });
-  } catch (error) { return runtimeError(c, error); }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
-agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs/:jobId/cancel", async (c) => {
-  try {
-    agentSessionRuntime.get(c.req.param("sessionId"));
-    const job = getMediaJob(c.req.param("jobId"));
-    if (!job || job.sessionId !== c.req.param("sessionId")) return c.json({ error: "Media job not found." }, 404);
-    return c.json({ job: await cancelJob(job.id) });
-  } catch (error) { return runtimeError(c, error); }
-});
-
-async function withSessionPayload(sessionId: string) {
-  const legacy = await loadLegacyHistoryModules();
-  legacy.flatMigration.prepareFlatHistory(sessionId);
-  const session = projectSessionState(agentSessionRuntime.get(sessionId));
-  const profile = profileService.getForSession(session);
-  return {
-    session,
-    profile,
-    work: workStore.current(sessionId),
-    context: session.contextSnapshotId
-      ? agentRuntimeStore.getContextBundle(session.contextSnapshotId)
-      : null,
-  };
-}
-
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/media-jobs/:jobId/cancel",
+  async (c) => {
+    try {
+      agentSessionRuntime.get(c.req.param("sessionId"));
+      const job = getMediaJob(c.req.param("jobId"));
+      if (!job || job.sessionId !== c.req.param("sessionId"))
+        return c.json({ error: "Media job not found." }, 404);
+      return c.json({ job: await cancelJob(job.id) });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 async function withAuthoritativeSessionPayload(sessionId: string) {
   const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const session = projectSessionState(snapshot.session as never);
@@ -446,14 +404,36 @@ async function withAuthoritativeSessionPayload(sessionId: string) {
     runtimeFacade.listHistoryObjects(sessionId, "list_work"),
     runtimeFacade.listHistoryObjects(sessionId, "list_contexts"),
   ]);
-  const activeWorkId = typeof session.sessionMetadata?.activeWorkId === "string"
-    ? session.sessionMetadata.activeWorkId
-    : undefined;
-  const work = (workItems as Array<{ id?: unknown; sessionId?: unknown; updatedAt?: unknown }>)
-    .filter((item) => item.sessionId === sessionId && (!activeWorkId || item.id === activeWorkId))
-    .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0] ?? null;
+  const activeWorkId =
+    typeof session.sessionMetadata?.activeWorkId === "string"
+      ? session.sessionMetadata.activeWorkId
+      : undefined;
+  const work =
+    (
+      workItems as Array<{
+        id?: unknown;
+        sessionId?: unknown;
+        updatedAt?: unknown;
+      }>
+    )
+      .filter(
+        (item) =>
+          item.sessionId === sessionId &&
+          (!activeWorkId || item.id === activeWorkId),
+      )
+      .sort((a, b) =>
+        String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+      )[0] ?? null;
   const context = session.contextSnapshotId
-    ? (contextItems as Array<{ id?: unknown; sessionId?: unknown }>).find((item) => item.id === session.contextSnapshotId && item.sessionId === sessionId) ?? null
+    ? ((
+        contextItems as Array<{
+          id?: unknown;
+          sessionId?: unknown;
+        }>
+      ).find(
+        (item) =>
+          item.id === session.contextSnapshotId && item.sessionId === sessionId,
+      ) ?? null)
     : null;
   return {
     session,
@@ -462,7 +442,6 @@ async function withAuthoritativeSessionPayload(sessionId: string) {
     context,
   };
 }
-
 // Provider-pipeline metadata kept in step rows for debugging; none of it has a
 // timeline consumer (the UI reads reasoningEffort and ids/status fields only).
 const STEP_METADATA_WIRE_OMISSIONS = [
@@ -474,9 +453,10 @@ const STEP_METADATA_WIRE_OMISSIONS = [
   "$.toolCallProviderMetadata",
   "$.runtimeReminder",
 ] as const;
-
 function projectRunStepForWire<
-  T extends { metadata: Record<string, unknown> | null },
+  T extends {
+    metadata: Record<string, unknown> | null;
+  },
 >(step: T): T {
   if (!step.metadata) return step;
   let omitted = false;
@@ -490,17 +470,18 @@ function projectRunStepForWire<
   }
   return omitted ? { ...step, metadata } : step;
 }
-
 /** Full tool outputs are debug data; only webSearch renders them inline. */
 function projectToolCallForWire<
-  T extends { toolId: string; outputRef?: unknown },
+  T extends {
+    toolId: string;
+    outputRef?: unknown;
+  },
 >(toolCall: T): T {
   if (toolCall.toolId === "webSearch" || toolCall.outputRef === undefined)
     return toolCall;
   const { outputRef: _omitted, ...rest } = toolCall;
   return rest as T;
 }
-
 agentRuntimeRoutes.get("/protocol", (c) =>
   c.json({
     protocol: RUNTIME_PROTOCOL_VERSION,
@@ -542,7 +523,6 @@ agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
@@ -565,11 +545,9 @@ agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/profiles", (c) =>
   c.json({ items: profileService.list() }),
 );
-
 agentRuntimeRoutes.post("/contexts/:projectId", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -584,7 +562,6 @@ agentRuntimeRoutes.post("/contexts/:projectId", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -597,10 +574,22 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     let gitScope = parsed.data.projectId;
     if (parsed.data.gitWorkspace?.rootId) {
       const project = readWorkspaceProject(parsed.data.projectId);
-      const root = project && projectWorkspaceRoots(project).find(item => item.id === parsed.data.gitWorkspace?.rootId);
-      if (!root || root.status !== "available") throw new AgentRuntimeError("所选仓库不存在或不可用。", "GIT_WORKSPACE_ERROR", 404);
+      const root =
+        project &&
+        projectWorkspaceRoots(project).find(
+          (item) => item.id === parsed.data.gitWorkspace?.rootId,
+        );
+      if (!root || root.status !== "available")
+        throw new AgentRuntimeError(
+          "所选仓库不存在或不可用。",
+          "GIT_WORKSPACE_ERROR",
+          404,
+        );
       projectLocation = workspaceRootLocation(root);
-      gitScope = root.role === "primary" ? parsed.data.projectId : `${parsed.data.projectId}/${root.id}`;
+      gitScope =
+        root.role === "primary"
+          ? parsed.data.projectId
+          : `${parsed.data.projectId}/${root.id}`;
     }
     if (
       projectLocation?.kind === "wsl" &&
@@ -615,15 +604,30 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     }
     if (parsed.data.mediaGeneration) {
       if (parsed.data.backendId && parsed.data.backendId !== "native")
-        return c.json({ error: "Media generation requires the native backend." }, 400);
+        return c.json(
+          { error: "Media generation requires the native backend." },
+          400,
+        );
       const config = getGlobalConfigForRuntime();
       const { providerId, modelId, capability } = parsed.data.mediaGeneration;
       const mediaModel = findMediaModel(config, providerId, modelId);
-      if (capability && !mediaModel.capabilities.operations.some((operation) =>
-        operation.endsWith(capability === "image_generation" ? "image" : "video")))
-        return c.json({ error: "Media model does not support the selected capability." }, 422);
+      if (
+        capability &&
+        !mediaModel.capabilities.operations.some((operation) =>
+          operation.endsWith(
+            capability === "image_generation" ? "image" : "video",
+          ),
+        )
+      )
+        return c.json(
+          { error: "Media model does not support the selected capability." },
+          422,
+        );
       if (!config.providerConnections[providerId]?.apiKey)
-        return c.json({ error: "Media provider API key is not configured." }, 422);
+        return c.json(
+          { error: "Media provider API key is not configured." },
+          422,
+        );
     } else if (!parsed.data.backendId || parsed.data.backendId === "native") {
       assertLlmProviderConfigured(parsed.data.projectId);
     }
@@ -660,11 +664,10 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         updatedAt: new Date().toISOString(),
       });
     }
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       await runtimeFacade.ensureUiProjection(session.id);
       return c.json(await withAuthoritativeSessionPayload(session.id), 201);
     }
-    return c.json(await withSessionPayload(session.id), 201);
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
       return c.json(
@@ -675,7 +678,6 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
   try {
     return c.json(
@@ -686,7 +688,6 @@ agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/search", async (c) => {
   const parsed = z
     .object({
@@ -699,70 +700,117 @@ agentRuntimeRoutes.get("/sessions/search", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId, q, limit, offset } = parsed.data;
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const sessions = (await runtimeFacade.listSessionProjection())
-        .map(item => projectSessionState(item as never))
-        .filter(session => session.projectId === projectId && !session.parentSessionId && !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt);
+        .map((item) => projectSessionState(item as never))
+        .filter(
+          (session) =>
+            session.projectId === projectId &&
+            !session.parentSessionId &&
+            !session.sessionMetadata?.archivedAt &&
+            !session.sessionMetadata?.deletedAt,
+        );
       const lowered = q.toLocaleLowerCase();
-      const matches = (await Promise.all(sessions.map(async session => {
-        if (session.title?.toLocaleLowerCase().includes(lowered) || session.prompt.toLocaleLowerCase().includes(lowered))
-          return { session, snippet: (session.title || session.prompt).slice(0, 160), updatedAt: session.updatedAt };
-        const message = (await runtimeFacade.listMessageHistory(session.id) as AgentRuntimeMessage[])
-          .find(item => item.content.toLocaleLowerCase().includes(lowered));
-        return message ? { session, snippet: message.content.slice(0, 160), updatedAt: session.updatedAt } : null;
-      }))).filter((item): item is { session: AgentSession; snippet: string; updatedAt: string } => Boolean(item))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.session.id.localeCompare(b.session.id));
+      const matches = (
+        await Promise.all(
+          sessions.map(async (session) => {
+            if (
+              session.title?.toLocaleLowerCase().includes(lowered) ||
+              session.prompt.toLocaleLowerCase().includes(lowered)
+            )
+              return {
+                session,
+                snippet: (session.title || session.prompt).slice(0, 160),
+                updatedAt: session.updatedAt,
+              };
+            const message = (
+              (await runtimeFacade.listMessageHistory(
+                session.id,
+              )) as AgentRuntimeMessage[]
+            ).find((item) =>
+              item.content.toLocaleLowerCase().includes(lowered),
+            );
+            return message
+              ? {
+                  session,
+                  snippet: message.content.slice(0, 160),
+                  updatedAt: session.updatedAt,
+                }
+              : null;
+          }),
+        )
+      )
+        .filter(
+          (
+            item,
+          ): item is {
+            session: AgentSession;
+            snippet: string;
+            updatedAt: string;
+          } => Boolean(item),
+        )
+        .sort(
+          (a, b) =>
+            b.updatedAt.localeCompare(a.updatedAt) ||
+            a.session.id.localeCompare(b.session.id),
+        );
       const page = matches.slice(offset, offset + limit + 1);
-      return c.json({ items: page.slice(0, limit).map(item => ({ session: projectSessionSummary(item.session), snippet: item.snippet })), hasMore: page.length > limit });
+      return c.json({
+        items: page
+          .slice(0, limit)
+          .map((item) => ({
+            session: projectSessionSummary(item.session),
+            snippet: item.snippet,
+          })),
+        hasMore: page.length > limit,
+      });
     }
-    const result = searchSessions(projectId, q, limit, offset);
-    return c.json({
-      ...result,
-      items: result.items.map((item) => ({
-        ...item,
-        session: projectSessionSummary(projectSessionState(item.session)),
-      })),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions", async (c) => {
   const parsed = listSessionsQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
   if (!parsed.success) return validationError(c, parsed.error);
   const { limit, offset, status, ...filter } = parsed.data;
-  if (runtimeFacade.streamMode() === "authoritative") {
+  {
     try {
       const all = (await runtimeFacade.listSessionProjection())
-        .map(item => projectSessionState(item as never))
-        .filter(session => !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt)
-        .filter(session => !filter.projectId || session.projectId === filter.projectId)
-        .filter(session => !filter.nodeId || session.nodeId === filter.nodeId)
-        .filter(session => !status || session.status === status)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
-      const countByStatus = Object.fromEntries(all.reduce((counts, session) => counts.set(session.status, (counts.get(session.status) ?? 0) + 1), new Map<string, number>()));
-      return c.json({ items: all.slice(offset, offset + limit).map(projectSessionSummary), totalCount: all.length, countByStatus });
+        .map((item) => projectSessionState(item as never))
+        .filter(
+          (session) =>
+            !session.sessionMetadata?.archivedAt &&
+            !session.sessionMetadata?.deletedAt,
+        )
+        .filter(
+          (session) =>
+            !filter.projectId || session.projectId === filter.projectId,
+        )
+        .filter((session) => !filter.nodeId || session.nodeId === filter.nodeId)
+        .filter((session) => !status || session.status === status)
+        .sort(
+          (a, b) =>
+            b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id),
+        );
+      const countByStatus = Object.fromEntries(
+        all.reduce(
+          (counts, session) =>
+            counts.set(session.status, (counts.get(session.status) ?? 0) + 1),
+          new Map<string, number>(),
+        ),
+      );
+      return c.json({
+        items: all.slice(offset, offset + limit).map(projectSessionSummary),
+        totalCount: all.length,
+        countByStatus,
+      });
     } catch (error) {
       return runtimeError(c, error);
     }
   }
-  // status filtering, paging and the status histogram are resolved in SQL against
-  // the projected runtimeControl state; only the requested page is materialized.
-  const page = agentRuntimeStore.listSessionsPage(
-    { ...filter, status },
-    { limit, offset },
-  );
-  const items = page.items.map(projectSessionState).map(projectSessionSummary);
-  return c.json({
-    items,
-    totalCount: page.totalCount,
-    countByStatus: page.countByStatus,
-  });
 });
-
 /** Badge counts only need id/status/updatedAt; a dedicated sparse projection
  *  keeps per-project polling payloads at bytes-per-row instead of kilobytes. */
 agentRuntimeRoutes.get("/sessions/badges", async (c) => {
@@ -773,35 +821,44 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
     .slice(0, 50);
   if (projectIds.length === 0) return c.json({ items: [] });
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const selected = new Set(projectIds);
-      return c.json({ items: (await runtimeFacade.listSessionProjection())
-        .map(item => projectSessionState(item as never))
-        .filter(session => selected.has(session.projectId) && !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt)
-        .map(session => ({ id: session.id, projectId: session.projectId, status: session.status, updatedAt: session.updatedAt })) });
+      return c.json({
+        items: (await runtimeFacade.listSessionProjection())
+          .map((item) => projectSessionState(item as never))
+          .filter(
+            (session) =>
+              selected.has(session.projectId) &&
+              !session.sessionMetadata?.archivedAt &&
+              !session.sessionMetadata?.deletedAt,
+          )
+          .map((session) => ({
+            id: session.id,
+            projectId: session.projectId,
+            status: session.status,
+            updatedAt: session.updatedAt,
+          })),
+      });
     }
-    return c.json({ items: agentRuntimeStore.listSessionBadges(projectIds) });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") return c.json(await withAuthoritativeSessionPayload(c.req.param("sessionId")));
-    return c.json(await withSessionPayload(c.req.param("sessionId")));
+    return c.json(
+      await withAuthoritativeSessionPayload(c.req.param("sessionId")),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 const listArchivesQuerySchema = z.object({
   projectId: z.string().trim().min(1).max(256).optional(),
   q: z.string().trim().max(512).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
-
 agentRuntimeRoutes.get("/session-archives", async (c) => {
   const parsed = listArchivesQuerySchema.safeParse(
     Object.fromEntries(new URL(c.req.url).searchParams),
@@ -809,131 +866,158 @@ agentRuntimeRoutes.get("/session-archives", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId, q, limit, offset } = parsed.data;
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const query = q?.toLocaleLowerCase();
-      const groups = new Map<string, {
-        archiveBatchId: string;
-        rootSessionId: string;
-        title: string | null;
-        prompt: string;
-        projectId: string;
-        archivedAt: string;
-        sessionCount: number;
-      }>();
+      const groups = new Map<
+        string,
+        {
+          archiveBatchId: string;
+          rootSessionId: string;
+          title: string | null;
+          prompt: string;
+          projectId: string;
+          archivedAt: string;
+          sessionCount: number;
+        }
+      >();
       for (const raw of await runtimeFacade.listSessionProjection()) {
         const session = projectSessionState(raw as never) as AgentSession;
         const metadata = session.sessionMetadata ?? {};
-        const archivedAt = typeof metadata.archivedAt === "string" ? metadata.archivedAt : undefined;
-        const archiveBatchId = typeof metadata.archiveBatchId === "string" ? metadata.archiveBatchId : undefined;
-        if (!archivedAt || !archiveBatchId || session.sessionMetadata?.deletedAt || (projectId && session.projectId !== projectId)) continue;
-        if (query && !session.title?.toLocaleLowerCase().includes(query) && !session.prompt.toLocaleLowerCase().includes(query)) continue;
+        const archivedAt =
+          typeof metadata.archivedAt === "string"
+            ? metadata.archivedAt
+            : undefined;
+        const archiveBatchId =
+          typeof metadata.archiveBatchId === "string"
+            ? metadata.archiveBatchId
+            : undefined;
+        if (
+          !archivedAt ||
+          !archiveBatchId ||
+          session.sessionMetadata?.deletedAt ||
+          (projectId && session.projectId !== projectId)
+        )
+          continue;
+        if (
+          query &&
+          !session.title?.toLocaleLowerCase().includes(query) &&
+          !session.prompt.toLocaleLowerCase().includes(query)
+        )
+          continue;
         const existing = groups.get(archiveBatchId);
         if (existing) existing.sessionCount += 1;
-        else groups.set(archiveBatchId, {
-          archiveBatchId,
-          rootSessionId: archiveBatchId,
-          title: session.title,
-          prompt: session.prompt,
-          projectId: session.projectId,
-          archivedAt,
-          sessionCount: 1,
-        });
+        else
+          groups.set(archiveBatchId, {
+            archiveBatchId,
+            rootSessionId: archiveBatchId,
+            title: session.title,
+            prompt: session.prompt,
+            projectId: session.projectId,
+            archivedAt,
+            sessionCount: 1,
+          });
       }
-      const all = [...groups.values()].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt) || a.rootSessionId.localeCompare(b.rootSessionId));
+      const all = [...groups.values()].sort(
+        (a, b) =>
+          b.archivedAt.localeCompare(a.archivedAt) ||
+          a.rootSessionId.localeCompare(b.rootSessionId),
+      );
       const page = all.slice(offset, offset + limit);
       const retentionDays = getGlobalConfig().sessionArchiveRetentionDays;
       const retention = retentionDays === undefined ? 7 : retentionDays;
       return c.json({
         totalCount: all.length,
-        items: page.map(item => ({
+        items: page.map((item) => ({
           ...item,
-          scheduledDeletionAt: retention === null ? null : new Date(Date.parse(item.archivedAt) + retention * 86_400_000).toISOString(),
+          scheduledDeletionAt:
+            retention === null
+              ? null
+              : new Date(
+                  Date.parse(item.archivedAt) + retention * 86400000,
+                ).toISOString(),
         })),
       });
     }
-    const result = agentRuntimeStore.listArchivedBatches(
-      { projectId, query: q },
-      { limit, offset },
-    );
-    const configuredRetentionDays =
-      getGlobalConfig().sessionArchiveRetentionDays;
-    const retentionDays =
-      configuredRetentionDays === undefined ? 7 : configuredRetentionDays;
-    return c.json({
-      ...result,
-      items: result.items.map((item) => ({
-        ...item,
-        scheduledDeletionAt:
-          retentionDays === null
-            ? null
-            : new Date(
-                Date.parse(item.archivedAt) + retentionDays * 86_400_000,
-              ).toISOString(),
-      })),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const batchId = c.req.param("batchId");
       const projected = (await runtimeFacade.listSessionProjection())
-        .map(item => projectSessionState(item as never) as AgentSession)
-        .filter(session => session.sessionMetadata?.archiveBatchId === batchId && session.sessionMetadata?.archivedAt);
-      if (!projected.some(session => session.id === batchId)) throw new AgentNotFoundError(batchId);
-      await Promise.all(projected.map(session => runtimeFacade.sessionPatch(
-        session.id,
-        `restore:${batchId}:${session.id}`,
-        { sessionMetadata: { archivedAt: null, archiveBatchId: null, deletedAt: null } },
-      )));
-      let restoredSessionIds = projected.map(session => session.id);
+        .map((item) => projectSessionState(item as never) as AgentSession)
+        .filter(
+          (session) =>
+            session.sessionMetadata?.archiveBatchId === batchId &&
+            session.sessionMetadata?.archivedAt,
+        );
+      if (!projected.some((session) => session.id === batchId))
+        throw new AgentNotFoundError(batchId);
+      await Promise.all(
+        projected.map((session) =>
+          runtimeFacade.sessionPatch(
+            session.id,
+            `restore:${batchId}:${session.id}`,
+            {
+              sessionMetadata: {
+                archivedAt: null,
+                archiveBatchId: null,
+                deletedAt: null,
+              },
+            },
+          ),
+        ),
+      );
+      let restoredSessionIds = projected.map((session) => session.id);
       try {
         restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(batchId);
       } catch (error) {
-        logger.warn({ batchId, error }, "[runtime] archived batch compatibility mirror restore failed");
+        logger.warn(
+          { batchId, error },
+          "[runtime] archived batch compatibility mirror restore failed",
+        );
       }
       return c.json({ ok: true, restoredSessionIds });
     }
-    const restoredSessionIds = agentRuntimeStore.restoreArchivedBatch(c.req.param("batchId"));
-    return c.json({
-      ok: true,
-      restoredSessionIds,
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const batchId = c.req.param("batchId");
       const archived = (await runtimeFacade.listSessionProjection())
-        .map(item => projectSessionState(item as never) as AgentSession)
-        .filter(session => session.sessionMetadata?.archiveBatchId === batchId && session.sessionMetadata?.archivedAt);
-      if (!archived.some(session => session.id === batchId)) throw new AgentNotFoundError(batchId);
+        .map((item) => projectSessionState(item as never) as AgentSession)
+        .filter(
+          (session) =>
+            session.sessionMetadata?.archiveBatchId === batchId &&
+            session.sessionMetadata?.archivedAt,
+        );
+      if (!archived.some((session) => session.id === batchId))
+        throw new AgentNotFoundError(batchId);
       const deletedAt = new Date().toISOString();
-      await Promise.all(archived.map(session => runtimeFacade.sessionPatch(
-        session.id,
-        `archive-delete:${batchId}:${session.id}`,
-        { sessionMetadata: { deletedAt } },
-      )));
+      await Promise.all(
+        archived.map((session) =>
+          runtimeFacade.sessionPatch(
+            session.id,
+            `archive-delete:${batchId}:${session.id}`,
+            { sessionMetadata: { deletedAt } },
+          ),
+        ),
+      );
       for (const session of archived) invalidateSessionEnvironment(session.id);
-      return c.json({ ok: true, deletedSessionIds: archived.map(session => session.id) });
+      return c.json({
+        ok: true,
+        deletedSessionIds: archived.map((session) => session.id),
+      });
     }
-    const deletedSessionIds = agentRuntimeStore.deleteArchivedBatch(
-      c.req.param("batchId"),
-    );
-    for (const id of deletedSessionIds) invalidateSessionEnvironment(id);
-    return c.json({ ok: true, deletedSessionIds });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 async function readControl(c: Context) {
   try {
     const text = await c.req.text();
@@ -944,7 +1028,6 @@ async function readControl(c: Context) {
     throw new AgentValidationError("Invalid control request.");
   }
 }
-
 agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
   try {
     const id = c.req.param("sessionId");
@@ -955,35 +1038,55 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
       id,
       "User requested session stop.",
       async () => {
-        if (runtimeFacade.streamMode() === "authoritative") {
-          await Promise.all(agentRuntimeStore.listSessionTree(id).map((session) => runtimeFacade.stopSessionAuthoritative(session.id, "interrupted", "User requested session stop.")));
-        } else agentSessionRuntime.interrupt(id);
+        {
+          await Promise.all(
+            agentRuntimeStore
+              .listSessionTree(id)
+              .map((session) =>
+                runtimeFacade.stopSessionAuthoritative(
+                  session.id,
+                  "interrupted",
+                  "User requested session stop.",
+                ),
+              ),
+          );
+        }
         for (const session of agentRuntimeStore.listSessionTree(id))
           invalidateSessionEnvironment(session.id);
         if (parentId) invalidateSessionEnvironment(parentId);
       },
       control.runId,
     );
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json(projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session));
-    return c.json(projectSessionState(agentRuntimeStore.getSession(id)));
+    return c.json(
+      projectSessionState(
+        (await runtimeFacade.uiSnapshotAuthoritative(id)).session,
+      ),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 async function archiveSessionRoute(c: Context) {
   try {
     const id = c.req.param("sessionId");
     if (!id) throw new AgentValidationError("Session id is required.");
     const control = await readControl(c);
     const result = await archiveSessionAfterShutdown(id, control.runId);
-    if (runtimeFacade.streamMode() === "authoritative") {
-      await Promise.all(result.archivedSessionIds.map(archivedId => runtimeFacade.sessionPatch(
-        archivedId,
-        `archive:${result.archiveBatchId}:${archivedId}`,
-        { sessionMetadata: { archivedAt: result.archivedAt, archiveBatchId: result.archiveBatchId } },
-      )));
+    {
+      await Promise.all(
+        result.archivedSessionIds.map((archivedId) =>
+          runtimeFacade.sessionPatch(
+            archivedId,
+            `archive:${result.archiveBatchId}:${archivedId}`,
+            {
+              sessionMetadata: {
+                archivedAt: result.archivedAt,
+                archiveBatchId: result.archiveBatchId,
+              },
+            },
+          ),
+        ),
+      );
     }
     for (const archivedId of result.archivedSessionIds)
       invalidateSessionEnvironment(archivedId);
@@ -999,11 +1102,9 @@ async function archiveSessionRoute(c: Context) {
     return runtimeError(c, error);
   }
 }
-
 agentRuntimeRoutes.post("/sessions/:sessionId/archive", archiveSessionRoute);
 // Compatibility: old clients must archive, never physically delete.
 agentRuntimeRoutes.delete("/sessions/:sessionId", archiveSessionRoute);
-
 async function archiveInactiveSessionsRoute(c: Context) {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1018,7 +1119,6 @@ async function archiveInactiveSessionsRoute(c: Context) {
       "waiting_input",
       "queued",
     ]);
-
     const allSessions = agentSessionRuntime.list({
       projectId,
       limit: Number.MAX_SAFE_INTEGER,
@@ -1029,12 +1129,10 @@ async function archiveInactiveSessionsRoute(c: Context) {
         !s.sessionMetadata?.runtimeControl &&
         !runCoordinator.isActive(s.id),
     );
-
     const toArchiveIds = new Set(toArchive.map((s) => s.id));
     const roots = toArchive.filter(
       (s) => !s.parentSessionId || !toArchiveIds.has(s.parentSessionId),
     );
-
     const archivedIds: string[] = [];
     let archivedBatchCount = 0;
     for (const root of roots) {
@@ -1055,7 +1153,6 @@ async function archiveInactiveSessionsRoute(c: Context) {
         invalidateSessionEnvironment(archivedId);
       if (archived.parentId) invalidateSessionEnvironment(archived.parentId);
     }
-
     return c.json({
       ok: true,
       archivedBatchCount,
@@ -1066,7 +1163,6 @@ async function archiveInactiveSessionsRoute(c: Context) {
     return runtimeError(c, error);
   }
 }
-
 agentRuntimeRoutes.post(
   "/sessions/archive-inactive",
   archiveInactiveSessionsRoute,
@@ -1075,273 +1171,206 @@ agentRuntimeRoutes.post(
   "/sessions/clear-inactive",
   archiveInactiveSessionsRoute,
 );
-
-agentRuntimeRoutes.post("/sessions/:sessionId/history/upgrade", async (c) => {
-  try {
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json({ upgraded: false, backend: "runtime-history", authoritative: true });
-    const legacy = await loadLegacyHistoryModules();
-    const result = SIMPLE_HISTORY_STORAGE
-      ? legacy.flatMigration.migrateFlatHistory(c.req.param("sessionId"))
-      : await legacy.jsonlMigration.migrateJsonlSession(c.req.param("sessionId"));
-    return c.json({ upgraded: true, ...result });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-
 agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
   try {
     const id = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json(await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor")));
-    const legacy = await loadLegacyHistoryModules();
-    agentRuntimeStore.getSession(id);
-    legacy.flatMigration.prepareFlatHistory(id);
-    if (legacy.simpleHistory.simpleHistorySession(id)) return c.json(legacy.flatReader.readFlatHistoryWindow(id, c.req.query("cursor")));
-    if (!legacy.versionBridge.versionedSession(id))
-      throw new AgentRuntimeError(
-        "Upgrade history before using version windows.",
-        "HISTORY_MIGRATION_REQUIRED",
-        409,
-      );
-    return c.json(legacy.versionWindow.readHistoryWindow(id, c.req.query("cursor")));
+    return c.json(
+      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor")),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/history-timeline", async (c) => {
   try {
     const id = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json(await runtimeFacade.historyTimelineAuthoritative(id, Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER)));
-    const legacy = await loadLegacyHistoryModules();
-    agentRuntimeStore.getSession(id);
-    const before = Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER);
-    if (!legacy.simpleHistory.simpleHistorySession(id)) throw new AgentRuntimeError("Flat timeline unavailable", "HISTORY_UNSUPPORTED", 409);
-    if (!Number.isSafeInteger(before) || before < 1) throw new AgentRuntimeError("Invalid timeline cursor", "INVALID_INPUT", 400);
-    return c.json(legacy.flatReader.readFlatTimeline(id, before));
-  } catch (error) { return runtimeError(c, error); }
+    return c.json(
+      await runtimeFacade.historyTimelineAuthoritative(
+        id,
+        Number(c.req.query("before") ?? Number.MAX_SAFE_INTEGER),
+      ),
+    );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 // History windows intentionally omit large JSON fields. Fetch the saved preview
 // only when its reply is mounted, without expanding every history page.
-agentRuntimeRoutes.get("/sessions/:sessionId/messages/:messageId/visualization", async (c) => {
-  try {
-    const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const message = (await runtimeFacade.listMessageHistory(sessionId))
-        .find(item => (item as { id?: unknown }).id === c.req.param("messageId")) as AgentRuntimeMessage | undefined;
-      if (!message) return c.json({ error: "Message not found." }, 404);
-      if (message.role !== "assistant" || message.metadata?.partial)
-        return c.json({ message: null });
-      hydrateCompletedVisualizations([message]);
-      if (message.metadata.source !== "inline_visualization" &&
-          !(message.metadata.purpose === "work_result" && Array.isArray(message.metadata.visualizations)))
-        return c.json({ message: null });
-      if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
-        return c.json({ error: "Preview exceeds the response size limit." }, 413);
-      return c.json({ message });
-    }
-    const legacy = await loadLegacyHistoryModules();
-    agentRuntimeStore.getSession(sessionId);
-    const messageId = c.req.param("messageId");
-    const message = legacy.versionBridge.versionedSession(sessionId)
-      ? legacy.versionBridge.versionRepository().get(sessionId, "messages", messageId, 8 * 1024 * 1024) as unknown as AgentRuntimeMessage | undefined
-      : agentRuntimeStore.getMessage(sessionId, messageId);
-    if (!message) return c.json({ error: "Message not found." }, 404);
-    if (message.role !== "assistant" || message.metadata.partial)
-      return c.json({ message: null });
-    hydrateCompletedVisualizations([message]);
-    if (message.metadata.source !== "inline_visualization" &&
-        !(message.metadata.purpose === "work_result" && Array.isArray(message.metadata.visualizations)))
-      return c.json({ message: null });
-    if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
-      return c.json({ error: "Preview exceeds the response size limit." }, 413);
-    return c.json({ message });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-
-agentRuntimeRoutes.get("/sessions/:sessionId/messages", async (c) => {
-  try {
-    const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      return c.json({ items: await runtimeFacade.listMessageHistory(sessionId) });
-    }
-    const legacy = await loadLegacyHistoryModules();
-    if (legacy.versionBridge.versionedSession(sessionId))
-      return c.json(
-        legacy.versionBridge.versionRepository().page(sessionId, "messages", {
-          limit:
-            c.req.query("limit") === undefined
-              ? 64
-              : Number(c.req.query("limit")),
-          cursor: c.req.query("cursor"),
-          reverse: c.req.query("reverse") === "true",
-          preview: c.req.query("preview") === "true",
-          fields: c.req.query("fields")?.split(","),
-        }),
-      );
-    return c.json({
-      items: agentLoopRuntime.listMessages(c.req.param("sessionId")),
-    });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-
 agentRuntimeRoutes.get(
-  "/sessions/:sessionId/messages/:messageId/content",
+  "/sessions/:sessionId/messages/:messageId/visualization",
   async (c) => {
     try {
       const sessionId = c.req.param("sessionId");
-      if (runtimeFacade.streamMode() === "authoritative") {
-        const cursor = Number(c.req.query("cursor") ?? 0);
-        const revision = c.req.query("revision") === undefined ? undefined : Number(c.req.query("revision"));
-        return c.json(await runtimeFacade.messageContentAuthoritative(sessionId, c.req.param("messageId"), cursor, revision));
+      {
+        const message = (
+          await runtimeFacade.listMessageHistory(sessionId)
+        ).find(
+          (item) =>
+            (
+              item as {
+                id?: unknown;
+              }
+            ).id === c.req.param("messageId"),
+        ) as AgentRuntimeMessage | undefined;
+        if (!message) return c.json({ error: "Message not found." }, 404);
+        if (message.role !== "assistant" || message.metadata?.partial)
+          return c.json({ message: null });
+        hydrateCompletedVisualizations([message]);
+        if (
+          message.metadata.source !== "inline_visualization" &&
+          !(
+            message.metadata.purpose === "work_result" &&
+            Array.isArray(message.metadata.visualizations)
+          )
+        )
+          return c.json({ message: null });
+        if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
+          return c.json(
+            { error: "Preview exceeds the response size limit." },
+            413,
+          );
+        return c.json({ message });
       }
-      agentRuntimeStore.getSession(sessionId);
-      const legacy = await loadLegacyHistoryModules();
-      if (legacy.simpleHistory.simpleHistorySession(sessionId)) {
-        const revision = legacy.simpleHistory.simpleHistoryRevision(sessionId);
-        const offset = Number(c.req.query("cursor") ?? 0);
-        if (!Number.isSafeInteger(offset) || offset < 0) throw new AgentRuntimeError("Invalid content cursor", "INVALID_INPUT", 400);
-        if ((offset > 0 || c.req.query("revision") !== undefined) && Number(c.req.query("revision")) !== revision)
-          throw new AgentRuntimeError("Conversation changed", "HISTORY_STALE", 409);
-        const row = getRawSqlite().prepare("SELECT substr(content,?,8192) AS text,length(content) AS size FROM agent_runtime_messages WHERE session_id=? AND id=?")
-          .get(offset + 1, sessionId, c.req.param("messageId")) as { text: string; size: number } | undefined;
-        if (!row) throw new AgentRuntimeError("Message missing", "NOT_FOUND", 404);
-        return c.json({ text: row.text, next: offset + 8192 < row.size ? offset + 8192 : undefined, revision });
-      }
-      if (!legacy.versionBridge.versionedSession(sessionId))
-        return c.json(
-          { error: "Content paging requires a versioned session." },
-          409,
-        );
-      const repo = legacy.versionBridge.versionRepository();
-      if (
-        Number(c.req.query("cursor") ?? 0) > 0 &&
-        c.req.query("revision") === undefined
-      )
-        return c.json(
-          {
-            error: "Content continuation requires the original revision.",
-            code: "HISTORY_STALE",
-          },
-          409,
-        );
-      if (
-        c.req.query("revision") !== undefined &&
-        Number(c.req.query("revision")) !== repo.head(sessionId).revision
-      )
-        return c.json(
-          { error: "Conversation changed.", code: "HISTORY_STALE" },
-          409,
-        );
-      return c.json(
-        repo.content(
-          sessionId,
-          "messages",
-          c.req.param("messageId"),
-          "content",
-          Number(c.req.query("cursor") ?? 0),
-          c.req.query("revision") === undefined
-            ? undefined
-            : Number(c.req.query("revision")),
-        ),
-      );
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
+agentRuntimeRoutes.get("/sessions/:sessionId/messages", async (c) => {
+  try {
+    const sessionId = c.req.param("sessionId");
+    {
+      return c.json({
+        items: await runtimeFacade.listMessageHistory(sessionId),
+      });
+    }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/messages/:messageId/content",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      {
+        const cursor = Number(c.req.query("cursor") ?? 0);
+        const revision =
+          c.req.query("revision") === undefined
+            ? undefined
+            : Number(c.req.query("revision"));
+        return c.json(
+          await runtimeFacade.messageContentAuthoritative(
+            sessionId,
+            c.req.param("messageId"),
+            cursor,
+            revision,
+          ),
+        );
+      }
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.get("/sessions/:sessionId/runs", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const sessionId = c.req.param("sessionId");
       const [history, snapshot] = await Promise.all([
         runtimeFacade.listRunHistory(sessionId),
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
       ]);
-      const items = [...history] as Array<{ id?: string }>;
-      if (snapshot.run && !items.some(item => item.id === (snapshot.run as { id?: string }).id)) items.unshift(snapshot.run);
+      const items = [...history] as Array<{
+        id?: string;
+      }>;
+      if (
+        snapshot.run &&
+        !items.some(
+          (item) =>
+            item.id ===
+            (
+              snapshot.run as {
+                id?: string;
+              }
+            ).id,
+        )
+      )
+        items.unshift(snapshot.run);
       return c.json({ items });
     }
-    return c.json({
-      items: agentLoopRuntime.listRuns(c.req.param("sessionId")),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const sessionId = c.req.param("sessionId");
       const runId = c.req.param("runId");
       const [runs, snapshot] = await Promise.all([
         runtimeFacade.listRunHistory(sessionId),
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
       ]);
-      const run = [...runs, ...(snapshot.run ? [snapshot.run] : [])]
-        .find(item => (item as { id?: unknown }).id === runId) as AgentRun | undefined;
-      if (!run || run.sessionId !== sessionId) return c.json({ error: "Run not found" }, 404);
+      const run = [...runs, ...(snapshot.run ? [snapshot.run] : [])].find(
+        (item) =>
+          (
+            item as {
+              id?: unknown;
+            }
+          ).id === runId,
+      ) as AgentRun | undefined;
+      if (!run || run.sessionId !== sessionId)
+        return c.json({ error: "Run not found" }, 404);
       return c.json(run);
     }
-    return c.json(
-      agentLoopRuntime.getRun(c.req.param("sessionId"), c.req.param("runId")),
-    );
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const items = await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_steps");
-      return c.json({ items: items.filter((item) => (item as { runId?: string }).runId === c.req.param("runId")) });
+    {
+      const items = await runtimeFacade.listHistoryObjects(
+        c.req.param("sessionId"),
+        "list_steps",
+      );
+      return c.json({
+        items: items.filter(
+          (item) =>
+            (
+              item as {
+                runId?: string;
+              }
+            ).runId === c.req.param("runId"),
+        ),
+      });
     }
-    return c.json({
-      items: agentLoopRuntime
-        .listRunSteps(c.req.param("sessionId"), c.req.param("runId"))
-        .map(projectRunStepForWire),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/steps", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json({ items: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_steps") });
     return c.json({
-      items: agentRuntimeStore
-        .listSessionSteps(c.req.param("sessionId"))
-        .map(projectRunStepForWire),
+      items: await runtimeFacade.listHistoryObjects(
+        c.req.param("sessionId"),
+        "list_steps",
+      ),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 const submitRunSchema = streamTurnRequestSchema.extend({
   requestId: z.string().trim().min(1).max(128),
   mode: z.enum(["turn", "continue"]).default("turn"),
 });
-
 function requireSessionBackendConfig(sessionId: string): void {
   const session = agentSessionRuntime.get(sessionId);
   if (resolveSessionBackend(sessionId).id === "native")
     assertLlmProviderConfigured(session.projectId);
 }
-
 function observeRunResponse(
   c: Context,
   sessionId: string,
@@ -1382,7 +1411,6 @@ function observeRunResponse(
     }
   });
 }
-
 agentRuntimeRoutes.post("/sessions/:sessionId/runs", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1401,21 +1429,30 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runs", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
     const runId = c.req.param("runId");
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const [snapshot, runs] = await Promise.all([
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
         runtimeFacade.listRunHistory(sessionId),
       ]);
-      const found = [...runs, ...(snapshot.run ? [snapshot.run] : [])]
-        .some(item => (item as { id?: unknown; sessionId?: unknown }).id === runId && (item as { sessionId?: unknown }).sessionId === sessionId);
+      const found = [...runs, ...(snapshot.run ? [snapshot.run] : [])].some(
+        (item) =>
+          (
+            item as {
+              id?: unknown;
+              sessionId?: unknown;
+            }
+          ).id === runId &&
+          (
+            item as {
+              sessionId?: unknown;
+            }
+          ).sessionId === sessionId,
+      );
       if (!found) return c.json({ error: "Run not found" }, 404);
-    } else if (agentRuntimeStore.getRun(runId).sessionId !== sessionId) {
-      return c.json({ error: "Run not found" }, 404);
     }
     const after = z.coerce
       .number()
@@ -1428,7 +1465,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1437,39 +1473,47 @@ agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
     await runCoordinator.reconcileFailedStop(id);
     await acknowledgeRuntimeRecovery(id);
     return c.json({
-      session: runtimeFacade.streamMode() === "authoritative"
-        ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session)
-        : projectSessionState(agentRuntimeStore.getSession(id)),
+      session: projectSessionState(
+        (await runtimeFacade.uiSnapshotAuthoritative(id)).session,
+      ),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = z.object({ clientId: z.string().min(1).max(128), snapshot: z.boolean().default(false) }).safeParse(body.data);
+  const parsed = z
+    .object({
+      clientId: z.string().min(1).max(128),
+      snapshot: z.boolean().default(false),
+    })
+    .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
-    // Remote web clients keep using the Node gateway; loopback discovery is desktop-only.
-    if (runtimeFacade.streamMode() !== 'authoritative') agentRuntimeStore.getSession(sessionId);
-    if (process.env.SYNAX_DESKTOP_SIDECAR !== '1' || runtimeFacade.streamMode() !== 'authoritative') {
-      return c.json({ transport: 'node' as const });
+    if (process.env.SYNAX_DESKTOP_SIDECAR !== "1") {
+      return c.json({ transport: "node" as const });
     }
     // The session middleware validated the persisted Rust projection. Issuing
     // a read ticket must never create/seed a session from the SQL mirror.
-    c.header('Cache-Control', 'no-store');
-    const ticket = await runtimeFacade.uiTicket(sessionId, parsed.data.clientId);
-    if (!ticket) throw new Error('Runtime sidecar ticket is unavailable.');
-    return c.json({ transport: 'rust' as const, ticket });
-  } catch (error) { return runtimeError(c, error); }
+    c.header("Cache-Control", "no-store");
+    const ticket = await runtimeFacade.uiTicket(
+      sessionId,
+      parsed.data.clientId,
+    );
+    if (!ticket) throw new Error("Runtime sidecar ticket is unavailable.");
+    return c.json({ transport: "rust" as const, ticket });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
   try {
-    const snapshot = await runtimeJournal.snapshotDurable(c.req.param("sessionId"));
+    const snapshot = await runtimeJournal.snapshotDurable(
+      c.req.param("sessionId"),
+    );
     return c.json({
       ...snapshot,
       liveChunks: snapshot.liveChunks ?? [],
@@ -1479,16 +1523,13 @@ agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
   const sessionId = c.req.param("sessionId");
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       // Validate against the persisted Rust projection before opening the
-      // compatibility SSE stream. The Node store is only a legacy mirror.
+      // HTTP observation stream backed by Rust replay.
       await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-    } else {
-      agentSessionRuntime.get(sessionId);
     }
   } catch (error) {
     return runtimeError(c, error);
@@ -1527,7 +1568,12 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
     );
     try {
       if (c.req.query("auxiliary") === "1") {
-        if (!observer.signal.aborted) await new Promise<void>(resolve => observer.signal.addEventListener('abort', () => resolve(), { once: true }));
+        if (!observer.signal.aborted)
+          await new Promise<void>((resolve) =>
+            observer.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
         return;
       }
       const snapshot = await runtimeJournal.snapshotDurable(sessionId);
@@ -1557,7 +1603,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
     }
   });
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1577,69 +1622,27 @@ agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/events", async (c) => {
-  if (runtimeFacade.streamMode() === "authoritative") {
+  {
     try {
       const sessionId = c.req.param("sessionId");
       const parsed = listEventsQuerySchema.safeParse(
         Object.fromEntries(new URL(c.req.url).searchParams),
       );
       if (!parsed.success) return validationError(c, parsed.error);
-      const items = await runtimeFacade.listHistoryObjects(sessionId, "list_events") as RuntimeEvent[];
-      const index = parsed.data.after ? items.findIndex(item => item.id === parsed.data.after) : -1;
+      const items = (await runtimeFacade.listHistoryObjects(
+        sessionId,
+        "list_events",
+      )) as RuntimeEvent[];
+      const index = parsed.data.after
+        ? items.findIndex((item) => item.id === parsed.data.after)
+        : -1;
       return c.json({ items: index >= 0 ? items.slice(index + 1) : items });
     } catch (error) {
       return runtimeError(c, error);
     }
   }
-  const legacy = await loadLegacyHistoryModules();
-  if (
-    legacy.versionBridge.versionedSession(c.req.param("sessionId")) &&
-    !legacy.versionBridge.boundaryOnlySession(c.req.param("sessionId"))
-  ) {
-    try {
-      if (c.req.query("after"))
-        return c.json(
-          {
-            error:
-              "Use the versioned event cursor instead of a legacy event id.",
-            code: "HISTORY_PAGE_REQUIRED",
-          },
-          409,
-        );
-      return c.json(
-        legacy.versionBridge.versionRepository().page(c.req.param("sessionId"), "events", {
-          limit:
-            c.req.query("limit") === undefined
-              ? 64
-              : Number(c.req.query("limit")),
-          cursor: c.req.query("cursor"),
-          reverse: c.req.query("reverse") === "true",
-          preview: c.req.query("preview") === "true",
-          fields: c.req.query("fields")?.split(","),
-        }),
-      );
-    } catch (error) {
-      return runtimeError(c, error);
-    }
-  }
-  const parsed = listEventsQuerySchema.safeParse(
-    Object.fromEntries(new URL(c.req.url).searchParams),
-  );
-  if (!parsed.success) return validationError(c, parsed.error);
-  try {
-    return c.json({
-      items: agentEventService.list(
-        c.req.param("sessionId"),
-        parsed.data.after,
-      ),
-    });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1660,104 +1663,131 @@ agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/plan", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const plans = await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans");
+    {
+      const plans = await runtimeFacade.listHistoryObjects(
+        c.req.param("sessionId"),
+        "list_plans",
+      );
       return c.json({ plan: plans[0] ?? null });
     }
-    agentSessionRuntime.get(c.req.param("sessionId"));
-    return c.json({ plan: getStoredPlan(c.req.param("sessionId")) });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/plans", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json({ plans: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans") });
-    agentSessionRuntime.get(c.req.param("sessionId"));
-    return c.json({ plans: listPlanArtifacts(c.req.param("sessionId")) });
+    return c.json({
+      plans: await runtimeFacade.listHistoryObjects(
+        c.req.param("sessionId"),
+        "list_plans",
+      ),
+    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/plans/:revision", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const revision = Number(c.req.param("revision"));
       if (!Number.isInteger(revision) || revision < 1)
-        return c.json({ error: "Plan revision must be a positive integer." }, 400);
-      const plan = (await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_plans"))
-        .find((item) => (item as { revision?: unknown }).revision === revision);
-      return plan ? c.json({ plan }) : c.json({ error: "Plan revision not found." }, 404);
+        return c.json(
+          { error: "Plan revision must be a positive integer." },
+          400,
+        );
+      const plan = (
+        await runtimeFacade.listHistoryObjects(
+          c.req.param("sessionId"),
+          "list_plans",
+        )
+      ).find(
+        (item) =>
+          (
+            item as {
+              revision?: unknown;
+            }
+          ).revision === revision,
+      );
+      return plan
+        ? c.json({ plan })
+        : c.json({ error: "Plan revision not found." }, 404);
     }
-    agentSessionRuntime.get(c.req.param("sessionId"));
-    const revision = Number(c.req.param("revision"));
-    if (!Number.isInteger(revision) || revision < 1)
-      return c.json({ error: "Plan revision must be a positive integer." }, 400);
-    const plan = getPlanArtifact(c.req.param("sessionId"), revision);
-    return plan ? c.json({ plan }) : c.json({ error: "Plan revision not found." }, 404);
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
-agentRuntimeRoutes.post("/sessions/:sessionId/plans/:revision/restore", async (c) => {
-  try {
-    const session = agentSessionRuntime.get(c.req.param("sessionId"));
-    const revision = Number(c.req.param("revision"));
-    if (!Number.isInteger(revision) || revision < 1)
-      return c.json({ error: "Plan revision must be a positive integer." }, 400);
-    if (session.parentSessionId || session.activeRunId || ["running", "waiting_input", "waiting_permission"].includes(session.status))
-      return c.json({ error: "Stop the session before restoring a plan revision." }, 409);
-    const plan = restorePlanArtifact(session.id, revision);
-    const goalMode = session.sessionMetadata?.mode === "goal";
-    const metadataPatch = {
-      mode: goalMode ? "goal" : "chat",
-      plan: { ...plan, status: "draft" },
-      goal: goalMode ? { ...initializeGoal(plan.objective), status: "planning" } : null,
-    };
-    const updated = runtimeFacade.streamMode() === "authoritative"
-      ? await runtimeFacade.sessionPatch(session.id, `plan-restore:${session.id}:${revision}`, { sessionMetadata: metadataPatch }) as AgentSession
-      : agentRuntimeStore.updateSessionMetadata(session.id, metadataPatch);
-    return c.json({ plan, session: updated });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/plans/:revision/restore",
+  async (c) => {
+    try {
+      const session = agentSessionRuntime.get(c.req.param("sessionId"));
+      const revision = Number(c.req.param("revision"));
+      if (!Number.isInteger(revision) || revision < 1)
+        return c.json(
+          { error: "Plan revision must be a positive integer." },
+          400,
+        );
+      if (
+        session.parentSessionId ||
+        session.activeRunId ||
+        ["running", "waiting_input", "waiting_permission"].includes(
+          session.status,
+        )
+      )
+        return c.json(
+          { error: "Stop the session before restoring a plan revision." },
+          409,
+        );
+      const plan = restorePlanArtifact(session.id, revision);
+      const goalMode = session.sessionMetadata?.mode === "goal";
+      const metadataPatch = {
+        mode: goalMode ? "goal" : "chat",
+        plan: { ...plan, status: "draft" },
+        goal: goalMode
+          ? { ...initializeGoal(plan.objective), status: "planning" }
+          : null,
+      };
+      const updated = (await runtimeFacade.sessionPatch(
+        session.id,
+        `plan-restore:${session.id}:${revision}`,
+        { sessionMetadata: metadataPatch },
+      )) as AgentSession;
+      return c.json({ plan, session: updated });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", async (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json({ items: await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_artifacts") });
     return c.json({
-      items: agentRuntimeStore.listArtifacts(c.req.param("sessionId")),
+      items: await runtimeFacade.listHistoryObjects(
+        c.req.param("sessionId"),
+        "list_artifacts",
+      ),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", async (c) => {
   try {
     agentSessionRuntime.get(c.req.param("sessionId"));
-    if (runtimeFacade.streamMode() === "authoritative")
-      return c.json({ items: (await runtimeFacade.listHistoryObjects(c.req.param("sessionId"), "list_tool_calls")).map(item => projectToolCallForWire(item as never)) });
     return c.json({
-      items: agentRuntimeStore
-        .listToolCalls(c.req.param("sessionId"))
-        .map(projectToolCallForWire),
+      items: (
+        await runtimeFacade.listHistoryObjects(
+          c.req.param("sessionId"),
+          "list_tool_calls",
+        )
+      ).map((item) => projectToolCallForWire(item as never)),
     });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/processes", (c) => {
   try {
     return c.json({
@@ -1783,7 +1813,6 @@ agentRuntimeRoutes.post(
     }
   },
 );
-
 agentRuntimeRoutes.delete(
   "/sessions/:sessionId/processes/:processId",
   async (c) => {
@@ -1800,60 +1829,79 @@ agentRuntimeRoutes.delete(
     }
   },
 );
-
 agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const [snapshot, tools, messages, projections, assets] = await Promise.all([
-        runtimeFacade.uiSnapshotAuthoritative(sessionId),
-        runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
-        runtimeFacade.listMessageHistory(sessionId),
-        runtimeFacade.listSessionProjection(),
-        runtimeFacade.listBoundAssets(sessionId),
-      ]);
-      const session = projectSessionState(snapshot.session as never) as AgentSession;
+    {
+      const [snapshot, tools, messages, projections, assets] =
+        await Promise.all([
+          runtimeFacade.uiSnapshotAuthoritative(sessionId),
+          runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+          runtimeFacade.listMessageHistory(sessionId),
+          runtimeFacade.listSessionProjection(),
+          runtimeFacade.listBoundAssets(sessionId),
+        ]);
+      const session = projectSessionState(
+        snapshot.session as never,
+      ) as AgentSession;
       const children = projections
         .map((item) => projectSessionState(item as never) as AgentSession)
-        .filter((item) => !item.sessionMetadata?.archivedAt && !item.sessionMetadata?.deletedAt)
-        .filter((item) => item.parentSessionId === sessionId || session.childSessionIds.includes(item.id));
-      return c.json(await getSessionEnvironment(sessionId, {
-        session,
-        toolCalls: tools as ToolCallRecord[],
-        messages: messages as AgentRuntimeMessage[],
-        children,
-        assetNames: new Map((assets as Array<{ id: string; filename: string }>).map((asset) => [asset.id, asset.filename])),
-      }));
+        .filter(
+          (item) =>
+            !item.sessionMetadata?.archivedAt &&
+            !item.sessionMetadata?.deletedAt,
+        )
+        .filter(
+          (item) =>
+            item.parentSessionId === sessionId ||
+            session.childSessionIds.includes(item.id),
+        );
+      return c.json(
+        await getSessionEnvironment(sessionId, {
+          session,
+          toolCalls: tools as ToolCallRecord[],
+          messages: messages as AgentRuntimeMessage[],
+          children,
+          assetNames: new Map(
+            (
+              assets as Array<{
+                id: string;
+                filename: string;
+              }>
+            ).map((asset) => [asset.id, asset.filename]),
+          ),
+        }),
+      );
     }
-    return c.json(await getSessionEnvironment(sessionId));
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/input-source/:toolCallId",
   async (c) => {
     try {
-      if (runtimeFacade.streamMode() === "authoritative") {
+      {
         const sessionId = c.req.param("sessionId");
-        const calls = await runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls");
-        const call = (calls as Array<{ id?: unknown }>).find((item) => item.id === c.req.param("toolCallId"));
+        const calls = await runtimeFacade.listHistoryObjects(
+          sessionId,
+          "list_tool_calls",
+        );
+        const call = (
+          calls as Array<{
+            id?: unknown;
+          }>
+        ).find((item) => item.id === c.req.param("toolCallId"));
         if (!call) return c.json({ error: "Input source not found." }, 404);
-        return c.json(getSessionInputSourceContentFromRecord(call as ToolCallRecord));
+        return c.json(
+          getSessionInputSourceContentFromRecord(call as ToolCallRecord),
+        );
       }
-      return c.json(
-        getSessionInputSourceContent(
-          c.req.param("sessionId"),
-          c.req.param("toolCallId"),
-        ),
-      );
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
 agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = z
@@ -1877,7 +1925,6 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/environment/file/system-terminal",
   async (c) => {
@@ -1901,7 +1948,6 @@ agentRuntimeRoutes.post(
     }
   },
 );
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/environment/file/trash",
   async (c) => {
@@ -1926,7 +1972,6 @@ agentRuntimeRoutes.post(
     }
   },
 );
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/environment/file/rename",
   async (c) => {
@@ -1954,7 +1999,6 @@ agentRuntimeRoutes.post(
     }
   },
 );
-
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/file/media",
   async (c) => {
@@ -1981,7 +2025,6 @@ agentRuntimeRoutes.get(
     }
   },
 );
-
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");
   const kind = c.req.query("kind") === "input" ? "input" : "diff";
@@ -1999,7 +2042,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/git/branches", async (c) => {
   try {
     return c.json(
@@ -2038,7 +2080,6 @@ agentRuntimeRoutes.post(
     }
   },
 );
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/git/branches/create",
   async (c) => {
@@ -2047,22 +2088,24 @@ agentRuntimeRoutes.post(
     const parsed = switchBranchSchema.safeParse(body.data);
     if (!parsed.success) return validationError(c, parsed.error);
     try {
-      return c.json(await createSessionGitBranch(
-        c.req.param("sessionId"), parsed.data.branch, parsed.data.rootId,
-      ));
+      return c.json(
+        await createSessionGitBranch(
+          c.req.param("sessionId"),
+          parsed.data.branch,
+          parsed.data.rootId,
+        ),
+      );
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
   includeUntracked: z.boolean().optional(),
   model: z.string().trim().min(1).max(256),
   locale: z.enum(["zh", "en"]).optional(),
 });
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/git/commit-message/stream",
   async (c) => {
@@ -2104,7 +2147,6 @@ agentRuntimeRoutes.post(
     });
   },
 );
-
 const commitSessionWorkspaceSchema = z.object({
   rootId: z.string().min(1).optional(),
   branchName: z.string().min(1).max(1024).optional(),
@@ -2114,7 +2156,6 @@ const commitSessionWorkspaceSchema = z.object({
   // Absent means "stage everything" so existing senders keep working.
   includeUntracked: z.boolean().optional(),
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/git/commit", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2128,24 +2169,25 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/commit", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/git/push", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = z.object({ rootId: z.string().min(1).optional() }).safeParse(body.data ?? {});
+  const parsed = z
+    .object({ rootId: z.string().min(1).optional() })
+    .safeParse(body.data ?? {});
   if (!parsed.success) return validationError(c, parsed.error);
   try {
-    return c.json(await pushSessionWorkspace(c.req.param("sessionId"), parsed.data));
+    return c.json(
+      await pushSessionWorkspace(c.req.param("sessionId"), parsed.data),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 const restoreSessionFileSchema = z.object({
   rootId: z.string().min(1).optional(),
   path: z.string().trim().min(1).max(1024),
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2159,28 +2201,27 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/stats", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const session = projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never);
-      const configuredContextLimit = await resolveSessionConfiguredContextLimit(session);
-      return c.json(await runtimeFacade.sessionStatsAuthoritative(sessionId, configuredContextLimit));
+    {
+      const session = projectSessionState(
+        (await runtimeFacade.uiSnapshotAuthoritative(sessionId))
+          .session as never,
+      );
+      const configuredContextLimit =
+        await resolveSessionConfiguredContextLimit(session);
+      return c.json(
+        await runtimeFacade.sessionStatsAuthoritative(
+          sessionId,
+          configuredContextLimit,
+        ),
+      );
     }
-    const session = agentSessionRuntime.get(sessionId);
-    // Render the usage bar against the provider-configured context window.
-    const configuredContextLimit =
-      await resolveSessionConfiguredContextLimit(session);
-    const stats = agentRuntimeStore.getSessionStats(sessionId, {
-      configuredContextLimit,
-    });
-    return c.json(stats);
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/capabilities", (c) => {
   try {
     const sessionId = c.req.param("sessionId");
@@ -2190,71 +2231,76 @@ agentRuntimeRoutes.get("/sessions/:sessionId/capabilities", (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/invocation-usage", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const sessionId = c.req.param("sessionId");
       const [snapshot, calls] = await Promise.all([
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
         runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
       ]);
-      return c.json(resolveSessionInvocationUsageFromRecords(snapshot.session.projectId, calls as ToolCallRecord[]));
+      return c.json(
+        resolveSessionInvocationUsageFromRecords(
+          snapshot.session.projectId,
+          calls as ToolCallRecord[],
+        ),
+      );
     }
-    return c.json(resolveSessionInvocationUsage(c.req.param("sessionId")));
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/todos", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const events = await runtimeFacade.listHistoryObjects(sessionId, "list_events") as Array<{ type?: string; payload?: { tasks?: unknown } }>;
-      const latestTaskEvent = [...events].reverse().find((event) => event.type === "task_state_updated");
-      const tasks = Array.isArray(latestTaskEvent?.payload?.tasks) ? latestTaskEvent.payload.tasks as Array<{ id: string; subject: string; status: string }> : [];
-      return c.json({ items: tasks.filter((task) => task.status !== "deleted").map((task) => ({ id: task.id, label: task.subject, status: task.status === "completed" ? "done" : task.status })) });
+    {
+      const events = (await runtimeFacade.listHistoryObjects(
+        sessionId,
+        "list_events",
+      )) as Array<{
+        type?: string;
+        payload?: {
+          tasks?: unknown;
+        };
+      }>;
+      const latestTaskEvent = [...events]
+        .reverse()
+        .find((event) => event.type === "task_state_updated");
+      const tasks = Array.isArray(latestTaskEvent?.payload?.tasks)
+        ? (latestTaskEvent.payload.tasks as Array<{
+            id: string;
+            subject: string;
+            status: string;
+          }>)
+        : [];
+      return c.json({
+        items: tasks
+          .filter((task) => task.status !== "deleted")
+          .map((task) => ({
+            id: task.id,
+            label: task.subject,
+            status: task.status === "completed" ? "done" : task.status,
+          })),
+      });
     }
-    agentSessionRuntime.get(sessionId);
-    // Read only the newest task snapshot: scanning the full event log here
-    // blocked the profile panel's polling during long runs.
-    const latestTaskEvent = agentRuntimeStore.getLatestEventByType(
-      sessionId,
-      "task_state_updated",
-    );
-    const tasks =
-      (latestTaskEvent?.payload.tasks as Array<{
-        id: string;
-        subject: string;
-        status: string;
-      }>) ?? [];
-    const items = tasks
-      .filter((t) => t.status !== "deleted")
-      .map((t) => ({
-        id: t.id,
-        label: t.subject,
-        status: t.status === "completed" ? "done" : t.status,
-      }));
-    return c.json({ items });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/permissions", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const state = await runtimeFacade.controlState(c.req.param("sessionId")) as { permissions?: unknown[] };
+    {
+      const state = (await runtimeFacade.controlState(
+        c.req.param("sessionId"),
+      )) as {
+        permissions?: unknown[];
+      };
       return c.json({ items: state.permissions ?? [] });
     }
-    agentSessionRuntime.get(c.req.param("sessionId"));
-    return c.json({ items: permissionPolicy.list(c.req.param("sessionId")) });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2262,25 +2308,24 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   const sessionId = c.req.param("sessionId");
   try {
-    const authoritative = runtimeFacade.streamMode() === "authoritative";
-    const session = authoritative
-      ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never)
-      : agentSessionRuntime.get(sessionId);
+    const session = projectSessionState(
+      (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never,
+    );
     if (session.sessionMetadata?.runtimeControl)
       return c.json(
         { error: "Wait for execution shutdown before changing permissions." },
         409,
       );
     validateBackendTurnInput(resolveSessionBackend(sessionId).id, parsed.data);
-    const updated = authoritative
-      ? await applySessionPermissionUpdateAuthoritative(sessionId, parsed.data)
-      : applySessionPermissionUpdate(sessionId, parsed.data);
-    return c.json(authoritative ? await withAuthoritativeSessionPayload(updated.id) : withSessionPayload(updated.id));
+    const updated = await applySessionPermissionUpdateAuthoritative(
+      sessionId,
+      parsed.data,
+    );
+    return c.json(await withAuthoritativeSessionPayload(updated.id));
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/permissions/:permissionId/reply",
   async (c) => {
@@ -2290,14 +2335,26 @@ agentRuntimeRoutes.post(
     if (!parsed.success) return validationError(c, parsed.error);
     const sessionId = c.req.param("sessionId");
     try {
-      const authoritative = runtimeFacade.streamMode() === "authoritative";
-      const session = authoritative
-        ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never)
-        : agentRuntimeStore.getSession(sessionId);
-      const previous = authoritative
-        ? (((await runtimeFacade.controlState(sessionId)) as { permissions?: unknown[] }).permissions ?? [])
-            .find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === c.req.param("permissionId")) as PermissionDecision | undefined
-        : permissionPolicy.list(sessionId).find((item) => item.id === c.req.param("permissionId"));
+      const session = projectSessionState(
+        (await runtimeFacade.uiSnapshotAuthoritative(sessionId))
+          .session as never,
+      );
+      const previous = (
+        (
+          (await runtimeFacade.controlState(sessionId)) as {
+            permissions?: unknown[];
+          }
+        ).permissions ?? []
+      ).find(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          (
+            item as {
+              id?: unknown;
+            }
+          ).id === c.req.param("permissionId"),
+      ) as PermissionDecision | undefined;
       if (previous?.resolvedAt) {
         return previous.userReply === parsed.data.reply
           ? c.json(previous)
@@ -2335,7 +2392,7 @@ agentRuntimeRoutes.post(
         );
       }
       let decision: PermissionDecision;
-      if (authoritative) {
+      {
         const nextState = await runtimeFacade.controlCommand({
           sessionId,
           requestId: `permission-reply:${c.req.param("permissionId")}:${parsed.data.reply}`,
@@ -2346,17 +2403,27 @@ agentRuntimeRoutes.post(
             message: parsed.data.message,
           },
         });
-        const updated = (nextState as { permissions?: unknown[] }).permissions?.find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === c.req.param("permissionId"));
-        if (!updated || typeof updated !== "object") throw new AgentRuntimeError("Permission response was not persisted.", "STORAGE_UNAVAILABLE", 503);
-        decision = updated as PermissionDecision;
-      } else {
-        decision = permissionPolicy.reply(
-          sessionId,
-          c.req.param("permissionId"),
-          parsed.data.reply,
-          parsed.data.message,
-          backendId === "native",
+        const updated = (
+          nextState as {
+            permissions?: unknown[];
+          }
+        ).permissions?.find(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            (
+              item as {
+                id?: unknown;
+              }
+            ).id === c.req.param("permissionId"),
         );
+        if (!updated || typeof updated !== "object")
+          throw new AgentRuntimeError(
+            "Permission response was not persisted.",
+            "STORAGE_UNAVAILABLE",
+            503,
+          );
+        decision = updated as PermissionDecision;
       }
       if (backendId !== "native") {
         backend.replyPermission?.(sessionId, decision.id, parsed.data.reply);
@@ -2372,34 +2439,16 @@ agentRuntimeRoutes.post(
         },
         "[agent-runtime] permission reply received",
       );
-      if (!authoritative) agentEventService.append({
-        sessionId,
-        type: "permission_resolved",
-        summary: decision.reason,
-        payload: {
-          permissionId: decision.id,
-          action: decision.action,
-          userReply: decision.userReply,
-        },
-      });
       const permissionEndedSession =
         !decision.resumeToken && decision.action !== "allow";
       const permissionResolvedAt = new Date().toISOString();
       let authoritativeSession: AgentSession | undefined;
-      if (runtimeFacade.streamMode() === "authoritative") {
+      {
         authoritativeSession = projectSessionState(
-          (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never,
+          (await runtimeFacade.uiSnapshotAuthoritative(sessionId))
+            .session as never,
         );
-      } else agentRuntimeStore.updateSession(sessionId, {
-        status: permissionEndedSession ? "completed" : "running",
-        updatedAt: permissionResolvedAt,
-        pendingResumeToken: decision.resumeToken,
-        blockedReason: permissionEndedSession ? decision.reason : null,
-        resultSummary: permissionEndedSession ? decision.reason : null,
-        ...(permissionEndedSession
-          ? { activeRunId: null, completedAt: permissionResolvedAt }
-          : { completedAt: null }),
-      });
+      }
       if (decision.resumeToken && !sessionUsesAcpEngine(sessionId)) {
         logger.info(
           {
@@ -2414,22 +2463,28 @@ agentRuntimeRoutes.post(
           parsed.data.message ? { message: parsed.data.message } : {},
         );
       }
-      return c.json(authoritativeSession ? { decision, session: authoritativeSession } : decision);
+      return c.json(
+        authoritativeSession
+          ? { decision, session: authoritativeSession }
+          : decision,
+      );
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
 agentRuntimeRoutes.get("/sessions/:sessionId/input-queue", async (c) => {
   try {
     const queue = await inputQueueRuntime.snapshot(c.req.param("sessionId"));
-    return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId, projectionRevision: queue.revision });
+    return c.json({
+      items: queue.items,
+      forceInjectItemId: queue.forceInjectItemId,
+      projectionRevision: queue.revision,
+    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/input-queue", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2441,10 +2496,15 @@ agentRuntimeRoutes.post("/sessions/:sessionId/input-queue", async (c) => {
     await inputQueueRuntime.enqueue(sessionId, parsed.data);
     await runCoordinator.dispatchQueuedInput(sessionId);
     const queue = await inputQueueRuntime.snapshot(sessionId);
-    return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId, projectionRevision: queue.revision });
-  } catch (error) { return runtimeError(c, error); }
+    return c.json({
+      items: queue.items,
+      forceInjectItemId: queue.forceInjectItemId,
+      projectionRevision: queue.revision,
+    });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
 });
-
 agentRuntimeRoutes.patch(
   "/sessions/:sessionId/input-queue/:itemId/order",
   async (c) => {
@@ -2474,21 +2534,35 @@ agentRuntimeRoutes.patch(
     )
       return c.json({ error: "toIndex must be an integer." }, 400);
     try {
-      return c.json({ items: await inputQueueRuntime.move(c.req.param("sessionId"), c.req.param("itemId"),
-        payload.direction !== undefined ? { direction: payload.direction } : { toIndex: payload.toIndex as number }) });
+      return c.json({
+        items: await inputQueueRuntime.move(
+          c.req.param("sessionId"),
+          c.req.param("itemId"),
+          payload.direction !== undefined
+            ? { direction: payload.direction }
+            : { toIndex: payload.toIndex as number },
+        ),
+      });
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
-agentRuntimeRoutes.delete("/sessions/:sessionId/input-queue/:itemId", async (c) => {
-  try { return c.json({ items: await inputQueueRuntime.remove(c.req.param("sessionId"), c.req.param("itemId")) });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-
+agentRuntimeRoutes.delete(
+  "/sessions/:sessionId/input-queue/:itemId",
+  async (c) => {
+    try {
+      return c.json({
+        items: await inputQueueRuntime.remove(
+          c.req.param("sessionId"),
+          c.req.param("itemId"),
+        ),
+      });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/input-queue/:itemId/force",
   async (c) => {
@@ -2496,18 +2570,19 @@ agentRuntimeRoutes.post(
       const sessionId = c.req.param("sessionId");
       await runCoordinator.forceQueuedInput(sessionId, c.req.param("itemId"));
       const queue = await inputQueueRuntime.snapshot(sessionId);
-      return c.json({ items: queue.items, forceInjectItemId: queue.forceInjectItemId });
+      return c.json({
+        items: queue.items,
+        forceInjectItemId: queue.forceInjectItemId,
+      });
     } catch (error) {
       return runtimeError(c, error);
     }
   },
 );
-
 // ============================== SSE 事件流 =======================
 agentRuntimeRoutes.get("/events/stream", (c) => {
   return streamSSE(c, async (stream) => {
     const lifetime = observationLifetime(c.req.raw.signal, stream);
-
     const onEvent = (event: {
       type: string;
       sessionId: string;
@@ -2536,15 +2611,13 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
         .writeSSE({ event: event.type, data: JSON.stringify(wire) })
         .catch(lifetime.stop);
     };
-
     const unsubscribe = runtimeBus.subscribe(onEvent);
-
     const heartbeat = setInterval(() => {
       if (!lifetime.signal.aborted)
         void stream
           .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
           .catch(lifetime.stop);
-    }, 25_000);
+    }, 25000);
     try {
       if (lifetime.signal.aborted) return;
       await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
@@ -2556,7 +2629,6 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
     }
   });
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
   const sessionId = c.req.param("sessionId");
   try {
@@ -2566,7 +2638,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
   }
   return streamSSE(c, async (stream) => {
     let closed = false;
-
     const onEvent = (event: SessionLiveEvent) => {
       if (closed) return;
       stream
@@ -2575,11 +2646,8 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
           closed = true;
         });
     };
-
     const unsubscribe = sessionLiveBus.subscribe(sessionId, onEvent);
-
     await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
-
     const heartbeat = setInterval(() => {
       if (closed) return;
       stream
@@ -2587,35 +2655,32 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
         .catch(() => {
           closed = true;
         });
-    }, 25_000);
-
+    }, 25000);
     c.req.raw.signal.addEventListener("abort", () => {
       closed = true;
       clearInterval(heartbeat);
       unsubscribe();
     });
-
     await new Promise<void>((resolve) => {
       c.req.raw.signal.addEventListener("abort", () => resolve(), {
         once: true,
       });
     });
-
     clearInterval(heartbeat);
     unsubscribe();
   });
 });
-
 // Forms are durable resources, not permission grants or queued chat messages.
 agentRuntimeRoutes.get("/sessions/:sessionId/interactions", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const state = await runtimeFacade.controlState(c.req.param("sessionId")) as { interactions?: unknown[] };
+    {
+      const state = (await runtimeFacade.controlState(
+        c.req.param("sessionId"),
+      )) as {
+        interactions?: unknown[];
+      };
       return c.json({ interactions: state.interactions ?? [] });
     }
-    return c.json({
-      interactions: interactionService.list(c.req.param("sessionId")),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2648,9 +2713,11 @@ agentRuntimeRoutes.post(
         !backend.hasPendingInteraction?.(sessionId, id)
       )
         return c.json({ error: "Native input request expired." }, 409);
-      const interaction = runtimeFacade.streamMode() === "authoritative"
-        ? await interactionService.replyAuthoritative(sessionId, id, parsed.data)
-        : interactionService.reply(sessionId, id, parsed.data);
+      const interaction = await interactionService.replyAuthoritative(
+        sessionId,
+        id,
+        parsed.data,
+      );
       if (backendId === "native") {
         if (interactionService.ready(sessionId))
           resumeAgentSessionInBackground(sessionId);
@@ -2671,22 +2738,20 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const patched = await runtimeFacade.sessionPatch(id, `session-pin:${id}:${parsed.data.pinned}`, { sessionMetadata: { pinned: parsed.data.pinned } }) as AgentSession;
-      return c.json({ session: projectSessionSummary(projectSessionState(patched as never)) });
+    {
+      const patched = (await runtimeFacade.sessionPatch(
+        id,
+        `session-pin:${id}:${parsed.data.pinned}`,
+        { sessionMetadata: { pinned: parsed.data.pinned } },
+      )) as AgentSession;
+      return c.json({
+        session: projectSessionSummary(projectSessionState(patched as never)),
+      });
     }
-    const session = agentRuntimeStore.updateSessionMetadata(
-      id,
-      parsed.data,
-    );
-    return c.json({
-      session: projectSessionSummary(projectSessionState(session)),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2697,14 +2762,12 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param("sessionId");
-    const authoritative = runtimeFacade.streamMode() === "authoritative";
-    const session = authoritative
-      ? projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session as never)
-      : agentRuntimeStore.getSession(id);
+    const session = projectSessionState(
+      (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
+    );
     if (
       session.parentSessionId ||
-      !["synax", "goal"].includes(session.profileId) ||
-      (!authoritative && sessionUsesAcpEngine(id))
+      !["synax", "goal"].includes(session.profileId)
     )
       return c.json(
         { error: "Modes are only available on primary native Synax sessions." },
@@ -2715,8 +2778,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
       session.activeRunId ||
       ["running", "waiting_input", "waiting_permission"].includes(
         session.status,
-      ) ||
-      (!authoritative && interactionService.pending(id))
+      )
     )
       return c.json(
         {
@@ -2726,31 +2788,26 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
         409,
       );
     const mode = parsed.data.mode;
-    if (runtimeFacade.streamMode() === "authoritative") {
-      const patched = await runtimeFacade.sessionPatch(id, `session-mode:${id}:${mode}`, {
-        sessionMetadata: {
-          mode,
-          ...(mode === "goal" && !session.sessionMetadata?.goal
-            ? { goal: initializeGoal(session.prompt) }
-            : {}),
+    {
+      const patched = (await runtimeFacade.sessionPatch(
+        id,
+        `session-mode:${id}:${mode}`,
+        {
+          sessionMetadata: {
+            mode,
+            ...(mode === "goal" && !session.sessionMetadata?.goal
+              ? { goal: initializeGoal(session.prompt) }
+              : {}),
+          },
         },
-      }) as AgentSession;
+      )) as AgentSession;
       workRuntime.onModeChanged(id, workflowMode(patched));
       return c.json({ session: patched });
     }
-    const updated = agentRuntimeStore.updateSessionMetadata(id, {
-      mode,
-      ...(mode === "goal" && !session.sessionMetadata?.goal
-        ? { goal: initializeGoal(session.prompt) }
-        : {}),
-    });
-    workRuntime.onModeChanged(id, workflowMode(session));
-    return c.json({ session: updated });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/sessions/:sessionId/input-capabilities", async (c) => {
   try {
     return c.json(
@@ -2763,7 +2820,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/input-capabilities", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.get("/input-capabilities", async (c) => {
   const parsed = z
     .object({
@@ -2785,13 +2841,12 @@ agentRuntimeRoutes.get("/input-capabilities", async (c) => {
     return runtimeError(c, error);
   }
 });
-
 // Conversation history operations are deliberately separate from work.checkpoint.
 const historyActionSchema = z.object({
   checkpointId: z.string().min(1).max(160),
   revision: z.number().int().nonnegative(),
   requestId: z.string().min(1).max(128),
-  message: z.string().trim().min(1).max(100_000).optional(),
+  message: z.string().trim().min(1).max(100000).optional(),
   includeFiles: z.boolean().default(true),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
@@ -2802,13 +2857,21 @@ const forkActionSchema = historyActionSchema.extend({
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
   try {
     const encoded = c.req.query("messageIds");
-    const messageIds = encoded === undefined ? undefined : z.array(z.string().min(1).max(256)).max(64).parse(JSON.parse(encoded));
-    if (runtimeFacade.streamMode() === "authoritative") {
+    const messageIds =
+      encoded === undefined
+        ? undefined
+        : z
+            .array(z.string().min(1).max(256))
+            .max(64)
+            .parse(JSON.parse(encoded));
+    {
       const sessionId = c.req.param("sessionId");
       const [head, checkpoints, messages] = await Promise.all([
         runtimeFacade.historyHeadAuthoritative(sessionId),
         runtimeFacade.listHistoryCheckpoints(sessionId),
-        runtimeFacade.listMessageHistory(sessionId) as Promise<AgentRuntimeMessage[]>,
+        runtimeFacade.listMessageHistory(sessionId) as Promise<
+          AgentRuntimeMessage[]
+        >,
       ]);
       const messageSet = messageIds ? new Set(messageIds) : undefined;
       const latestMessageId = messages.at(-1)?.id;
@@ -2821,23 +2884,33 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
         stopRequired: false,
         rollbackEnabled: checkpoints.length > 0,
         checkpoints: checkpoints
-          .filter((checkpoint) => !messageSet || messageSet.has(String(checkpoint.metadata.messageId ?? "")))
+          .filter(
+            (checkpoint) =>
+              !messageSet ||
+              messageSet.has(String(checkpoint.metadata.messageId ?? "")),
+          )
           .map((checkpoint) => ({
             id: checkpoint.id,
             kind: checkpoint.metadata.kind === "input" ? "input" : "reply",
-            messageId: typeof checkpoint.metadata.messageId === "string" ? checkpoint.metadata.messageId : null,
-            stepId: typeof checkpoint.metadata.stepId === "string" ? checkpoint.metadata.stepId : null,
+            messageId:
+              typeof checkpoint.metadata.messageId === "string"
+                ? checkpoint.metadata.messageId
+                : null,
+            stepId:
+              typeof checkpoint.metadata.stepId === "string"
+                ? checkpoint.metadata.stepId
+                : null,
             available: true,
             reason: null,
             transcriptOnly: false,
             destructive: true,
             hasLaterHistory: checkpoint.metadata.messageId !== latestMessageId,
-            initialInput: checkpoint.metadata.kind === "input" && messages[0]?.id === checkpoint.metadata.messageId,
+            initialInput:
+              checkpoint.metadata.kind === "input" &&
+              messages[0]?.id === checkpoint.metadata.messageId,
           })),
       });
     }
-    const legacy = await loadLegacyHistoryModules();
-    return c.json(legacy.operations.checkpointSummary(c.req.param("sessionId"), messageIds));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2856,41 +2929,32 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       if (parsed.data.action === "fork") {
-        if (!parsed.data.workspaceMode) throw new AgentValidationError("Choose a new worktree or the existing worktree before forking.");
+        if (!parsed.data.workspaceMode)
+          throw new AgentValidationError(
+            "Choose a new worktree or the existing worktree before forking.",
+          );
         return c.json({
-          ...(await runtimeFacade.previewHistoryAuthoritative(sessionId, parsed.data.checkpointId, false)),
+          ...(await runtimeFacade.previewHistoryAuthoritative(
+            sessionId,
+            parsed.data.checkpointId,
+            false,
+          )),
           workspaceMode: parsed.data.workspaceMode,
-          warnings: ["The fork copies the immutable Rust history head. Workspace files are copied only when a new worktree is selected."],
+          warnings: [
+            "The fork copies the immutable Rust history head. Workspace files are copied only when a new worktree is selected.",
+          ],
         });
       }
-      return c.json(await runtimeFacade.previewHistoryAuthoritative(
-        sessionId,
-        parsed.data.checkpointId,
-        parsed.data.includeFiles,
-      ));
-    }
-    const legacy = await loadLegacyHistoryModules();
-    if (parsed.data.action !== "fork")
       return c.json(
-        await legacy.operations.previewHistory(
+        await runtimeFacade.previewHistoryAuthoritative(
           sessionId,
           parsed.data.checkpointId,
           parsed.data.includeFiles,
         ),
       );
-    if (!parsed.data.workspaceMode)
-      throw new AgentValidationError(
-        "Choose a new worktree or the existing worktree before forking.",
-      );
-    return c.json(
-      await legacy.simpleFork.previewSimpleFork(
-        sessionId,
-        parsed.data.checkpointId,
-        parsed.data.workspaceMode,
-      ),
-    );
+    }
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2908,10 +2972,15 @@ for (const action of ["rollback", "edit", "fork"] as const) {
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
-        if (runtimeFacade.streamMode() === "authoritative") {
+        {
           if (action === "fork") {
             const source = agentRuntimeStore.getSession(sessionId);
-            const sourceBackend = (source.sessionMetadata?.backend ?? {}) as { id?: string; model?: string; workDir?: string; workspaceLocation?: unknown };
+            const sourceBackend = (source.sessionMetadata?.backend ?? {}) as {
+              id?: string;
+              model?: string;
+              workDir?: string;
+              workspaceLocation?: unknown;
+            };
             let workDir = sourceBackend.workDir;
             let sessionMetadata: Record<string, unknown> = {
               ...(source.sessionMetadata ?? {}),
@@ -2919,20 +2988,31 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               forkedFromCheckpointId: input.checkpointId,
             };
             if (input.workspaceMode === "new_worktree") {
-              const projectLocation = resolveProjectWorkspaceLocation(source.projectId);
+              const projectLocation = resolveProjectWorkspaceLocation(
+                source.projectId,
+              );
               const selected = await resolveGitWorkspaceSelection(
-                projectLocation ?? resolveRegisteredProjectWorkDir(source.projectId),
+                projectLocation ??
+                  resolveRegisteredProjectWorkDir(source.projectId),
                 source.projectId,
                 { kind: "new-worktree" },
               );
               workDir = selected.workDir;
               sessionMetadata = {
                 ...sessionMetadata,
-                ...(selected.location ? { workspaceLocation: selected.location } : {}),
-                gitWorkspace: { kind: selected.kind, branch: selected.branch, path: selected.workDir },
+                ...(selected.location
+                  ? { workspaceLocation: selected.location }
+                  : {}),
+                gitWorkspace: {
+                  kind: selected.kind,
+                  branch: selected.branch,
+                  path: selected.workDir,
+                },
               };
             } else if (!workDir) {
-              throw new AgentValidationError("The source session has no reusable workspace.");
+              throw new AgentValidationError(
+                "The source session has no reusable workspace.",
+              );
             }
             const target = agentSessionRuntime.create({
               projectId: source.projectId,
@@ -2956,15 +3036,31 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               revision: input.revision,
               requestId: input.requestId,
             });
-            const updated = await runtimeFacade.sessionPatch(target.id, `fork-session:${input.requestId}`, {
-              status: "completed",
-              activeRunId: null,
-              completedAt: null,
-              resultSummary: null,
-              updatedAt: new Date().toISOString(),
-              sessionMetadata: { forkedFromSessionId: sessionId, forkedFromCheckpointId: input.checkpointId },
-            });
-            return c.json({ sessionId: target.id, workspaceMode: input.workspaceMode, rollbackEnabled: true, revision: forked.revision, session: updated }, 201);
+            const updated = await runtimeFacade.sessionPatch(
+              target.id,
+              `fork-session:${input.requestId}`,
+              {
+                status: "completed",
+                activeRunId: null,
+                completedAt: null,
+                resultSummary: null,
+                updatedAt: new Date().toISOString(),
+                sessionMetadata: {
+                  forkedFromSessionId: sessionId,
+                  forkedFromCheckpointId: input.checkpointId,
+                },
+              },
+            );
+            return c.json(
+              {
+                sessionId: target.id,
+                workspaceMode: input.workspaceMode,
+                rollbackEnabled: true,
+                revision: forked.revision,
+                session: updated,
+              },
+              201,
+            );
           }
           const result = await runtimeFacade.applyHistoryAuthoritative({
             sessionId,
@@ -2982,38 +3078,12 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               "turn",
             );
           }
-          return c.json({ sessionId: result.sessionId, revision: result.revision, runId: undefined });
+          return c.json({
+            sessionId: result.sessionId,
+            revision: result.revision,
+            runId: undefined,
+          });
         }
-        const legacy = await loadLegacyHistoryModules();
-        if (action === "fork")
-          return c.json(
-            await legacy.simpleFork.forkSimpleConversation(
-              sessionId,
-              input.checkpointId,
-              input.revision,
-              input.requestId,
-              input.workspaceMode!,
-            ),
-            201,
-          );
-        if (action === "edit") requireSessionBackendConfig(sessionId);
-        const result = await legacy.operations.applyHistory(sessionId, { ...input, action });
-        if (
-          result.input &&
-          result.runId &&
-          legacy.guards.historyRevision(sessionId) === result.revision
-        )
-          await runCoordinator.submitAsync(
-            sessionId,
-            result.input,
-            legacy.operations.editRunRequestId(sessionId, input.requestId),
-            "turn",
-          );
-        return c.json({
-          sessionId: result.sessionId,
-          revision: result.revision,
-          runId: result.runId,
-        });
       } catch (error) {
         return runtimeError(c, error);
       }
@@ -3022,17 +3092,20 @@ for (const action of ["rollback", "edit", "fork"] as const) {
 }
 agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   try {
-    const legacy = await loadLegacyHistoryModules();
-    await legacy.operations.recoverHistoryOperation(c.req.param("sessionId"));
+    await runtimeFacade.historyCommand({
+      sessionId: c.req.param("sessionId"),
+      requestId: `history-recover:${randomUUID()}`,
+      operation: "reconcile_stream",
+      payload: {},
+    });
     return c.json({ recovered: true });
   } catch (error) {
     return runtimeError(c, error);
   }
 });
-
 agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", async (c) => {
   try {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       await runtimeFacade.historyCommand({
         sessionId: c.req.param("sessionId"),
         requestId: `history-visit:${c.req.param("sessionId")}`,
@@ -3041,9 +3114,6 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/visit", async (c) => {
       });
       return c.json({ visited: true });
     }
-    const legacy = await loadLegacyHistoryModules();
-    legacy.retention.visitConversation(c.req.param("sessionId"));
-    return c.json({ visited: true });
   } catch (error) {
     return runtimeError(c, error);
   }

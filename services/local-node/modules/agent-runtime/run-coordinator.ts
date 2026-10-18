@@ -812,7 +812,7 @@ export class RunCoordinator {
       payload: { runId },
       visibility: "internal",
     });
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       void runtimeJournal
         .appendDurable(sessionId, runId, [{ type: "event", event }])
         .catch((error) =>
@@ -821,7 +821,7 @@ export class RunCoordinator {
             "Progress replay could not be persisted",
           ),
         );
-    } else runtimeJournal.append(sessionId, runId, { type: "event", event });
+    }
   }
 
   activeSessionIds(): string[] {

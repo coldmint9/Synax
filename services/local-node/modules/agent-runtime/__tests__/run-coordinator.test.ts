@@ -372,8 +372,7 @@ describe("headless Run coordinator", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(agentRuntimeStore.getRun(accepted.run.id).status).toBe("completed");
     expect(
-      runtimeJournal
-        .read(session.id)
+      (await runtimeJournal.readDurable(session.id))
         .some((record) => record.chunk.type === "message_delta"),
     ).toBe(true);
   });
@@ -439,7 +438,7 @@ describe("stop release fence", () => {
     expect(() =>
       coordinator.submit(session.id, { message: "Next" }, "next"),
     ).toThrow(/release/i);
-    expect(runtimeJournal.snapshot(session.id).session.status).toBe("stopping");
+    expect((await runtimeJournal.snapshotDurable(session.id)).session.status).toBe("stopping");
     confirmStop();
     await stopped;
     expect(coordinator.isActive(session.id)).toBe(false);

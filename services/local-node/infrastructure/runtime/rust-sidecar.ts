@@ -249,8 +249,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   }
 }
 
-export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandle | null> {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR !== '1' && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== 'authoritative') return null;
+export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandle> {
   const supervisor = new RustRuntimeSupervisor();
   try { await supervisor.start(); return supervisor; }
   catch (error) { await supervisor.stop(); throw error; }

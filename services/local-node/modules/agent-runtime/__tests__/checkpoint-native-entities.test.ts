@@ -1,5 +1,4 @@
 import { RuntimeStreamWriter } from "../runtime-stream-writer.js";
-import { runtimeJournal } from "../runtime-journal.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -192,39 +191,6 @@ it("does not restore historical leases and fences late writers even if their old
         }),
     ),
   ).toThrow(/superseded/i);
-});
-it("does not replay stale stream journal records after a version switch", async () => {
-  store.appendRun(run("run-a"));
-  const cp = await checkpoint();
-  store.appendRun(run("run-b"));
-  runtimeJournal.append(id, "run-b", {
-    type: "message_delta",
-    runId: "run-b",
-    stepId: "old",
-    delta: "discarded streaming content",
-  });
-  expect(runtimeJournal.read(id)).toHaveLength(1);
-  await applyHistory(id, {
-    action: "rollback",
-    includeFiles: false,
-    checkpointId: cp.id,
-    revision: versionRepository().head(id).revision,
-    requestId: "undo",
-  });
-  expect(runtimeJournal.read(id)).toEqual([]);
-  expect(runtimeJournal.cursor(id)).toBe(0);
-  store.appendRun(run("run-c"));
-  runtimeJournal.append(id, "run-c", {
-    type: "message_delta",
-    runId: "run-c",
-    stepId: "new",
-    delta: "new content",
-  });
-  expect(
-    runtimeJournal
-      .read(id)
-      .map((row) => (row.chunk as { delta: string }).delta),
-  ).toEqual(["new content"]);
 });
 it("projects current recovery status but normalizes historical active steps after rollback", async () => {
   store.appendRun(run("run-a"));

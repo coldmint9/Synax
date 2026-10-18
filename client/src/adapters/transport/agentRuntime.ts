@@ -1033,14 +1033,6 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
       { silent: true },
     ),
-  upgradeHistory: (sessionId: string) =>
-    request<{ upgraded: boolean }>(
-      `/sessions/${encodeURIComponent(sessionId)}/history/upgrade`,
-      {
-        method: "POST",
-        body: JSON.stringify({ acknowledgeCheckpointReset: true }),
-      },
-    ),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,

@@ -924,8 +924,7 @@ describe("agentLoopRuntime", () => {
           "completed",
         );
         expect(
-          runtimeJournal
-            .read(session.id)
+          (await runtimeJournal.readDurable(session.id))
             .some((row) => row.chunk.type === "done"),
         ).toBe(true);
         expect(
@@ -963,8 +962,7 @@ describe("agentLoopRuntime", () => {
             .map((m) => m.content),
         ).toEqual(["Run with leases", "Implement a different feature"]);
         expect(
-          runtimeJournal
-            .read(session.id)
+          (await runtimeJournal.readDurable(session.id))
             .some((row) => row.chunk.type === "run_failed"),
         ).toBe(false);
       } finally {
