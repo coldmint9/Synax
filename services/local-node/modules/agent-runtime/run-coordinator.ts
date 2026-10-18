@@ -463,11 +463,22 @@ export class RunCoordinator {
         throw new Error("Execution stopped before launch.");
       await agentRuntimeStore.flushSession(sessionId);
       const admittedRun = agentRuntimeStore.getRun(owner.runId);
-      await runtimeFacade.admitExecution({
-        sessionId,
-        run: admittedRun,
-        runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput,
-      });
+      if (admittedRun.status === "queued") {
+        await runtimeFacade.admitExecution({
+          sessionId,
+          run: admittedRun,
+          runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput,
+        }, false);
+        // Sidecar admission activates the durable run before the backend
+        // starts, so mirror that activation locally before the loop binds its
+        // trigger message. Without this, activateAcceptedRun sees the stale
+        // queued mirror and rejects every admitted turn.
+        agentRuntimeStore.updateRun(owner.runId, {
+          status: "running",
+          completedAt: null,
+          stopReason: null,
+        });
+      }
       {
         await runtimeFacade.runPatch(
           sessionId,

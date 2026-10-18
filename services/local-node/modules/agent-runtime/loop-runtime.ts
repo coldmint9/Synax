@@ -242,7 +242,12 @@ export class AgentLoopRuntime {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<AgentRunStreamChunk> {
     let session = this.store.getSession(sessionId);
-    if (input.acceptedRunId && session.status === "queued") {
+    // The runtime sidecar activates an admitted run before the local loop
+    // starts. That activation publishes the session as `running`, even when
+    // this is a new continuation submitted from a completed/interrupted
+    // session. Use the status captured at admission for this run instead of
+    // rejecting the continuation because of that activation transition.
+    if (input.acceptedRunId) {
       const accepted = this.store.getRun(input.acceptedRunId);
       const runtime = accepted.metadata.runtime as AcceptedRuntimeInput;
       if (accepted.sessionId !== sessionId || !runtime)

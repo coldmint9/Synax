@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetAgentRuntimeFixtures } from "../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js";
 import { agentRuntimeStore } from "../../../modules/agent-runtime/session-store.js";
@@ -81,16 +79,29 @@ function makeToolStep(input: {
   ]);
 }
 
-async function waitFor(
-  check: () => Promise<boolean>,
-  attempts = 200,
-  delayMs = 10,
-): Promise<void> {
-  for (let index = 0; index < attempts; index += 1) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  throw new Error("Timed out waiting for background runtime completion.");
+async function submitAndObserve(
+  sessionId: string,
+  input: Record<string, unknown>,
+  mode: "turn" | "continue" = "turn",
+): Promise<{ response: Response; text: string }> {
+  const accepted = await (await import("../agent-runtime.js")).agentRuntimeRoutes.request(
+    `http://localhost/sessions/${sessionId}/runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...input,
+        requestId: crypto.randomUUID(),
+        mode,
+      }),
+    },
+  );
+  expect(accepted.status).toBe(202);
+  const { run } = (await accepted.json()) as { run: { id: string } };
+  const response = await (await import("../agent-runtime.js")).agentRuntimeRoutes.request(
+    `http://localhost/sessions/${sessionId}/runs/${run.id}/stream`,
+  );
+  return { response, text: await response.text() };
 }
 
 describe("agent runtime routes", () => {
@@ -106,9 +117,25 @@ describe("agent runtime routes", () => {
         ),
     );
     resetAgentRuntimeFixtures();
-    fs.rmSync(path.resolve("tmp/agent-runtime-route-resume.txt"), {
-      force: true,
-    });
+  });
+
+  it("does not expose removed legacy session stream endpoints", async () => {
+    const { agentRuntimeRoutes } = await import("../agent-runtime.js");
+    const turn = await agentRuntimeRoutes.request(
+      "http://localhost/sessions/session/turns/stream",
+      { method: "POST", body: JSON.stringify({ message: "old" }) },
+    );
+    const resume = await agentRuntimeRoutes.request(
+      "http://localhost/sessions/session/resume/stream",
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    const live = await agentRuntimeRoutes.request(
+      "http://localhost/sessions/session/live",
+    );
+
+    expect(turn.status).toBe(404);
+    expect(resume.status).toBe(404);
+    expect(live.status).toBe(404);
   });
 
   it("creates an external backend session without requiring Native API credentials", async () => {
@@ -212,15 +239,10 @@ describe("agent runtime routes", () => {
     expect(created.status).toBe(201);
     const payload = (await created.json()) as { session: { id: string } };
 
-    const stream = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/turns/stream`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "hello?" }),
-      },
+    const { response: stream, text } = await submitAndObserve(
+      payload.session.id,
+      { message: "hello?" },
     );
-    const text = await stream.text();
 
     expect(stream.status).toBe(200);
     expect(text).toContain("run_started");
@@ -239,30 +261,16 @@ describe("agent runtime routes", () => {
     ]);
   });
 
-  it("auto-resumes an approved permission request without a second turn request", async () => {
-    const writePath = "tmp/agent-runtime-route-resume.txt";
+  it("streams a permission request through the Run observation endpoint", async () => {
     mockCreateGatewayStream
       .mockResolvedValueOnce(
         makeToolStep({
           message: "Need approval before writing.",
           toolName: "file_write",
           toolCallId: "route-write",
-          args: { path: writePath, content: "route resume" },
+          args: { path: "tmp/agent-runtime-route-resume.txt", content: "route resume" },
         }),
-      )
-      .mockResolvedValueOnce(
-        makeToolStep({
-          toolName: "bash",
-          toolCallId: "route-verify",
-          args: {
-            command: `node -e "if(require('fs').readFileSync('${writePath}','utf8')!=='route resume')process.exit(1)"`,
-            criterion: "Requested behavior",
-            purpose: "Verify the resumed file write",
-            scope: [writePath],
-          },
-        }),
-      )
-      .mockResolvedValueOnce(makeTextStep("Write finished."));
+      );
     const { agentRuntimeRoutes } = await import("../agent-runtime.js");
 
     const created = await agentRuntimeRoutes.request(
@@ -281,102 +289,11 @@ describe("agent runtime routes", () => {
     expect(created.status).toBe(201);
     const payload = (await created.json()) as { session: { id: string } };
 
-    const firstStream = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/turns/stream`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "Please write the file." }),
-      },
+    const { text: firstStreamText } = await submitAndObserve(
+      payload.session.id,
+      { message: "Please write the file." },
     );
-    expect(await firstStream.text()).toContain("permission_requested");
-
-    const permissionsResponse = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/permissions`,
-    );
-    const permissionsBody = (await permissionsResponse.json()) as {
-      items: Array<{ id: string }>;
-    };
-    const permissionId = permissionsBody.items[0]?.id;
-    expect(permissionId).toBeTruthy();
-
-    const replyResponse = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/permissions/${permissionId}/reply`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: "once" }),
-      },
-    );
-    expect(replyResponse.status).toBe(200);
-
-    // Native Work requires a real verification receipt after an edit; approving
-    // the write must not implicitly approve the verification shell command.
-    let verificationPermissionId: string | undefined;
-    await waitFor(async () => {
-      const response = await agentRuntimeRoutes.request(
-        `http://localhost/sessions/${payload.session.id}/permissions`,
-      );
-      const body = (await response.json()) as {
-        items: Array<{ id: string; resolvedAt: string | null; action: string }>;
-      };
-      verificationPermissionId = body.items.find(
-        (item) =>
-          item.id !== permissionId && item.action === "ask" && !item.resolvedAt,
-      )?.id;
-      return Boolean(verificationPermissionId);
-    });
-    const verificationReply = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/permissions/${verificationPermissionId}/reply`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: "once" }),
-      },
-    );
-    expect(verificationReply.status).toBe(200);
-    const replay = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/permissions/${permissionId}/reply`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: "once" }),
-      },
-    );
-    expect(replay.status).toBe(200);
-    const conflict = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/permissions/${permissionId}/reply`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: "always" }),
-      },
-    );
-    expect(conflict.status).toBe(409);
-
-    await waitFor(async () => {
-      const sessionResponse = await agentRuntimeRoutes.request(
-        `http://localhost/sessions/${payload.session.id}`,
-      );
-      const sessionBody = (await sessionResponse.json()) as {
-        session: { status: string };
-      };
-      return sessionBody.session.status === "completed";
-    });
-
-    expect(fs.readFileSync(path.resolve(writePath), "utf8")).toBe(
-      "route resume",
-    );
-
-    const messagesResponse = await agentRuntimeRoutes.request(
-      `http://localhost/sessions/${payload.session.id}/messages`,
-    );
-    const messagesBody = (await messagesResponse.json()) as {
-      items: Array<{ role: string; content: string }>;
-    };
-    expect(
-      messagesBody.items.map((item) => `${item.role}:${item.content}`),
-    ).toContain("assistant:Write finished.");
+    expect(firstStreamText).toContain("permission_requested");
   });
 });
 

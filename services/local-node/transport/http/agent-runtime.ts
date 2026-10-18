@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import { assertLlmProviderConfigured } from "../../infrastructure/llm-runtime/provider-check.js";
 import {
@@ -119,7 +119,6 @@ import {
 import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
 import {
   sessionLiveBus,
-  type SessionLiveEvent,
 } from "../../modules/agent-runtime/session-live-bus.js";
 import { sessionProcessManager } from "../../modules/agent-runtime/session-process-manager.js";
 import {
@@ -1615,25 +1614,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
     }
   });
 });
-agentRuntimeRoutes.post("/sessions/:sessionId/turns/stream", async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = streamTurnRequestSchema.safeParse(body.data);
-  if (!parsed.success) return validationError(c, parsed.error);
-  try {
-    const id = c.req.param("sessionId");
-    requireSessionBackendConfig(id);
-    await validateInputMedia(id, parsed.data);
-    const accepted = await runCoordinator.submitAsync(
-      id,
-      parsed.data,
-      c.req.header("Idempotency-Key") ?? randomUUID(),
-    );
-    return observeRunResponse(c, id, accepted.run.id);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
 agentRuntimeRoutes.get("/sessions/:sessionId/events", async (c) => {
   {
     try {
@@ -1653,26 +1633,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/events", async (c) => {
     } catch (error) {
       return runtimeError(c, error);
     }
-  }
-});
-agentRuntimeRoutes.post("/sessions/:sessionId/resume/stream", async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  const parsed = streamTurnRequestSchema.safeParse(body.data ?? {});
-  if (!parsed.success) return validationError(c, parsed.error);
-  try {
-    const id = c.req.param("sessionId");
-    requireSessionBackendConfig(id);
-    await validateInputMedia(id, parsed.data);
-    const accepted = await runCoordinator.submitAsync(
-      id,
-      parsed.data,
-      c.req.header("Idempotency-Key") ?? randomUUID(),
-      "continue",
-    );
-    return observeRunResponse(c, id, accepted.run.id);
-  } catch (error) {
-    return runtimeError(c, error);
   }
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/plan", async (c) => {
@@ -2613,47 +2573,6 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
       unsubscribe();
       lifetime.dispose();
     }
-  });
-});
-agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
-  const sessionId = c.req.param("sessionId");
-  try {
-    agentSessionRuntime.get(sessionId);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-  return streamSSE(c, async (stream) => {
-    let closed = false;
-    const onEvent = (event: SessionLiveEvent) => {
-      if (closed) return;
-      stream
-        .writeSSE({ event: event.type, data: JSON.stringify(event) })
-        .catch(() => {
-          closed = true;
-        });
-    };
-    const unsubscribe = sessionLiveBus.subscribe(sessionId, onEvent);
-    await stream.writeSSE({ event: SseEventType.Connected, data: "{}" });
-    const heartbeat = setInterval(() => {
-      if (closed) return;
-      stream
-        .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
-        .catch(() => {
-          closed = true;
-        });
-    }, 25000);
-    c.req.raw.signal.addEventListener("abort", () => {
-      closed = true;
-      clearInterval(heartbeat);
-      unsubscribe();
-    });
-    await new Promise<void>((resolve) => {
-      c.req.raw.signal.addEventListener("abort", () => resolve(), {
-        once: true,
-      });
-    });
-    clearInterval(heartbeat);
-    unsubscribe();
   });
 });
 // Forms are durable resources, not permission grants or queued chat messages.
