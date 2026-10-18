@@ -51,3 +51,51 @@
 - 在线已不创建旧 runtime 表，但仓库里仍有旧 checkpoint/flat/transcript、同步 admission、interaction mutation、media/terminal/process 兼容分支；必须继续移除或改为 Rust 实现。旧 1.x 全量测试不再是完成标准；不能为保留它们恢复 SQL 后端。
 - 只读检查实际目录 `/Users/mint/.synax`：context.db 约 1.53 GB，299 个 session；228 个 versioned head、71 个 flat head、56,926 条 JSONL payload 索引、147 个资产。源数据未迁移/清理。下一步是完整的离线 versioned/JSONL/附件提取与有界原生导入，随后逐会话核对。
 - 不得将当前最小 E2E 的绿色结果当作“旧实现已全部删除/用户数据已完成迁移”。目标保持 active。2.0.0 DMG 尚未重新构建。
+
+## 2026-10-18 第三轮：真实数据只读提取与流式归档
+
+已新增独立离线读取器 `scripts/runtime-migration/v1-reader.ts`，只依赖文件读取、libsql 和离线字段 decoder，不导入旧在线 runtime。它支持：
+
+- flat SQL、早期 transcript JSONL、v3 不可变对象树（原始/紧凑节点）、外置 JSONL/二进制 payload、分块 text/JSON 字段。
+- 对象内容哈希、JSONL envelope/payload 哈希、committed offset、树/文本计数验证；原始内容不截断。
+- 根据旧程序的实际可见性选择数据源：消息读不可变树；boundary-only 的执行证据读 SQL locator + 当前/祖先 epoch 上界。`full_history=1` **不会**覆盖此规则。append-only 的 work/context 等也遵循旧 diagnostic 规则。
+- 当前 SQL live metadata 和 immutable session 内容合并；同 epoch 的控制字段覆盖；祖先分支的执行/权限状态按旧语义归一化。JSONL 迁移时临时 scope 的 header id 不覆盖真实 session id。
+- 保留检查点元数据及整个可达不可变对象图，并读取资产文件及绑定。全部能力留在离线脚本中，不增加在线 fallback。
+
+新增 CLI：
+
+```sh
+node --import tsx/esm scripts/synax-runtime-migrate.ts audit-v1 --data-root /Users/mint/.synax --output out/runtime-v2-migration/v1-audit.json
+node --import tsx/esm scripts/synax-runtime-migrate.ts export-v1 --data-root /Users/mint/.synax --output out/runtime-v2-migration/v1-source.ndjson
+node --import tsx/esm scripts/synax-runtime-migrate.ts verify-v1-export --input out/runtime-v2-migration/v1-source.ndjson
+```
+
+`export-v1` 每次只解码单条实体，缓存受限，写缓冲为 1 MiB；附件分块为 256 KiB。输出文件使用 0600 权限，完成后原子改名。验证器不依赖源数据库，验证 archive footer、对象哈希、附件块顺序/大小/哈希和 session 归属，拒绝截断或被修改的归档。
+
+真实目录最终核对结果（首轮误把 full_history 当作执行证据来源的计数已经作废）：
+
+| 项目 | 数量 |
+| --- | ---: |
+| 会话 | 299 |
+| 当前可见记录总数 | 403,344 |
+| 消息 | 7,833 |
+| run / step / part | 698 / 17,049 / 52,384 |
+| tool / event | 22,881 / 258,790 |
+| permission / interaction | 23,095 / 117 |
+| artifact / context / work | 19,477 / 291 / 520 |
+| plan / aux usage | 78 / 131 |
+| 检查点 | 2,787 |
+| 保留的不可变历史对象 | 74,835 |
+| 附件 / 绑定 | 147 / 105 |
+| 附件总字节数 | 38,441,890 |
+
+流式归档为 1,141,038,604 bytes，已通过独立校验。证据保存在被 Git 忽略的 `out/runtime-v2-migration/`；归档含真实用户内容，不提交 Git。源 `context.db` 仍为 1,526,464,512 bytes，修改时间仍是 2026-10-18 12:21:37；没有执行实际导入、删除旧表或清理源文件。
+
+验证：新增 7 个离线读取/归档测试通过（包含两种树格式、两种外置 payload、epoch 分支、append-only、live control、JSONL 截断/篡改和附件）；独立 scripts TypeScript 检查、项目 typecheck、原来的普通 SQL fixture → Rust 原生迁移 smoke 通过。
+
+仍需完成，不能据此宣称迁移成功：
+
+1. **真实数据暴露了整表 IPC 的硬问题**：一个会话的 step 正文合计 73,380,134 bytes；`history.rs::list_indexed` 仍遍历整个 head 图并一次性返回，Node working set 又依次全量加载多个集合。必须改为按字节分页/按需加载，才能用实际会话验收。
+2. 单实体最大 375,144 bytes，当前没有超过 900 KiB 的实体；单会话 permission 历史 1,013,860 bytes。用现有 `nativeProjection` 对全部导出会话实际序列化后，最大导入体为 **1,056,826 bytes**，已有 1 个会话超过 1 MiB 控制帧限制；证据为 `out/runtime-v2-migration/transport-audit.json`。历史权限和待处理权限的职责必须分开，不能持续向 control 数组堆积历史。
+3. 本次 archive 包含当前可见实体、保留 immutable graph 和附件；旧 process/terminal、SQL mutation/undo 及 boundary-only 检查点的完整原生转换仍需完成。原 SQL-only `export/import/verify-runtime` 仍只用于其现有 fixture，不能拿它清理真实目录。
+4. 下一步将上述 archive/reader 接入原生 Rust 导入，恢复 checkpoint/pin 和附件绑定，逐会话读回核对；再删除全部在线旧模块、扩展写文件/交互 E2E，最后构建 2.0.0 DMG。当前目标继续 active。

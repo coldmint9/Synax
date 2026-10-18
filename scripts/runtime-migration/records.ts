@@ -29,14 +29,14 @@ function decode(value: unknown): unknown {
   return typeof value === 'string' ? JSON.parse(value) : value;
 }
 export function nativeRow(table: string, row: Row): Row {
-  if (table === 'agent_runtime_work') return { ...decode(row.payload_json) as Row, id: row.id, sessionId: row.session_id };
+  if (table === 'agent_runtime_work' && Object.hasOwn(row, 'payload_json')) return { ...decode(row.payload_json) as Row, id: row.id, sessionId: row.session_id };
   const result: Row = {};
   for (const [key, value] of Object.entries(row)) {
-    if (['_metadata', '_rowid', 'version_epoch'].includes(key)) continue;
+    if (['_metadata', '_rowid', 'version_epoch', '__synaxExecutionEpoch'].includes(key)) continue;
     const name = key.replace(/_json$/, '').replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
     result[name] = key.endsWith('_json') ? decode(value) : value;
   }
-  if (table === 'agent_runtime_run_steps') {
+  if (table === 'agent_runtime_run_steps' && Object.hasOwn(result, 'stepIndex')) {
     result.index = result.stepIndex;
     delete result.stepIndex;
   }

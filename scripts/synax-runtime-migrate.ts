@@ -6,6 +6,8 @@ import NativeDatabase from 'libsql';
 import { isDeepStrictEqual } from 'node:util';
 import { RustRuntimeSupervisor } from '../services/local-node/infrastructure/runtime/rust-sidecar.js';
 import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runtime/sidecar/sidecar-client.js';
+import { auditV1 } from './runtime-migration/audit.js';
+import { exportV1Archive, verifyV1Archive } from './runtime-migration/archive.js';
 
 import { exportTables, historyTables, nativeEntities, nativeProjection, nativeSession, nativeRow, nativeReplay, type Row, type SessionBundle } from './runtime-migration/records.js';
 type MigrationBundle = {
@@ -25,12 +27,13 @@ const option = (name: string, fallback?: string) => {
 const dataRoot = path.resolve(option('--data-root', process.env.DATA_ROOT ?? path.join(os.homedir(), '.synax'))!);
 const database = path.resolve(option('--database', path.join(dataRoot, 'context.db'))!);
 const input = path.resolve(option('--input', path.join(dataRoot, 'runtime-migration-export.json'))!);
-const output = path.resolve(option('--output', path.join(dataRoot, 'runtime-migration-export.json'))!);
+const output = path.resolve(option('--output', path.join(dataRoot, command === 'audit-v1' ? 'runtime-v1-audit.json'
+  : command === 'export-v1' ? 'runtime-v1-source.ndjson' : 'runtime-migration-export.json'))!);
 
 const tables = exportTables;
 
 function usage(): never {
-  console.error('usage: npm run runtime:migrate -- <export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
+  console.error('usage: npm run runtime:migrate -- <audit-v1|export-v1|verify-v1-export|export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
   process.exit(2);
 }
 
@@ -306,8 +309,11 @@ async function purgeLegacy(): Promise<void> {
   console.log(JSON.stringify({ command: 'purge-legacy', database, deleted, force: true }, null, 2));
 }
 
-if (!command || !['export', 'import', 'verify', 'verify-runtime', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
-if (command === 'export') await exportLegacy();
+if (!command || !['audit-v1', 'export-v1', 'verify-v1-export', 'export', 'import', 'verify', 'verify-runtime', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
+if (command === 'audit-v1') await auditV1(dataRoot, database, output);
+else if (command === 'export-v1') console.log(JSON.stringify({ command, output, ...await exportV1Archive(dataRoot, database, output), ok: true }, null, 2));
+else if (command === 'verify-v1-export') console.log(JSON.stringify({ command, input, ...await verifyV1Archive(input), ok: true }, null, 2));
+else if (command === 'export') await exportLegacy();
 else if (command === 'import') await importBundle();
 else if (command === 'verify') await verifyBundle();
 else if (command === 'verify-runtime') await verifyRuntime();
