@@ -183,7 +183,7 @@ export class McpClientManager {
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         starting.transport = transport;
         client = new Client(
-          { name: "synax-host", version: "1.26.3" },
+          { name: "synax-host", version: "2.0.0" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -392,7 +392,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "1.26.3" },
+      { name: "synax-host-probe", version: "2.0.0" },
       { capabilities: {} },
     );
     try {
