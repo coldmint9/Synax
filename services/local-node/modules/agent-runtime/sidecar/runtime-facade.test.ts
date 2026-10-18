@@ -21,16 +21,13 @@ it('uses only Rust regardless of retired transport flags', () => {
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'disabled');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
 });
-it('seeds only at the explicit creation boundary', async () => {
-  const initial = { id: 's', projectId: 'p', status: 'running', updatedAt: 'now' };
-  const read = vi.spyOn(agentRuntimeStore, 'getSession').mockReturnValue(initial as never);
-  vi.spyOn(agentRuntimeStore, 'listRuns').mockReturnValue([]);
-  const client = remote({
-    uiSnapshot: vi.fn(async () => { throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MISSING', message: 'missing' }); }),
-    seedUi: vi.fn(async () => encode(snapshot)),
-  });
-  await new RuntimeFacade(() => client).ensureUiProjection('s');
-  expect(read).toHaveBeenCalledOnce(); expect(client.seedUi).toHaveBeenCalledWith('s', Buffer.from(JSON.stringify(initial)));
+it('awaits the store commit before reading the created projection', async () => {
+  const flush = vi.spyOn(agentRuntimeStore, 'flushSession').mockResolvedValue();
+  const client = remote({ uiSnapshot: vi.fn(async()=>encode(snapshot)), seedUi: vi.fn() });
+  await new RuntimeFacade(()=>client).ensureUiProjection('s');
+  expect(flush).toHaveBeenCalledWith('s');
+  expect(client.uiSnapshot).toHaveBeenCalledWith('s');
+  expect(client.seedUi).not.toHaveBeenCalled();
 });
 it('does not hide failures or attempt SQL fallback when Rust already owns the projection', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });
@@ -39,17 +36,11 @@ it('does not hide failures or attempt SQL fallback when Rust already owns the pr
   expect(read).not.toHaveBeenCalled();
 });
 
-it('does not seed an empty Rust projection over already executed SQLite history', async () => {
-  vi.spyOn(agentRuntimeStore, 'getSession').mockReturnValue({ id: 's' } as never);
-  vi.spyOn(agentRuntimeStore, 'listRuns').mockReturnValue([{ id: 'old', status: 'completed' }] as never);
-  const client = remote({
-    uiSnapshot: vi.fn(async () => { throw new RuntimeSidecarError({ type: 'error', code: 'PROJECTION_MISSING', message: 'missing' }); }),
-    seedUi: vi.fn(),
-  });
-  await expect(new RuntimeFacade(() => client).ensureUiProjection('s')).rejects.toMatchObject({ code: 'PROJECTION_MIGRATION_REQUIRED' });
+it('leaves missing projections missing instead of seeding from a local working set', async () => {
+  const client = remote({uiSnapshot:vi.fn().mockRejectedValue(new RuntimeSidecarError({type:'error',code:'PROJECTION_MISSING',message:'missing'})),seedUi:vi.fn()});
+  await expect(new RuntimeFacade(()=>client).ensureUiProjection('s')).rejects.toMatchObject({code:'PROJECTION_MISSING'});
   expect(client.seedUi).not.toHaveBeenCalled();
 });
-
 it('submits the terminal run document to Rust and propagates persistence failure without local writes', async () => {
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   const updateRun = vi.spyOn(agentRuntimeStore, 'updateRun').mockImplementation(() => { throw new Error('must not write local run'); });

@@ -1,21 +1,19 @@
-import { boundaryOnlySession } from "./checkpoints/version-runtime/bridge.js";
-import { diagnosticVisible } from "./checkpoints/version-runtime/diagnostics.js";
-import { AgentRuntimeError } from "./runtime-errors.js";
 import {
-  CacheUsageAccumulator,
-  cacheUsageSample,
-  projectCacheUsage,
-  type SessionCacheUsage,
-} from "./cache-usage.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
+isTokenCount,
+normalizeUsage,
+type NormalizedUsage,
+type UsageContext,
+} from "../../infrastructure/llm-runtime/usage.js";
 import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
 import {
-  normalizeUsage,
-  isTokenCount,
-  type NormalizedUsage,
-  type UsageContext,
-} from "../../infrastructure/llm-runtime/usage.js";
-import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+CacheUsageAccumulator,
+cacheUsageSample,
+projectCacheUsage,
+type SessionCacheUsage,
+} from "./cache-usage.js";
+import { AgentRuntimeError } from "./runtime-errors.js";
+import { makeRuntimeId,nowIso } from "./runtime-ids.js";
+import { agentRuntimeStore } from "./session-store.js";
 
 export interface UsageTotals {
   input: number;
@@ -115,31 +113,11 @@ export function projectSessionUsage(
   treeIds: string[],
 ): SessionUsageProjection {
   const ids = [...new Set([sessionId, ...treeIds])];
-  const db = getRawSqlite();
-  const slots = ids.map(() => "?").join(",");
-  const boundary = boundaryOnlySession(sessionId);
-  const usageFields = ["usage", "providerMetadata", "backendId", "engine", "externalTurn", "contextUsage", "contextComposition"];
-  const usageMetadata = `CASE WHEN length(CAST(s.metadata_json AS BLOB))<=1048576 THEN json_object(${usageFields.map(key => `'${key}',json_extract(s.metadata_json,'$.${key}')`).join(",")}) ELSE '{"historyBudgetExceeded":true}' END AS metadata_json`;
-  const rows = db
-    .prepare(
-      `SELECT s.rowid AS sequence, s.id, s.model, s.session_id, s.started_at, s.completed_at, s.status, ${usageMetadata}, r.completed_at AS run_ended_at FROM agent_runtime_run_steps s JOIN agent_runtime_runs r ON r.id=s.run_id WHERE s.session_id IN (${slots}) ORDER BY s.started_at, r.started_at, s.step_index, s.rowid`,
-    )
-    .iterate(...ids) as Iterable<{
-    sequence: number;
-    model: string | null;
-    id: string;
-    session_id: string;
-    started_at: string;
-    completed_at: string | null;
-    run_ended_at: string | null;
-    status: string;
-    metadata_json: string;
-  }>;
-  const auxiliary = db
-    .prepare(
-      `SELECT * FROM agent_runtime_aux_usage WHERE session_id IN (${slots})`,
-    )
-    .iterate(...ids) as Iterable<{ session_id: string; usage_json: string | null }>;
+  const rows = ids.flatMap(id => agentRuntimeStore.listSessionSteps(id).map((step,sequence)=>({
+    sequence, id:step.id, model:step.model, session_id:id, started_at:step.startedAt, completed_at:step.completedAt,
+    run_ended_at:agentRuntimeStore.getRun(step.runId).completedAt, status:step.status, metadata_json:JSON.stringify(step.metadata),
+  }))).sort((a,b)=>a.started_at.localeCompare(b.started_at)||a.sequence-b.sequence);
+  const auxiliary = ids.flatMap(id=>agentRuntimeStore.listRecords<{id:string;sessionId:string;usage:unknown}>('aux_usage',id).map(row=>({session_id:id,usage_json:JSON.stringify(row.usage??null)})));
   const result: SessionUsageProjection = {
     context: {
       inputTokens: null,
@@ -265,7 +243,6 @@ export function projectSessionUsage(
       ) || 0;
     // Cumulative usage and cache samples include all executed steps, including
     // abandoned branches. Only the *current context* follows visible history.
-    if (boundary && !diagnosticVisible(sessionId, "steps", row.id)) continue;
     // Missing usage must never replace a provider sample with a local estimate.
     // Preserve the last measured request, explicitly marked stale.
     result.context.stale = result.context.inputTokens !== null;
@@ -294,59 +271,14 @@ export function projectSessionUsage(
   return result;
 }
 
-/** Auxiliary calls have their own ID, never reuse a step ID or add their usage to step usage. */
-export function startAuxUsage(
-  sessionId: string,
-  purpose: string,
-  runId?: string | null,
-): string {
-  const id = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
-    ? `${makeRuntimeId("aux")}:${Buffer.from(sessionId).toString("base64url")}`
-    : makeRuntimeId("aux");
-  const authoritativeAuxSessions = getAuthoritativeAuxSessionMap();
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-    authoritativeAuxSessions.set(id, sessionId);
-    void import("./sidecar/runtime-facade.js")
-      .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(sessionId, "runtime.aux_usage", {
-        id, sessionId, runId: runId ?? null, purpose, startedAt: nowIso(), completedAt: null, usage: null,
-      }))
-      .catch(() => {});
-    return id;
-  }
-  getRawSqlite()
-    .prepare(
-      "INSERT INTO agent_runtime_aux_usage (id, session_id, run_id, purpose, started_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(id, sessionId, runId ?? null, purpose, nowIso());
+interface AuxiliaryUsage { id: string; sessionId: string; runId: string | null; purpose: string; startedAt: string; completedAt: string | null; usage: unknown }
+export function startAuxUsage(sessionId: string, purpose: string, runId?: string | null): string {
+  const id = `${makeRuntimeId('aux')}:${Buffer.from(sessionId).toString('base64url')}`;
+  agentRuntimeStore.saveRecord('aux_usage', { id, sessionId, runId: runId ?? null, purpose, startedAt: nowIso(), completedAt: null, usage: null });
   return id;
 }
 export function finishAuxUsage(id: string, usage?: unknown): void {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-    const sessionId = getAuthoritativeAuxSessionMap().get(id) ?? (() => {
-      if (!id.startsWith("aux_")) return undefined;
-      const encoded = id.split(":").at(-1);
-      if (!encoded) return undefined;
-      try { return Buffer.from(encoded, "base64url").toString("utf8"); }
-      catch { return undefined; }
-    })();
-    getAuthoritativeAuxSessionMap().delete(id);
-    void import("./sidecar/runtime-facade.js")
-      .then(async ({ runtimeFacade }) => {
-        if (sessionId) await runtimeFacade.persistHistoryObject(sessionId, "runtime.aux_usage", {
-          id, sessionId, completedAt: nowIso(), usage: usage ? normalizeUsage(usage) : null,
-        });
-      })
-      .catch(() => {});
-    return;
-  }
-  getRawSqlite()
-    .prepare(
-      "UPDATE agent_runtime_aux_usage SET completed_at=?, usage_json=? WHERE id=?",
-    )
-    .run(nowIso(), usage ? JSON.stringify(normalizeUsage(usage)) : null, id);
-}
-
-const authoritativeAuxSessionMap = new Map<string, string>();
-function getAuthoritativeAuxSessionMap(): Map<string, string> {
-  return authoritativeAuxSessionMap;
+  const existing = agentRuntimeStore.getRecord<AuxiliaryUsage>('aux_usage', id);
+  if (!existing) throw new AgentRuntimeError('Auxiliary usage was not loaded.', 'NOT_FOUND', 404);
+  agentRuntimeStore.saveRecord('aux_usage', { ...existing, completedAt: nowIso(), usage: usage ? normalizeUsage(usage) : null });
 }

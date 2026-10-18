@@ -239,6 +239,7 @@ impl HistoryStore {
                 | "get_blob_chunk"
                 | "get_blob_manifest"
                 | "asset_get"
+                | "asset_page"
                 | "asset_has_binding"
                 | "asset_list_bindings"
                 | "list_checkpoints"
@@ -255,6 +256,8 @@ impl HistoryStore {
                 | "list_contexts"
                 | "list_aux_usage"
                 | "list_terminals"
+                | "list_thinking"
+                | "list_compactions"
                 | "verify"
         );
         let identity = format!(
@@ -289,6 +292,7 @@ impl HistoryStore {
             "delete_blob" => self.delete_blob(&value, &mut batch)?,
             "asset_put" => self.asset_put(&value, &mut batch)?,
             "asset_get" => self.asset_get(&value)?,
+            "asset_page" => self.asset_page(&value)?,
             "asset_bind" => self.asset_bind(&value, &mut batch)?,
             "asset_unbind" => self.asset_unbind(&value, &mut batch)?,
             "asset_has_binding" => self.asset_has_binding(&value)?,
@@ -319,6 +323,8 @@ impl HistoryStore {
             "list_work" => self.list_indexed(session_id, "work")?,
             "list_contexts" => self.list_indexed(session_id, "context")?,
             "list_aux_usage" => self.list_indexed(session_id, "aux")?,
+            "list_thinking" => self.list_indexed(session_id, "thinking")?,
+            "list_compactions" => self.list_indexed(session_id, "compaction")?,
             "list_terminals" => self.list_indexed(session_id, "terminal")?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index(&mut batch)?,
@@ -674,6 +680,22 @@ impl HistoryStore {
         let id = required_string(value, "assetId")?;
         self.get(CF_ASSETS, format!("a/{id}").as_bytes())?
             .ok_or_else(|| HistoryError::ObjectMissing(format!("asset {id}")))
+    }
+
+    fn asset_page(&self, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let after = value["after"].as_str().unwrap_or("");
+        let start = format!("a/{after}");
+        let mut items = Vec::new();
+        for entry in self.db.iterator_cf(self.cf(CF_ASSETS)?, rocksdb::IteratorMode::From(start.as_bytes(), rocksdb::Direction::Forward)) {
+            let (key, bytes) = entry?;
+            if !key.starts_with(b"a/") { break; }
+            if !after.is_empty() && key.as_ref() <= start.as_bytes() { continue; }
+            let asset: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let next = required_string(&asset, "id")?.to_owned();
+            items.push(asset);
+            if items.len() == 64 { return Ok(serde_json::to_vec(&serde_json::json!({"items":items,"next":next}))?); }
+        }
+        Ok(serde_json::to_vec(&serde_json::json!({"items":items,"next":null}))?)
     }
 
     fn asset_bind(
@@ -1541,6 +1563,9 @@ fn entity_index_kind(kind: &str) -> Option<&'static str> {
         "runtime.work" => Some("work"),
         "runtime.context" => Some("context"),
         "runtime.aux_usage" => Some("aux"),
+        "runtime.thinking" => Some("thinking"),
+        "runtime.compaction" => Some("compaction"),
+        "runtime.permission" => Some("permission"),
         "runtime.terminal" => Some("terminal"),
         _ => None,
     }
@@ -2258,6 +2283,27 @@ mod tests {
                 )
                 .is_err()
         );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn asset_pages_are_bounded_and_continue_without_repeating_keys() {
+        let path = temp_path("asset-page");
+        let store = HistoryStore::open(&path).unwrap();
+        for index in 0..65 {
+            let id = format!("asset-{index:03}");
+            invoke(&store, "__assets__", &id, "asset_put", serde_json::json!({"asset":{
+                "id":id,"projectId":"p","filename":"test.txt","mediaType":"text/plain",
+                "size":0,"sha256":"0".repeat(64),"createdAt":"2026-10-18T00:00:00Z"
+            }}));
+        }
+        let first = invoke(&store,"__assets__","poll","asset_page",serde_json::json!({}));
+        assert_eq!(first["items"].as_array().unwrap().len(),64);
+        let second = invoke(&store,"__assets__","poll","asset_page",serde_json::json!({"after":first["next"]}));
+        assert_eq!(second["items"].as_array().unwrap().len(),1);
+        assert_eq!(second["items"][0]["id"],"asset-064");
+        assert!(second["next"].is_null());
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

@@ -10,6 +10,3 @@ CREATE TABLE runtime_artifact_feedback (
 );
 INSERT INTO runtime_artifact_feedback SELECT * FROM runtime_artifact_feedback_legacy;
 DROP TABLE runtime_artifact_feedback_legacy;
-CREATE TRIGGER delete_session_artifact_feedback AFTER DELETE ON agent_runtime_sessions BEGIN
- DELETE FROM runtime_artifact_feedback WHERE session_id = OLD.id;
-END;

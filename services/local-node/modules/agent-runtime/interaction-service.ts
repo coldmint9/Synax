@@ -213,48 +213,15 @@ export function persistPlanProposal(sessionId: string, plan: AgentPlan) {
 
 export const interactionService = {
   list(sessionId: string): AgentInteraction[] {
-    store.getSession(sessionId);
-    if (versionedSession(sessionId))
-      return listVersionEntities<AgentInteraction>(sessionId, "interactions");
-    return (
-      getRawSqlite()
-        .prepare(
-          "SELECT * FROM agent_runtime_interactions WHERE session_id = ? ORDER BY created_at, rowid",
-        )
-        .all(sessionId) as Row[]
-    ).map(map);
+    return store.listRecords<AgentInteraction>('interaction',sessionId).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
   },
   pending(sessionId: string): AgentInteraction | null {
-    if (versionedSession(sessionId))
-      return readVersionSnapshot(getRawSqlite(), () =>
-        pendingVersionInteraction(sessionId),
-      );
-    const row = getRawSqlite()
-      .prepare(
-        "SELECT * FROM agent_runtime_interactions WHERE session_id = ? AND status = 'pending'",
-      )
-      .get(sessionId) as Row | undefined;
-    return row ? map(row) : null;
+    return this.list(sessionId).find(i=>i.status==='pending')??null;
   },
   ready(sessionId: string): AgentInteraction | null {
-    if (versionedSession(sessionId))
-      return readVersionSnapshot(getRawSqlite(), () => {
-        const session = store.getSession(sessionId);
-        return session.status === "waiting_input" && session.activeRunId
-          ? readyVersionInteraction(sessionId, session.activeRunId)
-          : null;
-      });
-    const row = getRawSqlite()
-      .prepare(
-        "SELECT * FROM agent_runtime_interactions WHERE session_id = ? AND status != 'pending' AND response_json IS NOT NULL AND consumed_at IS NULL ORDER BY rowid DESC LIMIT 1",
-      )
-      .get(sessionId) as Row | undefined;
-    if (!row) return null;
-    const session = store.getSession(sessionId);
-    return session.status === "waiting_input" &&
-      session.activeRunId === row.run_id
-      ? map(row)
-      : null;
+    const session=store.getSession(sessionId);
+    if(session.status!=='waiting_input')return null;
+    return this.list(sessionId).find(i=>i.runId===session.activeRunId&&i.status==='answered'&&i.response)??null;
   },
   request(input: {
     sessionId: string;

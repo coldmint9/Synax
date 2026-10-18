@@ -222,33 +222,11 @@ export class RuntimeFacade {
       }
     }
   }
-  /** Explicit creation boundary until the Node session creator is fully migrated. */
   async ensureUiProjection(sessionId: string): Promise<void> {
+    await agentRuntimeStore.flushSession(sessionId);
     const client = this.clientFactory();
-    if (!client) throw new Error("Runtime sidecar client is not configured.");
-    try {
-      await client.uiSnapshot(sessionId);
-    } catch (error) {
-      if (
-        !(error instanceof RuntimeSidecarError) ||
-        error.code !== "PROJECTION_MISSING"
-      )
-        throw error;
-      const session = agentRuntimeStore.getSession(sessionId);
-      if (
-        agentRuntimeStore
-          .listRuns(sessionId)
-          .some((run) => run.status !== "queued")
-      ) {
-        throw new RuntimeSidecarError({
-          type: "error",
-          code: "PROJECTION_MIGRATION_REQUIRED",
-          message:
-            "Existing executed runs require offline projection migration.",
-        });
-      }
-      await client.seedUi(sessionId, Buffer.from(JSON.stringify(session)));
-    }
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    await client.uiSnapshot(sessionId);
   }
   async queueMutation(input: {
     sessionId: string;
@@ -287,23 +265,10 @@ export class RuntimeFacade {
     }
   }
   async queueSnapshot(sessionId: string): Promise<unknown> {
+    await agentRuntimeStore.flushSession(sessionId);
     const client = this.clientFactory();
-    if (!client) throw new Error("Runtime sidecar client is not configured.");
-    try {
-      return JSON.parse(
-        Buffer.from(await client.queueRead(sessionId)).toString("utf8"),
-      );
-    } catch (error) {
-      if (
-        !(error instanceof RuntimeSidecarError) ||
-        error.code !== "PROJECTION_MISSING"
-      )
-        throw error;
-      await this.ensureUiProjection(sessionId);
-      return JSON.parse(
-        Buffer.from(await client.queueRead(sessionId)).toString("utf8"),
-      );
-    }
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    return JSON.parse(Buffer.from(await client.queueRead(sessionId)).toString('utf8'));
   }
   async controlState(sessionId: string): Promise<unknown> {
     const client = this.clientFactory();
@@ -810,6 +775,7 @@ export class RuntimeFacade {
     }
   }
   async flushHistoryWrites(sessionId: string): Promise<void> {
+    await agentRuntimeStore.flushSession(sessionId);
     const pending = this.pendingHistoryWrites.get(sessionId);
     if (!pending?.size) return;
     await Promise.all([...pending]);

@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS runtime_artifact_feedback (
  id TEXT PRIMARY KEY,
- session_id TEXT NOT NULL REFERENCES agent_runtime_sessions(id) ON DELETE CASCADE,
+ session_id TEXT NOT NULL ,
  revision_id TEXT NOT NULL,
  idempotency_key TEXT NOT NULL,
  request_hash TEXT NOT NULL,

@@ -159,6 +159,18 @@ import {
 } from "../../modules/project-workspace.js";
 import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
 export const agentRuntimeRoutes = new Hono();
+// Load the execution working set at the HTTP boundary, and acknowledge only
+// after all mutations have reached Rust.
+agentRuntimeRoutes.use('*', async (c, next) => {
+  const id = c.req.param('sessionId') ?? (c.req.path.startsWith('/sessions/') ? c.req.param('id') : undefined);
+  try {
+    await agentRuntimeStore.hydrateSessions();
+    if (id) await agentRuntimeStore.hydrateSession(id);
+    await next();
+    await agentRuntimeStore.flush();
+  } catch (error) { return runtimeError(c, error); }
+});
+
 const authoritativeEditRequestId = (sessionId: string, requestId: string) =>
   `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
 agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {

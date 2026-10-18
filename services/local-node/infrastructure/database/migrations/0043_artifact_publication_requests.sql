@@ -4,6 +4,3 @@ CREATE TABLE artifact_publication_requests (
  created_at TEXT NOT NULL
 );
 CREATE INDEX artifact_publication_session ON artifact_publication_requests(session_id);
-CREATE TRIGGER delete_session_artifact_requests AFTER DELETE ON agent_runtime_sessions BEGIN
- DELETE FROM artifact_publication_requests WHERE session_id=OLD.id;
-END;

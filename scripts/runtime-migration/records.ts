@@ -14,6 +14,8 @@ export const historyTables = {
   agent_runtime_work: ['runtime.work', 'list_work'],
   agent_plan_artifacts: ['runtime.plan', 'list_plans'],
   agent_runtime_aux_usage: ['runtime.aux_usage', 'list_aux_usage'],
+  agent_runtime_thinking_summaries: ['runtime.thinking', 'list_thinking'],
+  agent_runtime_compaction_summaries: ['runtime.compaction', 'list_compactions'],
 } as const;
 
 export const exportTables = [
@@ -117,3 +119,5 @@ export function nativeReplay(item: SessionBundle) {
     return { kind: String(chunk.type), payload: Array.from(Buffer.from(JSON.stringify({ schema: 1, chunk, state }))) };
   });
 }
+
+export const mapLegacyHistoryRow = nativeRow;

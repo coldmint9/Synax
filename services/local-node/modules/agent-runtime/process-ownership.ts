@@ -48,7 +48,7 @@ const authoritative = () => process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "author
 
 function mirrorProcessLease(
   operation: "lease_open" | "lease_close",
-  record: { id: string; sessionId?: string | null; runId?: string | null; pid?: number | null; processGroup?: number; runtimeKind?: string; runtimeDistribution?: string | null; runtimePid?: number | null; runtimePgid?: number | null; state?: string; commandLabel?: string },
+  record: { id: string; sessionId?: string | null; runId?: string | null; pid?: number | null; processGroup?: number; runtimeKind?: string; runtimeDistribution?: string | null; runtimePid?: number | null; runtimePgid?: number | null; state?: string; commandLabel?: string; kind?: string; workerOwned?: boolean },
 ): Promise<void> {
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" || !record.sessionId) return Promise.resolve();
   const write = import("./sidecar/runtime-facade.js").then(({ runtimeFacade }) =>
@@ -56,7 +56,7 @@ function mirrorProcessLease(
       sessionId: record.sessionId!,
       requestId: `lease:${record.id}:${operation}:${record.pid ?? "none"}`,
       operation,
-      payload: { leaseId: record.id, hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`, runId: record.runId, pid: record.pid, processGroup: record.processGroup ?? 0, runtimeKind: record.runtimeKind, runtimeDistribution: record.runtimeDistribution, runtimePid: record.runtimePid, runtimePgid: record.runtimePgid, state: record.state, commandLabel: record.commandLabel },
+      payload: { leaseId: record.id, hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`, runId: record.runId, pid: record.pid, processGroup: record.processGroup ?? 0, runtimeKind: record.runtimeKind, runtimeDistribution: record.runtimeDistribution, runtimePid: record.runtimePid, runtimePgid: record.runtimePgid, state: record.state, commandLabel: record.commandLabel, kind: record.kind, workerOwned: record.workerOwned },
     }),
   );
   const result = write.then(() => undefined);
@@ -107,10 +107,11 @@ export function prepareOwnedProcess(
     process_group: grouped ? 1 : 0,
     command_label: commandLabel,
     state: "preparing",
+    kind: options.background ? "background" : "command",
   };
   if (authoritative()) {
     authoritativeLeases.set(ticket.id, record);
-    void mirrorProcessLease("lease_open", { id: record.id, sessionId: record.session_id, runId: record.run_id, processGroup: record.process_group, state: record.state, commandLabel }).catch(() => {});
+    void mirrorProcessLease("lease_open", { id: record.id, sessionId: record.session_id, runId: record.run_id, processGroup: record.process_group, state: record.state, commandLabel, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     return ticket;
   }
   getRawSqlite()
@@ -139,7 +140,7 @@ export function recordOwnedPid(id: string, pid: number | undefined): void {
     if (!record) return;
     record.pid = pid;
     record.state = "active";
-    void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid, processGroup: record.process_group, state: record.state, commandLabel: record.command_label }).catch(() => {});
+    void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid, processGroup: record.process_group, state: record.state, commandLabel: record.command_label, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     return;
   }
   getRawSqlite()
@@ -160,7 +161,7 @@ export function recordOwnedRuntimeTarget(
     if (record) {
       record.runtime_kind = "wsl";
       record.runtime_distribution = distribution;
-      void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, runtimeKind: "wsl", runtimeDistribution: distribution, state: record.state, commandLabel: record.command_label }).catch(() => {});
+      void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, runtimeKind: "wsl", runtimeDistribution: distribution, state: record.state, commandLabel: record.command_label, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     }
     return;
   }
@@ -182,7 +183,7 @@ export function recordOwnedRuntime(
       record.runtime_distribution = runtime.distribution;
       record.runtime_pid = runtime.pid;
       record.runtime_pgid = runtime.pgid;
-      void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, runtimeKind: "wsl", runtimeDistribution: runtime.distribution, runtimePid: runtime.pid, runtimePgid: runtime.pgid, state: record.state, commandLabel: record.command_label }).catch(() => {});
+      void mirrorProcessLease("lease_open", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, runtimeKind: "wsl", runtimeDistribution: runtime.distribution, runtimePid: runtime.pid, runtimePgid: runtime.pgid, state: record.state, commandLabel: record.command_label, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     }
     return;
   }
@@ -202,7 +203,7 @@ export function releaseOwnedProcess(
     const record = authoritativeLeases.get(id);
     if (record) {
       authoritativeLeases.delete(id);
-      void mirrorProcessLease("lease_close", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, state: "closed", commandLabel: record.command_label }).catch(() => {});
+      void mirrorProcessLease("lease_close", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, state: "closed", commandLabel: record.command_label, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     }
     return;
   }
@@ -248,17 +249,10 @@ function emitProcessChange(id: string): void {
   }
 }
 
-export function hasBackgroundProcesses(
-  sessionId: string,
-  workerOwnedOnly = false,
-): boolean {
-  return Boolean(
-    getRawSqlite()
-      .prepare(
-        `SELECT 1 FROM agent_runtime_processes p WHERE session_id=? AND kind='background' AND state<>'closed' ${workerOwnedOnly ? "AND NOT EXISTS (SELECT 1 FROM terminal_sessions t WHERE t.id=p.id)" : ""} LIMIT 1`,
-      )
-      .get(sessionId),
-  );
+export async function hasBackgroundProcesses(sessionId: string, workerOwnedOnly = false): Promise<boolean> {
+  const { runtimeFacade } = await import('./sidecar/runtime-facade.js');
+  const state = await runtimeFacade.controlState(sessionId) as { processLeases: Array<{kind?:string;state?:string;workerOwned?:boolean}> };
+  return state.processLeases.some(lease=>lease.kind==='background'&&lease.state!=='closed'&&(!workerOwnedOnly||lease.workerOwned===true));
 }
 
 function alive(pid: number): boolean {

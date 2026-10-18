@@ -40,7 +40,3 @@ CREATE TABLE agent_artifact_outbox (
 CREATE INDEX idx_artifact_outbox_pending ON agent_artifact_outbox(delivered_at, created_at);
 -- Session UPDATE/REPLACE must preserve revisions; explicit deletions clean up. SQLite's
 -- default recursive_triggers=OFF prevents REPLACE's implicit delete from firing this.
-CREATE TRIGGER delete_session_artifacts AFTER DELETE ON agent_runtime_sessions BEGIN
-  DELETE FROM agent_artifact_builds WHERE session_id = OLD.id;
-  DELETE FROM agent_artifacts WHERE session_id = OLD.id;
-END;

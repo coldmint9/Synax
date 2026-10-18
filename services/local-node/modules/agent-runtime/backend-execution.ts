@@ -1,4 +1,4 @@
-import { historyEpoch, historyError } from "./checkpoints/guards.js";
+import { assertExecutionContextCurrent } from "../../infrastructure/runtime/execution-context.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
 import {
@@ -20,7 +20,7 @@ export async function* executeBackendSession(
   input: StreamTurnRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
-  const revision = historyEpoch(sessionId);
+  await agentRuntimeStore.hydrateSession(sessionId);
   const binding = resolveSessionBackend(sessionId);
   const model = resolveBackendModel(sessionId, input);
   const metadata = agentRuntimeStore.getSession(sessionId).sessionMetadata;
@@ -45,8 +45,7 @@ export async function* executeBackendSession(
       model ? { ...input, model } : input,
       signal,
     )) {
-      if (historyEpoch(sessionId) !== revision)
-        throw historyError("Obsolete conversation execution.", "HISTORY_STALE");
+      await assertExecutionContextCurrent(input.executionContext);
       maybeScheduleSessionTitleFromStreamChunk(sessionId, chunk);
       yield chunk;
     }

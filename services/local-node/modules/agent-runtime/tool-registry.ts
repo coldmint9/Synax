@@ -8,7 +8,7 @@ import { customToolProvider } from "../extensions/custom-tool-provider.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
 import { resolveWorkspacePath as resolveUndoPath } from "./tools/workspace.js";
 import { withCheckpointMutation } from "./checkpoints/mutations.js";
-import { assertHistoryUnlocked } from "./checkpoints/guards.js";
+import { assertHistoryUnlocked } from "./runtime-history.js";
 import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
 import { mediaAudioVideoTools } from "./tools/media-audio-video.js";

@@ -1,7 +1,7 @@
 import type Database from "libsql";
 import { getRawSqlite } from "../../../../infrastructure/database/index.js";
 import { AgentRuntimeError } from "../../runtime-errors.js";
-import { mapLegacyHistoryRow } from "../../session-store.js";
+import { mapLegacyHistoryRow } from "../../../../../../scripts/runtime-migration/records.js";
 import { versionRepository } from "./bridge.js";
 import { readVersionSnapshot } from "../version-store/read-snapshot.js";
 import { admitVersionGrowth } from "../resource-admission.js";

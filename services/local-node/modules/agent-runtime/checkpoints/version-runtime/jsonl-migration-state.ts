@@ -1,5 +1,5 @@
 import { getRawSqlite } from '../../../../infrastructure/database/index.js';
-import { mapLegacyHistoryRow } from '../../session-store.js';
+import { mapLegacyHistoryRow } from "../../../../../../scripts/runtime-migration/records.js";
 import type { AgentSession } from '../../contracts.js';
 import { historySessionFields, versionRepository } from './bridge.js';
 import { VersionHeads } from '../version-store/heads.js';

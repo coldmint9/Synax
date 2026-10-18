@@ -18,3 +18,10 @@ it('has no old history imports or selectable runtime in HTTP routes', () => {
   expect(imports.filter(path => /flat-history|simple-history|transcript-jsonl|checkpoints\//.test(path))).toEqual([]);
   expect(source).not.toMatch(/loadLegacy|streamMode\(|history\/upgrade/);
 });
+
+it('central execution repositories contain no SQL or old history backends', () => {
+  for (const file of ['session-store.ts','session-runtime.ts','work-store.ts','plan-artifact-store.ts','usage-projection.ts','runtime-history.ts','runtime-transaction.ts']) {
+    const source = fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8');
+    expect(source, file).not.toMatch(/getRawSqlite|versionedSession|transcriptRepository|loadLegacy|checkpoints\/|agent_runtime_/);
+  }
+});

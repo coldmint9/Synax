@@ -1,44 +1,46 @@
-import { inputQueueRuntime } from "./input-queue-runtime.js";
-import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
-import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
-import { applySessionPermissionUpdate } from "./session-permissions.js";
-import { withDeadline } from "./managed-process.js";
-import { restoreUnlaunchedInput } from "./runtime-recovery.js";
-import { profileService } from "./profile-service.js";
 import { randomUUID } from "node:crypto";
+import { getRawSqlite } from "../../infrastructure/database/index.js";
 import {
+  runWithExecutionContext,
   withinExecutionContext,
   type RuntimeExecutionContext,
 } from "../../infrastructure/runtime/execution-context.js";
-import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
-import { agentEventService } from "./event-service.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
-import type { AgentRun, AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
+import { executeBackendSession } from "./backend-execution.js";
+import {
+  resolveSessionBackend,
+  validateBackendTurnInput,
+} from "./backends/backend-binding.js";
+import { getBackendAdapter } from "./backends/backend-registry.js";
+import type {
+  AgentRun,
+  AgentRunStreamChunk,
+  StreamTurnRequest,
+} from "./contracts.js";
+import { agentEventService } from "./event-service.js";
+import { goalContinuationInput } from "./goal-continuation.js";
+import { inputQueueRuntime } from "./input-queue-runtime.js";
+import { interactionService } from "./interaction-service.js";
+import { withDeadline } from "./managed-process.js";
+import { profileService } from "./profile-service.js";
 import {
   acceptRuntimeRun,
   acceptRuntimeRunAuthoritative,
   type AcceptedRuntimeInput,
 } from "./run-admission.js";
-import { executeBackendSession } from "./backend-execution.js";
-import { getBackendAdapter } from "./backends/backend-registry.js";
-import {
-  resolveSessionBackend,
-  validateBackendTurnInput,
-} from "./backends/backend-binding.js";
-import { agentRuntimeStore } from "./session-store.js";
-import { normalizeAgentSessionStatus } from "./session-projection.js";
-import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
+import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
-import { goalContinuationInput } from "./goal-continuation.js";
-import { inputQueueService } from "./input-queue-service.js";
-import { interactionService } from "./interaction-service.js";
+import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
+import { restoreUnlaunchedInput } from "./runtime-recovery.js";
+import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
+import { applySessionPermissionUpdate } from "./session-permissions.js";
+import { normalizeAgentSessionStatus } from "./session-projection.js";
+import { agentRuntimeStore } from "./session-store.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { workStore } from "./work-store.js";
 import { usesGoalWorkflow } from "./workflow-mode.js";
-import { logger } from "../../infrastructure/runtime/logger.js";
-import { runtimeFacade } from "./sidecar/runtime-facade.js";
-
 interface Owner {
   context?: RuntimeExecutionContext;
   runId: string;
@@ -70,20 +72,17 @@ const defaultDriver: Driver = {
     if (failure?.status === "rejected") throw failure.reason;
   },
 };
-
 export class RunCoordinator {
   private readonly owners = new Map<string, Owner>();
   private readonly queueDispatches = new Map<string, Promise<boolean>>();
   private readonly pendingResumes = new Map<string, StreamTurnRequest>();
   constructor(private readonly driver: Driver = defaultDriver) {}
-
   isActive(sessionId: string): boolean {
     return this.owners.has(sessionId);
   }
   isStopping(sessionId: string): boolean {
     return Boolean(this.owners.get(sessionId)?.stopping);
   }
-
   private acceptRun(
     sessionId: string,
     input: StreamTurnRequest,
@@ -108,7 +107,6 @@ export class RunCoordinator {
       mode === "continue" ? restoreUnlaunchedInput(sessionId, input) : input;
     return acceptRuntimeRun(sessionId, restored, requestId, mode);
   }
-
   private launchAccepted(
     sessionId: string,
     accepted: ReturnType<typeof acceptRuntimeRun>,
@@ -123,7 +121,6 @@ export class RunCoordinator {
       acceptedRunId: run.id,
     });
   }
-
   submit(
     sessionId: string,
     input: StreamTurnRequest,
@@ -134,20 +131,21 @@ export class RunCoordinator {
     this.launchAccepted(sessionId, accepted, mode);
     return accepted;
   }
-
   async submitAsync(
     sessionId: string,
     input: StreamTurnRequest,
     requestId: string,
     mode: AgentSessionStreamMode = "turn",
   ) {
-    if (runtimeFacade.streamMode() !== "authoritative")
-      return this.submit(sessionId, input, requestId, mode);
-    const accepted = await acceptRuntimeRunAuthoritative(sessionId, input, requestId, mode);
+    const accepted = await acceptRuntimeRunAuthoritative(
+      sessionId,
+      input,
+      requestId,
+      mode,
+    );
     this.launchAccepted(sessionId, accepted, mode);
     return accepted;
   }
-
   resume(sessionId: string, input: StreamTurnRequest = {}): void {
     const owner = this.owners.get(sessionId);
     if (owner?.stopping) return;
@@ -201,32 +199,41 @@ export class RunCoordinator {
       this.pendingResumes.set(sessionId, resumeInput);
       return;
     }
-    void runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `resume:${sessionId}:${runId}`,
-      operation: "resume",
-      payload: { runId },
-    }).catch((error) => logger.warn({ sessionId, runId, error }, "[run-coordinator] Rust resume control could not be committed"));
+    void runtimeFacade
+      .controlCommand({
+        sessionId,
+        requestId: `resume:${sessionId}:${runId}`,
+        operation: "resume",
+        payload: { runId },
+      })
+      .catch((error) =>
+        logger.warn(
+          { sessionId, runId, error },
+          "[run-coordinator] Rust resume control could not be committed",
+        ),
+      );
     this.launch(sessionId, runId, "resume", resumeInput);
   }
-
   /** Start one queued turn only after the previous conversation work has settled. */
   dispatchQueuedInput(sessionId: string, forced = false): Promise<boolean> {
     const pending = this.queueDispatches.get(sessionId);
     if (pending) return pending;
     const task = this.dispatchQueuedInputOnce(sessionId, forced).finally(() => {
-      if (this.queueDispatches.get(sessionId) === task) this.queueDispatches.delete(sessionId);
+      if (this.queueDispatches.get(sessionId) === task)
+        this.queueDispatches.delete(sessionId);
     });
     this.queueDispatches.set(sessionId, task);
     return task;
   }
-
-  private async dispatchQueuedInputOnce(sessionId: string, forced: boolean): Promise<boolean> {
+  private async dispatchQueuedInputOnce(
+    sessionId: string,
+    forced: boolean,
+  ): Promise<boolean> {
     if (this.isActive(sessionId)) return false;
     try {
       const queued = await inputQueueRuntime.snapshot(sessionId);
       if (this.isActive(sessionId)) return false;
-      if (runtimeFacade.streamMode() === "authoritative") {
+      {
         const candidate = getRawSqlite().transaction(() => {
           const session = agentRuntimeStore.getSession(sessionId);
           const work = workStore.current(sessionId);
@@ -237,12 +244,26 @@ export class RunCoordinator {
             session.parentSessionId ||
             session.sessionMetadata?.runtimeControl ||
             (!forced && latestRun?.status !== "completed") ||
-            (!forced && latestRun?.stopReason === "round_yielded" && goalContinuationInput(sessionId, latestRun.id) !== null) ||
-            (!forced && work && work.status !== "completed" && !(work.status === "active" && latestRun.stopReason === "round_yielded" && !usesGoalWorkflow(session))) ||
+            (!forced &&
+              latestRun?.stopReason === "round_yielded" &&
+              goalContinuationInput(sessionId, latestRun.id) !== null) ||
+            (!forced &&
+              work &&
+              work.status !== "completed" &&
+              !(
+                work.status === "active" &&
+                latestRun.stopReason === "round_yielded" &&
+                !usesGoalWorkflow(session)
+              )) ||
             (!forced && interactionService.pending(sessionId))
-          ) return null;
+          )
+            return null;
           const forcedId = queued.forceInjectItemId;
-          return queued.items.find(item => item.id === forcedId) ?? queued.items[0] ?? null;
+          return (
+            queued.items.find((item) => item.id === forcedId) ??
+            queued.items[0] ??
+            null
+          );
         })();
         if (!candidate) return false;
         const accepted = await acceptRuntimeRunAuthoritative(
@@ -268,67 +289,6 @@ export class RunCoordinator {
         }
         return true;
       }
-      const accepted = getRawSqlite().transaction(() => {
-        const session = agentRuntimeStore.getSession(sessionId);
-        const work = workStore.current(sessionId);
-        const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
-        if (
-          (!forced && session.status !== "completed") ||
-          session.activeRunId ||
-          session.parentSessionId ||
-          session.sessionMetadata?.runtimeControl ||
-          (!forced && latestRun?.status !== "completed") ||
-          // A settled round handoff stays reserved for the goal continuation;
-          // once no continuation applies (e.g. the goal finished), drain the queue.
-          (!forced &&
-            latestRun.stopReason === "round_yielded" &&
-            goalContinuationInput(sessionId, latestRun.id) !== null) ||
-          // Chat/plan handoffs end the turn while retaining unfinished TODOs.
-          // Only goal work must finish before queued user turns can start.
-          (!forced &&
-            work &&
-            work.status !== "completed" &&
-            !(
-              work.status === "active" &&
-              latestRun.stopReason === "round_yielded" &&
-              !usesGoalWorkflow(session)
-            )) ||
-          (!forced && interactionService.pending(sessionId))
-        )
-          return null;
-        const forcedId = queued.forceInjectItemId;
-        const item = queued.items.find(item => item.id === forcedId) ?? queued.items[0];
-        if (!item) return null;
-        const accepted = acceptRuntimeRun(
-          sessionId,
-          {
-            message: item.message,
-            contentParts: item.contentParts,
-            references: item.references,
-            referenceContext: item.referenceContext,
-            model: item.model ?? undefined,
-            reasoningEffort: item.reasoningEffort,
-          },
-          `input-queue:${item.id}`,
-        );
-        if (inputQueueRuntime.enabled()) {
-          const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
-          accepted.run = agentRuntimeStore.updateRun(accepted.run.id, { metadata: { ...accepted.run.metadata, runtime: { ...runtime, queueItem: item } } });
-        } else {
-          inputQueueService.take(sessionId, item.id);
-          if (forcedId) inputQueueService.clearForceInject(sessionId);
-        }
-        return accepted;
-      })();
-      if (!accepted) return false;
-      if (!accepted.reused) {
-        const runtime = accepted.run.metadata.runtime as AcceptedRuntimeInput;
-        this.launch(sessionId, accepted.run.id, "turn", {
-          ...runtime.input,
-          acceptedRunId: accepted.run.id,
-        });
-      }
-      return true;
     } catch (error) {
       // Admission and removal share a transaction: a rejected turn stays queued.
       logger.warn(
@@ -338,7 +298,6 @@ export class RunCoordinator {
       return false;
     }
   }
-
   /**
    * Stop the current turn, then start the selected queued input immediately.
    * The queue item remains durable until the new run is admitted successfully.
@@ -352,7 +311,6 @@ export class RunCoordinator {
       );
     return this.dispatchQueuedInput(sessionId, true);
   }
-
   private launch(
     sessionId: string,
     runId: string,
@@ -369,7 +327,9 @@ export class RunCoordinator {
     const leasePatch = { executionLease: { ...context, closed: false } };
     // The local lease is an execution ownership guard used by the Node driver;
     // Rust persists the authoritative copy after admission/activation below.
-    agentRuntimeStore.updateRun(runId, { metadata: { ...run.metadata, ...leasePatch } });
+    agentRuntimeStore.updateRun(runId, {
+      metadata: { ...run.metadata, ...leasePatch },
+    });
     input = { ...input, executionContext: context };
     const owner: Owner = {
       context,
@@ -385,7 +345,6 @@ export class RunCoordinator {
         this.quarantinePersistenceFailure(sessionId, owner, error),
       );
   }
-
   private async quarantinePersistenceFailure(
     sessionId: string,
     owner: Owner,
@@ -398,7 +357,12 @@ export class RunCoordinator {
     owner.controller.abort();
     let reason = `Runtime could not persist the execution outcome: ${error instanceof Error ? error.message : String(error)}`;
     logger.error(
-      { sessionId, runId: owner.runId, error, errorMessage: error instanceof Error ? error.message : String(error) },
+      {
+        sessionId,
+        runId: owner.runId,
+        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
       "[run-coordinator] persistence failure requires recovery",
     );
     const markUnconfirmed = () => {
@@ -417,7 +381,7 @@ export class RunCoordinator {
     try {
       await withDeadline(
         this.driver.interrupt(sessionId, reason),
-        10_000,
+        10000,
         "Execution shutdown could not be confirmed.",
       );
       // A persistence acknowledgement can time out after the backend has
@@ -435,7 +399,6 @@ export class RunCoordinator {
       markUnconfirmed();
     }
   }
-
   private async submitGoalContinuation(
     sessionId: string,
     previousRunId: string,
@@ -443,9 +406,10 @@ export class RunCoordinator {
   ): Promise<void> {
     const queue = await inputQueueRuntime.snapshot(sessionId);
     const forceId = queue.forceInjectItemId;
-    const forced = forceId ? queue.items.find(item => item.id === forceId) : undefined;
+    const forced = forceId
+      ? queue.items.find((item) => item.id === forceId)
+      : undefined;
     if (forceId && !forced) await inputQueueRuntime.clearForceInject(sessionId);
-
     const input: StreamTurnRequest = forced
       ? {
           ...continuation,
@@ -462,8 +426,7 @@ export class RunCoordinator {
     const requestId = forced
       ? `goal-force-input:${forced.id}`
       : `goal-continuation:${previousRunId}`;
-
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const accepted = await acceptRuntimeRunAuthoritative(
         sessionId,
         input,
@@ -474,42 +437,20 @@ export class RunCoordinator {
       this.launchAccepted(sessionId, accepted, "continue");
       return;
     }
-
-    const accepted = forced
-      ? getRawSqlite().transaction(() => {
-          const next = this.acceptRun(sessionId, input, requestId, "continue");
-          if (inputQueueRuntime.enabled()) {
-            const runtime = next.run.metadata.runtime as AcceptedRuntimeInput;
-            next.run = agentRuntimeStore.updateRun(next.run.id, { metadata: { ...next.run.metadata, runtime: { ...runtime, queueItem: forced } } });
-            return next;
-          }
-          const taken = inputQueueService.take(sessionId, forced.id);
-          if (!taken) {
-            throw new AgentRuntimeError(
-              "The forced input changed before it could be continued.",
-              "INPUT_QUEUE_CHANGED",
-              409,
-            );
-          }
-          inputQueueService.clearForceInject(sessionId);
-          return next;
-        })()
-      : this.acceptRun(sessionId, input, requestId, "continue");
-    this.launchAccepted(sessionId, accepted, "continue");
   }
-
   private async drive(
     sessionId: string,
     owner: Owner,
     mode: AgentSessionStreamMode,
     input: StreamTurnRequest,
   ): Promise<void> {
-    const writer = new RuntimeStreamWriter(
-      sessionId,
-      owner.runId,
-      () => this.ownsLease(owner),
+    const writer = new RuntimeStreamWriter(sessionId, owner.runId, () =>
+      this.ownsLease(owner),
     );
     const record = async (chunk: AgentRunStreamChunk) => {
+      await agentRuntimeStore.flushSession(sessionId);
+      if ("run" in chunk && chunk.run)
+        agentRuntimeStore.acceptRunProjection(chunk.run);
       writer.write(chunk);
       await writer.settled();
     };
@@ -521,12 +462,24 @@ export class RunCoordinator {
     try {
       if (owner.controller.signal.aborted)
         throw new Error("Execution stopped before launch.");
+      await agentRuntimeStore.flushSession(sessionId);
       const admittedRun = agentRuntimeStore.getRun(owner.runId);
-      await runtimeFacade.admitExecution({ sessionId, run: admittedRun, runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput });
-      if (runtimeFacade.streamMode() === "authoritative") {
-        await runtimeFacade.runPatch(sessionId, owner.runId, `lease-open-await:${owner.runId}:${owner.context?.epoch ?? "none"}`, {
-          metadata: { executionLease: { ...(owner.context ?? {}), closed: false } },
-        });
+      await runtimeFacade.admitExecution({
+        sessionId,
+        run: admittedRun,
+        runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput,
+      });
+      {
+        await runtimeFacade.runPatch(
+          sessionId,
+          owner.runId,
+          `lease-open-await:${owner.runId}:${owner.context?.epoch ?? "none"}`,
+          {
+            metadata: {
+              executionLease: { ...(owner.context ?? {}), closed: false },
+            },
+          },
+        );
       }
       for await (const chunk of withinExecutionContext(
         owner.context,
@@ -534,6 +487,7 @@ export class RunCoordinator {
       ))
         await record(chunk);
       await flush();
+      await agentRuntimeStore.hydrateSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
       if (run.status === "queued" || run.status === "running") {
         throw new Error("Backend ended without settling its Run.");
@@ -547,6 +501,7 @@ export class RunCoordinator {
       );
       if (!this.ownsLease(owner)) return;
       await flush();
+      await agentRuntimeStore.hydrateSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
       if (!["completed", "cancelled", "interrupted"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
@@ -572,28 +527,35 @@ export class RunCoordinator {
         await flush();
         await writer.prepareFinish();
         runWithExecutionContext(owner.context, () => writer.finish());
-        if (runtimeFacade.streamMode() === "authoritative") await writer.settled();
-        if (this.ownsLease(owner)) await runtimeFacade.finishExecution(sessionId, agentRuntimeStore.getRun(owner.runId));
+        await writer.settled();
+        if (this.ownsLease(owner))
+          await runtimeFacade.finishExecution(
+            sessionId,
+            agentRuntimeStore.getRun(owner.runId),
+          );
         // A replacement execution may have acquired the lease while the
         // persistence acknowledgement was in flight. Fence finalization too.
         let closeLeaseContext: RuntimeExecutionContext | undefined;
         ownsLease = getRawSqlite().transaction(() => {
           if (!this.ownsLease(owner)) return false;
           const run = agentRuntimeStore.getRun(owner.runId);
-          if (runtimeFacade.streamMode() === "authoritative") {
+          {
             closeLeaseContext = owner.context;
-          } else {
-            agentRuntimeStore.updateRun(run.id, {
-              metadata: { ...run.metadata, executionLease: { ...owner.context, closed: true } },
-            });
           }
           return true;
         })();
-        if (ownsLease && runtimeFacade.streamMode() === "authoritative") {
+        if (ownsLease) {
           const run = agentRuntimeStore.getRun(owner.runId);
-          await runtimeFacade.runPatch(sessionId, run.id, `lease-close:${run.id}:${closeLeaseContext?.epoch ?? "none"}`, {
-            metadata: { executionLease: { ...(closeLeaseContext ?? {}), closed: true } },
-          });
+          await runtimeFacade.runPatch(
+            sessionId,
+            run.id,
+            `lease-close:${run.id}:${closeLeaseContext?.epoch ?? "none"}`,
+            {
+              metadata: {
+                executionLease: { ...(closeLeaseContext ?? {}), closed: true },
+              },
+            },
+          );
         }
         if (!ownsLease) writer.abandon();
       }
@@ -621,7 +583,11 @@ export class RunCoordinator {
         try {
           const continuation = goalContinuationInput(sessionId, owner.runId);
           if (continuation)
-            await this.submitGoalContinuation(sessionId, owner.runId, continuation);
+            await this.submitGoalContinuation(
+              sessionId,
+              owner.runId,
+              continuation,
+            );
           else await this.dispatchQueuedInput(sessionId);
         } catch (error) {
           logger.warn(
@@ -632,16 +598,19 @@ export class RunCoordinator {
       }
     }
   }
-
   private ownsLease(owner: Owner): boolean {
     if (!owner.context) return true;
     const run = agentRuntimeStore.getRun(owner.runId);
     return (
-      (run.metadata.executionLease as { epoch?: string } | undefined)?.epoch ===
-      owner.context.epoch
+      (
+        run.metadata.executionLease as
+          | {
+              epoch?: string;
+            }
+          | undefined
+      )?.epoch === owner.context.epoch
     );
   }
-
   async interrupt(
     sessionId: string,
     reason: string,
@@ -687,12 +656,19 @@ export class RunCoordinator {
     agentRuntimeStore.updateSessionMetadata(sessionId, {
       runtimeControl: { state: "stopping", runId: stopping.runId, reason },
     });
-    void runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `stop-begin:${sessionId}:${stopping.runId}:${reason}`,
-      operation: "stop_begin",
-      payload: { runId: stopping.runId, reason },
-    }).catch(error => logger.warn({ sessionId, error }, "[run-coordinator] Rust stop fence could not be committed"));
+    void runtimeFacade
+      .controlCommand({
+        sessionId,
+        requestId: `stop-begin:${sessionId}:${stopping.runId}:${reason}`,
+        operation: "stop_begin",
+        payload: { runId: stopping.runId, reason },
+      })
+      .catch((error) =>
+        logger.warn(
+          { sessionId, error },
+          "[run-coordinator] Rust stop fence could not be committed",
+        ),
+      );
     const descendants = agentRuntimeStore
       .listSessionTree(sessionId)
       .slice(1)
@@ -741,7 +717,10 @@ export class RunCoordinator {
           sessionId,
           requestId: `stop-ack:${sessionId}:${stopping.runId}`,
           operation: "stop_ack",
-          payload: { runId: stopping.runId, reason: "Execution shutdown confirmed." },
+          payload: {
+            runId: stopping.runId,
+            reason: "Execution shutdown confirmed.",
+          },
         });
         for (const action of stopping.finalizers!) await action();
         for (const child of descendants) {
@@ -767,15 +746,20 @@ export class RunCoordinator {
           this.owners.delete(sessionId);
       } catch (error) {
         stopping.stopFailed = true;
-        await runtimeFacade.controlCommand({
-          sessionId,
-          requestId: `stop-unconfirmed:${sessionId}:${stopping.runId}`,
-          operation: "stop_unconfirmed",
-          payload: {
-            runId: stopping.runId,
-            reason: error instanceof Error ? error.message : "Execution shutdown could not be confirmed.",
-          },
-        }).catch(() => {});
+        await runtimeFacade
+          .controlCommand({
+            sessionId,
+            requestId: `stop-unconfirmed:${sessionId}:${stopping.runId}`,
+            operation: "stop_unconfirmed",
+            payload: {
+              runId: stopping.runId,
+              reason:
+                error instanceof Error
+                  ? error.message
+                  : "Execution shutdown could not be confirmed.",
+            },
+          })
+          .catch(() => {});
         if (agentRuntimeStore.tryGetSession(sessionId)) {
           agentRuntimeStore.updateSessionMetadata(sessionId, {
             runtimeControl: {
@@ -798,7 +782,6 @@ export class RunCoordinator {
     })();
     return stopping.stopTask;
   }
-
   private controlEvent(
     sessionId: string,
     runId: string,
@@ -823,11 +806,9 @@ export class RunCoordinator {
         );
     }
   }
-
   activeSessionIds(): string[] {
     return [...this.owners.keys()];
   }
-
   async reconcileFailedStop(sessionId: string): Promise<void> {
     const owner = this.owners.get(sessionId);
     if (!owner) return;
@@ -842,7 +823,6 @@ export class RunCoordinator {
     owner.finalizers = [];
     await this.interrupt(sessionId, "Recovery rechecked the owned processes.");
   }
-
   async waitForIdle(): Promise<void> {
     while (this.owners.size || this.queueDispatches.size) {
       const owners = [...this.owners.values()];
@@ -853,10 +833,12 @@ export class RunCoordinator {
           409,
         );
       }
-      await Promise.all([...owners.map((owner) => owner.stopTask ?? owner.task), ...this.queueDispatches.values()]);
+      await Promise.all([
+        ...owners.map((owner) => owner.stopTask ?? owner.task),
+        ...this.queueDispatches.values(),
+      ]);
     }
   }
-
   async waitForSessionIdle(sessionId: string): Promise<void> {
     while (this.owners.has(sessionId) || this.queueDispatches.has(sessionId)) {
       const owner = this.owners.get(sessionId);
@@ -868,27 +850,40 @@ export class RunCoordinator {
         );
       await Promise.all([
         ...(owner ? [owner.stopTask ?? owner.task] : []),
-        ...(this.queueDispatches.has(sessionId) ? [this.queueDispatches.get(sessionId)!] : []),
+        ...(this.queueDispatches.has(sessionId)
+          ? [this.queueDispatches.get(sessionId)!]
+          : []),
       ]);
     }
   }
-
   async *observeRun(
     sessionId: string,
     runId: string,
     after = 0,
     signal?: AbortSignal,
   ): AsyncGenerator<RuntimeStreamRecord> {
-    if (runtimeFacade.streamMode() === "authoritative") {
+    {
       const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-      const historical = (await runtimeFacade.listRunHistory(sessionId)).some(item =>
-        (item as { id?: unknown; sessionId?: unknown }).id === runId &&
-        (item as { sessionId?: unknown }).sessionId === sessionId,
+      const historical = (await runtimeFacade.listRunHistory(sessionId)).some(
+        (item) =>
+          (
+            item as {
+              id?: unknown;
+              sessionId?: unknown;
+            }
+          ).id === runId &&
+          (
+            item as {
+              sessionId?: unknown;
+            }
+          ).sessionId === sessionId,
       );
       if (snapshot.run?.id !== runId && !historical)
-        throw new AgentRuntimeError("Run belongs to another session.", "NOT_FOUND", 404);
-    } else if (agentRuntimeStore.getRun(runId).sessionId !== sessionId) {
-      throw new AgentRuntimeError("Run belongs to another session.", "NOT_FOUND", 404);
+        throw new AgentRuntimeError(
+          "Run belongs to another session.",
+          "NOT_FOUND",
+          404,
+        );
     }
     let cursor = after;
     while (!signal?.aborted) {
@@ -905,18 +900,30 @@ export class RunCoordinator {
         if (record.chunk.type === "done") return;
       }
       if (!records.length) {
-        if (runtimeFacade.streamMode() === "authoritative") {
-          const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-          const run = snapshot.run?.id === runId ? snapshot.run : (await runtimeFacade.listRunHistory(sessionId)).find(item => (item as { id?: unknown }).id === runId) as AgentRun | undefined;
-          if (!this.isActive(sessionId) && run && !["queued", "running"].includes(run.status)) return;
-        } else {
-          const run = agentRuntimeStore.getRun(runId);
-          if (!this.isActive(sessionId) && !["queued", "running"].includes(run.status)) return;
+        {
+          const snapshot =
+            await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+          const run =
+            snapshot.run?.id === runId
+              ? snapshot.run
+              : ((await runtimeFacade.listRunHistory(sessionId)).find(
+                  (item) =>
+                    (
+                      item as {
+                        id?: unknown;
+                      }
+                    ).id === runId,
+                ) as AgentRun | undefined);
+          if (
+            !this.isActive(sessionId) &&
+            run &&
+            !["queued", "running"].includes(run.status)
+          )
+            return;
         }
         await runtimeJournal.wait(sessionId, signal);
       }
     }
   }
 }
-
 export const runCoordinator = new RunCoordinator();

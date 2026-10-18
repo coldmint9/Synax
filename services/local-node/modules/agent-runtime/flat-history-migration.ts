@@ -1,6 +1,7 @@
+import { mapLegacyHistoryRow } from "../../../../scripts/runtime-migration/records.js";
 import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { SIMPLE_HISTORY_STORAGE } from "../../infrastructure/runtime/env.js";
-import { agentRuntimeStore, mapLegacyHistoryRow } from "./session-store.js";
+import { agentRuntimeStore } from "./session-store.js";
 import {
   versionedSession,
   versionRepository,

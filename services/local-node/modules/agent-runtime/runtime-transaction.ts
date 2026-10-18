@@ -1,18 +1,7 @@
-import { getRawSqlite } from '../../infrastructure/database/index.js';
-import {
-  retryWriteLockAcquisition,
-  runtimeWriteLockPolicy,
-} from '../../infrastructure/database/write-contention.js';
+import { agentRuntimeStore } from './session-store.js';
 
-/** Use Synax's compatibility wrapper, which supplies nested savepoints for libSQL. */
+/** Stage a synchronous execution mutation as one local change set. The caller
+ * awaits flushSession at its command boundary; only Rust writes durable data. */
 export function runtimeTransaction<T>(action: () => T): T {
-  const db = getRawSqlite();
-  const transaction = db.transaction(action);
-  return retryWriteLockAcquisition(
-    runtimeWriteLockPolicy(),
-    () => transaction(),
-    // A failed transaction is rolled back by the compatibility wrapper before
-    // this callback returns, so the entire transaction can be retried safely.
-    () => false,
-  );
+  return agentRuntimeStore.transaction(action);
 }

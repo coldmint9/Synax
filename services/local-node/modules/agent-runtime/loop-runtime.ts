@@ -10,12 +10,12 @@ import {
   withoutVisualizationDeclarations,
 } from "./visualization-integration.js";
 import { presentationDecision, pendingPresentationSkillLoads, checkPresentationCompletion } from "./presentation-runtime.js";
-import { filterHistoryFileReads } from "./checkpoints/state.js";
+import { filterHistoryFileReads } from "./runtime-history.js";
 import {
   captureCheckpoint,
   captureCompletedReply,
-} from "./checkpoints/store.js";
-import { assertHistoryUnlocked } from "./checkpoints/guards.js";
+} from "./runtime-history.js";
+import { assertHistoryUnlocked } from "./runtime-history.js";
 import { workflowMode, usesGoalWorkflow } from "./workflow-mode.js";
 import { buildToolContextReceipt } from "./tool-context-receipt.js";
 import {

@@ -1,7 +1,8 @@
+import { mapLegacyHistoryRow } from "../../../../../../scripts/runtime-migration/records.js";
 import { randomUUID } from "node:crypto";
 import { setImmediate as yieldNow } from "node:timers/promises";
 import { getRawSqlite } from "../../../../infrastructure/database/index.js";
-import { agentRuntimeStore, mapLegacyHistoryRow } from "../../session-store.js";
+import { agentRuntimeStore } from "../../session-store.js";
 import type { RuntimeContentPart } from "../../content-parts.js";
 import { AgentRuntimeError } from "../../runtime-errors.js";
 import {

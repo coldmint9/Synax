@@ -1,14 +1,7 @@
-import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
-import {
-  entityScope,
-  readVersionEntity,
-  writeVersionEntity,
-} from "./checkpoints/version-runtime/entities.js";
-import type { ContextMemorySnapshot } from "./context-memory.js";
-import type { RuntimeContentPart } from "./content-parts.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { agentRuntimeStore as store } from "./session-store.js";
-import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+import type { ContextMemorySnapshot } from './context-memory.js';
+import type { RuntimeContentPart } from './content-parts.js';
+import { agentRuntimeStore as store } from './session-store.js';
+import { makeRuntimeId, nowIso } from './runtime-ids.js';
 
 export interface WorkEvidence {
   criterion: string;
@@ -85,27 +78,7 @@ export interface WorkRecord {
 
 export const workStore = {
   get(id: string): WorkRecord | null {
-    const owner = entityScope("work", id);
-    if (owner) {
-      try {
-        return readVersionEntity<WorkRecord>(owner, "work", id);
-      } catch (error) {
-        if ((error as { code?: string }).code === "NOT_FOUND") return null;
-        throw error;
-      }
-    }
-    const row = getRawSqlite()
-      .prepare("SELECT payload_json FROM agent_runtime_work WHERE id = ?")
-      .get(id) as { payload_json: string } | undefined;
-    if (!row) return null;
-    const work = JSON.parse(row.payload_json) as WorkRecord;
-    // Records persisted before the action ledger existed carry no novelty history.
-    if (!Array.isArray(work.ledger)) work.ledger = [];
-    if (typeof work.noProgressSteps !== "number") work.noProgressSteps = 0;
-    if (typeof work.decisionFailures !== "number") work.decisionFailures = 0;
-    // The self-dead 'blocked' status was replaced by waiting + an interaction.
-    if ((work.status as string) === "blocked") work.status = "waiting";
-    return work;
+    return store.getRecord<WorkRecord>('work',id) ?? null;
   },
   current(sessionId: string): WorkRecord | null {
     const id = store.getSession(sessionId).sessionMetadata?.activeWorkId;
@@ -113,30 +86,7 @@ export const workStore = {
     return work?.sessionId === sessionId ? work : null;
   },
   save(work: WorkRecord): WorkRecord {
-    const writeControl = () => {
-      work.updatedAt = nowIso();
-      getRawSqlite()
-        .prepare(
-          "INSERT INTO agent_runtime_work (id, session_id, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at",
-        )
-        .run(work.id, work.sessionId, JSON.stringify(work), work.updatedAt);
-      return work;
-    };
-    const saved = versionedSession(work.sessionId)
-      ? writeVersionEntity(
-        work.sessionId,
-        "work",
-        work.id,
-        work,
-        writeControl,
-      )
-      : writeControl();
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-      void import("./sidecar/runtime-facade.js")
-        .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(work.sessionId, "runtime.work", saved))
-        .catch(() => {});
-    }
-    return saved;
+    return store.saveRecord('work', {...work, updatedAt: nowIso()});
   },
   create(sessionId: string, objective: string, legacy = false): WorkRecord {
     const session = store.getSession(sessionId);

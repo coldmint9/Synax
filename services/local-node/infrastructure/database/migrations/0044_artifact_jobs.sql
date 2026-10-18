@@ -8,6 +8,3 @@ CREATE TABLE artifact_jobs (
  UNIQUE(session_id,idempotency_key)
 );
 CREATE INDEX artifact_jobs_pending ON artifact_jobs(status,lease_until,created_at);
-CREATE TRIGGER delete_session_artifact_jobs AFTER DELETE ON agent_runtime_sessions BEGIN
- DELETE FROM artifact_jobs WHERE session_id=OLD.id;
-END;

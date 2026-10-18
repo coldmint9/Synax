@@ -1,3 +1,4 @@
+import { mapLegacyHistoryRow } from "../../../../../scripts/runtime-migration/records.js";
 import { simpleHistorySession, simpleHistoryBoundary, initializeSimpleHistory } from "../simple-history.js";
 import { migrateFlatHistory } from "../flat-history-migration.js";
 import { SIMPLE_HISTORY_STORAGE } from "../../../infrastructure/runtime/env.js";
@@ -14,7 +15,6 @@ import { getRawSqlite } from "../../../infrastructure/database/index.js";
 import { transcriptRepository } from "../transcript-repository.js";
 import {
   agentRuntimeStore as store,
-  mapLegacyHistoryRow,
 } from "../session-store.js";
 import type { AgentSession, CompactionRecord } from "../contracts.js";
 import { rebuildSessionPermissionRules } from "../session-permissions.js";

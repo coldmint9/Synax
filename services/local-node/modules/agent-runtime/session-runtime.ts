@@ -1,34 +1,31 @@
-import { createRequire } from "node:module";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
-import { resolveSessionUserRequest } from "./session-user-request.js";
-import { normalizeSessionPromptMetadata } from "./session-metadata.js";
-import {
-  makeBackendBinding,
-  validateBackendTurnInput,
-} from "./backends/backend-binding.js";
-import { resolveWorkspaceRoot } from "./tools/workspace.js";
+import { getProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
 import type { ProjectWorkspaceRoot } from "../project-workspace.js";
 import type { WorkspaceLocation } from "../workspace-location.js";
-import { interactionService } from "./interaction-service.js";
-import { initializeGoal } from "./goal-control.js";
-import type { AgentSession, CreateSessionRequest } from "./contracts.js";
 import {
-  rebuildSessionPermissionRules,
-  seedSessionPermissionMetadata,
-} from "./session-permissions.js";
+makeBackendBinding,
+validateBackendTurnInput,
+} from "./backends/backend-binding.js";
 import { agentContextBuilder } from "./context-builder.js";
-import { agentEventService, type AgentEventService } from "./event-service.js";
+import type { AgentSession,CreateSessionRequest } from "./contracts.js";
+import { agentEventService,type AgentEventService } from "./event-service.js";
+import { initializeGoal } from "./goal-control.js";
+import { interactionService } from "./interaction-service.js";
 import { agentLoopRuntime } from "./loop-runtime.js";
-import { sessionProcessManager } from "./session-process-manager.js";
-import { profileService, type ProfileService } from "./profile-service.js";
-import { makeRuntimeId, nowIso } from "./runtime-ids.js";
+import { profileService,type ProfileService } from "./profile-service.js";
 import { AgentValidationError } from "./runtime-errors.js";
-import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
+import { makeRuntimeId,nowIso } from "./runtime-ids.js";
 import { sessionHooks } from "./session-hooks.js";
+import { normalizeSessionPromptMetadata } from "./session-metadata.js";
+import {
+rebuildSessionPermissionRules,
+seedSessionPermissionMetadata,
+} from "./session-permissions.js";
+import { sessionProcessManager } from "./session-process-manager.js";
+import { agentRuntimeStore,type AgentRuntimeStore } from "./session-store.js";
 import { resolveInitialSessionTitle } from "./session-title-service.js";
-import { logger } from "../../infrastructure/runtime/logger.js";
-import { getProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
-import { SIMPLE_HISTORY_STORAGE, TRANSCRIPT_STORAGE } from "../../infrastructure/runtime/env.js";
+import { resolveSessionUserRequest } from "./session-user-request.js";
+import { resolveWorkspaceRoot } from "./tools/workspace.js";
 
 export class AgentSessionRuntime {
   constructor(
@@ -154,7 +151,6 @@ export class AgentSessionRuntime {
       }));
     }
     sessionMetadata.backend = backend;
-    if (SIMPLE_HISTORY_STORAGE && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") sessionMetadata.historyStorage = "sqlite-flat";
     if (
       !parent &&
       (input.profileId === "synax" || input.profileId === "goal")
@@ -204,11 +200,7 @@ export class AgentSessionRuntime {
         profile.permissionDefaults,
       ),
     };
-    const saved = getRawSqlite().transaction(() => {
-      const saved = this.store.createSession(session);
-      initializeLegacySessionHistory(this.store, saved, parent, input);
-      return saved;
-    })();
+    const saved = this.store.createSession(session);
     const bundle = agentContextBuilder.build(input.projectId, {
       nodeId: input.nodeId ?? undefined,
       profileId: profile.id,
@@ -359,91 +351,12 @@ export class AgentSessionRuntime {
   }
 
   delete(sessionId: string): string[] {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" && process.env.SYNAX_VERSION_HISTORY !== "legacy")
-      assertLegacyHistoryUnlocked(sessionId);
     return this.store.deleteSessionTree(sessionId);
   }
 
   archive(sessionId: string) {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" && process.env.SYNAX_VERSION_HISTORY !== "legacy")
-      assertLegacyHistoryUnlocked(sessionId);
     return this.store.archiveSessionTree(sessionId);
   }
-}
-
-type LegacySessionHistoryModules = {
-  simpleHistory: typeof import("./simple-history.js");
-  versionBridge: typeof import("./checkpoints/version-runtime/bridge.js");
-};
-
-const legacyRequire = createRequire(
-  typeof import.meta.url === "string"
-    ? new URL("./session-runtime.ts", import.meta.url)
-    : __filename,
-);
-const loadLegacyModule = (specifier: string) => legacyRequire(specifier);
-function loadLegacySessionHistoryModules(): LegacySessionHistoryModules {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-    throw new AgentValidationError(
-      "Legacy history is unavailable on the authoritative runtime path.",
-    );
-  const requireSource = (sourcePath: string) => {
-    try {
-      return loadLegacyModule(sourcePath);
-    } catch (error) {
-      if (!sourcePath.endsWith(".js")) throw error;
-      return loadLegacyModule(sourcePath.slice(0, -3) + ".ts");
-    }
-  };
-  return {
-    simpleHistory: requireSource("./simple-history.js"),
-    versionBridge: requireSource("./checkpoints/version-runtime/bridge.js"),
-  } as LegacySessionHistoryModules;
-}
-
-function assertLegacyHistoryUnlocked(sessionId: string): void {
-  if (
-    process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" ||
-    process.env.VITEST ||
-    process.env.NODE_ENV === "test"
-  )
-    return;
-  const requireSource = (sourcePath: string) => {
-    try {
-      return loadLegacyModule(sourcePath);
-    } catch (error) {
-      if (!sourcePath.endsWith(".js")) throw error;
-      return loadLegacyModule(sourcePath.slice(0, -3) + ".ts");
-    }
-  };
-  (requireSource("./checkpoints/guards.js") as typeof import("./checkpoints/guards.js")).assertHistoryUnlocked(sessionId);
-}
-
-function initializeLegacySessionHistory(
-  store: AgentRuntimeStore,
-  saved: AgentSession,
-  parent: AgentSession | undefined,
-  input: CreateSessionRequest,
-): void {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") return;
-  if (
-    !SIMPLE_HISTORY_STORAGE &&
-    TRANSCRIPT_STORAGE !== "jsonl" &&
-    (Boolean(parent) ||
-      (Boolean(input.backendId) && input.backendId !== "native") ||
-      process.env.SYNAX_VERSION_HISTORY === "legacy")
-  )
-    return;
-  if (SIMPLE_HISTORY_STORAGE) store.initializeFreshHistory(saved, "flat");
-  else if (TRANSCRIPT_STORAGE === "jsonl")
-    store.initializeFreshHistory(saved, "jsonl");
-  else if (
-    !SIMPLE_HISTORY_STORAGE &&
-    !parent &&
-    (!input.backendId || input.backendId === "native") &&
-    process.env.SYNAX_VERSION_HISTORY !== "legacy"
-  )
-    store.initializeFreshHistory(saved, "versioned");
 }
 
 export const agentSessionRuntime = new AgentSessionRuntime();

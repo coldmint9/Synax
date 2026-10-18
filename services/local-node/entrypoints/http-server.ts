@@ -1,6 +1,5 @@
 import { ObservationTransport, OBSERVATION_SOCKET_PATH } from "../modules/realtime/observation-transport.js";
 import { ensureGitMrProfileRegistered } from '../modules/agent-runtime/git/profile.js';
-import { startFileUndoRetention } from "../modules/agent-runtime/checkpoints/retention.js";
 import { attachTerminalSockets } from "../infrastructure/terminals/terminal-socket.js";
 import { terminalRoutes } from "../transport/http/terminals.js";
 import { terminalManager } from "../infrastructure/terminals/terminal-manager.js";
@@ -207,12 +206,13 @@ let closeObservationSockets: (() => void) | undefined;
 let shuttingDown = false;
 let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 
-let stopFileUndoRetention = () => {};
 let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
   process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
   rustRuntimeSidecar = await startRustRuntimeSidecar();
+  await agentRuntimeStore.hydrateSessions();
+  void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   const recovery = await recoverRuntime(runtimeHost.hostId);
   const mediaJobs = recoverMediaJobs();
   if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
@@ -222,7 +222,6 @@ async function startRuntime(): Promise<void> {
       "interrupted executions reconciled or isolated to their original sessions",
     );
   startPermissionTimeoutSweeper();
-  stopFileUndoRetention = startFileUndoRetention();
   stopSessionArchiveRetention = startSessionArchiveRetention();
   startInteractionRecovery();
 
@@ -264,7 +263,6 @@ function startServer(resumable: string[]): void {
 }
 
 async function shutdownRuntime(): Promise<void> {
-  stopFileUndoRetention();
   stopSessionArchiveRetention();
   if (shuttingDown) return;
   shuttingDown = true;
@@ -313,9 +311,7 @@ process.on("SIGTERM", () => {
   void shutdownRuntime();
 });
 
-void sweepAssets().catch((error) =>
-  pinoLogger.warn({ error }, "Media cleanup failed"),
-);
+
 setInterval(() => {
   void sweepAssets().catch((error) =>
     pinoLogger.warn({ error }, "Media cleanup failed"),

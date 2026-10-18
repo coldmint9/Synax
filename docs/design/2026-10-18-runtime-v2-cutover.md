@@ -30,3 +30,24 @@
 3. 停止在线 database migration 创建 runtime SQL 表，移除旧 bootstrap/history retention 和 runtime flags。不能仅在 E2E 结束时 DROP 表让检查变绿。
 4. 完成实际数据来源摸排和迁移。目前离线导出覆盖常规 runtime SQL 行；旧 versioned/JSONL payload、附件、terminal 等数据仍须完整导入后，才能对用户数据执行最终清理。
 5. 重新执行最小 E2E，要求业务步骤及“零旧 runtime SQL 表”全部通过，再做 2.0 DMG 和最终发布验收。
+
+## 2026-10-18 第二轮：中央仓储替换与主路径闭环
+
+已完成并验证：
+
+- 删除中央 session-store 的 SQL repository 实现，改为 Rust-backed execution working set。session/run/message/step/part/tool/context/thinking/compaction 等记录通过 Rust IPC 写入；HTTP/worker/执行收尾有显式 hydrate/flush 边界。
+- work、plan、usage 读取和持久化接入同一仓储，取消旧 SQL 与 history mirror。Node worker 在发送 chunk/done 前提交持久化，父进程完成一轮前重新 hydrate。
+- 新 session 不再加载或初始化 flat/JSONL/versioned history；Native loop 的 checkpoint 捕获使用 Rust pins，执行 fence 使用 Rust。
+- 删除 48 个旧 runtime/conversation/JSONL SQL 迁移文件及 schema repair/trigger bootstrap。应用其他领域的 SQLite 数据库保留；不再创建 runtime 表。
+- 新增 Rust `asset_page`，将启动附件清理迁出 SQL。worker 存活判断从 Rust process leases 读取，不再捕获 SQL 错误后默认回答。
+- `runtime:repository-smoke`：无 context.db 的目录创建 session、run、message、context、thinking、compaction、work、plan，sidecar 重启后全部读回；取消的本地 mutation 不发布。
+- 最小主路径 E2E 通过：HTTP create → HTTP submit → forked provider worker → 真实 file.read → provider 读取工具结果 → Rust 完成 → 原生 WS 增量 → host restart → HTTP 读回 → 第二轮完成。
+- E2E 不仅检查不存在旧 runtime 表，还用进程预加载探针记录所有旧表 SQL 调用（包括被 catch 掩盖的查询）；本轮结果两项均为零。
+- 当前 typecheck 通过；Rust tests 74 项通过；中央仓储/stream/facade 的定向 Vitest 19 项通过；离线原生迁移 smoke 通过。
+
+范围限制和下一步：
+
+- 上面的 working set 仍需要在更多后台命令/子代理/表单/文件写入入口接完整加载与提交边界。此次 E2E 证明聊天 + 文件读取，不证明这些未覆盖的流程。
+- 在线已不创建旧 runtime 表，但仓库里仍有旧 checkpoint/flat/transcript、同步 admission、interaction mutation、media/terminal/process 兼容分支；必须继续移除或改为 Rust 实现。旧 1.x 全量测试不再是完成标准；不能为保留它们恢复 SQL 后端。
+- 只读检查实际目录 `/Users/mint/.synax`：context.db 约 1.53 GB，299 个 session；228 个 versioned head、71 个 flat head、56,926 条 JSONL payload 索引、147 个资产。源数据未迁移/清理。下一步是完整的离线 versioned/JSONL/附件提取与有界原生导入，随后逐会话核对。
+- 不得将当前最小 E2E 的绿色结果当作“旧实现已全部删除/用户数据已完成迁移”。目标保持 active。2.0.0 DMG 尚未重新构建。

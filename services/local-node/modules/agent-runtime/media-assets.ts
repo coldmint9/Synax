@@ -424,19 +424,23 @@ export async function deleteUnboundAsset(id: string): Promise<void> {
   });
 }
 export async function sweepAssets(): Promise<void> {
+  const { runtimeFacade } = await import('./sidecar/runtime-facade.js');
   const cutoff = new Date(Date.now() - 86_400_000).toISOString();
-  let after = "";
-  const query = getRawSqlite().prepare(
-    "SELECT id FROM agent_runtime_assets WHERE id>? AND created_at<? AND NOT EXISTS(SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id) AND NOT EXISTS(SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=agent_runtime_assets.id) ORDER BY id LIMIT 64",
-  );
-  for (;;) {
-    const rows = query.all(after, cutoff) as { id: string }[];
-    if (!rows.length) return;
-    for (const row of rows) {
-      after = row.id;
-      await deleteUnboundAsset(row.id).catch(() => {});
+  let after: string | undefined;
+  do {
+    const page = await runtimeFacade.historyCommandGlobal({scopeId:'__assets__',requestId:`asset-page:${after??'start'}`,operation:'asset_page',payload:{after}}) as {items:Array<{id:string;createdAt:string}>;next?:string};
+    for(const asset of page.items) {
+      if(asset.createdAt>=cutoff)continue;
+      try { await runtimeFacade.deleteAssetMetadata(asset.id); }
+      catch(error) {
+        if(error instanceof Error && error.message.includes('asset is retained by a session'))continue;
+        throw error;
+      }
+      await runtimeFacade.deleteAssetBlob(asset.id);
+      await fsp.unlink(path.join(root(),asset.id)).catch(error=>{if(error.code!=='ENOENT')throw error});
     }
-  }
+    after=page.next;
+  } while(after);
 }
 export function modelContentParts(parts: RuntimeContentPart[]): any[] {
   return parts.flatMap((p) => {

@@ -223,7 +223,7 @@ class SessionProcessManager {
         state &&
         state.streams.size === 0 &&
         state.compactions.size === 0 &&
-        !hasBackgroundProcesses(sessionId, true)
+        !(await hasBackgroundProcesses(sessionId, true))
       ) {
         this.releaseChild(sessionId, "Agent session stream finished.", { idle: true });
       }
@@ -375,7 +375,7 @@ class SessionProcessManager {
         state &&
         state.streams.size === 0 &&
         state.compactions.size === 0 &&
-        !hasBackgroundProcesses(sessionId, true)
+        !(await hasBackgroundProcesses(sessionId, true))
       ) {
         this.releaseChild(sessionId, "Context compaction finished.", { idle: true });
       }
@@ -626,7 +626,7 @@ class SessionProcessManager {
         child.send?.({ type: "session:initialize" });
         return;
       }
-      this.handleChildMessage(sessionId, message);
+      void this.handleChildMessage(sessionId, message).catch(error => logger.error({sessionId,error}, "Worker message handling failed"));
     });
 
     child.on("exit", (code, signal) => {
@@ -764,7 +764,7 @@ class SessionProcessManager {
     });
   }
 
-  private handleChildMessage(sessionId: string, message: unknown): void {
+  private async handleChildMessage(sessionId: string, message: unknown): Promise<void> {
     if (!isAgentSessionChildMessage(message)) return;
 
     if (message.type === "session:live") {
@@ -779,7 +779,7 @@ class SessionProcessManager {
         message.event.type === "session_process_changed" &&
         owner?.streams.size === 0 &&
         owner.compactions.size === 0 &&
-        !hasBackgroundProcesses(sessionId, true)
+        !(await hasBackgroundProcesses(sessionId, true))
       ) {
         this.releaseChild(sessionId, "All background services have exited.", { idle: true });
       }

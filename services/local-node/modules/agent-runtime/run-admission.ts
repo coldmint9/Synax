@@ -313,6 +313,7 @@ export async function acceptRuntimeRunAuthoritative(
     .update(JSON.stringify(stable({ input, mode })))
     .digest("hex");
   await runtimeFacade.ensureUiProjection(sessionId);
+  await agentRuntimeStore.hydrateSession(sessionId);
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);
   const existingRun = authoritative.run as AgentRun | null | undefined;
@@ -358,13 +359,7 @@ export async function acceptRuntimeRunAuthoritative(
     ? undefined
     : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
 
-  const db = getRawSqlite();
-  const previous = db
-    .prepare(
-      `SELECT id FROM agent_runtime_runs WHERE session_id = ?
-       AND json_extract(metadata_json, '$.runtime.requestId') = ?`,
-    )
-    .get(sessionId, requestId) as { id: string } | undefined;
+  const previous = agentRuntimeStore.listRuns(sessionId).find(run => (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId === requestId);
   if (previous) {
     const run = agentRuntimeStore.listRuns(sessionId).find(item => item.id === previous.id);
     if (run) {
@@ -492,15 +487,15 @@ export function activateAcceptedRun(
   triggerMessageId: string,
   model: string | null,
 ): AgentRun {
-  return getRawSqlite().transaction(() => {
+  return agentRuntimeStore.transaction(() => {
     const run = agentRuntimeStore.getRun(runId);
     if (run.sessionId !== sessionId)
       throw new AgentValidationError(
         "The accepted Run belongs to another session.",
       );
-    if (run.status !== "queued")
+    if (run.status !== "running")
       throw new AgentRuntimeError(
-        "Only a queued Run can be activated.",
+        "Rust must activate the admitted Run before executing it.",
         "RUN_ALREADY_STARTED",
         409,
       );
@@ -510,5 +505,5 @@ export function activateAcceptedRun(
       model,
       startedAt: nowIso(),
     });
-  })();
+  });
 }

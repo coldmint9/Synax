@@ -1,6 +1,5 @@
 import { runToCompletion } from "./statement-lifecycle.js";
 import { assertTransactionSafe, rollbackAfterError } from "./transaction-safety.js";
-import { installConversationHistoryTriggers } from "./conversation-history-triggers.js";
 import { assertDatabaseWriteAllowed } from "../runtime/execution-context.js";
 
 import {
@@ -262,52 +261,8 @@ function markMigrationApplied(
     .run(file, new Date().toISOString());
 }
 
-/** The ledger was introduced at 0025. Bootstrap only that historical baseline, never later DDL. */
-function bootstrapMigrationLedger(
-  sqlite: NativeDatabase.Database,
-  files: string[],
-): void {
-  const row = sqlite
-    .prepare("SELECT COUNT(*) as c FROM _schema_migrations")
-    .get() as { c: number };
-  if (row.c > 0) return;
-
-  const legacy = sqlite
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_meta'",
-    )
-    .all() as Array<{ name: string }>;
-  if (legacy.length === 0) return;
-  const runtimeTables = sqlite
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agent_runtime_sessions', 'agent_runtime_runs')",
-    )
-    .all() as Array<{ name: string }>;
-  if (runtimeTables.length !== 2)
-    throw new Error(
-      "Legacy database predates the supported runtime baseline. Back up and migrate it with the matching Synax version; no migration ledger was guessed.",
-    );
-
-  const baselineFiles = files.filter((file) => Number.parseInt(file, 10) <= 25);
-  const now = new Date().toISOString();
-  const insert = sqlite.prepare(
-    "INSERT OR IGNORE INTO _schema_migrations (file, applied_at) VALUES (?, ?)",
-  );
-  for (const file of baselineFiles) {
-    insert.run(file, now);
-  }
-  pinoLogger.info(
-    { count: baselineFiles.length },
-    "context db: bootstrapped migration ledger for existing database",
-  );
-}
-
 function shouldRunMigrationsInThisProcess(): boolean {
   return process.env.SYNAX_AGENT_SESSION_CHILD !== "1";
-}
-
-function shouldInstallConversationHistoryTriggers(): boolean {
-  return shouldRunMigrationsInThisProcess() && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative";
 }
 
 function runMigrations(sqlite: NativeDatabase.Database): void {
@@ -327,7 +282,6 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
     .filter((f) => f.endsWith(".sql"))
     .sort();
 
-  bootstrapMigrationLedger(sqlite, files);
 
   for (const f of files) {
     if (isMigrationApplied(sqlite, f)) {
@@ -345,11 +299,6 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
     }
     try {
       sqlite.transaction(() => {
-        // 0010 delegates this column to runtime repair; FTS backfill needs it
-        // before the usual post-migration schema repair on fresh databases.
-        if (f === "0039_session_fulltext_search.sql") {
-          ensureColumn(sqlite, "agent_runtime_sessions", "title", "title TEXT");
-        }
         sqlite.exec(sql);
         markMigrationApplied(sqlite, f);
       })();
@@ -359,184 +308,6 @@ function runMigrations(sqlite: NativeDatabase.Database): void {
       throw err;
     }
   }
-}
-
-function ensureColumn(
-  sqlite: NativeDatabase.Database,
-  table: string,
-  column: string,
-  ddl: string,
-): void {
-  const tableExists = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name: string } | undefined;
-  if (!tableExists) return;
-  const columns = sqlite
-    .prepare(`PRAGMA table_info(${table})`)
-    .all() as unknown as Array<{ name: string }>;
-  if (columns.some((item) => item.name === column)) return;
-  sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  pinoLogger.info({ table, column }, "context db: column added");
-}
-
-function ensureRuntimeSchema(sqlite: NativeDatabase.Database): void {
-  ensureColumn(
-    sqlite,
-    "agent_runtime_sessions",
-    "active_run_id",
-    "active_run_id TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_sessions",
-    "pending_resume_token",
-    "pending_resume_token TEXT",
-  );
-  ensureColumn(sqlite, "agent_runtime_sessions", "title", "title TEXT");
-  ensureColumn(
-    sqlite,
-    "agent_runtime_sessions",
-    "session_metadata_json",
-    "session_metadata_json TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_sessions",
-    "reasoning_effort",
-    "reasoning_effort TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_sessions",
-    "mcp_server_ids_json",
-    "mcp_server_ids_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "project_id",
-    "project_id TEXT NOT NULL DEFAULT ''",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "sequence",
-    "sequence INTEGER NOT NULL DEFAULT 0",
-  );
-  ensureColumn(sqlite, "agent_runtime_messages", "turn_id", "turn_id TEXT");
-  ensureColumn(sqlite, "agent_runtime_messages", "run_id", "run_id TEXT");
-  ensureColumn(sqlite, "agent_runtime_messages", "step_id", "step_id TEXT");
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "provider_id",
-    "provider_id TEXT",
-  );
-  ensureColumn(sqlite, "agent_runtime_messages", "model_id", "model_id TEXT");
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "tool_call_id",
-    "tool_call_id TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "usage_json",
-    "usage_json TEXT NOT NULL DEFAULT '{}'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_messages",
-    "metadata_json",
-    "metadata_json TEXT NOT NULL DEFAULT '{}'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_events",
-    "payload_json",
-    "payload_json TEXT NOT NULL DEFAULT '{}'",
-  );
-  ensureColumn(sqlite, "agent_runtime_tool_calls", "run_id", "run_id TEXT");
-  ensureColumn(sqlite, "agent_runtime_tool_calls", "step_id", "step_id TEXT");
-  ensureColumn(
-    sqlite,
-    "agent_runtime_tool_calls",
-    "model_tool_call_id",
-    "model_tool_call_id TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_tool_calls",
-    "mutability",
-    "mutability TEXT NOT NULL DEFAULT 'read'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_tool_calls",
-    "args_hash",
-    "args_hash TEXT NOT NULL DEFAULT ''",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_tool_calls",
-    "input_ref_json",
-    "input_ref_json TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_tool_calls",
-    "output_ref_json",
-    "output_ref_json TEXT",
-  );
-  ensureColumn(sqlite, "agent_runtime_permissions", "run_id", "run_id TEXT");
-  ensureColumn(sqlite, "agent_runtime_permissions", "step_id", "step_id TEXT");
-  ensureColumn(
-    sqlite,
-    "agent_runtime_permissions",
-    "patterns_json",
-    "patterns_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_permissions",
-    "user_reply",
-    "user_reply TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_permissions",
-    "resume_token",
-    "resume_token TEXT",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_permissions",
-    "metadata_json",
-    "metadata_json TEXT NOT NULL DEFAULT '{}'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_artifacts",
-    "metadata_json",
-    "metadata_json TEXT NOT NULL DEFAULT '{}'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_context_bundles",
-    "blocks_json",
-    "blocks_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  ensureColumn(
-    sqlite,
-    "agent_runtime_thinking_summaries",
-    "evidence_used_json",
-    "evidence_used_json TEXT NOT NULL DEFAULT '[]'",
-  );
-  // These compatibility columns are repaired after the SQL migration ledger.
-  if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE name='agent_runtime_tool_calls'").get())
-    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_flat_tool_step ON agent_runtime_tool_calls(session_id,step_id,started_at,id)");
-
 }
 
 function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
@@ -555,8 +326,6 @@ function getOrCreateRawSqlite(dbPath = resolveDbPath()): RawSqlite {
 
     try {
       runMigrations(sqlite);
-      ensureRuntimeSchema(sqlite);
-      if (shouldInstallConversationHistoryTriggers()) installConversationHistoryTriggers(sqlite);
     } catch (error) {
       sqlite.close();
       throw error;

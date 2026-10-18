@@ -63,10 +63,12 @@ async function runStream(
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
+    await agentRuntimeStore.hydrateSession(sessionId, true);
     for await (const chunk of withinExecutionContext(
       input.executionContext,
       pickGenerator(mode, sessionId, input, abortController.signal),
     )) {
+      await agentRuntimeStore.flush();
       sendAgentSessionToParent({
         type: "stream:chunk",
         sessionId,
@@ -74,6 +76,7 @@ async function runStream(
         chunk,
       });
     }
+    await agentRuntimeStore.flush();
     sendAgentSessionToParent({ type: "stream:done", sessionId, streamId });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -110,8 +113,10 @@ function main(): void {
   }
 
   let initialized = false;
-  const initialize = () => {
+  const initialize = async () => {
     if (initialized || !process.connected) return;
+    await agentRuntimeStore.hydrateSessions();
+    await agentRuntimeStore.hydrateSession(init.sessionId);
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);
@@ -155,7 +160,7 @@ function main(): void {
     if (stopping || !isAgentSessionParentMessage(message)) return;
 
     if (message.type === "session:initialize") {
-      initialize();
+      void initialize().catch(error => { logger.error({error}, "worker initialization failed"); process.exit(1); });
       return;
     }
     if (!initialized) return;
@@ -222,10 +227,7 @@ function main(): void {
     }
   });
 
-  // Retain compatibility with an already-running pre-upgrade parent.
-  if (process.env.SYNAX_RECORDED_START !== "1") initialize();
-  else
-    sendAgentSessionToParent({
+  sendAgentSessionToParent({
       type: "session:booted",
       sessionId: init.sessionId,
     });
