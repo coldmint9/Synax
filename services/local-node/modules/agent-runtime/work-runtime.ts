@@ -1,8 +1,8 @@
+import { runtimeTransaction } from "./runtime-transaction.js";
 import { usesGoalWorkflow, workflowMode } from './workflow-mode.js';
 import { resolveSessionUserRequest } from './session-user-request.js';
 import { isWorkContinuation } from './work-intent.js';
 import type { AgentRun, ToolCallRecord, ToolExecutionInput, ToolExecutionResult } from './contracts.js';
-import { getRawSqlite } from '../../infrastructure/database/index.js';
 import { agentRuntimeStore as store } from './session-store.js';
 import { workStore, type WorkRecord, type WorkEvidence } from './work-store.js';
 import { TaskStore } from './tools/task-tools.js';
@@ -275,14 +275,14 @@ class WorkRuntime {
     if (this.pendingChildren(work) || interactionService.pending(input.sessionId))
       throw new AgentValidationError('Resolve active children and pending interactions before yielding the round.');
     // A handoff is not acceptance. Keep task, verification, plan and goal state intact.
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       work.status = 'active'; work.reason = summary;
       work.noProgressSteps = 0; work.decisionFailures = 0;
       if (nextAction) work.nextAction = nextAction;
       workStore.save(work);
       const run = store.getRun(input.runId!);
       store.updateRun(run.id, { metadata: { ...run.metadata, roundHandoff: { stepId: input.stepId, summary } } });
-    })();
+    });
     return { result: { workId: work.id, status: work.status, round: 'yielded', summary }, displaySummary: summary, artifacts: [] };
   }
 
@@ -312,7 +312,7 @@ class WorkRuntime {
         return this.yieldRound(input, summary);
       work.status = 'completed'; work.result = summary; work.reason = null;
       work.evidence = []; work.remaining = [];
-      getRawSqlite().transaction(() => { workStore.save(work); this.persistTerminal(work, input.runId!); })();
+      runtimeTransaction(() => { workStore.save(work); this.persistTerminal(work, input.runId!); });
       return { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };
     }
     if (getGoalState(session.sessionMetadata) && !session.parentSessionId && !input.toolCallId)
@@ -359,7 +359,7 @@ class WorkRuntime {
       throw new AgentValidationError(`Missing current-version verification. Use verification.run for the changed scope; TODO completion and arbitrary shell exit 0 are not verification. ${evidenceRemedy(receipts)}`);
 
     let result: ToolExecutionResult | undefined;
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       if (rootGoal) {
         result = completeGoalCheckpoint({
           ...input,
@@ -385,7 +385,7 @@ class WorkRuntime {
       work.remaining = [];
       workStore.save(work);
       this.persistTerminal(work, input.runId!);
-    })();
+    });
     return result?.suspend || (result?.result as { status?: string } | null)?.status === 'in_progress'
       ? result!
       : { result: { workId: work.id, status: work.status, summary }, displaySummary: summary, artifacts: [] };

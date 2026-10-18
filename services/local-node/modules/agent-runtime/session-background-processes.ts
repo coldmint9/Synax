@@ -1,9 +1,10 @@
 import { terminalManager } from "../../infrastructure/terminals/terminal-manager.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { agentRuntimeStore } from "./session-store.js";
 import {
   stopRecordedProcess,
+  listOwnedProcesses,
+  registerAuthoritativeLease,
   type OwnedProcessRecord,
 } from "./process-ownership.js";
 import { AgentNotFoundError, AgentRuntimeError } from "./runtime-errors.js";
@@ -54,136 +55,30 @@ export function detectServicePorts(command: string): number[] {
   return [...ports].sort((a, b) => a - b);
 }
 
-export function listSessionBackgroundProcesses(
-  sessionId: string,
-): SessionBackgroundProcess[] {
-  const rows = getRawSqlite()
-    .prepare(
-      `WITH visible AS (
-    SELECT p.*, t.id AS terminal_id, t.kind AS terminal_kind, t.cwd, t.project_id
-    FROM agent_runtime_processes p LEFT JOIN terminal_sessions t ON t.id=p.id
-    WHERE p.session_id=? AND p.kind='background'
-  ) SELECT * FROM visible WHERE state<>'closed' OR id IN (SELECT id FROM visible WHERE state='closed' ORDER BY started_at DESC LIMIT 5)
-  ORDER BY (state<>'closed') DESC, started_at DESC`,
-    )
-    .all(sessionId) as Array<
-    OwnedProcessRecord & {
-      terminal_id?: string;
-      terminal_kind?: "terminal" | "service";
-      cwd?: string;
-      project_id?: string;
-    }
-  >;
-  return rows.map((row) => {
-    const plainTerminal = row.terminal_kind === "terminal";
-    const ports = plainTerminal
-      ? []
-      : detectServicePorts(row.command_label ?? "");
-    return {
-      id: row.id,
-      command: row.command_label,
-      pid: row.pid,
-      state: row.state,
-      exitCode: row.exit_code ?? null,
-      startedAt: row.started_at!,
-      endedAt: row.ended_at ?? null,
-      ...(row.terminal_id
-        ? {
-            terminalId: row.terminal_id,
-            kind: row.terminal_kind,
-            cwd: row.cwd,
-            projectId: row.project_id,
-          }
-        : {}),
-      ...(ports.length ? { ports } : {}),
-    };
-  });
+export async function listSessionBackgroundProcesses(sessionId:string):Promise<SessionBackgroundProcess[]> {
+  const session=agentRuntimeStore.getSession(sessionId);
+  const terminals=await terminalManager.listAuthoritative(session.projectId);
+  const owned=await listOwnedProcesses(sessionId);
+  const result:SessionBackgroundProcess[]=terminals.filter(t=>t.ownerSessionId===sessionId).map(t=>({id:t.id,command:t.command ?? t.title,pid:t.pid,state:t.state,exitCode:t.exitCode,startedAt:t.startedAt,endedAt:t.endedAt,terminalId:t.id,kind:t.kind,cwd:t.cwd,projectId:t.projectId,ports:t.kind==='service'?detectServicePorts(t.command ?? ''):[]}));
+  for(const p of owned) if(p.kind==='background' && !result.some(t=>t.id===p.id)) result.push({id:p.id,command:p.command_label,pid:p.pid,state:p.state,exitCode:p.exit_code ?? null,startedAt:p.started_at ?? session.createdAt,endedAt:p.ended_at ?? null,ports:detectServicePorts(p.command_label)});
+  return result;
 }
-
-function ownedRow(
-  sessionId: string,
-  processId: string,
-): OwnedProcessRecord & { terminal_id?: string } {
-  const session = agentRuntimeStore.getSession(sessionId);
-  const row = getRawSqlite()
-    .prepare(
-      `SELECT p.*, t.id AS terminal_id FROM agent_runtime_processes p
-    LEFT JOIN terminal_sessions t ON t.id=p.id WHERE p.id=? AND
-    ((p.session_id=? AND p.kind='background') OR (t.project_id=? AND t.kind='terminal'))`,
-    )
-    .get(processId, sessionId, session.projectId) as
-    | (OwnedProcessRecord & { terminal_id?: string })
-    | undefined;
-  if (!row) throw new AgentNotFoundError(processId);
-  return row;
+export async function stopSessionBackgroundProcesses(sessionIds:Iterable<string>):Promise<void> {
+  for(const id of new Set(sessionIds)) for(const process of await listSessionBackgroundProcesses(id)) if(process.state!=='closed') await stopSessionBackgroundProcess(id,process.id);
 }
-export async function stopSessionBackgroundProcesses(
-  sessionIds: Iterable<string>,
-): Promise<void> {
-  const ids = [...new Set(sessionIds)];
-  const db = getRawSqlite();
-  for (const sessionId of ids) {
-    const processes = db
-      .prepare(
-        `SELECT p.id
-         FROM agent_runtime_processes p
-         LEFT JOIN terminal_sessions t ON t.id = p.id
-         WHERE p.state <> 'closed'
-           AND (p.session_id = ? OR t.owner_session_id = ?)`,
-      )
-      .all(sessionId, sessionId) as Array<{ id: string }>;
-    for (const process of processes) {
-      await stopSessionBackgroundProcess(sessionId, process.id);
-    }
-  }
+export async function stopSessionBackgroundProcess(sessionId:string,processId:string):Promise<void> {
+  const session=agentRuntimeStore.getSession(sessionId);
+  const terminal=(await terminalManager.listAuthoritative(session.projectId)).find(t=>t.id===processId && (t.ownerSessionId===sessionId || t.kind==='terminal'));
+  if(terminal){await terminalManager.stop(processId);return;}
+  const record=(await listOwnedProcesses(sessionId)).find(p=>p.id===processId && p.kind==='background');
+  if(!record) throw new AgentNotFoundError(processId);
+  registerAuthoritativeLease(record);
+  if(!await stopRecordedProcess(record)) throw new AgentRuntimeError('The service could not be identified or its termination confirmed.','PROCESS_STOP_UNCONFIRMED',409);
 }
-
-export async function stopSessionBackgroundProcess(
-  sessionId: string,
-  processId: string,
-): Promise<void> {
-  const row = ownedRow(sessionId, processId);
-  if (row.terminal_id) {
-    await terminalManager.stop(processId);
-    return;
-  }
-  if (row.state === "closed") return;
-  if (!(await stopRecordedProcess(row))) {
-    getRawSqlite()
-      .prepare(
-        "UPDATE agent_runtime_processes SET state='unconfirmed' WHERE id=?",
-      )
-      .run(processId);
-    throw new AgentRuntimeError(
-      "The service could not be safely identified or its termination confirmed.",
-      "PROCESS_STOP_UNCONFIRMED",
-      409,
-    );
-  }
-}
-
-/** Removing history is deliberately separate from stopping an owned process. */
-export async function deleteSessionBackgroundProcess(
-  sessionId: string,
-  processId: string,
-): Promise<void> {
-  const row = ownedRow(sessionId, processId);
-  const db = getRawSqlite();
-  if (row.terminal_id) {
-    // Plain terminals have no service lifecycle: deleting the row directly
-    // stops the shell and clears the terminal session in one step.
-    if (row.state !== "closed") await terminalManager.stop(processId);
-    terminalManager.remove(processId);
-  } else {
-    if (row.state !== "closed")
-      throw new AgentRuntimeError(
-        "Stop the service before deleting its record.",
-        "PROCESS_STILL_RUNNING",
-        409,
-      );
-    db.prepare(
-      "DELETE FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background' AND state='closed'",
-    ).run(processId, sessionId);
-  }
-  emitRuntimeBusEvent({ type: "session_process_changed", sessionId });
+export async function deleteSessionBackgroundProcess(sessionId:string,processId:string):Promise<void> {
+  const session=agentRuntimeStore.getSession(sessionId);
+  const terminal=(await terminalManager.listAuthoritative(session.projectId)).find(t=>t.id===processId && (t.ownerSessionId===sessionId || t.kind==='terminal'));
+  if(terminal){if(terminal.state!=='closed')await terminalManager.stop(processId);await terminalManager.remove(processId);}
+  else if((await listOwnedProcesses(sessionId)).some(p=>p.id===processId && p.state!=='closed')) throw new AgentRuntimeError('Stop the service before deleting its record.','PROCESS_STILL_RUNNING',409);
+  emitRuntimeBusEvent({type:'session_process_changed',sessionId});
 }

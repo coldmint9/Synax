@@ -5,7 +5,7 @@ import { getGlobalConfig } from "../runtime/config/config-store.js";
 import { systemTerminalShell } from "./terminal-shell.js";
 import path from "node:path";
 import type { IPty } from "node-pty";
-import { getRawSqlite, assertRuntimeExecutionCurrent } from "../database/index.js";
+import { assertRuntimeExecutionCurrent } from "../runtime/execution-context.js";
 import { withoutExecutionContext } from "../runtime/execution-context.js";
 import { canonicalWorkspaceDirectory } from "../../modules/project-workspace.js";
 import {
@@ -53,6 +53,9 @@ export interface TerminalInfo {
   endedAt: string | null;
   cols: number;
   rows: number;
+  requestKey?: string;
+  processIdentity?: string;
+  deletedAt?: string;
 }
 export interface TerminalFrame {
   sequence: number;
@@ -84,42 +87,6 @@ interface LiveTerminal {
   authoritativePersisting?: Promise<void>;
   authoritativeFlushQueued: boolean;
 }
-interface TerminalRow extends OwnedProcessRecord {
-  project_id: string;
-  root_id: string;
-  owner_session_id: string | null;
-  terminal_kind: "terminal" | "service";
-  title: string;
-  cwd: string;
-  shell: string;
-  command: string | null;
-  cols: number;
-  rows: number;
-  output_sequence: number;
-}
-const rowQuery = `SELECT p.*, t.project_id, t.root_id, t.owner_session_id, t.kind AS terminal_kind,
- t.title, t.cwd, t.shell, t.command, t.cols, t.rows, t.output_sequence
- FROM terminal_sessions t JOIN agent_runtime_processes p ON p.id=t.id`;
-function info(row: TerminalRow): TerminalInfo {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    rootId: row.root_id,
-    ownerSessionId: row.owner_session_id,
-    kind: row.terminal_kind,
-    title: row.title,
-    cwd: row.cwd,
-    shell: row.shell,
-    command: row.command,
-    pid: row.pid,
-    state: row.state,
-    exitCode: row.exit_code ?? null,
-    startedAt: row.started_at!,
-    endedAt: row.ended_at ?? null,
-    cols: row.cols,
-    rows: row.rows,
-  };
-}
 function failure(message: string, status = 409): never {
   throw new AgentRuntimeError(message, "TERMINAL_ERROR", status);
 }
@@ -142,12 +109,13 @@ class TerminalManager {
   private readonly authoritativeHydration = new Map<string, Promise<void>>();
 
   private authoritativeEnabled(): boolean {
-    return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative";
+    return true;
   }
 
   private mergeAuthoritativeRecord(raw: unknown): string | undefined {
     if (!raw || typeof raw !== "object") return undefined;
     const record = raw as Record<string, unknown>;
+    if(record.deletedAt && typeof record.id==='string') {this.authoritativeHistory.delete(record.id);return;}
     const required = ["id", "projectId", "rootId", "kind", "title", "cwd", "shell", "state", "startedAt"];
     if (required.some((key) => typeof record[key] !== "string")) return undefined;
     if (record.ownerSessionId !== null && record.ownerSessionId !== undefined && typeof record.ownerSessionId !== "string") return undefined;
@@ -169,6 +137,8 @@ class TerminalManager {
       endedAt: typeof record.endedAt === "string" ? record.endedAt : null,
       cols: typeof record.cols === "number" ? record.cols : 100,
       rows: typeof record.rows === "number" ? record.rows : 30,
+      requestKey: typeof record.requestKey === "string" ? record.requestKey:undefined,
+      processIdentity: typeof record.processIdentity === "string" ? record.processIdentity:undefined,
     };
     this.authoritativeHistory.set(item.id, item);
     const outputSequence = record.outputSequence;
@@ -208,7 +178,7 @@ class TerminalManager {
   }
 
   async getAuthoritative(id: string, projectId?: string): Promise<TerminalInfo> {
-    if (!this.authoritativeEnabled()) return this.get(id, projectId);
+
     const live = this.live.get(id)?.info;
     const cached = live ?? this.authoritativeHistory.get(id);
     if (cached && (!projectId || cached.projectId === projectId)) return { ...cached };
@@ -219,7 +189,7 @@ class TerminalManager {
   }
 
   async snapshotAuthoritative(id: string, projectId?: string): Promise<{ sequence: number; data: string }> {
-    if (!this.authoritativeEnabled()) return this.snapshot(id);
+
     if (!this.live.has(id) && !this.authoritativeHistory.has(id) && projectId)
       await this.hydrateAuthoritativeProject(projectId);
     const entry = this.live.get(id);
@@ -229,7 +199,7 @@ class TerminalManager {
   }
 
   async replayAuthoritative(id: string, projectId?: string, after?: number): Promise<{ reset: boolean; sequence: number; frames: TerminalFrame[] }> {
-    if (!this.authoritativeEnabled()) return this.replay(id, after);
+
     const entry = this.live.get(id);
     const snapshot = await this.snapshotAuthoritative(id, projectId);
     if (after !== undefined && after === snapshot.sequence) return { reset: false, sequence: after, frames: [] };
@@ -263,7 +233,7 @@ class TerminalManager {
     info: TerminalInfo,
     output = this.authoritativeOutput.get(info.id) ?? { sequence: 0, data: "" },
   ): Promise<void> {
-    if (!this.authoritativeEnabled()) return;
+
     if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN) {
       this.authoritativeHistory.set(info.id, { ...info });
       this.authoritativeOutput.set(info.id, { ...output });
@@ -335,26 +305,15 @@ class TerminalManager {
   }
   private flushTimer?: ReturnType<typeof setInterval>;
   private stopping = new Map<string, Promise<void>>();
-  private row(id: string): TerminalRow {
-    const row = getRawSqlite().prepare(`${rowQuery} WHERE t.id=?`).get(id) as
-      | TerminalRow
-      | undefined;
-    if (!row) failure("Terminal not found.", 404);
-    return row;
-  }
   get(id: string, projectId?: string): TerminalInfo {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    {
       const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
       if (!item || (projectId && item.projectId !== projectId)) failure("Terminal not found.", 404);
       return { ...item };
     }
-    const row = this.row(id);
-    if (projectId && row.project_id !== projectId)
-      failure("Terminal not found in this project.", 404);
-    return info(row);
   }
   list(projectId: string): TerminalInfo[] {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    {
       const items = new Map<string, TerminalInfo>(this.authoritativeHistory);
       for (const entry of this.live.values()) items.set(entry.info.id, entry.info);
       return [...items.values()]
@@ -363,27 +322,14 @@ class TerminalManager {
         .slice(0, 100)
         .map((item) => ({ ...item }));
     }
-    return (
-      getRawSqlite()
-        .prepare(
-          `${rowQuery} WHERE t.project_id=? ORDER BY (p.state<>'closed') DESC, p.started_at DESC LIMIT 100`,
-        )
-        .all(projectId) as TerminalRow[]
-    ).map(info);
   }
   async listAuthoritative(projectId: string): Promise<TerminalInfo[]> {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") return this.list(projectId);
+
     await this.hydrateAuthoritativeProject(projectId);
     return this.list(projectId);
   }
   has(id: string): boolean {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-      return this.live.has(id) || this.authoritativeHistory.has(id);
-    return Boolean(
-      getRawSqlite()
-        .prepare("SELECT id FROM terminal_sessions WHERE id=?")
-        .get(id),
-    );
+    return this.live.has(id) || this.authoritativeHistory.has(id);
   }
   async create(input: {
     projectId: string;
@@ -401,12 +347,7 @@ class TerminalManager {
     requestKey?: string;
     stdin?: string;
   }): Promise<TerminalInfo> {
-    if (input.requestKey && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
-      const found = getRawSqlite()
-        .prepare("SELECT id FROM terminal_sessions WHERE request_key=?")
-        .get(input.requestKey) as { id: string } | undefined;
-      if (found) return this.get(found.id, input.projectId);
-    }
+
     if (
       [...this.live.values()].filter((value) => !value.closed).length >=
       MAX_LIVE
@@ -430,9 +371,8 @@ class TerminalManager {
     const { spawn } = await import("node-pty");
     // Recheck after loading the native module; no process is spawned before the record is committed.
     if (input.requestKey) {
-      const found = getRawSqlite()
-        .prepare("SELECT id FROM terminal_sessions WHERE request_key=?")
-        .get(input.requestKey) as { id: string } | undefined;
+      await this.hydrateAuthoritativeProject(input.projectId);
+      const found = this.list(input.projectId).find(t=>t.requestKey===input.requestKey);
       if (found) return this.get(found.id, input.projectId);
     }
     if (
@@ -447,31 +387,10 @@ class TerminalManager {
     );
     await waitForAuthoritativeLease(ticket.id);
     if (wsl) recordOwnedRuntimeTarget(ticket.id, wsl.distribution);
-    const db = getRawSqlite();
     let identityReadyResolve: (() => void) | undefined;
     try {
-      if (input.kind === "terminal" && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
-        db.prepare(
-          "UPDATE agent_runtime_processes SET kind='terminal' WHERE id=?",
-        ).run(ticket.id);
-      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
-        db.prepare(
-          `INSERT INTO terminal_sessions (id,project_id,root_id,owner_session_id,kind,title,cwd,shell,command,cols,rows,request_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        ).run(
-          ticket.id,
-          input.projectId,
-          input.rootId,
-          input.ownerSessionId ?? null,
-          input.kind,
-          input.title,
-          cwd,
-          shell,
-          input.command ?? null,
-          cols,
-          rows,
-          input.requestKey ?? null,
-        );
-      }
+
+
       const localArgs =
         input.shellArgs ??
         (input.kind === "service"
@@ -527,6 +446,7 @@ class TerminalManager {
           shell,
           command: input.command ?? null,
           pid: pty.pid,
+          requestKey: input.requestKey,
           state: "active",
           exitCode: null,
           startedAt: new Date().toISOString(),
@@ -608,15 +528,13 @@ class TerminalManager {
           entry.info.exitCode = entry.stopping || signal ? null : exitCode;
           entry.info.endedAt = new Date().toISOString();
           entry.dirty = true;
-          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-            this.authoritativeOutput.set(ticket.id, { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") });
+          this.authoritativeOutput.set(ticket.id, { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") });
           releaseOwnedProcess(
             ticket.id,
             entry.stopping || signal ? null : exitCode,
           );
           this.flush(ticket.id, entry);
-          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-            this.authoritativeHistory.set(ticket.id, { ...entry.info });
+          this.authoritativeHistory.set(ticket.id, { ...entry.info });
           const terminal = this.has(ticket.id) ? this.get(ticket.id) : { ...entry.info };
           if (terminal)
             for (const listener of entry.listeners)
@@ -625,8 +543,7 @@ class TerminalManager {
           // Keep a closed terminal in the live map until its authoritative
           // snapshot is durably accepted. A sidecar restart must leave the
           // dirty entry eligible for the retry timer.
-          if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
-            this.live.delete(ticket.id);
+
         }),
       );
       // node-pty 1.1 exposes the slave path on its Unix handle. It is only
@@ -638,14 +555,7 @@ class TerminalManager {
           for (let attempt = 0; attempt < 25 && !entry.closed; attempt++) {
             const identity = await readProcessIdentity(pty.pid, tty);
             if (identity && !entry.closed) {
-              if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
-                withoutExecutionContext(() =>
-                  getRawSqlite()
-                    .prepare(
-                      "UPDATE terminal_sessions SET process_identity=? WHERE id=?",
-                    )
-                    .run(identity, ticket.id),
-                );
+              entry.info.processIdentity = identity;
               break;
             }
             await new Promise((resolve) => setTimeout(resolve, 20));
@@ -654,7 +564,7 @@ class TerminalManager {
       } finally {
         identityReadyResolve?.();
       }
-      assertRuntimeExecutionCurrent();
+      await assertRuntimeExecutionCurrent();
       if (input.stdin) pty.write(input.stdin);
       if (!this.flushTimer) {
         this.flushTimer = setInterval(
@@ -663,19 +573,16 @@ class TerminalManager {
               for (const [id, value] of this.live)
                 if (value.dirty) this.flush(id, value);
             }),
-          process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative"
-            ? AUTHORITATIVE_FLUSH_INTERVAL_MS
-            : 3000,
+          AUTHORITATIVE_FLUSH_INTERVAL_MS,
         );
         this.flushTimer.unref();
       }
-      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+      {
         const snapshot = this.authoritativeSnapshot(entry);
         await this.persistAuthoritative(snapshot.info, snapshot.output);
         entry.dirty = false;
         return { ...entry.info };
       }
-      return this.get(ticket.id);
     } catch (error) {
       identityReadyResolve?.();
       if (this.live.has(ticket.id))
@@ -686,20 +593,10 @@ class TerminalManager {
   }
   private flush(id: string, entry: LiveTerminal) {
     if (!entry.dirty) return;
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+    {
       this.queueAuthoritativeFlush(entry);
       return;
     }
-    getRawSqlite()
-      .prepare(
-        "UPDATE terminal_sessions SET output_tail=?, output_sequence=? WHERE id=?",
-      )
-      .run(
-        entry.frames.map((frame) => frame.data).join(""),
-        entry.sequence,
-        id,
-      );
-    entry.dirty = false;
   }
   snapshot(id: string): { sequence: number; data: string } {
     const entry = this.live.get(id);
@@ -708,15 +605,7 @@ class TerminalManager {
         sequence: entry.sequence,
         data: entry.frames.map((frame) => frame.data).join(""),
       };
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative")
-      return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
-    const row = getRawSqlite()
-      .prepare(
-        "SELECT output_tail, output_sequence FROM terminal_sessions WHERE id=?",
-      )
-      .get(id) as { output_tail: string; output_sequence: number } | undefined;
-    if (!row) failure("Terminal not found.", 404);
-    return { sequence: row.output_sequence, data: row.output_tail };
+    return this.authoritativeOutput.get(id) ?? { sequence: 0, data: "" };
   }
   replay(
     id: string,
@@ -813,10 +702,7 @@ class TerminalManager {
     entry.info.cols = cols;
     entry.info.rows = rows;
     entry.dirty = true;
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
-      getRawSqlite()
-        .prepare("UPDATE terminal_sessions SET cols=?, rows=? WHERE id=?")
-        .run(cols, rows, id);
+
   }
   redraw(id: string): void {
     const entry = this.live.get(id);
@@ -850,7 +736,7 @@ class TerminalManager {
       }
       return;
     }
-    const record = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && entry
+    const record:OwnedProcessRecord = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && entry
       ? {
           id,
           host_id: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`,
@@ -862,7 +748,10 @@ class TerminalManager {
           command_label: entry.info.title,
           ...(entry.runtimeKind === "wsl" ? { runtime_kind: "wsl" as const, runtime_distribution: entry.runtimeDistribution } : {}),
         } as OwnedProcessRecord
-      : this.row(id);
+      : (() => {
+          const info=this.get(id);
+          return {id,host_id:'recovered',session_id:info.ownerSessionId,run_id:null,pid:info.pid,process_group:1,state:info.state,command_label:info.command ?? info.title,process_identity:info.processIdentity} satisfies OwnedProcessRecord;
+        })();
     if (record.runtime_kind === "wsl") {
       if (!(await stopRecordedProcess(record))) {
         entry && (entry.stopping = false);
@@ -885,11 +774,7 @@ class TerminalManager {
       ]);
       clearTimeout(timer);
       if (!exited) {
-        if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") getRawSqlite()
-          .prepare(
-            "UPDATE agent_runtime_processes SET state='unconfirmed' WHERE id=?",
-          )
-          .run(id);
+
         entry.stopping = false;
         failure(
           "Unable to confirm terminal shutdown. Retry before deleting the record.",
@@ -926,11 +811,7 @@ class TerminalManager {
     }
     const confirmed = await stopRecordedProcess(record);
     if (!confirmed) {
-      if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") getRawSqlite()
-        .prepare(
-          "UPDATE agent_runtime_processes SET state='unconfirmed' WHERE id=?",
-        )
-        .run(id);
+
       if (entry) entry.stopping = false;
       failure(
         "Unable to confirm terminal shutdown. The record has been kept for retry.",
@@ -949,11 +830,7 @@ class TerminalManager {
       clearTimeout(timer);
       if (!exited) {
         entry.stopping = false;
-        if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") getRawSqlite()
-          .prepare(
-            "UPDATE agent_runtime_processes SET state='unconfirmed' WHERE id=?",
-          )
-          .run(id);
+
         failure(
           "Terminal exit could not be confirmed. The process and its record were retained.",
         );
@@ -961,28 +838,16 @@ class TerminalManager {
       this.flush(id, entry);
     }
   }
-  remove(id: string): void {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
+  async remove(id: string): Promise<void> {
+    {
       const item = this.live.get(id)?.info ?? this.authoritativeHistory.get(id);
       if (!item || item.state !== "closed" || (this.live.has(id) && !this.live.get(id)!.closed))
         failure("Stop this terminal before deleting its record.");
+      await this.persistAuthoritative({...item,deletedAt:new Date().toISOString()});
       this.live.delete(id);
       this.authoritativeHistory.delete(id);
       return;
     }
-    if (
-      this.get(id).state !== "closed" ||
-      (this.live.has(id) && !this.live.get(id)!.closed)
-    )
-      failure("Stop this terminal before deleting its record.");
-    getRawSqlite().transaction(() => {
-      getRawSqlite()
-        .prepare("DELETE FROM terminal_sessions WHERE id=?")
-        .run(id);
-      getRawSqlite()
-        .prepare("DELETE FROM agent_runtime_processes WHERE id=?")
-        .run(id);
-    })();
   }
   async shutdown(): Promise<void> {
     if (this.flushTimer) clearInterval(this.flushTimer);

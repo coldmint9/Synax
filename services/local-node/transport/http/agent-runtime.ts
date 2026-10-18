@@ -370,7 +370,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
       parsed.data.providerId,
       parsed.data.modelId,
     );
-    const job = createMediaJob(session.id, session.projectId, parsed.data);
+    const job = await createMediaJob(session.id, session.projectId, parsed.data);
     return c.json({ job }, 202);
   } catch (error) {
     return runtimeError(c, error);
@@ -1800,10 +1800,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", async (c) => {
     return runtimeError(c, error);
   }
 });
-agentRuntimeRoutes.get("/sessions/:sessionId/processes", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/processes", async (c) => {
   try {
     return c.json({
-      items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+      items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -1818,7 +1818,7 @@ agentRuntimeRoutes.post(
         c.req.param("processId"),
       );
       return c.json({
-        items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+        items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
       });
     } catch (error) {
       return runtimeError(c, error);
@@ -1834,7 +1834,7 @@ agentRuntimeRoutes.delete(
         c.req.param("processId"),
       );
       return c.json({
-        items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+        items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
       });
     } catch (error) {
       return runtimeError(c, error);

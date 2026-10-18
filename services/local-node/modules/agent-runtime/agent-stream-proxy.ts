@@ -1,10 +1,10 @@
+import { logger } from "../../infrastructure/runtime/logger.js";
 import { runCoordinator } from './run-coordinator.js';
 import { getBackendAdapter } from './backends/backend-registry.js';
 import { resolveBackendModel, resolveSessionBackend } from './backends/backend-binding.js';
 import { AgentRuntimeError, AgentValidationError } from './runtime-errors.js';
 import { agentSessionsRunInProcess, MAX_AGENT_SESSION_PROCESSES } from '../../infrastructure/runtime/env.js';
 import { interactionService } from './interaction-service.js';
-import { getRawSqlite } from '../../infrastructure/database/index.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
 import { agentEventService } from './event-service.js';
 import { agentLoopRuntime } from './loop-runtime.js';
@@ -150,13 +150,8 @@ async function* observeBackgroundRun(
   }finally{detach();signal?.removeEventListener('abort',detach);}
 }
 
-export function recoverAnsweredInteractions(): void {
-  if (runtimeFacade.streamMode() === 'authoritative') {
-    void recoverAnsweredInteractionsAuthoritative().catch(() => {});
-    return;
-  }
-  const rows = getRawSqlite().prepare("SELECT DISTINCT i.session_id FROM agent_runtime_interactions i JOIN agent_runtime_sessions s ON s.id=i.session_id WHERE i.consumed_at IS NULL AND i.response_json IS NOT NULL AND s.archived_at IS NULL AND s.status='waiting_input' LIMIT 100").all() as Array<{session_id:string}>;
-  for(const row of rows)if(interactionService.ready(row.session_id))resumeAgentSessionInBackground(row.session_id);
+export function recoverAnsweredInteractions():void {
+  void recoverAnsweredInteractionsAuthoritative().catch(error => logger.warn({error}, 'Interaction recovery failed'));
 }
 
 async function recoverAnsweredInteractionsAuthoritative(): Promise<void> {

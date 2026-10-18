@@ -8,7 +8,13 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import type { ContextEntry } from "../../adapters/transport/context";
+interface ContextEntry {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  contentType?: string;
+  metadata: Record<string, unknown>;
+}
 
 interface Props {
   entry: ContextEntry;

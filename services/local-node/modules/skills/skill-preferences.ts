@@ -1,26 +1,10 @@
-import { getRawSqlite } from '../../infrastructure/database/index.js';
-
+import { businessStore as store, businessKey } from '../../infrastructure/persistence/business-store.js';
+interface Preference {skillId:string;scope:string;enabled:boolean}
 export const skillPreferences = {
-  disabledIds(projectId?: string): Set<string> {
-    const rows = getRawSqlite()
-      .prepare(
-        "SELECT skill_id FROM skill_preferences WHERE enabled = 0 AND (scope = '' OR scope = ?)",
-      )
-      .all(projectId ?? '') as Array<{ skill_id: string }>;
-    return new Set(rows.map((row) => row.skill_id));
-  },
-
-  setEnabled(skillId: string, enabled: boolean, projectId?: string): void {
-    const scope = skillId.startsWith('project/') ? projectId : '';
-    if (scope === undefined)
-      throw new Error('Project skill requires a project id');
-    getRawSqlite()
-      .prepare(
-        `
-      INSERT INTO skill_preferences (skill_id, scope, enabled) VALUES (?, ?, ?)
-      ON CONFLICT(skill_id, scope) DO UPDATE SET enabled = excluded.enabled
-    `,
-      )
-      .run(skillId, scope, enabled ? 1 : 0);
+  disabledIds(projectId?:string):Set<string> {return new Set(store.list<Preference>('skill-preferences').filter(r=>!r.enabled && (!r.scope || r.scope===projectId)).map(r=>r.skillId));},
+  setEnabled(skillId:string,enabled:boolean,projectId?:string):void {
+    const scope=skillId.startsWith('project/')?projectId:'';
+    if(scope===undefined) throw new Error('Project skill requires a project id');
+    store.put('skill-preferences',businessKey(skillId,scope),{skillId,scope,enabled});
   },
 };

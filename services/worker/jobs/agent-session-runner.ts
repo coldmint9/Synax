@@ -15,6 +15,8 @@ import { agentRuntimeStore } from "../../local-node/modules/agent-runtime/sessio
 import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-runtime/agent-child-bootstrap.js";
 import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
 import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
+import { businessStore } from "../../local-node/infrastructure/persistence/business-store.js";
+import { hydrateRuntimeAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
 
 const activeStreams = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
@@ -64,11 +66,14 @@ async function runStream(
   activeStreams.set(streamId, abortController);
   try {
     await agentRuntimeStore.hydrateSession(sessionId, true);
+    await businessStore.refresh();
+    await hydrateRuntimeAssets([sessionId]);
     for await (const chunk of withinExecutionContext(
       input.executionContext,
       pickGenerator(mode, sessionId, input, abortController.signal),
     )) {
       await agentRuntimeStore.flush();
+      await businessStore.flush();
       sendAgentSessionToParent({
         type: "stream:chunk",
         sessionId,
@@ -115,8 +120,11 @@ function main(): void {
   let initialized = false;
   const initialize = async () => {
     if (initialized || !process.connected) return;
+    initialized = true;
     await agentRuntimeStore.hydrateSessions();
     await agentRuntimeStore.hydrateSession(init.sessionId);
+    await businessStore.refresh();
+    await hydrateRuntimeAssets([init.sessionId]);
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);

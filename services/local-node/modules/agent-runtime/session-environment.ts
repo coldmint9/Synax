@@ -1,4 +1,4 @@
-import { withCheckpointMutation } from "./checkpoints/mutations.js";
+import { withWorkspaceMutation } from "./workspace-mutation.js";
 import fs from "node:fs";
 import { openSystemTerminal } from "../../infrastructure/file-openers/index.js";
 import path from "node:path";
@@ -834,7 +834,7 @@ export async function renameSessionEnvironmentFile(
   if (nextPath === cleanPath) return { sessionId, path: cleanPath, previousPath: cleanPath };
   const target = resolveSafeFile(workspacePath, nextPath);
   if (fs.existsSync(target)) throw new AgentValidationError(`A file already exists at: ${nextPath}`);
-  await withCheckpointMutation(
+  await withWorkspaceMutation(
     sessionId,
     () => {
       assertInteractiveFileMutationAllowed(sessionId);
@@ -861,7 +861,7 @@ export async function trashSessionEnvironmentFile(
   const cleanPath = assertRelativePath(relativePath);
   if (cleanPath.split("/").includes(".git")) throw new AgentValidationError("Git metadata cannot be trashed.");
   const target = assertExistingMenuFile(workspacePath, cleanPath);
-  await withCheckpointMutation(sessionId, async () => {
+  await withWorkspaceMutation(sessionId, async () => {
     assertInteractiveFileMutationAllowed(sessionId);
     const { default: trash } = await import("trash");
     assertExistingMenuFile(workspacePath, cleanPath);
@@ -891,7 +891,7 @@ export async function saveSessionEnvironmentFile(
   if (!fs.statSync(absolutePath).isFile()) {
     throw new AgentValidationError(`Not a file: ${cleanPath}`);
   }
-  await withCheckpointMutation(
+  await withWorkspaceMutation(
     sessionId,
     () => fs.writeFileSync(absolutePath, content, "utf8"),
     true,

@@ -106,7 +106,7 @@ it("preserves the completed flat navigation index across ordinary appends", () =
   const previous = current();
   previous.timelineIndexLoaded = true;
   previous.timelineMessages = page(["m1", "m2", "m3", "m4"]).messages;
-  previous.historyWindow = { ...previous.historyWindow!, storage: "sqlite-flat" };
+  previous.historyWindow = { ...previous.historyWindow!, storage: "rust" };
   const latest = { ...current(), messages: page(["m4", "m5"]).messages, historyWindow: { ...previous.historyWindow, revision: 3 } };
   const merged = mergeRefreshedHistory(previous, latest);
   expect(merged.timelineIndexLoaded).toBe(true);

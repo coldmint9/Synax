@@ -27,6 +27,8 @@ const CF_OUTBOX: &str = "outbox";
 const CF_GC_STATE: &str = "gc_state";
 const CF_GC_MARKS: &str = "gc_marks";
 const CF_GC_QUEUE: &str = "gc_queue";
+mod metadata;
+const CF_METADATA: &str = "metadata";
 const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BLOB_CHUNK_BYTES: usize = 256 * 1024;
@@ -138,6 +140,7 @@ impl HistoryStore {
             CF_GC_STATE,
             CF_GC_MARKS,
             CF_GC_QUEUE,
+            CF_METADATA,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -256,7 +259,7 @@ impl HistoryStore {
             .map_err(|_| HistoryError::InvalidCommand("history session lock poisoned".into()))?;
         let readonly = matches!(
             operation,
-            "head_read"
+            "metadata_get" | "metadata_page" | "head_read"
                 | "get_object"
                 | "get_blob_chunk"
                 | "get_blob_manifest"
@@ -322,6 +325,9 @@ impl HistoryStore {
             "asset_has_binding" => self.asset_has_binding(&value)?,
             "asset_list_bindings" => self.asset_list_bindings(&value)?,
             "asset_delete" => self.asset_delete(&value, &mut batch)?,
+            "metadata_get" => self.metadata_get(session_id, &value)?,
+            "metadata_page" => self.metadata_page(session_id, &value)?,
+            "metadata_commit" => self.metadata_commit(session_id, &value, &mut batch)?,
             "get_object" => {
                 let object_id = required_string(&value, "objectId")?;
                 self.read_object(object_id)?

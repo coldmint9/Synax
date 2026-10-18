@@ -88,7 +88,7 @@ export async function listTurnReferenceOptions(
     const files = new Set(
       (await Promise.all(roots.map(workspaceFileIndex))).flat(),
     );
-    const recent = new Set(recentWorkspaceReadPaths(roots));
+    const recent = new Set(await recentWorkspaceReadPaths(roots));
     const config = sandboxConfigForSession(sessionId ?? "__default__");
     const needle = query.trim().replace(/\\/g, "/").toLowerCase();
     // Recent reads can include explicitly read generated/ignored files. They

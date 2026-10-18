@@ -1,9 +1,5 @@
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
-import {
-  retryWriteLockAcquisition,
-  runtimeWriteLockPolicy,
-} from "../../infrastructure/database/write-contention.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
@@ -14,9 +10,7 @@ export function finalizeStoppedSessions(
   store: AgentRuntimeStore = agentRuntimeStore,
 ): void {
   const ids = [...new Set(sessionIds)];
-  retryWriteLockAcquisition(
-    runtimeWriteLockPolicy(),
-    () => {
+  store.transaction(() => {
       const completedAt = nowIso();
       for (const sessionId of ids) {
         const session = store.tryGetSession(sessionId);
@@ -57,7 +51,5 @@ export function finalizeStoppedSessions(
             },
           });
       }
-    },
-    () => false,
-  );
+  });
 }

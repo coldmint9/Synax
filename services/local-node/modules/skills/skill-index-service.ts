@@ -1,4 +1,4 @@
-import { getRawSqlite } from '../../infrastructure/database/index.js';
+import { businessStore as store } from '../../infrastructure/persistence/business-store.js';
 import { parseSkillMarkdown } from './skill-parser.js';
 import { fetchSkillJson, fetchSkillText } from './skill-http.js';
 import { skillSourceService } from './skill-source-service.js';
@@ -121,22 +121,9 @@ function resolveWellKnownBaseUrl(indexUrl: string): string {
 export class SkillIndexService {
   listCatalogEntries(sourceId?: string): SkillCatalogEntry[] {
     skillSourceService.ensureDefaultSources();
-    const rows = sourceId
-      ? getRawSqlite()
-        .prepare('SELECT * FROM skill_catalog_entries WHERE source_id = ? ORDER BY name ASC')
-        .all(sourceId) as CatalogRow[]
-      : getRawSqlite()
-        .prepare('SELECT * FROM skill_catalog_entries ORDER BY source_id ASC, name ASC')
-        .all() as CatalogRow[];
-    return rows.map(rowToEntry);
+    return store.list<CatalogRow>('skill-catalog').filter(r=>!sourceId || r.source_id===sourceId).sort((a,b)=>a.source_id.localeCompare(b.source_id)||a.name.localeCompare(b.name)).map(rowToEntry);
   }
-
-  getCatalogEntry(entryId: string): SkillCatalogEntry | null {
-    const row = getRawSqlite()
-      .prepare('SELECT * FROM skill_catalog_entries WHERE id = ?')
-      .get(entryId) as CatalogRow | undefined;
-    return row ? rowToEntry(row) : null;
-  }
+  getCatalogEntry(id:string):SkillCatalogEntry|null {const row=store.get<CatalogRow>('skill-catalog',id);return row ? rowToEntry(row):null;}
 
   async syncSource(sourceId: string): Promise<number> {
     const source = skillSourceService.getSource(sourceId);
@@ -166,7 +153,7 @@ export class SkillIndexService {
         throw new Error(`Sync not supported for source type: ${source.type}`);
       }
 
-      getRawSqlite().prepare('DELETE FROM skill_catalog_entries WHERE source_id = ? AND indexed_at < ?').run(sourceId, indexedAt);
+      for (const row of store.list<CatalogRow>('skill-catalog')) if(row.source_id===sourceId && row.indexed_at<indexedAt) store.delete('skill-catalog',row.id);
       skillSourceService.markSyncResult(sourceId, { ok: true });
       return count;
     } catch (err) {
@@ -220,15 +207,7 @@ export class SkillIndexService {
       : `${apiBase}/${scanRoot}?ref=${encodeURIComponent(ref)}`;
 
     const entries = await fetchSkillJson<GitHubContentEntry[]>(listUrl);
-    const insert = getRawSqlite().prepare(`
-      INSERT INTO skill_catalog_entries (
-        id, source_id, name, description, version, remote_url, content_digest, tags_json, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        description = excluded.description,
-        remote_url = excluded.remote_url,
-        indexed_at = excluded.indexed_at
-    `);
+    const insert = catalogWriter;
 
     let count = 0;
     for (const entry of entries) {
@@ -268,16 +247,7 @@ export class SkillIndexService {
     contentBaseUrl: string,
     indexedAt: string,
   ): number {
-    const insert = getRawSqlite().prepare(`
-      INSERT INTO skill_catalog_entries (
-        id, source_id, name, description, version, remote_url, content_digest, tags_json, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        description = excluded.description,
-        remote_url = excluded.remote_url,
-        tags_json = excluded.tags_json,
-        indexed_at = excluded.indexed_at
-    `);
+    const insert = catalogWriter;
 
     let count = 0;
     for (const item of entries) {
@@ -305,17 +275,7 @@ export class SkillIndexService {
     baseUrl: string,
     indexedAt: string,
   ): number {
-    const insert = getRawSqlite().prepare(`
-      INSERT INTO skill_catalog_entries (
-        id, source_id, name, description, version, remote_url, content_digest, tags_json, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        description = excluded.description,
-        version = excluded.version,
-        remote_url = excluded.remote_url,
-        content_digest = excluded.content_digest,
-        indexed_at = excluded.indexed_at
-    `);
+    const insert = catalogWriter;
 
     let count = 0;
     for (const item of index.skills ?? []) {
@@ -343,18 +303,7 @@ export class SkillIndexService {
     baseUrl: string,
     indexedAt: string,
   ): number {
-    const insert = getRawSqlite().prepare(`
-      INSERT INTO skill_catalog_entries (
-        id, source_id, name, description, version, remote_url, content_digest, tags_json, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        description = excluded.description,
-        version = excluded.version,
-        remote_url = excluded.remote_url,
-        content_digest = excluded.content_digest,
-        tags_json = excluded.tags_json,
-        indexed_at = excluded.indexed_at
-    `);
+    const insert = catalogWriter;
 
     let count = 0;
     for (const item of index.skills ?? []) {
@@ -379,3 +328,9 @@ export class SkillIndexService {
 }
 
 export const skillIndexService = new SkillIndexService();
+
+const catalogWriter = {
+  run(id:string,source_id:string,name:string,description:string,version:string|null,remote_url:string,content_digest:string|null,tags_json:string,indexed_at:string):void {
+    store.put('skill-catalog',id,{id,source_id,name,description,version,remote_url,content_digest,tags_json,indexed_at});
+  },
+};

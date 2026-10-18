@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import type { AgentSession,ToolCallRecord } from "./contracts.js";
 import { extractBashReadPaths } from "./read-tracker.js";
 import { resolveProjectWorkspaceLocation } from "./tools/workspace.js";
 import { isWithinWorkspace } from "../project-workspace.js";
@@ -26,28 +27,13 @@ function object(json: string | null): Record<string, unknown> {
 }
 
 /** Durable history works across sessions, server restarts and runtime workers. */
-export function recentWorkspaceReadPaths(roots: string[]): string[] {
-  const rows = getRawSqlite()
-    .prepare(
-      `
-    SELECT t.tool_id, t.input_ref_json,
-           CASE WHEN json_valid(t.output_ref_json) THEN json_object('exitCode',
-             COALESCE(json_extract(t.output_ref_json, '$.exitCode'),
-                      json_extract(t.output_ref_json, '$.exit_code')))
-           ELSE NULL END AS output_ref_json,
-           s.project_id, s.session_metadata_json
-    FROM agent_runtime_tool_calls t
-    JOIN agent_runtime_sessions s ON s.id = t.session_id
-    WHERE s.archived_at IS NULL AND t.status = 'completed' AND (
-      t.tool_id = 'file.read' OR lower(t.tool_id) GLOB '*.read'
-      OR lower(t.tool_id) GLOB '*read_file' OR lower(t.tool_id) GLOB '*read_text_file'
-      OR t.tool_id = 'bash' OR lower(t.tool_id) GLOB '*.bash'
-      OR t.tool_id = 'codex.commandExecution'
-    )
-    ORDER BY t.ended_at DESC, t.rowid DESC LIMIT 2000
-  `,
-    )
-    .all() as unknown as ReadRow[];
+export async function recentWorkspaceReadPaths(roots: string[]): Promise<string[]> {
+  const sessions=await runtimeFacade.listSessionProjection() as AgentSession[];
+  const rows:ReadRow[]=[];
+  for(const session of sessions.filter(s=>!s.sessionMetadata?.archivedAt && !s.sessionMetadata?.deletedAt).slice(0,50)) {
+    const calls=await runtimeFacade.listHistoryObjects(session.id,'list_tool_calls') as ToolCallRecord[];
+    for(const call of calls.filter(t=>t.status==='completed').slice(-200)) rows.push({tool_id:call.toolId,input_ref_json:JSON.stringify(call.inputRef),output_ref_json:JSON.stringify(call.outputRef),project_id:session.projectId,session_metadata_json:JSON.stringify(session.sessionMetadata)});
+  }
   const seen = new Set<string>();
   const checked = new Set<string>();
   const projectLocations = new Map<string, WorkspaceLocation | undefined>();

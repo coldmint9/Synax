@@ -1,3 +1,4 @@
+import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
 import { createGitMrRoutes } from "./git-mr.js";
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
@@ -29,8 +30,6 @@ import { dirname, join, normalize, resolve } from "node:path";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { initializeProjectSettings } from "../../infrastructure/runtime/config/project-settings-store.js";
-import { contextService } from "../../modules/context/context-service.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { revokeAllProjectToolGrants } from "../../modules/agent-runtime/project-tool-grants.js";
 import { agentRuntimeStore } from "../../modules/agent-runtime/session-store.js";
 import { invalidateSessionEnvironment } from "../../modules/agent-runtime/session-environment.js";
@@ -1064,41 +1063,14 @@ projectRoutes.post("/:id/git/worktrees/prune", async (c) => {
   }
 });
 
-/** GET /:id/stats — real-time project statistics from SQLite */
-projectRoutes.get("/:id/stats", (c) => {
-  const id = c.req.param("id");
-  if (!projects.has(id)) return c.json({ error: "Not found" }, 404);
-
-  const db = getRawSqlite();
-
-  const { total: sessionCount } = contextService.listSessions(id, { limit: 1 });
-
-  const coordState = contextService.getCoordinatesState(id);
-  const nodeCount = coordState
-    ? Object.keys(coordState.forest.nodes ?? {}).length
-    : 0;
-
-  const sevenDaysAgo = new Date(
-    Date.now() - 7 * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const recentRuns = db
-    .prepare(
-      `SELECT COUNT(*) as c FROM agent_loop_records WHERE project_id = ? AND started_at > ?`,
-    )
-    .get(id, sevenDaysAgo) as { c: number } | undefined;
-
-  const lastEvent = db
-    .prepare(
-      `SELECT created_at FROM coord_event_log WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(id) as { created_at: string } | undefined;
-
-  return c.json({
-    sessionCount,
-    nodeCount,
-    recentRunCount: recentRuns?.c ?? 0,
-    lastActivity: lastEvent?.created_at ?? null,
-  });
+/** Project activity comes from the authoritative Agent sessions. */
+projectRoutes.get('/:id/stats',async c=>{
+  const id=c.req.param('id');if(!projects.has(id)) return c.json({error:'Not found'},404);
+  const sessions=(await runtimeFacade.listSessionProjection()) as import('../../modules/agent-runtime/contracts.js').AgentSession[];
+  const visible=sessions.filter(s=>s.projectId===id && !s.sessionMetadata?.deletedAt && !s.sessionMetadata?.archivedAt);
+  const recent=new Date(Date.now()-7*86400000).toISOString();
+  const runs=await Promise.all(visible.map(s=>runtimeFacade.listRunHistory(s.id)));
+  return c.json({sessionCount:visible.length,nodeCount:0,recentRunCount:runs.flat().filter(r=>(r as {startedAt:string}).startedAt>recent).length,lastActivity:visible.map(s=>s.updatedAt).sort().at(-1) ?? null});
 });
 
 /** GET /:id — get single project */

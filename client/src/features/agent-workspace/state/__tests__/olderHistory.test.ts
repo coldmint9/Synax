@@ -128,7 +128,7 @@ it("loads just the pages needed when jumping to an indexed older point", async (
 
 it("uses the lightweight index for flat history without fetching full older windows", async () => {
   loaded();
-  store.setState({ sessions: [{ id: "session", sessionMetadata: { historyStorage: "sqlite-flat" } } as import("../../../../adapters/transport/agentRuntime").AgentSession] });
+  store.setState({ sessions: [{ id: "session", sessionMetadata: { historyStorage: "rust" } } as import("../../../../adapters/transport/agentRuntime").AgentSession] });
   vi.mocked(agentRuntimeApi.historyTimeline).mockResolvedValueOnce({ items: page(["m2","m3","m4"]).messages, next: 2, epoch: 1 })
     .mockResolvedValueOnce({ items: page(["m1"]).messages, epoch: 1 });
   await store.getState().loadTimelineIndex();

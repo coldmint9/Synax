@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import NativeDatabase from 'libsql';
+import { existsSync } from 'node:fs';
 import { decodeEnvelope, encodeEnvelope } from '../packages/runtime-protocol/wire.js';
 
 // This fixture exercises real HTTP, provider execution, worker IPC, RocksDB,
@@ -72,8 +72,7 @@ async function stopHost() {
 async function startHost() {
   const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'error',
     SYNAX_DESKTOP_SIDECAR: '1', SYNAX_AGENT_SESSION_IN_PROCESS: '0',
-    SYNAX_E2E_SQL_PROBE: path.join(root,'retired-sql.jsonl'),
-    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${path.resolve('scripts/runtime-v2-sql-probe.cjs')}` };
+ };
   // Retired mode flags must have no role in selecting the runtime under test.
   for (const key of ['SYNAX_HISTORY_MODE', 'SYNAX_TRANSCRIPT_STORAGE', 'SYNAX_RUNTIME_SIDECAR_STREAM', 'SYNAX_RUNTIME_SIDECAR_ADMISSION', 'SYNAX_RUNTIME_SIDECAR_SOCKET', 'SYNAX_RUNTIME_SIDECAR_TOKEN', 'SYNAX_RUNTIME_SIDECAR_PORT']) delete env[key];
   const child = spawn(process.execPath, ['--import', 'tsx/esm', 'services/local-node/entrypoints/http-server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
@@ -161,15 +160,9 @@ try {
   assert.equal(finalHistory.items.filter((message:{role:string;content:string})=>message.role==='assistant'&&message.content.includes(answer)).length,2);
   checks.push('persisted tool evidence → second turn after restart');
   await stopHost();
-  const db = new NativeDatabase(path.join(root, 'context.db'), { readonly: true });
-  let oldTables: Array<{ name: string }>;
-  try { oldTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND (name GLOB 'agent_runtime_*' OR name GLOB 'conversation_*' OR name GLOB 'jsonl_*' OR name GLOB 'transcript_*' OR name='agent_plan_artifacts' OR name='terminal_sessions')").all() as Array<{ name: string }>; }
-  finally { db.close(); }
-  assert.deepEqual(oldTables, [], '2.0 runtime must not create old runtime SQL tables');
-  checks.push('no old runtime SQL tables');
-  const attempts = await readFile(path.join(root,'retired-sql.jsonl'),'utf8').catch(()=> '');
-  assert.equal(attempts, '', 'online path must not query retired SQL tables, including caught errors');
-  checks.push('no retired SQL reads or writes');
+  assert(!existsSync(path.join(root,'context.db')),'context.db must not be created');
+  assert(!existsSync(path.join(root,'api-logs.db')),'api-logs.db must not be created');
+  checks.push('no SQLite databases');
 } catch (error) { failure = error; }
 finally {
   socket?.close(); await stopHost();

@@ -1,4 +1,4 @@
-import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
+import { assertBatchInput } from "./validation/batch-input.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { RuntimeEvent, RuntimeEventType } from "./contracts.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";

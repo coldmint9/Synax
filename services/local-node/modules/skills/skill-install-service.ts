@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { getRawSqlite } from '../../infrastructure/database/index.js';
+import { businessStore as store } from '../../infrastructure/persistence/business-store.js';
 import { fetchSkillText, sha256Digest, verifyContentDigest } from './skill-http.js';
 import { fetchSkillsShSkillContent } from './skills-sh-client.js';
 import { parseSkillFile } from './skill-parser.js';
@@ -9,44 +9,10 @@ import { resolveGlobalSkillsRoot } from './paths.js';
 import type { AgentProfileKind } from '../agent-runtime/contracts.js';
 import type { SkillInstallRecord, SkillInstallStatus, SkillSummary } from './types.js';
 
-interface InstallRow {
-  id: string;
-  source_id: string;
-  name: string;
-  version: string | null;
-  label: string | null;
-  description: string;
-  install_path: string;
-  content_digest: string | null;
-  applies_to_json: string;
-  required_capabilities_json: string;
-  status: string;
-  installed_at: string;
-  updated_at: string;
-}
-
 const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function rowToRecord(row: InstallRow): SkillInstallRecord {
-  return {
-    id: row.id,
-    sourceId: row.source_id,
-    name: row.name,
-    version: row.version ?? undefined,
-    label: row.label ?? undefined,
-    description: row.description,
-    installPath: row.install_path,
-    contentDigest: row.content_digest ?? undefined,
-    appliesTo: JSON.parse(row.applies_to_json) as AgentProfileKind[],
-    requiredCapabilities: JSON.parse(row.required_capabilities_json) as string[],
-    status: row.status as SkillInstallStatus,
-    installedAt: row.installed_at,
-    updatedAt: row.updated_at,
-  };
 }
 
 function assertSafeSkillName(name: string): void {
@@ -67,22 +33,10 @@ function resolveInstallDir(name: string): string {
 
 export class SkillInstallService {
   listInstalls(): SkillInstallRecord[] {
-    const rows = getRawSqlite()
-      .prepare('SELECT * FROM skill_installs ORDER BY name ASC')
-      .all() as InstallRow[];
-    return rows.map(rowToRecord);
+    return store.list<SkillInstallRecord>('skill-installs').sort((a,b)=>a.name.localeCompare(b.name));
   }
-
-  getInstall(skillId: string): SkillInstallRecord | null {
-    const row = getRawSqlite()
-      .prepare('SELECT * FROM skill_installs WHERE id = ?')
-      .get(skillId) as InstallRow | undefined;
-    return row ? rowToRecord(row) : null;
-  }
-
-  isInstalledName(name: string): boolean {
-    return Boolean(getRawSqlite().prepare('SELECT 1 FROM skill_installs WHERE name = ? LIMIT 1').get(name));
-  }
+  getInstall(id:string):SkillInstallRecord|null {return store.get<SkillInstallRecord>('skill-installs',id) ?? null;}
+  isInstalledName(name:string):boolean {return this.listInstalls().some(i=>i.name===name);}
 
   async install(input: { sourceId: string; name: string; version?: string; remoteUrl?: string }): Promise<SkillSummary> {
     assertSafeSkillName(input.name);
@@ -118,36 +72,12 @@ export class SkillInstallService {
     const now = nowIso();
     const digest = entry?.contentDigest ?? `sha256:${sha256Digest(rawContent)}`;
 
-    getRawSqlite().prepare(`
-      INSERT INTO skill_installs (
-        id, source_id, name, version, label, description, install_path, content_digest,
-        applies_to_json, required_capabilities_json, status, installed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'installed', ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        source_id = excluded.source_id,
-        version = excluded.version,
-        label = excluded.label,
-        description = excluded.description,
-        install_path = excluded.install_path,
-        content_digest = excluded.content_digest,
-        applies_to_json = excluded.applies_to_json,
-        required_capabilities_json = excluded.required_capabilities_json,
-        status = 'installed',
-        updated_at = excluded.updated_at
-    `).run(
-      skillId,
-      input.sourceId,
-      input.name,
-      parsed.version || entry?.version || input.version || '',
-      parsed.label,
-      parsed.description,
-      installPath,
-      digest,
-      JSON.stringify(parsed.appliesTo),
-      JSON.stringify(parsed.requiredCapabilities),
-      now,
-      now,
-    );
+    store.put('skill-installs',skillId,{
+      id:skillId,sourceId:input.sourceId,name:input.name,version:parsed.version || entry?.version || input.version || '',
+      label:parsed.label,description:parsed.description,installPath,contentDigest:digest,
+      appliesTo:parsed.appliesTo,requiredCapabilities:parsed.requiredCapabilities,status:'installed',installedAt:existing?.installedAt ?? now,updatedAt:now,
+    } satisfies SkillInstallRecord);
+    await store.flush(['skill-installs']);
 
     const { skillRegistry } = await import('./skill-registry.js');
     return skillRegistry.getSummary(skillId, undefined, true, true);
@@ -165,15 +95,13 @@ export class SkillInstallService {
       const dir = path.dirname(install.installPath);
       fs.rmSync(dir, { recursive: true, force: true });
     }
-    getRawSqlite().prepare('DELETE FROM skill_installs WHERE id = ?').run(skillId);
+    store.delete('skill-installs',skillId);
   }
 
   setStatus(skillId: string, status: SkillInstallStatus): SkillInstallRecord {
     const install = this.getInstall(skillId);
     if (!install) throw new Error(`Installed skill not found: ${skillId}`);
-    getRawSqlite()
-      .prepare('UPDATE skill_installs SET status = ?, updated_at = ? WHERE id = ?')
-      .run(status, nowIso(), skillId);
+    store.put('skill-installs',skillId,{...install,status,updatedAt:nowIso()});
     return this.getInstall(skillId)!;
   }
 

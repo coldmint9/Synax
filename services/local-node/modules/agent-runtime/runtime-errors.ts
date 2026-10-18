@@ -1,5 +1,5 @@
 import { RuntimeSidecarError } from "./sidecar/sidecar-client.js";
-import { VersionStoreError } from "./checkpoints/version-store/limits.js";
+import { VersionStoreError } from "./validation/limits.js";
 export class AgentRuntimeError extends Error {
   constructor(
     message: string,

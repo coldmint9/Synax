@@ -1,10 +1,14 @@
+import { ensureTestRuntime, clearBusinessTestData } from "../../../../test-fixtures/rust-runtime.js";
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from '../../../infrastructure/runtime/env.js';
 import { resetRuntimeIdsForTests } from '../runtime-ids.js';
 import { agentRuntimeStore } from '../session-store.js';
 
-export function resetAgentRuntimeFixtures(): void {
+export async function resetAgentRuntimeFixtures(): Promise<void> {
+  await ensureTestRuntime();
+  await agentRuntimeStore.flush().catch(()=>{});
+  await clearBusinessTestData();
   agentRuntimeStore.reset();
   resetRuntimeIdsForTests();
   // Runtime execution requires an explicit workspace, even in unit tests.

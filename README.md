@@ -57,22 +57,9 @@ npm run client:build
 
 The build outputs are `server-dist/` and `client/dist/`. Use `npm run dev:all` for the browser workflow, or `npm run build:desktop` to package the desktop application.
 
-#### Local storage maintenance (read-only by default)
+#### Local storage
 
-Inspect database pages, freelist, WAL, FTS, cache, replay, and process-receipt categories:
-
-```bash
-npm run storage:report
-```
-
-Maintenance is not automatic. Point it at a copy and stop the runtime first:
-
-```bash
-SYNAX_DB_PATH=/absolute/path/context.db npm run storage:maintain
-SYNAX_DB_PATH=/absolute/path/context.db npm run storage:compact
-```
-
-The command creates a consistent `VACUUM INTO` backup and refuses to overwrite an existing backup. It does not remove authoritative messages, events, billing, checkpoints, forks, undo records, or asset references. Never run mutating maintenance against a live `~/.synax/context.db`.
+Synax 2.0 uses RocksDB in the Rust Runtime Sidecar for session state, history, context memory, skill and extension state, tool grants, media jobs, terminals, and process leases. Configuration, project registration, and logs use JSON/files. The project no longer creates or reads SQLite databases. Set `DATA_ROOT` to change the runtime root; the default is `~/.synax`.
 
 #### Desktop (Electron)
 

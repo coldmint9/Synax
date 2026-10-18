@@ -57,22 +57,9 @@ npm run client:build
 
 构建产物分别位于 `server-dist/` 和 `client/dist/`。浏览器使用流程通过 `npm run dev:all` 启动；打包桌面应用使用 `npm run build:desktop`。
 
-#### 本地存储维护（默认只读）
+#### 本地存储
 
-查看数据库占用、freelist、WAL、FTS、缓存、回放和进程台账分类：
-
-```bash
-npm run storage:report
-```
-
-维护命令默认不会执行。使用 `SYNAX_DB_PATH` 指定副本并在运行服务完全停止后执行：
-
-```bash
-SYNAX_DB_PATH=/绝对路径/context.db npm run storage:maintain
-SYNAX_DB_PATH=/绝对路径/context.db npm run storage:compact
-```
-
-命令会先通过 `VACUUM INTO` 创建一致性备份，拒绝覆盖已有备份；不会清理权威消息、事件、计费、检查点、分叉、撤销或资源引用。不要对正在运行的 `~/.synax/context.db` 执行变更命令。
+Synax 2.0 使用 Rust Runtime Sidecar 的 RocksDB 保存会话运行态、历史、上下文记忆、技能与扩展开关、工具授权、媒体任务、终端和进程租约。配置、项目注册和日志使用 JSON/文件存储；运行目录由 `DATA_ROOT` 指定，默认是 `~/.synax`。项目不再创建或读取 SQLite 数据库。
 
 #### 桌面端（Electron）
 

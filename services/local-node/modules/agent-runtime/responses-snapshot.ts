@@ -7,8 +7,8 @@
  * reasoningParts, messages and tool calls, whose signatures remain untouched.
  */
 import { whitelistRawUsage } from "../../infrastructure/llm-runtime/usage.js";
-import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
-import { VersionStoreError } from "./checkpoints/version-store/limits.js";
+import { assertBatchInput } from "./validation/batch-input.js";
+import { VersionStoreError } from "./validation/limits.js";
 
 const OUTPUT_DIAGNOSTIC_BYTES = 512 * 1024;
 const USAGE_DIAGNOSTIC_BYTES = 64 * 1024;

@@ -56,7 +56,6 @@ import {
   projectWorkContext,
 } from "./context-projection.js";
 import { maybeLlmCompactContext } from "./llm-context-compaction.js";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { INVALID_TOOL_ID } from "./tool-invalid.js";
 import { interactionService } from "./interaction-service.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
@@ -2149,7 +2148,7 @@ export class AgentLoopRuntime {
       }),
     );
     let message: AgentRuntimeMessage | undefined;
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       message = this.store
         .listMessages(sessionId)
         .find(
@@ -2182,7 +2181,7 @@ export class AgentLoopRuntime {
               : {}),
           },
         );
-    })();
+    });
     if (
       work.status === "completed" &&
       message &&
@@ -2227,7 +2226,7 @@ export class AgentLoopRuntime {
     };
     let message!: AgentRuntimeMessage;
     let finished!: AgentRun;
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       message = this.finishAssistantMessage(
         sessionId,
         run.id,
@@ -2236,10 +2235,10 @@ export class AgentLoopRuntime {
         run.model,
         "round_handoff",
       );
-    })();
+    });
     // Snapshot the reply before publishing the terminal run state.
     persistInlineVisualization(message);
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       finished = this.store.updateRun(run.id, {
         status: "completed",
         completedAt: nowIso(),
@@ -2256,7 +2255,7 @@ export class AgentLoopRuntime {
         resultSummary: handoff.summary,
         blockedReason: null,
       });
-    })();
+    });
     const event = this.events.append({
       sessionId,
       type: "run_completed",
@@ -2303,7 +2302,7 @@ export class AgentLoopRuntime {
         ].join("\n")
       : reason;
     let message!: AgentRuntimeMessage;
-    getRawSqlite().transaction(() => {
+    runtimeTransaction(() => {
       message =
         this.store
           .listMessages(sessionId)
@@ -2329,7 +2328,7 @@ export class AgentLoopRuntime {
               }
             : { goalStatus: goal?.status, goalStateRunId: run.id },
         );
-    })();
+    });
     const finished = this.store.updateRun(run.id, {
       status: completed ? "completed" : "blocked",
       completedAt: nowIso(),

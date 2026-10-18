@@ -1,7 +1,6 @@
 import type { GlobalComputerUseSettings } from './config-types.js';
 import fs from "node:fs";
 import path from "node:path";
-import { getRawSqlite } from "../../database/index.js";
 import { DATA_ROOT } from "../env.js";
 import { logger } from "../logger.js";
 import {
@@ -288,22 +287,19 @@ function ensureConfigStoreReady(): void {
     if (!templateExists && globalExists) {
       migrateLegacyJsonConfigIfNeeded();
     } else {
-      const migrated = migrateLegacyConfigIfNeeded();
-      if (!migrated) {
-        if (!templateExists) {
-          writeJsonAtomic(
-            templateConfigPath(),
-            prepareGlobalConfigForStorage(createDefaultGlobalConfig()),
-            { preserveBackup: false },
-          );
-        }
-        if (!globalExists) {
-          writeJsonAtomic(
-            globalConfigPath(),
-            prepareGlobalConfigForStorage(createDefaultUserGlobalConfig()),
-            { preserveBackup: false },
-          );
-        }
+      if (!templateExists) {
+        writeJsonAtomic(
+          templateConfigPath(),
+          prepareGlobalConfigForStorage(createDefaultGlobalConfig()),
+          { preserveBackup: false },
+        );
+      }
+      if (!globalExists) {
+        writeJsonAtomic(
+          globalConfigPath(),
+          prepareGlobalConfigForStorage(createDefaultUserGlobalConfig()),
+          { preserveBackup: false },
+        );
       }
     }
   } else {
@@ -351,82 +347,6 @@ function migrateLegacyJsonConfigIfNeeded(): boolean {
     globalConfigPath(),
     prepareGlobalConfigForStorage(split.global),
     { preserveBackup: false },
-  );
-  return true;
-}
-
-function migrateLegacyConfigIfNeeded(): boolean {
-  const db = getRawSqlite();
-  const globalRow = db
-    .prepare(
-      "SELECT config_json, version, updated_at, updated_by FROM global_config WHERE id = 1",
-    )
-    .get() as
-    | {
-        config_json: string;
-        version: number;
-        updated_at: string;
-        updated_by: string;
-      }
-    | undefined;
-  const projectRows = db
-    .prepare(
-      "SELECT project_id, config_json, version, updated_at, updated_by FROM project_config",
-    )
-    .all() as Array<{
-    project_id: string;
-    config_json: string;
-    version: number;
-    updated_at: string;
-    updated_by: string;
-  }>;
-
-  if (!globalRow && projectRows.length === 0) return false;
-
-  const legacyGlobal = globalRow
-    ? (JSON.parse(globalRow.config_json) as GlobalConfig)
-    : createDefaultGlobalConfig();
-  const split = splitMergedGlobalConfig(legacyGlobal);
-
-  writeJsonAtomic(
-    templateConfigPath(),
-    prepareGlobalConfigForStorage(split.template),
-    { preserveBackup: false },
-  );
-  writeJsonAtomic(
-    globalConfigPath(),
-    prepareGlobalConfigForStorage(split.global),
-    { preserveBackup: false },
-  );
-
-  for (const row of projectRows) {
-    const parsed = JSON.parse(row.config_json) as ProjectConfig;
-    const projectConfig: ProjectConfig = {
-      ...parsed,
-      projectId: row.project_id,
-      version: row.version,
-      updatedAt: row.updated_at,
-      updatedBy: row.updated_by,
-    };
-    writeJsonAtomic(
-      projectConfigPath(row.project_id),
-      prepareProjectConfigForStorage(projectConfig),
-      { preserveBackup: false },
-    );
-  }
-
-  try {
-    db.prepare("DELETE FROM global_config").run();
-    db.prepare("DELETE FROM project_config").run();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error({ err: message }, "[config] legacy config cleanup failed");
-    throw err;
-  }
-
-  logger.info(
-    { projects: projectRows.length },
-    "[config] legacy sqlite config migrated to json",
   );
   return true;
 }
