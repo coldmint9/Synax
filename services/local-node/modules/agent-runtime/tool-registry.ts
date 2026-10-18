@@ -7,7 +7,7 @@ import { extensionStore } from "../extensions/extension-store.js";
 import { customToolProvider } from "../extensions/custom-tool-provider.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
 import { resolveWorkspacePath as resolveUndoPath } from "./tools/workspace.js";
-import { withCheckpointMutation } from "./checkpoints/mutations.js";
+import { withRuntimeFileMutation } from "./runtime-files.js";
 import { assertHistoryUnlocked } from "./runtime-history.js";
 import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
@@ -1043,7 +1043,7 @@ export class ToolRegistry {
           ])
           .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
       const result = checkpointMutation
-        ? await withCheckpointMutation(
+        ? await withRuntimeFileMutation(
             sessionId,
             executeTool,
             false,

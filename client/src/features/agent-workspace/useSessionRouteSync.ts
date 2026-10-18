@@ -15,6 +15,10 @@ import {
 import { isRuntimeResourceRemoved } from "../../shared/lib/runtimeResourceRegistry";
 import type { SessionListView } from "./sessionBuckets";
 
+function isRuntimeSessionReference(value: string): boolean {
+  return value.startsWith("ars_");
+}
+
 /** Keep agent session detail in sync with sessions URL. */
 export function useSessionRouteSync(
   listView: SessionListView,
@@ -55,7 +59,20 @@ export function useSessionRouteSync(
       return;
     }
 
-    if (total !== null && sessions.length >= total) {
+    // The 2.0 runtime only accepts opaque `ars_*` session IDs. Older desktop
+    // state could contain a profile or model reference here and would cause a
+    // burst of misleading 404 notifications during startup.
+    if (!isRuntimeSessionReference(last.sessionId)) {
+      clearSessionLastVisit(projectId);
+      return;
+    }
+
+    // Wait for the first Rust-backed session page before replaying the last
+    // visit. Navigating while `total` is still null can open a stale ID and
+    // fan out several detail requests before the list can reject it.
+    if (total === null) return;
+
+    if (sessions.length >= total) {
       const exists = sessions.some((s) => s.id === last.sessionId);
       if (!exists) {
         clearSessionLastVisit(projectId);
@@ -84,6 +101,16 @@ export function useSessionRouteSync(
     // afterwards, so the panel would never reopen and the detail never loads.
     // Wait until the store has bound the project this page renders.
     if (!isProjectReady) return;
+
+    if (sessionIdFromUrl && !isRuntimeSessionReference(sessionIdFromUrl)) {
+      const search = new URLSearchParams(location.search);
+      search.delete("session");
+      navigate(
+        { pathname: location.pathname, search: search.toString() },
+        { replace: true },
+      );
+      return;
+    }
 
     if (sessionRemoved && (listView === "sessions" || listView === "workflow")) {
       const last = loadSessionLastVisit(projectId);

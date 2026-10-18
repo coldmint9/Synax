@@ -3,6 +3,7 @@ import { saveGeneratedMedia } from "../../modules/agent-runtime/generated-media.
 import {
   modelContentParts,
   validateAssets,
+  prepareAssets,
 } from "../../modules/agent-runtime/media-assets.js";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -116,6 +117,7 @@ llmRoutes.post("/stream", async (c) => {
     })),
   } as import("../../infrastructure/llm-runtime/types.js").LlmGatewayRequest;
   try {
+    for (const message of parsed.data.messages) if (message.contentParts) await prepareAssets(message.contentParts, input.projectId);
     input.messages = parsed.data.messages.map((message) => {
       if (!message.contentParts)
         return { role: message.role, content: message.content };

@@ -366,7 +366,7 @@ try {
     { probe, server: path.join(info.resources, "server-dist", "server.cjs") },
   );
   assert.deepEqual(native, { nativeModules: true, childFork: true });
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative') {
+  {
     let snapshots = 0;
     let materializedSnapshots = 0;
     let clientHello = false;

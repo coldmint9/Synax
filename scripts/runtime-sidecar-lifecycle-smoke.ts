@@ -8,7 +8,6 @@ import type { AgentRunStreamChunk } from '../services/local-node/modules/agent-r
 const root = await mkdtemp(path.join(tmpdir(), 'synax-lifecycle-'));
 Object.assign(process.env, {
   DATA_ROOT: root, NODE_ENV: 'test', LOG_LEVEL: 'error',
-  SYNAX_HISTORY_MODE: 'flat', SYNAX_TRANSCRIPT_STORAGE: 'legacy',
   SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '1', SYNAX_RUNTIME_SIDECAR_STREAM: 'authoritative',
 });
 const { startRustRuntimeSidecar, stopRustRuntimeSidecar } = await import('../services/local-node/infrastructure/runtime/rust-sidecar.js');

@@ -1,6 +1,7 @@
 import { agentRuntimeStore } from "./session-store.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
+import { randomUUID } from 'node:crypto';
 
 export async function captureCheckpoint(
   sessionId: string,
@@ -10,16 +11,17 @@ export async function captureCheckpoint(
   omitRunId?: string,
 ): Promise<void> {
   await agentRuntimeStore.flushSession(sessionId);
-  const head = await runtimeFacade.historyHeadAuthoritative(sessionId);
-  if (!head.objectId) return;
+  const session=agentRuntimeStore.getSession(sessionId);
+  if(session.parentSessionId)return;
+  const metadata={...session.sessionMetadata};
+  for(const key of ['permissionTier','permissionOverrides','runtimeControl','manualStop','inputQueue','inputForceInjectId','pendingResume','turnReferences','historyRevision','latestSystemPrompt'])delete metadata[key];
   const id = `rust_checkpoint_${kind}_${messageId}`;
   await runtimeFacade.historyCommand({
     sessionId,
-    requestId: `checkpoint:${id}`,
-    operation: "checkpoint",
+    requestId: randomUUID(),
+    operation: "file_checkpoint",
     payload: {
       pinId: id,
-      objectId: head.objectId,
       metadata: {
         sessionId,
         kind,
@@ -27,6 +29,7 @@ export async function captureCheckpoint(
         stepId,
         createdAt: new Date().toISOString(),
         omitRunId: omitRunId ?? null,
+        historyFields: {prompt:session.prompt,contextSnapshotId:session.contextSnapshotId,sessionMetadata:metadata},
       },
     },
   });

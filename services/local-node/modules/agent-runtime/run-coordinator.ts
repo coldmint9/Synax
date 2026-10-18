@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import {
   runWithExecutionContext,
   withinExecutionContext,
@@ -24,16 +23,11 @@ import { inputQueueRuntime } from "./input-queue-runtime.js";
 import { interactionService } from "./interaction-service.js";
 import { withDeadline } from "./managed-process.js";
 import { profileService } from "./profile-service.js";
-import {
-  acceptRuntimeRun,
-  acceptRuntimeRunAuthoritative,
-  type AcceptedRuntimeInput,
-} from "./run-admission.js";
+import { acceptRuntimeRunAuthoritative, type AcceptedRuntimeInput } from "./run-admission.js";
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
-import { restoreUnlaunchedInput } from "./runtime-recovery.js";
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
@@ -83,33 +77,9 @@ export class RunCoordinator {
   isStopping(sessionId: string): boolean {
     return Boolean(this.owners.get(sessionId)?.stopping);
   }
-  private acceptRun(
-    sessionId: string,
-    input: StreamTurnRequest,
-    requestId: string,
-    mode: AgentSessionStreamMode,
-  ): ReturnType<typeof acceptRuntimeRun> {
-    if (this.isActive(sessionId)) {
-      const previous = getRawSqlite()
-        .prepare(
-          `SELECT id FROM agent_runtime_runs WHERE session_id = ?
-        AND json_extract(metadata_json, '$.runtime.requestId') = ?`,
-        )
-        .get(sessionId, requestId);
-      if (!previous)
-        throw new AgentRuntimeError(
-          "The previous execution has not released this session.",
-          "SESSION_BUSY",
-          409,
-        );
-    }
-    const restored =
-      mode === "continue" ? restoreUnlaunchedInput(sessionId, input) : input;
-    return acceptRuntimeRun(sessionId, restored, requestId, mode);
-  }
   private launchAccepted(
     sessionId: string,
-    accepted: ReturnType<typeof acceptRuntimeRun>,
+    accepted: { run: AgentRun; reused: boolean },
     mode: AgentSessionStreamMode,
   ): void {
     if (accepted.reused && this.isActive(sessionId)) return;
@@ -120,16 +90,6 @@ export class RunCoordinator {
       ...runtime.input,
       acceptedRunId: run.id,
     });
-  }
-  submit(
-    sessionId: string,
-    input: StreamTurnRequest,
-    requestId: string,
-    mode: AgentSessionStreamMode = "turn",
-  ) {
-    const accepted = this.acceptRun(sessionId, input, requestId, mode);
-    this.launchAccepted(sessionId, accepted, mode);
-    return accepted;
   }
   async submitAsync(
     sessionId: string,
@@ -234,7 +194,7 @@ export class RunCoordinator {
       const queued = await inputQueueRuntime.snapshot(sessionId);
       if (this.isActive(sessionId)) return false;
       {
-        const candidate = getRawSqlite().transaction(() => {
+        const candidate = (() => {
           const session = agentRuntimeStore.getSession(sessionId);
           const work = workStore.current(sessionId);
           const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
@@ -536,7 +496,7 @@ export class RunCoordinator {
         // A replacement execution may have acquired the lease while the
         // persistence acknowledgement was in flight. Fence finalization too.
         let closeLeaseContext: RuntimeExecutionContext | undefined;
-        ownsLease = getRawSqlite().transaction(() => {
+        ownsLease = (() => {
           if (!this.ownsLease(owner)) return false;
           const run = agentRuntimeStore.getRun(owner.runId);
           {

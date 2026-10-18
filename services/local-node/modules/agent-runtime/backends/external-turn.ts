@@ -127,16 +127,7 @@ export class ExternalTurn {
   }
   async ask(nativeId: string, questions: HumanQuestion[], title = 'Agent needs your input'): Promise<InteractionReply> {
     const tool = this.tool(nativeId, 'request_input', { questions });
-    const interaction = process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative'
-      ? await interactionService.requestAuthoritative({
-          sessionId: this.sessionId,
-          runId: this.run.id,
-          stepId: this.step.id,
-          toolCallId: tool.id,
-          kind: 'clarification',
-          request: { title, questions },
-        })
-      : interactionService.request({
+    const interaction = await interactionService.requestAuthoritative({
           sessionId: this.sessionId,
           runId: this.run.id,
           stepId: this.step.id,

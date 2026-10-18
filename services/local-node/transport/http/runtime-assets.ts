@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import {
   createAsset,
   deleteUnboundAsset,
-  getAsset,
+  loadAsset,
   readAsset,
 } from "../../modules/agent-runtime/media-assets.js";
 import { MAX_FILE_BYTES } from "../../modules/agent-runtime/content-parts.js";
@@ -52,15 +52,15 @@ runtimeAssetRoutes.post(
     );
   },
 );
-runtimeAssetRoutes.get("/:id", (c) =>
-  c.json({ asset: getAsset(c.req.param("id")) }),
+runtimeAssetRoutes.get("/:id", async (c) =>
+  c.json({ asset: await loadAsset(c.req.param("id")) }),
 );
 runtimeAssetRoutes.delete("/:id", async (c) => {
   await deleteUnboundAsset(c.req.param("id"));
   return c.json({ deleted: true });
 });
 runtimeAssetRoutes.get("/:id/content", async (c) => {
-  const asset = getAsset(c.req.param("id"));
+  const asset = await loadAsset(c.req.param("id"));
   const bytes = await readAsset(asset.id);
   c.header("Content-Type", asset.mediaType);
   c.header("X-Content-Type-Options", "nosniff");

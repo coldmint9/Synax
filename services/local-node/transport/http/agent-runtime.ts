@@ -1800,10 +1800,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", async (c) => {
     return runtimeError(c, error);
   }
 });
-agentRuntimeRoutes.get("/sessions/:sessionId/processes", (c) => {
+agentRuntimeRoutes.get("/sessions/:sessionId/processes", async (c) => {
   try {
     return c.json({
-      items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+      items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -1818,7 +1818,7 @@ agentRuntimeRoutes.post(
         c.req.param("processId"),
       );
       return c.json({
-        items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+        items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
       });
     } catch (error) {
       return runtimeError(c, error);
@@ -1834,7 +1834,7 @@ agentRuntimeRoutes.delete(
         c.req.param("processId"),
       );
       return c.json({
-        items: listSessionBackgroundProcesses(c.req.param("sessionId")),
+        items: await listSessionBackgroundProcesses(c.req.param("sessionId")),
       });
     } catch (error) {
       return runtimeError(c, error);
@@ -2845,19 +2845,20 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
             .parse(JSON.parse(encoded));
     {
       const sessionId = c.req.param("sessionId");
-      const [head, checkpoints, messages] = await Promise.all([
+      const [head, checkpoints, messages, control] = await Promise.all([
         runtimeFacade.historyHeadAuthoritative(sessionId),
         runtimeFacade.listHistoryCheckpoints(sessionId),
         runtimeFacade.listMessageHistory(sessionId) as Promise<
           AgentRuntimeMessage[]
         >,
+        runtimeFacade.controlState(sessionId) as Promise<{runtimeControl?:{historyRequestId?:string}}>,
       ]);
       const messageSet = messageIds ? new Set(messageIds) : undefined;
       const latestMessageId = messages.at(-1)?.id;
       return c.json({
         sessionId,
         revision: head.revision,
-        recoveryRequired: false,
+        recoveryRequired: Boolean(control.runtimeControl?.historyRequestId),
         reason: null,
         forkReason: null,
         stopRequired: false,
@@ -3048,6 +3049,7 @@ for (const action of ["rollback", "edit", "fork"] as const) {
             requestId: input.requestId,
             action,
             message: input.message,
+            includeFiles: input.includeFiles,
           });
           if (result.input && action === "edit") {
             await runCoordinator.submitAsync(
@@ -3071,12 +3073,7 @@ for (const action of ["rollback", "edit", "fork"] as const) {
 }
 agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   try {
-    await runtimeFacade.historyCommand({
-      sessionId: c.req.param("sessionId"),
-      requestId: `history-recover:${randomUUID()}`,
-      operation: "reconcile_stream",
-      payload: {},
-    });
+    await runtimeFacade.recoverHistoryAuthoritative(c.req.param('sessionId'));
     return c.json({ recovered: true });
   } catch (error) {
     return runtimeError(c, error);

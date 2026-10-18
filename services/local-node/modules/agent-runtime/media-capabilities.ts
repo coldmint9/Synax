@@ -13,7 +13,7 @@ import {
   type RuntimeContentPart,
   type RuntimeAsset,
 } from "./content-parts.js";
-import { getAsset, readAsset, validateAssets, modelContentParts } from "./media-assets.js";
+import { getAsset, readAsset, validateAssets, prepareAssets, modelContentParts } from "./media-assets.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveMediaProfile } from "../../infrastructure/llm-runtime/providers/media-profile.js";
@@ -194,6 +194,7 @@ export async function validateInputMedia(
 ): Promise<void> {
   const { agentRuntimeStore: store } = await import("./session-store.js");
   const session = store.getSession(sessionId);
+  await prepareAssets(inputParts(input), session.projectId);
   validateAssets(inputParts(input), session.projectId);
   const parts = await resolveFileParts(inputParts(input), session.projectId);
   if (!parts.some((p) => p.type !== "text") && !input.model) return;

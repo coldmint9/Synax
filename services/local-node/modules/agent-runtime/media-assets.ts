@@ -1,16 +1,9 @@
-import { reserveExternalBytes } from "./checkpoints/resource-admission.js";
-import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
-import {
-  bindVersionAssets,
-  versionSessionHasAsset,
-} from "./checkpoints/version-runtime/assets.js";
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
+import { agentRuntimeStore } from "./session-store.js";
 import { decodeCharacterFile } from "./file-input/registry.js";
 import {
   MAX_FILE_BYTES,
@@ -21,6 +14,8 @@ import {
 } from "./content-parts.js";
 
 const root = () => path.resolve(DATA_ROOT, "runtime-media");
+const assetCache = new Map<string, RuntimeAsset>();
+const assetBindings = new Map<string, Set<string>>();
 const error = (
   message: string,
   code = "INVALID_MEDIA",
@@ -154,24 +149,15 @@ export function detectMediaType(
     error(`Unrecognized or invalid media file: ${filename}.`);
   return detected ?? "application/octet-stream";
 }
-function map(row: any): RuntimeAsset {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    filename: row.filename,
-    mediaType: row.media_type,
-    size: row.size,
-    sha256: row.sha256,
-    createdAt: row.created_at,
-  };
-}
 export function getAsset(id: string, projectId?: string): RuntimeAsset {
   if (!/^asset_[a-f0-9]{32}$/.test(id)) error("Invalid asset ID.");
-  const row = getRawSqlite()
-    .prepare("SELECT * FROM agent_runtime_assets WHERE id=?")
-    .get(id);
-  if (!row) error("Media resource no longer exists.", "MEDIA_NOT_FOUND", 404);
-  const asset = map(row);
+  const asset = assetCache.get(id);
+  if (!asset)
+    throw new AgentRuntimeError(
+      "Media resource no longer exists.",
+      "MEDIA_NOT_FOUND",
+      404,
+    );
   if (projectId && asset.projectId !== projectId)
     error(
       "Media belongs to a different project.",
@@ -180,54 +166,37 @@ export function getAsset(id: string, projectId?: string): RuntimeAsset {
     );
   return asset;
 }
+/** Fetch exact metadata on demand; synchronous helpers use this execution cache. */
+export async function loadAsset(id: string, projectId?: string): Promise<RuntimeAsset> {
+  if (!/^asset_[a-f0-9]{32}$/.test(id)) return error("Invalid asset ID.");
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  const asset = await runtimeFacade.getAssetMetadata(id) as RuntimeAsset;
+  assetCache.set(id, asset);
+  return getAsset(id, projectId);
+}
+export async function prepareAssets(parts: RuntimeContentPart[], projectId?: string): Promise<void> {
+  for (const part of parts) if (part.type !== "text") await loadAsset(part.assetId, projectId);
+}
 export function assetPath(id: string): string {
   getAsset(id);
   return path.join(root(), id);
 }
-export async function readAsset(
-  id: string,
-  projectId?: string,
-): Promise<Buffer> {
-  const asset = getAsset(id, projectId);
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-    try {
-      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-      return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
-    } catch (error) {
-      // Migrate an existing local asset once, then make Rust authoritative for
-      // all subsequent reads. Do not silently keep falling back to SQLite.
-      if (!(error instanceof Error)) throw error;
-      const bytes = await readLocalAsset(asset, id);
-      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-      await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
-      return bytes;
-    }
-  }
-  return readLocalAsset(asset, id);
+export async function readAsset(id: string, projectId?: string): Promise<Buffer> {
+  const asset = await loadAsset(id, projectId);
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  const bytes = Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
+  if (bytes.length !== asset.size || createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
+    return error("Media content does not match its metadata.", "MEDIA_CHANGED", 409);
+  return bytes;
 }
-
-async function readLocalAsset(asset: RuntimeAsset, id: string): Promise<Buffer> {
-  const file = await fsp
-    .open(
-      path.join(root(), id),
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-    )
-    .catch(() => error("Media file is missing.", "MEDIA_NOT_FOUND", 404));
-  try {
-    const stat = await file.stat();
-    if (
-      !stat.isFile() ||
-      stat.size !== asset.size ||
-      stat.size > MAX_FILE_BYTES
-    )
-      error("Media file was changed.", "MEDIA_CHANGED", 409);
-    const bytes = await file.readFile();
-    if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
-      error("Media file was changed.", "MEDIA_CHANGED", 409);
-    return bytes;
-  } finally {
-    await file.close();
-  }
+/** Local-path providers get a disposable materialization of the Rust blob. */
+export async function materializeAsset(id: string): Promise<string> {
+  const bytes = await readAsset(id);
+  await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
+  const destination = assetPath(id), temporary = `${destination}.${randomUUID()}.tmp`;
+  await fsp.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+  await fsp.rename(temporary, destination);
+  return destination;
 }
 export async function createAsset(
   projectId: string,
@@ -240,20 +209,6 @@ export async function createAsset(
     error("File must be nonempty and at most 50 MiB.", "MEDIA_TOO_LARGE", 413);
   const mediaType = detectMediaType(bytes, filename, declared);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const existing = getRawSqlite()
-    .prepare(
-      "SELECT * FROM agent_runtime_assets WHERE project_id=? AND sha256=? AND filename=? AND media_type=? AND (EXISTS (SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=agent_runtime_assets.id) OR EXISTS(SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=agent_runtime_assets.id)) LIMIT 1",
-    )
-    .get(projectId, sha256, path.basename(filename), mediaType);
-  if (existing) {
-    const asset = map(existing);
-    try {
-      await readAsset(asset.id, projectId);
-      return asset;
-    } catch (error) {
-      if (!(error instanceof AgentRuntimeError)) throw error;
-    }
-  }
   const asset: RuntimeAsset = {
     id: `asset_${randomUUID().replaceAll("-", "")}`,
     projectId,
@@ -267,36 +222,9 @@ export async function createAsset(
     sha256,
     createdAt: new Date().toISOString(),
   };
-  const release = await reserveExternalBytes(root(), bytes.length);
-  let committed = false;
-  try {
-    await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
-  await fsp.writeFile(path.join(root(), asset.id), bytes, {
-    flag: "wx",
-    mode: 0o600,
-  });
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-      await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
-    }
-    getRawSqlite()
-      .prepare(
-        "INSERT INTO agent_runtime_assets (id,project_id,filename,media_type,size,sha256,created_at) VALUES (?,?,?,?,?,?,?)",
-      )
-      .run(
-        asset.id,
-        asset.projectId,
-        asset.filename,
-        asset.mediaType,
-        asset.size,
-        asset.sha256,
-        asset.createdAt,
-      );
-    committed = true;
-  } catch (e) {
-    await fsp.unlink(path.join(root(), asset.id)).catch(() => {});
-    throw e;
-  } finally { release(committed); }
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  await runtimeFacade.putAssetBlob(asset.id, asset, bytes);
+  assetCache.set(asset.id, asset);
   return asset;
 }
 export function validateAssets(
@@ -317,112 +245,60 @@ export function validateAssets(
       modalityForMime(getAsset(part.assetId, projectId).mediaType) !== part.type
     )
       error("Content part does not match the media type.");
-  for (const asset of assets) {
-    try {
-      const stat = fs.lstatSync(path.join(root(), asset.id));
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== asset.size)
-        error("Media file was changed.", "MEDIA_CHANGED", 409);
-    } catch (e) {
-      if (e instanceof AgentRuntimeError) throw e;
-      error("Media file is missing.", "MEDIA_NOT_FOUND", 404);
-    }
-  }
   return assets;
 }
 export function bindValidatedAssets(
   sessionId: string,
   assets: RuntimeAsset[],
 ): void {
-  const db = getRawSqlite();
-  if (versionedSession(sessionId)) {
-    bindVersionAssets(sessionId, assets);
-    return;
-  }
-  for (const a of assets)
-    db.prepare(
-      "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
-    ).run(a.id, sessionId);
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-    void import("./sidecar/runtime-facade.js").then(({ runtimeFacade }) =>
-      Promise.all(assets.map((asset) => runtimeFacade.bindAsset(sessionId, asset.id)))
-    ).catch(() => {
-      // The synchronous compatibility mirror remains available to legacy callers;
-      // authoritative admission awaits bindValidatedAssetsAuthoritative below.
-    });
-  }
+  const bound = assetBindings.get(sessionId) ?? new Set<string>();
+  for (const asset of assets) bound.add(asset.id);
+  assetBindings.set(sessionId, bound);
+  for (const asset of assets) agentRuntimeStore.enqueueAssetBinding(sessionId, asset.id);
 }
 
 export async function bindValidatedAssetsAuthoritative(
   sessionId: string,
   assets: RuntimeAsset[],
 ): Promise<void> {
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative") {
-    bindValidatedAssets(sessionId, assets);
-    return;
-  }
-  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  await Promise.all(assets.map((asset) => runtimeFacade.bindAsset(sessionId, asset.id)));
-  // Keep the compatibility read model coherent for non-runtime consumers. The
-  // Rust binding is committed first and is the authority for admission.
-  const db = getRawSqlite();
-  for (const asset of assets)
-    db.prepare(
-      "INSERT OR IGNORE INTO agent_runtime_asset_sessions (asset_id,session_id) VALUES (?,?)",
-    ).run(asset.id, sessionId);
+  bindValidatedAssets(sessionId, assets);
+  await agentRuntimeStore.flushSession(sessionId);
 }
 
 export function bindAssets(
   sessionId: string,
   parts: RuntimeContentPart[],
 ): void {
-  const db = getRawSqlite();
-  const session = db
-    .prepare("SELECT project_id FROM agent_runtime_sessions WHERE id=?")
-    .get(sessionId) as { project_id: string } | undefined;
-  if (!session) error("Session not found.", "NOT_FOUND", 404);
-  bindValidatedAssets(sessionId, validateAssets(parts, session!.project_id));
+  const session = agentRuntimeStore.getSession(sessionId);
+  bindValidatedAssets(sessionId, validateAssets(parts, session.projectId));
 }
 export function sessionHasAsset(sessionId: string, id: string): boolean {
-  if (versionedSession(sessionId)) return versionSessionHasAsset(sessionId, id);
-  return !!getRawSqlite()
-    .prepare(
-      "SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=? AND session_id=?",
-    )
-    .get(id, sessionId);
+  return assetBindings.get(sessionId)?.has(id) === true;
 }
 export async function deleteUnboundAsset(id: string): Promise<void> {
-  const db = getRawSqlite();
-  const asset = getAsset(id);
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-    const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-    // Rust checks every durable binding before allowing metadata deletion. For
-    // assets created before cutover, import the local bytes first so deletion
-    // has the same metadata/blob invariant as a new asset.
-    try {
-      await runtimeFacade.deleteAssetMetadata(id);
-    } catch (caught) {
-      if (!(caught instanceof Error) || !/asset .*not found/i.test(caught.message)) throw caught;
-      const bytes = await readLocalAsset(asset, id);
-      await runtimeFacade.putAssetBlob(id, asset, bytes);
-      await runtimeFacade.deleteAssetMetadata(id);
-    }
-    await runtimeFacade.deleteAssetBlob(id).catch(() => {});
+  await loadAsset(id);
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  try { await runtimeFacade.deleteAssetMetadata(id); }
+  catch (caught) {
+    if (caught instanceof Error && caught.message.includes("asset is retained by a session"))
+      return error("Media is retained by a session.", "MEDIA_IN_USE", 409);
+    throw caught;
   }
-  db.transaction(() => {
-    if (
-      db
-        .prepare(
-          "SELECT 1 FROM agent_runtime_asset_sessions WHERE asset_id=? UNION ALL SELECT 1 FROM conversation_v3_asset_refs WHERE asset_id=? LIMIT 1",
-        )
-        .get(id, id)
-    )
-      error("Media is retained by a session.", "MEDIA_IN_USE", 409);
-    db.prepare("DELETE FROM agent_runtime_assets WHERE id=?").run(id);
-  })();
+  await runtimeFacade.deleteAssetBlob(id);
+  assetCache.delete(id);
   await fsp.unlink(path.join(root(), id)).catch((e) => {
     if (e.code !== "ENOENT") throw e;
   });
 }
+
+/** Only load bindings for a session being executed, including in child workers. */
+export async function hydrateSessionAssets(sessionId: string): Promise<void> {
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  const assets = await runtimeFacade.listBoundAssets(sessionId) as RuntimeAsset[];
+  for (const asset of assets) assetCache.set(asset.id, asset);
+  assetBindings.set(sessionId, new Set(assets.map(asset => asset.id)));
+}
+
 export async function sweepAssets(): Promise<void> {
   const { runtimeFacade } = await import('./sidecar/runtime-facade.js');
   const cutoff = new Date(Date.now() - 86_400_000).toISOString();
@@ -437,6 +313,7 @@ export async function sweepAssets(): Promise<void> {
         throw error;
       }
       await runtimeFacade.deleteAssetBlob(asset.id);
+      assetCache.delete(asset.id);
       await fsp.unlink(path.join(root(),asset.id)).catch(error=>{if(error.code!=='ENOENT')throw error});
     }
     after=page.next;

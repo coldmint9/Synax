@@ -52,6 +52,8 @@ pub enum StorageError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSession {
     session_id: String,
+    #[serde(default)]
+    history_generation: u64,
     epoch: u64,
     revision: u64,
     active_run_id: Option<String>,
@@ -64,6 +66,7 @@ impl StoredSession {
     fn new(session_id: String) -> Self {
         Self {
             session_id,
+            history_generation: 0,
             epoch: 1,
             revision: 0,
             active_run_id: None,
@@ -87,6 +90,8 @@ impl StoredSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReceipt {
+    #[serde(default)]
+    history_generation: u64,
     body_hash: String,
     admission: RunAdmission,
     #[serde(default)]
@@ -187,6 +192,8 @@ pub struct ControlState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredControlCommandReceipt {
+    #[serde(default)]
+    history_generation: u64,
     identity: String,
     result: crate::actor::ControlCommandReceipt,
 }
@@ -660,6 +667,8 @@ impl HotStore {
         let receipt_key = control_receipt_key(session_id, request_id);
         if let Some(bytes) = self.get(CF_CONTROLS, receipt_key.as_bytes())? {
             let saved: StoredControlCommandReceipt = serde_json::from_slice(&bytes)?;
+            let current=self.read_session(session_id)?;
+            if current.history_generation!=saved.history_generation {return Err(RuntimeError::StaleEpoch{expected:saved.result.snapshot.epoch,actual:current.epoch}.into());}
             if saved.identity != identity {
                 return Err(RuntimeError::RequestConflict.into());
             }
@@ -686,6 +695,33 @@ impl HotStore {
             .to_owned();
 
         match operation {
+            "history_begin" => {
+                if state.active_run_id.is_some() || control.runtime_control.is_some() {return Err(RuntimeError::SessionBusy.into());}
+                control.runtime_control=Some(serde_json::json!({"state":"stopping","historyRequestId":value["historyRequestId"],"previousStatus":projection.session["status"],"reason":"Restoring history"}));
+                projection.session["sessionMetadata"]["runtimeControl"]=control.runtime_control.clone().unwrap();
+                set_projection_state(&mut projection,"stopping",None,None,Some("Restoring history"),&now);
+                event_name="history_restore_started".into();
+            }
+            "history_end" | "history_cancel" => {
+                let marker=control.runtime_control.as_ref().ok_or_else(||RuntimeError::InvalidCommand("history restore is not active".into()))?;
+                if marker["historyRequestId"]!=value["historyRequestId"] {return Err(RuntimeError::RequestConflict.into());}
+                let prior=marker["previousStatus"].as_str().unwrap_or("completed").to_owned();
+                if operation=="history_end" {
+                    state.epoch=state.epoch.checked_add(1).ok_or_else(||RuntimeError::InvalidCommand("epoch overflow".into()))?;
+                    state.history_generation=state.history_generation.checked_add(1).ok_or_else(||RuntimeError::InvalidCommand("history generation overflow".into()))?;
+                    state.active_run_id=None;
+                    control.permissions.clear();control.interactions.clear();
+                    projection.run=serde_json::Value::Null;projection.live_chunks.clear();projection.completed_step_ids.clear();
+                    projection.set_queue(&crate::input_queue::QueueState::default());
+                    for key in ["prompt","contextSnapshotId"] {if let Some(field)=value["historyFields"].get(key){projection.session[key]=field.clone();}}
+                    if let Some(fields)=value["historyFields"]["sessionMetadata"].as_object(){for(key,field)in fields{projection.session["sessionMetadata"][key]=field.clone();}}
+                    projection.session["completedAt"]=serde_json::Value::Null;projection.session["resultSummary"]=serde_json::Value::Null;
+                    projection.session["sessionMetadata"]["lastHistoryRestore"]=value["historyRequestId"].clone();
+                }
+                control.runtime_control=None;projection.session["sessionMetadata"]["runtimeControl"]=serde_json::Value::Null;
+                set_projection_state(&mut projection,if operation=="history_end"{"completed"}else{&prior},None,None,None,&now);
+                event_name="history_restored".into();
+            }
             "permission_request" => {
                 let id = value["id"]
                     .as_str()
@@ -1013,6 +1049,7 @@ impl HotStore {
                 for (key, patch_value) in patch {
                     match key.as_str() {
                         "title" | "prompt" | "contextSnapshotId" | "profileId" | "nodeId"
+                        | "reasoningEffort"
                         | "childSessionIds" | "skillIds" | "mcpServerIds" | "permissionRules"
                         | "pinned" | "mode" | "status" | "activeRunId" | "completedAt"
                         | "updatedAt" | "archivedAt" | "archiveBatchId" | "resultSummary"
@@ -1160,6 +1197,7 @@ impl HotStore {
                 CF_CONTROLS,
                 receipt_key,
                 &serde_json::to_vec(&StoredControlCommandReceipt {
+                    history_generation: state.history_generation,
                     identity,
                     result: result.clone(),
                 })?,
@@ -1412,6 +1450,7 @@ impl HotStore {
         let receipt_key = receipt_key(session_id, request_id);
         if let Some(bytes) = self.get(CF_RECEIPTS, receipt_key.as_bytes())? {
             let receipt: StoredReceipt = serde_json::from_slice(&bytes)?;
+            if state.history_generation!=receipt.history_generation {return Err(RuntimeError::StaleEpoch{expected:receipt.admission.epoch,actual:state.epoch}.into());}
             if receipt.body_hash != body_hash || receipt.queue_item != queue_item {
                 return Err(RuntimeError::RequestConflict.into());
             }
@@ -1424,7 +1463,7 @@ impl HotStore {
         }
         ensure_epoch(&state, epoch)?;
         ensure_revision(&state, expected_revision)?;
-        if state.active_run_id.is_some() {
+        if state.active_run_id.is_some() || self.read_control_state(session_id)?.runtime_control.is_some() {
             return Err(RuntimeError::SessionBusy.into());
         }
         if self
@@ -1507,6 +1546,7 @@ impl HotStore {
             queue_event,
         };
         let receipt = StoredReceipt {
+            history_generation: state.history_generation,
             body_hash: body_hash.to_owned(),
             admission: admission.clone(),
             queue_item,
@@ -3854,6 +3894,21 @@ mod tests {
     }
 
     #[test]
+    fn history_restore_blocks_admission_and_invalidates_old_execution_epoch() {
+        let path=temp_path("history-restore-control");let store=HotStore::open(&path).unwrap();
+        store.ui_snapshot("s",Some(&ui_seed())).unwrap();
+        store.control_command("s","begin",1,0,"history_begin",br#"{"historyRequestId":"restore"}"#).unwrap();
+        assert!(matches!(store.admit_run("s","new","hash","r",1,1),Err(StorageError::Runtime(RuntimeError::SessionBusy))));
+        let result=store.control_command("s","end",1,1,"history_end",br#"{"historyRequestId":"restore","historyFields":{"prompt":"old prompt","sessionMetadata":{"plan":{"status":"draft"}}}}"#).unwrap();
+        assert_eq!(result.snapshot.epoch,2);
+        let snapshot:serde_json::Value=serde_json::from_slice(&store.ui_snapshot("s",None).unwrap()).unwrap();
+        assert_eq!(snapshot["session"]["prompt"],"old prompt");assert_eq!(snapshot["session"]["sessionMetadata"]["lastHistoryRestore"],"restore");
+        assert!(snapshot["run"].is_null());
+        assert!(matches!(store.admit_run("s","stale","hash","r",1,2),Err(StorageError::Runtime(RuntimeError::StaleEpoch{..}))));
+        drop(store);let _=std::fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn session_pages_bound_metadata_bytes_and_visit_every_session() {
         let path = temp_path("session-pages");
         let store = HotStore::open(&path).unwrap();
@@ -4012,7 +4067,7 @@ mod tests {
                 1,
                 1,
                 "session_patch",
-                br#"{"patch":{"status":"paused","activeRunId":null,"completedAt":null,"updatedAt":"2026-10-17T00:00:00Z","blockedReason":"restart"}}"#,
+                br#"{"patch":{"status":"paused","activeRunId":null,"completedAt":null,"updatedAt":"2026-10-17T00:00:00Z","blockedReason":"restart","reasoningEffort":"high"}}"#,
             )
             .unwrap();
         assert_eq!(patched.snapshot.revision, 2);
@@ -4021,6 +4076,7 @@ mod tests {
         assert_eq!(projection.session["status"], "paused");
         assert_eq!(projection.session["activeRunId"], serde_json::Value::Null);
         assert_eq!(projection.session["blockedReason"], "restart");
+        assert_eq!(projection.session["reasoningEffort"], "high");
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

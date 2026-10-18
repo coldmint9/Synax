@@ -4,7 +4,6 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { runWithExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { terminalManager } from "../../infrastructure/terminals/terminal-manager.js";
 import {
@@ -12,7 +11,7 @@ import {
   createServiceTerminal,
 } from "../../infrastructure/terminals/terminal-service.js";
 import { agentRuntimeStore } from "../../modules/agent-runtime/session-store.js";
-import { stopSessionBackgroundProcess } from "../../modules/agent-runtime/session-background-processes.js";
+import { listSessionBackgroundProcesses, stopSessionBackgroundProcess } from "../../modules/agent-runtime/session-background-processes.js";
 import {
   AgentRuntimeError,
   toHttpError,
@@ -263,12 +262,8 @@ terminalRoutes.post(
     const sessionId = c.req.param("sessionId"),
       id = c.req.param("processId");
     agentRuntimeStore.getSession(sessionId);
-    const previous = getRawSqlite()
-      .prepare(
-        "SELECT id FROM agent_runtime_processes WHERE id=? AND session_id=? AND kind='background'",
-      )
-      .get(id, sessionId);
-    if (!previous)
+    const previous = await listSessionBackgroundProcesses(sessionId);
+    if (!previous.some(item => item.id === id && item.kind === "service"))
       throw new AgentRuntimeError("Service not found.", "NOT_FOUND", 404);
     const body = await json(
       c,

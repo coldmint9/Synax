@@ -85,7 +85,7 @@ export class AgentContextBuilder {
       createdAt: nowIso(),
     };
     const saved = this.store.saveContextBundle(bundle);
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && bundle.sessionId) {
+    if (bundle.sessionId) {
       void import("./sidecar/runtime-facade.js")
         .then(({ runtimeFacade }) => runtimeFacade.persistHistoryObject(bundle.sessionId!, "runtime.context", saved))
         .catch(() => {});

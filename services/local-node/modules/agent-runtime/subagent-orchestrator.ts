@@ -281,44 +281,17 @@ export async function runChildToCompletion(
         }, opts.timeoutMs)
       : undefined;
 
-  let stream: AsyncGenerator<import("./contracts.js").AgentRunStreamChunk> | undefined;
   try {
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative") {
-      const { runCoordinator } = await import("./run-coordinator.js");
-      const requestId = `subagent:${childSessionId}:${startedAt}`;
-      await runCoordinator.submitAsync(
-        childSessionId,
-        opts.input ?? {},
-        requestId,
-        opts.resume ? "resume" : "turn",
-      );
-      await runCoordinator.waitForSessionIdle(childSessionId);
-      lastProgressAt = Date.now();
-    } else {
-    stream = opts.resume
-      ? deps.loop.streamContinue(childSessionId, opts.input ?? {}, controller.signal)
-      : deps.loop.streamRun(childSessionId, opts.input ?? {}, controller.signal);
-    while (true) {
-      // Race the read too: some upstream streams do not honor AbortSignal.
-      controller.signal.throwIfAborted();
-      let rejectAbort!: () => void;
-      const aborted = new Promise<never>((_resolve, reject) => {
-        rejectAbort = () => reject(controller.signal.reason ?? new Error("Subagent aborted."));
-        controller.signal.addEventListener("abort", rejectAbort, { once: true });
-      });
-      let chunk: IteratorResult<import("./contracts.js").AgentRunStreamChunk>;
-      try {
-        chunk = await Promise.race([stream.next(), aborted]);
-      } finally {
-        // A single pending abort promise for the whole stream would retain a
-        // race handler per chunk until completion on long-running children.
-        controller.signal.removeEventListener("abort", rejectAbort);
-      }
-      if (chunk.done) break;
-      lastProgressAt = Date.now();
-      touch("running");
-    }
-    }
+    const { runCoordinator } = await import("./run-coordinator.js");
+    const requestId = `subagent:${childSessionId}:${startedAt}`;
+    await runCoordinator.submitAsync(
+      childSessionId,
+      opts.input ?? {},
+      requestId,
+      opts.resume ? "resume" : "turn",
+    );
+    await runCoordinator.waitForSessionIdle(childSessionId);
+    lastProgressAt = Date.now();
   } catch (err) {
     logger.warn(
       { childSessionId, profileId: spec.profileId, err },
@@ -328,10 +301,6 @@ export async function runChildToCompletion(
     clearInterval(heartbeat);
     if (timer) clearTimeout(timer);
     opts.abortSignal?.removeEventListener("abort", onParentAbort);
-    if (controller.signal.aborted)
-      void stream?.return(undefined).catch((err) => {
-        logger.warn({ childSessionId, err }, "[subagent-orchestrator] child stream cleanup failed");
-      });
     reapUnresolvableChild(
       childSessionId, timedOut, opts.timeoutMs ?? progressTimeoutMs, deps,
       controller.signal.aborted && controller.signal.reason instanceof Error

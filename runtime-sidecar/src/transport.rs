@@ -1296,6 +1296,8 @@ fn history_error_to_wire(error: crate::history::HistoryError) -> wire_envelope::
         HistoryError::RevisionConflict { expected, actual } =>
             error_to_wire(RuntimeError::RevisionConflict { expected, actual }),
         HistoryError::RequestConflict => error_to_wire(RuntimeError::RequestConflict),
+        HistoryError::FileBusy(message) => wire_error("FILE_WRITE_BUSY", &message),
+        HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
         HistoryError::InvalidCommand(message) => wire_error("INVALID_COMMAND", &message),
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
         HistoryError::Rocks(error) => wire_error("STORAGE_UNAVAILABLE", &error.to_string()),

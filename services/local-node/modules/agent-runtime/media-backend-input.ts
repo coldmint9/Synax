@@ -1,7 +1,7 @@
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { type RuntimeContentPart, type InputCapabilities } from "./content-parts.js";
-import { getAsset, readAsset, assetPath } from "./media-assets.js";
+import { getAsset, readAsset, assetPath, materializeAsset } from "./media-assets.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveFileParts } from "./file-input/index.js";
 export async function codexMediaInput(
@@ -17,7 +17,7 @@ export async function codexMediaInput(
       422,
     );
   for (const part of parts)
-    if (part.type !== "text") await readAsset(part.assetId);
+    if (part.type !== "text") await materializeAsset(part.assetId);
   return parts.map((p) =>
     p.type === "text"
       ? { type: "text", text: p.text }

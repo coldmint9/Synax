@@ -1,5 +1,4 @@
 import { RuntimeSidecarError } from "./sidecar/sidecar-client.js";
-import { VersionStoreError } from "./checkpoints/version-store/limits.js";
 export class AgentRuntimeError extends Error {
   constructor(
     message: string,
@@ -42,10 +41,6 @@ export function toRuntimeError(error: unknown): AgentRuntimeError {
     if (error.code === 'HISTORY_ERROR') return new AgentRuntimeError(error.message, error.code, 500);
     const status = error.code === 'INVALID_COMMAND' ? 400 : ['STORAGE_UNAVAILABLE','DISK_FULL','DURABILITY_UNKNOWN','BACKPRESSURE'].includes(error.code) ? 503 : 409;
     return new AgentRuntimeError(error.message, error.code, status);
-  }
-  if(error instanceof VersionStoreError){
-    const status=error.code.includes("BUDGET")||error.code.includes("SIZE")?413:error.code.includes("MISSING")||error.code.includes("NOT_FOUND")?404:409;
-    return new AgentRuntimeError(error.message,error.code,status);
   }
   if (error instanceof Error) return new AgentRuntimeError(error.message);
   return new AgentRuntimeError(String(error));

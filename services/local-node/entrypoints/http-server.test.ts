@@ -7,7 +7,7 @@ import { expect, it } from 'vitest';
 
 it('opens the direct SQLite compatibility database for an explicitly disabled sidecar test host', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-host-startup-'));
-  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'production', LOG_LEVEL: 'error', SYNAX_DESKTOP_SIDECAR: '1', SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '0', SYNAX_RUNTIME_SIDECAR_STREAM: 'disabled' };
+  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'production', LOG_LEVEL: 'error', SYNAX_DESKTOP_SIDECAR: '1', SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '0' };
   for (const key of Object.keys(env)) if (key === 'SYNAX_RUNTIME_HOST_ID' || key === 'SYNAX_RUNTIME_DATA_ROOT' || key === 'VITEST') delete env[key as keyof typeof env];
   const server = fileURLToPath(new URL('./http-server.ts', import.meta.url));
   const database = fileURLToPath(new URL('../infrastructure/database/index.ts', import.meta.url));

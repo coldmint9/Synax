@@ -1,4 +1,3 @@
-import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { RuntimeEvent, RuntimeEventType } from "./contracts.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
@@ -51,7 +50,13 @@ export class AgentEventService {
         "VERSION_BATCH_LIMIT",
         413,
       );
-    assertBatchInput(inputs);
+    const encodedBytes = Buffer.byteLength(JSON.stringify(inputs), "utf8");
+    if (encodedBytes > 768 * 1024)
+      throw new AgentRuntimeError(
+        "Event batch exceeds the runtime payload budget.",
+        "EVENT_BATCH_SIZE",
+        413,
+      );
     if (!inputs.length) return [];
     const sessionId = inputs[0].sessionId;
     if (inputs.some((input) => input.sessionId !== sessionId))

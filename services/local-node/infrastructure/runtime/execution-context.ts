@@ -25,11 +25,6 @@ export function setAuthoritativeExecutionFence(fence: AuthoritativeExecutionFenc
   authoritativeExecutionFence = fence;
 }
 
-function authoritativeRuntime(): boolean {
-  return process.env.SYNAX_RUNTIME_SIDECAR_STREAM === 'authoritative' ||
-    (process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR === '1' && process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== 'disabled');
-}
-
 function superseded(message: string): Error {
   return Object.assign(new Error(message), { code: 'EXECUTION_SUPERSEDED' });
 }
@@ -86,7 +81,6 @@ async function defaultAuthoritativeExecutionFence(context: RuntimeExecutionConte
 export async function assertExecutionContextCurrent(context: RuntimeExecutionContext | undefined): Promise<void> {
   if (!context) return;
   assertHostFence(context);
-  if (!authoritativeRuntime()) return;
   await (authoritativeExecutionFence ?? defaultAuthoritativeExecutionFence)(context);
 }
 
@@ -104,15 +98,9 @@ export function assertDatabaseWriteAllowed(sqlite: NativeDatabase.Database, data
     if (host?.host_id !== hostId) throw superseded('Runtime host has been superseded.');
   }
   if (!context) return;
-  // Authoritative execution leases are checked at an awaited Rust projection
-  // boundary. Never read the legacy lease/head mirrors from this synchronous
-  // database write guard on an authoritative host.
-  if (authoritativeRuntime()) return;
-  const row = sqlite.prepare("SELECT json_extract(metadata_json, '$.executionLease.epoch') AS epoch, json_extract(metadata_json, '$.executionLease.closed') AS closed FROM agent_runtime_runs WHERE id = ? AND session_id = ?")
-    .get(context.runId, context.sessionId) as { epoch: string | null; closed: number | null } | undefined;
-  if (!row || row.epoch !== context.epoch || row.closed) throw Object.assign(new Error('Execution lease has been superseded or closed.'), { code: 'EXECUTION_SUPERSEDED' });
-  const generation=sqlite.prepare("SELECT r.version_epoch AS run_epoch,h.epoch AS session_epoch FROM agent_runtime_runs r JOIN conversation_v3_heads h ON h.session_id=r.session_id WHERE r.id=? AND r.session_id=?").get(context.runId,context.sessionId) as {run_epoch:number|null;session_epoch:number}|undefined;
-  if(generation&&generation.run_epoch!==generation.session_epoch)throw Object.assign(new Error('Execution history epoch has been superseded.'),{code:'EXECUTION_SUPERSEDED'});
+  // The Rust projection is the only execution fence. Legacy runtime tables
+  // are intentionally never consulted by the synchronous SQLite guard.
+
 }
 
 export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>): AsyncGenerator<T> {

@@ -16,9 +16,7 @@ it('reads a persisted projection without touching legacy session storage', async
 
 it('uses only Rust regardless of retired transport flags', () => {
   vi.stubEnv('SYNAX_RUNTIME_SIDECAR_SUPERVISOR', '1');
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', '');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'disabled');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
 });
 it('awaits the store commit before reading the created projection', async () => {
@@ -42,7 +40,6 @@ it('leaves missing projections missing instead of seeding from a local working s
   expect(client.seedUi).not.toHaveBeenCalled();
 });
 it('submits the terminal run document to Rust and propagates persistence failure without local writes', async () => {
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   const updateRun = vi.spyOn(agentRuntimeStore, 'updateRun').mockImplementation(() => { throw new Error('must not write local run'); });
   const updateSession = vi.spyOn(agentRuntimeStore, 'updateSession').mockImplementation(() => { throw new Error('must not write local session'); });
   const run = { id: 'r', sessionId: 's', status: 'failed', completedAt: '2026-10-16T12:00:00.123Z', currentStep: 4, stopReason: 'provider error' } as never;
@@ -57,7 +54,6 @@ it('submits the terminal run document to Rust and propagates persistence failure
 });
 
 it('does not rescan SQLite history after an authoritative terminal finish', async () => {
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   const reads = [
     vi.spyOn(agentRuntimeStore, 'listMessages'),
     vi.spyOn(agentRuntimeStore, 'listRuns'),
@@ -75,7 +71,6 @@ it('does not rescan SQLite history after an authoritative terminal finish', asyn
 });
 
 it('waits for pending work or context history writes before authoritative finish', async () => {
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const facade = new RuntimeFacade(() => remote({
@@ -103,7 +98,6 @@ it('does not seed a missing projection from legacy SQL during a read', async () 
 });
 
 it('publishes history entities in a single Rust append command without a Node head read/replace race', async () => {
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
   const facade = new RuntimeFacade(() => remote({ historyCommand }));
   const record = { id: 'tool', sessionId: 's', status: 'completed' };
@@ -121,7 +115,6 @@ it('publishes history entities in a single Rust append command without a Node he
 });
 
 it('keeps stream history batches within the control frame and refuses oversized entities explicitly', async () => {
-  vi.stubEnv('SYNAX_RUNTIME_SIDECAR_STREAM', 'authoritative');
   const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
   const facade = new RuntimeFacade(() => remote({ historyCommand }));
   const chunks = Array.from({ length: 300 }, (_, index) => ({ type: 'message', message: { id: `m-${index}`, sessionId: 's', content: 'x'.repeat(4_000) } }));

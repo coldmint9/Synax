@@ -53,7 +53,7 @@ try {
   ensureLegacyGoalProfileRegistered();
   const session = agentSessionRuntime.create({ projectId: 'provider-smoke', profileId: 'synax', prompt: 'Respond with one short sentence.', workDir: root });
   const coordinator = new RunCoordinator();
-  const accepted = coordinator.submit(session.id, { message: 'Say hello through the local provider.' }, 'provider-worker-smoke');
+  const accepted = await coordinator.submitAsync(session.id, { message: 'Say hello through the local provider.' }, 'provider-worker-smoke');
   await coordinator.waitForIdle();
   const run = agentRuntimeStore.getRun(accepted.run.id);
   const messages = agentRuntimeStore.listMessages(session.id);

@@ -19,7 +19,8 @@ import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
-import { readHistoryList, readSessionList } from './history-pages.js';
+import { historyPages, readHistoryList, readSessionList } from './history-pages.js';
+import { fileCommand, previewRuntimeFiles, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
 export type RuntimeSidecarStreamMode = "authoritative";
 function streamMode(): RuntimeSidecarStreamMode {
   return "authoritative";
@@ -479,12 +480,6 @@ export class RuntimeFacade {
     bytes: Uint8Array,
   ): Promise<void> {
     const scopeId = `asset:${assetId}`;
-    await this.historyCommandGlobal({
-      scopeId: "assets",
-      requestId: `asset-metadata:${assetId}:${createHash("sha256").update(JSON.stringify(asset)).digest("hex")}`,
-      operation: "asset_put",
-      payload: { asset },
-    });
     const chunkSize = 256 * 1024;
     const total = Math.max(1, Math.ceil(bytes.length / chunkSize));
     const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
@@ -510,6 +505,12 @@ export class RuntimeFacade {
         size: bytes.length,
         sha256: createHash("sha256").update(bytes).digest("hex"),
       },
+    });
+    await this.historyCommandGlobal({
+      scopeId: "assets",
+      requestId: `asset-metadata:${assetId}:${createHash("sha256").update(JSON.stringify(asset)).digest("hex")}`,
+      operation: "asset_put",
+      payload: { asset },
     });
     await this.historyCommandGlobal({
       scopeId,
@@ -1117,19 +1118,9 @@ export class RuntimeFacade {
       metadata: Record<string, unknown>;
     }>
   > {
-    const state = (await this.historyCommand({
-      sessionId,
-      requestId: historyReadRequest("list-checkpoints", sessionId),
-      operation: "list_checkpoints",
-      payload: {},
-    })) as {
-      items?: Array<{
-        id?: unknown;
-        objectId?: unknown;
-        metadata?: unknown;
-      }>;
-    };
-    return (state.items ?? []).flatMap((item) => {
+    const client=this.clientFactory();if(!client)throw new Error('Runtime sidecar is not configured.');
+    const items=await readHistoryList<{id?:unknown;objectId?:unknown;metadata?:unknown}>(client,sessionId,'list_checkpoints');
+    return items.flatMap((item) => {
       if (typeof item.id !== "string" || typeof item.objectId !== "string")
         return [];
       return [
@@ -1144,60 +1135,18 @@ export class RuntimeFacade {
       ];
     });
   }
-  async previewHistoryAuthoritative(
-    sessionId: string,
-    checkpointId: string,
-    includeFiles = true,
-  ): Promise<{
-    checkpointId: string;
-    revision: number;
-    removedMessages: number;
-    files: [];
-    conflicts: [];
-    canApply: boolean;
-    warnings: string[];
-    preservedFiles: [];
-    exclusions: string;
-  }> {
+  async previewHistoryAuthoritative(sessionId: string, checkpointId: string, includeFiles = true) {
     const [head, checkpoints, messages] = await Promise.all([
-      this.historyHeadAuthoritative(sessionId),
-      this.listHistoryCheckpoints(sessionId),
+      this.historyHeadAuthoritative(sessionId), this.listHistoryCheckpoints(sessionId),
       this.listMessageHistory(sessionId) as Promise<AgentRuntimeMessage[]>,
     ]);
-    const checkpoint = checkpoints.find((item) => item.id === checkpointId);
-    if (!checkpoint)
-      throw new AgentRuntimeError(
-        "History checkpoint was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    const index = messages.findIndex(
-      (item) => item.id === checkpoint.metadata.messageId,
-    );
-    if (index < 0)
-      throw new AgentRuntimeError(
-        "History checkpoint message was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    return {
-      checkpointId,
-      revision: head.revision,
-      removedMessages: Math.max(0, messages.length - index - 1),
-      files: [],
-      conflicts: [],
-      canApply: true,
-      warnings: [
-        "Rust history mutation changes the immutable conversation head.",
-        ...(includeFiles
-          ? [
-              "Workspace files are preserved; file rollback is not part of the runtime history command.",
-            ]
-          : []),
-      ],
-      preservedFiles: [],
-      exclusions: "Conversation history only; workspace files are not changed.",
-    };
+    const checkpoint=checkpoints.find(item=>item.id===checkpointId);
+    if(!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.','CHECKPOINT_NOT_FOUND',404);
+    const index=messages.findIndex(item=>item.id===checkpoint.metadata.messageId);
+    if(index<0)throw new AgentRuntimeError('History checkpoint message was not found.','CHECKPOINT_NOT_FOUND',404);
+    const files=includeFiles?await previewRuntimeFiles(sessionId,checkpointId):{files:[] as RuntimeFileChange[],conflicts:[] as RuntimeFileConflict[],preservedFiles:[] as RuntimeFileConflict[],warnings:[] as string[]};
+    return {checkpointId,revision:head.revision,removedMessages:Math.max(0,messages.length-index-(checkpoint.metadata.kind==='input'?0:1)),...files,
+      canApply:files.conflicts.length===0,exclusions:FILE_EXCLUSIONS};
   }
   private async writeHistoryRootRefs(
     sessionId: string,
@@ -1274,119 +1223,86 @@ export class RuntimeFacade {
     }
     return this.writeHistoryRootRefs(sessionId, refs, requestPrefix);
   }
-  async applyHistoryAuthoritative(input: {
-    sessionId: string;
-    checkpointId: string;
-    revision: number;
-    requestId: string;
-    action: "rollback" | "edit";
-    message?: string;
-  }): Promise<{
-    sessionId: string;
-    revision: number;
-    input?: {
-      message: string;
-    };
-  }> {
-    const [head, checkpoints, messages, runs, steps, parts, tools, events] =
-      await Promise.all([
-        this.historyHeadAuthoritative(input.sessionId),
-        this.listHistoryCheckpoints(input.sessionId),
-        this.listHistoryObjects(input.sessionId, "list_messages"),
-        this.listHistoryObjects(input.sessionId, "list_runs"),
-        this.listHistoryObjects(input.sessionId, "list_steps"),
-        this.listHistoryObjects(input.sessionId, "list_parts"),
-        this.listHistoryObjects(input.sessionId, "list_tool_calls"),
-        this.listHistoryObjects(input.sessionId, "list_events"),
-      ]);
-    if (head.revision !== input.revision)
-      throw new AgentRuntimeError(
-        "Conversation changed. Refresh history.",
-        "HISTORY_STALE",
-        409,
-      );
-    const checkpoint = checkpoints.find(
-      (item) => item.id === input.checkpointId,
-    );
-    if (!checkpoint)
-      throw new AgentRuntimeError(
-        "History checkpoint was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    const orderedMessages = this.orderedHistory(
-      messages as AgentRuntimeMessage[],
-    );
-    const boundary = orderedMessages.findIndex(
-      (item) => item.id === checkpoint.metadata.messageId,
-    );
-    if (boundary < 0)
-      throw new AgentRuntimeError(
-        "History checkpoint message was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    const keptMessages = orderedMessages.slice(0, boundary + 1);
-    const keptIds = new Set(keptMessages.map((item) => item.id));
-    const runIds = new Set(
-      keptMessages
-        .map((item) => item.runId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const keptRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
-    const keptSteps = (steps as AgentRunStep[]).filter((step) =>
-      runIds.has(step.runId),
-    );
-    const keptStepIds = new Set(keptSteps.map((step) => step.id));
-    const objects: Array<{
-      kind: string;
-      value: unknown;
-    }> = [
-      ...keptMessages.map((value) => ({ kind: "runtime.message", value })),
-      ...keptRuns.map((value) => ({ kind: "runtime.run", value })),
-      ...keptSteps.map((value) => ({ kind: "runtime.step", value })),
-      ...(
-        parts as Array<{
-          stepId?: string;
-        }>
-      )
-        .filter((part) => part.stepId && keptStepIds.has(part.stepId))
-        .map((value) => ({ kind: "runtime.part", value })),
-      ...(
-        tools as Array<{
-          stepId?: string;
-        }>
-      )
-        .filter((tool) => tool.stepId && keptStepIds.has(tool.stepId))
-        .map((value) => ({ kind: "runtime.tool_call", value })),
-      ...(
-        events as Array<{
-          runId?: string;
-        }>
-      )
-        .filter((event) => !event.runId || runIds.has(event.runId))
-        .map((value) => ({ kind: "runtime.event", value })),
-    ];
-    const root = await this.writeHistoryRoot(
-      input.sessionId,
-      objects,
-      `history-mutation:${input.requestId}`,
-    );
-    const switched = (await this.historyCommand({
-      sessionId: input.sessionId,
-      requestId: `history-head:${input.requestId}`,
-      operation: "head_switch",
-      payload: { objectId: root, expectedRevision: input.revision },
-    })) as {
-      revision?: number;
-    };
-    return {
-      sessionId: input.sessionId,
-      revision: Number(switched.revision ?? input.revision + 1),
-      ...(input.action === "edit" && input.message
-        ? { input: { message: input.message } }
-        : {}),
-    };
+  private async completeHistoryRestore(sessionId: string, restored: {requestId:string;metadata:Record<string,unknown>}): Promise<number> {
+    const client=this.clientFactory();if(!client)throw new Error('Runtime sidecar is not configured.');
+    const snapshot=await this.uiSnapshotAuthoritative(sessionId);
+    if(snapshot.session.sessionMetadata?.lastHistoryRestore===restored.requestId) {
+      await fileCommand(sessionId,'file_restore_ack',{requestId:restored.requestId},`history-ack:${restored.requestId}`);
+      return (await this.historyHeadAuthoritative(sessionId)).revision;
+    }
+    const changes:Array<{kind:string;value:Record<string,unknown>}>=[];
+    const rules=[['list_runs','run'],['list_steps','step'],['list_parts','part'],['list_events','event'],['list_artifacts','artifact'],['list_tool_calls','tool_call'],['list_permissions','permission'],['list_interactions','interaction']] as const;
+    const now=new Date().toISOString();
+    for(const [operation,kind] of rules)for await(const page of historyPages<Record<string,unknown>>(client,sessionId,operation))for(const record of page) {
+      if(restored.metadata.omitRunId && ((kind==='run'&&record.id===restored.metadata.omitRunId)||record.runId===restored.metadata.omitRunId)) {
+        changes.push({kind:'runtime.tombstone',value:{id:record.id,sessionId,entityKind:`runtime.${kind}`}});continue;
+      }
+      const value={...record};let changed=false;
+      if(kind==='run' && ['running','queued','stopping','waiting_permission','waiting_input'].includes(String(value.status))) {
+        value.status='interrupted';value.stopReason='History restored';value.completedAt=now;
+        const metadata={...value.metadata as Record<string,unknown>};delete metadata.executionLease;delete metadata.recovery;value.metadata=metadata;changed=true;
+      } else if(kind==='step' && ['running','queued','waiting_permission','waiting_input'].includes(String(value.status))) {
+        value.status='interrupted';value.finishReason='history_restored';value.completedAt=now;changed=true;
+      } else if(kind==='tool_call' && ['pending','running'].includes(String(value.status))) {
+        value.status='failed';value.error='Execution ended when history was restored.';value.endedAt=now;changed=true;
+      } else if(kind==='permission' && value.action==='ask' && !value.resolvedAt) {
+        Object.assign(value,{action:'deny',userReply:'reject',resolvedAt:now,resumeToken:null});changed=true;
+      } else if(kind==='interaction' && !value.consumedAt) {
+        Object.assign(value,{status:'cancelled',resolvedAt:now,consumedAt:now});changed=true;
+      }
+      if(changed)changes.push({kind:`runtime.${kind}`,value});
+    }
+    await this.appendHistoryEntities(sessionId,changes);
+    await this.controlCommand({sessionId,requestId:`history-end:${restored.requestId}`,operation:'history_end',
+      payload:{historyRequestId:restored.requestId,historyFields:restored.metadata.historyFields??{}}});
+    await fileCommand(sessionId,'file_restore_ack',{requestId:restored.requestId},`history-ack:${restored.requestId}`);
+    await agentRuntimeStore.hydrateSession(sessionId,true);
+    return (await this.historyHeadAuthoritative(sessionId)).revision;
+  }
+  async applyHistoryAuthoritative(input: {sessionId:string;checkpointId:string;revision:number;requestId:string;action:'rollback'|'edit';message?:string;includeFiles?:boolean}) {
+    await agentRuntimeStore.hydrateSessions();
+    const members=agentRuntimeStore.listSessionTree(input.sessionId);
+    for(const member of members) {
+      const hot=await this.snapshotAuthoritative(member.id);
+      const control=await this.controlState(member.id) as {processLeases?:Array<{state:string;workerOwned?:boolean}>};
+      if(hot.activeRunId || ['running','queued','stopping','waiting_permission','waiting_input'].includes(member.status)
+        || control.processLeases?.some(lease=>lease.state!=='closed'&&!lease.workerOwned))
+        throw new AgentRuntimeError('Stop the session and its agents before restoring history.','HISTORY_SESSION_BUSY',409);
+    }
+    await this.historyCommand({sessionId:input.sessionId,requestId:historyReadRequest('reconcile',input.sessionId),operation:'reconcile_stream',payload:{}});
+    const preview=await this.previewHistoryAuthoritative(input.sessionId,input.checkpointId,input.includeFiles??true);
+    if(preview.revision!==input.revision)throw new AgentRuntimeError('Conversation changed. Refresh history.','HISTORY_STALE',409);
+    if(!preview.canApply)throw new AgentRuntimeError('Resolve independent file changes before restoring history.','FILE_CHANGED',409);
+    const requestId=`history-restore:${input.requestId}`;
+    await this.controlCommand({sessionId:input.sessionId,requestId:`history-begin:${requestId}`,operation:'history_begin',payload:{historyRequestId:requestId}});
+    try {
+      const restored=await fileCommand<{requestId:string;metadata:Record<string,unknown>}>(input.sessionId,'restore_checkpoint',{
+        checkpointId:input.checkpointId,expectedRevision:input.revision,includeFiles:input.includeFiles??true,
+        preservePaths:preview.preservedFiles.map(file=>JSON.stringify([file.root,file.path])),
+      },requestId);
+      const revision=await this.completeHistoryRestore(input.sessionId,restored);
+      return {sessionId:input.sessionId,revision,...(input.action==='edit'&&input.message?{input:{message:input.message}}:{})};
+    } catch(error) {
+      const pending=await pendingRuntimeFiles();
+      const control=await this.controlState(input.sessionId) as {runtimeControl?:{historyRequestId?:string}};
+      if(!pending.restores.some(item=>item.sessionId===input.sessionId) && control.runtimeControl?.historyRequestId===requestId)
+        await this.controlCommand({sessionId:input.sessionId,requestId:`history-cancel:${requestId}`,operation:'history_cancel',payload:{historyRequestId:requestId}});
+      throw error;
+    }
+  }
+  async recoverHistoryAuthoritative(sessionId: string): Promise<void> {
+    const control=await this.controlState(sessionId) as {runtimeControl?:{historyRequestId?:string}};
+    const pending=(await pendingRuntimeFiles()).restores.find(item=>item.sessionId===sessionId);
+    const snapshot=await this.uiSnapshotAuthoritative(sessionId);
+    if(pending && snapshot.session.sessionMetadata?.lastHistoryRestore!==pending.requestId && !control.runtimeControl?.historyRequestId)
+      await this.controlCommand({sessionId,requestId:historyReadRequest('recover-begin',sessionId),operation:'history_begin',payload:{historyRequestId:pending.requestId}});
+    const result=await fileCommand<{recovered:boolean;requestId:string;metadata:Record<string,unknown>}>(sessionId,'file_recover',{});
+    if(result.recovered) {
+      await this.completeHistoryRestore(sessionId,result);
+    } else if(control.runtimeControl?.historyRequestId) {
+      const requestId=control.runtimeControl.historyRequestId;
+      await this.controlCommand({sessionId,requestId:`history-cancel:${requestId}`,operation:'history_cancel',payload:{historyRequestId:requestId}});
+    }
   }
   async cloneHistoryAuthoritative(input: {
     sourceSessionId: string;

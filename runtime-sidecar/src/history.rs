@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 use tokio::sync::Semaphore;
+mod files;
 
 const CF_OBJECTS: &str = "objects";
 const CF_HEADS: &str = "heads";
@@ -20,6 +21,7 @@ const CF_PINS: &str = "pins";
 const CF_RECEIPTS: &str = "receipts";
 const CF_INDEXES: &str = "indexes";
 const CF_ENTITIES: &str = "visible_entities";
+const CF_FILES: &str = "file_operations";
 const CF_BLOBS: &str = "blobs";
 const CF_ASSETS: &str = "assets";
 const CF_ASSET_BINDINGS: &str = "asset_bindings";
@@ -39,6 +41,10 @@ const GC_MAX_BATCH: usize = 512;
 
 #[derive(Debug, Error)]
 pub enum HistoryError {
+    #[error("file operation: {0}")]
+    FileIo(#[from] std::io::Error),
+    #[error("file operation conflicts: {0}")]
+    FileBusy(String),
     #[error("rocksdb: {0}")]
     Rocks(#[from] rocksdb::Error),
     #[error("serialization: {0}")]
@@ -115,6 +121,7 @@ pub struct HistoryStore {
     object_cache: Cache<String, Vec<u8>>,
     command_locks: Arc<[Mutex<()>; 64]>,
     asset_lock: Arc<Mutex<()>>,
+    file_lock: Arc<Mutex<()>>,
     maintenance_lock: Arc<RwLock<()>>,
     blocking_slots: Arc<Semaphore>,
 }
@@ -131,6 +138,7 @@ impl HistoryStore {
             CF_RECEIPTS,
             CF_INDEXES,
             CF_ENTITIES,
+            CF_FILES,
             CF_BLOBS,
             CF_ASSETS,
             CF_ASSET_BINDINGS,
@@ -150,6 +158,7 @@ impl HistoryStore {
                 .max_capacity(64 * 1024 * 1024).build(),
             command_locks: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
             asset_lock: Arc::new(Mutex::new(())),
+            file_lock: Arc::new(Mutex::new(())),
             maintenance_lock: Arc::new(RwLock::new(())),
             blocking_slots: Arc::new(Semaphore::new(32)),
         })
@@ -249,6 +258,9 @@ impl HistoryStore {
             } else {
                 None
             };
+        let _files = if operation.starts_with("file_") || operation == "restore_checkpoint" {
+            Some(self.file_lock.lock().map_err(|_| HistoryError::InvalidCommand("file operation lock poisoned".into()))?)
+        } else { None };
         let stripe =
             usize::from(Sha256::digest(session_id.as_bytes())[0]) % self.command_locks.len();
         let _session = self.command_locks[stripe]
@@ -282,6 +294,10 @@ impl HistoryStore {
                 | "list_compactions"
                 | "list_permissions"
                 | "list_interactions"
+                | "list_file_changes"
+                | "file_cursor"
+                | "file_pending"
+                | "file_preview"
                 | "verify"
         );
         let identity = format!(
@@ -330,7 +346,7 @@ impl HistoryStore {
             "head_switch" | "checkpoint" => {
                 self.head_switch(session_id, &value, operation, &mut batch)?
             }
-            "list_checkpoints" => self.list_checkpoints(session_id)?,
+            "list_checkpoints" => self.list_checkpoints(session_id, &value)?,
             "fork" => self.fork(session_id, &value, &mut batch)?,
             "rollback" => self.head_switch(session_id, &value, "head_switch", &mut batch)?,
             "pin" => self.pin(session_id, &value, &mut batch)?,
@@ -352,6 +368,9 @@ impl HistoryStore {
             "list_terminals" => self.list_indexed(session_id, "terminal", &value)?,
             "list_permissions" => self.list_indexed(session_id, "permission", &value)?,
             "list_interactions" => self.list_indexed(session_id, "interaction", &value)?,
+            "list_file_changes" => self.list_indexed(session_id, "file_change", &value)?,
+            "file_begin" | "file_finish" | "file_abandon" | "file_import" | "file_cursor" | "file_checkpoint" | "file_pending" | "file_preview" | "restore_checkpoint" | "file_recover" | "file_restore_ack" =>
+                self.file_command(session_id, request_id, operation, &value, &mut batch)?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index(&mut batch)?,
             "gc" => self.gc(&value)?,
@@ -455,7 +474,7 @@ impl HistoryStore {
         // must win both graph traversal and the materialized current-head index.
         for object in objects.iter().rev() {
             let kind = required_string(object, "kind")?;
-            if entity_index_kind(kind).is_none()
+            if indexed_kind(kind, &object["value"]).is_none()
                 || object["value"]["sessionId"].as_str() != Some(session_id)
             {
                 return Err(HistoryError::InvalidCommand(
@@ -466,7 +485,7 @@ impl HistoryStore {
             let result: serde_json::Value =
                 serde_json::from_slice(&self.put_object(object, batch)?)?;
             let object_id = required_string(&result, "objectId")?.to_owned();
-            if indexed.insert((kind, required_string(&object["value"], "id")?)) {
+            if indexed.insert((indexed_kind(kind, &object["value"]).unwrap(), required_string(&object["value"], "id")?)) {
                 self.index_entity(session_id, &object_id, kind, &object["value"], batch)?;
             }
             refs.push(object_id);
@@ -883,36 +902,25 @@ impl HistoryStore {
         Ok(serde_json::to_vec(&head)?)
     }
 
-    fn list_checkpoints(&self, session_id: &str) -> Result<Vec<u8>, HistoryError> {
+    fn list_checkpoints(&self, session_id: &str, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
         let prefix = format!("p/{session_id}/");
-        let mut items = Vec::new();
-        for item in self.db.iterator_cf(
-            self.cf(CF_PINS)?,
-            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
-        ) {
-            let (key, value) = item?;
-            if !key.starts_with(prefix.as_bytes()) {
-                break;
-            }
-            let pin_id = String::from_utf8_lossy(&key)
-                .trim_start_matches(&prefix)
-                .to_owned();
-            let (object_id, metadata) = match serde_json::from_slice::<serde_json::Value>(&value) {
-                Ok(saved) if saved["objectId"].is_string() => (
-                    saved["objectId"].as_str().unwrap_or_default().to_owned(),
-                    saved
-                        .get("metadata")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({})),
-                ),
-                _ => (
-                    String::from_utf8_lossy(&value).to_string(),
-                    serde_json::json!({}),
-                ),
-            };
-            items.push(serde_json::json!({"id":pin_id,"objectId":object_id,"metadata":metadata}));
+        let after=value["cursor"]["after"].as_str().unwrap_or("");
+        if !after.is_empty() && value["cursor"]["sessionId"]!=session_id {return Err(HistoryError::InvalidCommand("checkpoint cursor scope mismatch".into()));}
+        let start=format!("{prefix}{after}");
+        let mut items=Vec::new();let mut bytes=2048;let mut last=None;let mut more=false;
+        for entry in self.db.iterator_cf(self.cf(CF_PINS)?, rocksdb::IteratorMode::From(start.as_bytes(),rocksdb::Direction::Forward)) {
+            let (key,value)=entry?;
+            if !key.starts_with(prefix.as_bytes()){break;}
+            if !after.is_empty() && key.as_ref()<=start.as_bytes(){continue;}
+            let saved:serde_json::Value=serde_json::from_slice(&value)?;
+            let id=String::from_utf8_lossy(&key).trim_start_matches(&prefix).to_owned();
+            let item=serde_json::json!({"id":id,"objectId":saved["objectId"],"metadata":saved["metadata"]});
+            let cost=serde_json::to_vec(&item)?.len()+1;
+            if items.len()==64 || bytes+cost>900*1024 {more=true;break;}
+            bytes+=cost;last=Some(id);items.push(item);
         }
-        Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?)
+        let cursor=if more {last.map(|after|serde_json::json!({"sessionId":session_id,"after":after}))} else {None};
+        Ok(serde_json::to_vec(&serde_json::json!({"items":items,"cursor":cursor}))?)
     }
 
     fn pin(
@@ -932,7 +940,7 @@ impl HistoryStore {
         batch.put_cf(
             self.cf(CF_PINS)?,
             pin_key(session_id, pin_id).as_bytes(),
-            object_id.as_bytes(),
+            serde_json::to_vec(&serde_json::json!({"objectId":object_id,"metadata":{}}))?,
         );
         self.bump_root_epoch(batch)?;
         Ok(serde_json::to_vec(
@@ -1110,13 +1118,17 @@ impl HistoryStore {
         &self, scope: &str, object_id: &str, object_kind: &str,
         value: &serde_json::Value, batch: &mut WriteBatch,
     ) -> Result<(), HistoryError> {
-        let Some(kind) = entity_index_kind(object_kind) else { return Ok(()); };
+        let Some(kind) = indexed_kind(object_kind,value) else { return Ok(()); };
         let owner = required_string(value, "sessionId")?;
         let id = required_string(value, "id")?;
         let identity_key = format!("{}id/{kind}/{}/{}", entity_prefix(scope), encode_hex(owner.as_bytes()), encode_hex(id.as_bytes()));
         if let Some(previous) = self.get(CF_ENTITIES, identity_key.as_bytes())? {
             let previous: EntityIndexEntry = serde_json::from_slice(&previous)?;
             batch.delete_cf(self.cf(CF_ENTITIES)?, previous.order_key.as_bytes());
+        }
+        if object_kind=="runtime.tombstone" {
+            batch.delete_cf(self.cf(CF_ENTITIES)?,identity_key.as_bytes());
+            return Ok(());
         }
         let order_key = format!("{}sort/{kind}/{}/{}/{}", entity_prefix(scope), entity_order(kind, value), encode_hex(id.as_bytes()), encode_hex(owner.as_bytes()));
         let entry = EntityIndexEntry { object_id: object_id.to_owned(), order_key };
@@ -1139,7 +1151,7 @@ impl HistoryStore {
             if !visited.insert(id.clone()) { continue; }
             let object: HistoryObject = serde_json::from_slice(&self.read_object(&id)?)?;
             stack.extend(object.refs.iter().rev().cloned());
-            if let Some(kind) = entity_index_kind(&object.kind) {
+            if let Some(kind) = indexed_kind(&object.kind,&object.value) {
                 let owner = required_string(&object.value, "sessionId")?;
                 let entity = required_string(&object.value, "id")?;
                 if entities.insert((kind, owner.to_owned(), entity.to_owned())) {
@@ -1663,9 +1675,13 @@ fn entity_index_kind(kind: &str) -> Option<&'static str> {
         "runtime.compaction" => Some("compaction"),
         "runtime.permission" => Some("permission"),
         "runtime.interaction" => Some("interaction"),
+        "runtime.file_change" => Some("file_change"),
         "runtime.terminal" => Some("terminal"),
         _ => None,
     }
+}
+fn indexed_kind(kind:&str,value:&serde_json::Value)->Option<&'static str> {
+    entity_index_kind(if kind=="runtime.tombstone" {value["entityKind"].as_str()?} else {kind})
 }
 
 fn entity_prefix(session_id: &str) -> String {
@@ -1674,7 +1690,7 @@ fn entity_prefix(session_id: &str) -> String {
 fn entity_head_key(session_id: &str) -> String { format!("{}head", entity_prefix(session_id)) }
 fn entity_order(kind: &str, value: &serde_json::Value) -> String {
     let number = match kind {
-        "message" | "part" => value["sequence"].as_u64(),
+        "message" | "part" | "file_change" => value["sequence"].as_u64(),
         "plan" => value["revision"].as_u64(),
         _ => None,
     };
@@ -2070,6 +2086,9 @@ mod tests {
         invoke(&store, "s", "rollback", "head_switch", serde_json::json!({"objectId":first["objectId"]}));
         invoke(&store, "system", "rebuild", "rebuild_index", serde_json::json!({}));
         assert_eq!(invoke(&store, "s", "restored", "list_messages", serde_json::json!({}))["items"], serde_json::json!([entity("a",1)["value"],entity("b",2)["value"]]));
+        invoke(&store,"s","remove","append_entities",serde_json::json!({"objects":[{"kind":"runtime.tombstone","value":{"id":"a","sessionId":"s","entityKind":"runtime.message"}}]}));
+        invoke(&store,"system","rebuild-deleted","rebuild_index",serde_json::json!({}));
+        assert_eq!(invoke(&store,"s","without-a","list_messages",serde_json::json!({}))["items"],serde_json::json!([entity("b",2)["value"]]));
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

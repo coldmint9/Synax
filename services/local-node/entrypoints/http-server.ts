@@ -53,6 +53,8 @@ import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-confi
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
 import { readServiceOrigin, startReadService, stopReadService } from "../infrastructure/runtime/read-service.js";
 import { startRustRuntimeSidecar, stopRustRuntimeSidecar, type RustRuntimeSidecarHandle } from "../infrastructure/runtime/rust-sidecar.js";
+import { recoverAbandonedFileWriters } from '../modules/agent-runtime/runtime-files.js';
+import { runtimeFacade } from '../modules/agent-runtime/sidecar/runtime-facade.js';
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -212,8 +214,18 @@ async function startRuntime(): Promise<void> {
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
   rustRuntimeSidecar = await startRustRuntimeSidecar();
   await agentRuntimeStore.hydrateSessions();
+  const fileRestores=await recoverAbandonedFileWriters();
+  const restoreSessions=new Set(fileRestores);
+  for(const session of await runtimeFacade.listSessionProjection() as Array<{id:string;status:string}>) {
+    if(session.status==='stopping') {
+      const control=await runtimeFacade.controlState(session.id) as {runtimeControl?:{historyRequestId?:string}};
+      if(control.runtimeControl?.historyRequestId)restoreSessions.add(session.id);
+    }
+  }
+  for(const sessionId of restoreSessions)await runtimeFacade.recoverHistoryAuthoritative(sessionId);
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   const recovery = await recoverRuntime(runtimeHost.hostId);
+  await recoverAbandonedFileWriters();
   const mediaJobs = recoverMediaJobs();
   if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
   if (recovery.reviewed)

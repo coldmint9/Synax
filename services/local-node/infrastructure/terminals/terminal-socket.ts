@@ -19,8 +19,6 @@ export function issueTerminalTicket(
 ): string {
   // The record may only exist in Rust history after this Node process has
   // restarted. Validation is repeated asynchronously when the socket attaches.
-  if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative")
-    terminalManager.get(terminalId, projectId);
   for (const [key, ticket] of tickets)
     if (ticket.expires < Date.now()) tickets.delete(key);
   if (tickets.size >= 128)

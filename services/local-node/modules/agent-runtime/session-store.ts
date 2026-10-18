@@ -114,7 +114,6 @@ export class AgentRuntimeStore {
     }
     const write = (this.tails.get(sessionId) ?? Promise.resolve()).then(
       async () => {
-        if (this.failures.has(sessionId)) throw this.failures.get(sessionId);
         await action();
       },
     );
@@ -129,13 +128,23 @@ export class AgentRuntimeStore {
       tail = this.tails.get(sessionId);
       await tail;
     } while (tail !== this.tails.get(sessionId));
-    if (this.failures.has(sessionId)) throw this.failures.get(sessionId);
+    const failure = this.failures.get(sessionId);
     this.tails.delete(sessionId);
+    if (failure) {
+      this.failures.delete(sessionId);
+      throw failure;
+    }
   }
   async flush(): Promise<void> {
     await Promise.all(
       [...this.tails.keys()].map((id) => this.flushSession(id)),
     );
+  }
+  enqueueAssetBinding(sessionId: string, assetId: string): void {
+    this.queue(sessionId, async () => {
+      await runtimeClient().historyCommandGlobal({ sessionId: "assets", requestId: `asset-bind:${sessionId}:${assetId}`,
+        operation: "asset_bind", payload: { sessionId, assetId } });
+    });
   }
   enqueueControl(sessionId: string, requestId: string, operation: string, payload: unknown): void {
     const input = copy(payload);
@@ -188,6 +197,7 @@ export class AgentRuntimeStore {
       const interactions = this.collection("interaction");
       for (const interaction of control.interactions as Entity[])
         interactions.set(interaction.id, interaction);
+      await (await import("./media-assets.js")).hydrateSessionAssets(sessionId);
       this.loaded.add(sessionId);
     })();
     this.loading.set(sessionId, load);

@@ -7,20 +7,12 @@
  * reasoningParts, messages and tool calls, whose signatures remain untouched.
  */
 import { whitelistRawUsage } from "../../infrastructure/llm-runtime/usage.js";
-import { assertBatchInput } from "./checkpoints/version-runtime/batch-input.js";
-import { VersionStoreError } from "./checkpoints/version-store/limits.js";
 
 const OUTPUT_DIAGNOSTIC_BYTES = 512 * 1024;
 const USAGE_DIAGNOSTIC_BYTES = 64 * 1024;
 
 function exceedsDiagnosticBudget(value: unknown, bytes: number): boolean {
-  try {
-    assertBatchInput(value, bytes);
-    return false;
-  } catch (error) {
-    if (error instanceof VersionStoreError && error.code === "VERSION_BATCH_BUDGET") return true;
-    throw error;
-  }
+  return Buffer.byteLength(JSON.stringify(value), "utf8") > bytes;
 }
 export interface ResponsesProtocolSnapshot {
   protocol: 'openai-responses'

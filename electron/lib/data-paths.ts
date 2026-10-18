@@ -3,7 +3,7 @@ import path from "node:path";
 
 export function getDataRoot(): string {
   if (process.env.DATA_ROOT) return path.resolve(process.env.DATA_ROOT);
-  return path.join(app.getPath("home"), ".synax");
+  return path.join(app.getPath("home"), ".synax", "v2");
 }
 
 export function getResourcePath(...segments: string[]): string {

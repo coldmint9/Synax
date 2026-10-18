@@ -7,7 +7,7 @@ import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runti
 import type { AgentRunStreamChunk } from '../services/local-node/modules/agent-runtime/contracts.js';
 
 const root = await mkdtemp(path.join(tmpdir(), 'synax-rust-queue-'));
-Object.assign(process.env, { DATA_ROOT: root, NODE_ENV: 'test', LOG_LEVEL: 'error', SYNAX_HISTORY_MODE: 'flat', SYNAX_TRANSCRIPT_STORAGE: 'legacy', SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '1', SYNAX_RUNTIME_SIDECAR_STREAM: 'authoritative' });
+Object.assign(process.env, { DATA_ROOT: root, NODE_ENV: 'test', LOG_LEVEL: 'error', SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '1', SYNAX_RUNTIME_SIDECAR_STREAM: 'authoritative' });
 const { startRustRuntimeSidecar, stopRustRuntimeSidecar } = await import('../services/local-node/infrastructure/runtime/rust-sidecar.js');
 const runtime = await startRustRuntimeSidecar(); assert(runtime);
 const client = new RuntimeSidecarClient({ socketPath: runtime.socketPath, token: runtime.token });
@@ -44,7 +44,7 @@ try {
       yield { type: 'run_completed', run: completed }; yield { type: 'done', sessionId, runId: run.id };
     }, async interrupt() { release(); },
   });
-  coordinator.submit(session.id, { message: 'first' }, 'first');
+  await coordinator.submitAsync(session.id, { message: 'first' }, 'first');
   await waitFor(() => observed.length === 1, 'first run');
   const firstResponse = await agentRuntimeRoutes.request(`/sessions/${session.id}/input-queue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'second' }) });
   assert.equal(firstResponse.status, 200, await firstResponse.clone().text());

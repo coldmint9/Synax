@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseWslUncPath } from "../../workspace-location.js";
-import { wslCommandSpec } from "../../../infrastructure/wsl/wsl.js";
-import type { FileChange, GitBoundary } from "./files.js";
+import { parseWslUncPath } from "../workspace-location.js";
+import { wslCommandSpec } from "../../infrastructure/wsl/wsl.js";
+import type { RuntimeFileChange as FileChange, RuntimeGitBoundary as GitBoundary } from "./runtime-files.js";
 const execute = promisify(execFile);
 async function git(root: string, args: string[]): Promise<string> {
   const wsl = parseWslUncPath(root),
