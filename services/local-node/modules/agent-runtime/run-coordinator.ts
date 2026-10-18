@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   runWithExecutionContext,
   withinExecutionContext,
+  isExecutionSuperseded,
   type RuntimeExecutionContext,
 } from "../../infrastructure/runtime/execution-context.js";
 import type { AgentSessionStreamMode } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -198,19 +199,6 @@ export class RunCoordinator {
       this.pendingResumes.set(sessionId, resumeInput);
       return;
     }
-    void runtimeFacade
-      .controlCommand({
-        sessionId,
-        requestId: `resume:${sessionId}:${runId}`,
-        operation: "resume",
-        payload: { runId },
-      })
-      .catch((error) =>
-        logger.warn(
-          { sessionId, runId, error },
-          "[run-coordinator] Rust resume control could not be committed",
-        ),
-      );
     this.launch(sessionId, runId, "resume", resumeInput);
   }
   /** Start one queued turn only after the previous conversation work has settled. */
@@ -458,6 +446,7 @@ export class RunCoordinator {
       await writer.settled();
     };
     let settledNormally = false;
+    let leaseLost = false;
     try {
       if (owner.controller.signal.aborted)
         throw new Error("Execution stopped before launch.");
@@ -468,29 +457,22 @@ export class RunCoordinator {
           sessionId,
           run: admittedRun,
           runtime: admittedRun.metadata.runtime as AcceptedRuntimeInput,
-        }, false);
-        // Sidecar admission activates the durable run before the backend
-        // starts, so mirror that activation locally before the loop binds its
-        // trigger message. Without this, activateAcceptedRun sees the stale
-        // queued mirror and rejects every admitted turn.
+        });
+        // Mirror only after Rust has durably activated this run.
         agentRuntimeStore.updateRun(owner.runId, {
           status: "running",
           completedAt: null,
           stopReason: null,
         });
       }
-      {
-        await runtimeFacade.runPatch(
-          sessionId,
-          owner.runId,
-          `lease-open-await:${owner.runId}:${owner.context?.epoch ?? "none"}`,
-          {
-            metadata: {
-              executionLease: { ...(owner.context ?? {}), closed: false },
-            },
-          },
-        );
+      if (mode === "resume") {
+        await runtimeFacade.controlCommand({ sessionId,
+          requestId: `resume:${owner.runId}:${owner.context?.epoch}`,
+          operation: "resume", payload: { runId: owner.runId } });
       }
+      await runtimeFacade.controlCommand({ sessionId,
+        requestId: `execution-open:${owner.runId}:${owner.context?.epoch}`,
+        operation: "execution_open", payload: owner.context });
       for await (const chunk of withinExecutionContext(
         owner.context,
         this.driver.execute(sessionId, mode, input, owner.controller.signal),
@@ -506,14 +488,16 @@ export class RunCoordinator {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
-        { sessionId, runId: owner.runId, error: message },
+        { sessionId, runId: owner.runId, error: message, cause: error instanceof Error ? error.cause : undefined },
         "[run-coordinator] execution ended with an error",
       );
+      leaseLost = isExecutionSuperseded(error);
+      if (leaseLost) return;
       if (!this.ownsLease(owner)) return;
       await flush();
       await agentRuntimeStore.hydrateSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
-      if (!["completed", "cancelled", "interrupted"].includes(run.status)) {
+      if (!["completed", "cancelled", "interrupted", "failed", "blocked"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
           status: owner.controller.signal.aborted ? "interrupted" : "failed",
           completedAt: nowIso(),
@@ -531,42 +515,28 @@ export class RunCoordinator {
       }
       await record({ type: "done", sessionId, runId: run.id });
     } finally {
-      let ownsLease = this.ownsLease(owner);
+      let ownsLease = !leaseLost && this.ownsLease(owner);
       if (!ownsLease) writer.abandon();
       if (ownsLease) {
         await flush();
         await writer.prepareFinish();
         runWithExecutionContext(owner.context, () => writer.finish());
         await writer.settled();
-        if (this.ownsLease(owner))
+        if (this.ownsLease(owner)) {
+          const run = agentRuntimeStore.getRun(owner.runId);
           await runtimeFacade.finishExecution(
             sessionId,
-            agentRuntimeStore.getRun(owner.runId),
+            run,
           );
-        // A replacement execution may have acquired the lease while the
-        // persistence acknowledgement was in flight. Fence finalization too.
-        let closeLeaseContext: RuntimeExecutionContext | undefined;
-        ownsLease = runtimeTransaction(() => {
-          if (!this.ownsLease(owner)) return false;
-          const run = agentRuntimeStore.getRun(owner.runId);
-          {
-            closeLeaseContext = owner.context;
+          // Terminal finish closes the lease in the same Rust transaction.
+          // Waiting checkpoints retain the run but release this executor.
+          if (["waiting_input", "waiting_permission"].includes(run.status)) {
+            await runtimeFacade.controlCommand({ sessionId,
+              requestId: `execution-close:${owner.runId}:${owner.context?.epoch}`,
+              operation: "execution_close", payload: owner.context });
           }
-          return true;
-        });
-        if (ownsLease) {
-          const run = agentRuntimeStore.getRun(owner.runId);
-          await runtimeFacade.runPatch(
-            sessionId,
-            run.id,
-            `lease-close:${run.id}:${closeLeaseContext?.epoch ?? "none"}`,
-            {
-              metadata: {
-                executionLease: { ...(closeLeaseContext ?? {}), closed: true },
-              },
-            },
-          );
         }
+        ownsLease = this.ownsLease(owner);
         if (!ownsLease) writer.abandon();
       }
       if (!owner.stopping && this.owners.get(sessionId) === owner)
@@ -574,7 +544,7 @@ export class RunCoordinator {
       emitRuntimeBusEvent({ type: "session_checkpoint_changed", sessionId });
       const pending = this.pendingResumes.get(sessionId);
       this.pendingResumes.delete(sessionId);
-      if (pending && !owner.stopping) {
+      if (pending && !owner.stopping && !leaseLost) {
         try {
           this.resume(sessionId, pending);
         } catch (error) {
@@ -610,6 +580,7 @@ export class RunCoordinator {
   }
   private ownsLease(owner: Owner): boolean {
     if (!owner.context) return true;
+    if (this.owners.get(owner.context.sessionId) !== owner) return false;
     const run = agentRuntimeStore.getRun(owner.runId);
     return (
       (

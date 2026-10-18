@@ -180,6 +180,8 @@ pub struct QueueMutationReceipt {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_lease: Option<crate::execution::ExecutionLease>,
     #[serde(default)]
     pub permissions: Vec<serde_json::Value>,
     #[serde(default)]
@@ -660,6 +662,18 @@ impl HotStore {
         } else {
             serde_json::from_slice(payload)?
         };
+        // A live authority read, never a replayed receipt or a UI snapshot. The
+        // shard serializes it with admission, lease changes and finish_run.
+        if operation == "execution_check" {
+            let expected = crate::execution::ExecutionLease::decode(session_id, &value)?;
+            let state = self.read_session(session_id)?;
+            let control = self.read_control_state(session_id)?;
+            expected.assert_current(state.active_run_id.as_deref(), control.execution_lease.as_ref())?;
+            return Ok(ControlCommandReceipt {
+                state_json: serde_json::to_vec(&serde_json::json!({"executionLease": control.execution_lease}))?,
+                snapshot: state.snapshot(), event: None, reused: false,
+            });
+        }
         let identity = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&("control.v1", operation, &value))?)
@@ -695,6 +709,41 @@ impl HotStore {
             .to_owned();
 
         match operation {
+            "execution_open" | "execution_close" => {
+                let mut lease = crate::execution::ExecutionLease::decode(session_id, &value)?;
+                if projection.run["id"].as_str() != Some(lease.run_id.as_str()) {
+                    return Err(lease.superseded("projected run replaced").into());
+                }
+                if operation == "execution_open" {
+                    if state.active_run_id.as_deref() != Some(lease.run_id.as_str())
+                        || projection.run["id"].as_str() != Some(lease.run_id.as_str())
+                    {
+                        return Err(lease.superseded("run finished or replaced").into());
+                    }
+                    if control.runtime_control.is_some() {
+                        return Err(lease.superseded("execution is stopping").into());
+                    }
+                    if control.execution_lease.as_ref().is_some_and(|current| !current.closed && !current.same_owner(&lease)) {
+                        return Err(lease.superseded("another executor owns the run").into());
+                    }
+                    if control.execution_lease.as_ref().is_some_and(|current| current.closed && current.same_owner(&lease)) {
+                        return Err(lease.superseded("closed generation cannot be reopened").into());
+                    }
+                } else {
+                    // Compare the execution generation, even if the caller has
+                    // refreshed the session revision. A delayed close cannot
+                    // revoke a newer executor resuming the same run.
+                    if !control.execution_lease.as_ref().is_some_and(|current| current.same_owner(&lease)) {
+                        return Err(lease.superseded("owner changed before close").into());
+                    }
+                    lease.closed = true;
+                }
+                event_run_id = lease.run_id.clone();
+                if !projection.run["metadata"].is_object() { projection.run["metadata"] = serde_json::json!({}); }
+                projection.run["metadata"]["executionLease"] = serde_json::to_value(&lease)?;
+                control.execution_lease = Some(lease);
+                event_name = "run_updated".into();
+            }
             "history_begin" => {
                 if state.active_run_id.is_some() || control.runtime_control.is_some() {return Err(RuntimeError::SessionBusy.into());}
                 control.runtime_control=Some(serde_json::json!({"state":"stopping","historyRequestId":value["historyRequestId"],"previousStatus":projection.session["status"],"reason":"Restoring history"}));
@@ -710,7 +759,7 @@ impl HotStore {
                     state.epoch=state.epoch.checked_add(1).ok_or_else(||RuntimeError::InvalidCommand("epoch overflow".into()))?;
                     state.history_generation=state.history_generation.checked_add(1).ok_or_else(||RuntimeError::InvalidCommand("history generation overflow".into()))?;
                     state.active_run_id=None;
-                    control.permissions.clear();control.interactions.clear();
+                    control.permissions.clear();control.interactions.clear();control.execution_lease=None;
                     projection.run=serde_json::Value::Null;projection.live_chunks.clear();projection.completed_step_ids.clear();
                     projection.set_queue(&crate::input_queue::QueueState::default());
                     for key in ["prompt","contextSnapshotId"] {if let Some(field)=value["historyFields"].get(key){projection.session[key]=field.clone();}}
@@ -1841,6 +1890,16 @@ impl HotStore {
             .ok_or_else(|| RuntimeError::InvalidCommand("active run is missing".into()))?;
         let mut run: StoredRun = serde_json::from_slice(&bytes)?;
         let mut projection = self.read_ui_projection(session_id)?;
+        let mut control = self.read_control_state(session_id)?;
+        if let Some(lease) = control.execution_lease.as_mut().filter(|lease| lease.run_id == run_id) {
+            if let Some(identity) = supplied.as_ref().and_then(|run| run.pointer("/metadata/executionLease")) {
+                let expected = crate::execution::ExecutionLease::decode(session_id, identity)?;
+                if !lease.same_owner(&expected) {
+                    return Err(expected.superseded("owner changed before finish").into());
+                }
+            }
+            lease.closed = true;
+        }
         let projected_document = projection
             .as_ref()
             .filter(|projection| projection.run["id"].as_str() == Some(run_id))
@@ -1849,10 +1908,15 @@ impl HotStore {
             .as_ref()
             .map(|projection| projection.session["blockedReason"].clone())
             .unwrap_or(serde_json::Value::Null);
+        let mut document = supplied.or(projected_document).or(run.document.clone());
+        if let (Some(document), Some(lease)) = (document.as_mut(), control.execution_lease.as_ref().filter(|lease| lease.run_id == run_id)) {
+            if !document["metadata"].is_object() { document["metadata"] = serde_json::json!({}); }
+            document["metadata"]["executionLease"] = serde_json::to_value(lease)?;
+        }
         let completion = crate::completion::complete(
             run_id,
             status,
-            supplied.or(projected_document).or(run.document.clone()),
+            document,
             previous_reason,
         )?;
         let previous_retained = state.retained_from;
@@ -1882,6 +1946,7 @@ impl HotStore {
             reused: false,
         };
         let mut batch = WriteBatch::default();
+        self.put_batch(&mut batch, CF_CONTROLS, control_state_key(session_id), &serde_json::to_vec(&control)?)?;
         self.put_batch(
             &mut batch,
             CF_SESSIONS,

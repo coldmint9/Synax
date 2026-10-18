@@ -20,7 +20,7 @@ import {
   type RuntimeContentPart,
 } from "./content-parts.js";
 import { bindAssets, validateAssets, sessionHasAsset } from "./media-assets.js";
-import { assertRuntimeExecutionCurrent } from "../../infrastructure/runtime/execution-context.js";
+import { assertRuntimeExecutionCurrent, isExecutionSuperseded } from "../../infrastructure/runtime/execution-context.js";
 import { workTools } from "./tools/work-tools.js";
 import { verificationTool } from "./tools/verification.js";
 import { workRuntime } from "./work-runtime.js";
@@ -1155,6 +1155,7 @@ export class ToolRegistry {
       });
       return { record: completed, permission, toolResult: result };
     } catch (error) {
+      if (isExecutionSuperseded(error)) throw error;
       const work = workStore.current(sessionId);
       if (
         work &&

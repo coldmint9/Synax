@@ -15,8 +15,8 @@ export function withoutExecutionContext<T>(action: () => T): T { return contexts
 
 /**
  * Install the host's asynchronous authority check. The production default is
- * the Rust UI projection; tests and embedded hosts may provide an equivalent
- * control/projection adapter without importing the runtime facade here.
+ * Rust execution control state; tests and embedded hosts may provide an equivalent
+ * control adapter without importing the runtime facade here.
  */
 export function setAuthoritativeExecutionFence(fence: AuthoritativeExecutionFence | undefined): void {
   authoritativeExecutionFence = fence;
@@ -49,24 +49,19 @@ function getSidecarFenceClient(): RuntimeSidecarClient {
 }
 
 async function defaultAuthoritativeExecutionFence(context: RuntimeExecutionContext): Promise<void> {
-  let snapshot: unknown;
+  const client = getSidecarFenceClient();
   try {
-    snapshot = JSON.parse(Buffer.from(await getSidecarFenceClient().uiSnapshot(context.sessionId)).toString('utf8'));
+    await client.assertExecutionLease(context);
   } catch (error) {
-    sidecarFenceClient?.client.close();
-    sidecarFenceClient = undefined;
-    if (error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'EXECUTION_SUPERSEDED') throw error;
+    // A rejected owner is a valid response, not a broken connection. Do not
+    // cancel unrelated sessions' checks on this shared, reconnecting client.
+    if (isExecutionSuperseded(error)) throw error;
     throw fenceUnavailable('Rust execution fence could not be read.', error);
   }
-  const value = snapshot as {
-    session?: { id?: unknown; activeRunId?: unknown };
-    run?: { id?: unknown; metadata?: { executionLease?: { epoch?: unknown; closed?: unknown } } } | null;
-  };
-  const lease = value.run?.metadata?.executionLease;
-  if (value.session?.id !== context.sessionId || value.session.activeRunId !== context.runId ||
-      value.run?.id !== context.runId || lease?.epoch !== context.epoch || lease.closed === true) {
-    throw superseded('Execution lease has been superseded or closed.');
-  }
+}
+
+export function isExecutionSuperseded(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EXECUTION_SUPERSEDED');
 }
 
 /**

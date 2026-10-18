@@ -61,6 +61,7 @@ export type AgentSessionChildMessage =
       sessionId: string;
       streamId: string;
       error: string;
+      code?: string;
     }
   | {
       type: "context:compact:done";

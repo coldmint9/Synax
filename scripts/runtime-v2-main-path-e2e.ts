@@ -70,7 +70,7 @@ async function stopHost() {
   try { await exited; } finally { clearTimeout(timer); }
 }
 async function startHost() {
-  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'error',
+  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'warn',
     SYNAX_DESKTOP_SIDECAR: '1', SYNAX_AGENT_SESSION_IN_PROCESS: '0',
  };
   // Retired mode flags must have no role in selecting the runtime under test.
@@ -143,6 +143,7 @@ try {
   assert(toolRequested && toolObserved, 'provider must receive the real file tool result');
   checks.push('provider → file.read → persisted tool result'); checks.push('HTTP submit → forked provider worker → Rust completion');
   await until(async () => observed, events => events.includes('message_delta'), 'native WebSocket delta');
+  await until(async () => observed, events => events.includes('run_finished'), 'durable terminal completion');
   checks.push('native WebSocket streaming');
   const messages = await api(`/sessions/${sessionId}/messages`);
   assert(messages.items.some((m: { content: string }) => m.content.includes(answer)));
@@ -160,6 +161,7 @@ try {
   assert.equal(finalHistory.items.filter((message:{role:string;content:string})=>message.role==='assistant'&&message.content.includes(answer)).length,2);
   checks.push('persisted tool evidence → second turn after restart');
   await stopHost();
+  assert(!/execution ended with an error|stream failed|persistence failure requires recovery/i.test(hostOutput), 'a completed run must not hide an execution or finalization failure');
   assert(!existsSync(path.join(root,'context.db')),'context.db must not be created');
   assert(!existsSync(path.join(root,'api-logs.db')),'api-logs.db must not be created');
   checks.push('no SQLite databases');

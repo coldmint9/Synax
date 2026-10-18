@@ -52,7 +52,7 @@ const CONTEXT_COMPACTION_TIMEOUT_MS = 5 * 60_000;
 type StreamQueueItem =
   | { kind: "chunk"; chunk: AgentRunStreamChunk }
   | { kind: "done" }
-  | { kind: "error"; error: string };
+  | { kind: "error"; error: string; code?: string };
 
 class StreamQueue {
   private readonly pending: StreamQueueItem[] = [];
@@ -205,7 +205,7 @@ class SessionProcessManager {
           continue;
         }
         if (item.kind === "error") {
-          throw new AgentRuntimeError(item.error, "STREAM_ERROR", 500);
+          throw new AgentRuntimeError(item.error, item.code ?? "STREAM_ERROR", item.code === "EXECUTION_SUPERSEDED" ? 409 : 500);
         }
         break;
       }
@@ -826,7 +826,7 @@ class SessionProcessManager {
 
     if (message.type === "stream:error") {
       const stream = state.streams.get(message.streamId);
-      stream?.queue.push({ kind: "error", error: message.error });
+      stream?.queue.push({ kind: "error", error: message.error, code: message.code });
       stream?.queue.close();
     }
   }

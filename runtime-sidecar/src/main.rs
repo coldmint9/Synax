@@ -2,6 +2,7 @@ mod actor;
 mod commit;
 mod completion;
 mod control;
+mod execution;
 mod flow;
 mod history;
 mod input_queue;

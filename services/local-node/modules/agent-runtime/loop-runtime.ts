@@ -43,6 +43,7 @@ import {
 import { prepareTurnReferences } from "./turn-references.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
+import { assertRuntimeExecutionCurrent, isExecutionSuperseded } from "../../infrastructure/runtime/execution-context.js";
 import type { AgentSession } from "./contracts.js";
 import {
   activateAcceptedRun,
@@ -1916,6 +1917,9 @@ export class AgentLoopRuntime {
           }
         }
       } catch (error) {
+        // Losing execution ownership is control flow. The replacement executor
+        // owns failure handling and persisted state from this point onward.
+        if (isExecutionSuperseded(error)) throw error;
         const committedWork = workStore.current(sessionId);
         if (committedWork?.status === "completed") {
           yield* this.finishWorkRun(sessionId, run);
@@ -2076,6 +2080,7 @@ export class AgentLoopRuntime {
         yield { type: "done", sessionId, runId: failedRun.id };
       } finally {
         if (run) {
+          await assertRuntimeExecutionCurrent();
           for (const step of this.store.listRunSteps(run.id)) {
             if (step.status === "running")
               this.store.updateRunStep(step.id, {

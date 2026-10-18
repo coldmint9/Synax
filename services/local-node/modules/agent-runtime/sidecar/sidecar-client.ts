@@ -146,6 +146,12 @@ export class RuntimeSidecarClient {
       .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);
   }
 
+  /** Compact actor-serialized authority read; UI state may already be terminal. */
+  async assertExecutionLease(context: { sessionId: string; runId: string; epoch: string; hostId: string }): Promise<void> {
+    await this.controlCommand({ sessionId: context.sessionId, requestId: randomUUID(),
+      epoch: 0, revision: 0, operation: 'execution_check', payload: context });
+  }
+
   async activateRun(input: { requestId?: string; sessionId: string; epoch: number; revision: number; run: unknown }): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
     return this.request({ type: 'activate_run', runJson: new TextEncoder().encode(JSON.stringify(input.run)) }, input.sessionId, input.epoch, input.revision, input.requestId)
       .then(envelope => this.expect(envelope, 'snapshot_response'));

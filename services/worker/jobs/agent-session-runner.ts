@@ -90,6 +90,7 @@ async function runStream(
       sessionId,
       streamId,
       error,
+      code: err && typeof err === 'object' && 'code' in err && typeof err.code === 'string' ? err.code : undefined,
     });
     logger.error(
       { err, sessionId, streamId, mode },

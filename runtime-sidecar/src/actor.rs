@@ -86,6 +86,8 @@ pub enum RuntimeError {
     RevisionConflict { expected: u64, actual: u64 },
     #[error("session already has an active run")]
     SessionBusy,
+    #[error("{0}")]
+    ExecutionSuperseded(String),
     #[error("producer sequence was already seen: expected {expected}, actual {actual}")]
     ProducerSequenceReplay { expected: u64, actual: u64 },
     #[error("producer sequence has a gap: expected {expected}, actual {actual}")]
@@ -1296,8 +1298,8 @@ async fn run_shard(
                         {
                             Ok(receipt) => {
                                 let state = sessions.get_mut(&session_id).unwrap();
-                                state.sync_snapshot(&receipt.snapshot);
                                 if !receipt.reused {
+                                    state.sync_snapshot(&receipt.snapshot);
                                     if let Some(event) = receipt.event.clone() {
                                         let event = Arc::new(event);
                                         state.subscribers.retain(|subscriber| {
@@ -1914,6 +1916,30 @@ mod tests {
             .unwrap();
         assert!(live.try_recv().is_err());
         assert_eq!(router.snapshot("s").await.unwrap().revision, 2);
+        drop(router);
+        tokio::task::yield_now().await;
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[tokio::test]
+    async fn replayed_control_receipt_cannot_restore_an_old_execution_fence() {
+        let path = std::env::temp_dir().join(format!("synax-control-fence-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(HotStore::open(&path).unwrap());
+        let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
+        router.ui_snapshot("s".into(), Some(br#"{"id":"s","projectId":"p","status":"queued","updatedAt":"2026-10-18"}"#.to_vec())).await.unwrap();
+        router.admit_run("s", "start1", "body1", "r1", 1, 0).await.unwrap();
+        let patch = br#"{"patch":{"title":"Updated"}}"#.to_vec();
+        router.control_command("s".into(), "patch".into(), 1, 1, "session_patch".into(), patch.clone()).await.unwrap();
+        router.finish_run("s", "finish1", "r1", "completed", 1, 2).await.unwrap();
+        router.admit_run("s", "start2", "body2", "r2", 2, 3).await.unwrap();
+        let retried = router.control_command("s".into(), "patch".into(), 1, 1, "session_patch".into(), patch).await.unwrap();
+        assert!(retried.reused);
+        // Ephemeral sends consult the actor directly, without a storage read
+        // that could conceal a rewound in-memory ownership fence.
+        assert!(matches!(router.append_stream_with_durability("s", "r1", "late", 1, 1, Durability::Ephemeral, vec![event("late")]).await,
+            Err(RuntimeError::StaleEpoch { .. })));
+        router.append_stream_with_durability("s", "r2", "current", 1, 2, Durability::Ephemeral, vec![event("current")]).await.unwrap();
         drop(router);
         tokio::task::yield_now().await;
         drop(store);

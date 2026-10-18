@@ -14,6 +14,8 @@ import { runtimeTransaction } from "./runtime-transaction.js";
 import { nowIso } from "./runtime-ids.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { AgentRun, AgentSession, StreamTurnRequest } from "./contracts.js";
+import type { RuntimeExecutionContext } from "../../infrastructure/runtime/execution-context.js";
+import { runtimeClient } from "./sidecar/runtime-repository.js";
 
 export function isDurableRuntimeCheckpoint(status: string): boolean {
   return status === "waiting_permission" || status === "waiting_input";
@@ -57,25 +59,19 @@ async function recoverAuthoritativeRuntime(
   let reviewed = 0;
   for (const item of projections) {
     const session = item as AgentSession;
-    const [snapshot, control, historyRuns] = await Promise.all([
+    const [snapshot, control, historyRuns, execution] = await Promise.all([
       runtimeFacade.uiSnapshotAuthoritative(session.id),
-      runtimeFacade.controlState(session.id) as Promise<{ runtimeControl?: unknown; processLeases?: unknown[] }>,
+      runtimeFacade.controlState(session.id) as Promise<{ runtimeControl?: unknown; processLeases?: unknown[]; executionLease?: RuntimeExecutionContext & { closed: boolean } }>,
       runtimeFacade.listRunHistory(session.id),
+      runtimeClient().snapshot(session.id),
     ]);
     const local = agentRuntimeStore.tryGetSession(session.id);
     const runs = historyRuns as AgentRun[];
-    const active =
-      ((snapshot.run as AgentRun | null | undefined) &&
-        ["queued", "running", "waiting_permission", "waiting_input"].includes(
-          (snapshot.run as AgentRun).status,
-        )
-        ? (snapshot.run as AgentRun)
-        : undefined) ??
-      runs.find((run) =>
-        ["queued", "running", "waiting_permission", "waiting_input"].includes(
-          run.status,
-        ),
-      );
+    // A terminal UI document can precede finish_run. Recover the durable
+    // owner, not an old history entry selected merely by its status.
+    const active = execution.activeRunId
+      ? snapshot.run?.id === execution.activeRunId ? snapshot.run : runs.find((run) => run.id === execution.activeRunId)
+      : undefined;
     const leases = Array.isArray(control.processLeases) ? control.processLeases : [];
     const permissions = Array.isArray((control as { permissions?: unknown[] }).permissions)
       ? (control as { permissions: unknown[] }).permissions
@@ -86,11 +82,25 @@ async function recoverAuthoritativeRuntime(
     const processUnknown = unresolved.some((record) => record.session_id === session.id);
     const localRuns = local ? agentRuntimeStore.listRuns(session.id) : [];
     const checkpoint = local ? findDurableCheckpoint(session.id, localRuns) : null;
+    if (active && !processUnknown && ["completed", "failed", "blocked", "cancelled", "interrupted"].includes(active.status)) {
+      // The worker already recorded its outcome. Complete the interrupted
+      // finalization without replacing that result with a restart error.
+      await runtimeFacade.finishExecution(session.id, active);
+      if (local) await agentRuntimeStore.hydrateSession(session.id, true);
+      reviewed++;
+      continue;
+    }
     if (
       active &&
       isDurableRuntimeCheckpoint(active.status) &&
       !processUnknown
     ) {
+      const lease = control.executionLease;
+      if (lease && !lease.closed && lease.hostId !== hostId) {
+        await runtimeFacade.controlCommand({ sessionId: session.id,
+          requestId: `recovery-execution-close:${active.id}:${lease.epoch}`,
+          operation: "execution_close", payload: lease });
+      }
       const answeredInteraction = interactions.some((item) =>
         item && typeof item === "object" && (item as { runId?: unknown }).runId === active.id &&
         (item as { status?: unknown }).status !== "pending" && Boolean((item as { response?: unknown }).response));
@@ -103,6 +113,7 @@ async function recoverAuthoritativeRuntime(
     }
     if (
       !active &&
+      !execution.activeRunId &&
       !control.runtimeControl &&
       !processUnknown &&
       !["running", "stopping", "queued"].includes(session.status)

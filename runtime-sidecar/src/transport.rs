@@ -36,6 +36,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "queue_read",
     "control_command",
     "control_state",
+    "execution_lease",
     "history_command",
     "session_list",
     "import_projection",
@@ -1372,6 +1373,7 @@ fn error_to_wire(error: RuntimeError) -> wire_envelope::Body {
             None,
             None,
         ),
+        RuntimeError::ExecutionSuperseded(message) => ("EXECUTION_SUPERSEDED", message, None, None),
         RuntimeError::ProducerSequenceReplay { expected, actual } => (
             "PRODUCER_SEQUENCE_REPLAY",
             "producer sequence was already seen".to_owned(),

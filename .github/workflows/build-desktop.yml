@@ -98,6 +98,18 @@ jobs:
       - name: Test Rust runtime storage and concurrency on the target platform
         run: npm run runtime-sidecar:test -- --release --locked
 
+      - name: Build Rust runtime for Node integration tests
+        run: npm run runtime-sidecar:build
+
+      - name: Verify execution ownership and worker error propagation
+        run: npx vitest run services/local-node/infrastructure/runtime/execution-context.test.ts services/local-node/modules/agent-runtime/__tests__/session-process-manager-fence.test.ts
+
+      - name: Verify execution lifecycle and crash recovery
+        run: npx tsx scripts/runtime-sidecar-lifecycle-smoke.ts
+
+      - name: Verify real provider worker completion and restart
+        run: npx tsx scripts/runtime-v2-main-path-e2e.ts
+
       - name: Import macOS signing certificate
         if: runner.os == 'macOS'
         env:
