@@ -1061,17 +1061,6 @@ impl HistoryStore {
 
     fn list_indexed(&self, session_id: &str, kind: &str) -> Result<Vec<u8>, HistoryError> {
         if let Some(head_id) = self.read_head(session_id)?.object_id {
-            let head_is_root = self
-                .read_object(&head_id)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<HistoryObject>(&bytes).ok())
-                .is_some_and(|object| {
-                    object.kind == "runtime.session.root"
-                        || object.kind == "runtime.session.root.chunk"
-                });
-            if !head_is_root {
-                return self.list_indexed_legacy(session_id, kind);
-            }
             let mut stack = vec![head_id];
             let mut entity_ids = HashSet::new();
             let mut seen = HashSet::new();
@@ -1096,29 +1085,7 @@ impl HistoryStore {
             order_entities(kind, &mut items);
             return Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?);
         }
-        self.list_indexed_legacy(session_id, kind)
-    }
-
-    fn list_indexed_legacy(&self, session_id: &str, kind: &str) -> Result<Vec<u8>, HistoryError> {
-        let prefix = format!("{kind}/{session_id}/");
-        let mut items = Vec::new();
-        for item in self.db.iterator_cf(
-            self.cf(CF_INDEXES)?,
-            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
-        ) {
-            let (key, value) = item?;
-            if !key.starts_with(prefix.as_bytes()) {
-                break;
-            }
-            let object_id = String::from_utf8_lossy(&value).to_string();
-            if let Ok(bytes) = self.read_object(&object_id) {
-                if let Ok(object) = serde_json::from_slice::<HistoryObject>(&bytes) {
-                    items.push(object.value);
-                }
-            }
-        }
-        order_entities(kind, &mut items);
-        Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?)
+        Ok(serde_json::to_vec(&serde_json::json!({"items":[]}))?)
     }
 
     fn verify(&self) -> Result<Vec<u8>, HistoryError> {
@@ -2191,8 +2158,9 @@ mod tests {
             .command("s", "list-events", "list_events", b"{}")
             .unwrap();
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&events).unwrap()["items"][0]["id"],
-            "event-1"
+            serde_json::from_slice::<serde_json::Value>(&events).unwrap()["items"],
+            serde_json::json!([]),
+            "unpublished objects must not leak through the old global index"
         );
         let gc = store.command("s", "gc", "gc", b"{}").unwrap();
         assert_eq!(

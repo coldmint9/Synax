@@ -59,18 +59,10 @@ async fn reconcile_history_from_hot(
     session_id: &str,
     request_id: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut events = hot
+    let events = hot
         .history_outbox_async(session_id.to_owned(), 4096)
         .await
         .map_err(|error| error.to_string())?;
-    // Older databases may predate the durable outbox. Use the retained stream
-    // as a bounded compatibility source, while new appends never need it.
-    if events.is_empty() {
-        events = hot
-            .replay_bounded_async(session_id.to_owned(), 0, 1024, 7 * 1024 * 1024)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
     let mut objects: Vec<Value> = Vec::new();
     for event in events.iter().filter(|event| !event.ephemeral) {
         let payload: Value = serde_json::from_slice(&event.payload).map_err(|error| error.to_string())?;

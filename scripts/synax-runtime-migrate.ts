@@ -1,17 +1,13 @@
-import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import NativeDatabase from 'libsql';
+import { isDeepStrictEqual } from 'node:util';
 import { RustRuntimeSupervisor } from '../services/local-node/infrastructure/runtime/rust-sidecar.js';
 import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runtime/sidecar/sidecar-client.js';
 
-type Row = Record<string, unknown>;
-type SessionBundle = {
-  session: Row;
-  tables: Record<string, Row[]>;
-};
+import { exportTables, historyTables, nativeEntities, nativeProjection, nativeSession, nativeRow, nativeReplay, type Row, type SessionBundle } from './runtime-migration/records.js';
 type MigrationBundle = {
   format: 'synax.runtime.migration.v1';
   createdAt: string;
@@ -31,11 +27,7 @@ const database = path.resolve(option('--database', path.join(dataRoot, 'context.
 const input = path.resolve(option('--input', path.join(dataRoot, 'runtime-migration-export.json'))!);
 const output = path.resolve(option('--output', path.join(dataRoot, 'runtime-migration-export.json'))!);
 
-const tables = [
-  'agent_runtime_runs', 'agent_runtime_run_steps', 'agent_runtime_messages', 'agent_runtime_run_parts',
-  'agent_runtime_tool_calls', 'agent_runtime_permissions', 'agent_runtime_interactions',
-  'agent_runtime_events', 'agent_runtime_stream_records',
-];
+const tables = exportTables;
 
 function usage(): never {
   console.error('usage: npm run runtime:migrate -- <export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
@@ -48,11 +40,7 @@ function tableExists(db: NativeDatabase.Database, table: string): boolean {
 
 function rowsFor(db: NativeDatabase.Database, table: string, sessionId: string): Row[] {
   if (!tableExists(db, table)) return [];
-  try {
-    return db.prepare(`SELECT * FROM ${table} WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Row[];
-  } catch {
-    return [];
-  }
+  return db.prepare(`SELECT * FROM ${table} WHERE session_id = ? ORDER BY rowid`).all(sessionId) as Row[];
 }
 
 async function exportLegacy(): Promise<void> {
@@ -106,62 +94,6 @@ function validateBundle(bundle: MigrationBundle): Array<{ sessionId?: string; re
     }
   }
   return quarantine;
-}
-
-function jsonColumn(value: unknown, fallback: unknown): unknown {
-  if (typeof value !== 'string' || value.length === 0) return fallback;
-  try { return JSON.parse(value); } catch { return fallback; }
-}
-
-function legacyProjection(item: SessionBundle): unknown {
-  const row = item.session;
-  const sessionId = String(row.id);
-  const metadata = jsonColumn(row.session_metadata_json, {});
-  const runs = item.tables.agent_runtime_runs ?? [];
-  const latest = runs.at(-1);
-  const run = latest ? {
-    id: latest.id,
-    sessionId,
-    status: latest.status ?? 'completed',
-    startedAt: latest.started_at ?? null,
-    completedAt: latest.completed_at ?? null,
-    currentStep: latest.current_step ?? 0,
-    stopReason: latest.stop_reason ?? null,
-    metadata: jsonColumn(latest.metadata_json, {}),
-  } : null;
-  return {
-    session: {
-      id: sessionId,
-      projectId: row.project_id ?? 'unknown',
-      nodeId: row.node_id ?? null,
-      status: row.status ?? 'completed',
-      title: row.title ?? null,
-      prompt: row.prompt ?? '',
-      createdAt: row.created_at ?? row.updated_at ?? new Date().toISOString(),
-      updatedAt: row.updated_at ?? new Date().toISOString(),
-      activeRunId: row.active_run_id ?? null,
-      pendingResumeToken: row.pending_resume_token ?? null,
-      blockedReason: row.blocked_reason ?? null,
-      sessionMetadata: metadata,
-    },
-    run,
-    cursor: 0,
-    liveChunks: [],
-    completedStepIds: [],
-  };
-}
-
-function legacyStreamEvents(item: SessionBundle): Array<{ kind: string; payload: unknown }> {
-  return (item.tables.agent_runtime_stream_records ?? []).slice(-1024).map(row => {
-    const raw = jsonColumn(row.chunk_json, {});
-    const payload = raw && typeof raw === 'object' && (raw as { schema?: unknown }).schema === 1
-      ? raw
-      : { schema: 1, chunk: (raw as { chunk?: unknown }).chunk ?? raw, state: (raw as { state?: unknown }).state ?? { status: 'completed', activeRunId: null, pendingResumeToken: null, blockedReason: null, updatedAt: row.created_at ?? new Date().toISOString() } };
-    return {
-      kind: String(row.kind ?? (payload as { chunk?: { type?: unknown } }).chunk?.type ?? 'event'),
-      payload: Array.from(new TextEncoder().encode(JSON.stringify(payload))),
-    };
-  });
 }
 
 async function verifyBundle(): Promise<void> {
@@ -255,9 +187,30 @@ async function verifyRuntime(): Promise<void> {
         }
 
         if (expectedItem) {
-          const legacySession = expectedItem.session;
+          for (const [table, [, operation]] of Object.entries(historyTables)) {
+            const expectedRows = (expectedItem.tables[table] ?? []).map(row => nativeRow(table, row));
+            const result = asRecord(JSON.parse(new TextDecoder().decode(await client.historyCommand({
+              sessionId, requestId: `verify-native:${table}:${sessionId}`, operation, payload: {},
+            }))));
+            const actual = new Map((result.items as Row[]).map(row => [row.id, row]));
+            for (const row of expectedRows) {
+              if (!actual.has(row.id)) { issues.push({ sessionId, reason: `${table}:${row.id} missing from native history` }); continue; }
+              for (const [key, value] of Object.entries(row)) {
+                if (!isDeepStrictEqual(actual.get(row.id)![key], value))
+                  issues.push({ sessionId, reason: `${table}:${row.id}.${key} differs after import` });
+              }
+            }
+          }
+          const fence = await client.snapshot(sessionId);
+          const controlReply = await client.controlCommand({ sessionId, requestId: `verify-control:${sessionId}`, operation: 'read', epoch: fence.epoch, revision: fence.revision });
+          const controls = asRecord(JSON.parse(new TextDecoder().decode(controlReply.stateJson)));
+          for (const [table, field] of [['agent_runtime_permissions', 'permissions'], ['agent_runtime_interactions', 'interactions']]) {
+            const source = (expectedItem.tables[table] ?? []).map(row => nativeRow(table, row));
+            if (!isDeepStrictEqual(controls[field], source)) issues.push({ sessionId, reason: `${field} differ after import` });
+          }
+          const legacySession = nativeSession(expectedItem);
           for (const key of ['id', 'project_id', 'status'] as const) {
-            const expectedValue = key === 'id' ? legacySession.id : legacySession[key];
+            const expectedValue = legacySession[key === 'project_id' ? 'projectId' : key];
             const actualKey = key === 'project_id' ? 'projectId' : key;
             if (expectedValue !== undefined && session[actualKey] !== expectedValue) {
               issues.push({ sessionId, reason: `session field ${actualKey} differs from migration input` });
@@ -303,20 +256,25 @@ async function importBundle(): Promise<void> {
     let count = 0;
     for (const item of valid) {
       const sessionId = String(item.session.id);
-      const existing = JSON.parse(new TextDecoder().decode(await client.historyCommand({ sessionId, requestId: `migrate:${sessionId}:head-read`, operation: 'head_read', payload: {} }))) as { objectId?: string };
-      if (existing.objectId) { count++; continue; }
-      await client.importProjection(sessionId, new TextEncoder().encode(JSON.stringify(legacyProjection(item))));
-      const streamEvents = legacyStreamEvents(item);
-      if (streamEvents.length) await client.importStream(sessionId, new TextEncoder().encode(JSON.stringify(streamEvents)));
-      const chunks: string[] = [];
-      for (const [table, rows] of Object.entries(item.tables)) {
-        for (let offset = 0; offset < rows.length; offset += 128) {
-          const chunk = rows.slice(offset, offset + 128);
-          chunks.push(await putObject(client, sessionId, `migrate:${sessionId}:${table}:${offset}`, `legacy.${table}`, { sessionId, table, offset, rows: chunk }));
-        }
+      await client.importProjection(sessionId, new TextEncoder().encode(JSON.stringify(nativeProjection(item))));
+      const refs: string[] = [];
+      for (const { kind, value } of nativeEntities(item)) {
+        refs.push(await putObject(client, sessionId, `migrate:v2:${sessionId}:${kind}:${value.id}`, kind, value));
       }
-      const root = await putObject(client, sessionId, `migrate:${sessionId}:root`, 'runtime.session.root', { session: item.session, source: bundle.source }, chunks);
-      await client.historyCommand({ sessionId, requestId: `migrate:${sessionId}:head-switch`, operation: 'head_switch', payload: { objectId: root, expectedRevision: 0 } });
+      // Root fanout stays within a bounded control frame regardless of row count.
+      let level = refs;
+      for (let depth = 0; level.length > 256; depth++) {
+        const next: string[] = [];
+        for (let offset = 0; offset < level.length; offset += 256) {
+          next.push(await putObject(client, sessionId, `migrate:v2:${sessionId}:chunk:${depth}:${offset}`,
+            'runtime.session.root.chunk', { sessionId }, level.slice(offset, offset + 256)));
+        }
+        level = next;
+      }
+      const root = await putObject(client, sessionId, `migrate:v2:${sessionId}:root`, 'runtime.session.root', { sessionId }, level);
+      await client.historyCommand({ sessionId, requestId: `migrate:v2:${sessionId}:publish`, operation: 'head_switch', payload: { objectId: root, expectedRevision: 0 } });
+      const replay = nativeReplay(item);
+      if (replay.length) await client.importStream(sessionId, new TextEncoder().encode(JSON.stringify(replay)));
       count++;
     }
     return count;
@@ -334,12 +292,14 @@ async function purgeLegacy(): Promise<void> {
   if (!args.includes('--force')) throw new Error('purge-legacy requires --force after an offline export/import/verify pass.');
   if (!existsSync(database)) throw new Error(`SQLite database does not exist: ${database}`);
   const db = new NativeDatabase(database);
-  const tables = ['agent_runtime_stream_records', 'agent_runtime_events', 'conversation_history_journal'];
+  const tables = [...exportTables, 'agent_runtime_sessions', 'conversation_history_journal'];
   const deleted: Record<string, number> = {};
   try {
+    db.exec('PRAGMA foreign_keys=OFF');
     for (const table of tables) {
       if (!tableExists(db, table)) continue;
-      deleted[table] = Number(db.prepare(`DELETE FROM "${table}"`).run().changes ?? 0);
+      deleted[table] = Number((db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get() as { n: number }).n);
+      db.exec(`DROP TABLE "${table}"`);
     }
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   } finally { db.close(); }

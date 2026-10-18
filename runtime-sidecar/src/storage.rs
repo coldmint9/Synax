@@ -2312,7 +2312,14 @@ impl HotStore {
         session_id: &str,
         snapshot_json: &[u8],
     ) -> Result<Vec<u8>, StorageError> {
-        let projection: UiSnapshot = serde_json::from_slice(snapshot_json)
+        #[derive(Deserialize)]
+        struct ImportedSession {
+            #[serde(flatten)]
+            projection: UiSnapshot,
+            #[serde(default)]
+            control: ControlState,
+        }
+        let ImportedSession { projection, control } = serde_json::from_slice(snapshot_json)
             .map_err(|_| RuntimeError::InvalidCommand("invalid UI projection import".into()))?;
         if projection.session["id"].as_str() != Some(session_id) {
             return Err(RuntimeError::InvalidCommand(
@@ -2322,7 +2329,7 @@ impl HotStore {
         }
         let bytes = projection.encode()?;
         if let Some(existing) = self.get(CF_UI, session_key(session_id).as_bytes())? {
-            if existing != bytes {
+            if existing != bytes || self.read_control_state(session_id)? != control {
                 return Err(RuntimeError::RequestConflict.into());
             }
             return Ok(existing);
@@ -2336,6 +2343,12 @@ impl HotStore {
         state.revision = state.revision.max(projection.cursor);
         let mut batch = WriteBatch::default();
         self.put_batch(&mut batch, CF_UI, session_key(session_id), &bytes)?;
+        self.put_batch(
+            &mut batch,
+            CF_CONTROLS,
+            control_state_key(session_id),
+            &serde_json::to_vec(&control)?,
+        )?;
         self.put_batch(
             &mut batch,
             CF_SESSIONS,
