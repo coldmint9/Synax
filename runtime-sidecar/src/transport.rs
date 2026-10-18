@@ -57,16 +57,24 @@ async fn reconcile_history_from_hot(
     hot: &crate::storage::HotStore,
     history: &crate::history::HistoryStore,
     session_id: &str,
-    request_id: &str,
+    _request_id: &str,
 ) -> Result<Vec<u8>, String> {
     let events = hot
         .history_outbox_async(session_id.to_owned(), 4096)
         .await
         .map_err(|error| error.to_string())?;
     let mut objects: Vec<Value> = Vec::new();
+    let source_range = format!("outbox:{}:{}", events.first().map(|event| event.sequence).unwrap_or(0), events.last().map(|event| event.sequence).unwrap_or(0));
     for event in events.iter().filter(|event| !event.ephemeral) {
         let payload: Value = serde_json::from_slice(&event.payload).map_err(|error| error.to_string())?;
         let chunk = payload.get("chunk").cloned().unwrap_or(Value::Null);
+        for (field, kind) in [("permission", "runtime.permission"), ("interaction", "runtime.interaction")] {
+            if let Some(value) = chunk.get(field) {
+                if value["id"].is_string() && value["sessionId"].as_str() == Some(session_id) {
+                    objects.push(serde_json::json!({"kind":kind,"value":value}));
+                }
+            }
+        }
         let kind = match chunk.get("type").and_then(Value::as_str) {
             Some("run_started") | Some("run_activated") | Some("run_finished") | Some("run_completed") | Some("run_failed") | Some("run_resumed") => Some(("runtime.run", chunk.get("run"))),
             Some("step_started") => Some(("runtime.step", chunk.get("step"))),
@@ -92,7 +100,7 @@ async fn reconcile_history_from_hot(
         if !batch.is_empty() && (batch.len() >= 128 || bytes + cost > 768 * 1024) {
             let result = history.command_async(
                 session_id.to_owned(),
-                format!("{request_id}:{}", reconciled),
+                format!("{source_range}:{reconciled}"),
                 "append_entities".to_owned(),
                 serde_json::to_vec(&serde_json::json!({"objects": batch})).map_err(|error| error.to_string())?,
             ).await.map_err(|error| error.to_string())?;
@@ -107,7 +115,7 @@ async fn reconcile_history_from_hot(
     if !batch.is_empty() {
         let result = history.command_async(
             session_id.to_owned(),
-            format!("{request_id}:{reconciled}"),
+            format!("{source_range}:{reconciled}"),
             "append_entities".to_owned(),
             serde_json::to_vec(&serde_json::json!({"objects": batch})).map_err(|error| error.to_string())?,
         ).await.map_err(|error| error.to_string())?;
@@ -1052,14 +1060,14 @@ async fn execute_wire(
                 ),
             }
         }
-        Some(wire_envelope::Body::SessionList(_)) => {
+        Some(wire_envelope::Body::SessionList(request)) => {
             if !local_control {
                 return (envelope(wire_error("FORBIDDEN", "session listing requires private control transport")), false);
             }
             let Some(store) = context.hot_store.as_ref() else {
                 return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
             };
-            match store.session_list_async().await {
+            match store.session_list_async(request.after).await {
                 Ok(sessions_json) => (
                     WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
                         body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) },

@@ -541,9 +541,9 @@ impl HotStore {
         .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
-    pub async fn session_list_async(&self) -> Result<Vec<u8>, StorageError> {
+    pub async fn session_list_async(&self, after: String) -> Result<Vec<u8>, StorageError> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.session_list())
+        tokio::task::spawn_blocking(move || store.session_list(&after))
             .await
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
@@ -639,6 +639,15 @@ impl HotStore {
                 RuntimeError::InvalidCommand("control command exceeds bounds".into()).into(),
             );
         }
+        if operation == "read" {
+            let state = self.read_session(session_id)?;
+            ensure_epoch(&state, epoch)?;
+            ensure_revision(&state, revision)?;
+            return Ok(ControlCommandReceipt {
+                state_json: serde_json::to_vec(&self.read_control_state(session_id)?)?,
+                snapshot: state.snapshot(), event: None, reused: false,
+            });
+        }
         let value: serde_json::Value = if payload.is_empty() {
             serde_json::Value::Null
         } else {
@@ -669,15 +678,14 @@ impl HotStore {
             .ok_or(RuntimeError::ProjectionMissing)?;
 
         let now = chrono::Utc::now().to_rfc3339();
-        let mut changed = false;
-        let mut event_name = operation.to_owned();
+        let mut entity: Option<(&str, serde_json::Value)> = None;
+        let event_name: String;
         let mut event_run_id = projection.session["activeRunId"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
 
         match operation {
-            "read" => {}
             "permission_request" => {
                 let id = value["id"]
                     .as_str()
@@ -700,6 +708,7 @@ impl HotStore {
                     item["resolvedAt"] = serde_json::Value::Null;
                 }
                 control.permissions.push(item.clone());
+                entity = Some(("permission", item.clone()));
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
                 if item["action"] == "ask" && item["resolvedAt"].is_null() {
                     let reason = item["reason"].as_str().unwrap_or("Permission required");
@@ -712,7 +721,6 @@ impl HotStore {
                         &now,
                     );
                 }
-                changed = true;
                 event_name = "permission_requested".into();
             }
             "permission_reply" => {
@@ -791,7 +799,7 @@ impl HotStore {
                         }
                     }
                 }
-                changed = true;
+                entity = Some(("permission", item.clone()));
                 event_name = "permission_resolved".into();
             }
             "interaction_request" => {
@@ -811,6 +819,7 @@ impl HotStore {
                     item["createdAt"] = serde_json::json!(now);
                 }
                 control.interactions.push(item.clone());
+                entity = Some(("interaction", item.clone()));
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
                 let title = item["request"]["title"]
                     .as_str()
@@ -823,7 +832,6 @@ impl HotStore {
                     Some(title),
                     &now,
                 );
-                changed = true;
                 event_name = "interaction_requested".into();
             }
             "interaction_reply" => {
@@ -866,10 +874,10 @@ impl HotStore {
                 item["response"] = reply;
                 item["resolvedAt"] = serde_json::json!(now);
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                changed = true;
+                entity = Some(("interaction", item.clone()));
                 event_name = "interaction_resolved".into();
             }
-            "interaction_consume" => {
+            "interaction_consume" | "interaction_cancel" => {
                 let id = required_string(&value, "id")?;
                 let item = control
                     .interactions
@@ -879,17 +887,18 @@ impl HotStore {
                         RuntimeError::InvalidCommand("interaction was not found".into())
                     })?;
                 item["consumedAt"] = serde_json::json!(now);
+                if operation == "interaction_cancel" { item["status"] = serde_json::json!("cancelled"); item["resolvedAt"] = serde_json::json!(now); }
+                entity = Some(("interaction", item.clone()));
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                set_projection_state(
+                if operation == "interaction_consume" { set_projection_state(
                     &mut projection,
                     "running",
                     Some(&event_run_id),
                     None,
                     None,
                     &now,
-                );
-                changed = true;
-                event_name = "interaction_consumed".into();
+                ); }
+                event_name = if operation == "interaction_consume" { "interaction_consumed" } else { "interaction_cancelled" }.into();
             }
             "stop_begin" | "stop_unconfirmed" => {
                 let run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
@@ -910,7 +919,6 @@ impl HotStore {
                     value["reason"].as_str(),
                     &now,
                 );
-                changed = true;
                 event_name = operation.into();
             }
             "stop_ack" => {
@@ -924,7 +932,6 @@ impl HotStore {
                     value["reason"].as_str(),
                     &now,
                 );
-                changed = true;
                 event_name = "stop_acknowledged".into();
             }
             "resume" => {
@@ -938,7 +945,6 @@ impl HotStore {
                     None,
                     &now,
                 );
-                changed = true;
                 event_name = "run_resumed".into();
             }
             "lease_open" | "lease_close" => {
@@ -949,7 +955,6 @@ impl HotStore {
                 if operation == "lease_open" {
                     control.process_leases.push(value.clone());
                 }
-                changed = true;
                 event_name = operation.into();
             }
             "run_patch" => {
@@ -999,7 +1004,6 @@ impl HotStore {
                     }
                 }
                 event_run_id = run_id.to_owned();
-                changed = true;
                 event_name = "run_updated".into();
             }
             "session_patch" => {
@@ -1053,7 +1057,6 @@ impl HotStore {
                         }
                     }
                 }
-                changed = true;
                 event_name = "session_updated".into();
             }
             _ => {
@@ -1064,14 +1067,23 @@ impl HotStore {
             }
         }
 
-        let snapshot = if changed {
+        let snapshot = {
+            // Historical decisions are carried by the durable outbox; hot state
+            // contains only approvals/forms that can still affect execution.
+            control.permissions.retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
+            control.interactions.retain(|item| item["consumedAt"].is_null() && (item["status"] == "pending" || !item["response"].is_null()));
             state.cursor += 1;
             state.revision += 1;
-            let state_payload = serde_json::json!({
+            let mut state_payload = serde_json::json!({
                 "schema": 1,
                 "chunk": {"type": event_name, "sessionId": session_id, "runId": event_run_id, "control": control.clone()},
                 "state": {"status": projection.session["status"], "activeRunId": projection.session["activeRunId"], "pendingResumeToken": projection.session["pendingResumeToken"], "blockedReason": projection.session["blockedReason"], "updatedAt": projection.session["updatedAt"]}
             });
+            let mut result_state = serde_json::to_value(&control)?;
+            if let Some((field, value)) = &entity {
+                state_payload["chunk"][field] = value.clone();
+                result_state["entity"] = value.clone();
+            }
             let event = StreamEvent {
                 sequence: state.cursor,
                 run_id: event_run_id.clone(),
@@ -1138,30 +1150,11 @@ impl HotStore {
                 batch.delete_cf(self.cf(CF_STREAMS)?, stream_key(session_id, sequence));
             }
             let result = ControlCommandReceipt {
-                state_json: serde_json::to_vec(&control)?,
+                state_json: serde_json::to_vec(&result_state)?,
                 snapshot: state.snapshot(),
                 event: Some(event),
                 reused: false,
             };
-            self.put_batch(
-                &mut batch,
-                CF_CONTROLS,
-                receipt_key,
-                &serde_json::to_vec(&StoredControlCommandReceipt {
-                    identity,
-                    result: result.clone(),
-                })?,
-            )?;
-            self.write_with_durability(batch, Durability::Sync)?;
-            result
-        } else {
-            let result = ControlCommandReceipt {
-                state_json: serde_json::to_vec(&control)?,
-                snapshot: state.snapshot(),
-                event: None,
-                reused: false,
-            };
-            let mut batch = WriteBatch::default();
             self.put_batch(
                 &mut batch,
                 CF_CONTROLS,
@@ -2294,17 +2287,27 @@ impl HotStore {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    fn session_list(&self) -> Result<Vec<u8>, StorageError> {
+    fn session_list(&self, after: &str) -> Result<Vec<u8>, StorageError> {
         let mut items = Vec::new();
+        let start = session_key(after);
+        let mut bytes = 2048;
+        let mut last = None;
+        let mut more = false;
         for entry in self
             .db
-            .iterator_cf(self.cf(CF_UI)?, rocksdb::IteratorMode::Start)
+            .iterator_cf(self.cf(CF_UI)?, rocksdb::IteratorMode::From(start.as_bytes(), rocksdb::Direction::Forward))
         {
-            let (_, value) = entry?;
+            let (key, value) = entry?;
+            if !key.starts_with(b"s/") { break; }
+            if !after.is_empty() && key.as_ref() <= start.as_bytes() { continue; }
             let projection: UiSnapshot = serde_json::from_slice(&value)?;
+            let cost = serde_json::to_vec(&projection.session)?.len() + 1;
+            if items.len() == 64 || bytes + cost > 900 * 1024 { more = true; break; }
+            bytes += cost;
+            last = projection.session["id"].as_str().map(str::to_owned);
             items.push(projection.session);
         }
-        Ok(serde_json::to_vec(&serde_json::json!({"items": items}))?)
+        Ok(serde_json::to_vec(&serde_json::json!({"items": items,"next": if more { last } else { None }}))?)
     }
 
     fn import_ui_projection(
@@ -3851,6 +3854,47 @@ mod tests {
     }
 
     #[test]
+    fn session_pages_bound_metadata_bytes_and_visit_every_session() {
+        let path = temp_path("session-pages");
+        let store = HotStore::open(&path).unwrap();
+        for n in 0..80 {
+            let id = format!("s-{n:03}");
+            let seed = serde_json::to_vec(&serde_json::json!({"id":id,"projectId":"p","status":"completed","updatedAt":"2026-10-18","sessionMetadata":{"instructions":"x".repeat(40_000)}})).unwrap();
+            store.ui_snapshot(&id, Some(&seed)).unwrap();
+        }
+        let mut after = String::new();
+        let mut ids = Vec::new();
+        loop {
+            let bytes = store.session_list(&after).unwrap();
+            assert!(bytes.len() <= 900 * 1024);
+            let page: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            for item in page["items"].as_array().unwrap() { ids.push(item["id"].as_str().unwrap().to_owned()); }
+            let Some(next) = page["next"].as_str() else { break; };
+            assert_ne!(next, after);
+            after = next.to_owned();
+        }
+        assert_eq!(ids, (0..80).map(|n| format!("s-{n:03}")).collect::<Vec<_>>());
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn reading_controls_does_not_create_receipts_or_writes() {
+        let path = temp_path("read-controls");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let before = store.db.iterator_cf(store.cf(CF_CONTROLS).unwrap(), rocksdb::IteratorMode::Start).count();
+        for i in 0..64 {
+            let result = store.control_command("s", &format!("read-{i}"), 1, 0, "read", b"{}").unwrap();
+            assert!(result.event.is_none());
+            assert_eq!(result.snapshot.revision, 0);
+        }
+        assert_eq!(store.db.iterator_cf(store.cf(CF_CONTROLS).unwrap(), rocksdb::IteratorMode::Start).count(), before);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
     fn control_commands_are_fenced_idempotent_and_recoverable() {
         let path = temp_path("controls");
         let store = HotStore::open(&path).unwrap();
@@ -3911,7 +3955,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(resolved.snapshot.revision, 2);
-        assert_eq!(resolved.event.unwrap().kind, "permission_resolved");
+        let event = resolved.event.unwrap();
+        assert_eq!(event.kind, "permission_resolved");
+        let payload: serde_json::Value = serde_json::from_slice(&event.payload).unwrap();
+        assert_eq!(payload["chunk"]["permission"]["userReply"], "once");
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&resolved.state_json).unwrap()["entity"]["id"], "permission-1");
 
         let stop = store
             .control_command(
@@ -3935,7 +3983,7 @@ mod tests {
         let reopened = HotStore::open(&path).unwrap();
         let state = reopened.control_state("s").unwrap();
         let state: ControlState = serde_json::from_slice(&state).unwrap();
-        assert_eq!(state.permissions[0]["userReply"], "once");
+        assert!(state.permissions.is_empty());
         assert_eq!(state.runtime_control.unwrap()["state"], "stopping");
         assert_eq!(reopened.replay("s", 0).unwrap().len(), 3);
         drop(reopened);

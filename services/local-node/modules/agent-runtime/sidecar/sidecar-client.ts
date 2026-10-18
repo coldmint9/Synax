@@ -225,8 +225,8 @@ export class RuntimeSidecarClient {
     return this.expect(envelope, 'history_state').stateJson;
   }
 
-  async sessionList(): Promise<Uint8Array> {
-    const envelope = await this.request({ type: 'session_list' }, '', 0, 0);
+  async sessionList(after?: string): Promise<Uint8Array> {
+    const envelope = await this.request({ type: 'session_list', after }, '', 0, 0);
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 

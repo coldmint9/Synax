@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
+import { readHistoryList } from './history-pages.js';
 import type { AgentSession } from "../contracts.js";
 
 let connection:
@@ -30,9 +31,9 @@ export async function patchRuntime(
   sessionId: string,
   operation: string,
   payload: unknown,
+  requestId: string = randomUUID(),
 ) {
-  const client = runtimeClient(),
-    requestId = randomUUID();
+  const client = runtimeClient();
   for (let attempt = 0; ; attempt++) {
     const fence = await client.snapshot(sessionId);
     try {
@@ -80,12 +81,5 @@ export async function listEntities<T>(
   sessionId: string,
   operation: string,
 ): Promise<T[]> {
-  return decode<{ items: T[] }>(
-    await runtimeClient().historyCommand({
-      sessionId,
-      requestId: randomUUID(),
-      operation,
-      payload: {},
-    }),
-  ).items;
+  return readHistoryList<T>(runtimeClient(), sessionId, operation);
 }

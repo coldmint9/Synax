@@ -16,11 +16,12 @@ export const historyTables = {
   agent_runtime_aux_usage: ['runtime.aux_usage', 'list_aux_usage'],
   agent_runtime_thinking_summaries: ['runtime.thinking', 'list_thinking'],
   agent_runtime_compaction_summaries: ['runtime.compaction', 'list_compactions'],
+  agent_runtime_permissions: ['runtime.permission', 'list_permissions'],
+  agent_runtime_interactions: ['runtime.interaction', 'list_interactions'],
 } as const;
 
 export const exportTables = [
   ...Object.keys(historyTables),
-  'agent_runtime_permissions', 'agent_runtime_interactions',
   'agent_runtime_stream_records',
 ];
 
@@ -96,8 +97,10 @@ export function nativeProjection(item: SessionBundle) {
     queuedInputs: metadata.inputQueue ?? [], forceInjectItemId: metadata.inputForceInjectId ?? null,
     queueRevision: 0, pendingQueueInput: null,
     control: {
-      permissions: (item.tables.agent_runtime_permissions ?? []).map(row => nativeRow('agent_runtime_permissions', row)),
-      interactions: (item.tables.agent_runtime_interactions ?? []).map(row => nativeRow('agent_runtime_interactions', row)),
+      permissions: (item.tables.agent_runtime_permissions ?? []).map(row => nativeRow('agent_runtime_permissions', row))
+        .filter(row => row.action === 'ask' && !row.resolvedAt),
+      interactions: (item.tables.agent_runtime_interactions ?? []).map(row => nativeRow('agent_runtime_interactions', row))
+        .filter(row => !row.consumedAt && (row.status === 'pending' || row.response != null)),
       runtimeControl: null, processLeases: [],
     },
   };

@@ -66,8 +66,14 @@ try {
     interactions: Array<{ id: string; status: string }>;
     runtimeControl: unknown;
   };
-  assert.equal(state.permissions[0].userReply, 'once');
-  assert.equal(state.interactions[0].status, 'answered');
+  assert.deepEqual(state.permissions, []);
+  assert.deepEqual(state.interactions, []);
+  await client.historyCommand({ sessionId: 's', requestId: 'recover-control-history', operation: 'reconcile_stream', payload: {} });
+  const history = async (operation: string) => JSON.parse(new TextDecoder().decode(await client!.historyCommand({ sessionId: 's', requestId: operation, operation, payload: {} })));
+  assert.equal((await history('list_permissions')).items[0].userReply, 'once');
+  const savedInteraction = (await history('list_interactions')).items[0];
+  assert.equal(savedInteraction.status, 'answered');
+  assert.equal(typeof savedInteraction.consumedAt, 'string');
   assert.equal(state.runtimeControl, null);
   assert.equal((await client.replay('s', 0)).events.length, 9);
   console.log('Rust control smoke passed: permission/interaction/stop/resume commands are fenced, receipt-idempotent, projected, replayable, and recover after sidecar restart.');

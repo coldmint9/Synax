@@ -18,19 +18,6 @@ import {
   parseBashInvocations,
   type BashInvocation,
 } from "./tools/bash-command-policy.js";
-import { runtimeFacade } from "./sidecar/runtime-facade.js";
-
-function mirrorPermissionRequest(decision: PermissionDecision): void {
-  void runtimeFacade.controlCommand({
-    sessionId: decision.sessionId,
-    requestId: `permission-request:${decision.id}`,
-    operation: "permission_request",
-    payload: decision,
-  }).catch(() => {
-    // Shadow and disabled deployments keep the existing local path. In authoritative
-    // mode the next control read/reply surfaces an unavailable sidecar explicitly.
-  });
-}
 
 function strictestPermissionAction(
   actions: PermissionAction[],
@@ -314,7 +301,6 @@ export class PermissionPolicy {
           ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
-    mirrorPermissionRequest(decision);
     return decision;
   }
 
@@ -349,7 +335,6 @@ export class PermissionPolicy {
           ? { allowedReplies: reviewReplies(input.metadata, input.toolCallId) } : {}),
       },
     });
-    mirrorPermissionRequest(decision);
     return decision;
   }
 
@@ -396,12 +381,7 @@ export class PermissionPolicy {
         resolvedAt: nowIso(),
         reason: message ? `${decision.reason} ${message}` : decision.reason,
       });
-      void runtimeFacade.controlCommand({
-        sessionId,
-        requestId: `permission-reply:${permissionId}:${reply}`,
-        operation: "permission_reply",
-        payload: { id: permissionId, reply, message },
-      }).catch(() => {});
+      this.store.enqueueControl(sessionId, `permission-reply:${permissionId}:${reply}`, 'permission_reply', { id: permissionId, reply, message });
       if (reply === "always" && persistRule && typeof toolId !== "string") {
         const pattern = decision.patterns[0] ?? "*";
         const gate = decision.internalGate === "none"

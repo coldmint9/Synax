@@ -2301,14 +2301,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/todos", async (c) => {
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/permissions", async (c) => {
   try {
-    {
-      const state = (await runtimeFacade.controlState(
-        c.req.param("sessionId"),
-      )) as {
-        permissions?: unknown[];
-      };
-      return c.json({ items: state.permissions ?? [] });
-    }
+    return c.json({ items: await runtimeFacade.listHistoryObjects(c.req.param('sessionId'), 'list_permissions') });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2351,13 +2344,7 @@ agentRuntimeRoutes.post(
         (await runtimeFacade.uiSnapshotAuthoritative(sessionId))
           .session as never,
       );
-      const previous = (
-        (
-          (await runtimeFacade.controlState(sessionId)) as {
-            permissions?: unknown[];
-          }
-        ).permissions ?? []
-      ).find(
+      const previous = (await runtimeFacade.listHistoryObjects(sessionId, 'list_permissions')).find(
         (item) =>
           item &&
           typeof item === "object" &&
@@ -2415,20 +2402,7 @@ agentRuntimeRoutes.post(
             message: parsed.data.message,
           },
         });
-        const updated = (
-          nextState as {
-            permissions?: unknown[];
-          }
-        ).permissions?.find(
-          (item) =>
-            item &&
-            typeof item === "object" &&
-            (
-              item as {
-                id?: unknown;
-              }
-            ).id === c.req.param("permissionId"),
-        );
+        const updated = (nextState as { entity?: unknown }).entity;
         if (!updated || typeof updated !== "object")
           throw new AgentRuntimeError(
             "Permission response was not persisted.",
@@ -2685,14 +2659,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/live", (c) => {
 // Forms are durable resources, not permission grants or queued chat messages.
 agentRuntimeRoutes.get("/sessions/:sessionId/interactions", async (c) => {
   try {
-    {
-      const state = (await runtimeFacade.controlState(
-        c.req.param("sessionId"),
-      )) as {
-        interactions?: unknown[];
-      };
-      return c.json({ interactions: state.interactions ?? [] });
-    }
+    return c.json({ interactions: await runtimeFacade.listHistoryObjects(c.req.param('sessionId'), 'list_interactions') });
   } catch (error) {
     return runtimeError(c, error);
   }

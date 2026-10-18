@@ -99,3 +99,44 @@ node --import tsx/esm scripts/synax-runtime-migrate.ts verify-v1-export --input 
 2. 单实体最大 375,144 bytes，当前没有超过 900 KiB 的实体；单会话 permission 历史 1,013,860 bytes。用现有 `nativeProjection` 对全部导出会话实际序列化后，最大导入体为 **1,056,826 bytes**，已有 1 个会话超过 1 MiB 控制帧限制；证据为 `out/runtime-v2-migration/transport-audit.json`。历史权限和待处理权限的职责必须分开，不能持续向 control 数组堆积历史。
 3. 本次 archive 包含当前可见实体、保留 immutable graph 和附件；旧 process/terminal、SQL mutation/undo 及 boundary-only 检查点的完整原生转换仍需完成。原 SQL-only `export/import/verify-runtime` 仍只用于其现有 fixture，不能拿它清理真实目录。
 4. 下一步将上述 archive/reader 接入原生 Rust 导入，恢复 checkpoint/pin 和附件绑定，逐会话读回核对；再删除全部在线旧模块、扩展写文件/交互 E2E，最后构建 2.0.0 DMG。当前目标继续 active。
+
+## 2026-10-18 第四轮：原生分页、交互切换、真实数据暂存与逐字段验证
+
+### 在线代码变更
+
+- Rust 增加 `visible_entities` 索引：实体身份和有序查询键只随当前 head 原子提交，未发布对象不会进入列表。追加增量更新索引；head switch、fork 和显式 rebuild 根据可达历史重建。移除 `put_object` 对旧全局实体索引的写入，列表不再逐次扫描整个历史 DAG。
+- 所有 `list_*` 实体查询返回有字节上限的分页，游标绑定 session、kind、direction、head revision。更新同一实体会删除旧排序键；同一批次中最后一次更新获胜。Node 仓储、facade、迁移校验和 benchmark 接入分页；UI 历史页不再按对象图扫描后丢弃多余消息。
+- `session_list` 增加 after 游标，每页最多 64 条且正文预算 900 KiB。仓储启动加载和 facade 列表都迭代分页，解决真实会话元数据总计 5,944,798 bytes 超出控制帧的问题。
+- 历史对象 Moka 缓存改用字节权重，容量 64 MiB。控制状态 `read` 不再生成持久化 receipt 或触发 WAL 写入。
+- 热控制状态只保留未解决的 permission 和未消费的 interaction。完成记录随控制事件写入 durable outbox，再进入 `runtime.permission` / `runtime.interaction` 历史。命令回执返回本次变更实体，HTTP 与工作集从历史读取完整记录。
+- outbox reconcile receipt 按事件序列范围生成，避免同一个调用方 request id 处理后续新事件时发生冲突。
+- `interaction-service.ts` 删除全部 SQL/version/checkpoint 引用和兼容回退，统一使用工作集事务、排队控制命令及显式 flush。保留答案校验、skip 语义、计划批准和任务创建、consume 后的 tool_result、取消与重启恢复。权限不再 fire-and-forget shadow 写入，随工作集 flush 提交。
+
+### 真实数据证据
+
+新增 `stage-v1` / `verify-v1-stage`，逐条读取上一轮归档、按 750 KiB/256 条批量提交原生实体，附件以 256 KiB 块写入 Rust blob 并核验 manifest。验证时只保留每条记录的字段哈希，通过原生分页逐条比较，核对完整 session、待处理 controls、附件字节和绑定。
+
+首次验证发现实际浮点精度损失：metadata 中 `1792047838.6933553` 被读成 `1792047838.693355`。已启用 serde_json `float_roundtrip` 并增加持久化重启回归测试；重新创建暂存目录后全量校验通过。旧 `native-staging` 保留为失败样本，不可用于切换；仅下述 `native-staging-precise` 通过字段级验收。
+
+```sh
+node --import tsx/esm scripts/synax-runtime-migrate.ts stage-v1 --input out/runtime-v2-migration/v1-source.ndjson --data-root out/runtime-v2-migration/native-staging-precise
+node --import tsx/esm scripts/synax-runtime-migrate.ts verify-v1-stage --input out/runtime-v2-migration/v1-source.ndjson --data-root out/runtime-v2-migration/native-staging-precise
+```
+
+结果：
+
+- 299 个会话、403,344 条当前可见实体全部完成原生导入，并在 sidecar 重启后逐字段哈希一致。
+- 147 个附件、38,441,890 bytes、105 个绑定原生读回一致。
+- 最大单页实体正文 520,158 bytes；最大会话列表页正文 913,775 bytes，均经真实 IPC 返回。
+- 最大 projection 导入体从 1,056,826 bytes 降至 88,516 bytes。
+- 最后一次完整核对耗时 37,383 ms，包含原始归档校验、哈希计算、IPC 读回及附件验证；不是纯存储吞吐或端到端性能基准。
+- 证据：`out/runtime-v2-migration/native-staging-precise/stage-v1-result.json`、`verify-v1-stage-result.json`。源用户目录未切换，归档与暂存库均不纳入 Git。
+
+### 验收与剩余范围
+
+- Rust tests **79/79**；6 个定向 Vitest 文件 **31 项**；服务端、客户端和新增迁移脚本 typecheck 通过。
+- `runtime-v2-main-path-e2e.ts` 再次通过真实 HTTP → 独立 worker → provider fixture → file.read → WS → 重启 → 第二轮，并保持零旧 runtime SQL 表、零旧表读写尝试。
+- 新增 `runtime-v2-interaction-smoke.ts`：真实 Rust 持久化下校验非法答案、回复、重启后消费一次、tool_result、计划执行、skip 重试、取消、历史权限；全过程不创建 context.db。
+- 原生仓储、SQL fixture 迁移、控制状态重启、outbox 维护/重复 reconcile/unknown ack 的 smoke 均通过。
+
+**目标仍未完成。** 暂存结果明确 `cutoverComplete: false`：2,787 个检查点及文件恢复语义尚未完成原生转换；旧 file/checkpoint/flat/transcript、同步 admission、media/process 等在线依赖仍待剔除。Node 工作集仍可能加载整个会话（现在分 IPC 页加载），HTTP 某些列表仍会收集全量实体，不能宣称长会话按需加载或极限吞吐已经完成。下一阶段继续转换保留历史和文件状态、拆掉剩余旧依赖、验证文件写入和回滚，最后才切用户目录、清理旧数据并构建 2.0.0 DMG。

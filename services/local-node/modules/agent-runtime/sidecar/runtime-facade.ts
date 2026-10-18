@@ -19,6 +19,7 @@ import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
+import { readHistoryList, readSessionList } from './history-pages.js';
 export type RuntimeSidecarStreamMode = "authoritative";
 function streamMode(): RuntimeSidecarStreamMode {
   return "authoritative";
@@ -312,7 +313,13 @@ export class RuntimeFacade {
           epoch: snapshot.epoch,
           revision: snapshot.revision,
         });
-        return JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
+        const state = JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
+        if (state.entity) {
+          await client.historyCommand({ sessionId: input.sessionId,
+            requestId: `control-history:${createHash('sha256').update(input.requestId).digest('hex')}`,
+            operation: 'reconcile_stream', payload: {} });
+        }
+        return state;
       } catch (error) {
         if (
           !(error instanceof RuntimeSidecarError) ||
@@ -781,35 +788,15 @@ export class RuntimeFacade {
     await Promise.all([...pending]);
   }
   async listRunHistory(sessionId: string): Promise<unknown[]> {
-    const state = (await this.historyCommand({
-      sessionId,
-      requestId: historyReadRequest("list-runs", sessionId),
-      operation: "list_runs",
-      payload: {},
-    })) as {
-      items?: unknown[];
-    };
-    return state.items ?? [];
+    return this.listHistoryObjects(sessionId, 'list_runs');
   }
   async listMessageHistory(sessionId: string): Promise<unknown[]> {
-    const state = (await this.historyCommand({
-      sessionId,
-      requestId: historyReadRequest("list-messages", sessionId),
-      operation: "list_messages",
-      payload: {},
-    })) as {
-      items?: unknown[];
-    };
-    return state.items ?? [];
+    return this.listHistoryObjects(sessionId, 'list_messages');
   }
   async listSessionProjection(): Promise<unknown[]> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    const bytes = await client.sessionList();
-    const state = JSON.parse(Buffer.from(bytes).toString("utf8")) as {
-      items?: unknown[];
-    };
-    return state.items ?? [];
+    return readSessionList(client);
   }
   async importUiProjection(
     sessionId: string,
@@ -836,17 +823,13 @@ export class RuntimeFacade {
       | "list_plans"
       | "list_work"
       | "list_contexts"
-      | "list_aux_usage",
+      | "list_aux_usage"
+      | "list_permissions"
+      | "list_interactions",
   ): Promise<unknown[]> {
-    const state = (await this.historyCommand({
-      sessionId,
-      requestId: historyReadRequest(operation, sessionId),
-      operation,
-      payload: {},
-    })) as {
-      items?: unknown[];
-    };
-    return state.items ?? [];
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    return readHistoryList(client, sessionId, operation);
   }
   async persistTerminalInfo(
     projectId: string,
@@ -876,15 +859,9 @@ export class RuntimeFacade {
   }
   async listTerminalHistory(projectId: string): Promise<unknown[]> {
     const scopeId = `terminals:${projectId}`;
-    const state = (await this.historyCommandGlobal({
-      scopeId,
-      requestId: `terminal-list:${projectId}`,
-      operation: "list_terminals",
-      payload: {},
-    })) as {
-      items?: unknown[];
-    };
-    return state.items ?? [];
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    return readHistoryList(client, scopeId, 'list_terminals', { global: true });
   }
   async sessionStatsAuthoritative(
     sessionId: string,
@@ -1679,34 +1656,19 @@ export class RuntimeFacade {
     const graphCursor = this.decodeGraphCursor(sessionId, revision, cursor);
     const page = (await this.historyCommand({
       sessionId,
-      requestId: `history-page:${operation}:${sessionId}:${revision}:${cursor ?? "root"}`,
-      operation: "page",
-      payload: graphCursor
-        ? { cursor: graphCursor, limit }
-        : { objectId: head.objectId, limit },
+      requestId: historyReadRequest(operation, sessionId),
+      operation,
+      payload: { cursor: graphCursor, limit, reverse: true },
     })) as {
-      items?: Array<{
-        kind?: unknown;
-        value?: unknown;
-      }>;
+      items?: unknown[];
       cursor?: unknown;
+      revision: number;
     };
-    const kinds: Record<string, string> = {
-      list_messages: "runtime.message",
-      list_runs: "runtime.run",
-      list_steps: "runtime.step",
-      list_tool_calls: "runtime.tool_call",
-      list_events: "runtime.event",
-    };
-    const items = (page.items ?? [])
-      .filter((item) => item.kind === kinds[operation])
-      .map((item) => item.value)
-      .filter((item) => item !== undefined);
     return {
-      items,
-      revision,
+      items: page.items ?? [],
+      revision: page.revision,
       ...(page.cursor
-        ? { cursor: this.encodeGraphCursor(sessionId, revision, page.cursor) }
+        ? { cursor: this.encodeGraphCursor(sessionId, page.revision, page.cursor) }
         : {}),
     };
   }
@@ -1747,7 +1709,7 @@ export class RuntimeFacade {
         sessionId,
         "list_messages",
         graphCursor,
-        256,
+        24 - messagePage.length,
       );
       messagePage.push(...(result.items as AgentRuntimeMessage[]));
       if (!result.cursor) {
@@ -1785,20 +1747,7 @@ export class RuntimeFacade {
     const events = cursor
       ? []
       : this.orderedHistory(eventsRaw as RuntimeEvent[]).slice(-32);
-    let permissions: unknown[] = [];
-    if (!cursor) {
-      try {
-        permissions = (
-          (
-            (await this.controlState(sessionId)) as {
-              permissions?: unknown[];
-            }
-          ).permissions ?? []
-        ).slice(-32);
-      } catch {
-        permissions = [];
-      }
-    }
+    const permissions = cursor ? [] : (await this.listHistoryObjects(sessionId, 'list_permissions')).slice(-32);
     const epoch = hot?.epoch ?? 0;
     return {
       messages: pageMessages,

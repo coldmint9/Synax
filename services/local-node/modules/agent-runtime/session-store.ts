@@ -19,10 +19,10 @@ import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentNotFoundError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 import { sessionLiveBus } from "./session-live-bus.js";
+import { historyPages, sessionPages } from './sidecar/history-pages.js';
 import { projectSessionState } from "./session-projection.js";
 import {
   decode,
-  listEntities,
   patchRuntime,
   persistEntity,
   runtimeClient,
@@ -63,6 +63,8 @@ const collections = {
   aux_usage: "list_aux_usage",
   thinking: "list_thinking",
   compaction: "list_compactions",
+  permission: "list_permissions",
+  interaction: "list_interactions",
 } as const;
 const copy = <T,>(value: T): T => structuredClone(value);
 
@@ -135,12 +137,24 @@ export class AgentRuntimeStore {
       [...this.tails.keys()].map((id) => this.flushSession(id)),
     );
   }
+  enqueueControl(sessionId: string, requestId: string, operation: string, payload: unknown): void {
+    const input = copy(payload);
+    this.queue(sessionId, async () => {
+      const result = await patchRuntime(sessionId, operation, input, requestId);
+      if (result.entity) {
+        const kind = operation.startsWith('permission_') ? 'permission' : 'interaction';
+        const record = result.entity as Entity;
+        this.collection(kind).set(record.id, copy(record));
+        await runtimeClient().historyCommand({ sessionId, requestId: `control-history:${createHash('sha256').update(requestId).digest('hex')}`,
+          operation: 'reconcile_stream', payload: {} });
+      }
+    });
+  }
   async hydrateSessions(): Promise<void> {
     await this.flush();
-    const { items } = decode<{ items: AgentSession[] }>(
-      await runtimeClient().sessionList(),
-    );
-    for (const session of items) this.sessions.set(session.id, copy(session));
+    for await (const items of sessionPages<AgentSession>(runtimeClient())) {
+      for (const session of items) this.sessions.set(session.id, copy(session));
+    }
   }
   async hydrateSession(sessionId: string, refresh = false): Promise<void> {
     if (this.loaded.has(sessionId) && !refresh) {
@@ -151,28 +165,27 @@ export class AgentRuntimeStore {
     if (existing) return existing;
     const load = (async () => {
       await this.flushSession(sessionId);
+      await runtimeClient().historyCommand({ sessionId, requestId: `hydrate-history:${sessionId}:${Date.now()}`,
+        operation: 'reconcile_stream', payload: {} });
       const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(
         await runtimeClient().uiSnapshot(sessionId),
       );
       this.sessions.set(sessionId, snapshot.session);
       for (const [kind, operation] of Object.entries(collections)) {
-        const records = await listEntities<Entity>(sessionId, operation);
         const map = this.collection(kind);
         for (const [id, record] of map)
           if (record.sessionId === sessionId) map.delete(id);
-        for (const record of records) map.set(record.id, record);
+        for await (const page of historyPages<Entity>(runtimeClient(), sessionId, operation)) {
+          for (const record of page) map.set(record.id, record);
+        }
       }
       if (snapshot.run)
         this.collection("run").set(snapshot.run.id, snapshot.run);
       const control = await patchRuntime(sessionId, "read", {});
       const permissions = this.collection("permission");
-      for (const [id, record] of permissions)
-        if (record.sessionId === sessionId) permissions.delete(id);
       for (const permission of control.permissions as PermissionDecision[])
         permissions.set(permission.id, permission);
       const interactions = this.collection("interaction");
-      for (const [id, record] of interactions)
-        if (record.sessionId === sessionId) interactions.delete(id);
       for (const interaction of control.interactions as Entity[])
         interactions.set(interaction.id, interaction);
       this.loaded.add(sessionId);
@@ -637,7 +650,9 @@ export class AgentRuntimeStore {
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   }
   appendPermission(decision: PermissionDecision) {
-    return this.saveRecord("permission", decision);
+    const record = this.saveRecord("permission", decision);
+    this.enqueueControl(decision.sessionId, `permission-request:${decision.id}`, 'permission_request', record);
+    return record;
   }
   updatePermission(
     sessionId: string,
@@ -646,7 +661,7 @@ export class AgentRuntimeStore {
   ) {
     const current = this.requireRecord<PermissionDecision>("permission", id);
     if (current.sessionId !== sessionId) throw new AgentNotFoundError(id);
-    return this.appendPermission({ ...current, ...patch });
+    return this.saveRecord('permission', { ...current, ...patch });
   }
   listPermissions(id: string) {
     return this.listRecords<PermissionDecision>("permission", id);

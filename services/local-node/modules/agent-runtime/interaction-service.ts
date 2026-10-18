@@ -1,15 +1,4 @@
-import { readVersionSnapshot } from "./checkpoints/version-store/read-snapshot.js";
-import { versionedSession } from "./checkpoints/version-runtime/bridge.js";
-import { listVersionEntities } from "./checkpoints/version-runtime/entities.js";
-import {
-  currentVersionInteraction,
-  persistInteraction,
-  pendingVersionInteraction,
-  readyVersionInteraction,
-  cancelVersionInteractions,
-} from "./checkpoints/version-runtime/interaction-control.js";
 import { isDeepStrictEqual } from "node:util";
-import { getRawSqlite } from "../../infrastructure/database/index.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { agentEventService as events } from "./event-service.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
@@ -29,45 +18,12 @@ import {
   getPlanArtifact,
   updatePlanArtifact,
 } from "./plan-artifact-store.js";
-import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 /** Injected on a skipped form: the model continues on its own recommendation
  *  instead of reading the skip as a refusal. */
 const SKIP_MESSAGE =
   "The user skipped this form instead of answering. Do not treat it as a refusal and do not ask again: continue now with the intent you recommended while asking, preferring the options you marked as recommended and choosing sensible defaults for everything else.";
 
-type Row = {
-  id: string;
-  session_id: string;
-  run_id: string;
-  step_id: string;
-  tool_call_id: string;
-  kind: AgentInteraction["kind"];
-  revision: number;
-  status: string;
-  request_json: string;
-  response_json: string | null;
-  created_at: string;
-  resolved_at: string | null;
-};
-/** `decline` was retired: a skipped form is not a refusal, so legacy rows
- *  fold into `answered` and the stored domain keeps its three outcomes. */
-const normalizeStatus = (raw: string): AgentInteraction["status"] =>
-  raw === "declined" ? "answered" : (raw as AgentInteraction["status"]);
-const map = (r: Row): AgentInteraction => ({
-  id: r.id,
-  sessionId: r.session_id,
-  runId: r.run_id,
-  stepId: r.step_id,
-  toolCallId: r.tool_call_id,
-  kind: r.kind,
-  revision: r.revision,
-  status: normalizeStatus(r.status),
-  request: JSON.parse(r.request_json),
-  response: r.response_json ? JSON.parse(r.response_json) : null,
-  createdAt: r.created_at,
-  resolvedAt: r.resolved_at,
-});
 const conflict = (message: string): never => {
   throw new AgentRuntimeError(message, "INTERACTION_CONFLICT", 409);
 };
@@ -139,23 +95,8 @@ function persistLocalInteraction(
   request: AgentInteraction["request"],
   call: ReturnType<typeof store.getToolCall>,
 ): AgentInteraction {
-  return getRawSqlite().transaction(() => {
-    persistInteraction(interaction, () => {
-      getRawSqlite().prepare(
-        "INSERT INTO agent_runtime_interactions (id,session_id,run_id,step_id,tool_call_id,kind,revision,status,request_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      ).run(
-        interaction.id,
-        interaction.sessionId,
-        interaction.runId,
-        interaction.stepId,
-        interaction.toolCallId,
-        interaction.kind,
-        interaction.revision,
-        interaction.status,
-        JSON.stringify(interaction.request),
-        interaction.createdAt,
-      );
-    });
+  return store.transaction(() => {
+    store.saveRecord('interaction', interaction);
     if ("plan" in request) persistPlanProposal(interaction.sessionId, request.plan!);
     if (!store.listRunParts(interaction.stepId).some((p) => p.kind === "tool_call" && p.toolCallId === interaction.toolCallId))
       store.appendRunPart({
@@ -185,7 +126,7 @@ function persistLocalInteraction(
       payload: { interactionId: interaction.id, runId: interaction.runId, stepId: interaction.stepId, toolCallId: interaction.toolCallId },
     });
     return interaction;
-  })();
+  });
 }
 
 export function persistPlanProposal(sessionId: string, plan: AgentPlan) {
@@ -221,181 +162,30 @@ export const interactionService = {
   ready(sessionId: string): AgentInteraction | null {
     const session=store.getSession(sessionId);
     if(session.status!=='waiting_input')return null;
-    return this.list(sessionId).find(i=>i.runId===session.activeRunId&&i.status==='answered'&&i.response)??null;
+    return this.list(sessionId).find(i=>i.runId===session.activeRunId&&i.status==='answered'&&i.response&&!i.consumedAt)??null;
   },
-  request(input: {
-    sessionId: string;
-    runId: string;
-    stepId: string;
-    toolCallId: string;
-    kind: AgentInteraction["kind"];
-    request: unknown;
-  }): AgentInteraction {
-    const request: AgentInteraction["request"] =
-      input.kind === "clarification"
-        ? humanAskSchema.parse(input.request)
-        : (() => {
-            const raw = input.request as { plan: unknown };
-            const plan = agentPlanSchema.parse(raw.plan);
-            return { title: plan.title, plan };
-          })();
-    const interaction = getRawSqlite().transaction(() => {
-      const session = store.getSession(input.sessionId);
-      if (
-        session.parentSessionId ||
-        (!["synax", "goal"].includes(session.profileId) &&
-          ((session.sessionMetadata?.backend as { id?: string } | undefined)
-            ?.id ?? "native") === "native")
-      )
-        throw new AgentValidationError(
-          "Only the primary Synax agent can ask the user.",
-        );
-      if (session.status !== "running" || session.activeRunId !== input.runId)
-        conflict("The run is not active.");
-      const call = store.getToolCall(input.sessionId, input.toolCallId);
-      const approval = (input.request as AgentInteraction["request"])
-        .approvalFor;
-      if (approval && call.toolId === "goal.finish") {
-        const plan = session.sessionMetadata?.plan as
-          | { revision: number; humanAcceptanceCriteria?: string[] }
-          | undefined;
-        if (
-          !plan ||
-          approval.planRevision !== plan.revision ||
-          approval.criteria.some(
-            (c) => !plan.humanAcceptanceCriteria?.includes(c),
-          )
-        )
-          conflict("Invalid human acceptance request.");
-        request.approvalFor = approval;
-      }
-      if (call.runId !== input.runId || call.stepId !== input.stepId)
-        conflict("Interaction checkpoint does not match the tool call.");
-      const previous = this.pending(input.sessionId);
-      if (previous) conflict("Resolve the current interaction first.");
-      const oldPlan = session.sessionMetadata?.plan as
-        | { revision?: number }
-        | undefined;
-      const revision = input.kind === "plan_approval"
-        ? (getPlanArtifact(input.sessionId)?.revision ?? oldPlan?.revision ?? 0) + 1
-        : 1;
-      const i: AgentInteraction = {
-        sessionId: input.sessionId,
-        runId: input.runId,
-        stepId: input.stepId,
-        toolCallId: input.toolCallId,
-        kind: input.kind,
-        request,
-        revision,
-        id: makeRuntimeId("hitl"),
-        status: "pending",
-        response: null,
-        createdAt: nowIso(),
-        resolvedAt: null,
-      };
-      persistInteraction(i, () => {
-        getRawSqlite()
-          .prepare(
-            "INSERT INTO agent_runtime_interactions (id,session_id,run_id,step_id,tool_call_id,kind,revision,status,request_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-          )
-          .run(
-            i.id,
-            i.sessionId,
-            i.runId,
-            i.stepId,
-            i.toolCallId,
-            i.kind,
-            i.revision,
-            i.status,
-            JSON.stringify(i.request),
-            i.createdAt,
-          );
-      });
-      if ("plan" in request) {
-        persistPlanProposal(i.sessionId, request.plan!);
-      }
-      if (
-        !store
-          .listRunParts(i.stepId)
-          .some((p) => p.kind === "tool_call" && p.toolCallId === i.toolCallId)
-      )
-        store.appendRunPart({
-          id: makeRuntimeId("prt"),
-          runId: i.runId,
-          stepId: i.stepId,
-          sessionId: i.sessionId,
-          kind: "tool_call",
-          sequence: store.nextRunPartSequence(i.stepId),
-          content: `${call.toolId} ${call.inputSummary}`,
-          toolCallId: i.toolCallId,
-          metadata: { modelToolCallId: call.modelToolCallId },
-          createdAt: nowIso(),
-        });
-      store.updateToolCall(i.sessionId, i.toolCallId, {
-        status: "pending",
-        endedAt: null,
-      });
-      store.updateRunStep(i.stepId, {
-        status: "waiting_input",
-        finishReason: "human_input",
-      });
-      store.updateRun(i.runId, {
-        status: "waiting_input",
-        stopReason: "human_input",
-      });
-      store.updateSession(i.sessionId, {
-        status: "waiting_input",
-        pendingResumeToken: `interaction:${i.id}`,
-        blockedReason: i.request.title,
-      });
-      events.append({
-        sessionId: i.sessionId,
-        type: "interaction_requested",
-        summary: i.request.title,
-        payload: {
-          interactionId: i.id,
-          runId: i.runId,
-          stepId: i.stepId,
-          toolCallId: i.toolCallId,
-        },
-      });
-      return i;
-    })();
-    void runtimeFacade.controlCommand({
-      sessionId: interaction.sessionId,
-      requestId: `interaction-request:${interaction.id}`,
-      operation: "interaction_request",
-      payload: interaction,
-    }).catch(() => {});
-    return interaction;
+  request(input: InteractionRequestInput): AgentInteraction {
+    const prepared = prepareInteraction(input);
+    if (this.pending(input.sessionId)) conflict("Resolve the current interaction first.");
+    return store.transaction(() => {
+      const value = persistLocalInteraction(prepared.interaction, prepared.request, prepared.call);
+      store.enqueueControl(input.sessionId, `interaction-request:${value.id}`, 'interaction_request', value);
+      return value;
+    });
   },
   async requestAuthoritative(input: InteractionRequestInput): Promise<AgentInteraction> {
-    const prepared = prepareInteraction(input);
-    const control = await runtimeFacade.controlState(input.sessionId) as { interactions?: unknown[] };
-    if ((control.interactions ?? []).some((item) => item && typeof item === "object" && (item as { status?: unknown }).status === "pending"))
-      conflict("Resolve the current interaction first.");
-    await runtimeFacade.controlCommand({
-      sessionId: input.sessionId,
-      requestId: `interaction-request:${prepared.interaction.id}`,
-      operation: "interaction_request",
-      payload: prepared.interaction,
-    });
-    return persistLocalInteraction(prepared.interaction, prepared.request, prepared.call);
+    await store.hydrateSession(input.sessionId);
+    const value = this.request(input);
+    await store.flushSession(input.sessionId);
+    return store.getRecord<AgentInteraction>('interaction', value.id)!;
   },
   reply(sessionId: string, id: string, raw: unknown): AgentInteraction {
-    const reply = interactionReplySchema.parse(raw);
-    const interaction = getRawSqlite().transaction(() => {
-      const row = getRawSqlite()
-        .prepare(
-          "SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?",
-        )
-        .get(id, sessionId) as Row | undefined;
-      if (!row)
-        throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
-      const i = versionedSession(sessionId)
-          ? currentVersionInteraction(sessionId, id)
-          : map(row),
-        session = store.getSession(sessionId);
+    const parsed = interactionReplySchema.parse(raw);
+    const reply = parsed.action === 'skip' && !parsed.message?.trim() ? { ...parsed, message: SKIP_MESSAGE } : parsed;
+    const interaction = store.transaction(() => {
+      const i = store.getRecord<AgentInteraction>('interaction', id);
+      if (!i || i.sessionId !== sessionId) throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
+      const session = store.getSession(sessionId);
       if (reply.revision !== i.revision)
         conflict("The form is stale. Reload it before submitting.");
       if (i.status !== "pending") {
@@ -475,13 +265,7 @@ export const interactionService = {
           ? "cancelled"
           : "answered";
       const resolvedAt = nowIso();
-      persistInteraction({ ...i, status, response, resolvedAt }, () => {
-        getRawSqlite()
-          .prepare(
-            "UPDATE agent_runtime_interactions SET status=?, response_json=?,resolved_at=? WHERE id=? AND status='pending'",
-          )
-          .run(status, JSON.stringify(response), resolvedAt, id);
-      });
+      store.saveRecord('interaction', { ...i, status, response, resolvedAt });
       events.append({
         sessionId,
         type: "interaction_resolved",
@@ -489,44 +273,21 @@ export const interactionService = {
         payload: { interactionId: id, runId: i.runId, action: reply.action },
       });
       return { ...i, status, response, resolvedAt };
-    })();
-    void runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `interaction-reply:${id}:${reply.revision}:${reply.action}`,
-      operation: "interaction_reply",
-      payload: { id, revision: reply.revision, reply },
-    }).catch(() => {});
+    });
+    store.enqueueControl(sessionId, `interaction-reply:${id}:${reply.revision}:${reply.action}`, 'interaction_reply',
+      { id, revision: reply.revision, reply: interaction.response });
     return interaction;
   },
   async replyAuthoritative(sessionId: string, id: string, raw: unknown): Promise<AgentInteraction> {
-    const reply = interactionReplySchema.parse(raw);
-    await runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `interaction-reply:${id}:${reply.revision}:${reply.action}`,
-      operation: "interaction_reply",
-      payload: { id, revision: reply.revision, reply },
-    });
-    const control = await runtimeFacade.controlState(sessionId) as { interactions?: unknown[] };
-    const updated = (control.interactions ?? []).find((item) => item && typeof item === "object" && (item as { id?: unknown }).id === id);
-    if (!updated || typeof updated !== "object") throw new AgentRuntimeError("Interaction response was not persisted.", "STORAGE_UNAVAILABLE", 503);
-    try {
-      return this.reply(sessionId, id, raw);
-    } catch {
-      return updated as AgentInteraction;
-    }
+    await store.hydrateSession(sessionId, true);
+    this.reply(sessionId, id, raw);
+    await store.flushSession(sessionId);
+    return store.getRecord<AgentInteraction>('interaction', id)!;
   },
   deferPlan(sessionId: string, id: string): AgentInteraction {
-    const interaction = getRawSqlite().transaction(() => {
-      const row = getRawSqlite()
-        .prepare(
-          "SELECT * FROM agent_runtime_interactions WHERE id = ? AND session_id = ?",
-        )
-        .get(id, sessionId) as Row | undefined;
-      if (!row)
-        throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
-      const i = versionedSession(sessionId)
-        ? currentVersionInteraction(sessionId, id)
-        : map(row);
+    const interaction = store.transaction(() => {
+      const i = store.getRecord<AgentInteraction>('interaction', id);
+      if (!i || i.sessionId !== sessionId) throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
       if (i.kind !== "plan_approval")
         throw new AgentValidationError("Only a plan approval can be deferred.");
       if (i.status !== "pending")
@@ -545,16 +306,7 @@ export const interactionService = {
       });
       const reply: InteractionReply = { revision: i.revision, action: "save" };
       const resolvedAt = nowIso();
-      persistInteraction(
-        { ...i, status: "answered", response: reply, resolvedAt },
-        () => {
-          getRawSqlite()
-            .prepare(
-              "UPDATE agent_runtime_interactions SET status='answered',response_json=?,resolved_at=? WHERE id=? AND status='pending'",
-            )
-            .run(JSON.stringify(reply), resolvedAt, id);
-        },
-      );
+      store.saveRecord('interaction', { ...i, status: 'answered' as const, response: reply, resolvedAt });
       events.append({
         sessionId,
         type: "interaction_resolved",
@@ -562,17 +314,13 @@ export const interactionService = {
         payload: { interactionId: id, runId: i.runId, action: "save" },
       });
       return { ...i, status: "answered" as const, response: reply, resolvedAt };
-    })();
-    void runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `interaction-defer:${id}`,
-      operation: "interaction_reply",
-      payload: { id, revision: interaction.revision, reply: interaction.response },
-    }).catch(() => {});
+    });
+    store.enqueueControl(sessionId, `interaction-defer:${id}`, 'interaction_reply',
+      { id, revision: interaction.revision, reply: interaction.response });
     return interaction;
   },
   consume(sessionId: string): AgentInteraction | null {
-    const interaction = getRawSqlite().transaction(() => {
+    const interaction = store.transaction(() => {
       const i = this.ready(sessionId);
       if (!i) return null;
       const summary = JSON.stringify({ kind: i.kind, ...i.response });
@@ -607,13 +355,7 @@ export const interactionService = {
         completedAt: nowIso(),
         finishReason: "human_input_resolved",
       });
-      persistInteraction(i, () => {
-        getRawSqlite()
-          .prepare(
-            "UPDATE agent_runtime_interactions SET consumed_at=? WHERE id=? AND consumed_at IS NULL",
-          )
-          .run(nowIso(), i.id);
-      });
+      store.saveRecord('interaction', { ...i, consumedAt: nowIso() });
       store.updateRun(i.runId, {
         status: "running",
         completedAt: null,
@@ -625,46 +367,23 @@ export const interactionService = {
         blockedReason: null,
       });
       return i;
-    })();
-    if (interaction) {
-      void runtimeFacade.controlCommand({
-        sessionId,
-        requestId: `interaction-consume:${interaction.id}`,
-        operation: "interaction_consume",
-        payload: { id: interaction.id },
-      }).catch(() => {});
-    }
+    });
+    if (interaction) store.enqueueControl(sessionId, `interaction-consume:${interaction.id}`, 'interaction_consume', { id: interaction.id });
     return interaction;
   },
   async consumeAuthoritative(sessionId: string): Promise<AgentInteraction | null> {
-    const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-    const control = await runtimeFacade.controlState(sessionId) as { interactions?: unknown[] };
-    const raw = (control.interactions ?? []).find((item) => {
-      if (!item || typeof item !== "object") return false;
-      const value = item as { runId?: unknown; status?: unknown; response?: unknown; consumedAt?: unknown };
-      return value.runId === snapshot.session.activeRunId && value.status !== "pending" && value.response != null && !value.consumedAt;
-    });
-    if (!raw || typeof raw !== "object") return null;
-    const value = raw as AgentInteraction;
-    await runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `interaction-consume:${value.id}`,
-      operation: "interaction_consume",
-      payload: { id: value.id },
-    });
-    // Refresh the compatibility mirror when it is present. Rust remains the
-    // authority, so a missing/stale SQLite row cannot block resume.
-    return this.consume(sessionId) ?? value;
+    await store.hydrateSession(sessionId, true);
+    const value = this.consume(sessionId);
+    await store.flushSession(sessionId);
+    return value ? store.getRecord<AgentInteraction>('interaction', value.id)! : null;
   },
   cancel(sessionId: string): void {
-    if (versionedSession(sessionId)) {
-      cancelVersionInteractions(sessionId, nowIso());
-      return;
-    }
-    getRawSqlite()
-      .prepare(
-        "UPDATE agent_runtime_interactions SET status='cancelled',resolved_at=?,consumed_at=? WHERE session_id=? AND consumed_at IS NULL",
-      )
-      .run(nowIso(), nowIso(), sessionId);
+    store.transaction(() => {
+      for (const interaction of this.list(sessionId).filter(value => !value.consumedAt && (value.status === 'pending' || value.response))) {
+        const now = nowIso();
+        store.saveRecord('interaction', { ...interaction, status: 'cancelled' as const, resolvedAt: now, consumedAt: now });
+        store.enqueueControl(sessionId, `interaction-cancel:${interaction.id}`, 'interaction_cancel', { id: interaction.id });
+      }
+    });
   },
 };

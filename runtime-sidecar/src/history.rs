@@ -19,6 +19,7 @@ const CF_HEADS: &str = "heads";
 const CF_PINS: &str = "pins";
 const CF_RECEIPTS: &str = "receipts";
 const CF_INDEXES: &str = "indexes";
+const CF_ENTITIES: &str = "visible_entities";
 const CF_BLOBS: &str = "blobs";
 const CF_ASSETS: &str = "assets";
 const CF_ASSET_BINDINGS: &str = "asset_bindings";
@@ -32,6 +33,7 @@ const MAX_BLOB_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_BLOB_CHUNKS: u64 = 16_384;
 const PAGE_LIMIT: usize = 256;
 const PAGE_CURSOR_MAX_ITEMS: usize = 4096;
+const ENTITY_PAGE_BYTES: usize = 768 * 1024;
 const GC_DEFAULT_BATCH: usize = 128;
 const GC_MAX_BATCH: usize = 512;
 
@@ -76,6 +78,23 @@ struct HistoryReceipt {
     result: Vec<u8>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntityIndexEntry {
+    object_id: String,
+    order_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntityCursor {
+    session_id: String,
+    kind: String,
+    revision: u64,
+    reverse: bool,
+    after: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GcState {
@@ -111,6 +130,7 @@ impl HistoryStore {
             CF_PINS,
             CF_RECEIPTS,
             CF_INDEXES,
+            CF_ENTITIES,
             CF_BLOBS,
             CF_ASSETS,
             CF_ASSET_BINDINGS,
@@ -125,7 +145,9 @@ impl HistoryStore {
         let db = Arc::new(DB::open_cf_descriptors(&options, path, descriptors)?);
         Ok(Self {
             db,
-            object_cache: Cache::builder().max_capacity(4096).build(),
+            object_cache: Cache::builder()
+                .weigher(|_key: &String, value: &Vec<u8>| value.len().min(u32::MAX as usize) as u32)
+                .max_capacity(64 * 1024 * 1024).build(),
             command_locks: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
             asset_lock: Arc::new(Mutex::new(())),
             maintenance_lock: Arc::new(RwLock::new(())),
@@ -258,6 +280,8 @@ impl HistoryStore {
                 | "list_terminals"
                 | "list_thinking"
                 | "list_compactions"
+                | "list_permissions"
+                | "list_interactions"
                 | "verify"
         );
         let identity = format!(
@@ -312,20 +336,22 @@ impl HistoryStore {
             "pin" => self.pin(session_id, &value, &mut batch)?,
             "unpin" => self.unpin(session_id, &value, &mut batch)?,
             "page" => self.page(&value)?,
-            "list_runs" => self.list_indexed(session_id, "run")?,
-            "list_messages" => self.list_indexed(session_id, "message")?,
-            "list_steps" => self.list_indexed(session_id, "step")?,
-            "list_parts" => self.list_indexed(session_id, "part")?,
-            "list_tool_calls" => self.list_indexed(session_id, "tool")?,
-            "list_events" => self.list_indexed(session_id, "event")?,
-            "list_artifacts" => self.list_indexed(session_id, "artifact")?,
-            "list_plans" => self.list_indexed(session_id, "plan")?,
-            "list_work" => self.list_indexed(session_id, "work")?,
-            "list_contexts" => self.list_indexed(session_id, "context")?,
-            "list_aux_usage" => self.list_indexed(session_id, "aux")?,
-            "list_thinking" => self.list_indexed(session_id, "thinking")?,
-            "list_compactions" => self.list_indexed(session_id, "compaction")?,
-            "list_terminals" => self.list_indexed(session_id, "terminal")?,
+            "list_runs" => self.list_indexed(session_id, "run", &value)?,
+            "list_messages" => self.list_indexed(session_id, "message", &value)?,
+            "list_steps" => self.list_indexed(session_id, "step", &value)?,
+            "list_parts" => self.list_indexed(session_id, "part", &value)?,
+            "list_tool_calls" => self.list_indexed(session_id, "tool", &value)?,
+            "list_events" => self.list_indexed(session_id, "event", &value)?,
+            "list_artifacts" => self.list_indexed(session_id, "artifact", &value)?,
+            "list_plans" => self.list_indexed(session_id, "plan", &value)?,
+            "list_work" => self.list_indexed(session_id, "work", &value)?,
+            "list_contexts" => self.list_indexed(session_id, "context", &value)?,
+            "list_aux_usage" => self.list_indexed(session_id, "aux", &value)?,
+            "list_thinking" => self.list_indexed(session_id, "thinking", &value)?,
+            "list_compactions" => self.list_indexed(session_id, "compaction", &value)?,
+            "list_terminals" => self.list_indexed(session_id, "terminal", &value)?,
+            "list_permissions" => self.list_indexed(session_id, "permission", &value)?,
+            "list_interactions" => self.list_indexed(session_id, "interaction", &value)?,
             "verify" => self.verify()?,
             "rebuild_index" => self.rebuild_index(&mut batch)?,
             "gc" => self.gc(&value)?,
@@ -392,18 +418,6 @@ impl HistoryStore {
             object_key(&object_id).as_bytes(),
             &bytes,
         );
-        if let Some(index_kind) = entity_index_kind(kind) {
-            if let (Some(session_id), Some(entity_id)) = (
-                object.value["sessionId"].as_str(),
-                object.value["id"].as_str(),
-            ) {
-                batch.put_cf(
-                    self.cf(CF_INDEXES)?,
-                    format!("{index_kind}/{session_id}/{entity_id}").as_bytes(),
-                    object_id.as_bytes(),
-                );
-            }
-        }
         Ok(serde_json::to_vec(
             &serde_json::json!({"objectId":object_id,"bytes":bytes.len()}),
         )?)
@@ -424,6 +438,7 @@ impl HistoryStore {
                 HistoryError::InvalidCommand("append requires 1..256 entities".into())
             })?;
         let mut head = self.read_head(session_id)?;
+        self.require_entity_index(session_id, &head)?;
         if let Some(expected) = value.get("expectedRevision").and_then(|v| v.as_u64()) {
             if expected != head.revision {
                 return Err(HistoryError::RevisionConflict {
@@ -435,7 +450,10 @@ impl HistoryStore {
         // New entities come first so bounded graph pages can serve the latest
         // transcript without walking the entire historical root chain.
         let mut refs = Vec::with_capacity(objects.len() + 1);
-        for object in objects {
+        let mut indexed = HashSet::new();
+        // Outbox batches arrive chronologically. The newest value of each id
+        // must win both graph traversal and the materialized current-head index.
+        for object in objects.iter().rev() {
             let kind = required_string(object, "kind")?;
             if entity_index_kind(kind).is_none()
                 || object["value"]["sessionId"].as_str() != Some(session_id)
@@ -447,7 +465,11 @@ impl HistoryStore {
             required_string(&object["value"], "id")?;
             let result: serde_json::Value =
                 serde_json::from_slice(&self.put_object(object, batch)?)?;
-            refs.push(required_string(&result, "objectId")?.to_owned());
+            let object_id = required_string(&result, "objectId")?.to_owned();
+            if indexed.insert((kind, required_string(&object["value"], "id")?)) {
+                self.index_entity(session_id, &object_id, kind, &object["value"], batch)?;
+            }
+            refs.push(object_id);
         }
         if let Some(previous) = &head.object_id {
             self.read_object(previous)?;
@@ -472,7 +494,7 @@ impl HistoryStore {
             serde_json::to_vec(&root)?,
         );
         head.session_id = session_id.to_owned();
-        head.object_id = Some(root.object_id);
+        head.object_id = Some(root.object_id.clone());
         head.updated_at = now_iso();
         batch.put_cf(
             self.cf(CF_HEADS)?,
@@ -480,6 +502,7 @@ impl HistoryStore {
             serde_json::to_vec(&head)?,
         );
         self.bump_root_epoch(batch)?;
+        batch.put_cf(self.cf(CF_ENTITIES)?, entity_head_key(session_id), root.object_id.as_bytes());
         Ok(serde_json::to_vec(&head)?)
     }
 
@@ -856,6 +879,7 @@ impl HistoryStore {
             serde_json::to_vec(&head)?,
         );
         self.bump_root_epoch(batch)?;
+        self.rebuild_session_entities(session_id, object_id, batch)?;
         Ok(serde_json::to_vec(&head)?)
     }
 
@@ -947,6 +971,7 @@ impl HistoryStore {
             serde_json::to_vec(&next)?,
         );
         self.bump_root_epoch(batch)?;
+        self.rebuild_session_entities(target_session_id, object_id, batch)?;
         Ok(serde_json::to_vec(
             &serde_json::json!({"sourceSessionId":source_session_id,"head":next}),
         )?)
@@ -1081,33 +1106,100 @@ impl HistoryStore {
         }))?)
     }
 
-    fn list_indexed(&self, session_id: &str, kind: &str) -> Result<Vec<u8>, HistoryError> {
-        if let Some(head_id) = self.read_head(session_id)?.object_id {
-            let mut stack = vec![head_id];
-            let mut entity_ids = HashSet::new();
-            let mut seen = HashSet::new();
-            let mut items = Vec::new();
-            while let Some(object_id) = stack.pop() {
-                if !seen.insert(object_id.clone()) {
-                    continue;
-                }
-                let bytes = self.read_object(&object_id)?;
-                let object: HistoryObject = serde_json::from_slice(&bytes)?;
-                // The root stores newest refs first; DFS stack order must push
-                // them in reverse so the newest entity is visited first.
-                stack.extend(object.refs.iter().rev().cloned());
-                if entity_index_kind(&object.kind) == Some(kind) {
-                    let id = required_string(&object.value, "id")?;
-                    let owner = required_string(&object.value, "sessionId")?;
-                    if entity_ids.insert((owner.to_owned(), id.to_owned())) {
-                        items.push(object.value);
-                    }
+    fn index_entity(
+        &self, scope: &str, object_id: &str, object_kind: &str,
+        value: &serde_json::Value, batch: &mut WriteBatch,
+    ) -> Result<(), HistoryError> {
+        let Some(kind) = entity_index_kind(object_kind) else { return Ok(()); };
+        let owner = required_string(value, "sessionId")?;
+        let id = required_string(value, "id")?;
+        let identity_key = format!("{}id/{kind}/{}/{}", entity_prefix(scope), encode_hex(owner.as_bytes()), encode_hex(id.as_bytes()));
+        if let Some(previous) = self.get(CF_ENTITIES, identity_key.as_bytes())? {
+            let previous: EntityIndexEntry = serde_json::from_slice(&previous)?;
+            batch.delete_cf(self.cf(CF_ENTITIES)?, previous.order_key.as_bytes());
+        }
+        let order_key = format!("{}sort/{kind}/{}/{}/{}", entity_prefix(scope), entity_order(kind, value), encode_hex(id.as_bytes()), encode_hex(owner.as_bytes()));
+        let entry = EntityIndexEntry { object_id: object_id.to_owned(), order_key };
+        batch.put_cf(self.cf(CF_ENTITIES)?, entry.order_key.as_bytes(), object_id.as_bytes());
+        batch.put_cf(self.cf(CF_ENTITIES)?, identity_key.as_bytes(), serde_json::to_vec(&entry)?);
+        Ok(())
+    }
+
+    fn rebuild_session_entities(&self, session_id: &str, root: &str, batch: &mut WriteBatch) -> Result<(), HistoryError> {
+        let prefix = entity_prefix(session_id);
+        for row in self.db.iterator_cf(self.cf(CF_ENTITIES)?, rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)) {
+            let (key, _) = row?;
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            batch.delete_cf(self.cf(CF_ENTITIES)?, key);
+        }
+        let mut stack = vec![root.to_owned()];
+        let mut visited = HashSet::new();
+        let mut entities = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id.clone()) { continue; }
+            let object: HistoryObject = serde_json::from_slice(&self.read_object(&id)?)?;
+            stack.extend(object.refs.iter().rev().cloned());
+            if let Some(kind) = entity_index_kind(&object.kind) {
+                let owner = required_string(&object.value, "sessionId")?;
+                let entity = required_string(&object.value, "id")?;
+                if entities.insert((kind, owner.to_owned(), entity.to_owned())) {
+                    self.index_entity(session_id, &object.object_id, &object.kind, &object.value, batch)?;
                 }
             }
-            order_entities(kind, &mut items);
-            return Ok(serde_json::to_vec(&serde_json::json!({"items":items}))?);
         }
-        Ok(serde_json::to_vec(&serde_json::json!({"items":[]}))?)
+        batch.put_cf(self.cf(CF_ENTITIES)?, entity_head_key(session_id), root.as_bytes());
+        Ok(())
+    }
+
+    fn require_entity_index(&self, session_id: &str, head: &HistoryHead) -> Result<(), HistoryError> {
+        if let Some(root) = &head.object_id {
+            if self.get(CF_ENTITIES, entity_head_key(session_id).as_bytes())?.as_deref() != Some(root.as_bytes()) {
+                return Err(HistoryError::InvalidCommand("current history index is missing; rebuild_index required".into()));
+            }
+        }
+        Ok(())
+    }
+
+    fn list_indexed(&self, session_id: &str, kind: &str, value: &serde_json::Value) -> Result<Vec<u8>, HistoryError> {
+        let head = self.read_head(session_id)?;
+        self.require_entity_index(session_id, &head)?;
+        let reverse = value["reverse"].as_bool().unwrap_or(matches!(kind, "run" | "plan"));
+        let limit = value["limit"].as_u64().unwrap_or(128).clamp(1, PAGE_LIMIT as u64) as usize;
+        let max_bytes = value["maxBytes"].as_u64().unwrap_or(512 * 1024).clamp(8192, ENTITY_PAGE_BYTES as u64) as usize;
+        let prefix = format!("{}sort/{kind}/", entity_prefix(session_id));
+        let cursor: Option<EntityCursor> = value.get("cursor").filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone())).transpose()?;
+        if let Some(cursor) = &cursor {
+            if cursor.session_id != session_id || cursor.kind != kind || cursor.reverse != reverse || !cursor.after.starts_with(&prefix) {
+                return Err(HistoryError::InvalidCommand("history entity cursor scope mismatch".into()));
+            }
+            if cursor.revision != head.revision {
+                return Err(HistoryError::RevisionConflict { expected: cursor.revision, actual: head.revision });
+            }
+        }
+        let start = cursor.as_ref().map(|c| c.after.clone()).unwrap_or_else(|| if reverse { format!("{prefix}~") } else { prefix.clone() });
+        let direction = if reverse { rocksdb::Direction::Reverse } else { rocksdb::Direction::Forward };
+        let mut items = Vec::new();
+        let mut used = 4096; // Envelope and cursor are reserved before any body is read.
+        let mut last_key = None;
+        let mut more = false;
+        for row in self.db.iterator_cf(self.cf(CF_ENTITIES)?, rocksdb::IteratorMode::From(start.as_bytes(), direction)) {
+            let (key, reference) = row?;
+            if !key.starts_with(prefix.as_bytes()) { break; }
+            if cursor.as_ref().is_some_and(|c| c.after.as_bytes() == key.as_ref()) { continue; }
+            if items.len() == limit { more = true; break; }
+            let object: HistoryObject = serde_json::from_slice(&self.read_object(&String::from_utf8_lossy(&reference))?)?;
+            let size = serde_json::to_vec(&object.value)?.len() + 1;
+            if used + size > max_bytes {
+                if items.is_empty() { return Err(HistoryError::InvalidCommand("entity exceeds history page byte budget".into())); }
+                more = true; break;
+            }
+            used += size;
+            last_key = Some(String::from_utf8_lossy(&key).into_owned());
+            items.push(object.value);
+        }
+        let next = if more { last_key.map(|after| EntityCursor { session_id: session_id.to_owned(), kind: kind.to_owned(), revision: head.revision, reverse, after }) } else { None };
+        Ok(serde_json::to_vec(&serde_json::json!({"items":items,"cursor":next,"revision":head.revision}))?)
     }
 
     fn verify(&self) -> Result<Vec<u8>, HistoryError> {
@@ -1200,8 +1292,12 @@ impl HistoryStore {
             batch.put_cf(
                 self.cf(CF_INDEXES)?,
                 format!("session/{session_id}").as_bytes(),
-                value,
+                &value,
             );
+            let head: HistoryHead = serde_json::from_slice(&value)?;
+            if let Some(root) = &head.object_id {
+                self.rebuild_session_entities(&session_id, root, batch)?;
+            }
             sessions += 1;
         }
         Ok(serde_json::to_vec(
@@ -1566,34 +1662,26 @@ fn entity_index_kind(kind: &str) -> Option<&'static str> {
         "runtime.thinking" => Some("thinking"),
         "runtime.compaction" => Some("compaction"),
         "runtime.permission" => Some("permission"),
+        "runtime.interaction" => Some("interaction"),
         "runtime.terminal" => Some("terminal"),
         _ => None,
     }
 }
 
-fn order_entities(kind: &str, items: &mut [serde_json::Value]) {
-    fn timestamp(value: &serde_json::Value) -> &str {
-        ["createdAt", "startedAt", "timestamp"]
-            .iter()
-            .find_map(|field| value[*field].as_str())
-            .unwrap_or("")
-    }
-    items.sort_by(|a, b| {
-        let numeric = match kind {
-            "message" | "part" => a["sequence"].as_u64().zip(b["sequence"].as_u64()),
-            "plan" => a["revision"].as_u64().zip(b["revision"].as_u64()),
-            _ => None,
-        };
-        let order = numeric
-            .map(|(a, b)| a.cmp(&b))
-            .unwrap_or_else(|| timestamp(a).cmp(timestamp(b)))
-            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()));
-        if matches!(kind, "run" | "plan") {
-            order.reverse()
-        } else {
-            order
-        }
-    });
+fn entity_prefix(session_id: &str) -> String {
+    format!("s/{}/", encode_hex(session_id.as_bytes()))
+}
+fn entity_head_key(session_id: &str) -> String { format!("{}head", entity_prefix(session_id)) }
+fn entity_order(kind: &str, value: &serde_json::Value) -> String {
+    let number = match kind {
+        "message" | "part" => value["sequence"].as_u64(),
+        "plan" => value["revision"].as_u64(),
+        _ => None,
+    };
+    if let Some(number) = number { return format!("0/{number:020}"); }
+    let timestamp = ["createdAt", "startedAt", "timestamp"].iter()
+        .find_map(|field| value[*field].as_str()).unwrap_or("");
+    format!("1/{}", encode_hex(timestamp.as_bytes()))
 }
 
 fn required_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, HistoryError> {
@@ -1911,6 +1999,77 @@ mod tests {
             invoke(&store, "s", "same-query-id", "list_messages", read)["items"][0]["content"],
             "old"
         );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn protocol_float_precision_survives_persistence_and_reopen() {
+        let path = temp_path("numeric-roundtrip");
+        let store = HistoryStore::open(&path).unwrap();
+        store.command("s", "write", "append_entities", br#"{"objects":[{"kind":"runtime.step","value":{"id":"step","sessionId":"s","metadata":{"create_time":1792047838.6933553}}}]}"#).unwrap();
+        drop(store);
+        let store = HistoryStore::open(&path).unwrap();
+        let page = invoke(&store, "s", "read", "list_steps", serde_json::json!({}));
+        assert_eq!(page["items"][0]["metadata"]["create_time"].as_f64().unwrap().to_bits(), 1792047838.6933553_f64.to_bits());
+        assert_eq!(invoke(&store, "system", "verify", "verify", serde_json::json!({}))["ok"], true);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn entity_pages_bound_bytes_preserve_order_and_survive_restart() {
+        let path = temp_path("entity-pages");
+        let store = HistoryStore::open(&path).unwrap();
+        let objects: Vec<_> = (1..=24).map(|i| serde_json::json!({"kind":"runtime.step","value":{
+            "id":format!("step-{i:03}"),"sessionId":"s","startedAt":format!("2026-10-18T00:00:{i:02}Z"),"metadata":{"evidence":"x".repeat(100_000)}
+        }})).collect();
+        invoke(&store, "s", "append", "append_entities", serde_json::json!({"objects":objects}));
+        drop(store);
+        let store = HistoryStore::open(&path).unwrap();
+        for reverse in [false, true] {
+            let mut cursor = serde_json::Value::Null;
+            let mut ids = Vec::new();
+            loop {
+                let page = invoke(&store, "s", "page", "list_steps", serde_json::json!({"cursor":cursor,"reverse":reverse,"maxBytes":240_000}));
+                assert!(serde_json::to_vec(&page).unwrap().len() <= 240_000);
+                let items = page["items"].as_array().unwrap();
+                assert!(!items.is_empty() && items.len() <= 2);
+                for item in items {
+                    assert_eq!(item["metadata"]["evidence"].as_str().unwrap().len(), 100_000);
+                    ids.push(item["id"].as_str().unwrap().to_owned());
+                }
+                cursor = page["cursor"].clone();
+                if cursor.is_null() { break; }
+            }
+            let mut expected: Vec<_> = (1..=24).map(|i| format!("step-{i:03}")).collect();
+            if reverse { expected.reverse(); }
+            assert_eq!(ids, expected);
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn visible_index_changes_atomically_with_head_and_rejects_stale_pages() {
+        let path = temp_path("entity-head-index");
+        let store = HistoryStore::open(&path).unwrap();
+        let entity = |id: &str, sequence: u64| serde_json::json!({"kind":"runtime.message","value":{"id":id,"sessionId":"s","sequence":sequence}});
+        let first = invoke(&store, "s", "first", "append_entities", serde_json::json!({"objects":[entity("a",1),entity("b",2)]}));
+        let page = invoke(&store, "s", "page", "list_messages", serde_json::json!({"limit":1}));
+        invoke(&store, "s", "staged", "put_object", entity("not-published", 0));
+        assert_eq!(invoke(&store, "s", "stable", "list_messages", serde_json::json!({}))["items"].as_array().unwrap().len(), 2);
+        invoke(&store, "fork", "fork", "fork", serde_json::json!({"sourceSessionId":"s"}));
+        invoke(&store, "s", "replace", "append_entities", serde_json::json!({"objects":[entity("a",3),entity("a",4)]}));
+        let updated = invoke(&store, "s", "updated", "list_messages", serde_json::json!({}));
+        assert_eq!(updated["items"].as_array().unwrap().len(), 2);
+        assert_eq!(updated["items"][0]["id"], "b");
+        assert_eq!(updated["items"][1]["sequence"], 4);
+        assert!(matches!(store.command("s", "stale", "list_messages", &serde_json::to_vec(&serde_json::json!({"cursor":page["cursor"]})).unwrap()), Err(HistoryError::RevisionConflict { .. })));
+        assert_eq!(invoke(&store, "fork", "isolated", "list_messages", serde_json::json!({}))["items"][0]["sequence"], 1);
+        invoke(&store, "s", "rollback", "head_switch", serde_json::json!({"objectId":first["objectId"]}));
+        invoke(&store, "system", "rebuild", "rebuild_index", serde_json::json!({}));
+        assert_eq!(invoke(&store, "s", "restored", "list_messages", serde_json::json!({}))["items"], serde_json::json!([entity("a",1)["value"],entity("b",2)["value"]]));
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

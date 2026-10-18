@@ -50,10 +50,15 @@ try {
       await command(sessionId, 'append_entities', { objects: [{ kind: 'runtime.message', value: {
         id: 'm-0', sessionId, sequence: 0, content: 'updated',
       } }] }, 'append');
-      const result = await command(sessionId, 'list_messages', {}, 'query');
-      assert.equal(result.items.length, settings.batches * settings.entitiesPerBatch);
-      assert.equal(result.items[0].content, 'updated');
-      assert.deepEqual(result.items.map((item: { sequence: number }) => item.sequence),
+      const items: Array<{sequence: number; content: string}> = [];
+      let cursor: unknown;
+      do {
+        const result = await command(sessionId, 'list_messages', {cursor}, 'query');
+        items.push(...result.items); cursor = result.cursor;
+      } while (cursor);
+      assert.equal(items.length, settings.batches * settings.entitiesPerBatch);
+      assert.equal(items[0].content, 'updated');
+      assert.deepEqual(items.map(item => item.sequence),
         Array.from({ length: settings.batches * settings.entitiesPerBatch }, (_, i) => i));
     }
   }));

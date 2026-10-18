@@ -6,8 +6,10 @@ import NativeDatabase from 'libsql';
 import { isDeepStrictEqual } from 'node:util';
 import { RustRuntimeSupervisor } from '../services/local-node/infrastructure/runtime/rust-sidecar.js';
 import { RuntimeSidecarClient } from '../services/local-node/modules/agent-runtime/sidecar/sidecar-client.js';
+import { readHistoryList, readSessionList } from '../services/local-node/modules/agent-runtime/sidecar/history-pages.js';
 import { auditV1 } from './runtime-migration/audit.js';
 import { exportV1Archive, verifyV1Archive } from './runtime-migration/archive.js';
+import { stageV1Archive, verifyV1Stage } from './runtime-migration/stage.js';
 
 import { exportTables, historyTables, nativeEntities, nativeProjection, nativeSession, nativeRow, nativeReplay, type Row, type SessionBundle } from './runtime-migration/records.js';
 type MigrationBundle = {
@@ -33,7 +35,7 @@ const output = path.resolve(option('--output', path.join(dataRoot, command === '
 const tables = exportTables;
 
 function usage(): never {
-  console.error('usage: npm run runtime:migrate -- <audit-v1|export-v1|verify-v1-export|export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
+  console.error('usage: npm run runtime:migrate -- <audit-v1|export-v1|verify-v1-export|stage-v1|verify-v1-stage|export|import|verify|verify-runtime|rebuild-index|purge-legacy> [--force] [--data-root DIR] [--database FILE] [--input FILE] [--output FILE]');
   process.exit(2);
 }
 
@@ -125,8 +127,7 @@ async function verifyRuntime(): Promise<void> {
 
   const result = await withSidecar(async client => {
     const issues: RuntimeVerificationIssue[] = [];
-    const list = asRecord(JSON.parse(new TextDecoder().decode(await client.sessionList())));
-    const sessions = Array.isArray(list.items) ? list.items : [];
+    const sessions = await readSessionList(client);
     const seen = new Set<string>();
 
     const historyVerify = asRecord(JSON.parse(new TextDecoder().decode(await client.historyCommand({
@@ -192,10 +193,7 @@ async function verifyRuntime(): Promise<void> {
         if (expectedItem) {
           for (const [table, [, operation]] of Object.entries(historyTables)) {
             const expectedRows = (expectedItem.tables[table] ?? []).map(row => nativeRow(table, row));
-            const result = asRecord(JSON.parse(new TextDecoder().decode(await client.historyCommand({
-              sessionId, requestId: `verify-native:${table}:${sessionId}`, operation, payload: {},
-            }))));
-            const actual = new Map((result.items as Row[]).map(row => [row.id, row]));
+            const actual = new Map((await readHistoryList<Row>(client, sessionId, operation)).map(row => [row.id, row]));
             for (const row of expectedRows) {
               if (!actual.has(row.id)) { issues.push({ sessionId, reason: `${table}:${row.id} missing from native history` }); continue; }
               for (const [key, value] of Object.entries(row)) {
@@ -208,7 +206,7 @@ async function verifyRuntime(): Promise<void> {
           const controlReply = await client.controlCommand({ sessionId, requestId: `verify-control:${sessionId}`, operation: 'read', epoch: fence.epoch, revision: fence.revision });
           const controls = asRecord(JSON.parse(new TextDecoder().decode(controlReply.stateJson)));
           for (const [table, field] of [['agent_runtime_permissions', 'permissions'], ['agent_runtime_interactions', 'interactions']]) {
-            const source = (expectedItem.tables[table] ?? []).map(row => nativeRow(table, row));
+            const source = nativeProjection(expectedItem).control[field as 'permissions' | 'interactions'];
             if (!isDeepStrictEqual(controls[field], source)) issues.push({ sessionId, reason: `${field} differ after import` });
           }
           const legacySession = nativeSession(expectedItem);
@@ -309,10 +307,15 @@ async function purgeLegacy(): Promise<void> {
   console.log(JSON.stringify({ command: 'purge-legacy', database, deleted, force: true }, null, 2));
 }
 
-if (!command || !['audit-v1', 'export-v1', 'verify-v1-export', 'export', 'import', 'verify', 'verify-runtime', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
+if (!command || !['stage-v1', 'verify-v1-stage', 'audit-v1', 'export-v1', 'verify-v1-export', 'export', 'import', 'verify', 'verify-runtime', 'rebuild-index', 'purge-legacy'].includes(command)) usage();
 if (command === 'audit-v1') await auditV1(dataRoot, database, output);
 else if (command === 'export-v1') console.log(JSON.stringify({ command, output, ...await exportV1Archive(dataRoot, database, output), ok: true }, null, 2));
 else if (command === 'verify-v1-export') console.log(JSON.stringify({ command, input, ...await verifyV1Archive(input), ok: true }, null, 2));
+else if (command === 'stage-v1' || command === 'verify-v1-stage') {
+  const result = await withSidecar(client => command === 'stage-v1' ? stageV1Archive(input, client) : verifyV1Stage(input, client));
+  await writeFile(path.join(dataRoot, `${command}-result.json`), `${JSON.stringify(result, null, 2)}\n`);
+  console.log(JSON.stringify({ command, dataRoot, ...result }, null, 2));
+}
 else if (command === 'export') await exportLegacy();
 else if (command === 'import') await importBundle();
 else if (command === 'verify') await verifyBundle();

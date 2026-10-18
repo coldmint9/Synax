@@ -201,7 +201,10 @@ pub struct WireHistoryState {
 }
 
 #[derive(Clone, PartialEq, Message)]
-pub struct WireSessionList {}
+pub struct WireSessionList {
+    #[prost(string, tag = "1")]
+    pub after: String,
+}
 
 #[derive(Clone, PartialEq, Message)]
 pub struct WireSessionListResponse {

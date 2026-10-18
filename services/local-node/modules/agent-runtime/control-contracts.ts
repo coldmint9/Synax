@@ -171,6 +171,7 @@ export interface AgentInteraction {
   response: InteractionReply | null;
   createdAt: string;
   resolvedAt: string | null;
+  consumedAt?: string | null;
 }
 
 export function validateAnswers(
