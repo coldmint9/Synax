@@ -165,6 +165,38 @@ export async function hydrateRuntimeAssets(sessionIds: string[] = []): Promise<v
     for(const asset of bound) assets.set(asset.id,asset);
   }
 }
+/** Fetch exact metadata from the Rust asset store and refresh the local cache. */
+export async function loadAsset(
+  id: string,
+  projectId?: string,
+): Promise<RuntimeAsset> {
+  if (!/^asset_[a-f0-9]{32}$/.test(id)) return error("Invalid asset ID.");
+  const asset = (await runtimeFacade.getAssetMetadata(id)) as RuntimeAsset;
+  assets.set(id, asset);
+  return getAsset(id, projectId);
+}
+
+/** Ensure every referenced asset is available in the metadata cache. */
+export async function prepareAssets(
+  parts: RuntimeContentPart[],
+  projectId?: string,
+): Promise<void> {
+  for (const part of parts) {
+    if (part.type !== "text") await loadAsset(part.assetId, projectId);
+  }
+}
+
+/** Materialize a Rust-owned blob for providers that require a local path. */
+export async function materializeAsset(id: string): Promise<string> {
+  const bytes = await readAsset(id);
+  await fsp.mkdir(root(), { recursive: true, mode: 0o700 });
+  const destination = assetPath(id);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  await fsp.writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
+  await fsp.rename(temporary, destination);
+  return destination;
+}
+
 export function getAsset(id:string,projectId?:string):RuntimeAsset {
   if(!/^asset_[a-f0-9]{32}$/.test(id)) error('Invalid asset ID.');
   const asset=assets.get(id);
@@ -253,6 +285,14 @@ export async function bindAssets(sessionId:string,parts:RuntimeContentPart[]):Pr
   await bindValidatedAssets(sessionId,validateAssets(parts,session.projectId));
 }
 export function sessionHasAsset(sessionId:string,id:string):boolean {return bindings.get(sessionId)?.has(id) ?? false;}
+
+/** Load only the bindings needed by a session executing in this process. */
+export async function hydrateSessionAssets(sessionId: string): Promise<void> {
+  const bound = (await runtimeFacade.listBoundAssets(sessionId)) as RuntimeAsset[];
+  bindings.set(sessionId, new Set(bound.map((asset) => asset.id)));
+  for (const asset of bound) assets.set(asset.id, asset);
+}
+
 export async function deleteUnboundAsset(id:string):Promise<void> {
   await runtimeFacade.deleteAssetMetadata(id);
   await runtimeFacade.deleteAssetBlob(id);
