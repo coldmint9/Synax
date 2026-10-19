@@ -10,7 +10,7 @@ import type { NodeReviewState } from "./review.js";
 import type {
   AgentRunChangeSummary,
   AgentRunFileChange,
-} from "../acp/contracts.js";
+} from "../context/coordination-contracts.js";
 
 export type CoordNodeStatus =
   | "pending"

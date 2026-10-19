@@ -1,4 +1,5 @@
 mod actor;
+mod agent_loop;
 mod commit;
 mod completion;
 mod control;
@@ -6,11 +7,18 @@ mod execution;
 mod flow;
 mod history;
 mod input_queue;
+mod loop_policy;
+mod loop_context;
 mod projection;
+mod provider;
+mod provider_adapter;
+mod provider_metadata;
+mod provider_tool_names;
 mod protocol;
 mod storage;
 mod tickets;
 mod transport;
+mod workspace_index;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,6 +94,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(0);
     let websocket_listener = TcpListener::bind(("127.0.0.1", port)).await?;
     let websocket_port = websocket_listener.local_addr()?.port();
+    let provider_port = std::env::var("SYNAX_RUNTIME_PROVIDER_PORT").ok()
+        .and_then(|value| value.parse::<u16>().ok()).unwrap_or(0);
+    let provider_listener = TcpListener::bind(("127.0.0.1", provider_port)).await?;
+    let provider_port = provider_listener.local_addr()?.port();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
         .map(HotStore::open)
@@ -99,6 +111,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => SessionShardRouter::new(16, 1024)?,
     };
     let context = TransportContext {
+        workspace_index: workspace_index::WorkspaceIndex::new(),
         token: Arc::from(token),
         control_budget: Arc::new(control::ControlBudget::new()),
         tickets: Arc::new(tickets::TicketStore::new()),
@@ -123,6 +136,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "type": "runtime_ready",
         "protocol": protocol::PROTOCOL_VERSION,
         "port": websocket_port,
+        "providerPort": provider_port,
         "socket": socket_path_from_env().map(|path| path.display().to_string()),
         "capabilities": transport::HANDSHAKE_CAPABILITIES,
         "pid": std::process::id(),
@@ -133,6 +147,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         websocket_listener,
         context.clone(),
         shutdown_rx.clone(),
+    ));
+    let provider_task = tokio::spawn(provider::serve_http(
+        provider_listener,
+        context.token.to_string(),
+        shutdown_rx.clone(),
+        hot_store.clone(),
+        context.router.clone(),
     ));
 
     let maintenance_task = hot_store.as_ref().map(|_| {
@@ -174,8 +195,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ = parent_closed() => {},
         result = shutdown_signal.changed() => result?,
     }
+    context.workspace_index.stop();
     let _ = shutdown_tx.send(true);
     let _ = websocket_task.await;
+    let _ = provider_task.await;
     if let Some(task) = maintenance_task {
         let _ = task.await;
     }

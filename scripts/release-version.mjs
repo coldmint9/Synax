@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -68,10 +68,12 @@ function sync(version) {
   }
 
   const claudePath = resolve(root, "services/local-node/modules/agent-runtime/backends/claude-connection.ts");
-  writeFileSync(
-    claudePath,
-    readFileSync(claudePath, "utf8").replace(/synax\/\d+\.\d+\.\d+/, `synax/${version}`),
-  );
+  if (existsSync(claudePath)) {
+    writeFileSync(
+      claudePath,
+      readFileSync(claudePath, "utf8").replace(/synax\/\d+\.\d+\.\d+/, `synax/${version}`),
+    );
+  }
 }
 
 const command = process.argv[2] ?? "sync";

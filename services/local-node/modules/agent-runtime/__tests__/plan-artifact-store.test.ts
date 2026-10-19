@@ -20,7 +20,7 @@ const plan = (title: string) => ({
   risks: [],
 });
 
-beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
+beforeEach(async () => { await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
 
 describe('plan artifact store', () => {
   it('persists immutable revisions and restores an older revision as a new draft', () => {

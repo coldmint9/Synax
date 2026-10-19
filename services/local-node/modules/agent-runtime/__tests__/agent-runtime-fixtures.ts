@@ -43,3 +43,17 @@ export const executorInput = {
   profileId: 'executor',
   prompt: 'Dispatch a controlled execution step.',
 };
+
+/** Establish the same Rust admission/activation boundary used by the HTTP host. */
+export async function admitActiveFixtureRun(sessionId: string, message = "Test") {
+  const { acceptRuntimeRunAuthoritative } = await import("../run-admission.js");
+  const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
+  const accepted = await acceptRuntimeRunAuthoritative(sessionId, { message }, `fixture:${sessionId}`);
+  const { runtime } = accepted.run.metadata;
+  await runtimeFacade.admitExecution({ sessionId, run: accepted.run,
+    runtime: runtime as import("../run-admission.js").AcceptedRuntimeInput });
+  const run = agentRuntimeStore.updateRun(accepted.run.id, { status: "running" });
+  agentRuntimeStore.updateSession(sessionId, { status: "running", activeRunId: run.id });
+  await agentRuntimeStore.flushSession(sessionId);
+  return run;
+}

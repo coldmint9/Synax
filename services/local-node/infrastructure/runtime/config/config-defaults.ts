@@ -5,8 +5,6 @@ import type {
   WebSearchConfig,
 } from "./config-types.js";
 
-const ACP_BASE_URL = "http://127.0.0.1:3210";
-
 export const DEFAULT_MAC_WINDOW_APPEARANCE: MacWindowAppearance = {
   enabled: false,
   vibrancy: "under-window",
@@ -34,48 +32,6 @@ function createBuiltinApiProvider(
 }
 
 export const BUILTIN_PROVIDERS: ProviderDef[] = [
-  {
-    id: "opencode-acp",
-    label: "OpenCode ACP",
-    description: "OpenCode Agent Client Protocol for local opencode runtime",
-    status: "live",
-    kind: "acp",
-    caps: { canFollowUp: true, canCancel: true },
-    models: [
-      { id: "opencode-default", label: "OpenCode Default", isDefault: true },
-    ],
-  },
-  {
-    id: "cursor-acp",
-    label: "Cursor ACP",
-    description: "Cursor Agent Client Protocol for local Cursor runtime",
-    status: "live",
-    kind: "acp",
-    caps: { canFollowUp: true, canCancel: true },
-    models: [
-      { id: "cursor-default", label: "Cursor Default", isDefault: true },
-    ],
-  },
-  {
-    id: "codex-acp",
-    label: "Codex ACP",
-    description:
-      "Codex Agent Client Protocol via the codex-acp adapter for local OpenAI Codex runtime",
-    status: "live",
-    kind: "acp",
-    caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: "codex-default", label: "Codex Default", isDefault: true }],
-  },
-  {
-    id: "pi-acp",
-    label: "Pi ACP",
-    description:
-      "Pi Agent Client Protocol via the pi-acp adapter for local pi coding-agent runtime",
-    status: "live",
-    kind: "acp",
-    caps: { canFollowUp: true, canCancel: true },
-    models: [{ id: "pi-default", label: "Pi Default", isDefault: true }],
-  },
   createBuiltinApiProvider(
     "openai",
     "OpenAI",
@@ -109,47 +65,15 @@ export function createDefaultGlobalConfig(updatedBy = "system"): GlobalConfig {
   return {
     version: 1,
     providers: BUILTIN_PROVIDERS,
-    defaultProviderId: "opencode-acp",
+    defaultProviderId: "openai",
     defaultApiProviderId: "openai",
-    enabledAcpProviderIds: ["opencode-acp"],
+    enabledAcpProviderIds: [],
     mcpServers: [],
     computerUse: { enabled: false, strategy: "auto", perception: "disabled" },
     macWindowAppearance: { ...DEFAULT_MAC_WINDOW_APPEARANCE },
     webSearch: createDefaultWebSearchConfig(),
     sessionArchiveRetentionDays: 7,
     providerConnections: {
-      "opencode-acp": {
-        providerId: "opencode-acp",
-        baseUrl: ACP_BASE_URL,
-        extra: {
-          kind: "acp",
-          connectionMode: "local",
-        },
-      },
-      "cursor-acp": {
-        providerId: "cursor-acp",
-        baseUrl: ACP_BASE_URL,
-        extra: {
-          kind: "acp",
-          connectionMode: "local",
-        },
-      },
-      "codex-acp": {
-        providerId: "codex-acp",
-        baseUrl: ACP_BASE_URL,
-        extra: {
-          kind: "acp",
-          connectionMode: "local",
-        },
-      },
-      "pi-acp": {
-        providerId: "pi-acp",
-        baseUrl: ACP_BASE_URL,
-        extra: {
-          kind: "acp",
-          connectionMode: "local",
-        },
-      },
       openai: {
         providerId: "openai",
         baseUrl: "https://api.openai.com/v1",
@@ -188,9 +112,9 @@ export function createDefaultUserGlobalConfig(
   return {
     version: 1,
     providers: [],
-    defaultProviderId: "opencode-acp",
+    defaultProviderId: "openai",
     defaultApiProviderId: "openai",
-    enabledAcpProviderIds: ["opencode-acp"],
+    enabledAcpProviderIds: [],
     mcpServers: [],
     computerUse: { enabled: false, strategy: "auto", perception: "disabled" },
     macWindowAppearance: { ...DEFAULT_MAC_WINDOW_APPEARANCE },
@@ -207,30 +131,4 @@ export function createDefaultUserGlobalConfig(
     updatedAt: now,
     updatedBy,
   };
-}
-
-export function convertAcpProviders(
-  providers: Array<{
-    id: string;
-    label: string;
-    status: string;
-    caps: { canFollowUp: boolean; canCancel: boolean };
-    description?: string;
-  }>,
-): ProviderDef[] {
-  return providers.map((provider) => ({
-    id: provider.id,
-    label: provider.label,
-    description: provider.description,
-    status: provider.status === "experimental" ? "experimental" : "live",
-    kind: "acp",
-    caps: provider.caps,
-    models: [
-      {
-        id: `${provider.id}-default`,
-        label: `${provider.label} Default`,
-        isDefault: true,
-      },
-    ],
-  }));
 }

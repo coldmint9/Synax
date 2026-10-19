@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeUsage, normalizeResultUsage } from "../usage.js";
 
 import { generateText, streamText } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createRustCompatible as createOpenAICompatible } from "../../../../test-fixtures/rust-provider.js";
+import { createRustMessages as createAnthropic } from "../../../../test-fixtures/rust-provider.js";
 import type {
   LanguageModelV4,
   LanguageModelV4StreamPart,
@@ -13,12 +13,6 @@ import { aggregateUsage, whitelistRawUsage } from "../usage.js";
 import { applyUsageMiddleware } from "../middleware/usage.js";
 import { buildHookCallbacks } from "../middleware/hook-callbacks.js";
 import { llmHooks, type LlmHookEvent } from "../llm-hooks.js";
-import {
-  usageFromAcpPrompt,
-  usageFromAcpUpdate,
-  readUsageInputTokens,
-  readUsageOutputTokens,
-} from "../../../modules/agent-runtime/acp-engine/acp-usage.js";
 const gateway = vi.hoisted(() => ({ createGatewayStream: vi.fn() }));
 vi.mock("../gateway.js", () => ({
   ...gateway,
@@ -224,25 +218,6 @@ describe("presence, validation and provenance", () => {
 });
 
 describe("ACP and CLI compatibility", () => {
-  it("recognizes explicit ACP cache zero and cache writes without adding to input", () => {
-    const u = normalized(
-      usageFromAcpPrompt({
-        inputTokens: 10000,
-        outputTokens: 20,
-        totalTokens: 10020,
-        cachedReadTokens: 0,
-        cachedWriteTokens: 50,
-        thoughtTokens: 5,
-      }),
-    );
-    expect(u).toMatchObject({
-      inputTokens: 10000,
-      cachedInputTokens: 0,
-      cacheWriteTokens: 50,
-      reasoningTokens: 5,
-    });
-    expect(u.normalization.cacheRead.status).toBe("known");
-  });
   it.each(["codex", "claude-code", "cli"])(
     "recognizes %s aliases and already inclusive input",
     (source) => {
@@ -261,31 +236,6 @@ describe("ACP and CLI compatibility", () => {
       expect(u.normalization.source).toBe("cli");
     },
   );
-  it("supports old raw records via the same readers", () => {
-    expect(
-      readUsageInputTokens({
-        prompt_tokens: 10000,
-        prompt_cache_hit_tokens: 8000,
-      }),
-    ).toBe(10000);
-    expect(
-      readUsageInputTokens({
-        input_tokens: 100,
-        cache_read_input_tokens: 8000,
-        cache_creation_input_tokens: 1000,
-      }),
-    ).toBe(9100);
-    expect(readUsageOutputTokens({ completion_tokens: 20 })).toBe(20);
-    expect(readUsageInputTokens({ used: 42000 })).toBe(42000);
-    expect(readUsageInputTokens({ inputTokens: -1 })).toBe(0);
-  });
-  it("keeps ACP context occupancy separate with cache availability unknown", () => {
-    const u = normalized(usageFromAcpUpdate({ used: 42000, size: 200000 }));
-    expect(u.inputTokens).toBe(42000);
-    expect(u.contextWindowSize).toBe(200000);
-    expect(u.outputTokens).toBeUndefined();
-    expect(u.normalization.cacheRead.status).toBe("unknown");
-  });
 });
 
 function sse(events: unknown[]) {

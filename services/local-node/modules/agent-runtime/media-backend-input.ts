@@ -1,7 +1,6 @@
 import { AgentRuntimeError } from "./runtime-errors.js";
-import type { ContentBlock } from "@agentclientprotocol/sdk";
-import { type RuntimeContentPart, type InputCapabilities } from "./content-parts.js";
-import { getAsset, readAsset, assetPath, materializeAsset } from "./media-assets.js";
+import { type InputCapabilities } from "./content-parts.js";
+import { assetPath, materializeAsset } from "./media-assets.js";
 import type { StreamTurnRequest } from "./contracts.js";
 import { resolveFileParts } from "./file-input/index.js";
 export async function codexMediaInput(
@@ -23,63 +22,4 @@ export async function codexMediaInput(
       ? { type: "text", text: p.text }
       : { type: "localImage", path: assetPath(p.assetId) },
   );
-}
-export async function claudeMediaInput(
-  input: StreamTurnRequest,
-  text: string,
-  capability?: InputCapabilities,
-): Promise<any> {
-  if (!input.contentParts) return text;
-  const parts = await resolveFileParts(input.contentParts, undefined, capability);
-  if (parts.some((p) => p.type !== "text" && p.type !== "image"))
-    throw new AgentRuntimeError(
-      "Claude Code only supports text and image attachments.",
-      "UNSUPPORTED_MEDIA",
-      422,
-    );
-  return Promise.all(
-    parts.map(async (p) =>
-      p.type === "text"
-        ? p
-        : {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: getAsset(p.assetId).mediaType,
-              data: (await readAsset(p.assetId)).toString("base64"),
-            },
-          },
-    ),
-  );
-}
-export async function acpMediaInput(
-  parts: RuntimeContentPart[],
-  text: string,
-  capability?: InputCapabilities,
-): Promise<ContentBlock[]> {
-  if (!parts.length) return [{ type: "text", text }];
-  parts = await resolveFileParts(parts, undefined, capability);
-  return (await Promise.all(
-    parts.map(async (p) => {
-      if (p.type === "text") return p;
-      const asset = getAsset(p.assetId),
-        bytes = await readAsset(p.assetId);
-      if (p.type === "image" || p.type === "audio")
-        return {
-          type: p.type,
-          data: bytes.toString("base64"),
-          mimeType: asset.mediaType,
-        };
-      return {
-        type: "resource",
-        resource: {
-          uri: `synax-asset:${asset.id}`,
-          mimeType: asset.mediaType,
-          ...(asset.mediaType.startsWith("text/")
-            ? { text: bytes.toString("utf8") }
-            : { blob: bytes.toString("base64") }),
-        },
-      };
-    }),
-  )) as ContentBlock[];
 }

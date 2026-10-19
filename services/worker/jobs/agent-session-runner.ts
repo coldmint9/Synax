@@ -10,13 +10,15 @@ import {
   type AgentSessionStreamMode,
 } from "../../local-node/infrastructure/runtime/ipc/agent-session-protocol.js";
 import type { StreamTurnRequest } from "../../local-node/modules/agent-runtime/contracts.js";
-import { agentLoopRuntime } from "../../local-node/modules/agent-runtime/loop-runtime.js";
+import { rustNativeBackend } from "../../local-node/modules/agent-runtime/backends/rust-native-backend.js";
 import { agentRuntimeStore } from "../../local-node/modules/agent-runtime/session-store.js";
 import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-runtime/agent-child-bootstrap.js";
 import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
 import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
 import { businessStore } from "../../local-node/infrastructure/persistence/business-store.js";
 import { hydrateRuntimeAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
+import { AgentNotFoundError } from "../../local-node/modules/agent-runtime/runtime-errors.js";
+import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/sidecar/sidecar-client.js";
 
 const activeStreams = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
@@ -27,14 +29,7 @@ function pickGenerator(
   input: StreamTurnRequest,
   abortSignal: AbortSignal,
 ) {
-  switch (mode) {
-    case "turn":
-      return agentLoopRuntime.streamRun(sessionId, input, abortSignal, false);
-    case "continue":
-      return agentLoopRuntime.streamContinue(sessionId, input, abortSignal);
-    case "resume":
-      return agentLoopRuntime.streamRun(sessionId, input, abortSignal, true);
-  }
+  return rustNativeBackend.stream(sessionId, mode, input, abortSignal);
 }
 
 async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
@@ -122,8 +117,27 @@ function main(): void {
   const initialize = async () => {
     if (initialized || !process.connected) return;
     initialized = true;
-    await agentRuntimeStore.hydrateSessions();
-    await agentRuntimeStore.hydrateSession(init.sessionId);
+    try {
+      await agentRuntimeStore.hydrateSessions();
+    } catch (error) {
+      // A newly started sidecar may not have a projection yet. The worker can
+      // still boot and return a structured error for requests against a
+      // missing session; the parent host will hydrate the projection later.
+      if (!(error instanceof RuntimeSidecarError) || error.code !== "PROJECTION_MISSING") throw error;
+      logger.info("[agent-session-runner] runtime projection is not hydrated during bootstrap");
+    }
+    try {
+      await agentRuntimeStore.hydrateSession(init.sessionId);
+    } catch (error) {
+      // A worker can be started for a session that was archived or removed
+      // after the parent admitted the process. Keep the IPC worker alive so
+      // the request receives a structured not-found response instead of a
+      // child-process crash.
+      if (!(error instanceof AgentNotFoundError) &&
+          (!(error instanceof RuntimeSidecarError) || !["PROJECTION_MISSING", "HISTORY_NOT_FOUND"].includes(error.code)))
+        throw error;
+      logger.info({ sessionId: init.sessionId }, "[agent-session-runner] session missing during bootstrap");
+    }
     await businessStore.refresh();
     await hydrateRuntimeAssets([init.sessionId]);
     initialized = true;
@@ -219,10 +233,9 @@ function main(): void {
             throw new Error(
               "The requested subagent does not belong to this worker.",
             );
-          await agentLoopRuntime.interruptAndWaitForSessions(
-            [message.sessionId],
-            message.reason,
-          );
+          await Promise.all(agentRuntimeStore.listSessionTree(message.sessionId).map(
+            session => rustNativeBackend.interrupt(session.id, message.reason),
+          ));
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
         }

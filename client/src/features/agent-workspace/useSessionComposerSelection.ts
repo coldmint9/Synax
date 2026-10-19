@@ -152,7 +152,7 @@ export function useSessionComposerSelection(
         modelId: effectiveConfig.modelId,
       }
     : null;
-  const defaultSelection = pickDefaultModelSelection(apiModels, [], preferred);
+  const defaultSelection = pickDefaultModelSelection(apiModels, preferred);
   const separator = runtime.model?.indexOf("/") ?? -1;
   const qualifiedModel =
     separator > 0 && runtime.model && separator < runtime.model.length - 1

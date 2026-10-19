@@ -4,6 +4,7 @@ import {
   releaseOwnedProcess,
   waitForAuthoritativeLease,
   hasBackgroundProcesses,
+  hasLocalBackgroundProcesses,
 } from "./process-ownership.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -779,7 +780,7 @@ class SessionProcessManager {
         message.event.type === "session_process_changed" &&
         owner?.streams.size === 0 &&
         owner.compactions.size === 0 &&
-        !(await hasBackgroundProcesses(sessionId, true))
+        !hasLocalBackgroundProcesses(sessionId)
       ) {
         this.releaseChild(sessionId, "All background services have exited.", { idle: true });
       }

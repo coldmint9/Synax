@@ -27,6 +27,7 @@ use tokio_tungstenite::{
 
 pub(crate) const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
+    "workspace_index",
     "health",
     "shutdown",
     "admit_run",
@@ -50,6 +51,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "ui_projection",
     "credit_window",
     "history_outbox_maintenance",
+    "provider_bridge",
+    "agent_loop",
 ];
 
 type WebSocket = WebSocketStream<TcpStream>;
@@ -69,7 +72,7 @@ async fn reconcile_history_from_hot(
     for event in events.iter().filter(|event| !event.ephemeral) {
         let payload: Value = serde_json::from_slice(&event.payload).map_err(|error| error.to_string())?;
         let chunk = payload.get("chunk").cloned().unwrap_or(Value::Null);
-        for (field, kind) in [("permission", "runtime.permission"), ("interaction", "runtime.interaction")] {
+        for (field, kind) in [("permission", "runtime.permission"), ("interaction", "runtime.interaction"), ("message", "runtime.message")] {
             if let Some(value) = chunk.get(field) {
                 if value["id"].is_string() && value["sessionId"].as_str() == Some(session_id) {
                     objects.push(serde_json::json!({"kind":kind,"value":value}));
@@ -79,7 +82,6 @@ async fn reconcile_history_from_hot(
         let kind = match chunk.get("type").and_then(Value::as_str) {
             Some("run_started") | Some("run_activated") | Some("run_finished") | Some("run_completed") | Some("run_failed") | Some("run_resumed") => Some(("runtime.run", chunk.get("run"))),
             Some("step_started") => Some(("runtime.step", chunk.get("step"))),
-            Some("message") | Some("input_injected") => Some(("runtime.message", chunk.get("message"))),
             Some("tool_call") | Some("tool_result") | Some("permission_requested") => Some(("runtime.tool_call", chunk.get("toolCall"))),
             Some("event") => Some(("runtime.event", chunk.get("event"))),
             _ => None,
@@ -143,6 +145,7 @@ pub enum TransportError {
 
 #[derive(Clone)]
 pub struct TransportContext {
+    pub workspace_index: Arc<crate::workspace_index::WorkspaceIndex>,
     pub token: Arc<str>,
     pub control_budget: Arc<crate::control::ControlBudget>,
     pub tickets: Arc<TicketStore>,
@@ -707,6 +710,17 @@ async fn execute_wire(
     };
 
     match request.body {
+        Some(wire_envelope::Body::WorkspaceIndexCommand(command)) => {
+            if !local_control {
+                return (envelope(wire_error("FORBIDDEN", "workspace indexing requires private control transport")), false);
+            }
+            match context.workspace_index.command(command.operation, command.payload).await {
+                Ok(state_json) => (envelope(wire_envelope::Body::WorkspaceIndexState(crate::protocol::WireWorkspaceIndexState { state_json })), false),
+                Err(error) => (envelope(wire_error(error.code(), &error.to_string())), false),
+            }
+        }
+        Some(wire_envelope::Body::WorkspaceIndexState(_)) =>
+            (envelope(wire_error("INVALID_COMMAND", "workspace_index_state is a response-only message")), false),
         Some(wire_envelope::Body::SeedUi(seed)) => {
             if !local_control {
                 return (
@@ -972,6 +986,18 @@ async fn execute_wire(
                         });
                         (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&state).unwrap_or_default() })) }, false)
                     }
+                    Err(error) => (envelope(storage_error_to_wire(error)), false),
+                };
+            }
+            if command.operation == "test_reset_runtime" {
+                if std::env::var("SYNAX_RUNTIME_TEST_MODE") != Ok("1".to_owned()) {
+                    return (envelope(wire_error("FORBIDDEN", "test reset is only available in test mode")), false);
+                }
+                let Some(hot) = context.hot_store.as_ref() else {
+                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+                };
+                return match hot.reset_for_tests_async().await {
+                    Ok(()) => (envelope(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ok": true})).unwrap_or_default() })), false),
                     Err(error) => (envelope(storage_error_to_wire(error)), false),
                 };
             }
@@ -1294,6 +1320,7 @@ fn decode_durability(value: u32) -> Durability {
 fn history_error_to_wire(error: crate::history::HistoryError) -> wire_envelope::Body {
     use crate::history::HistoryError;
     match error {
+        HistoryError::StaleCursor => wire_error("HISTORY_STALE", "Conversation changed. Refresh history."),
         HistoryError::RevisionConflict { expected, actual } =>
             error_to_wire(RuntimeError::RevisionConflict { expected, actual }),
         HistoryError::RequestConflict => error_to_wire(RuntimeError::RequestConflict),

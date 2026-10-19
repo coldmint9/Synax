@@ -179,6 +179,21 @@ export function readWorkspaceProject(
   }
 }
 
+/** Read all persisted local workspace projects for background services. */
+export function listWorkspaceProjects(): WorkspaceProject[] {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(DATA_ROOT, "projects.json"), "utf8"),
+    );
+    const items: WorkspaceProject[] = Array.isArray(raw)
+      ? raw
+      : (raw.items ?? []);
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Validate a new membership against canonical host/WSL locations. */
 export async function validateProjectReferenceLocation(
   project: WorkspaceProject,

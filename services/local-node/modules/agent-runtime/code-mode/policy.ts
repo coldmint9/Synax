@@ -22,8 +22,7 @@ export function codeModeEnabled(
     | { id?: string }
     | undefined;
   if (
-    (backend?.id && backend.id !== "native") ||
-    (!backend && Boolean(session.sessionMetadata?.acp))
+    (backend?.id && backend.id !== "native")
   )
     return false;
   return true;

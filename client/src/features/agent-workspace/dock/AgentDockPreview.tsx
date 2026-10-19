@@ -1,4 +1,5 @@
 import { ChevronUp } from "lucide-react";
+import { useShellStore } from "../../../shared/state/shellStore";
 import { AgentWorkingIndicator } from "./AgentWorkingIndicator";
 import type { DockSessionStatus } from "./dockSessionStream";
 import type { DockToolCall } from "./dockSessionStream";
@@ -33,7 +34,8 @@ export function AgentDockPreview({
   onClick,
 }: Props) {
   const isRunning = status === "running";
-  const text = previewText(sessionTitle, latestTool, thinkingPreview);
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
+  const text = previewText(sessionTitle, latestTool, showThinking ? thinkingPreview : "");
 
   return (
     <button

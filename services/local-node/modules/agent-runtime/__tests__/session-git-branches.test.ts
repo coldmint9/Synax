@@ -16,8 +16,8 @@ let dir: string;
 let one: string;
 let two: string;
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-beforeEach(() => {
-  resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-branch-routes-'));
   one = path.join(dir, 'one'); two = path.join(dir, 'two');
   for (const root of [one, two]) {

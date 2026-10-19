@@ -285,7 +285,6 @@ import {
   finishAuxUsage,
 } from "../usage-projection.js";
 import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
-import { usageFromAcpUpdate } from "../acp-engine/acp-usage.js";
 
 it("encodes the authoritative auxiliary session scope in the usage id", () => {
   const previous = process.env.SYNAX_RUNTIME_SIDECAR_STREAM;
@@ -455,7 +454,7 @@ describe("cache usage projection", () => {
     addUsageStep(session.id, "occupancy", undefined, {
       externalTurn: true,
       engine: "acp",
-      contextUsage: usageFromAcpUpdate({ used: 42000, size: 200000 }),
+      contextUsage: { source: "acp", kind: "context_occupancy", inputTokens: 42000, contextWindowSize: 200000 },
     });
     const stats = agentRuntimeStore.getSessionStats(session.id);
     expect(stats.context).toMatchObject({

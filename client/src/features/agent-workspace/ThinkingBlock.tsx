@@ -1,4 +1,5 @@
 import { useLocale } from "../../shared/hooks/useLocale";
+import { useShellStore } from "../../shared/state/shellStore";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { ThinkingBanner } from "./ThinkingBanner";
 import {
@@ -25,6 +26,8 @@ interface Props {
  */
 export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const { t } = useLocale();
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
+  if (!showThinking) return null;
   if (!hasDisplayableReasoning(content)) return null;
   const bannerPhrases = thinkingBannerPhrases(content);
   if (bannerPhrases)

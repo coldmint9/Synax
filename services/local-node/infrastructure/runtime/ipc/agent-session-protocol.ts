@@ -163,6 +163,7 @@ export function forwardChunkToLiveBus(
         type: "message_delta",
         stepId: chunk.stepId,
         delta: chunk.delta,
+        ...(chunk.outputTokens === undefined ? {} : { outputTokens: chunk.outputTokens }),
       };
       break;
     case "thought_delta":
@@ -170,6 +171,7 @@ export function forwardChunkToLiveBus(
         type: "thought_delta",
         stepId: chunk.stepId,
         delta: chunk.delta,
+        ...(chunk.thinkingTokens === undefined ? {} : { thinkingTokens: chunk.thinkingTokens }),
       };
       break;
     case "tool_call":

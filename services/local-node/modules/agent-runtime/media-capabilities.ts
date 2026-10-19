@@ -155,38 +155,7 @@ export async function sessionInputCapabilities(
       "image/gif",
     ]);
   }
-  if (binding.id === "claude-code")
-    return caps(
-      ["text", "image"],
-      ["image/png", "image/jpeg", "image/webp", "image/gif"],
-      5 * 1024 * 1024,
-      24 * 1024 * 1024,
-    );
-  const { acpConnectionPool } =
-    await import("./acp-engine/acp-connection-pool.js");
-  const connection = await acpConnectionPool.acquire({
-    synaxSessionId: sessionId,
-    projectId: session.projectId,
-    providerId: binding.id,
-  });
-  const prompt = connection.capabilities.promptCapabilities;
-  return caps(
-    [
-      "text",
-      ...(prompt?.image ? ["image" as const] : []),
-      ...(prompt?.audio ? ["audio" as const] : []),
-      ...(prompt?.embeddedContext ? ["file" as const] : []),
-    ],
-    [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/gif",
-      "audio/*",
-      "application/pdf",
-      "text/plain",
-    ],
-  );
+  return caps(["text"], ["text/plain"]);
 }
 export async function validateInputMedia(
   sessionId: string,
@@ -543,13 +512,6 @@ export async function draftInputCapabilities(
       await resolveGatewaySelection({ projectId, purpose: "agent", model }),
     );
   }
-  if (backendId === "claude-code")
-    return caps(
-      ["text", "image"],
-      ["image/png", "image/jpeg", "image/webp", "image/gif"],
-      5 * 1024 * 1024,
-      24 * 1024 * 1024,
-    );
   if (backendId === "codex") {
     const { codexBackend } = await import("./backends/codex-backend.js");
     const result = await codexBackend.models();

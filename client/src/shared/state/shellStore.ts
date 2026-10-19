@@ -51,6 +51,8 @@ export interface ShellPreferences {
   userMessageFontWeight: number;
   /** Fold runs of activity-only agent turns into one work-log row. */
   sessionFoldWorkRuns: boolean;
+  /** Render model reasoning content in the conversation transcript. */
+  sessionShowThinking: boolean;
   sessionListDisplayMode: "title" | "preview";
 }
 
@@ -84,6 +86,7 @@ interface ShellState {
   setAgentFontSize: (fontSize: number) => void;
   setUserMessageFontWeight: (fontWeight: number) => void;
   setSessionFoldWorkRuns: (value: boolean) => void;
+  setSessionShowThinking: (value: boolean) => void;
   setSessionListDisplayMode: (
     value: ShellPreferences["sessionListDisplayMode"],
   ) => void;
@@ -155,6 +158,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
     agentFontSize: 14,
     userMessageFontWeight: DEFAULT_USER_MESSAGE_FONT_WEIGHT,
     sessionFoldWorkRuns: true,
+    sessionShowThinking: true,
     sessionListDisplayMode: "preview",
   },
   currentProjectId: null,
@@ -218,6 +222,12 @@ export const useShellStore = create<ShellState>((set, get) => ({
   setSessionFoldWorkRuns: (value) => {
     set((state) => ({
       preferences: { ...state.preferences, sessionFoldWorkRuns: value },
+    }));
+    persistShellPreferences();
+  },
+  setSessionShowThinking: (value) => {
+    set((state) => ({
+      preferences: { ...state.preferences, sessionShowThinking: value },
     }));
     persistShellPreferences();
   },
@@ -400,6 +410,8 @@ export function hydrateShellPreferences() {
     }
     if (typeof parsed.sessionFoldWorkRuns === "boolean")
       patch.sessionFoldWorkRuns = parsed.sessionFoldWorkRuns;
+    if (typeof parsed.sessionShowThinking === "boolean")
+      patch.sessionShowThinking = parsed.sessionShowThinking;
     if (
       parsed.sessionListDisplayMode === "title" ||
       parsed.sessionListDisplayMode === "preview"

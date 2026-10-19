@@ -62,13 +62,34 @@ export function projectSessionState(session: AgentSession): AgentSession {
   return normalized;
 }
 
+/** All sessions are backed by the revisioned Rust history store. Keep the
+ * capability marker on the wire so clients can use the bounded history-window
+ * protocol instead of rebuilding an entire transcript on every refresh. */
+export function markRevisionedHistory(session: AgentSession): AgentSession {
+  if (session.sessionMetadata?.historyStorage === 3) return session;
+  return {
+    ...session,
+    sessionMetadata: {
+      ...(session.sessionMetadata ?? {}),
+      historyStorage: 3,
+    },
+  };
+}
+
 /**
  * Wire projection for session list rows. The system-prompt preview is a debug
  * artifact written per step (tens of KB per row); it dominated list payloads
  * and has no list consumer, so it never leaves the server in list responses.
  */
 export function projectSessionSummary(session: AgentSession): AgentSession {
-  if (!session.sessionMetadata || !('latestSystemPrompt' in session.sessionMetadata)) return session;
-  const { latestSystemPrompt: _omitted, ...sessionMetadata } = session.sessionMetadata;
-  return { ...session, sessionMetadata };
+  const marked = markRevisionedHistory(session);
+  const {
+    latestSystemPrompt: _latestSystemPrompt,
+    inputQueue: _inputQueue,
+    inputForceInjectId: _inputForceInjectId,
+    ...sessionMetadata
+  } = marked.sessionMetadata!;
+  if (Object.keys(sessionMetadata).length === Object.keys(marked.sessionMetadata!).length)
+    return marked;
+  return { ...marked, sessionMetadata };
 }

@@ -765,6 +765,8 @@ export type AgentRunStreamChunk =
       runId: string;
       stepId: string;
       delta: string;
+      /** Cumulative output-token estimate for this step at emission time. */
+      outputTokens?: number;
       event?: RuntimeEvent;
     }
   | {
@@ -772,6 +774,8 @@ export type AgentRunStreamChunk =
       runId: string;
       stepId: string;
       delta: string;
+      /** Cumulative reasoning-token estimate for this step at emission time. */
+      thinkingTokens?: number;
       event?: RuntimeEvent;
     }
   | {

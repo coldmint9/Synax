@@ -1,14 +1,17 @@
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { generateText, jsonSchema, streamText, tool } from 'ai'
 import type { ToolSet } from 'ai'
-import { afterEach, describe, expect, it } from 'vitest'
+import { beforeAll, afterEach, describe, expect, it } from 'vitest'
 import { executePipeline } from '../pipeline.js'
 import { applyJsonSchemaCompatMiddleware } from '../middleware/json-schema-compat.js'
 import { buildProtocolProviderOptions } from '../protocol-options.js'
 import { instantiateProvider, selectLanguageModel } from '../providers/provider-registry.js'
 import { buildThinkingStreamOptions } from '../thinking-mode-strategy.js'
 import type { LlmGatewayRequest, ResolvedModelSelection } from '../types.js'
+
+beforeAll(async () => { await ensureTestRuntime(); });
 
 const servers: http.Server[] = []
 const warnings: string[] = []
@@ -28,8 +31,9 @@ async function startStubServer(): Promise<{ baseUrl: string; bodies: Array<Recor
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8')
       bodies.push(raw ? JSON.parse(raw) as Record<string, unknown> : {})
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(responsesPayload()))
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.write(`data: ${JSON.stringify({ type: 'response.output_text.delta', output_index: 0, delta: 'pong' })}\n\n`)
+      res.end(`data: ${JSON.stringify({ type: 'response.completed', response: responsesPayload() })}\n\n`)
     })
   })
   servers.push(server)
@@ -176,7 +180,7 @@ describe('OpenAI Responses wire warnings for DeepSeek gateway models', () => {
     expect(emittedWarningsSince(before)).toEqual([])
     expect(bodies).toHaveLength(1)
     expect(JSON.stringify(bodies[0])).not.toContain('propertyNames')
-    expect(JSON.stringify(bodies[0])).not.toContain('reasoning')
+    expect(bodies[0]).not.toHaveProperty('reasoning')
     expect(bodies[0]).toMatchObject({ model: 'deepseek-v4-flash' })
   })
 

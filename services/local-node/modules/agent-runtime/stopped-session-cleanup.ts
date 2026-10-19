@@ -10,7 +10,7 @@ export function finalizeStoppedSessions(
   store: AgentRuntimeStore = agentRuntimeStore,
 ): void {
   const ids = [...new Set(sessionIds)];
-  store.transaction(() => {
+  const run = () => {
       const completedAt = nowIso();
       for (const sessionId of ids) {
         const session = store.tryGetSession(sessionId);
@@ -51,5 +51,9 @@ export function finalizeStoppedSessions(
             },
           });
       }
-  });
+  };
+  if (typeof (store as Partial<AgentRuntimeStore>).transaction === "function")
+    store.transaction(run);
+  else
+    run();
 }

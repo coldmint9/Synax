@@ -352,7 +352,7 @@ describe("CodeViewer", () => {
     ).toHaveAttribute("src", "blob:https://synax.test/preview");
     fireEvent.click(screen.getByRole("button", { name: "源码" }));
     expect(
-      screen.getByRole("textbox", { name: "编辑文件 src/icon.svg" }),
+      await screen.findByRole("textbox", { name: "编辑文件 src/icon.svg" }),
     ).toBeTruthy();
     unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(

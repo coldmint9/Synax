@@ -38,7 +38,7 @@ type LlmProviderSaveState = {
 }
 
 function isOfficialProvider(provider: ProviderDef): boolean {
-  return provider.kind === 'acp' || isBuiltinApiProviderId(provider.id)
+  return provider.kind === 'api' && isBuiltinApiProviderId(provider.id)
 }
 
 function hasStoredApiKey(config: GlobalConfig, providerId: string): boolean {

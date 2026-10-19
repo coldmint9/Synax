@@ -196,6 +196,11 @@ export function buildInterleavedTurns(
           });
         continue;
       }
+      // CLI and ACP backends retain visible reasoning alongside the answer.
+      // Reading only standalone thinking messages drops it at live/history handoff.
+      const thought = msg.metadata?.thought;
+      if (typeof thought === "string" && hasDisplayableReasoning(thought))
+        items.push({ timestamp, block: { type: "thinking", content: thought } });
       for (const block of visualizationReplyParts(msg))
         items.push({ timestamp, block });
       if (msg.content.trim()) {

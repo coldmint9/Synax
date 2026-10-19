@@ -16,7 +16,7 @@ import {
   resetAgentRuntimeFixtures,
 } from "./agent-runtime-fixtures.js";
 const toolSet = buildLoopToolSet([]);
-beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 function fixture(count = 10, length = 2800) {
   const session = agentSessionRuntime.create(executorInput);
   store.appendMessage({

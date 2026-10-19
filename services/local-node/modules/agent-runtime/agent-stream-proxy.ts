@@ -7,11 +7,10 @@ import { agentSessionsRunInProcess, MAX_AGENT_SESSION_PROCESSES } from '../../in
 import { interactionService } from './interaction-service.js';
 import type { AgentRunStreamChunk, StreamTurnRequest } from './contracts.js';
 import { agentEventService } from './event-service.js';
-import { agentLoopRuntime } from './loop-runtime.js';
+import { rustNativeBackend } from './backends/rust-native-backend.js';
 import { sessionProcessManager } from './session-process-manager.js';
 import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../infrastructure/runtime/ipc/agent-session-protocol.js';
-import { acpSessionEngine, shouldUseAcpEngine } from './acp-engine/index.js';
 import { agentRuntimeStore } from './session-store.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
 
@@ -25,28 +24,22 @@ export function usesForkedAgentSessions(): boolean {
 
 export function canStartAgentSessionProcess(sessionId?: string): boolean {
   if (sessionId) {
-    const session = agentRuntimeStore.tryGetSession(sessionId);
-    if (session && shouldUseAcpEngine(sessionId, {})) {
-      return true;
-    }
+    agentRuntimeStore.tryGetSession(sessionId);
   }
   if (!usesForkedAgentSessions()) {
     // In-process runs must honour the same admission cap: without it every
     // session would share the host's heap and event loop unbounded.
-    return agentLoopRuntime.activeSessionCount() < MAX_AGENT_SESSION_PROCESSES;
+    return runCoordinator.activeSessionIds().length < MAX_AGENT_SESSION_PROCESSES;
   }
   return sessionProcessManager.canSpawnChild(sessionId);
 }
 
 export function assertCanStartAgentSessionProcess(sessionId?: string): void {
   if (sessionId) {
-    const session = agentRuntimeStore.tryGetSession(sessionId);
-    if (session && shouldUseAcpEngine(sessionId, {})) {
-      return;
-    }
+    agentRuntimeStore.tryGetSession(sessionId);
   }
   if (!usesForkedAgentSessions()) {
-    if (agentLoopRuntime.activeSessionCount() < MAX_AGENT_SESSION_PROCESSES)
+    if (runCoordinator.activeSessionIds().length < MAX_AGENT_SESSION_PROCESSES)
       return;
     throw new AgentRuntimeError(
       `Too many active agent session processes (max ${MAX_AGENT_SESSION_PROCESSES}).`,
@@ -104,22 +97,11 @@ export async function interruptAgentSessionsAndWait(
   for (const sessionId of ids) {
     if (!agentRuntimeStore.tryGetSession(sessionId)) continue;
     await runCoordinator.interrupt(sessionId, reason);
-    if (acpSessionEngine.usesAcpSession(sessionId)) {
-      await acpSessionEngine.interruptSession(sessionId, reason);
-    }
   }
   if (!useInProcessAgentSessions()) {
     await sessionProcessManager.interruptAndWaitForSessions(ids, reason);
   }
-  await agentLoopRuntime.interruptAndWaitForSessions(ids, reason);
-}
-
-export async function closeAcpAgentSessions(sessionIds: Iterable<string>): Promise<void> {
-  for (const sessionId of sessionIds) {
-    if (acpSessionEngine.usesAcpSession(sessionId)) {
-      await acpSessionEngine.closeSession(sessionId);
-    }
-  }
+  await Promise.all(ids.map(id => rustNativeBackend.interrupt(id, reason)));
 }
 
 // Goal execution belongs to the session, not the browser's SSE connection.

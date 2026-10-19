@@ -38,7 +38,7 @@ function appendCall(input: {
 }
 
 describe('resolveSessionInvocationUsage', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
   afterEach(() => vi.restoreAllMocks());
 
   it('normalizes tools, skills and MCP servers and sorts each group by usage', () => {

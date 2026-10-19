@@ -1,0 +1,22 @@
+/* The header is SessionListHeader in both views: identical traffic-light inset
+   and collapse-button position. Project names belong to the scrollable tree. */
+.workspace-directory-tree-panel { padding: 5px 6px; }
+.workspace-directory-tree-level { list-style: none; margin: 0; padding: 0; }
+.workspace-directory-tree-row {
+  display: flex; width: 100%; min-height: 29px; align-items: center; gap: 7px;
+  padding-right: 8px; border-radius: 6px; color: var(--foreground);
+  font-size: 12px; line-height: 18px; text-align: left;
+}
+.workspace-directory-tree-row > svg { flex: 0 0 auto; color: hsl(var(--muted-foreground)); }
+.workspace-directory-tree-row > span { min-width: 0; }
+.workspace-directory-tree-row:hover:not(:disabled) { background: hsl(var(--secondary) / 0.58); }
+.workspace-directory-tree-row:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+.workspace-directory-tree-row--root { min-height: 32px; font-size: 13px; font-weight: 650; }
+.workspace-directory-tree-row[data-ignored="true"], .workspace-directory-tree-row:disabled { color: hsl(var(--muted-foreground)); }
+.workspace-directory-tree-chevron { transition: transform 120ms ease; }
+.workspace-directory-tree-chevron--expanded { transform: rotate(90deg); }
+.workspace-directory-tree-status { display: flex; gap: 6px; align-items: center; min-height: 28px; color: hsl(var(--muted-foreground)); font-size: 11px; }
+.workspace-directory-tree-hint { margin: 12px 8px; color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.5; }
+.workspace-directory-tree-error { display: flex; gap: 6px; align-items: center; margin: 4px 8px; color: var(--danger); font-size: 11px; }
+.workspace-directory-tree-load-more { margin-left: 22px; }
+@media (prefers-reduced-motion: reduce) { .workspace-directory-tree-chevron { transition: none; } }

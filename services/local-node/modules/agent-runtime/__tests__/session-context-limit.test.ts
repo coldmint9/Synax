@@ -16,8 +16,8 @@ import { explorerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime
 const mockResolveGatewaySelection = vi.mocked(resolveGatewaySelection);
 
 describe('resolveSessionConfiguredContextLimit', () => {
-  beforeEach(() => {
-    resetAgentRuntimeFixtures();
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
     resetSessionContextLimitCacheForTests();
     mockResolveGatewaySelection.mockReset();
     mockResolveGatewaySelection.mockResolvedValue({
@@ -45,14 +45,4 @@ describe('resolveSessionConfiguredContextLimit', () => {
     await expect(resolveSessionConfiguredContextLimit(session)).resolves.toBeNull();
   });
 
-  it('leaves ACP sessions to the engine-reported window', async () => {
-    const session = agentSessionRuntime.create(explorerSessionInput);
-    const updated = agentRuntimeStore.updateSession(session.id, {
-      sessionMetadata: {
-        acp: { providerId: 'cursor-acp', acpSessionId: 'acp-1', engineModel: 'cursor-acp/default' },
-      },
-    });
-    await expect(resolveSessionConfiguredContextLimit(updated)).resolves.toBeNull();
-    expect(mockResolveGatewaySelection).not.toHaveBeenCalled();
-  });
 });

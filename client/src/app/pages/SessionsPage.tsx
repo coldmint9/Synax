@@ -38,8 +38,17 @@ const RIGHT_PANEL_MAX = 960;
 const MAIN_CONTENT_MIN = 320;
 const LEFT_PANEL_STORAGE_KEY = "synax-sessions-left-panel";
 const RIGHT_PANEL_STORAGE_KEY = "synax-sessions-right-panel";
+const SIDEBAR_VIEW_STORAGE_KEY = "synax-sessions-sidebar-view";
 
 type PanelSide = "left" | "right";
+type SidebarView = "sessions" | "workspace";
+
+function readSidebarView(): SidebarView {
+  if (typeof window === "undefined") return "sessions";
+  return window.localStorage.getItem(SIDEBAR_VIEW_STORAGE_KEY) === "workspace"
+    ? "workspace"
+    : "sessions";
+}
 
 function readPanelWidth(
   key: string,
@@ -164,6 +173,14 @@ export default memo(function SessionsPage() {
     RIGHT_PANEL_MIN,
     RIGHT_PANEL_MAX,
   );
+  const [sidebarView, setSidebarView] = useState<SidebarView>(readSidebarView);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_VIEW_STORAGE_KEY, sidebarView);
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, [sidebarView]);
   const location = useLocation();
   useEffect(() => {
     const toggle = () => {
@@ -277,6 +294,8 @@ export default memo(function SessionsPage() {
               listView={listView}
               projectId={projectId}
               onCollapsePanel={() => leftPanel.setCollapsed(true)}
+              sidebarView={sidebarView}
+              onSidebarViewChange={setSidebarView}
             />
             <div
               className="session-panel-resizer session-panel-resizer--left"

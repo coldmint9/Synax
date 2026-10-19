@@ -62,6 +62,25 @@ function makeToolCall(partial: Partial<ToolCallRecord>): ToolCallRecord {
 }
 
 describe("buildInterleavedTurns", () => {
+  it.each(["codex", "claude-code", "acp"])("restores %s reasoning saved with the answer", (source) => {
+    const turns = buildInterleavedTurns([makeStep()], [], [makeMessage({
+      content: "Final answer", metadata: { source, thought: "Provider reasoning" },
+    })]);
+    expect(turns[0].blocks).toEqual([
+      { type: "thinking", content: "Provider reasoning" },
+      { type: "text", content: "Final answer", messageId: "msg-1" },
+    ]);
+  });
+
+  it("restores reasoning-only replies and ignores invalid or placeholder metadata", () => {
+    const turns = buildInterleavedTurns([makeStep()], [], [
+      makeMessage({ id: "reasoning", metadata: { source: "acp", thought: "仍在分析" } }),
+      makeMessage({ id: "placeholder", metadata: { thought: "..." } }),
+      makeMessage({ id: "invalid", metadata: { thought: { text: "not a string" } } }),
+    ]);
+    expect(turns[0].blocks).toEqual([{ type: "thinking", content: "仍在分析" }]);
+  });
+
   it.each([{ type: "thinking" }, { kind: "thought" }])(
     "omits historical placeholder thoughts without hiding short reasoning or answer punctuation (%j)",
     (metadata) => {

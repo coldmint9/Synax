@@ -8,7 +8,7 @@ import { CodexBackend } from '../backends/codex-backend.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore as store } from '../session-store.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
-import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
+import { resetAgentRuntimeFixtures, admitActiveFixtureRun } from './agent-runtime-fixtures.js';
 import { permissionPolicy } from '../permission-policy.js';
 import { interactionService } from '../interaction-service.js';
 const mock = vi.hoisted(() => ({ open: vi.fn() }));
@@ -34,14 +34,15 @@ class FakeRpc {
 }
 let rpc: FakeRpc;
 afterEach(() => { vi.restoreAllMocks(); });
-beforeEach(() => {
-  resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); rpc = new FakeRpc();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); rpc = new FakeRpc();
   mock.open.mockResolvedValue({ rpc, config: {}, version: 'fixture', isolated: true });
 });
 const create = () => agentSessionRuntime.create({ projectId: 'codex-mapping', profileId: 'synax', prompt: 'Test', backendId: 'codex', workDir: os.tmpdir() });
 async function start(sessionId: string) {
+  const run = await admitActiveFixtureRun(sessionId);
   const backend = new CodexBackend(); const chunks: any[] = [];
-  const task = (async () => { for await (const chunk of backend.stream(sessionId, 'run', { message: 'Test' })) chunks.push(chunk); })();
+  const task = (async () => { for await (const chunk of backend.stream(sessionId, 'run', { message: 'Test', acceptedRunId: run.id })) chunks.push(chunk); })();
   await vi.waitFor(() => expect(rpc.request).toHaveBeenCalledWith('turn/start', expect.anything()));
   return { backend, chunks, task };
 }
@@ -111,11 +112,13 @@ describe('Codex native protocol mapping', () => {
   it('round-trips native approvals and questions through persistent Synax records', async () => {
     const session = create(); const { task, backend } = await start(session.id);
     const pending = rpc.reverse('item/commandExecution/requestApproval', { threadId: 'native-thread', turnId: 'new-turn', itemId: 'command', command: 'echo hello', availableDecisions: ['accept', 'cancel'] });
+    await vi.waitFor(() => expect(store.listPermissions(session.id)).toHaveLength(1));
     const decision = store.listPermissions(session.id)[0];
     expect(decision.metadata.allowedReplies).toEqual(['once', 'reject']);
     permissionPolicy.reply(session.id, decision.id, 'reject', undefined, false); backend.replyPermission(session.id, decision.id, 'reject');
     expect(await pending).toEqual({ decision: 'cancel' });
     const answer = rpc.reverse('item/tool/requestUserInput', { threadId: 'native-thread', turnId: 'new-turn', itemId: 'question', questions: [{ id: 'native-question', question: 'Which file?', options: [{ label: 'README.md' }] }] });
+    await vi.waitFor(() => expect(interactionService.pending(session.id)).not.toBeNull());
     const interaction = interactionService.pending(session.id)!;
     interactionService.reply(session.id, interaction.id, { revision: 1, action: 'submit', answers: { q0: 'README.md' } }); backend.replyInteraction(session.id, interaction.id);
     expect(await answer).toEqual({ answers: { 'native-question': { answers: ['README.md'] } } });

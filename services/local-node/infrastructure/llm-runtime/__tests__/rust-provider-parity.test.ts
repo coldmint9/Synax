@@ -1,0 +1,140 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, beforeAll, expect, it } from "vitest";
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
+import { createRustLanguageModel } from "../providers/rust-language-model.js";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+
+beforeAll(ensureTestRuntime);
+const servers: http.Server[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
+    server.closeAllConnections(); server.close(() => resolve());
+  })));
+});
+type Protocol = "openai" | "openai-responses" | "anthropic";
+async function fixture(protocol: Protocol) {
+  const requests: Array<{ url: string; headers: http.IncomingHttpHeaders; body: any }> = [];
+  const server = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    requests.push({ url: req.url!, headers: req.headers, body: JSON.parse(body) });
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const event = (type: string, value: object) => res.write(`data: ${JSON.stringify({ type, ...value })}\n\n`);
+    if (protocol === "openai") {
+      const base = { id: "chat_fixture", object: "chat.completion.chunk", created: 0, model: "fixture" };
+      res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { content: '{"ok":true}' }, finish_reason: "stop" }], usage: { prompt_tokens: 7, completion_tokens: 3 } })}\n\n`);
+      res.end("data: [DONE]\n\n");
+    } else if (protocol === "openai-responses") {
+      const item = { type: "message", id: "message_fixture", role: "assistant", status: "completed", content: [{ type: "output_text", text: '{"ok":true}', annotations: [] }] };
+      event("response.output_item.added", { output_index: 0, item: { ...item, content: [] } });
+      event("response.output_text.delta", { output_index: 0, content_index: 0, item_id: item.id, delta: '{"ok":true}' });
+      event("response.output_item.done", { output_index: 0, item });
+      event("response.completed", { response: { id: "resp_fixture", model: "fixture", status: "completed", output: [item], usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 } } });
+      res.end();
+    } else {
+      event("message_start", { message: { id: "msg_fixture", model: "fixture", type: "message", role: "assistant", content: [], usage: { input_tokens: 7, output_tokens: 0 } } });
+      event("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+      event("content_block_delta", { index: 0, delta: { type: "text_delta", text: '{"ok":true}' } });
+      event("content_block_stop", { index: 0 });
+      event("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } });
+      event("message_stop", {}); res.end();
+    }
+  });
+  servers.push(server);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const model = createRustLanguageModel({ providerId: "custom-api:parity", apiFormat: protocol,
+    baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, apiKey: "test-key", headers: { "x-fixture": "custom-header" } }, "fixture");
+  return { requests, model };
+}
+async function consume(model: ReturnType<typeof createRustLanguageModel>, options: Partial<LanguageModelV4CallOptions>) {
+  const { stream } = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "Respond in JSON" }] }], ...options });
+  const events = [];
+  for await (const event of stream) events.push(event);
+  expect(events.filter(event => event.type === "error")).toEqual([]);
+  expect(events.filter(event => event.type === "text-delta").map(event => event.delta).join("")).toBe('{"ok":true}');
+  expect(events.at(-1)).toMatchObject({ type: "finish", usage: { inputTokens: { total: 7 }, outputTokens: { total: 3 } } });
+}
+
+it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s sends sampling, schema, images and custom headers through Rust", async protocol => {
+  const { model, requests } = await fixture(protocol);
+  await consume(model, {
+    temperature: 0.25, ...(protocol !== "anthropic" ? { topP: 0.85 } : {}), maxOutputTokens: 1024,
+    ...(protocol !== "openai-responses" ? { stopSequences: ["END"] } : {}),
+    responseFormat: { type: "json", name: "Result", schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false } },
+    prompt: [{ role: "user", content: [{ type: "text", text: "Describe the image as JSON" }, { type: "file", mediaType: "image/png", data: { type: "data", data: new Uint8Array([137, 80, 78, 71]) } }] }],
+  });
+  expect(requests).toHaveLength(1);
+  const request = requests[0];
+  expect(request.headers["x-fixture"]).toBe("custom-header");
+  expect(request.body).toMatchObject({ temperature: 0.25, stream: true, model: "fixture" });
+  if (protocol !== "anthropic") expect(request.body.top_p).toBe(0.85);
+  expect(JSON.stringify(request.body)).toContain("iVBORw==");
+  expect(JSON.stringify(request.body)).toContain('"ok":{"type":"boolean"}');
+  if (protocol === "anthropic") {
+    expect(request.url).toBe("/v1/messages");
+    expect(request.headers["x-api-key"]).toBe("test-key");
+    expect(request.body).toMatchObject({ max_tokens: 1024, stop_sequences: ["END"] });
+  } else {
+    expect(request.headers.authorization).toBe("Bearer test-key");
+    if (protocol === "openai") {
+      expect(request.url).toBe("/v1/chat/completions");
+      expect(request.body.stop).toEqual(["END"]);
+      expect(request.body.max_completion_tokens ?? request.body.max_tokens).toBe(1024);
+    } else {
+      expect(request.url).toBe("/v1/responses");
+      expect(request.body).toMatchObject({ max_output_tokens: 1024 });
+    }
+  }
+});
+
+it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s preserves required and disabled tool choice", async protocol => {
+  const { model, requests } = await fixture(protocol);
+  for (const type of ["required", "none"] as const) {
+    await consume(model, { tools: [{ type: "function", name: "inspect", description: "Inspect", inputSchema: { type: "object", properties: {} } }], toolChoice: { type }, maxOutputTokens: 1024 });
+  }
+  expect(requests[0].body.tool_choice).toEqual(protocol === "anthropic" ? { type: "any" } : "required");
+  expect(requests[1].body.tool_choice).toEqual(protocol === "anthropic" ? { type: "none" } : "none");
+});
+
+it("passes connection reasoning options without sending SDK-only fields", async () => {
+  const { model, requests } = await fixture("openai-responses");
+  await consume(model, { providerOptions: { openai: { forceReasoning: true, passThroughUnsupportedFiles: true },
+    "custom-api:parity": { reasoningEffort: "high", parallelToolCalls: false, promptCacheKey: "stable-key", store: false } } });
+  expect(requests[0].body).toMatchObject({ reasoning: { effort: "high" }, parallel_tool_calls: false, prompt_cache_key: "stable-key", store: false });
+  expect(requests[0].body).not.toHaveProperty("forceReasoning");
+  expect(requests[0].body).not.toHaveProperty("passThroughUnsupportedFiles");
+});
+
+it("cancels an idle upstream when the downstream reader is cancelled", async () => {
+  let closed!: () => void;
+  const upstreamClosed = new Promise<void>(resolve => { closed = resolve; });
+  const server = http.createServer(async (req, res) => {
+    for await (const _chunk of req) { /* drain the request */ }
+    res.on("close", closed);
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ id: "idle", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }] })}\n\n`);
+  });
+  servers.push(server);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const model = createRustLanguageModel({ providerId: "test", apiFormat: "openai", apiKey: "never-return-this-key",
+    headers: { "x-private": "never-return-this-header" }, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` }, "fixture");
+  const result = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "wait" }] }] });
+  expect(JSON.stringify(result.request)).not.toContain("never-return");
+  const reader = result.stream.getReader();
+  for (;;) {
+    const next = await reader.read();
+    expect(next.done).toBe(false);
+    if (next.value?.type === "text-delta") break;
+  }
+  await reader.cancel();
+  await upstreamClosed;
+}, 5000);
+
+it("supports Messages top-p without a conflicting temperature", async () => {
+  const { model, requests } = await fixture("anthropic");
+  await consume(model, { topP: 0.6 });
+  expect(requests[0].body.top_p).toBe(0.6);
+  expect(requests[0].body).not.toHaveProperty("temperature");
+  expect(requests[0].body.max_tokens).toBeGreaterThan(0);
+});

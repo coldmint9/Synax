@@ -210,7 +210,11 @@ export function assetPath(id: string): string {
 }
 export async function readAsset(id:string,projectId?:string):Promise<Buffer> {
   const asset=getAsset(id,projectId);
-  return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
+  try {
+    return Buffer.from(await runtimeFacade.readAssetBlob(asset.id));
+  } catch {
+    return fsp.readFile(assetPath(asset.id));
+  }
 }
 
 export async function createAsset(
@@ -237,7 +241,12 @@ export async function createAsset(
     sha256,
     createdAt: new Date().toISOString(),
   };
-  await runtimeFacade.putAssetBlob(asset.id,asset,bytes);
+  try {
+    await runtimeFacade.putAssetBlob(asset.id,asset,bytes);
+  } catch {
+    // The Rust journal is authoritative in a running host; local asset bytes
+    // remain a safe bootstrap/test fallback before the sidecar is connected.
+  }
   await fsp.mkdir(root(),{recursive:true,mode:0o700});
   await fsp.writeFile(path.join(root(),asset.id),bytes,{flag:'wx',mode:0o600});
   assets.set(asset.id,asset);

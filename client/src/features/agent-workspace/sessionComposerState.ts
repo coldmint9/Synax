@@ -1,7 +1,7 @@
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import type { PermissionDecision } from "../../adapters/transport/agentRuntime";
 import { listPendingPermissions } from "./dock/AgentQuickApproval";
-import { isAcpSession, readSynaxSessionMode } from "./synaxSessionTypes";
+import { isExternalSession, readSynaxSessionMode } from "./synaxSessionTypes";
 
 export function patchAgentSession(
   session: AgentSession,
@@ -54,18 +54,18 @@ export function canSwitchSessionMode(
   options: {
     hasPendingInteractions?: boolean;
     hasPendingPermissions?: boolean;
-    acp?: boolean;
+    externalBackend?: boolean;
   } = {},
 ): boolean {
   if (
-    options.acp ||
+    options.externalBackend ||
     options.hasPendingInteractions ||
     options.hasPendingPermissions
   )
     return false;
   if (!session) return true;
   if (
-    isAcpSession(session) ||
+    isExternalSession(session) ||
     session.parentSessionId ||
     readSynaxSessionMode(session.sessionMetadata) === "plan_node"
   )

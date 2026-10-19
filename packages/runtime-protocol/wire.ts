@@ -1,4 +1,6 @@
 export type SidecarBody =
+  | { type: 'workspace_index_command'; operation: string; payload: Uint8Array }
+  | { type: 'workspace_index_state'; stateJson: Uint8Array }
   | { type: 'seed_ui'; sessionJson: Uint8Array }
   | { type: 'ui_snapshot' }
   | { type: 'ui_snapshot_response'; snapshotJson: Uint8Array }
@@ -64,6 +66,8 @@ export interface SidecarEnvelope {
 }
 
 const BODY_FIELDS: Record<SidecarBody['type'], number> = {
+  workspace_index_command: 48,
+  workspace_index_state: 49,
   hello: 10,
   health: 11,
   shutdown: 12,
@@ -151,6 +155,8 @@ function fieldUint(field: number, value: number): Uint8Array {
 
 function bodyPayload(body: SidecarBody): Uint8Array {
   switch (body.type) {
+    case 'workspace_index_command': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
+    case 'workspace_index_state': return fieldBytes(1, body.stateJson);
     case 'seed_ui': return fieldBytes(1, body.sessionJson);
     case 'ui_snapshot': return new Uint8Array();
     case 'ui_snapshot_response': return fieldBytes(1, body.snapshotJson);
@@ -330,6 +336,8 @@ function firstBool(bytes: Uint8Array, field: number): boolean {
 
 function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
   switch (field) {
+    case 48: return { type: 'workspace_index_command', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
+    case 49: return { type: 'workspace_index_state', stateJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 36: return { type: 'queue_read' };
     case 37: return { type: 'queue_state', queueJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 38: return { type: 'control_command', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
@@ -393,7 +401,7 @@ function decodeDurability(value: number): 'sync' | 'group_commit' | 'ephemeral' 
 
 export function decodeEnvelope(bytes: Uint8Array): SidecarEnvelope {
   const fields = readFields(bytes);
-  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 47 && item.wire === 2);
+  const bodyField = fields.reverse().find((item) => item.field >= 10 && item.field <= 49 && item.wire === 2);
   if (!bodyField) throw new Error('Sidecar envelope has no body.');
   return {
     requestId: firstString(bytes, 1) ?? '',

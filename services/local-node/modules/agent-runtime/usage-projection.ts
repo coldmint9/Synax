@@ -4,7 +4,6 @@ normalizeUsage,
 type NormalizedUsage,
 type UsageContext,
 } from "../../infrastructure/llm-runtime/usage.js";
-import { readUsageContextWindowSize } from "./acp-engine/acp-usage.js";
 import {
 CacheUsageAccumulator,
 cacheUsageSample,
@@ -195,15 +194,19 @@ export function projectSessionUsage(
       providerMetadata: metadata?.providerMetadata,
     };
     if (
-      metadata?.backendId === "codex" ||
-      metadata?.backendId === "claude-code"
+      metadata?.backendId === "codex" || metadata?.backendId === "claude-code"
     )
       context.source = "cli";
+    // Historical records remain readable after their execution backend is removed.
     else if (metadata?.engine === "acp") context.source = "acp";
     const u = normalizeUsage(metadata?.usage, context);
     const contextUsage = metadata?.externalTurn
       ? normalizeUsage(metadata.contextUsage, context)
       : u;
+    const contextWindowSize = metadata?.externalTurn && typeof metadata.contextUsage?.contextWindowSize === "number"
+      ? metadata.contextUsage.contextWindowSize
+      : undefined;
+    if (contextWindowSize && contextWindowSize > 0) result.reportedWindow = contextWindowSize;
     add(row.session_id, u, "steps");
     if (row.session_id !== sessionId) continue;
     // Running requests without final usage are pending, not zero-hit samples.
@@ -261,9 +264,6 @@ export function projectSessionUsage(
           ? contextUsage!.measuredAt
           : (row.completed_at ?? row.started_at);
     }
-    if (contextUsage)
-      result.reportedWindow =
-        readUsageContextWindowSize(contextUsage) ?? result.reportedWindow;
   }
   result.cache = cacheSamples.result(pendingCacheSamples);
   for (const row of auxiliary)

@@ -643,3 +643,59 @@ describe("inactive session page cache", () => {
     );
   });
 });
+
+describe('incremental history pages', () => {
+  function window(messages: AgentRuntimeMessage[], cursor: string, incremental = false, more = false): HistoryWindowResponse {
+    return {messages, runs:[], steps:[], toolCalls:[], events:[], permissions:[],
+      historyWindow:{revision:2,epoch:1,generation:1,syncCursor:cursor,olderCursor:incremental ? undefined : 'older-page',
+        incremental,hasMoreChanges:more,hasEarlier:!incremental,latest:true,detailsTruncated:false}};
+  }
+  it('paints each change page before the next arrives and never refetches cached history', async () => {
+    store.setState({sessions:[{...session,sessionMetadata:{historyStorage:3}}]});
+    const history = vi.spyOn(api,'historyWindow').mockResolvedValueOnce(window([message('cached')],'sync-1'));
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached']));
+    let resolve!: (page: HistoryWindowResponse) => void;
+    history.mockResolvedValueOnce(window([message('first-change')],'sync-2',true,true))
+      .mockReturnValueOnce(new Promise(r=>{resolve=r;}));
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','first-change']));
+    expect(history.mock.calls.slice(1)).toEqual([[session.id,undefined,'sync-1'],[session.id,undefined,'sync-2']]);
+    expect(api.listMessages).not.toHaveBeenCalled();
+    resolve({...window([message('second-change')],'sync-3',true),removed:[{collection:'messages',id:'first-change'}]});
+    await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','second-change']));
+    expect(store.getState().sessionDetailCache[session.id].historyWindow?.olderCursor).toBe('older-page');
+    const pageCount=history.mock.calls.length;
+    vi.spyOn(api,'historyIndexPage').mockResolvedValue(window([],'sync-3'));
+    vi.mocked(api.historyIndexPage).mockResolvedValue({...window([],'sync-3'),historyWindow:{...window([],'sync-3').historyWindow,olderCursor:undefined,hasEarlier:false}});
+    await store.getState().loadTimelineIndex();
+    expect(history).toHaveBeenCalledTimes(pageCount);
+  });
+  it('keeps completed pages when a later change page fails, then resumes at its last cursor', async () => {
+    store.setState({sessions:[{...session,sessionMetadata:{historyStorage:3}}]});
+    const history=vi.spyOn(api,'historyWindow').mockResolvedValueOnce(window([message('cached')],'sync-1'));
+    await store.getState().refreshDetail();
+    await vi.waitFor(()=>expect(store.getState().messages).toHaveLength(1));
+    history.mockResolvedValueOnce(window([message('saved')],'sync-2',true,true)).mockRejectedValueOnce(new Error('offline'));
+    await store.getState().refreshDetail();
+    await vi.waitFor(()=>expect(store.getState().detailError).toContain('offline'));
+    expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','saved']);
+    history.mockResolvedValueOnce(window([],'sync-3',true));
+    await store.getState().refreshDetail();
+    await vi.waitFor(()=>expect(store.getState().detailError).toBeNull());
+    expect(history).toHaveBeenLastCalledWith(session.id,undefined,'sync-2');
+  });
+  it('stops automatic refresh after a permanent history failure and allows explicit retry', async () => {
+    const id='permanent-history';
+    store.setState({selectedSessionId:id,sessions:[{...session,id,sessionMetadata:{historyStorage:3}}]});
+    const history=vi.spyOn(api,'historyWindow').mockRejectedValueOnce(Object.assign(new Error('record unavailable'),{code:'HISTORY_ENTITY_TOO_LARGE',statusCode:413}));
+    await store.getState().refreshDetail();
+    await vi.waitFor(()=>expect(store.getState().detailError).toContain('record unavailable'));
+    for(let i=0;i<4;i++) await store.getState().refreshDetail({joinPending:true});
+    expect(history).toHaveBeenCalledOnce();
+    history.mockResolvedValueOnce(window([],'sync-1'));
+    await store.getState().refreshDetail({forceFresh:true});
+    await vi.waitFor(()=>expect(store.getState().detailError).toBeNull());
+    expect(history).toHaveBeenCalledTimes(2);
+  });
+});

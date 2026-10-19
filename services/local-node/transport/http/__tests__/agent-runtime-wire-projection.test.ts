@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import { resetAgentRuntimeFixtures, executorInput } from "../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js";
 import { agentSessionRuntime } from "../../../modules/agent-runtime/session-runtime.js";
 import { agentRuntimeStore } from "../../../modules/agent-runtime/session-store.js";
@@ -78,7 +79,7 @@ async function createSessionWithHeavyArtifacts() {
 }
 
 describe("agent runtime wire projections", () => {
-  beforeEach(() => resetAgentRuntimeFixtures());
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it("GET /sessions/:id/steps omits provider-pipeline metadata but keeps reasoningEffort", async () => {
     const session = await createSessionWithHeavyArtifacts();
@@ -116,6 +117,12 @@ describe("agent runtime wire projections", () => {
     const row = items.find((item) => item.id === session.id);
     expect(row).toMatchObject({ projectId: session.projectId, status: expect.any(String) });
     expect(Object.keys(row ?? {}).sort()).toEqual(["id", "projectId", "status", "updatedAt"]);
+
+    const mounted = new Hono().route("/api/agent-runtime", agentRuntimeRoutes);
+    const mountedResponse = await mounted.request(
+      `http://localhost/api/agent-runtime/sessions/badges?projectIds=${session.projectId}`,
+    );
+    expect(mountedResponse.status).toBe(200);
   });
 
   it("GET /sessions list rows omit latestSystemPrompt", async () => {

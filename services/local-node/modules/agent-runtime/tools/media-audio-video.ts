@@ -102,7 +102,7 @@ async function saveOutput(
   const projectId = agentRuntimeStore.getSession(input.sessionId).projectId;
   return {
     contentParts: await Promise.all(
-      files.map((file) => saveGeneratedMedia(projectId, file)),
+      files.map((file) => saveGeneratedMedia(projectId, file, undefined, input.sessionId)),
     ),
     result,
     displaySummary: summary,

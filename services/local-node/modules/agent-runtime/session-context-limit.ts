@@ -1,8 +1,7 @@
 import type { AgentSession } from "./contracts.js";
 import { profileService } from "./profile-service.js";
 import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
-import { resolveSessionEngineModel } from "./acp-engine/acp-engine-routing.js";
-import { isAcpModel } from "./acp-engine/acp-model.js";
+import { resolveBackendModel } from "./backends/backend-binding.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 
 /**
@@ -32,8 +31,7 @@ export async function resolveSessionConfiguredContextLimit(
     | { id?: string }
     | undefined;
   if (backend?.id && backend.id !== "native") return null;
-  const engineModel = resolveSessionEngineModel(session.id, {});
-  if (isAcpModel(engineModel)) return null;
+  const engineModel = resolveBackendModel(session.id, {});
 
   const profile = profileService.tryGet(session.profileId);
   const key = [session.projectId, engineModel ?? "", profile.kind].join("|");

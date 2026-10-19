@@ -1,7 +1,7 @@
 import type { GeneratedFile } from "ai";
 import { randomUUID } from "node:crypto";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { createAsset } from "./media-assets.js";
+import { bindValidatedAssets, createAsset } from "./media-assets.js";
 import {
   modalityForMime,
   runtimeContentPartSchema,
@@ -13,6 +13,7 @@ export async function saveGeneratedMedia(
   projectId: string | undefined,
   file: Pick<GeneratedFile, "mediaType" | "uint8Array">,
   providerOptions?: ProviderOptions,
+  sessionId?: string,
 ): Promise<RuntimeContentPart> {
   if (!projectId)
     throw new Error("Generated media requires a project context.");
@@ -27,11 +28,13 @@ export async function saveGeneratedMedia(
     Buffer.from(file.uint8Array),
     file.mediaType,
   );
-  return runtimeContentPartSchema.parse({
+  const part = runtimeContentPartSchema.parse({
     type: modalityForMime(asset.mediaType),
     assetId: asset.id,
     ...(providerOptions
       ? { providerOptions: JSON.parse(JSON.stringify(providerOptions)) }
       : {}),
   });
+  if (sessionId) await bindValidatedAssets(sessionId, [asset]);
+  return part;
 }

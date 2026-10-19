@@ -43,6 +43,13 @@ const INTERNAL_ENV = [
 // This in-memory map only bridges synchronous launcher callbacks to the async
 // Rust control command; it is never used as a recovery authority.
 const authoritativeLeases = new Map<string, OwnedProcessRecord>();
+const locallyClosedSessions = new Set<string>();
+export function hasLocalBackgroundProcesses(sessionId: string): boolean {
+  for (const record of authoritativeLeases.values())
+    if (record.session_id === sessionId && record.kind === "background" && record.state !== "closed")
+      return true;
+  return false;
+}
 const authoritativeLeaseWrites = new Map<string, Promise<void>>();
 const authoritative = () => process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative";
 
@@ -112,6 +119,7 @@ export function prepareOwnedProcess(
   };
   {
     authoritativeLeases.set(ticket.id, record);
+    if (record.session_id) locallyClosedSessions.delete(record.session_id);
     void mirrorProcessLease("lease_open", { id: record.id, sessionId: record.session_id, runId: record.run_id, processGroup: record.process_group, state: record.state, commandLabel, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     return ticket;
   }
@@ -167,6 +175,12 @@ export function releaseOwnedProcess(
     const record = authoritativeLeases.get(id);
     if (record) {
       authoritativeLeases.delete(id);
+      if (record.session_id && record.kind === "background") {
+        const stillOpen = [...authoritativeLeases.values()].some(
+          (item) => item.session_id === record.session_id && item.kind === "background" && item.state !== "closed",
+        );
+        if (!stillOpen) locallyClosedSessions.add(record.session_id);
+      }
       void mirrorProcessLease("lease_close", { id, sessionId: record.session_id, runId: record.run_id, pid: record.pid, processGroup: record.process_group, state: "closed", commandLabel: record.command_label, kind: record.kind, workerOwned: process.env.SYNAX_AGENT_SESSION_CHILD === "1" }).catch(() => {});
     }
     return;
@@ -188,6 +202,13 @@ function emitProcessChange(id:string):void {
 }
 
 export async function hasBackgroundProcesses(sessionId: string, workerOwnedOnly = false): Promise<boolean> {
+  // Launcher callbacks are synchronous; use the local lease map first so a
+  // just-opened service keeps its worker alive before the Rust mirror catches
+  // up. A closed local lease must immediately release the child as well.
+  if (hasLocalBackgroundProcesses(sessionId)) return true;
+  if (locallyClosedSessions.has(sessionId)) return false;
+  if (!process.env.SYNAX_RUNTIME_SIDECAR_SOCKET || !process.env.SYNAX_RUNTIME_SIDECAR_TOKEN)
+    return false;
   const { runtimeFacade } = await import('./sidecar/runtime-facade.js');
   const state = await runtimeFacade.controlState(sessionId) as { processLeases: Array<{kind?:string;state?:string;workerOwned?:boolean}> };
   return state.processLeases.some(lease=>lease.kind==='background'&&lease.state!=='closed'&&(!workerOwnedOnly||lease.workerOwned===true));

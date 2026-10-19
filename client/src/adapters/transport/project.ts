@@ -51,6 +51,32 @@ export interface ProjectWorkspace {
   roots: ProjectWorkspaceRoot[];
 }
 
+export interface WorkspaceTreeEntry {
+  name: string;
+  /** Workspace-relative path using forward slashes. */
+  path: string;
+  kind: "directory" | "file";
+  hasChildren: boolean;
+  ignored?: boolean;
+  lazy?: boolean;
+  childCount?: number;
+}
+
+export interface WorkspaceTreeListing {
+  projectId: string;
+  rootId: string;
+  rootName: string;
+  rootPath: string;
+  /** Empty string represents the selected workspace root. */
+  path: string;
+  entries: WorkspaceTreeEntry[];
+  truncated: boolean;
+  indexing?: boolean;
+  indexedAt?: string | null;
+  revision?: number;
+  nextCursor?: string | null;
+}
+
 export type AddProjectReferenceRequest =
   | {
       name?: string;
@@ -108,7 +134,7 @@ async function projectRequest<T>(url: string, init?: ApiFetchInit): Promise<T> {
     const body = (await resp
       .json()
       .catch(() => ({ error: resp.statusText }))) as { error?: string };
-    throw new Error(body.error || `HTTP ${resp.status}`);
+    throw Object.assign(new Error(body.error || `HTTP ${resp.status}`), { status: resp.status });
   }
   return (await resp.json()) as T;
 }
@@ -152,8 +178,40 @@ export const projectApi = {
     addProject(project);
     return { project };
   },
-  getWorkspace(id: string): Promise<ProjectWorkspace> {
-    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/workspace`);
+  getWorkspace(id: string, sessionId?: string): Promise<ProjectWorkspace> {
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/workspace${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
+  },
+  workspaceTreeStatus(id: string, rootId: string, sessionId?: string): Promise<{ revision: number; indexing: boolean }> {
+    const query = new URLSearchParams({ rootId });
+    if (sessionId) query.set("sessionId", sessionId);
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/tree/status?${query}`, { priority: "low" });
+  },
+  listWorkspaceTree(
+    id: string,
+    options: {
+      rootId?: string;
+      path?: string;
+      showHidden?: boolean;
+      showIgnored?: boolean;
+      limit?: number;
+      cursor?: string;
+      signal?: AbortSignal;
+      sessionId?: string;
+    } = {},
+  ): Promise<WorkspaceTreeListing> {
+    const query = new URLSearchParams();
+    if (options.rootId) query.set("rootId", options.rootId);
+    if (options.path) query.set("path", options.path);
+    if (options.showHidden) query.set("showHidden", "1");
+    if (options.showIgnored) query.set("showIgnored", "1");
+    if (options.limit) query.set("limit", String(options.limit));
+    if (options.cursor) query.set("cursor", options.cursor);
+    if (options.sessionId) query.set("sessionId", options.sessionId);
+    const suffix = query.toString();
+    return projectRequest(
+      `${API_BASE}/${encodeURIComponent(id)}/tree${suffix ? `?${suffix}` : ""}`,
+      { signal: options.signal, priority: "low" },
+    );
   },
 
   addReference(

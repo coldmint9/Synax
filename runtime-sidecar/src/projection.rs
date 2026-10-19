@@ -42,6 +42,10 @@ pub struct UiSnapshot {
     pub queue_revision: u64,
     #[serde(default)]
     pub pending_queue_input: Option<Value>,
+    /// Captured before terminal UI state clears live deltas. The finish
+    /// transaction moves this into canonical history exactly once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_partial_message: Option<Value>,
 }
 impl UiSnapshot {
     pub fn seed(session_id: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
@@ -70,6 +74,7 @@ impl UiSnapshot {
             force_inject_item_id: None,
             queue_revision: 0,
             pending_queue_input: None,
+            pending_partial_message: None,
         };
         let items = snapshot
             .session
@@ -160,6 +165,7 @@ impl UiSnapshot {
             self.run = Value::Null;
             self.live_chunks.clear();
             self.completed_step_ids.clear();
+            self.pending_partial_message = None;
         }
         self.session["pendingResumeToken"] = Value::Null;
         self.session["activeRunId"] = json!(run_id);
@@ -171,6 +177,22 @@ impl UiSnapshot {
             .first()
             .and_then(|chunk| chunk["step"]["id"].as_str())
             .map(str::to_owned)
+    }
+    fn partial_message(&self, run_id: &str, created_at: &str) -> Option<Value> {
+        let step_id = self.current_step()?;
+        let content: String = self.live_chunks.iter()
+            .filter(|chunk| chunk["type"] == "message_delta" && chunk["stepId"] == step_id)
+            .filter_map(|chunk| chunk["delta"].as_str()).collect();
+        if content.is_empty() { return None; }
+        Some(json!({
+            "id":format!("msg_partial_{run_id}_{step_id}"), "sessionId":self.session["id"],
+            "runId":run_id, "stepId":step_id, "role":"assistant", "content":content,
+            "createdAt":created_at,
+            "metadata":{"source":"runtime_partial","partial":true,"runId":run_id,"stepId":step_id}
+        }))
+    }
+    pub(crate) fn take_partial_message(&mut self, run_id: &str, created_at: &str) -> Option<Value> {
+        self.pending_partial_message.take().or_else(|| self.partial_message(run_id, created_at))
     }
     fn complete_current(&mut self) {
         if let Some(id) = self.current_step() {
@@ -276,6 +298,11 @@ impl UiSnapshot {
                     let mut text = last["delta"].as_str().unwrap_or_default().to_owned();
                     text.push_str(delta);
                     last["delta"] = json!(text);
+                    for field in ["outputTokens", "thinkingTokens"] {
+                        if let Some(value) = chunk.get(field) {
+                            last[field] = value.clone();
+                        }
+                    }
                 } else {
                     self.live_chunks.push(chunk.clone());
                 }
@@ -285,16 +312,23 @@ impl UiSnapshot {
             }
             "message"
                 if chunk["message"]["role"] == "assistant"
-                    && self.current_step().as_deref() == chunk["message"]["stepId"].as_str() =>
+                    && (self.current_step().as_deref() == chunk["message"]["stepId"].as_str()
+                        || self.pending_partial_message.as_ref().is_some_and(|message|
+                            message["stepId"] == chunk["message"]["stepId"])) =>
             {
+                self.pending_partial_message = None;
                 self.complete_current();
             }
             _ => {}
         }
-        // Waiting states retain streaming content. A terminal event resets it just like the UI projector.
+        if matches!(state["status"].as_str(), Some("interrupted" | "cancelled" | "failed" | "paused"))
+            && kind != "run_finished" && self.pending_partial_message.is_none() {
+            self.pending_partial_message = self.partial_message(run_id, state["updatedAt"].as_str().unwrap_or_default());
+        }
+        // Stop requests retain live output until shutdown has been confirmed.
         if !matches!(
             state["status"].as_str(),
-            Some("running" | "queued" | "waiting_permission" | "waiting_input")
+            Some("running" | "queued" | "waiting_permission" | "waiting_input" | "stopping")
         ) {
             self.complete_current();
         }
@@ -319,6 +353,36 @@ mod tests {
     }
     fn step(id: &str) -> Value {
         json!({ "type":"step_started", "step":{"id":id,"sessionId":"s","runId":"r","index":1} })
+    }
+    #[test]
+    fn published_assistant_message_is_not_duplicated_as_partial() {
+        let mut snapshot = snapshot();
+        snapshot.apply(1, "r", &pending(step("a"), "running")).unwrap();
+        snapshot.apply(2, "r", &pending(json!({"type":"message_delta","stepId":"a","delta":"visible"}), "running")).unwrap();
+        snapshot.apply(3, "r", &pending(json!({"type":"stop_acknowledged"}), "interrupted")).unwrap();
+        assert!(snapshot.pending_partial_message.is_some());
+        snapshot.apply(4, "r", &pending(json!({"type":"message","message":{"role":"assistant","stepId":"a","content":"visible"}}), "interrupted")).unwrap();
+        assert!(snapshot.take_partial_message("r", "2026-10-19").is_none());
+    }
+    #[test]
+    fn coalesced_deltas_keep_latest_text_and_reasoning_token_counts() {
+        let mut snapshot = snapshot();
+        snapshot.apply(1, "r", &pending(step("a"), "running")).unwrap();
+        for (sequence, kind, field, delta, tokens) in [
+            (2, "thought_delta", "thinkingTokens", "think", 5),
+            (3, "thought_delta", "thinkingTokens", " more", 12),
+            (4, "message_delta", "outputTokens", "answer", 3),
+            (5, "message_delta", "outputTokens", " more", 7),
+        ] {
+            let mut chunk = json!({"type":kind,"stepId":"a","delta":delta});
+            chunk[field] = json!(tokens);
+            snapshot.apply(sequence, "r", &pending(chunk, "running")).unwrap();
+        }
+        assert_eq!(snapshot.live_chunks.len(), 3);
+        assert_eq!(snapshot.live_chunks[1]["delta"], "think more");
+        assert_eq!(snapshot.live_chunks[1]["thinkingTokens"], 12);
+        assert_eq!(snapshot.live_chunks[2]["delta"], "answer more");
+        assert_eq!(snapshot.live_chunks[2]["outputTokens"], 7);
     }
     #[test]
     fn retry_resets_only_the_current_attempt_and_terminal_clears_live_state() {

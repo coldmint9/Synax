@@ -31,8 +31,8 @@ function create(projectId: string) {
   return session.id;
 }
 
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-tool-grants-"));
   fs.mkdirSync(path.join(dir, "workspace"));

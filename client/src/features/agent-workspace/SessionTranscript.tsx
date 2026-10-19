@@ -140,9 +140,10 @@ export function SessionTranscript({
       const isThinking =
         message.metadata?.type === "thinking" ||
         message.metadata?.kind === "thought";
+      const thought = isThinking ? message.content : message.metadata?.thought;
       return (
-        isThinking &&
-        hasDisplayableReasoning(message.content) &&
+        typeof thought === "string" &&
+        hasDisplayableReasoning(thought) &&
         (message.runId === responseRunId ||
           (message.stepId !== null && responseStepIds.has(message.stepId)) ||
           (pending && message.metadata.requestId === pending.requestId))
@@ -279,6 +280,14 @@ export function SessionTranscript({
           aria-busy={preparing || loading || refreshing || olderHistory.loading}
         >
           <div className="session-transcript-body">
+            {error && projected.messages.length > 0 && (
+              <div role="alert" className="px-4 py-2 text-sm text-muted-foreground">
+                {locale === "zh" ? "历史更新失败，已保留加载的内容。" : "History could not be updated. Loaded content is preserved."}{" "}
+                <button type="button" className="underline" onClick={() => void useAgentSessionStore.getState().refreshDetail({ forceFresh: true })}>
+                  {locale === "zh" ? "重试" : "Retry"}
+                </button>
+              </div>
+            )}
             {olderHistory.loading && (
               <div
                 role="status"
@@ -320,7 +329,7 @@ export function SessionTranscript({
                   type="button"
                   className="mt-3 underline"
                   onClick={() =>
-                    void useAgentSessionStore.getState().refreshDetail()
+                    void useAgentSessionStore.getState().refreshDetail({ forceFresh: true })
                   }
                 >
                   {locale === "zh" ? "重试" : "Retry"}

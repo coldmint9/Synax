@@ -11,7 +11,7 @@ import type { AgentSession,CreateSessionRequest } from "./contracts.js";
 import { agentEventService,type AgentEventService } from "./event-service.js";
 import { initializeGoal } from "./goal-control.js";
 import { interactionService } from "./interaction-service.js";
-import { agentLoopRuntime } from "./loop-runtime.js";
+import { rustNativeBackend } from "./backends/rust-native-backend.js";
 import { profileService,type ProfileService } from "./profile-service.js";
 import { AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId,nowIso } from "./runtime-ids.js";
@@ -292,7 +292,10 @@ export class AgentSessionRuntime {
         ].includes(session.status),
     );
     const ids = targets.map((session) => session.id);
-    agentLoopRuntime.interruptSessions(ids, "User stopped run.");
+    void Promise.all(ids.map(id => rustNativeBackend.interrupt(id, "User stopped run."))).catch(error => {
+      logger.error({ sessionId, error }, "Rust execution shutdown could not be confirmed");
+      this.store.updateSessionMetadata(sessionId, { runtimeControl: { state: "unconfirmed", reason: String(error) } });
+    });
     sessionProcessManager.interruptSessions(ids, "User stopped run.");
     for (const session of targets)
       this.stopOne(session.id, session.id === sessionId ? rootStatus : "interrupted");

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { WorkLogEntry, type WorkLogEntryData } from "../WorkLogEntry";
@@ -52,7 +52,7 @@ const ENTRY: WorkLogEntryData = {
 describe("WorkLogEntry", () => {
   beforeEach(() => {
     useShellStore.setState((state) => ({
-      preferences: { ...state.preferences, locale: "en" },
+      preferences: { ...state.preferences, locale: "en", sessionShowThinking: true },
     }));
   });
 
@@ -72,7 +72,7 @@ describe("WorkLogEntry", () => {
     const view = render(<WorkLogEntry entry={ENTRY} />);
 
     // A collapsed round keeps the folded turns out of the DOM entirely.
-    expect(view.container.textContent).not.toContain("bash");
+    expect(view.container.textContent).not.toContain("Run command");
 
     await user.click(view.getByRole("button"));
 
@@ -81,7 +81,7 @@ describe("WorkLogEntry", () => {
     expect(
       view.container.querySelectorAll("[data-activity-body]"),
     ).toHaveLength(1);
-    expect(view.container.textContent).toContain("bash");
+    expect(view.container.textContent).toContain("Run command");
     expect(
       view.container.querySelectorAll(".bui-thinking").length,
     ).toBeGreaterThan(0);
@@ -97,6 +97,17 @@ describe("WorkLogEntry", () => {
     const preview = container.querySelector(".bui-activity-preview");
     expect(preview?.textContent).toBe("third reasoning");
     expect(container.textContent).not.toContain("first reasoning");
+  });
+
+  it("hides reasoning previews and restores them when the preference changes", () => {
+    const { container } = render(<WorkLogEntry entry={{ ...ENTRY, id: "thinking-visibility" }} />);
+    expect(container).toHaveTextContent("third reasoning");
+    act(() => useShellStore.getState().setSessionShowThinking(false));
+    expect(container).not.toHaveTextContent("third reasoning");
+    expect(container).not.toHaveTextContent("50 chars");
+    expect(container).toHaveTextContent("3 calls");
+    act(() => useShellStore.getState().setSessionShowThinking(true));
+    expect(container).toHaveTextContent("third reasoning");
   });
 
   it("restores the expanded state after a lazy unmount", async () => {

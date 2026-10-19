@@ -21,8 +21,8 @@ import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
 
 let directory: string;
 let sessionId: string;
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "synax-approval-"));
   fs.mkdirSync(path.join(directory, "workspace"));
@@ -195,15 +195,15 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("asks for native requests whose actual scope is unknown rather than trusting their read/edit label", () => {
+it("uses the native permission tier for a request without ACP metadata", () => {
   const request = permissionPolicy.evaluate({
     sessionId,
     category: "write",
     internalGate: "write",
     rules: agentRuntimeStore.getSession(sessionId).permissionRules,
-    metadata: { source: "acp", acpKind: "edit", acpTitle: "Edit a file" },
+    metadata: { toolId: "file.write", args: { path: "unknown" }, label: "Edit a file" },
   });
-  expect(request.action).toBe("ask");
+  expect(request.action).toBe("allow");
 });
 
 it("does not auto-approve a workspace executable masquerading as a read command on PATH", () => {

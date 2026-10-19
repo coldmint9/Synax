@@ -32,18 +32,14 @@ export function readSessionBackendId(session?: AgentSession): BackendId {
   );
 }
 
-export function isAcpSession(
-  session?: AgentSession,
-  model?: string | null,
-): boolean {
-  if (session?.sessionMetadata?.backend)
-    return readSessionBackendId(session) !== "native";
-  return (
-    Boolean(session?.sessionMetadata?.acp) ||
-    [model, session?.model].some((value) =>
-      value?.split("/")[0].endsWith("-acp"),
-    )
-  );
+/** Retired bindings remain readable so an old transcript never silently changes engine. */
+export function isUnsupportedSessionBackend(session?: AgentSession): boolean {
+  const id = readSessionBackendId(session);
+  return (id !== "native" && id !== "codex") || Boolean(session?.sessionMetadata?.acp);
+}
+
+export function isExternalSession(session?: AgentSession): boolean {
+  return readSessionBackendId(session) !== "native" || Boolean(session?.sessionMetadata?.acp);
 }
 
 export function createSynaxSessionMetadata(

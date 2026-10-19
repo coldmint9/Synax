@@ -1,11 +1,12 @@
 import { execFile, fork } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build, type Options } from "tsup";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { AgentSessionChildMessage } from "../../../infrastructure/runtime/ipc/agent-session-protocol.js";
+import { RustRuntimeSupervisor } from "../../../infrastructure/runtime/rust-sidecar.js";
 import buildOptions from "../../../../../tsup.config.js";
 
 const root = fileURLToPath(new URL("../../../../../", import.meta.url));
@@ -35,18 +36,8 @@ it.each(["source", "bundle"])(
       : path.join(directory, "workers/agent-session-runner.cjs");
     const sessionId = "startup-probe";
     const dataRoot = path.join(directory, `data-${mode}`);
-    // Production workers open a database already migrated by the API host.
-    const databaseUrl = pathToFileURL(path.join(
-      root, "services/local-node/infrastructure/database/index.ts",
-    )).href;
-    await promisify(execFile)(process.execPath, [
-      "--import", "tsx/esm", "--input-type=module", "-e",
-      `import { getDb, closeDb } from ${JSON.stringify(databaseUrl)}; getDb(); closeDb();`,
-    ], {
-      cwd: root,
-      env: { ...process.env, DATA_ROOT: dataRoot, SYNAX_AGENT_SESSION_CHILD: undefined },
-      timeout: 15_000,
-    });
+    const supervisor = new RustRuntimeSupervisor({ dataRoot });
+    await supervisor.start();
     const child = fork(entry, [], {
       cwd: root,
       env: {
@@ -61,8 +52,9 @@ it.each(["source", "bundle"])(
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     let stderr = "";
+    let stdout = "";
     let response: Extract<AgentSessionChildMessage, { type: "context:compact:error" }> | undefined;
-    child.stdout?.resume();
+    child.stdout?.on("data", (data) => { stdout += data; });
     child.stderr?.on("data", (data) => { stderr += data; });
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
     try {
@@ -78,7 +70,7 @@ it.each(["source", "bundle"])(
         child.once("exit", (code) => {
           finish(code === 0 && response
             ? undefined
-            : new Error(`Worker exited (${code}) before completing IPC: ${stderr}`));
+            : new Error(`Worker exited (${code}) before completing IPC: ${stdout}\n${stderr}`));
         });
         child.on("message", (message: AgentSessionChildMessage) => {
           if (message.type === "session:booted") child.send({ type: "session:initialize" });
@@ -98,6 +90,7 @@ it.each(["source", "bundle"])(
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await closed;
+      await supervisor.stop();
     }
   },
   40_000,

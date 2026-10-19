@@ -13,7 +13,6 @@ describe("native module packaging manifest", () => {
   });
 
   it("keeps the runtime packages that are still externalized by the server bundle", () => {
-    expect(script).toContain('"@anthropic-ai/claude-agent-sdk"');
     expect(script).toContain('"playwright-core"');
     expect(script).toContain('"node-pty"');
   });

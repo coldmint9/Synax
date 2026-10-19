@@ -5,7 +5,7 @@ import { workStore } from '../work-store.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
-beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
+beforeEach(async () => { await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
 
 describe('task tools', () => {
   it('marks task mutations with task mutability', () => {

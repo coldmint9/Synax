@@ -15,8 +15,6 @@ const skill: SkillSummary = {
 };
 afterEach(() => { vi.restoreAllMocks(); useShellStore.setState(useShellStore.getInitialState()); });
 
-describe('attachment form popover', () => {
-});
 
 
 function attachmentProps(): ComponentProps<typeof ComposerAttachMenu> {

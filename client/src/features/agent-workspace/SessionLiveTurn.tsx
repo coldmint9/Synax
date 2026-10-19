@@ -1,6 +1,6 @@
 import type { LlmRetryState } from "../../adapters/transport/sessionLive";
 import { RetryIndicator } from "./RetryIndicator";
-import { memo, useDeferredValue, useEffect, useRef } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef } from "react";
 import type { AgentRunStep } from "../../adapters/transport/agentRuntime";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { StreamingTextBlock } from "./StreamingTextBlock";
@@ -13,8 +13,7 @@ import {
   type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
 import { latestThinkingIndex } from "./activityText";
-
-const WORK_LOG_COLLAPSE_DELAY_MS = 420;
+import { useShellStore } from "../../shared/state/shellStore";
 
 function renderLiveSegments(
   blocks: TurnContentBlock[],
@@ -29,9 +28,6 @@ function renderLiveSegments(
   // The answer region mounts only its newest reasoning block: earlier thoughts
   // are read-only history, so their rows would only cost DOM subtrees.
   const latestThought = latestThinkingIndex(answers);
-  const answerStarted = answers.some(
-    (segment) => segment.type === "text" && segment.markdown,
-  );
   const render = (segment: (typeof segments)[number], i: number) => {
     const live = isStreaming && segment === segments[segments.length - 1];
     if (segment.type === "thinking") {
@@ -53,11 +49,6 @@ function renderLiveSegments(
           key={i}
           text={segment.content}
           isStreaming={live}
-          startDelayMs={
-            isStreaming && answerStarted && segment.markdown
-              ? WORK_LOG_COLLAPSE_DELAY_MS
-              : 0
-          }
           markdown={segment.markdown}
         />
       );
@@ -70,7 +61,10 @@ function renderLiveSegments(
           <ToolCallRoundPanel
             toolBlocks={toolBlocks}
             maxHeight="none"
-            isStreaming={isStreaming && !answerStarted}
+            // The activity rail stays open for the whole live turn. Closing it
+            // when the first answer token arrives causes a visible collapse /
+            // expand loop when the runtime emits another activity event.
+            isStreaming={isStreaming}
           />
         )}
       </div>
@@ -85,11 +79,13 @@ const CompletedStepView = memo(function CompletedStepView({
   blocks: TurnContentBlock[];
   stepId: string;
 }) {
-  if (blocks.length === 0) return null;
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
+  const visibleBlocks = showThinking ? blocks : blocks.filter((block) => block.type !== "thinking");
+  if (visibleBlocks.length === 0) return null;
   return (
     <div className="session-completed-step animate-[fade-up_0.3s_ease-out]">
       <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
-        {renderLiveSegments(blocks, false, stepId)}
+        {renderLiveSegments(visibleBlocks, false, stepId)}
       </div>
     </div>
   );
@@ -103,7 +99,14 @@ const LiveStepView = memo(function LiveStepView({
   streamingLive: StreamingLiveBuffers;
 }) {
   const deferredLive = useDeferredValue(streamingLive);
-  const blocks = materializeLiveBlocks(deferredLive);
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
+  const blocks = useMemo(
+    () => {
+      const content = materializeLiveBlocks(deferredLive);
+      return showThinking ? content : content.filter((block) => block.type !== "thinking");
+    },
+    [deferredLive, showThinking],
+  );
   const hasContent = blocks.length > 0;
 
   return (

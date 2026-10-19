@@ -8,7 +8,7 @@ import { ensureSynaxAgentRegistered } from '../../../modules/agent-runtime/synax
 import { resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 import { startAuxUsage, finishAuxUsage } from '../../../modules/agent-runtime/usage-projection.js';
 
-beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
+beforeEach(async () => { await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
 describe('work-aware session API', () => {
   it('preserves historical plan and goal on mode switch without applying goal acceptance in chat', async () => {
     const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Deliver verified change', sessionMetadata: { mode: 'goal' } });

@@ -4,7 +4,6 @@ import { useNotificationStore } from "../../shared/state/notificationStore";
 export interface FileOpener { id: string; name: string; icon: string | null }
 
 import type {
-  AcpDiscoveryResponse,
   AiApiModelsDiscoverRequest,
   AiApiModelsDiscoverResponse,
   AiApiValidateRequest,
@@ -84,9 +83,7 @@ export const configApi = {
     return request<ProviderListResponse>(`${BASE}/global/providers`);
   },
 
-  async discoverAcp(): Promise<AcpDiscoveryResponse> {
-    return request<AcpDiscoveryResponse>(`${BASE}/acp/discovery`);
-  },
+
 
   async validateAiApi(
     payload: AiApiValidateRequest,

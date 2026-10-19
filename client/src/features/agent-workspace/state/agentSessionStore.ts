@@ -56,7 +56,6 @@ import {
 import {
   SYNAX_PROFILE_ID,
   createSynaxSessionMetadata,
-  isAcpSession,
   readSynaxPermissionTier,
   type SynaxPermissionTier,
 } from "../synaxSessionTypes";
@@ -98,9 +97,11 @@ function isMissingSession(error: unknown, sessionId: string): boolean {
 
 async function readLatestHistoryWindow(
   sessionId: string,
+  since?: string,
 ): Promise<HistoryWindowResponse> {
   try {
-    return await agentRuntimeApi.historyWindow(sessionId);
+    return since ? await agentRuntimeApi.historyWindow(sessionId, undefined, since)
+      : await agentRuntimeApi.historyWindow(sessionId);
   } catch (error) {
     if ((error as { code?: string }).code !== "HISTORY_STALE") throw error;
     // The first read may race a runtime append. Start over from the latest
@@ -264,6 +265,8 @@ export interface SessionDetailCacheEntry {
   timelineToolCalls?: ToolCallRecord[];
   timelineIndexLoaded?: boolean;
   timelineIndexError?: string;
+  removed?: HistoryWindowResponse["removed"];
+  historyDeleted?: Record<string, string[]>;
 }
 
 let activeSessionsRefresh: {
@@ -290,6 +293,12 @@ let activeTranscriptRefresh: {
   promise: Promise<void>;
 } | null = null;
 let detailRefreshEpoch = 0;
+const terminalHistoryErrors = new Map<string, string>();
+function isPermanentHistoryError(error: unknown): boolean {
+  const value = error as { code?: string; statusCode?: number } | null;
+  return value?.code === "HISTORY_ENTITY_TOO_LARGE" || value?.code === "HISTORY_PAGE_REQUIRED" ||
+    (value?.statusCode !== undefined && [400, 401, 403, 413, 422].includes(value.statusCode));
+}
 let interactionRefreshVersion = 0;
 let finalReplyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let finalReplyRetryCount = 0;
@@ -374,7 +383,8 @@ function confirmedLiveStep(
       (message) =>
         message.stepId === snapshot.stepId &&
         (message.metadata?.type === "thinking" ||
-          message.metadata?.kind === "thought"),
+          message.metadata?.kind === "thought" ||
+          (typeof message.metadata?.thought === "string" && Boolean(message.metadata.thought.trim()))),
     )
   )
     return false;
@@ -1385,9 +1395,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
       const prompt = body.prompt?.trim() || message || "附件输入 / Media input";
       const mode = body.mode ?? get().draftMode;
-      if (isAcpSession(undefined, body.model) && mode !== "chat") {
+      if ((body.backendId && !["native", "codex"].includes(body.backendId)) || body.model?.split("/")[0].endsWith("-acp")) {
         throw new AppError(
-          "Plan and goal modes require the native Synax engine.",
+          "This execution backend has been removed. Start a native Synax session.",
           { level: "business", code: "VALIDATION" },
         );
       }
@@ -1526,6 +1536,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     resetConversationHistory: (sessionId) => {
+      terminalHistoryErrors.delete(sessionId);
       const selected = get().selectedSessionId === sessionId;
       const alreadyRefreshing =
         activeDetailRefresh?.sessionId === sessionId ||
@@ -1607,13 +1618,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         activeTranscriptRefresh = null;
       }
       get().markSessionRead(sessionId);
-      // Active sessions must always render from a fresh request. The live
-      // stream remains the fast path, but an old detail snapshot must not be
-      // restored when the conversation page is mounted again.
-      // Reuse complete inactive snapshots even for a forced refresh. The
-      // refresh runs in the background, so switching stays instant without
-      // showing a half-built transcript. Active sessions remain live-only.
-      const cached = liveSession ? undefined : existingCache;
+      // Paint the last complete page immediately, including active sessions.
+      // Live events and the change cursor reconcile it in the background.
+      const cached = existingCache;
       const needsRefresh =
         forceFresh ||
         !cacheFresh ||
@@ -1837,7 +1844,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           while (cursor && get().selectedSessionId === sessionId) {
             let older: HistoryWindowResponse;
             try {
-              older = await agentRuntimeApi.historyWindow(sessionId, cursor);
+              older = initial.historyWindow?.generation !== undefined
+                ? await agentRuntimeApi.historyIndexPage(sessionId, cursor)
+                : await agentRuntimeApi.historyWindow(sessionId, cursor);
             } catch (error) {
               if (
                 (error as { code?: string }).code !== "HISTORY_STALE" ||
@@ -1859,7 +1868,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             }
             if (get().selectedSessionId !== sessionId) return;
             if (
-              older.historyWindow.revision !== revision ||
+              (initial.historyWindow?.generation === undefined && older.historyWindow.revision !== revision) ||
               older.historyWindow.epoch !== epoch
             ) {
               if (++restarts > 2) return;
@@ -1892,6 +1901,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             timelineSteps = indexed.timelineSteps ?? timelineSteps;
             timelineToolCalls = indexed.timelineToolCalls ?? timelineToolCalls;
             cursor = nextCursor;
+            // Publish rail previews page by page; the visible transcript stays put.
+            set((state) => {
+              const current = state.sessionDetailCache[sessionId];
+              if (!current || state.selectedSessionId !== sessionId || current.historyWindow?.epoch !== epoch) return state;
+              return { sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: {
+                ...current, ...extendTimelineIndex(current, {messages:timelineMessages,runs:timelineRuns,steps:timelineSteps,toolCalls:timelineToolCalls,events:[],permissions:[],historyWindow:current.historyWindow!}),
+                timelineIndexLoaded: !cursor, timelineIndexError: undefined,
+              } } };
+            });
           }
           if (get().selectedSessionId !== sessionId) return;
           set((state) => {
@@ -1900,7 +1918,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               !current ||
               state.selectedSessionId !== sessionId ||
               current.historyWindow?.epoch !== epoch ||
-              current.historyWindow?.revision !== revision
+              (initial.historyWindow?.generation === undefined && current.historyWindow?.revision !== revision)
             )
               return state;
             return {
@@ -1908,10 +1926,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 ...state.sessionDetailCache,
                 [sessionId]: {
                   ...current,
-                  timelineMessages,
-                  timelineRuns,
-                  timelineSteps,
-                  timelineToolCalls,
+                  ...extendTimelineIndex(current, {messages:timelineMessages,runs:timelineRuns,steps:timelineSteps,toolCalls:timelineToolCalls,events:[],permissions:[],historyWindow:current.historyWindow!}),
                   timelineIndexLoaded: true,
                   timelineIndexError: undefined,
                 },
@@ -1989,6 +2004,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const targetProjectId = get().projectId;
       const forceFresh = options?.forceFresh === true;
       if (!targetSessionId) return;
+      if (forceFresh) terminalHistoryErrors.delete(targetSessionId);
+      else if (terminalHistoryErrors.has(targetSessionId)) {
+        set({ detailLoading: false, detailRefreshing: false, detailError: terminalHistoryErrors.get(targetSessionId)! });
+        return;
+      }
       // A deleted session has nothing left to refresh; without this every poll
       // tick would re-issue the full nine-request burst against a dead id.
       if (isRuntimeResourceGone(targetSessionId)) return;
@@ -2178,172 +2198,189 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               : sessionActive && cachedEntry?.cachedAt
                 ? Promise.resolve({ items: get().toolCalls })
                 : agentRuntimeApi.listToolCalls(targetSessionId);
-            const transcriptSource = windowed
-              ? readLatestHistoryWindow(targetSessionId).then(
-                  (window) =>
-                    [
-                      { items: window.steps },
-                      { items: window.runs },
-                      { items: window.events },
-                      {
-                        items: window.messages,
-                        historyWindow: window.historyWindow,
-                      },
-                      { items: window.toolCalls },
-                      { items: window.permissions },
-                    ] as const,
-                )
-              : Promise.all([
-                  // Steps and their messages must become visible together. A
-                  // completed step alone would hide its still-visible live answer.
-                  agentRuntimeApi.listSessionSteps(targetSessionId),
-                  agentRuntimeApi.listRuns(targetSessionId),
-                  agentRuntimeApi.listEvents(targetSessionId, knownEventId),
-                  agentRuntimeApi.listMessages(targetSessionId),
-                  toolCallsSource,
-                  agentRuntimeApi.listPermissions(targetSessionId),
-                ]);
-            const transcriptTask = transcriptSource
-              .then(
-                async ([
-                  stepsRes,
-                  runsRes,
-                  eventsRes,
-                  messagesRes,
-                  toolCallsRes,
-                  permissionsRes,
-                ]) => {
-                  if (!isCurrent()) return;
-                  const hydratedMessages =
-                    windowed && "historyWindow" in messagesRes
-                      ? await hydrateHistoryMessageContent(
-                          targetSessionId,
-                          messagesRes.items,
-                          messagesRes.historyWindow.revision,
-                          cachedEntry?.messages,
-                        )
-                      : messagesRes.items;
-                  if (!isCurrent()) return;
-                  const events =
-                    knownEventId && cachedEntry
-                      ? [...cachedEntry.events, ...eventsRes.items].slice(-256)
-                      : eventsRes.items;
-                  const cacheEntry: SessionDetailCacheEntry = {
-                    runs: runsRes.items,
-                    steps: stepsRes.items,
-                    events,
-                    messages: hydratedMessages,
-                    toolCalls: toolCallsRes.items,
-                    permissions: permissionsRes.items,
-                    sessionStats: get().sessionStats,
-                    sessionTodos: get().sessionTodos,
-                    sessionInvocationUsage: get().sessionInvocationUsage,
-                    cachedAt: Date.now(),
-                    lastVisitedAt: Date.now(),
-                    historyWindow:
-                      "historyWindow" in messagesRes
-                        ? messagesRes.historyWindow
-                        : undefined,
-                    ...(windowed && "historyWindow" in messagesRes
-                      ? {
-                          ...seedTimelineIndex({
-                            messages: hydratedMessages,
-                            runs: runsRes.items,
-                            steps: stepsRes.items,
-                            toolCalls: toolCallsRes.items,
-                            events: [],
-                            permissions: [],
-                            historyWindow: messagesRes.historyWindow,
-                          }),
-                          timelineIndexLoaded:
-                            !messagesRes.historyWindow.olderCursor,
-                        }
-                      : {}),
-                  };
+            const transcriptTask = (async () => {
+              let moreChanges = false;
+              do {
+                const since = forceFresh && !moreChanges ? undefined : get().sessionDetailCache[targetSessionId]?.historyWindow?.syncCursor;
+                const transcriptSource = windowed
+                  ? readLatestHistoryWindow(targetSessionId,
+                      since,
+                    ).then(
+                      (window) =>
+                        [
+                          { items: window.steps },
+                          { items: window.runs },
+                          { items: window.events },
+                          {
+                            items: window.messages,
+                            historyWindow: window.historyWindow,
+                            removed: window.removed,
+                          },
+                          { items: window.toolCalls },
+                          { items: window.permissions },
+                        ] as const,
+                    )
+                  : Promise.all([
+                      // Steps and their messages must become visible together. A
+                      // completed step alone would hide its still-visible live answer.
+                      agentRuntimeApi.listSessionSteps(targetSessionId),
+                      agentRuntimeApi.listRuns(targetSessionId),
+                      agentRuntimeApi.listEvents(targetSessionId, knownEventId),
+                      agentRuntimeApi.listMessages(targetSessionId),
+                      toolCallsSource,
+                      agentRuntimeApi.listPermissions(targetSessionId),
+                    ]);
+                await transcriptSource
+                  .then(
+                    async ([
+                      stepsRes,
+                      runsRes,
+                      eventsRes,
+                      messagesRes,
+                      toolCallsRes,
+                      permissionsRes,
+                    ]) => {
+                      if (!isCurrent()) return;
+                      const hydratedMessages =
+                        windowed && "historyWindow" in messagesRes
+                          ? await hydrateHistoryMessageContent(
+                              targetSessionId,
+                              messagesRes.items,
+                              messagesRes.historyWindow.revision,
+                              cachedEntry?.messages,
+                            )
+                          : messagesRes.items;
+                      if (!isCurrent()) return;
+                      const events =
+                        knownEventId && cachedEntry
+                          ? [...cachedEntry.events, ...eventsRes.items].slice(-256)
+                          : eventsRes.items;
+                      moreChanges = "historyWindow" in messagesRes && messagesRes.historyWindow.hasMoreChanges === true;
+                      if (moreChanges && "historyWindow" in messagesRes && (!messagesRes.historyWindow.syncCursor || messagesRes.historyWindow.syncCursor === since))
+                        throw new AppError("History cursor did not advance.", {level: "business", code: "HISTORY_CURSOR_STALLED", statusCode: 422});
+                      const cacheEntry: SessionDetailCacheEntry = {
+                        runs: runsRes.items,
+                        steps: stepsRes.items,
+                        events,
+                        messages: hydratedMessages,
+                        toolCalls: toolCallsRes.items,
+                        permissions: permissionsRes.items,
+                        sessionStats: get().sessionStats,
+                        sessionTodos: get().sessionTodos,
+                        sessionInvocationUsage: get().sessionInvocationUsage,
+                        cachedAt: Date.now(),
+                        lastVisitedAt: Date.now(),
+                        removed: "removed" in messagesRes ? messagesRes.removed : undefined,
+                        historyWindow:
+                          "historyWindow" in messagesRes
+                            ? messagesRes.historyWindow
+                            : undefined,
+                        ...(windowed && "historyWindow" in messagesRes
+                          ? {
+                              ...seedTimelineIndex({
+                                messages: hydratedMessages,
+                                runs: runsRes.items,
+                                steps: stepsRes.items,
+                                toolCalls: toolCallsRes.items,
+                                events: [],
+                                permissions: [],
+                                historyWindow: messagesRes.historyWindow,
+                              }),
+                              timelineIndexLoaded:
+                                !messagesRes.historyWindow.olderCursor,
+                            }
+                          : {}),
+                      };
 
-                  let pendingFinalReply = false;
-                  set((s) => {
-                    const merged =
-                      windowed && !forceFresh
-                        ? mergeRefreshedHistory(
-                            s.sessionDetailCache[targetSessionId],
-                            cacheEntry,
-                          )
-                        : cacheEntry;
-                    const currentStatus = s.sessions.find(
-                      (item) => item.id === targetSessionId,
-                    )?.status;
-                    const terminal = isTerminalSessionStatus(currentStatus);
-                    const snapshots = terminal
-                      ? snapshotCurrentStep(s)
-                      : s.streamingCompletedSteps;
-                    const pendingSnapshots = snapshots.filter(
-                      (snapshot) =>
-                        !confirmedLiveStep(
-                          snapshot,
-                          merged.steps,
-                          merged.messages,
-                          merged.toolCalls,
-                        ),
-                    );
-                    pendingFinalReply = terminal && pendingSnapshots.length > 0;
-                    const preserveLive = isActiveSessionStatus(currentStatus);
-                    return {
-                      detailLoading: false,
-                      detailRefreshing: false,
-                      detailError: null,
-                      runs: merged.runs,
-                      steps: merged.steps,
-                      events: merged.events,
-                      contextCompactionNotice: contextCompactionNotice(
-                        s.sessions.find((item) => item.id === targetSessionId)
-                          ?.sessionMetadata?.contextCompaction as
-                          | StoredContextCompaction
-                          | undefined,
-                      ),
-                      messages: merged.messages,
-                      toolCalls: merged.toolCalls,
-                      permissions: merged.permissions,
-                      sessionDetailCache: trimSessionDetailCache(
-                        {
-                          ...s.sessionDetailCache,
-                          [targetSessionId]: merged,
-                        },
-                        s.selectedSessionId,
-                      ),
-                      streamingCompletedSteps: pendingSnapshots,
-                      ...(preserveLive
-                        ? {}
-                        : {
-                            streamingRetry: null,
-                            streamingStepId: null,
-                            streamingLive: EMPTY_STREAMING_BUFFERS,
-                          }),
-                    };
-                  });
+                      let pendingFinalReply = false;
+                      set((s) => {
+                        const merged =
+                          windowed && (!forceFresh || cacheEntry.historyWindow?.incremental)
+                            ? mergeRefreshedHistory(
+                                s.sessionDetailCache[targetSessionId],
+                                cacheEntry,
+                              )
+                            : cacheEntry;
+                        const currentStatus = s.sessions.find(
+                          (item) => item.id === targetSessionId,
+                        )?.status;
+                        const terminal = isTerminalSessionStatus(currentStatus);
+                        const snapshots = terminal
+                          ? snapshotCurrentStep(s)
+                          : s.streamingCompletedSteps;
+                        const pendingSnapshots = snapshots.filter(
+                          (snapshot) =>
+                            !confirmedLiveStep(
+                              snapshot,
+                              merged.steps,
+                              merged.messages,
+                              merged.toolCalls,
+                            ),
+                        );
+                        pendingFinalReply = terminal && pendingSnapshots.length > 0;
+                        const preserveLive = isActiveSessionStatus(currentStatus);
+                        return {
+                          detailLoading: false,
+                          detailRefreshing: false,
+                          detailError: null,
+                          runs: merged.runs,
+                          steps: merged.steps,
+                          events: merged.events,
+                          contextCompactionNotice: contextCompactionNotice(
+                            s.sessions.find((item) => item.id === targetSessionId)
+                              ?.sessionMetadata?.contextCompaction as
+                              | StoredContextCompaction
+                              | undefined,
+                          ),
+                          messages: merged.messages,
+                          toolCalls: merged.toolCalls,
+                          permissions: merged.permissions,
+                          sessionDetailCache: trimSessionDetailCache(
+                            {
+                              ...s.sessionDetailCache,
+                              [targetSessionId]: merged,
+                            },
+                            s.selectedSessionId,
+                          ),
+                          streamingCompletedSteps: pendingSnapshots,
+                          ...(preserveLive
+                            ? {}
+                            : {
+                                streamingRetry: null,
+                                streamingStepId: null,
+                                streamingLive: EMPTY_STREAMING_BUFFERS,
+                              }),
+                        };
+                      });
 
-                  if (pendingFinalReply)
-                    scheduleFinalReplyRetry(targetSessionId);
-                  else clearFinalReplyRetry();
+                      if (pendingFinalReply)
+                        scheduleFinalReplyRetry(targetSessionId);
+                      else clearFinalReplyRetry();
 
-                  const session = get().sessions.find(
-                    (s) => s.id === targetSessionId,
+                      const session = get().sessions.find(
+                        (s) => s.id === targetSessionId,
+                      );
+                      if (session && session.childSessionIds.length > 0) {
+                        void get().fetchChildSessions(targetSessionId);
+                      }
+                    },
                   );
-                  if (session && session.childSessionIds.length > 0) {
-                    void get().fetchChildSessions(targetSessionId);
-                  }
-                },
-              )
-              .catch((error) => {
+              } while (moreChanges && isCurrent());
+            })().catch((error) => {
                 if (discardIfMissing(error)) return;
                 if (isCurrent()) {
+                  if (isPermanentHistoryError(error)) {
+                    terminalHistoryErrors.set(targetSessionId, String(error));
+                    if (terminalHistoryErrors.size > 64) terminalHistoryErrors.delete(terminalHistoryErrors.keys().next().value!);
+                    clearFinalReplyRetry();
+                  }
                   set({
                     detailLoading: false,
                     detailRefreshing: false,
                     detailError: String(error),
                   });
                   if (
-                    get().streamingCompletedSteps.length > 0 &&
+                    !isPermanentHistoryError(error) && get().streamingCompletedSteps.length > 0 &&
                     isTerminalSessionStatus(
                       get().sessions.find(
                         (session) => session.id === targetSessionId,

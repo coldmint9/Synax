@@ -33,9 +33,9 @@ const project = () => registry.capabilities.project(id, registry.listForSession(
 const discover = async (ids: string[]) => (await registry.execute(id, "agent.discover", { ids })).toolResult?.result as { contracts: Array<{ id: string; compose: boolean }> };
 const run = async (code: string) => (await registry.execute(id, "agent.execute", { code })).toolResult?.result as { status: string; value?: unknown; error?: string };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.stubEnv("SYNAX_NATIVE_CAPABILITIES", "1");
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
   vi.stubEnv("SYNAX_NATIVE_CAPABILITIES", "1");
   registry = new ToolRegistry();

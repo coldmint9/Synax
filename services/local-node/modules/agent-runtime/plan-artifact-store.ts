@@ -25,9 +25,20 @@ export interface PlanArtifact extends AgentPlan {
 }
 
 export function listPlanArtifacts(sessionId: string): PlanArtifact[] {
-  return agentRuntimeStore
+  const artifacts = agentRuntimeStore
     .listRecords<PlanArtifact>("plan", sessionId)
     .sort((a, b) => b.revision - a.revision);
+  if (artifacts.length) return artifacts;
+  const session = agentRuntimeStore.getSession(sessionId);
+  const legacy = session.sessionMetadata?.plan;
+  if (!legacy || typeof legacy !== 'object') return artifacts;
+  const parsed = agentPlanSchema.safeParse(legacy);
+  if (!parsed.success) return artifacts;
+  const now = nowIso();
+  return [{ ...parsed.data, id: `legacy-${sessionId}`, sessionId, projectId: session.projectId,
+    revision: typeof (legacy as Record<string, unknown>).revision === 'number' ? Number((legacy as Record<string, unknown>).revision) : 1,
+    status: ((legacy as Record<string, unknown>).status as PlanArtifactStatus | undefined) ?? 'saved',
+    createdAt: now, updatedAt: now }];
 }
 export function getPlanArtifact(
   sessionId: string,

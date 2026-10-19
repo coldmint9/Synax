@@ -1,9 +1,12 @@
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { streamText } from "ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeAll, afterEach, describe, expect, it } from "vitest";
 import { instantiateProvider, selectLanguageModel } from "../providers/provider-registry.js";
 import { applyResponsesReasoningMiddleware } from "./responses-reasoning.js";
+
+beforeAll(async () => { await ensureTestRuntime(); });
 
 const servers: http.Server[] = [];
 
@@ -195,7 +198,7 @@ describe("DeepSeek Responses reasoning recovery", () => {
     expect(result.reasoning).toBe("silent reasoning");
   });
 
-  it("leaves reasoning empty without the middleware, reproducing the reported bug", async () => {
+  it("preserves reasoning through Rust without Node middleware", async () => {
     const { baseUrl } = await startDeepSeekStub(
       deepSeekEvents(["The user ", "greets me."], "The user greets me."),
     );
@@ -203,6 +206,6 @@ describe("DeepSeek Responses reasoning recovery", () => {
     const result = await runStream(baseUrl, false);
 
     expect(result.text).toBe("pong");
-    expect(result.reasoning).toBe("");
+    expect(result.reasoning).toBe("The user greets me.");
   });
 });

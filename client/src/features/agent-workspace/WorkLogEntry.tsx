@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { ListChecks } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { useShellStore } from "../../shared/state/shellStore";
 import type { ConversationTimelineEntry } from "./buildConversationTimeline";
 import { ActivityRow } from "./ActivityRow";
 import { TurnBody } from "./TurnBody";
@@ -50,8 +51,9 @@ export const WorkLogEntry = memo(function WorkLogEntry({
   onExpandChild,
 }: Props) {
   const { t, locale } = useLocale();
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const { stepCount, toolCallCount, thinkingChars, elapsedMs } = entry.stats;
-  const thinking = latestThinking(entry);
+  const thinking = showThinking ? latestThinking(entry) : null;
   // A headline-style reasoning block renders as a banner in the turn body; its
   // row preview must not leak the markdown markers that the banner strips.
   const preview = thinking
@@ -60,7 +62,7 @@ export const WorkLogEntry = memo(function WorkLogEntry({
   const meta = [
     t("sessionWorkLogSteps", { count: stepCount }),
     t("sessionWorkLogCalls", { count: toolCallCount }),
-    thinkingChars > 0
+    showThinking && thinkingChars > 0
       ? t("sessionActivityChars", { count: formatCharCount(thinkingChars) })
       : null,
   ]

@@ -37,7 +37,6 @@ console.log(`  copied ${ripgrepPackage}`);
 
 // These runtime packages resolve resources dynamically.
 const dynamicPackages = [
-  "@anthropic-ai/claude-agent-sdk",
   "playwright-core",
   "node-pty",
 ];

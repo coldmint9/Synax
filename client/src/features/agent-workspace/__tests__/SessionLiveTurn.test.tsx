@@ -123,6 +123,24 @@ describe("SessionLiveTurn", () => {
     );
   });
 
+  it("keeps the activity rail live while the final answer starts streaming", () => {
+    render(
+      <SessionLiveTurn
+        {...props}
+        streamingStepId="step-1"
+        streamingCompletedSteps={[]}
+        streamingLive={{
+          ...EMPTY_STREAMING_BUFFERS,
+          blocks: [...blocks, { type: "text", content: "Final answer" }],
+        }}
+      />,
+    );
+
+    expect(
+      document.querySelectorAll('[data-live-tools="true"]'),
+    ).toHaveLength(1);
+  });
+
   it("mounts only the newest thought row of a live step", () => {
     render(
       <SessionLiveTurn

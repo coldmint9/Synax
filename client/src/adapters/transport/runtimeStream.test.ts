@@ -4,11 +4,19 @@ import type { AgentSession, AgentRunStep } from './agentRuntime'
 const session = { id: 'session', status: 'running', activeRunId: 'run', pendingResumeToken: null, blockedReason: null, updatedAt: '' } as AgentSession
 const step = { id: 'step', runId: 'run', sessionId: 'session', index: 1, status: 'running' } as AgentRunStep
 const snapshot = { session, run: null, cursor: 10, liveChunks: [{ type: 'step_started', step },
-  { type: 'message_delta', stepId: 'step', delta: 'partial' }], completedStepIds: [] } satisfies RuntimeSnapshot
+  { type: 'message_delta', stepId: 'step', delta: 'partial', outputTokens: 1 },
+  { type: 'thought_delta', stepId: 'step', delta: 'thought', thinkingTokens: 2 }], completedStepIds: [] } satisfies RuntimeSnapshot
 const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId: 'run', state: session,
-  chunk: { type: 'message_delta', stepId: 'step', delta: ' rest' } }
+  chunk: { type: 'message_delta', stepId: 'step', delta: ' rest', outputTokens: 3 } }
 
 describe('runtime stream projection', () => {
+  it('preserves cumulative thinking telemetry and deduplicates repeated records', () => {
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot(snapshot);
+    const thought = { ...record, chunk: { type: 'thought_delta', stepId: 'step', delta: ' more thought', thinkingTokens: 12 } };
+    expect(projector.record(thought)).toEqual([{ type: 'thought_delta', stepId: 'step', delta: ' more thought', thinkingTokens: 12 }]);
+    expect(projector.record(thought)).toEqual([]);
+  });
   it('refreshes a queue on Rust admission consumption even when the session has no active run', () => {
     const projector = new RuntimeStreamProjector();
     projector.snapshot({ ...snapshot, session: { ...session, status: 'completed', activeRunId: null }, liveChunks: [] });
@@ -32,7 +40,7 @@ describe('runtime stream projection', () => {
       sessionId: 'session',
       liveChunks: snapshot.liveChunks,
     })])
-    expect(projector.record(record)).toEqual([{ type: 'message_delta', stepId: 'step', delta: ' rest' }])
+    expect(projector.record(record)).toEqual([{ type: 'message_delta', stepId: 'step', delta: ' rest', outputTokens: 3 }])
     expect(projector.record(record)).toEqual([])
   })
   it('does not reopen a finished session from a delayed run-start event', () => {

@@ -32,7 +32,7 @@ function tree() {
 }
 
 describe("subagent lifecycle controls", () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it("preserves a manual stop when recovering the parent instead of restarting or reporting a lost child", async () => {
     const { root, child } = tree();

@@ -13,7 +13,6 @@ import {
 } from "../../../adapters/transport/runtimeMedia";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
-import { useAcpDiscovery } from "../composer/useAcpDiscovery";
 import {
   clearDraftComposer,
   loadDraftComposer,
@@ -34,9 +33,6 @@ vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
 vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
   releaseSessionLiveSubscription: vi.fn(),
-}));
-vi.mock("../composer/useAcpDiscovery", () => ({
-  useAcpDiscovery: vi.fn(),
 }));
 vi.mock("../../settings/useConfig", () => ({
   useConfig: () => ({
@@ -146,7 +142,6 @@ beforeEach(() => {
     selections: {},
     lastSubmittedByProject: {},
   });
-  vi.mocked(useAcpDiscovery).mockReturnValue([]);
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
     sessions: [session],

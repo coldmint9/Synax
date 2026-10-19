@@ -1,119 +1,98 @@
-import { resolvePromptCaching } from "../cache-policy.js";
 import { logger } from "../../runtime/logger.js";
 import type { ApiFormat } from "../../runtime/config/config-types.js";
 import type { ResolvedProviderConfig, RuntimeProvider } from "../types.js";
-import { buildOpenAICompatibleClientSettings } from "../custom-api-compat.js";
 import { isImageGenerationModel } from "../openai-models.js";
+import { createRustLanguageModel } from "./rust-language-model.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ProviderFactory = (options?: any) => unknown;
-
-const REGISTRY: Record<string, () => Promise<ProviderFactory>> = {
-  "@ai-sdk/anthropic": async () =>
-    (await import("@ai-sdk/anthropic")).createAnthropic,
-  "@ai-sdk/cerebras": async () =>
-    (await import("@ai-sdk/cerebras")).createCerebras,
-  "@ai-sdk/cohere": async () => (await import("@ai-sdk/cohere")).createCohere,
-  "@ai-sdk/deepinfra": async () =>
-    (await import("@ai-sdk/deepinfra")).createDeepInfra,
-  "@ai-sdk/deepseek": async () =>
-    (await import("@ai-sdk/deepseek")).createDeepSeek,
-  "@ai-sdk/google": async () =>
-    (await import("@ai-sdk/google")).createGoogleGenerativeAI,
-  "@ai-sdk/groq": async () => (await import("@ai-sdk/groq")).createGroq,
-  "@ai-sdk/mistral": async () =>
-    (await import("@ai-sdk/mistral")).createMistral,
-  "@ai-sdk/open-responses": async () =>
-    (await import("@ai-sdk/open-responses")).createOpenResponses,
-  "@ai-sdk/openai": async () => (await import("@ai-sdk/openai")).createOpenAI,
-  "@ai-sdk/openai-compatible": async () =>
-    (await import("@ai-sdk/openai-compatible")).createOpenAICompatible,
-  "@ai-sdk/perplexity": async () =>
-    (await import("@ai-sdk/perplexity")).createPerplexity,
-  "@ai-sdk/togetherai": async () =>
-    (await import("@ai-sdk/togetherai")).createTogetherAI,
-  "@ai-sdk/xai": async () => (await import("@ai-sdk/xai")).createXai,
-  "@openrouter/ai-sdk-provider": async () =>
-    (await import("@openrouter/ai-sdk-provider")).createOpenRouter,
+type RustProviderClient = {
+  config: ResolvedProviderConfig;
+  providerId: string;
+  api: string | undefined;
+  adapter?: string;
 };
-
-const factoryCache = new Map<string, ProviderFactory>();
+const SUPPORTED_ADAPTER_NAMES = new Set([
+  "@ai-sdk/anthropic",
+  "@ai-sdk/cerebras",
+  "@ai-sdk/cohere",
+  "@ai-sdk/deepinfra",
+  "@ai-sdk/deepseek",
+  "@ai-sdk/google",
+  "@ai-sdk/groq",
+  "@ai-sdk/mistral",
+  "@ai-sdk/open-responses",
+  "@ai-sdk/openai",
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/perplexity",
+  "@ai-sdk/togetherai",
+  "@ai-sdk/xai",
+  "@openrouter/ai-sdk-provider",
+]);
 
 export function isProviderSupported(
   provider: Pick<RuntimeProvider, "npm">,
 ): boolean {
-  return Boolean(provider.npm && REGISTRY[provider.npm]);
+  return Boolean(provider.npm && SUPPORTED_ADAPTER_NAMES.has(provider.npm));
 }
 
 export async function instantiateProvider(
-  provider: Pick<RuntimeProvider, "id" | "label" | "npm" | "api">,
+  provider: Pick<RuntimeProvider, "id" | "label" | "npm" | "api"> & { env?: string[] },
   config: ResolvedProviderConfig,
 ): Promise<unknown> {
-  if (!provider.npm || !REGISTRY[provider.npm]) {
+  if (!provider.npm) {
     throw new Error(
       `Provider '${provider.id}' is unsupported in Synax runtime`,
     );
   }
 
-  const create = await getFactory(provider.npm);
-  const headers = normalizeStringMap(config.options?.headers);
-  const { promptCaching: _promptCaching, ...options } = normalizeObject(
-    config.options,
-  );
-  const baseURL = config.baseUrl ?? provider.api;
+  const apiKey =
+    config.apiKey ??
+    (provider.env ?? []).map((name) => process.env[name]?.trim()).find(Boolean);
+  const rustClient = {
+    config: apiKey ? { ...config, apiKey } : config,
+    providerId: config.providerId,
+    api: config.baseUrl ?? provider.api,
+    adapter: provider.npm,
+  } satisfies RustProviderClient;
 
-  if (provider.npm === "@ai-sdk/open-responses") {
-    return create({
-      name: config.providerId,
-      url: responsesEndpoint(baseURL),
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    });
-  }
-
-  if (provider.npm === "@ai-sdk/openai-compatible") {
-    // The compatibility provider only exposes Chat Completions. For an
-    // explicitly configured Responses connection, use the native OpenAI
-    // provider against the configured base URL instead of silently falling
-    // back to chat semantics.
-    if (config.apiFormat === "openai-responses") {
-      const createResponses = await getFactory("@ai-sdk/openai");
-      return createResponses({
-        ...(baseURL ? { baseURL } : {}),
-        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-        ...(Object.keys(headers).length > 0 ? { headers } : {}),
-        ...options,
-      });
-    }
-    return create(buildOpenAICompatibleClientSettings(provider, config));
-  }
-
-  if (provider.npm === "@openrouter/ai-sdk-provider") {
-    return create({
-      baseURL,
-      apiKey: config.apiKey,
-      headers,
+  // Keep the optional OpenAI media surface available for speech/transcription
+  // and SDK image adapters. Conversation model selection below always uses
+  // the Rust descriptor, so chat/responses/messages traffic stays in Rust.
+  if (provider.npm === "@ai-sdk/openai") {
+    const { createOpenAI } = await import("@ai-sdk/openai");
+    const options = config.options && typeof config.options === "object"
+      ? { ...(config.options as Record<string, unknown>) }
+      : {};
+    delete options.promptCaching;
+    const headers = options.headers && typeof options.headers === "object"
+      ? Object.fromEntries(
+          Object.entries(options.headers as Record<string, unknown>).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : undefined;
+    delete options.headers;
+    const mediaClient = createOpenAI({
+      ...(rustClient.api ? { baseURL: rustClient.api } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      ...(headers && Object.keys(headers).length ? { headers } : {}),
       ...options,
     });
+    return Object.assign(mediaClient, rustClient);
   }
-
-  return create({
-    ...(baseURL ? { baseURL } : {}),
-    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-    ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    ...options,
-  });
+  return rustClient;
 }
 
 /**
- * Select the language model for a provider client.
+ * Select the Rust-backed language model for a provider client.
  *
  * `apiFormat` pins the wire protocol of the connection:
  * - `openai` → Chat Completions (`.chat()` on the native OpenAI client, callable otherwise)
  * - `openai-responses` → Responses API (`.responses()`)
  * - `anthropic` → Messages API (`.messages()`)
  *
- * Without an explicit format the historical selector order applies.
+ * Without an explicit format the caller's resolved protocol defaults to
+ * OpenAI Chat Completions.
  */
 export function selectLanguageModel(
   client: unknown,
@@ -126,6 +105,17 @@ export function selectLanguageModel(
     throw new Error(
       `'${modelId}' is an image model. Select a conversation model and use media.generate with this image model.`,
     );
+  }
+  const rust = client as RustProviderClient;
+  if (rust && (typeof rust === "object" || typeof rust === "function") && "config" in rust) {
+    return createRustLanguageModel({
+      providerId: rust.providerId,
+      adapter: rust.adapter,
+      apiFormat: apiFormat ?? rust.config.apiFormat ?? "openai",
+      baseUrl: rust.config.baseUrl ?? rust.api,
+      apiKey: rust.config.apiKey,
+      options: rust.config.options,
+    }, modelId);
   }
   const c = client as Record<string, unknown>;
 
@@ -162,41 +152,6 @@ export function selectLanguageModel(
   throw new Error(`Provider client cannot resolve model '${modelId}'`);
 }
 
-async function getFactory(npm: string): Promise<ProviderFactory> {
-  const cached = factoryCache.get(npm);
-  if (cached) return cached;
-  const loader = REGISTRY[npm];
-  if (!loader) throw new Error(`No registry entry for '${npm}'`);
-  const factory = await loader();
-  factoryCache.set(npm, factory);
-  return factory;
-}
-
-function normalizeObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as Record<string, unknown>) }
-    : {};
-}
-
-function normalizeStringMap(value: unknown): Record<string, string> {
-  const input = normalizeObject(value);
-  return Object.fromEntries(
-    Object.entries(input).filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === "string" && entry[1].trim().length > 0,
-    ),
-  );
-}
-
-function responsesEndpoint(baseUrl: string | undefined): string {
-  const normalized = (baseUrl ?? "https://api.openai.com/v1").replace(
-    /\/+$/,
-    "",
-  );
-  return normalized.endsWith("/responses")
-    ? normalized
-    : `${normalized}/responses`;
-}
 
 /**
  * Adapter npm names the runtime can instantiate. The media capability table is
@@ -204,5 +159,5 @@ function responsesEndpoint(baseUrl: string | undefined): string {
  * cannot ship without an explicit media declaration.
  */
 export function registeredAdapterPackages(): string[] {
-  return Object.keys(REGISTRY).sort();
+  return [...SUPPORTED_ADAPTER_NAMES].sort();
 }

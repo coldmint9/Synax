@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.config.mockReturnValue({
     inputOptimizationModel: "",
-    providers: [{ id: "codex-acp", kind: "acp" }],
+    providers: [{ id: "openai", kind: "api" }],
   });
   mocks.generate.mockResolvedValue({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",

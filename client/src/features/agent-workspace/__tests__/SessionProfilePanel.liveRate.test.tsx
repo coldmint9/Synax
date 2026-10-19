@@ -82,12 +82,14 @@ describe("SessionProfilePanel live token rate", () => {
     vi.useRealTimers();
   });
 
-  it("counts real stream deltas into a five-second rate", () => {
+  it.each([true, false])("counts text and reasoning regardless of visibility (showThinking=%s)", (showThinking) => {
+    useShellStore.setState((s) => ({ preferences: { ...s.preferences, sessionShowThinking: showThinking } }));
     render(<SessionProfilePanel sessionId="profile" />);
     expect(screen.getByText("—")).toBeInTheDocument();
 
     act(() => {
-      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400) });
+      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400), outputTokens: 60 });
+      emit({ type: "thought_delta", stepId: "step-1", delta: "b".repeat(160), thinkingTokens: 40 });
       vi.advanceTimersByTime(5_000);
     });
 
@@ -98,7 +100,8 @@ describe("SessionProfilePanel live token rate", () => {
   it("stops counting once the session is no longer running", () => {
     render(<SessionProfilePanel sessionId="profile" />);
     act(() => {
-      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400) });
+      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400), outputTokens: 60 });
+      emit({ type: "thought_delta", stepId: "step-1", delta: "b".repeat(160), thinkingTokens: 40 });
       vi.advanceTimersByTime(5_000);
     });
     expect(screen.getByText("20.0")).toBeInTheDocument();

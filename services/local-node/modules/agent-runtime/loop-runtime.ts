@@ -477,7 +477,9 @@ export class AgentLoopRuntime {
       : session.prompt;
     const inputResume = resume ? interactionService.ready(sessionId) : null;
     let pendingResume =
-      resume && !inputResume ? this.resume.resolvePendingRun(sessionId) : null;
+      resume && !inputResume
+        ? await this.resume.resolvePendingRun(sessionId)
+        : null;
     if (resume && !inputResume && !pendingResume)
       throw new AgentValidationError(
         "No pending runtime action is available to resume.",
@@ -945,6 +947,8 @@ export class AgentLoopRuntime {
 
           let modelResult: LoopStepModelResult | null = null;
           let stepForceInjectRequested = false;
+          let streamedOutput = "";
+          let streamedThought = "";
           void sessionHooks.emit({
             type: "step:before",
             sessionId,
@@ -1043,6 +1047,11 @@ export class AgentLoopRuntime {
               });
             }
             if (event.type === "thought_delta") {
+              streamedThought += event.delta;
+              const thinkingTokens = countTokens(
+                streamedThought,
+                input.model ?? undefined,
+              );
               const evt = this.events.append({
                 sessionId,
                 type: "thought_delta",
@@ -1055,15 +1064,22 @@ export class AgentLoopRuntime {
                 runId: run.id,
                 stepId: step.id,
                 delta: event.delta,
+                thinkingTokens,
                 event: evt,
               };
               emitSessionLive(sessionId, {
                 type: "thought_delta",
                 stepId: step.id,
                 delta: event.delta,
+                thinkingTokens,
               });
             }
             if (event.type === "text_delta") {
+              streamedOutput += event.delta;
+              const outputTokens = countTokens(
+                streamedOutput,
+                input.model ?? undefined,
+              );
               const evt = this.events.append({
                 sessionId,
                 type: "message_delta",
@@ -1076,12 +1092,14 @@ export class AgentLoopRuntime {
                 runId: run.id,
                 stepId: step.id,
                 delta: event.delta,
+                outputTokens,
                 event: evt,
               };
               emitSessionLive(sessionId, {
                 type: "message_delta",
                 stepId: step.id,
                 delta: event.delta,
+                outputTokens,
               });
             }
             if (event.type === "step_complete") {

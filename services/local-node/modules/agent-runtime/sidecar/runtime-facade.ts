@@ -3,9 +3,16 @@ import {
   decodeUiSnapshot,
   type RuntimeRecordState,
 } from "../../../../../packages/runtime-protocol/stream.js";
-import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
+import {
+  normalizeUsage,
+  type UsageContext,
+} from "../../../infrastructure/llm-runtime/usage.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
-import { projectCacheUsage } from "../cache-usage.js";
+import {
+  CacheUsageAccumulator,
+  cacheUsageSample,
+} from "../cache-usage.js";
+import type { ContextComposition } from "../context-composition.js";
 import type {
   AgentRun,
   AgentRunStep,
@@ -19,9 +26,10 @@ import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
-import { historyPages, readHistoryList, readSessionList } from './history-pages.js';
+import { hydrateHistoryValues, readHistoryList, readSessionList } from './history-pages.js';
 import { fileCommand, previewRuntimeFiles, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
 export type RuntimeSidecarStreamMode = "authoritative";
+const HISTORY_ENTITY_PAGE_BYTES = 768 * 1024;
 function streamMode(): RuntimeSidecarStreamMode {
   return "authoritative";
 }
@@ -77,17 +85,24 @@ export class RuntimeFacade {
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
   ) {}
+  async workspaceIndexCommand<T>(operation: 'register' | 'list' | 'status', payload: unknown): Promise<T> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Rust workspace indexer is unavailable.');
+    return JSON.parse(Buffer.from(await client.workspaceIndexCommand(operation, payload)).toString('utf8')) as T;
+  }
   streamMode(): RuntimeSidecarStreamMode {
     return streamMode();
   }
   enabled(): boolean {
     return this.clientFactory() !== null;
   }
+
   /** Admission is awaited before starting provider/tool execution. */
   async admitExecution(
     input: RuntimeAdmissionInput,
     activate = true,
   ): Promise<{
+    runId: string;
     reused: boolean;
     epoch: number;
     revision: number;
@@ -122,8 +137,10 @@ export class RuntimeFacade {
             throw error;
         }
       }
-      if (admission.runId !== input.run.id)
-        throw new Error("Runtime admission returned a different run identity.");
+      // Admission retries may propose a new ID. The Rust receipt owns the
+      // identity; only activation requires the caller's exact accepted run.
+      if (activate && admission.runId !== input.run.id)
+        throw new Error("Runtime activation attempted for a different accepted run.");
       if (activate && input.run.status === "queued") {
         for (let attempt = 0; ; attempt++) {
           const fence = await client.snapshot(input.sessionId);
@@ -160,11 +177,12 @@ export class RuntimeFacade {
       }
       const current = await client.snapshot(input.sessionId);
       if (
-        current.activeRunId !== input.run.id ||
-        current.epoch !== admission.epoch
+        (activate || !admission.reused) &&
+        (current.activeRunId !== admission.runId || current.epoch !== admission.epoch)
       )
         throw new Error("Cannot relaunch a completed or superseded run.");
       return {
+        runId: admission.runId,
         reused: admission.reused,
         epoch: current.epoch,
         revision: current.revision,
@@ -211,6 +229,10 @@ export class RuntimeFacade {
       }
       try {
         await this.persistRunHistory(run);
+        // Finish may add an interrupted assistant message in the same Rust
+        // transaction. Reconcile that outbox before exposing completed history.
+        await this.historyCommand({ sessionId, requestId: `finish-history:${run.id}`,
+          operation: "reconcile_stream", payload: {} });
       } catch (error) {
         logger.warn(
           {
@@ -364,14 +386,10 @@ export class RuntimeFacade {
     reason: string,
   ): Promise<void> {
     const snapshot = await this.uiSnapshotAuthoritative(sessionId);
+    const fence = await this.snapshotAuthoritative(sessionId);
     const now = new Date().toISOString();
     const run = snapshot.run as AgentRun | null;
-    if (
-      run &&
-      ["queued", "running", "waiting_permission", "waiting_input"].includes(
-        String(run.status),
-      )
-    ) {
+    if (run && fence.activeRunId === run.id) {
       await this.finishExecution(sessionId, {
         ...run,
         status: "interrupted",
@@ -405,6 +423,7 @@ export class RuntimeFacade {
         },
       },
     );
+    await agentRuntimeStore.hydrateSession(sessionId, true);
   }
   async historyCommand(input: {
     sessionId: string;
@@ -414,8 +433,7 @@ export class RuntimeFacade {
   }): Promise<unknown> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    let bytes: Uint8Array;
-    bytes = await client.historyCommand(input);
+    const bytes = await client.historyCommand(input);
     return JSON.parse(Buffer.from(bytes).toString("utf8"));
   }
   async historyCommandGlobal(input: {
@@ -925,7 +943,7 @@ export class RuntimeFacade {
       total: 0,
       cacheReadMatched: 0,
       cacheInputMatched: 0,
-      cacheReadRatio: null,
+      cacheReadRatio: null as number | null,
     });
     const zeroCoverage = () => ({
       requests: 0,
@@ -955,40 +973,99 @@ export class RuntimeFacade {
     let contextRequestId: string | null = null;
     let reportedWindow: number | null = null;
     let runningDuration = 0;
+    const cacheSamples = new CacheUsageAccumulator();
+    let pendingCacheSamples = 0;
+    let contextComposition: ContextComposition | null = null;
+    const addUsage = (
+      target: ReturnType<typeof zeroTotals>,
+      targetCoverage: ReturnType<typeof zeroCoverage>,
+      normalized: ReturnType<typeof normalizeUsage>,
+    ) => {
+      targetCoverage.requests++;
+      const n = normalized?.normalization;
+      for (const key of ["cacheRead", "cacheWrite"] as const)
+        targetCoverage[`${key}${n?.[key].status === "known" ? "Known" : "Unknown"}`]++;
+      if (!normalized || n?.input.status !== "known") {
+        targetCoverage.missing++;
+        targetCoverage.complete = false;
+        return;
+      }
+      targetCoverage.recorded++;
+      target.input += n.input.value ?? 0;
+      target.output += n.output.value ?? 0;
+      target.reasoning += n.reasoning.value ?? 0;
+      target.cacheRead += n.cacheRead.value ?? 0;
+      target.cacheWrite += n.cacheWrite.value ?? 0;
+      if (
+        n.cacheRead.status === "known" &&
+        n.cacheRead.value! <= n.input.value!
+      ) {
+        targetCoverage.cacheMatched++;
+        target.cacheReadMatched += n.cacheRead.value!;
+        target.cacheInputMatched += n.input.value!;
+        target.cacheReadRatio =
+          target.cacheInputMatched > 0
+            ? target.cacheReadMatched / target.cacheInputMatched
+            : null;
+      }
+      target.total = target.input + target.output;
+    };
     const addStep = (step: AgentRunStep, isSelf: boolean) => {
       const metadata =
         step.metadata && typeof step.metadata === "object"
           ? (step.metadata as Record<string, unknown>)
           : {};
-      const normalized = normalizeUsage(metadata.usage);
+      const context: UsageContext = {
+        providerMetadata: metadata.providerMetadata,
+      };
+      if (metadata.backendId === "codex")
+        context.source = "cli";
+      const normalized = normalizeUsage(metadata.usage, context);
+      const contextUsage = metadata.externalTurn
+        ? normalizeUsage(metadata.contextUsage, context)
+        : normalized;
       const groups = isSelf ? (["self", "tree"] as const) : (["tree"] as const);
       for (const group of groups) {
-        const target = usage.steps[group];
-        const targetCoverage = coverage.steps[group];
-        targetCoverage.requests++;
-        if (normalized?.normalization.input.status === "known")
-          targetCoverage.recorded++;
-        else {
-          targetCoverage.missing++;
-          targetCoverage.complete = false;
-        }
-        target.input += normalized?.normalization.input.value ?? 0;
-        target.output += normalized?.normalization.output.value ?? 0;
-        target.reasoning += normalized?.normalization.reasoning.value ?? 0;
-        target.cacheRead += normalized?.normalization.cacheRead.value ?? 0;
-        target.cacheWrite += normalized?.normalization.cacheWrite.value ?? 0;
-        target.total = target.input + target.output;
+        addUsage(usage[group], coverage[group], normalized);
+        addUsage(usage.steps[group], coverage.steps[group], normalized);
       }
-      if (isSelf && normalized?.normalization.input.status === "known") {
-        contextInput = normalized.normalization.input.value ?? null;
+      if (isSelf && contextUsage?.normalization.input.status === "known") {
+        contextInput = contextUsage.normalization.input.value ?? null;
         contextRequestId =
-          typeof normalized.requestId === "string"
-            ? normalized.requestId
+          typeof contextUsage.requestId === "string"
+            ? contextUsage.requestId
             : step.id;
         contextMeasuredAt =
-          typeof normalized.measuredAt === "string"
-            ? normalized.measuredAt
+          typeof contextUsage.measuredAt === "string"
+            ? contextUsage.measuredAt
             : (step.completedAt ?? step.startedAt);
+      }
+      if (isSelf) {
+        const composition = metadata.contextComposition;
+        if (composition && typeof composition === "object")
+          contextComposition = composition as ContextComposition;
+        if (
+          (!contextUsage || contextUsage.normalization.input.status !== "known") &&
+          !step.completedAt &&
+          ["running", "waiting_permission", "waiting_input"].includes(
+            step.status,
+          )
+        ) {
+          pendingCacheSamples++;
+        } else {
+          cacheSamples.push(
+            cacheUsageSample(
+              {
+                stepId: step.id,
+                measuredAt: step.completedAt ?? step.startedAt,
+                model: step.model,
+                unit: metadata.externalTurn ? "external-turn" : "request",
+              },
+              metadata.externalTurn ? metadata.contextUsage : metadata.usage,
+              context,
+            ),
+          );
+        }
       }
       const start = Date.parse(step.startedAt);
       const run = root.runs.find((item) => item.id === step.runId);
@@ -1003,7 +1080,10 @@ export class RuntimeFacade {
         reportedWindow = candidateWindow;
     };
     for (const record of records)
-      for (const step of record.steps) addStep(step, record.id === sessionId);
+      for (const step of [...record.steps].sort((a, b) =>
+        a.startedAt.localeCompare(b.startedAt),
+      ))
+        addStep(step, record.id === sessionId);
     for (const record of records) {
       for (const item of record.auxiliary as Array<{
         sessionId?: unknown;
@@ -1013,21 +1093,8 @@ export class RuntimeFacade {
         for (const group of record.id === sessionId
           ? (["self", "tree"] as const)
           : (["tree"] as const)) {
-          const target = usage.auxiliary[group];
-          const targetCoverage = coverage.auxiliary[group];
-          targetCoverage.requests++;
-          if (normalized?.normalization.input.status === "known")
-            targetCoverage.recorded++;
-          else {
-            targetCoverage.missing++;
-            targetCoverage.complete = false;
-          }
-          target.input += normalized?.normalization.input.value ?? 0;
-          target.output += normalized?.normalization.output.value ?? 0;
-          target.reasoning += normalized?.normalization.reasoning.value ?? 0;
-          target.cacheRead += normalized?.normalization.cacheRead.value ?? 0;
-          target.cacheWrite += normalized?.normalization.cacheWrite.value ?? 0;
-          target.total = target.input + target.output;
+          addUsage(usage[group], coverage[group], normalized);
+          addUsage(usage.auxiliary[group], coverage.auxiliary[group], normalized);
         }
       }
     }
@@ -1080,7 +1147,7 @@ export class RuntimeFacade {
           : null,
       roundCount: root.steps.length,
       averageStepsPerCompletedRun: averageSteps,
-      contextComposition: null,
+      contextComposition,
       context: {
         inputTokens: contextInput,
         source: contextInput === null ? null : "provider",
@@ -1089,7 +1156,7 @@ export class RuntimeFacade {
         measuredAt: contextMeasuredAt,
         latestRequestUsageAvailable: contextInput !== null,
       },
-      cache: projectCacheUsage([]),
+      cache: cacheSamples.result(pendingCacheSamples),
       usage,
       coverage,
       tokenUsage: { input, output: usage.self.output, total: input },
@@ -1233,24 +1300,27 @@ export class RuntimeFacade {
     const changes:Array<{kind:string;value:Record<string,unknown>}>=[];
     const rules=[['list_runs','run'],['list_steps','step'],['list_parts','part'],['list_events','event'],['list_artifacts','artifact'],['list_tool_calls','tool_call'],['list_permissions','permission'],['list_interactions','interaction']] as const;
     const now=new Date().toISOString();
-    for(const [operation,kind] of rules)for await(const page of historyPages<Record<string,unknown>>(client,sessionId,operation))for(const record of page) {
-      if(restored.metadata.omitRunId && ((kind==='run'&&record.id===restored.metadata.omitRunId)||record.runId===restored.metadata.omitRunId)) {
-        changes.push({kind:'runtime.tombstone',value:{id:record.id,sessionId,entityKind:`runtime.${kind}`}});continue;
+    for (const [operation, kind] of rules) {
+      const records = await readHistoryList<Record<string, unknown>>(client, sessionId, operation);
+      for (const record of records) {
+        if(restored.metadata.omitRunId && ((kind==='run'&&record.id===restored.metadata.omitRunId)||record.runId===restored.metadata.omitRunId)) {
+          changes.push({kind:'runtime.tombstone',value:{id:record.id,sessionId,entityKind:`runtime.${kind}`}});continue;
+        }
+        const value={...record};let changed=false;
+        if(kind==='run' && ['running','queued','stopping','waiting_permission','waiting_input'].includes(String(value.status))) {
+          value.status='interrupted';value.stopReason='History restored';value.completedAt=now;
+          const metadata={...value.metadata as Record<string,unknown>};delete metadata.executionLease;delete metadata.recovery;value.metadata=metadata;changed=true;
+        } else if(kind==='step' && ['running','queued','waiting_permission','waiting_input'].includes(String(value.status))) {
+          value.status='interrupted';value.finishReason='history_restored';value.completedAt=now;changed=true;
+        } else if(kind==='tool_call' && ['pending','running'].includes(String(value.status))) {
+          value.status='failed';value.error='Execution ended when history was restored.';value.endedAt=now;changed=true;
+        } else if(kind==='permission' && value.action==='ask' && !value.resolvedAt) {
+          Object.assign(value,{action:'deny',userReply:'reject',resolvedAt:now,resumeToken:null});changed=true;
+        } else if(kind==='interaction' && !value.consumedAt) {
+          Object.assign(value,{status:'cancelled',resolvedAt:now,consumedAt:now});changed=true;
+        }
+        if(changed)changes.push({kind:`runtime.${kind}`,value});
       }
-      const value={...record};let changed=false;
-      if(kind==='run' && ['running','queued','stopping','waiting_permission','waiting_input'].includes(String(value.status))) {
-        value.status='interrupted';value.stopReason='History restored';value.completedAt=now;
-        const metadata={...value.metadata as Record<string,unknown>};delete metadata.executionLease;delete metadata.recovery;value.metadata=metadata;changed=true;
-      } else if(kind==='step' && ['running','queued','waiting_permission','waiting_input'].includes(String(value.status))) {
-        value.status='interrupted';value.finishReason='history_restored';value.completedAt=now;changed=true;
-      } else if(kind==='tool_call' && ['pending','running'].includes(String(value.status))) {
-        value.status='failed';value.error='Execution ended when history was restored.';value.endedAt=now;changed=true;
-      } else if(kind==='permission' && value.action==='ask' && !value.resolvedAt) {
-        Object.assign(value,{action:'deny',userReply:'reject',resolvedAt:now,resumeToken:null});changed=true;
-      } else if(kind==='interaction' && !value.consumedAt) {
-        Object.assign(value,{status:'cancelled',resolvedAt:now,consumedAt:now});changed=true;
-      }
-      if(changed)changes.push({kind:`runtime.${kind}`,value});
     }
     await this.appendHistoryEntities(sessionId,changes);
     await this.controlCommand({sessionId,requestId:`history-end:${restored.requestId}`,operation:'history_end',
@@ -1558,7 +1628,8 @@ export class RuntimeFacade {
       | "list_runs"
       | "list_steps"
       | "list_tool_calls"
-      | "list_events",
+      | "list_events"
+      | "list_permissions",
     cursor?: string,
     limit = 256,
   ): Promise<{
@@ -1574,114 +1645,67 @@ export class RuntimeFacade {
       sessionId,
       requestId: historyReadRequest(operation, sessionId),
       operation,
-      payload: { cursor: graphCursor, limit, reverse: true },
+      payload: {
+        cursor: graphCursor,
+        limit,
+        reverse: true,
+        maxBytes: HISTORY_ENTITY_PAGE_BYTES,
+        chunked: true,
+      },
     })) as {
       items?: unknown[];
       cursor?: unknown;
       revision: number;
     };
     return {
-      items: page.items ?? [],
+      items: await hydrateHistoryValues(this.clientFactory()!, sessionId, page.items ?? []),
       revision: page.revision,
       ...(page.cursor
         ? { cursor: this.encodeGraphCursor(sessionId, page.revision, page.cursor) }
         : {}),
     };
   }
-  async historyWindowAuthoritative(
-    sessionId: string,
-    cursor?: string,
-  ): Promise<{
+  async historyWindowAuthoritative(sessionId: string, cursor?: string, since?: string, preview = false): Promise<{
     messages: AgentRuntimeMessage[];
     runs: AgentRun[];
     steps: AgentRunStep[];
     toolCalls: ToolCallRecord[];
     events: RuntimeEvent[];
     permissions: unknown[];
+    removed: Array<{ collection: string; id: string }>;
     historyWindow: {
-      revision: number;
-      epoch: number;
-      cursor?: string;
-      olderCursor?: string;
-      hasEarlier: boolean;
-      latest: boolean;
-      detailsTruncated: boolean;
+      revision: number; epoch: number; generation: number;
+      cursor?: string; olderCursor?: string; syncCursor?: string;
+      hasEarlier: boolean; latest: boolean; detailsTruncated: boolean;
+      incremental: boolean; hasMoreChanges?: boolean;
     };
   }> {
-    const [head, hot, runsRaw, stepsRaw, toolsRaw, eventsRaw] =
-      await Promise.all([
-        this.historyHead(sessionId),
-        this.snapshotAuthoritative(sessionId),
-        this.listHistoryObjects(sessionId, "list_runs"),
-        this.listHistoryObjects(sessionId, "list_steps"),
-        this.listHistoryObjects(sessionId, "list_tool_calls"),
-        this.listHistoryObjects(sessionId, "list_events"),
-      ]);
-    const revision = Number.isSafeInteger(head.revision) ? head.revision : 0;
-    const messagePage: AgentRuntimeMessage[] = [];
-    let graphCursor = cursor;
-    for (let page = 0; page < 32 && messagePage.length < 24; page++) {
-      const result = await this.historyEntityPageAuthoritative(
-        sessionId,
-        "list_messages",
-        graphCursor,
-        24 - messagePage.length,
-      );
-      messagePage.push(...(result.items as AgentRuntimeMessage[]));
-      if (!result.cursor) {
-        graphCursor = undefined;
-        break;
-      }
-      graphCursor = result.cursor;
-    }
-    const pageMessages = this.orderedHistory(messagePage).slice(-24);
-    const stepIds = new Set(
-      pageMessages
-        .map((message) => message.stepId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const runIds = new Set(
-      pageMessages
-        .map((message) => message.runId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const steps = this.orderedHistory(
-      (stepsRaw as AgentRunStep[]).filter(
-        (step) => stepIds.has(step.id) || runIds.has(step.runId),
-      ),
-    ).slice(-48);
-    for (const step of steps) runIds.add(step.runId);
-    const runs = this.orderedHistory(
-      (runsRaw as AgentRun[]).filter((run) => runIds.has(run.id)),
-    ).slice(-48);
-    const relatedStepIds = new Set(steps.map((step) => step.id));
-    const toolCalls = this.orderedHistory(
-      (toolsRaw as ToolCallRecord[]).filter(
-        (tool) => tool.stepId && relatedStepIds.has(tool.stepId),
-      ),
-    ).slice(-96);
-    const events = cursor
-      ? []
-      : this.orderedHistory(eventsRaw as RuntimeEvent[]).slice(-32);
-    const permissions = cursor ? [] : (await this.listHistoryObjects(sessionId, 'list_permissions')).slice(-32);
-    const epoch = hot?.epoch ?? 0;
-    return {
-      messages: pageMessages,
-      runs,
-      steps,
-      toolCalls,
-      events,
-      permissions,
-      historyWindow: {
-        revision,
-        epoch,
-        cursor,
-        olderCursor: graphCursor,
-        hasEarlier: Boolean(graphCursor),
-        latest: !cursor,
-        detailsTruncated: false,
-      },
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    const decode = (token?: string) => {
+      if (!token) return undefined;
+      if (token.length > 16_384) throw new AgentRuntimeError('Invalid history cursor.', 'INVALID_COMMAND', 400);
+      try { return JSON.parse(Buffer.from(token, 'base64url').toString('utf8')); }
+      catch { throw new AgentRuntimeError('Invalid history cursor.', 'INVALID_COMMAND', 400); }
     };
+    // One atomic, bounded Rust query for all collections. No listHistoryObjects
+    // call, full-session hydration, or loop through older pages on this path.
+    const page = await this.historyCommand({ sessionId,
+      requestId: historyReadRequest('history-sync', sessionId), operation: 'history_sync',
+      payload: { cursor: decode(cursor), since: decode(since), ...(preview ? {preview: true} : {}) },
+    }) as Awaited<ReturnType<RuntimeFacade['historyWindowAuthoritative']>>;
+    for (const field of ['messages', 'runs', 'steps', 'toolCalls', 'events', 'permissions'] as const) {
+      const records = await hydrateHistoryValues(client, sessionId, page[field] as unknown[]);
+      // Changes are in revision order; preserve it so the newest identity wins.
+      (page as unknown as Record<string, unknown>)[field] = page.historyWindow.incremental
+        ? records : this.orderedHistory(records);
+    }
+    for (const field of ['olderCursor', 'syncCursor'] as const) {
+      const token = page.historyWindow[field];
+      page.historyWindow[field] = token ? Buffer.from(JSON.stringify(token)).toString('base64url') : undefined;
+    }
+    page.historyWindow.cursor = cursor;
+    return page;
   }
   async historyTimelineAuthoritative(
     sessionId: string,

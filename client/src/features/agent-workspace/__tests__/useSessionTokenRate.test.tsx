@@ -5,8 +5,7 @@ import {
   useSessionTokenRate,
 } from "../useSessionTokenRate";
 import {
-  estimateStreamTokens,
-  noteStreamedOutput,
+  noteLiveEvent,
   readStreamedTokens,
   resetStreamedTokensForTests,
 } from "../../../shared/lib/streamThroughput";
@@ -14,24 +13,49 @@ import {
 describe("streamThroughput", () => {
   beforeEach(resetStreamedTokensForTests);
 
-  it("estimates latin at four characters per token and CJK at one", () => {
-    expect(estimateStreamTokens("")).toBe(0);
-    expect(estimateStreamTokens("abcd")).toBe(1);
-    expect(estimateStreamTokens("你好")).toBe(2);
-  });
-
   it("keeps accumulating across step boundaries", () => {
-    noteStreamedOutput("s1", "abcd");
-    noteStreamedOutput("s1", "efgh");
+    noteLiveEvent("s1", { type: "message_delta", stepId: "one", outputTokens: 1 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "two", thinkingTokens: 1 });
     expect(readStreamedTokens("s1")).toBe(2);
   });
 
   it("counts each session separately", () => {
-    noteStreamedOutput("s1", "abcd");
-    noteStreamedOutput("s2", "abcd".repeat(4));
+    noteLiveEvent("s1", { type: "message_delta", stepId: "one", outputTokens: 1 });
+    noteLiveEvent("s2", { type: "message_delta", stepId: "one", outputTokens: 4 });
     expect(readStreamedTokens("s1")).toBe(1);
     expect(readStreamedTokens("s2")).toBe(4);
     expect(readStreamedTokens("s3")).toBe(0);
+  });
+
+  it("deduplicates text and reasoning counts independently", () => {
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 5 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 5 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 3 });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 4 });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 2 });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 7 });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-2", outputTokens: 3 });
+    expect(readStreamedTokens("s1")).toBe(15);
+  });
+
+  it("includes reasoning telemetry in the output rate", () => {
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 4 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 6 });
+    expect(readStreamedTokens("s1")).toBe(10);
+  });
+
+  it("hydrates the current step from a reconnect snapshot", () => {
+    noteLiveEvent("s1", {
+      type: "runtime_snapshot",
+      liveChunks: [
+        { type: "message_delta", stepId: "step-1", outputTokens: 8 },
+        { type: "thought_delta", stepId: "step-1", thinkingTokens: 20 },
+      ],
+    });
+    expect(readStreamedTokens("s1")).toBe(0);
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 10 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 23 });
+    expect(readStreamedTokens("s1")).toBe(5);
   });
 });
 
@@ -50,13 +74,13 @@ describe("useSessionTokenRate", () => {
     expect(view.result.current).toBeNull();
 
     act(() => {
-      noteStreamedOutput("s1", "a".repeat(400)); // 100 tokens over 5s
+      noteLiveEvent("s1", { type: "thought_delta", stepId: "one", thinkingTokens: 100 }); // 100 tokens over 5s
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS);
     });
     expect(view.result.current).toBe(20);
 
     act(() => {
-      noteStreamedOutput("s1", "a".repeat(200)); // 50 tokens over the next 5s
+      noteLiveEvent("s1", { type: "message_delta", stepId: "one", outputTokens: 50 }); // 50 tokens over the next 5s
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS);
     });
     expect(view.result.current).toBe(10);
@@ -65,22 +89,22 @@ describe("useSessionTokenRate", () => {
   it("ignores output that belongs to another session", () => {
     const view = renderHook(() => useSessionTokenRate("s1", true));
     act(() => {
-      noteStreamedOutput("s2", "a".repeat(400));
+      noteLiveEvent("s2", { type: "thought_delta", stepId: "one", thinkingTokens: 100 });
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS);
     });
     expect(view.result.current).toBeNull();
   });
 
-  it("keeps the last measured speed when a window produces no output", () => {
+  it("clears the measured speed when a window produces no output", () => {
     const view = renderHook(() => useSessionTokenRate("s1", true));
     act(() => {
-      noteStreamedOutput("s1", "a".repeat(400));
+      noteLiveEvent("s1", { type: "thought_delta", stepId: "one", thinkingTokens: 100 });
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS);
     });
     expect(view.result.current).toBe(20);
 
     act(() => vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS));
-    expect(view.result.current).toBe(20);
+    expect(view.result.current).toBeNull();
   });
 
   it("runs no timer and reports nothing while the session is idle", () => {
@@ -89,7 +113,7 @@ describe("useSessionTokenRate", () => {
     expect(view.result.current).toBeNull();
 
     act(() => {
-      noteStreamedOutput("s1", "a".repeat(400));
+      noteLiveEvent("s1", { type: "thought_delta", stepId: "one", thinkingTokens: 100 });
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS * 3);
     });
     expect(view.result.current).toBeNull();
@@ -102,7 +126,7 @@ describe("useSessionTokenRate", () => {
       { initialProps: { working: true } },
     );
     act(() => {
-      noteStreamedOutput("s1", "a".repeat(400));
+      noteLiveEvent("s1", { type: "thought_delta", stepId: "one", thinkingTokens: 100 });
       vi.advanceTimersByTime(TOKEN_RATE_SAMPLE_MS);
     });
     expect(view.result.current).toBe(20);

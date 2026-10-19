@@ -30,6 +30,7 @@ const CF_GC_STATE: &str = "gc_state";
 const CF_GC_MARKS: &str = "gc_marks";
 const CF_GC_QUEUE: &str = "gc_queue";
 mod metadata;
+mod sync;
 const CF_METADATA: &str = "metadata";
 const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMMAND_BYTES: usize = 8 * 1024 * 1024;
@@ -43,6 +44,8 @@ const GC_MAX_BATCH: usize = 512;
 
 #[derive(Debug, Error)]
 pub enum HistoryError {
+    #[error("Conversation changed. Refresh history.")]
+    StaleCursor,
     #[error("file operation: {0}")]
     FileIo(#[from] std::io::Error),
     #[error("file operation conflicts: {0}")]
@@ -194,21 +197,6 @@ impl HistoryStore {
         result
     }
 
-    pub async fn object_async(&self, object_id: String) -> Result<Vec<u8>, HistoryError> {
-        if let Some(bytes) = self.object_cache.get(&object_id).await {
-            return Ok(bytes);
-        }
-        let store = self.clone();
-        let key = object_id.clone();
-        let bytes = tokio::task::spawn_blocking(move || store.read_object(&key))
-            .await
-            .map_err(|error| {
-                HistoryError::InvalidCommand(format!("history task failed: {error}"))
-            })??;
-        self.object_cache.insert(object_id, bytes.clone()).await;
-        Ok(bytes)
-    }
-
     fn command(
         &self,
         session_id: &str,
@@ -271,7 +259,7 @@ impl HistoryStore {
             .map_err(|_| HistoryError::InvalidCommand("history session lock poisoned".into()))?;
         let readonly = matches!(
             operation,
-            "metadata_get" | "metadata_page" | "head_read"
+            "metadata_get" | "metadata_page" | "head_read" | "history_sync" | "object_value_chunk"
                 | "get_object"
                 | "get_blob_chunk"
                 | "get_blob_manifest"
@@ -326,6 +314,8 @@ impl HistoryStore {
         }
         let mut batch = WriteBatch::default();
         let result = match operation {
+            "history_sync" => self.history_sync(session_id, &value)?,
+            "object_value_chunk" => self.object_value_chunk(&value)?,
             "append_entities" => self.append_entities(session_id, &value, &mut batch)?,
             "put_object" => self.put_object(&value, &mut batch)?,
             "put_blob_chunk" => self.put_blob_chunk(&value, &mut batch)?,
@@ -478,7 +468,7 @@ impl HistoryStore {
         let mut indexed = HashSet::new();
         // Outbox batches arrive chronologically. The newest value of each id
         // must win both graph traversal and the materialized current-head index.
-        for object in objects.iter().rev() {
+        for (offset, object) in objects.iter().rev().enumerate() {
             let kind = required_string(object, "kind")?;
             if indexed_kind(kind, &object["value"]).is_none()
                 || object["value"]["sessionId"].as_str() != Some(session_id)
@@ -493,6 +483,7 @@ impl HistoryStore {
             let object_id = required_string(&result, "objectId")?.to_owned();
             if indexed.insert((indexed_kind(kind, &object["value"]).unwrap(), required_string(&object["value"], "id")?)) {
                 self.index_entity(session_id, &object_id, kind, &object["value"], batch)?;
+                self.index_history_change(session_id, head.revision + 1, offset, &object_id, kind, &object["value"], batch)?;
             }
             refs.push(object_id);
         }
@@ -1144,6 +1135,8 @@ impl HistoryStore {
     }
 
     fn rebuild_session_entities(&self, session_id: &str, root: &str, batch: &mut WriteBatch) -> Result<(), HistoryError> {
+        let generation = self.history_generation(session_id)?.checked_add(1)
+            .ok_or_else(|| HistoryError::InvalidCommand("history generation overflow".into()))?;
         let prefix = entity_prefix(session_id);
         for row in self.db.iterator_cf(self.cf(CF_ENTITIES)?, rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)) {
             let (key, _) = row?;
@@ -1166,6 +1159,7 @@ impl HistoryStore {
             }
         }
         batch.put_cf(self.cf(CF_ENTITIES)?, entity_head_key(session_id), root.as_bytes());
+        self.set_history_generation(session_id, generation, batch)?;
         Ok(())
     }
 
@@ -1207,14 +1201,17 @@ impl HistoryStore {
             if cursor.as_ref().is_some_and(|c| c.after.as_bytes() == key.as_ref()) { continue; }
             if items.len() == limit { more = true; break; }
             let object: HistoryObject = serde_json::from_slice(&self.read_object(&String::from_utf8_lossy(&reference))?)?;
-            let size = serde_json::to_vec(&object.value)?.len() + 1;
+            let item = if value["chunked"].as_bool() == Some(true) {
+                self.history_wire_value(&object, max_bytes.saturating_sub(4096))?
+            } else { object.value };
+            let size = serde_json::to_vec(&item)?.len() + 1;
             if used + size > max_bytes {
                 if items.is_empty() { return Err(HistoryError::InvalidCommand("entity exceeds history page byte budget".into())); }
                 more = true; break;
             }
             used += size;
             last_key = Some(String::from_utf8_lossy(&key).into_owned());
-            items.push(object.value);
+            items.push(item);
         }
         let next = if more { last_key.map(|after| EntityCursor { session_id: session_id.to_owned(), kind: kind.to_owned(), revision: head.revision, reverse, after }) } else { None };
         Ok(serde_json::to_vec(&serde_json::json!({"items":items,"cursor":next,"revision":head.revision}))?)

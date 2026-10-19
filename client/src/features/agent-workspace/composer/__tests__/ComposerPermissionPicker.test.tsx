@@ -130,7 +130,7 @@ describe("permission dropdown", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it.each(["codex", "claude-code"])(
+  it.each(["codex"])(
     "keeps native approval behavior for %s",
     (backendId) => {
       render(

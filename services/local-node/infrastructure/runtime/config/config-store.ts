@@ -9,7 +9,6 @@ import {
   createDefaultGlobalConfig,
   createDefaultUserGlobalConfig,
 } from "./config-defaults.js";
-import { isAcpProviderId } from "./acp-provider-ids.js";
 import { normalizeLegacyProviders } from "./normalize-legacy-providers.js";
 import {
   mergeWebSearchConfig,
@@ -416,11 +415,10 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       version: config.version,
       providers: userProviders,
       providerConnections: normalizeConnections(userConnections, true),
-      defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
+      defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
       defaultApiProviderId:
         config.defaultApiProviderId || globalBase.defaultApiProviderId,
-      enabledAcpProviderIds:
-        config.enabledAcpProviderIds ?? globalBase.enabledAcpProviderIds,
+      enabledAcpProviderIds: [],
       webSearch: config.webSearch ?? globalBase.webSearch,
       limits: config.limits,
       features: config.features,
@@ -461,13 +459,12 @@ function normalizeTemplateConfig(
     ...config,
     providers,
     providerConnections,
-    defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
+    defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
     defaultApiProviderId: normalizeApiProviderId(
       config.defaultApiProviderId,
       providers,
     ),
-    enabledAcpProviderIds:
-      config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
+    enabledAcpProviderIds: [],
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
@@ -505,11 +502,10 @@ function normalizeUserGlobalConfig(
     ...config,
     providers,
     providerConnections,
-    defaultProviderId: normalizeAcpProviderId(config.defaultProviderId),
+    defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
     defaultApiProviderId:
       config.defaultApiProviderId || defaults.defaultApiProviderId,
-    enabledAcpProviderIds:
-      config.enabledAcpProviderIds ?? defaults.enabledAcpProviderIds,
+    enabledAcpProviderIds: [],
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
@@ -549,15 +545,14 @@ function mergeGlobalConfigLayers(
     defaultImageModel: global.defaultImageModel,
     defaultVideoModel: global.defaultVideoModel,
     providers,
-    defaultProviderId: normalizeAcpProviderId(
+    defaultProviderId: normalizeDefaultProviderId(
       global.defaultProviderId ?? template.defaultProviderId,
     ),
     defaultApiProviderId: normalizeApiProviderId(
       global.defaultApiProviderId ?? template.defaultApiProviderId,
       providers,
     ),
-    enabledAcpProviderIds:
-      global.enabledAcpProviderIds ?? template.enabledAcpProviderIds,
+    enabledAcpProviderIds: [],
     providerConnections,
     mcpServers: normalizeMcpServers(
       global.mcpServers ?? template.mcpServers ?? [],
@@ -697,12 +692,11 @@ function applyGlobalConfigPatch(
       patch.terminalShellPath ?? current.terminalShellPath ?? "",
     providers: nextGlobalProviders,
     providerConnections: nextGlobalConnections,
-    defaultProviderId: normalizeAcpProviderId(
+    defaultProviderId: normalizeDefaultProviderId(
       patch.defaultProviderId ?? current.defaultProviderId,
     ),
     defaultApiProviderId: resolvedDefaultApiProviderId,
-    enabledAcpProviderIds:
-      patch.enabledAcpProviderIds ?? current.enabledAcpProviderIds,
+    enabledAcpProviderIds: [],
     mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
     macWindowAppearance:
       patch.macWindowAppearance ?? current.macWindowAppearance,
@@ -758,7 +752,7 @@ function normalizeProviders(providers: ProviderDef[]): ProviderDef[] {
 function normalizeProviderDef(provider: ProviderDef): ProviderDef {
   return {
     ...provider,
-    kind: isApiProviderId(provider.id) ? "api" : "acp",
+    kind: "api",
     status:
       provider.status === "inactive"
         ? "inactive"
@@ -817,6 +811,7 @@ function mergeProviderConnections(
 
   const merged = { ...existing, ...incoming };
   for (const [providerId, connection] of Object.entries(merged)) {
+    if (!isApiProviderId(providerId)) continue;
     if (!allowedIds.has(providerId)) continue;
     const prev = existing[providerId];
     const preserved = preserveApiKey(connection, prev);
@@ -832,6 +827,7 @@ function normalizeConnections(
 ): Record<string, ProviderConnection> {
   const result: Record<string, ProviderConnection> = {};
   for (const [providerId, connection] of Object.entries(connections)) {
+    if (!isApiProviderId(providerId)) continue;
     result[providerId] = normalizeProviderConnection(
       connection,
       includeSecrets,
@@ -1028,10 +1024,8 @@ function prepareProviderConnectionForStorage(
   };
 }
 
-function normalizeAcpProviderId(providerId?: string | null): string {
-  return providerId && isAcpProviderId(providerId)
-    ? providerId
-    : "opencode-acp";
+function normalizeDefaultProviderId(providerId?: string | null): string {
+  return providerId && isApiProviderId(providerId) ? providerId : "openai";
 }
 
 function autoSelectDefaultApiProvider(
@@ -1087,7 +1081,7 @@ function isApiProviderId(providerId: string): boolean {
 }
 
 function isKnownProviderId(providerId: string): boolean {
-  return isAcpProviderId(providerId) || isApiProviderId(providerId);
+  return isApiProviderId(providerId);
 }
 
 function resolveApiFormat(
@@ -1130,7 +1124,7 @@ function createFallbackProvider(id: string): ProviderDef {
     id,
     label: id,
     status: "inactive",
-    kind: isApiProviderId(id) ? "api" : "acp",
+    kind: "api",
     caps: { canFollowUp: false, canCancel: false },
     models: [{ id: `${id}-default`, label: `${id} Default`, isDefault: true }],
   };

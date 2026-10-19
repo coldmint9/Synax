@@ -31,7 +31,8 @@ function request(method: string, path: string, body?: unknown): Promise<{ status
 }
 
 beforeEach(async () => {
-  resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); executionSignal = undefined; mock.execute.mockReset();
+  await resetAgentRuntimeFixtures();
+  ensureSynaxAgentRegistered(); executionSignal = undefined; mock.execute.mockReset();
   const gate = new Promise<void>(resolve => { release = resolve; });
   mock.execute.mockImplementation(async function* (sessionId: string, _mode: string, input: StreamTurnRequest, signal: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
     executionSignal = signal;
@@ -102,8 +103,12 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
       expect((await request('PATCH', `/sessions/${id}/mode`, { mode: 'plan' })).status).toBe(400);
       expect((await request('PATCH', `/sessions/${id}/permissions`, { permissionTier: 'unrestricted' })).status).toBe(409);
       expect((await request('POST', `/sessions/${id}/interactions/pending/reply`, { revision: 1, action: 'submit', answers: {} })).status).toBe(409);
-    } finally { confirm(); await stopping; interrupt.mockRestore(); }
-    expect(JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body).session.status).toBe('completed');
+    } finally { confirm(); release(); await stopping; interrupt.mockRestore(); }
+    const stopped = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
+    expect(stopped.session.status).toBe('completed');
+    expect(stopped.run.status).toBe('interrupted');
+    expect(stopped.session.activeRunId).toBeNull();
+    expect(stopped.session.sessionMetadata.runtimeControl).toBeNull();
   });
 
   it('continues work after the TCP observer disconnects and replays output on reconnect', async () => {
@@ -116,8 +121,15 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
         res.setEncoding('utf8'); let text = '';
         res.on('data', data => {
           text += data;
-          if (!text.includes('run_started')) return;
-          const sequence = Number(/id: (\d+)/.exec(text)?.[1]);
+          const frames = text.split('\n\n');
+          text = frames.pop() ?? '';
+          const started = frames.find(frame => {
+            const data = /^data: (.+)$/m.exec(frame)?.[1];
+            return data && data !== '[DONE]' && JSON.parse(data).type === 'run_started';
+          });
+          if (!started) return;
+          const sequence = Number(/^id: (\d+)$/m.exec(started)?.[1]);
+          if (!Number.isSafeInteger(sequence)) return reject(new Error('run_started lacks an event ID'));
           req.once('close', () => resolve(sequence)); res.destroy(); req.destroy();
         });
       });
@@ -139,12 +151,25 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
   it('deduplicates two concurrent HTTP submissions and stops only on explicit control', async () => {
     const id = await createSession();
     const [a, b] = await Promise.all([1, 2].map(() => request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'duplicate' })));
-    expect(a.status).toBe(202); expect(b.status).toBe(202);
+    expect(a.status, a.body).toBe(202); expect(b.status, b.body).toBe(202);
     expect(JSON.parse(a.body).run.id).toBe(JSON.parse(b.body).run.id);
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledTimes(1));
+    const repeated = await request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'duplicate' });
+    expect(repeated.status, repeated.body).toBe(202);
+    expect(JSON.parse(repeated.body).run.id).toBe(JSON.parse(a.body).run.id);
+    const conflict = await request('POST', `/sessions/${id}/runs`, { message: 'Different', requestId: 'duplicate' });
+    expect(conflict.status, conflict.body).toBe(409);
     expect(mock.execute).toHaveBeenCalledTimes(1);
+    await vi.waitFor(async () => {
+      const snapshot = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
+      expect(snapshot.liveChunks.some((chunk: { delta?: string }) => chunk.delta === 'partial output')).toBe(true);
+    });
     const stop = await request('POST', `/sessions/${id}/cancel`);
     expect(stop.status).toBe(200); expect(executionSignal?.aborted).toBe(true);
     expect(runCoordinator.isActive(id)).toBe(false);
-    expect(agentRuntimeStore.listMessages(id).find(message => message.metadata?.partial === true)?.content).toBe('partial output');
+    const saved = await request('GET', `/sessions/${id}/messages`);
+    expect(saved.status, saved.body).toBe(200);
+    const messages = JSON.parse(saved.body).items as Array<{ content: string; metadata?: { partial?: boolean } }>;
+    expect(messages.filter(message => message.metadata?.partial).map(message => message.content)).toEqual(['partial output']);
   });
 });

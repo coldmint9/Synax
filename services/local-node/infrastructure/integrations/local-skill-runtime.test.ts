@@ -1,7 +1,8 @@
+import { ensureTestRuntime } from "../../../test-fixtures/rust-runtime.js";
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { beforeAll, afterEach, expect, it, vi } from 'vitest'
 import {
   discoverLocalIntegrations,
   importDiscoveredSkill,
@@ -57,3 +58,5 @@ it('makes an imported local skill available to runtime listing and skill.load', 
     }).content,
   ).toBe('Read references/guide.md before reviewing.')
 })
+
+beforeAll(ensureTestRuntime);

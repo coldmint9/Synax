@@ -3,7 +3,7 @@ import { agentRuntimeRoutes } from "../agent-runtime.js";
 import { agentRuntimeStore } from "../../../modules/agent-runtime/session-store.js";
 import { resetAgentRuntimeFixtures } from "../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js";
 
-beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
 describe("session pin route", () => {
   it("validates requests and preserves session metadata and activity dates", async () => {
@@ -49,7 +49,7 @@ describe("session pin route", () => {
       const response = await pin("pin-test", { pinned });
       expect(response.status).toBe(200);
       const { session } = await response.json();
-      expect(session.sessionMetadata).toEqual({ mode: "chat", pinned });
+      expect(session.sessionMetadata).toEqual({ mode: "chat", pinned, historyStorage: 3 });
       expect(session.updatedAt).toBe("2026-01-01");
       expect(
         agentRuntimeStore.getSession("pin-test").sessionMetadata?.pinned,

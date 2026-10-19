@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSessionList } from "./useSessionList";
 import { SessionListHeader } from "./SessionListHeader";
 import { SessionTimeGroups } from "./SessionTimeGroups";
+import { WorkspaceDirectoryTree } from "./WorkspaceDirectoryTree";
+import "./workspaceDirectoryTree.css";
 import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
@@ -17,12 +19,16 @@ interface Props {
   listView?: SessionListView;
   projectId: string;
   onCollapsePanel?: () => void;
+  sidebarView?: "sessions" | "workspace";
+  onSidebarViewChange?: (view: "sessions" | "workspace") => void;
 }
 
 export function SessionListPanel({
   listView = "sessions",
   projectId,
   onCollapsePanel,
+  sidebarView = "sessions",
+  onSidebarViewChange,
 }: Props) {
   const { locale, t } = useLocale();
   const navigate = useNavigate();
@@ -77,7 +83,7 @@ export function SessionListPanel({
 
   return (
     <div className="session-list-panel flex h-full min-h-0 flex-col">
-      <div className="session-list-card session-list-card--sessions min-h-0">
+      <div className="session-list-card session-list-card--sessions flex min-h-0 flex-1 flex-col overflow-hidden">
         <SessionListHeader
           listView={listView}
           workflowCount={list.viewCounts.workflow}
@@ -89,40 +95,36 @@ export function SessionListPanel({
           onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
           onBackToSessions={() => navigate(sessionsPath(projectId))}
           onCollapsePanel={onCollapsePanel}
+          sidebarView={sidebarView}
+          onSidebarViewChange={onSidebarViewChange}
         />
-        <div className="session-list-session-area min-h-0">
-          <SessionTimeGroups
-            key={`${projectId}:${listView}:${list.searchQuery}`}
-            groups={list.groups}
-            isLoading={list.isRefreshing || !list.isProjectReady}
-            error={list.error}
-            onRetry={() => void list.refresh()}
-            selectedId={list.selectedId}
-            isLoadingMore={list.isLoadingMore}
-            hasMore={list.hasMore}
-            hideGroupHeaders={
-              listView === "sessions" ? false : !list.hasPinned
-            }
-            onTogglePin={list.togglePin}
-            emptyLabel={
-              list.searchQuery.trim()
-                ? locale === "zh"
-                  ? "当前工作区没有匹配的会话"
-                  : "No matching sessions in this workspace"
-                : listView === "workflow"
-                  ? t("sessionWorkflowEmpty")
-                  : t("sessionListEmpty")
-            }
-            onSelect={list.select}
-            onToggleGroup={list.toggleGroup}
-            onToggleExpand={list.toggleExpand}
-            onLoadMore={list.loadMore}
-            onDelete={(id) => void handleArchive(id)}
-          />
-        </div>
+        {sidebarView === "workspace" ? (
+          <WorkspaceDirectoryTree projectId={projectId} />
+        ) : (
+          <div className="session-list-session-area min-h-0">
+            <SessionTimeGroups
+              key={`${projectId}:${listView}:${list.searchQuery}`}
+              groups={list.groups}
+              isLoading={list.isRefreshing || !list.isProjectReady}
+              error={list.error}
+              onRetry={() => void list.refresh()}
+              selectedId={list.selectedId}
+              isLoadingMore={list.isLoadingMore}
+              hasMore={list.hasMore}
+              hideGroupHeaders={listView === "sessions" ? false : !list.hasPinned}
+              onTogglePin={list.togglePin}
+              emptyLabel={list.searchQuery.trim()
+                ? locale === "zh" ? "当前工作区没有匹配的会话" : "No matching sessions in this workspace"
+                : listView === "workflow" ? t("sessionWorkflowEmpty") : t("sessionListEmpty")}
+              onSelect={list.select}
+              onToggleGroup={list.toggleGroup}
+              onToggleExpand={list.toggleExpand}
+              onLoadMore={list.loadMore}
+              onDelete={(id) => void handleArchive(id)}
+            />
+          </div>
+        )}
       </div>
-
-
     </div>
   );
 }

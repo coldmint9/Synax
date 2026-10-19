@@ -1,3 +1,4 @@
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import { describe, expect, it, beforeAll, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { skillRegistry } from "../skill-registry.js";
@@ -22,8 +23,8 @@ describe("skillRegistry", () => {
     ).toBe(false);
   });
 
-  it("loads skill content through the agent bridge", () => {
-    resetAgentRuntimeFixtures();
+  it("loads skill content through the agent bridge", async () => {
+    await resetAgentRuntimeFixtures();
     const session = agentSessionRuntime.create(explorerSessionInput);
     const skill = skillAgentBridge.loadForTool({
       sessionId: session.id,
@@ -127,3 +128,5 @@ describe("matchesProfile — profileIds precedence", () => {
     expect(matchesProfile(summary({}), "planner")).toBe(true);
   });
 });
+
+beforeAll(ensureTestRuntime);

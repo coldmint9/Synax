@@ -10,8 +10,8 @@ import { setSessionWorkspaceRoot } from '../tools/workspace.js';
 import { executorInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 let root: string;
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-verification-'));
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));

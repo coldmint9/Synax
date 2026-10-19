@@ -152,11 +152,15 @@ function renderTimelineRows({
     }
   }
   return entries.map((entry, index) => {
-    const isLiveEntry =
-      liveEntryIds &&
-      [...liveEntryIds].some(
-        (stepId) => entry.id === stepId || entry.id.startsWith(`${stepId}:`),
-      );
+    let isLiveEntry = false;
+    if (liveEntryIds) {
+      for (const stepId of liveEntryIds) {
+        if (entry.id === stepId || entry.id.startsWith(`${stepId}:`)) {
+          isLiveEntry = true;
+          break;
+        }
+      }
+    }
     const entryCacheVersion = isLiveEntry ? "live" : cacheVersion;
     return (
     <TimelineRow

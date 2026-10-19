@@ -32,6 +32,7 @@ try {
     NODE_ENV: 'test',
     SYNAX_RUNTIME_SIDECAR_SUPERVISOR: '1',
     SYNAX_RUNTIME_SIDECAR_STREAM: 'authoritative',
+    SYNAX_AGENT_LOOP_ENGINE: 'rust',
     SYNAX_AGENT_SESSION_IN_PROCESS: '0',
   });
   const { RustRuntimeSupervisor } = await import('../services/local-node/infrastructure/runtime/rust-sidecar.js');
@@ -58,6 +59,9 @@ try {
   const run = agentRuntimeStore.getRun(accepted.run.id);
   const messages = agentRuntimeStore.listMessages(session.id);
   assert.equal(run.status, 'completed');
+  assert.equal(run.metadata.engine, 'rust');
+  assert.equal(typeof run.metadata.hostProcessId, 'number');
+  assert.notEqual(run.metadata.hostProcessId, process.pid, 'tool executor must be a separate worker process');
   assert(messages.some(message => message.role === 'assistant' && message.content.includes('Rust worker provider output')));
   const sidecarClient = await import('../services/local-node/modules/agent-runtime/sidecar/sidecar-client.js');
   const client = new sidecarClient.RuntimeSidecarClient({ socketPath: supervisor.socketPath, token: supervisor.token });

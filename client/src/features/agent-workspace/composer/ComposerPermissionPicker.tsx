@@ -46,7 +46,7 @@ export function ComposerPermissionPicker({
   }>({ scope: scope.current, pending: false, error: null });
   const pending = state.scope === scope.current && state.pending;
   const error = state.scope === scope.current ? state.error : null;
-  if (backendId === "codex" || backendId === "claude-code") {
+  if (backendId === "codex") {
     const label = zh ? "CLI 原生审批" : "Native CLI approvals";
     return (
       <span

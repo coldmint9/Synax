@@ -804,6 +804,10 @@ export interface HistoryWindowState {
   hasEarlier: boolean;
   latest: boolean;
   detailsTruncated: boolean;
+  generation?: number;
+  syncCursor?: string;
+  incremental?: boolean;
+  hasMoreChanges?: boolean;
 }
 export interface HistoryWindowResponse {
   messages: AgentRuntimeMessage[];
@@ -813,6 +817,7 @@ export interface HistoryWindowResponse {
   events: RuntimeEvent[];
   permissions: PermissionDecision[];
   historyWindow: HistoryWindowState;
+  removed?: Array<{ collection: string; id: string }>;
 }
 
 export const agentRuntimeApi = {
@@ -1028,18 +1033,25 @@ export const agentRuntimeApi = {
     request<{ items: AgentRuntimeMessage[]; next?: number; epoch: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/history-timeline${before === undefined ? "" : `?before=${before}`}`, { silent: true },
     ),
-  historyWindow: (sessionId: string, cursor?: string) =>
+  historyWindow: (sessionId: string, cursor?: string, since?: string) =>
     request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : since ? `?since=${encodeURIComponent(since)}` : ""}`,
+      { silent: true },
+    ),
+  historyIndexPage: (sessionId: string, cursor?: string) =>
+    request<HistoryWindowResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/history-window?view=timeline${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
       { silent: true },
     ),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
+      { silent: true },
     ),
   listRuns: (sessionId: string) =>
     request<{ items: AgentRun[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/runs`,
+      { silent: true },
     ),
   getRun: (sessionId: string, runId: string) =>
     request<AgentRun>(
@@ -1052,10 +1064,12 @@ export const agentRuntimeApi = {
   listSessionSteps: (sessionId: string) =>
     request<{ items: AgentRunStep[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/steps`,
+      { silent: true },
     ),
   listEvents: (sessionId: string, after?: string) =>
     request<{ items: RuntimeEvent[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/events${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+      { silent: true },
     ),
   listProjectToolGrants: (projectId: string) =>
     request<{ items: ProjectToolGrant[] }>(
@@ -1069,6 +1083,7 @@ export const agentRuntimeApi = {
   listPermissions: (sessionId: string) =>
     request<{ items: PermissionDecision[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/permissions`,
+      { silent: true },
     ),
   replyPermission: (
     sessionId: string,
@@ -1101,6 +1116,7 @@ export const agentRuntimeApi = {
   listToolCalls: (sessionId: string) =>
     request<{ items: ToolCallRecord[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tool-calls`,
+      { silent: true },
     ),
   getSessionInputSource: (sessionId: string, toolCallId: string) =>
     request<{ content: string; truncated: boolean }>(
@@ -1245,10 +1261,11 @@ export const agentRuntimeApi = {
       },
     ),
   getSessionStats: (sessionId: string) =>
-    request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`),
+    request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`, { silent: true }),
   getSessionTodos: (sessionId: string) =>
     request<{ items: TodoItem[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/todos`,
+      { silent: true },
     ),
   getSessionCapabilities: (sessionId: string) =>
     request<SessionCapabilities>(
@@ -1257,6 +1274,7 @@ export const agentRuntimeApi = {
   getSessionInvocationUsage: (sessionId: string) =>
     request<SessionInvocationUsageResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/invocation-usage`,
+      { silent: true },
     ),
   // Submitting is a short idempotent HTTP request. Observing the accepted run
   // shares the WS transport instead of holding another HTTP/1.1 connection.

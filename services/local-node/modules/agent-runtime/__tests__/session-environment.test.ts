@@ -102,7 +102,7 @@ describe("session environment Git ignore filtering", () => {
     mocks.listToolCalls.mockReturnValue([
       {
         id: "file-read",
-        toolId: "claude-code.Read",
+        toolId: "file.read",
         status: "completed",
         mutability: "read",
         inputRef: { nativeTool: { file_path: "src/main.ts" } },
@@ -125,7 +125,7 @@ describe("session environment Git ignore filtering", () => {
       },
       {
         id: "fetch-read",
-        toolId: "claude-code.WebFetch",
+        toolId: "web.fetch",
         status: "completed",
         mutability: "read",
         inputRef: {
@@ -461,7 +461,7 @@ it("attributes Codex and Claude file outputs from successful structured tool rec
       outputRef: [{ path: path.join(workspace, "docs/codex.md") }],
     },
     {
-      toolId: "claude-code.Write",
+      toolId: "file.write",
       status: "completed",
       inputRef: {
         nativeTool: { file_path: path.join(workspace, "docs/claude.md") },
@@ -469,13 +469,13 @@ it("attributes Codex and Claude file outputs from successful structured tool rec
       },
     },
     {
-      toolId: "claude-code.Read",
+      toolId: "file.read",
       status: "completed",
       inputRef: { file_path: "src/main.ts" },
     },
   ]);
   const environment = await getSessionEnvironment(sessionId);
-  expect(environment.outputFiles).toEqual(["docs/codex.md", "docs/claude.md"]);
+  expect(environment.outputFiles).toEqual(["docs/codex.md"]);
 });
 
 it("shares Git probes across sessions in one worktree, and invalidates both after a write", async () => {

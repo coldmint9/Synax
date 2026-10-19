@@ -137,7 +137,7 @@ describe("patchTool", () => {
   });
 
   it("requires write permission approval through the registry", async () => {
-    resetAgentRuntimeFixtures();
+    await resetAgentRuntimeFixtures();
     const session = agentSessionRuntime.create(executorInput);
     const call = await toolRegistry.execute(session.id, "file.patch", {
       patch:

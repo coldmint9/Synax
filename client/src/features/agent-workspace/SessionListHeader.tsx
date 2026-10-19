@@ -2,7 +2,9 @@ import {
   AlignLeft,
   Archive,
   ArrowLeft,
+  FolderTree,
   List,
+  MessageSquare,
   PanelLeftClose,
   Search,
   SquarePen,
@@ -24,6 +26,8 @@ interface Props {
   onOpenWorkflows?: () => void;
   onBackToSessions?: () => void;
   onCollapsePanel?: () => void;
+  sidebarView?: "sessions" | "workspace";
+  onSidebarViewChange?: (view: "sessions" | "workspace") => void;
 }
 
 export function SessionListHeader({
@@ -38,6 +42,8 @@ export function SessionListHeader({
   onOpenWorkflows,
   onBackToSessions,
   onCollapsePanel,
+  sidebarView = "sessions",
+  onSidebarViewChange,
 }: Props) {
   const { t, locale } = useLocale();
   const displayMode = useShellStore(
@@ -46,12 +52,14 @@ export function SessionListHeader({
   const setDisplayMode = useShellStore(
     (state) => state.setSessionListDisplayMode,
   );
-  const isWorkflowView = listView === "workflow";
+  const isWorkspaceView = sidebarView === "workspace";
+  const isWorkflowView = !isWorkspaceView && listView === "workflow";
 
   return (
     <div
       className="session-list-header px-3 pt-3 pb-2 border-b border-border/20 space-y-2"
-      data-list-view={listView}
+      data-list-view={isWorkspaceView ? "sessions" : listView}
+      data-sidebar-view={sidebarView}
     >
       {isWorkflowView ? (
         <button
@@ -84,7 +92,7 @@ export function SessionListHeader({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {!isWorkflowView && onNewSession ? (
+          {!isWorkspaceView && !isWorkflowView && onNewSession ? (
             <Button
               size="sm"
               variant="ghost"
@@ -99,7 +107,36 @@ export function SessionListHeader({
               {t("sessionNewChat")}
             </Button>
           ) : null}
-          <Button
+          {onSidebarViewChange ? (
+            <Button
+              iconOnly
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 min-w-0 text-muted-foreground hover:text-foreground"
+              onClick={() =>
+                onSidebarViewChange(
+                  sidebarView === "sessions" ? "workspace" : "sessions",
+                )
+              }
+              aria-label={
+                sidebarView === "sessions"
+                  ? t("sidebarSwitchToWorkspace")
+                  : t("sidebarSwitchToSessions")
+              }
+              title={
+                sidebarView === "sessions"
+                  ? t("sidebarSwitchToWorkspace")
+                  : t("sidebarSwitchToSessions")
+              }
+            >
+              {sidebarView === "sessions" ? (
+                <FolderTree size={14} />
+              ) : (
+                <MessageSquare size={14} />
+              )}
+            </Button>
+          ) : null}
+          {!isWorkspaceView && <Button
             iconOnly
             variant="ghost"
             size="sm"
@@ -108,11 +145,11 @@ export function SessionListHeader({
             aria-label={t("sessionClearInactive")}
           >
             <Archive size={14} />
-          </Button>
+          </Button>}
         </div>
       </div>
 
-      <div className="flex min-w-0 items-center gap-1">
+      {!isWorkspaceView && <div className="flex min-w-0 items-center gap-1">
         <div className="relative min-w-0 flex-1">
           <Search
             size={12}
@@ -157,9 +194,9 @@ export function SessionListHeader({
             <AlignLeft size={14} />
           </button>
         </div>
-      </div>
+      </div>}
 
-      {!isWorkflowView && workflowCount > 0 ? (
+      {!isWorkspaceView && !isWorkflowView && workflowCount > 0 ? (
         <button
           type="button"
           onClick={onOpenWorkflows}

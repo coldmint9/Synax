@@ -25,6 +25,7 @@ const CF_STREAMS: &str = "streams";
 const CF_APPENDS: &str = "append_receipts";
 const CF_TRANSITIONS: &str = "transitions";
 const CF_HISTORY_OUTBOX: &str = "history_outbox";
+const CF_AGENT_LOOPS: &str = "agent_loops";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
 const HISTORY_OUTBOX_MAINTENANCE_BATCH: usize = 256;
@@ -283,6 +284,7 @@ impl HotStore {
             CF_ACTIVATIONS,
             CF_CONTROLS,
             CF_HISTORY_OUTBOX,
+            CF_AGENT_LOOPS,
         ]
         .into_iter()
         .map(|name| ColumnFamilyDescriptor::new(name, Options::default()))
@@ -296,6 +298,46 @@ impl HotStore {
                 .build(),
             faults,
         })
+    }
+
+    /// Checkpoint and event publication share a WAL commit. A tool event is
+    /// never visible without the state needed to validate its result on recovery.
+    pub(crate) async fn commit_agent_loop_async(
+        &self,
+        loop_id: String,
+        checkpoint: Vec<u8>,
+        events: Vec<(u64, Vec<u8>)>,
+    ) -> Result<(), StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            store.put_batch(&mut batch, CF_AGENT_LOOPS, format!("c/{loop_id}"), &checkpoint)?;
+            for (sequence, event) in events {
+                store.put_batch(&mut batch, CF_AGENT_LOOPS, format!("e/{loop_id}/{sequence:020}"), &event)?;
+            }
+            store.write_with_durability(batch, Durability::GroupCommit)
+        }).await.map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    }
+
+    pub(crate) async fn load_agent_loop_async(
+        &self,
+        loop_id: String,
+    ) -> Result<Option<(Vec<u8>, Vec<Vec<u8>>)>, StorageError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let Some(checkpoint) = store.get(CF_AGENT_LOOPS, format!("c/{loop_id}").as_bytes())? else { return Ok(None); };
+            let prefix = format!("e/{loop_id}/");
+            let mut events = Vec::new();
+            let mut bytes = 0usize;
+            for row in store.db.iterator_cf(store.cf(CF_AGENT_LOOPS)?, rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)) {
+                let (key, value) = row?;
+                if !key.starts_with(prefix.as_bytes()) { break; }
+                bytes += value.len();
+                if bytes > 33 * 1024 * 1024 { return Err(RuntimeError::StorageUnavailable("agent loop journal exceeds recovery budget".into()).into()); }
+                events.push(value.to_vec());
+            }
+            Ok(Some((checkpoint, events)))
+        }).await.map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
     pub async fn snapshot_async(
@@ -319,6 +361,7 @@ impl HotStore {
         Ok(snapshot)
     }
 
+    #[cfg(test)]
     pub async fn admit_run_async(
         &self,
         session_id: String,
@@ -557,6 +600,29 @@ impl HotStore {
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
     }
 
+    /// Clear hot runtime state for isolated integration tests. This command is
+    /// only exposed through the private control socket by the test fixture.
+    pub async fn reset_for_tests_async(&self) -> Result<(), StorageError> {
+        let store = self.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            for name in [
+                CF_SESSIONS, CF_RUNS, CF_RECEIPTS, CF_STREAMS, CF_TRANSITIONS,
+                CF_APPENDS, CF_UI, CF_ACTIVATIONS, CF_CONTROLS, CF_HISTORY_OUTBOX, CF_AGENT_LOOPS,
+            ] {
+                let cf = store.cf(name)?;
+                for entry in store.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+                    let (key, _) = entry?;
+                    batch.delete_cf(cf, key);
+                }
+            }
+            store.committer.commit(batch, true)
+                .map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error)))
+        }).await.map_err(|error| StorageError::Runtime(RuntimeError::StorageUnavailable(error.to_string())))?;
+        self.snapshots.invalidate_all();
+        result
+    }
+
     pub async fn import_ui_projection_async(
         &self,
         session_id: String,
@@ -588,11 +654,10 @@ impl HotStore {
         result?
     }
 
-    pub async fn control_state_async(&self, session_id: String) -> Result<Vec<u8>, StorageError> {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || store.control_state(&session_id))
-            .await
-            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+    #[cfg(test)]
+    fn control_state(&self, session_id: &str) -> Result<Vec<u8>, StorageError> {
+        let state = self.read_control_state(session_id)?;
+        Ok(serde_json::to_vec(&state)?)
     }
 
     pub async fn control_command_async(
@@ -620,11 +685,6 @@ impl HotStore {
         .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()));
         self.snapshots.invalidate(&key).await;
         result?
-    }
-
-    fn control_state(&self, session_id: &str) -> Result<Vec<u8>, StorageError> {
-        let state = self.read_control_state(session_id)?;
-        Ok(serde_json::to_vec(&state)?)
     }
 
     fn control_command(
@@ -1440,6 +1500,7 @@ impl HotStore {
         )
     }
 
+    #[cfg(test)]
     pub fn admit_run_with_queue(
         &self,
         session_id: &str,
@@ -1913,12 +1974,20 @@ impl HotStore {
             if !document["metadata"].is_object() { document["metadata"] = serde_json::json!({}); }
             document["metadata"]["executionLease"] = serde_json::to_value(lease)?;
         }
-        let completion = crate::completion::complete(
+        let mut completion = crate::completion::complete(
             run_id,
             status,
             document,
             previous_reason,
         )?;
+        if matches!(status, "interrupted" | "cancelled" | "failed") {
+            if let Some(message) = projection.as_mut().and_then(|projection|
+                projection.take_partial_message(run_id, &completion.completed_at)) {
+                let mut payload: serde_json::Value = serde_json::from_slice(&completion.event.payload)?;
+                payload["chunk"]["message"] = message;
+                completion.event.payload = serde_json::to_vec(&payload)?;
+            }
+        }
         let previous_retained = state.retained_from;
         state.active_run_id = None;
         state.epoch += 1;
@@ -1966,6 +2035,11 @@ impl HotStore {
             &serde_json::to_vec(&event)?,
         )?;
         self.put_batch(
+            &mut batch, CF_HISTORY_OUTBOX,
+            history_outbox_key(session_id, event.sequence),
+            &serde_json::to_vec(&event)?,
+        )?;
+        self.put_batch(
             &mut batch,
             CF_TRANSITIONS,
             key,
@@ -1992,6 +2066,7 @@ impl HotStore {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub fn compact_stream(&self, session_id: &str) -> Result<(), StorageError> {
         let cf = self.cf(CF_STREAMS)?;
         let start = format!("e/{session_id}/");
@@ -2001,6 +2076,7 @@ impl HotStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn receipt(
         &self,
         session_id: &str,
@@ -2014,6 +2090,7 @@ impl HotStore {
         Ok(Some(receipt.admission))
     }
 
+    #[cfg(test)]
     pub fn append_stream(
         &self,
         session_id: &str,
@@ -2179,6 +2256,7 @@ impl HotStore {
         Ok(receipt)
     }
 
+    #[cfg(test)]
     pub fn replay(&self, session_id: &str, after: u64) -> Result<Vec<StreamEvent>, StorageError> {
         self.replay_bounded(session_id, after, EVENT_RETENTION as usize, 4 * 1024 * 1024)
     }
@@ -2711,6 +2789,43 @@ mod tests {
     }
     fn ui_read(store: &HotStore) -> UiSnapshot {
         serde_json::from_slice(&store.ui_snapshot("s", None).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn interrupted_text_survives_reopen_and_is_committed_once_with_finish() {
+        let path = temp_path("partial-finish");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        store.admit_run("s", "start", "hash", "r", 1, 0).unwrap();
+        let step = ui_event(serde_json::json!({"type":"step_started","step":{"id":"step","sessionId":"s","runId":"r","index":1}}));
+        let delta = ui_event(serde_json::json!({"type":"message_delta","stepId":"step","delta":"partial output"}));
+        let mut stop = ui_event(serde_json::json!({"type":"stop_begin"}));
+        let mut payload: serde_json::Value = serde_json::from_slice(&stop.payload).unwrap();
+        payload["state"]["status"] = serde_json::json!("stopping");
+        stop.payload = serde_json::to_vec(&payload).unwrap();
+        store.append_stream("s", "r", "p", 1, 1, vec![step, delta, stop]).unwrap();
+        assert!(!ui_read(&store).live_chunks.is_empty());
+        let mut stopped = ui_event(serde_json::json!({"type":"stop_acknowledged"}));
+        payload["chunk"] = serde_json::json!({"type":"stop_acknowledged"});
+        payload["state"]["status"] = serde_json::json!("interrupted");
+        stopped.payload = serde_json::to_vec(&payload).unwrap();
+        store.append_stream("s", "r", "p", 2, 1, vec![stopped]).unwrap();
+        assert!(ui_read(&store).live_chunks.is_empty());
+        drop(store);
+        let store = HotStore::open(&path).unwrap();
+        let state = store.snapshot("s").unwrap();
+        let finished = store.finish_run_with_document("s", "finish", "r", "interrupted", state.epoch, state.revision, &[]).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&finished.event.as_ref().unwrap().payload).unwrap();
+        assert_eq!(payload["chunk"]["message"]["content"], "partial output");
+        assert_eq!(payload["chunk"]["message"]["metadata"]["partial"], true);
+        assert!(ui_read(&store).pending_partial_message.is_none());
+        let retried = store.finish_run_with_document("s", "finish", "r", "interrupted", state.epoch, state.revision, &[]).unwrap();
+        assert!(retried.reused);
+        assert_eq!(retried.event.unwrap().payload, finished.event.unwrap().payload);
+        assert_eq!(store.replay("s", 0).unwrap().iter().filter(|event| event.kind == "run_finished").count(), 1);
+        assert!(store.history_outbox("s", 256).unwrap().iter().any(|event| event.kind == "run_finished"));
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]

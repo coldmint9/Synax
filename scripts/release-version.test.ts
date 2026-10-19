@@ -21,6 +21,5 @@ describe("software version consistency", () => {
     for (const file of ["services/local-node/infrastructure/mcp/mcp-client-manager.ts", "services/local-node/modules/agent-runtime/backends/codex-connection.ts"]) {
       expect(read(file).match(/version: "\d+\.\d+\.\d+"/g)?.every(value => value === `version: "${version}"`)).toBe(true);
     }
-    expect(read("services/local-node/modules/agent-runtime/backends/claude-connection.ts")).toContain(`CLAUDE_AGENT_SDK_CLIENT_APP = "synax/${version}"`);
   });
 });

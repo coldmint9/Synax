@@ -4,7 +4,7 @@ import { agentSessionRuntime } from '../session-runtime.js';
 import { explorerSessionInput, plannerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('sub-session safety', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('inherits parent permissions and denies child writes', () => {
     const parent = agentSessionRuntime.create(plannerSessionInput);

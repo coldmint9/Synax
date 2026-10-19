@@ -30,20 +30,12 @@ import type {
   ApiFormat,
   UpdateGlobalConfigRequest,
 } from "../../infrastructure/runtime/config/config-types.js";
-import { discoverAcpProviders } from "../../modules/acp/discovery.js";
-import { listProviders as listAcpProviders } from "../../modules/acp/index.js";
 import { mergeMediaModelsIntoProviders } from "../../modules/media/catalog.js";
 import { beginWebSearchOAuth } from "../../modules/web-search/oauth.js";
 import { getRuntimeCatalog } from "../../infrastructure/llm-runtime/catalog.js";
 
 export const configRoutes = new Hono();
 
-const ACP_PROVIDER_IDS = [
-  "opencode-acp",
-  "cursor-acp",
-  "codex-acp",
-  "pi-acp",
-] as const;
 const BUILTIN_API_PROVIDER_IDS = ["openai", "anthropic"] as const;
 const CUSTOM_API_PROVIDER_PREFIX = "custom-api:";
 const REASONING_EFFORTS = [
@@ -83,7 +75,7 @@ const providerDefSchema = z.object({
   label: z.string().min(1),
   description: z.string().optional(),
   status: z.enum(["live", "experimental", "inactive"]),
-  kind: z.enum(["acp", "api"]),
+  kind: z.literal("api"),
   caps: z.object({
     canFollowUp: z.boolean(),
     canCancel: z.boolean(),
@@ -189,9 +181,9 @@ const globalConfigPatchSchema = z
     defaultImageModel: mediaSelectionSchema.nullable().optional(),
     defaultVideoModel: mediaSelectionSchema.nullable().optional(),
     providers: z.array(providerDefSchema).optional(),
-    defaultProviderId: z.enum(ACP_PROVIDER_IDS).optional(),
+    defaultProviderId: z.string().min(1).refine(isApiProviderId, "Only API providers are supported").optional(),
     defaultApiProviderId: z.string().min(1).optional(),
-    enabledAcpProviderIds: z.array(z.string().min(1)).optional(),
+    enabledAcpProviderIds: z.array(z.string()).max(0).optional(),
     providerConnections: z
       .record(z.string(), providerConnectionSchema)
       .optional(),
@@ -326,22 +318,6 @@ configRoutes.get("/global/providers", (c) => {
   });
 });
 
-configRoutes.get("/acp/discovery", async (c) => {
-  const global = getGlobalConfig();
-  const providers = listAcpProviders();
-  const items = await discoverAcpProviders(providers, global.defaultProviderId);
-  const enabledIds = items
-    .filter(
-      (item) =>
-        item.status === "available" && item.installed && item.handshakeOk,
-    )
-    .map((item) => item.id);
-  return c.json({
-    selectedProviderId: global.defaultProviderId,
-    enabledIds,
-    supported: items,
-  });
-});
 
 configRoutes.post("/ai-api/validate", async (c) => {
   let body: unknown;
@@ -570,20 +546,17 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
     }
   }
 
-  for (const official of [...ACP_PROVIDER_IDS, ...BUILTIN_API_PROVIDER_IDS]) {
+  for (const official of BUILTIN_API_PROVIDER_IDS) {
     if (!providerMap.has(official)) {
       throw new Error(`官方 provider 不可删除: ${official}`);
     }
   }
 
   for (const provider of nextProviders) {
-    if (isAcpProviderId(provider.id) && provider.kind !== "acp") {
-      throw new Error(`${provider.id} 必须是 ACP provider`);
-    }
     if (isApiProviderId(provider.id) && provider.kind !== "api") {
       throw new Error(`${provider.id} 必须是 API provider`);
     }
-    if (!isAcpProviderId(provider.id) && !isApiProviderId(provider.id)) {
+    if (!isApiProviderId(provider.id)) {
       throw new Error(`不支持的 provider: ${provider.id}`);
     }
   }
@@ -616,12 +589,6 @@ function validateGlobalConfigPatch(body: unknown): UpdateGlobalConfigRequest {
       connection,
       current.providerConnections[providerId],
     );
-  }
-
-  const defaultAcpProviderId =
-    patch.defaultProviderId ?? current.defaultProviderId;
-  if (!isAcpProviderId(defaultAcpProviderId)) {
-    throw new Error("默认 ACP provider 必须是已注册的 ACP provider");
   }
 
   const defaultApiProviderId =
@@ -693,21 +660,6 @@ function validateProviderConnection(
   }
 
   const extra = connection.extra ?? {};
-  if (isAcpProviderId(providerId)) {
-    if (extra.kind && extra.kind !== "acp") {
-      throw new Error(`${providerId} 的 extra.kind 必须是 acp`);
-    }
-    const connectionMode = extra.connectionMode;
-    if (
-      connectionMode &&
-      connectionMode !== "local" &&
-      connectionMode !== "remote"
-    ) {
-      throw new Error(`${providerId} 的 connectionMode 只能是 local 或 remote`);
-    }
-    return;
-  }
-
   if (extra.kind && extra.kind !== "api") {
     throw new Error(`${providerId} 的 extra.kind 必须是 api`);
   }
@@ -776,12 +728,6 @@ type ProviderConnectionInput = {
   apiKeyMasked?: string;
   extra?: Record<string, unknown>;
 };
-
-function isAcpProviderId(
-  providerId: string,
-): providerId is (typeof ACP_PROVIDER_IDS)[number] {
-  return (ACP_PROVIDER_IDS as readonly string[]).includes(providerId);
-}
 
 function isBuiltinApiProviderId(
   providerId: string,

@@ -7,6 +7,8 @@ export interface RuntimeChunk {
   stepId?: string
   retry?: LlmRetryState
   delta?: string
+  outputTokens?: number
+  thinkingTokens?: number
   step?: AgentRunStep
   queueRevision?: number
   toolCall?: ToolCallRecord
@@ -115,7 +117,14 @@ export class RuntimeStreamProjector {
       return [{ type: 'retry_status', stepId: chunk.stepId, retry: chunk.retry }]
     }
     if ((chunk.type === 'message_delta' || chunk.type === 'thought_delta') && chunk.delta !== undefined) {
-      return [{ type: chunk.type, stepId: chunk.stepId, delta: chunk.delta }]
+      const outputTokens = chunk.outputTokens
+      return [{
+        type: chunk.type,
+        stepId: chunk.stepId,
+        delta: chunk.delta,
+        ...(chunk.type === 'message_delta' && typeof outputTokens === 'number' && Number.isSafeInteger(outputTokens) && outputTokens >= 0 ? { outputTokens } : {}),
+        ...(chunk.type === 'thought_delta' && typeof chunk.thinkingTokens === 'number' && Number.isSafeInteger(chunk.thinkingTokens) && chunk.thinkingTokens >= 0 ? { thinkingTokens: chunk.thinkingTokens } : {}),
+      }]
     }
     if ((chunk.type === 'tool_call' || chunk.type === 'tool_result') && chunk.toolCall) {
       return [{ type: chunk.type, stepId: chunk.stepId, toolCall: chunk.toolCall }]

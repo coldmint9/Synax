@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import type { InterleavedTurn } from "../buildInterleavedTurns";
 import { TurnBody } from "../TurnBody";
+import { useShellStore } from "../../../shared/state/shellStore";
 
 const emptyTurn: InterleavedTurn = {
   stepId: "step-1",
@@ -12,7 +13,10 @@ const emptyTurn: InterleavedTurn = {
 };
 
 describe("TurnBody", () => {
-  it("keeps the live header loader after tools finish and collapse, but only times expanded activity", () => {
+  beforeEach(() => {
+    useShellStore.setState((s) => ({ preferences: { ...s.preferences, locale: "zh", sessionShowThinking: true } }));
+  });
+  it("keeps the live header loader after tools finish and collapse", () => {
     const turn: InterleavedTurn = {
       ...emptyTurn,
       status: "completed",
@@ -40,11 +44,10 @@ describe("TurnBody", () => {
       "data-live",
       "true",
     );
-    // Tool activity uses a pixel loader in the header and a timer in the
-    // expanded footer; the three-dot placeholder belongs to empty turns only.
+    // Tool activity keeps its live loader even when the completed calls are folded.
     expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
-    expect(heading.querySelector('[role="status"]')).toHaveTextContent("bash · pwd");
-    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    expect(heading.querySelector('[role="status"]')).toHaveTextContent("执行命令 · pwd");
+    expect(container.querySelector('[role="timer"]')).toBeNull();
     expect(container.querySelector('[data-activity-body] [role="timer"]')).toBeNull();
     expect(container.querySelector('[data-activity-body] .loading-state-cell')).toBeNull();
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
@@ -61,7 +64,7 @@ describe("TurnBody", () => {
     );
     fireEvent.click(heading);
     expect(heading).toHaveAttribute("aria-expanded", "true");
-    expect(container.querySelector('[role="timer"]')).not.toBeNull();
+    expect(container.querySelector('[role="timer"]')).toBeNull();
     expect(heading.querySelectorAll(".loading-state-cell")).toHaveLength(9);
 
     rerender(<TurnBody turn={turn} entryId="entry-1" isWorking={false} />);
@@ -78,6 +81,37 @@ describe("TurnBody", () => {
 
     expect(container.querySelector('[data-testid="thinking-indicator"]')).toHaveAttribute("role", "status");
     expect(container.querySelector("[data-thinking-dot]")).toBeNull();
+  });
+
+  it("keeps the activity rail open while the final answer is streaming", () => {
+    const turn: InterleavedTurn = {
+      ...emptyTurn,
+      blocks: [
+        {
+          type: "tool_call",
+          call: {
+            id: "call-1",
+            toolId: "bash",
+            inputSummary: "pwd",
+            outputSummary: "/workspace",
+            status: "completed",
+            duration: "10ms",
+          },
+        },
+        { type: "text", content: "Final answer" },
+      ],
+    };
+    const { container } = render(
+      <TurnBody turn={turn} entryId="entry-final-answer" isWorking />,
+    );
+
+    expect(container.querySelector(".bui-thinking")).toHaveAttribute(
+      "data-live",
+      "true",
+    );
+    expect(
+      container.querySelector(".session-answer-region"),
+    ).toHaveTextContent("Final answer");
   });
 
   it("does not show a thinking status for an empty completed turn", () => {

@@ -27,11 +27,11 @@ describe('log-store retention', () => {
       loggedAt: `${expired}T12:00:00.000Z`,
     });
 
-    expect(listApiLogs({ limit: 10 })).toHaveLength(2);
+    expect(await listApiLogs({ limit: 10 })).toHaveLength(2);
 
     pruneOldApiLogs();
 
-    expect(listApiLogs({ limit: 10 })).toEqual([
+    expect(await listApiLogs({ limit: 10 })).toEqual([
       expect.objectContaining({
         level: 'info',
         message: 'fresh',

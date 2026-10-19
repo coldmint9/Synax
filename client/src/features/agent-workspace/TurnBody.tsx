@@ -8,6 +8,7 @@ const InlineVisualization = lazy(() =>
 import type { InlineVisualizationReference } from "./visualizationTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
+import { useShellStore } from "../../shared/state/shellStore";
 import { Zap } from "lucide-react";
 import { MediaParts } from "../media/MediaParts";
 import type {
@@ -40,8 +41,6 @@ function TranscriptVisualization({
     </Suspense>
   );
 }
-const WORK_LOG_COLLAPSE_DELAY_MS = 420;
-
 function sourceLabel(url: string): string {
   try {
     return new URL(url).hostname;
@@ -93,12 +92,6 @@ function renderTurnBlocks(
       segment.type !== "tool_round" &&
       (toolBlocks.length === 0 || segment.type !== "thinking"),
   );
-  const answerStarted = answers.some(
-    (segment) =>
-      (segment.type === "text" && segment.markdown) ||
-      segment.type === "media" ||
-      segment.type === "visualization",
-  );
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "visualization")
@@ -127,11 +120,6 @@ function renderTurnBlocks(
           key={key}
           text={segment.content}
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
-          startDelayMs={
-            isStreaming && answerStarted && segment.markdown && toolBlocks.length > 0
-              ? WORK_LOG_COLLAPSE_DELAY_MS
-              : 0
-          }
           markdown={segment.markdown}
         />
       );
@@ -183,9 +171,10 @@ function renderTurnBlocks(
           <ToolCallRoundPanel
             toolBlocks={toolBlocks}
             maxHeight="420px"
-            // Once the final answer starts, close the work log before the
-            // buffered Markdown renderer begins revealing answer lines.
-            isStreaming={isWorking && !answerStarted}
+            // Keep the activity rail stable while the final answer streams.
+            // It collapses once the turn stops, instead of toggling open and
+            // closed at the first answer token.
+            isStreaming={isWorking}
           />
         )}
       </div>
@@ -208,6 +197,10 @@ export function TurnBody({
   isWorking?: boolean;
 }) {
   const history = useSessionHistory();
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
+  const visibleBlocks = showThinking
+    ? turn.blocks
+    : turn.blocks.filter((block) => block.type !== "thinking");
   const textBlocks = turn.blocks.filter((block) => block.type === "text");
   const messageId =
     textBlocks[textBlocks.length - 1]?.messageId ??
@@ -224,11 +217,11 @@ export function TurnBody({
   );
   return (
     <div className="session-turn-content message-action-group flex min-w-0 flex-1 flex-col gap-1">
-      {isStreaming && turn.blocks.length === 0 ? (
+      {isWorking && visibleBlocks.length === 0 ? (
         <ThinkingIndicator />
       ) : (
         renderTurnBlocks(
-          turn.blocks,
+          visibleBlocks,
           onExpandChild,
           entryId,
           isStreaming,

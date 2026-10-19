@@ -58,8 +58,7 @@ describe("native Responses web search routing", () => {
     const modelName = result.tools.resolveModelToolName("webSearch")!;
     expect(result.native).toBe(true);
     expect(result.tools.tools[modelName]).toMatchObject({
-      type: "provider",
-      isProviderExecuted: true,
+      type: "provider-defined",
       id: "openai.web_search",
       args: { externalWebAccess: true, searchContextSize: "high" },
     });

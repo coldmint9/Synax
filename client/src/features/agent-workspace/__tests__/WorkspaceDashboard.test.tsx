@@ -602,29 +602,17 @@ describe("WorkspaceDashboard", () => {
           branch: "web-branch",
           workspacePath: "/repos/web",
         },
-        {
-          ...environment,
-          rootId: "missing",
-          name: "Gone",
-          role: "reference",
-          status: "missing",
-          changedFiles: [],
-          inputSources: [],
-        },
       ],
     });
     const apiHeader = screen.getByRole("button", { name: /^API/ });
     const webHeader = screen.getByRole("button", { name: /^Web/ });
-    const goneHeader = screen.getByRole("button", { name: /^Gone/ });
     const apiCard = apiHeader.closest(".ws-project-card")!;
     const webCard = webHeader.closest(".ws-project-card")!;
-    const goneCard = goneHeader.closest(".ws-project-card")!;
     const pane = apiCard.closest(".workspace-dashboard--custom")!;
     expect(webCard.closest(".workspace-dashboard--custom")).toBe(pane);
-    expect(goneCard.closest(".workspace-dashboard--custom")).toBe(pane);
     expect(
       pane.querySelectorAll('[data-dashboard-panel^="repository:"]'),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     expect(pane.closest(".ws-card")).toBeNull();
     expect(screen.queryByRole("button", { name: /^项目\s*3$/ })).toBeNull();
 
@@ -661,10 +649,14 @@ describe("WorkspaceDashboard", () => {
     expect(
       apiCard.querySelector(".ws-project-folder-icon")?.getAttribute("data-project-color"),
     ).not.toBe("default");
+  });
+
+  it("marks a missing repository and disables its write actions", () => {
+    renderDashboard({ repositories: [{ ...environment, rootId: "missing", name: "Gone", role: "primary",
+      status: "missing", changedFiles: [], inputSources: [] }] });
+    const goneCard = screen.getByRole("button", { name: /^Gone/ }).closest(".ws-project-card")!;
     expect(within(goneCard).getByText("目录缺失")).toBeInTheDocument();
-    expect(
-      within(goneCard).getByRole("button", { name: "提交并推送" }),
-    ).toBeDisabled();
+    expect(within(goneCard).getByRole("button", { name: "提交并推送" })).toBeDisabled();
   });
 
   it("restores the clicked Git file in its own repository in tree view", async () => {
@@ -775,13 +767,13 @@ describe("WorkspaceDashboard", () => {
     ).toEqual(["api", "web"]);
   });
 
-  it("hides the progress panel while the session has no tasks", () => {
+  it("keeps the empty progress panel available and updates it when tasks arrive", () => {
     const { container } = renderDashboard();
     expect(
       container.querySelector('[data-dashboard-panel="progress"]'),
-    ).toBeNull();
-    expect(screen.queryByText("任务进度")).toBeNull();
-    expect(screen.queryByText("暂无任务")).toBeNull();
+    ).not.toBeNull();
+    expect(screen.queryByText("任务进度")).not.toBeNull();
+    expect(screen.queryByText("暂无任务")).not.toBeNull();
 
     act(() =>
       useAgentSessionStore.setState({
@@ -895,15 +887,16 @@ describe("WorkspaceDashboard", () => {
           status: "ready",
           branch: longBranch,
         },
+        { ...environment, rootId: "third", name: "Third", role: "reference", status: "ready" },
       ],
     });
 
     const rows = document.querySelectorAll(".ws-project-option");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
 
     // The row still exposes a real branch trigger whose label is clipped by CSS
     // instead of stretching the row, and whose title keeps the untruncated name.
-    const trigger = screen.getByRole("button", {
+    const trigger = within(rows[1] as HTMLElement).getByRole("button", {
       name: new RegExp(`切换 Git 分支|Switch Git branch.*`, "s"),
     });
     expect(trigger).toHaveAttribute("title", longBranch);

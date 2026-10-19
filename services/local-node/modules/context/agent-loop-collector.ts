@@ -1,4 +1,4 @@
-import type { AgentRunFileChange, CoordinatesRunEvent } from '../acp/contracts.js';
+import type { AgentRunFileChange, CoordinatesRunEvent } from './coordination-contracts.js';
 import type { NewAgentLoopRecord, NewAgentLoopStep } from '../contracts/context.js';
 
 interface AgentLoopCollectorInput {

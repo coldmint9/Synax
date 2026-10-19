@@ -501,7 +501,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
 
-  if (sessionId && environment && repositories.length <= 2) {
+  if (sessionId && environment && repositories.length > 0 && repositories.length <= 2) {
     return (
       <WorkspaceDashboardLayout
         key={environment.projectId}

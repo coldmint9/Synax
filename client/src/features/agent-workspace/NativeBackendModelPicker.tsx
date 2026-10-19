@@ -243,13 +243,7 @@ function NativeModelContent({
             )}
           </dl>
         )}
-        {backendId === "claude-code" && (
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            {zh
-              ? "使用 API / 网关 / 云端认证，不使用 claude.ai 订阅登录。仅继承原生设置中的模型和 API 环境配置。"
-              : "API / gateway / cloud authentication only, not claude.ai subscription login. Only native model and API environment settings are inherited."}
-          </p>
-        )}
+
         <p className="mt-2 text-[10px] text-muted-foreground">
           {zh
             ? "默认隔离本机 MCP、插件与 Hooks；不会修改全局配置。"

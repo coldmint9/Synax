@@ -19,7 +19,6 @@ import {
 } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
-import { useAcpDiscovery } from "../composer/useAcpDiscovery";
 import { SessionComposer } from "../SessionComposer";
 import { SessionModeSummary } from "../SessionWorkspace";
 import { useSessionComposerSelections } from "../useSessionComposerSelection";
@@ -33,9 +32,6 @@ vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
 vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
   releaseSessionLiveSubscription: vi.fn(),
-}));
-vi.mock("../composer/useAcpDiscovery", () => ({
-  useAcpDiscovery: vi.fn(),
 }));
 vi.mock("../../settings/useConfig", () => ({
   useConfig: () => ({
@@ -119,18 +115,6 @@ beforeEach(() => {
     selections: {},
     lastSubmittedByProject: {},
   });
-  vi.mocked(useAcpDiscovery).mockReturnValue([
-    {
-      id: "codex-acp",
-      label: "Codex ACP",
-      command: "codex-acp",
-      status: "available",
-      installed: true,
-      handshakeOk: true,
-      selected: false,
-      compatibility: "",
-    },
-  ]);
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
     sessions: [session],
@@ -385,8 +369,7 @@ describe("SessionComposer input queue", () => {
 
 describe("SessionComposer mode controls", () => {
   it("no longer offers an execution backend selector for new sessions", async () => {
-    vi.mocked(useAcpDiscovery).mockReturnValue([]);
-    renderComposer();
+      renderComposer();
     expect(
       screen.queryByRole("button", { name: "Execution backend" }),
     ).not.toBeInTheDocument();
@@ -399,8 +382,7 @@ describe("SessionComposer mode controls", () => {
   });
 
   it("ignores a remembered ACP provider now that drafts run on the native runtime", async () => {
-    vi.mocked(useAcpDiscovery).mockReturnValue([]);
-    useAgentDockStore.setState({
+      useAgentDockStore.setState({
       composerProviderId: "codex-acp",
       composerModelId: "default",
     });
@@ -764,4 +746,12 @@ it("finishes an old draft in the background without navigating away or clearing 
   expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
     "Other unsent draft",
   );
+});
+
+it.each(["codex-acp", "claude-code"])("prevents submission for the retired %s backend while preserving history", async id => {
+  const retired = { ...session, sessionMetadata: { backend: { id } } } as AgentSession;
+  renderComposer(retired);
+  expect(screen.getByRole("alert")).toHaveTextContent("execution backend has been removed");
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: /Native model|原生模型/ })).not.toBeInTheDocument();
 });

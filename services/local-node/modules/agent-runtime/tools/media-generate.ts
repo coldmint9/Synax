@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { assertSessionMediaBudget } from "./media-context.js";
 import type { RegisteredTool } from "../contracts.js";
 import type { RuntimeContentPart } from "../content-parts.js";
-import { createAsset } from "../media-assets.js";
+import { bindValidatedAssets, createAsset } from "../media-assets.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { sessionLiveBus } from "../session-live-bus.js";
 import {
@@ -106,6 +106,7 @@ export const mediaGenerateTool: RegisteredTool = {
         saveImage(image, String(index + 1)),
       ),
     );
+    await bindValidatedAssets(input.sessionId, assets);
     const contentParts: RuntimeContentPart[] = assets.map((asset) => ({
       type: "image",
       assetId: asset.id,

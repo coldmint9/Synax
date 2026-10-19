@@ -1,5 +1,4 @@
 import type {
-  AcpDiscoveryItem,
   GlobalConfig,
   ProviderDef,
   ProviderModelDef,
@@ -11,7 +10,7 @@ import {
 } from "../../settings/lib/providerPresets";
 
 export type AgentModelSelection = {
-  kind: "api" | "acp";
+  kind: "api";
   providerId: string;
   modelId: string;
   label: string;
@@ -38,7 +37,7 @@ function modelCapabilities(model: ProviderModelDef): ModelCapability[] {
   return inferred;
 }
 
-/** Preserve the selected provider for both API models and ACP engines. */
+/** Preserve the selected API provider and avoid duplicating its prefix. */
 export function formatModelReference(
   providerId: string | null,
   modelId: string | null,
@@ -53,33 +52,11 @@ export function formatModelReference(
   return model;
 }
 
-export function discoveredAcpProviders(
-  providers: ProviderDef[],
-  discovery: AcpDiscoveryItem[],
-): ProviderDef[] {
-  const availableIds = new Set(
-    discovery
-      .filter(
-        (item) =>
-          item.status === "available" && item.installed && item.handshakeOk,
-      )
-      .map((item) => item.id),
-  );
-  return providers.filter(
-    (provider) =>
-      provider.kind === "acp" &&
-      provider.status !== "inactive" &&
-      availableIds.has(provider.id),
-  );
-}
-
 export function buildAgentModelOptions(
   globalConfig: GlobalConfig | null,
   providers: ProviderDef[],
-  acpDiscovery: AcpDiscoveryItem[] = [],
-): { apiModels: AgentModelSelection[]; acpEndpoints: AgentModelSelection[] } {
+): { apiModels: AgentModelSelection[] } {
   const apiModels: AgentModelSelection[] = [];
-  const acpEndpoints: AgentModelSelection[] = [];
 
   if (globalConfig) {
     const configuredIds = new Set(buildApiDrafts(globalConfig, providers).filter(
@@ -102,41 +79,11 @@ export function buildAgentModelOptions(
     }
   }
 
-  const discoveryById = new Map(acpDiscovery.map((item) => [item.id, item]));
-
-  for (const provider of discoveredAcpProviders(providers, acpDiscovery)) {
-    const discoveryItem = discoveryById.get(provider.id);
-    const catalogModels = discoveryItem?.models ?? [];
-    if (catalogModels.length > 0) {
-      for (const model of catalogModels) {
-        acpEndpoints.push({
-          kind: "acp",
-          providerId: provider.id,
-          modelId: model.id,
-          label: model.label,
-          capability: "chat",
-        });
-      }
-      continue;
-    }
-
-    for (const model of provider.models) {
-      acpEndpoints.push({
-        kind: "acp",
-        providerId: provider.id,
-        modelId: model.id,
-        label: model.label || provider.label,
-        capability: "chat",
-      });
-    }
-  }
-
-  return { apiModels, acpEndpoints };
+  return { apiModels };
 }
 
 export function findAgentModelSelection(
   apiModels: AgentModelSelection[],
-  acpEndpoints: AgentModelSelection[],
   providerId: string | null,
   modelId: string | null,
   capability?: ModelCapability | null,
@@ -149,29 +96,21 @@ export function findAgentModelSelection(
         m.modelId === modelId &&
         (!capability || m.capability === capability),
     ) ??
-    acpEndpoints.find(
-      (m) =>
-        m.providerId === providerId &&
-        m.modelId === modelId &&
-        (!capability || m.capability === capability),
-    ) ??
     null
   );
 }
 
 export function pickDefaultModelSelection(
   apiModels: AgentModelSelection[],
-  acpEndpoints: AgentModelSelection[],
   preferred?: { providerId: string; modelId: string } | null,
 ): AgentModelSelection | null {
   if (preferred) {
     const found = findAgentModelSelection(
       apiModels,
-      acpEndpoints,
       preferred.providerId,
       preferred.modelId,
     );
     if (found?.capability === "chat") return found;
   }
-  return apiModels.find((model) => model.capability === "chat") ?? acpEndpoints[0] ?? apiModels[0] ?? null;
+  return apiModels.find((model) => model.capability === "chat") ?? apiModels[0] ?? null;
 }

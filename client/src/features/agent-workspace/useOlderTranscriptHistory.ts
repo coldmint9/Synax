@@ -28,12 +28,14 @@ export function useOlderTranscriptHistory(
   const [error, setError] = useState("");
   const pending = useRef<ScrollAnchor | null>(null);
   const busy = useRef(false);
+  const failedCursor = useRef<string | null>(null);
   const generation = useRef(0);
 
   useLayoutEffect(() => {
     generation.current++;
     busy.current = false;
     pending.current = null;
+    failedCursor.current = null;
     setLoading(false);
     setError("");
   }, [sessionId]);
@@ -53,10 +55,12 @@ export function useOlderTranscriptHistory(
     pending.current = null;
   }, [firstId, page?.olderCursor, scrollRef, sessionId]);
 
-  const loadOlder = useCallback(async () => {
+  const loadOlder = useCallback(async (manual = false) => {
     const element = scrollRef.current;
     if (!active || !sessionId || !element || !page?.olderCursor || busy.current ||
         useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
+    if (!manual && failedCursor.current === page.olderCursor) return;
+    failedCursor.current = null;
     busy.current = true;
     const token = ++generation.current;
     const cursor = page.olderCursor;
@@ -70,8 +74,10 @@ export function useOlderTranscriptHistory(
       await useAgentSessionStore.getState().loadOlderHistory();
     } catch (cause) {
       pending.current = null;
-      if (generation.current === token)
+      if (generation.current === token) {
+        failedCursor.current = cursor;
         setError(String(cause));
+      }
     } finally {
       if (generation.current === token) {
         const state = useAgentSessionStore.getState();
@@ -98,5 +104,5 @@ export function useOlderTranscriptHistory(
     return () => element.removeEventListener("scroll", onScroll);
   }, [active, loadOlder, page?.olderCursor, scrollRef, sessionId]);
 
-  return { loading, error, retry: loadOlder };
+  return { loading, error, retry: () => loadOlder(true) };
 }

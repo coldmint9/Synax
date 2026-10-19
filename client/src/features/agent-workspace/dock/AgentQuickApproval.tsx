@@ -178,7 +178,7 @@ export function AgentQuickApproval({
       )
     : [];
   const targets = approvalPaths.length ? approvalPaths : permission.patterns;
-  const nativeTitle = permission.metadata?.acpTitle;
+  const nativeTitle = permission.metadata?.nativeTitle;
   const label =
     typeof command === "string"
       ? command

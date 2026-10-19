@@ -51,6 +51,22 @@ describe("BufferedMarkdown", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not keep a polling timer alive after the stream catches up", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <BufferedMarkdown content="streamed" isStreaming />,
+    );
+
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => vi.advanceTimersByTime(40));
+    expect(vi.getTimerCount()).toBe(0);
+
+    rerender(<BufferedMarkdown content="streamed more" isStreaming />);
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => vi.advanceTimersByTime(40));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("waits for the work-log collapse before showing the final answer", () => {
     vi.useFakeTimers();
     const { container } = render(

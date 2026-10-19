@@ -53,7 +53,13 @@ import {
   previewGitWorktreePrune,
 } from "../../modules/git-workspaces.js";
 import { listGitSessions } from "../../modules/git-session-index.js";
+import { resolveWorkspaceRootsFromSession } from "../../modules/agent-runtime/tools/workspace.js";
+import { projectSessionState } from "../../modules/agent-runtime/session-projection.js";
+import type { AgentSession } from "../../modules/agent-runtime/contracts.js";
 import { MAX_WORKTREE_CLEANUP_PATHS, isTerminalWorktreeSession } from "../../modules/git-worktree-management-contracts.js";
+import {
+  workspaceIndexService,
+} from "../../modules/workspace-index-service.js";
 
 // ---------------------------------------------------------------------------
 // Project store — in-memory Map 与磁盘 JSON 双写（原子写入）
@@ -93,6 +99,7 @@ const projectMutationQueues = new Map<string, Promise<void>>();
 
 const PROJECTS_FILE = resolve(join(DATA_ROOT, "projects.json"));
 
+const WORKSPACE_TREE_MAX_ENTRIES = 100;
 // ---------------------------------------------------------------------------
 // Persistence helpers
 // ---------------------------------------------------------------------------
@@ -378,6 +385,10 @@ function projectGitRoot(
     throw new GitWorkspaceError("Workspace directory is unavailable.", 409);
   const location = workspaceRootLocation(root);
   return {
+    id: root.id,
+    name: root.name,
+    role: root.role,
+    status: root.status,
     path: root.path,
     location,
     repository: location.kind === "host" ? location.path : location,
@@ -623,13 +634,42 @@ projectRoutes.post("/workspaces", async (c) => {
     projects.delete(project.id);
     throw error;
   }
+  workspaceIndexService.indexProject(project.id, projectWorkspaceRoots(project));
   return c.json({ project, roots: projectWorkspaceRoots(project) }, 201);
 });
 
-projectRoutes.get("/:id/workspace", (c) => {
+/** The explorer and file viewer must resolve the same session worktree. */
+async function treeRoots(project: ProjectRecord, sessionId?: string) {
+  if (!sessionId) return projectWorkspaceRoots(project);
+  const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+  const session = projectSessionState(snapshot.session as never) as AgentSession;
+  if (session.projectId !== project.id) throw new GitWorkspaceError("Session is outside this workspace.", 404);
+  return resolveWorkspaceRootsFromSession(session);
+}
+async function treeRoot(project: ProjectRecord, rootId?: string, sessionId?: string) {
+  const roots = await treeRoots(project, sessionId);
+  const root = rootId ? roots.find(item => item.id === rootId) : roots.find(item => item.role === "primary");
+  if (!root) throw new GitWorkspaceError("Workspace project not found.", 404);
+  if (root.status !== "available") throw new GitWorkspaceError("Workspace directory is unavailable.", 409);
+  return root;
+}
+projectRoutes.get("/:id/workspace", async (c) => {
   const project = projects.get(c.req.param("id"));
   if (!project) return c.json({ error: "Project not found" }, 404);
-  return c.json({ roots: projectWorkspaceRoots(project) });
+  try { return c.json({ roots: await treeRoots(project, c.req.query("sessionId")) }); }
+  catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+projectRoutes.get("/:id/tree/status", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  try {
+    const root = await treeRoot(project, c.req.query("rootId"), c.req.query("sessionId"));
+    return c.json(await workspaceIndexService.status(root));
+  } catch (error) {
+    if (error instanceof GitWorkspaceError) return gitWorkspaceRouteError(c, error);
+    return c.json({ error: "Rust workspace indexer is unavailable.", code: "INDEX_UNAVAILABLE" }, 503);
+  }
 });
 
 const addReferenceSchema = workspaceRootInputSchema;
@@ -679,6 +719,7 @@ projectRoutes.post("/:id/references", async (c) => {
       projects.set(latest.id, updated);
       return projectWorkspaceRoots(updated);
     });
+    workspaceIndexService.indexProject(projectId, roots);
     invalidateWorkspaceSessionEnvironments(projectId);
     return c.json({ roots }, 201);
   } catch (error) {
@@ -811,6 +852,66 @@ projectRoutes.get("/", (c) => {
 });
 
 // ── Remaining Project Routes ──
+
+/**
+ * List one directory level from a workspace root.
+ *
+ * Rust owns the index and watcher. This route only validates the workspace
+ * member and adapts the sidecar's revisioned page contract to HTTP.
+ */
+projectRoutes.get("/:id/tree", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+
+  const query = z
+    .object({
+      rootId: z.string().min(1).optional(),
+      sessionId: z.string().min(1).max(256).optional(),
+      path: z.string().max(4096).optional(),
+      showHidden: z.enum(["1", "true"]).optional(),
+      showIgnored: z.enum(["1", "true"]).optional(),
+      limit: z.coerce.number().int().min(1).max(WORKSPACE_TREE_MAX_ENTRIES).optional(),
+      cursor: z.string().max(16384).optional(),
+    })
+    .safeParse(c.req.query());
+  if (!query.success)
+    return c.json({ error: "Invalid workspace tree query" }, 400);
+
+  try {
+    const root = await treeRoot(project, query.data.rootId, query.data.sessionId);
+    const relativePath = query.data.path === "." ? "" : (query.data.path ?? "");
+    const showHidden = query.data.showHidden === "1" || query.data.showHidden === "true";
+    const showIgnored = query.data.showIgnored === "1" || query.data.showIgnored === "true";
+    const limit = query.data.limit ?? WORKSPACE_TREE_MAX_ENTRIES;
+    const listing = await workspaceIndexService.listChildren({
+      projectId: project.id,
+      root,
+      relativePath,
+      showHidden,
+      showIgnored,
+      cursor: query.data.cursor,
+      limit,
+    });
+    return c.json(listing);
+  } catch (error) {
+    const indexCode = (error as { code?: string }).code;
+    if (indexCode === "INVALID_PATH") return c.json({ error: String(error), code: indexCode }, 400);
+    if (indexCode === "INDEX_NOT_FOUND") return c.json({ error: String(error), code: indexCode }, 404);
+    if (indexCode === "INDEX_FORBIDDEN") return c.json({ error: String(error), code: indexCode }, 403);
+    if (indexCode === "INDEX_CURSOR_STALE") return c.json({ error: String(error), code: indexCode }, 409);
+    if (error instanceof GitWorkspaceError)
+      return c.json({ error: error.message }, error.status as 400 | 404 | 409 | 500);
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return c.json({ error: "Workspace directory not found." }, 404);
+    if (code === "EACCES" || code === "EPERM")
+      return c.json({ error: "Workspace directory is not readable." }, 403);
+    logger.error(
+      { err: error instanceof Error ? error.message : String(error) },
+      "[projects] workspace tree listing failed",
+    );
+    return c.json({ error: "Rust workspace indexer is unavailable.", code: "INDEX_UNAVAILABLE" }, 503);
+  }
+});
 
 /** GET /:id/git/workspaces — list local branches and linked worktrees. */
 projectRoutes.get("/:id/git/workspaces", async (c) => {
@@ -1224,6 +1325,7 @@ projectRoutes.post("/", async (c) => {
   projects.set(id, project);
   initializeProjectSettings(id);
   saveProjectsToDisk();
+  workspaceIndexService.indexProject(id, projectWorkspaceRoots(project));
   logger.info({ projectId: id, name, kind: source.kind }, "[projects] created");
 
   return c.json({ project }, 201);

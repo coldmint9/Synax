@@ -769,23 +769,15 @@ export class RunCoordinator {
     summary: string,
   ): void {
     if (!runId) return;
-    const event = agentEventService.append({
+    // Rust stop commands publish durable stream events. The human-readable
+    // audit record is persisted in history even after finish closes the run.
+    agentEventService.append({
       sessionId,
       type: "progress_updated",
       summary,
       payload: { runId },
       visibility: "internal",
     });
-    {
-      void runtimeJournal
-        .appendDurable(sessionId, runId, [{ type: "event", event }])
-        .catch((error) =>
-          logger.warn(
-            { error, sessionId },
-            "Progress replay could not be persisted",
-          ),
-        );
-    }
   }
   activeSessionIds(): string[] {
     return [...this.owners.keys()];

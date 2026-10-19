@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SessionMarkdown } from "./SessionMarkdown";
 import { MarkdownCodeFrame } from "../../shared/ui/markdown/MarkdownCodeFrame";
 
@@ -7,7 +7,28 @@ const LINE_TICK_MS = 32;
 function useLineBufferedText(text: string, isStreaming: boolean): string {
   const targetRef = useRef(text);
   const visibleRef = useRef(isStreaming ? "" : text);
+  const timerRef = useRef<number | null>(null);
+  const streamingRef = useRef(isStreaming);
   const [visible, setVisible] = useState(visibleRef.current);
+
+  streamingRef.current = isStreaming;
+
+  const scheduleFlush = useCallback(() => {
+    if (
+      !streamingRef.current ||
+      timerRef.current !== null ||
+      visibleRef.current === targetRef.current
+    )
+      return;
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      if (!streamingRef.current) return;
+      const target = targetRef.current;
+      if (visibleRef.current === target) return;
+      visibleRef.current = target;
+      setVisible(target);
+    }, LINE_TICK_MS);
+  }, []);
 
   useEffect(() => {
     targetRef.current = text;
@@ -22,28 +43,16 @@ function useLineBufferedText(text: string, isStreaming: boolean): string {
       visibleRef.current = "";
       setVisible("");
     }
-  }, [text, isStreaming]);
+    scheduleFlush();
+  }, [text, isStreaming, scheduleFlush]);
 
   useEffect(() => {
-    if (!isStreaming) return;
-
-    const timer = window.setInterval(() => {
-      const target = targetRef.current;
-      const current = visibleRef.current;
-      if (current === target) return;
-
-      // Reveal everything received so far. Complete lines render as Markdown
-      // while the trailing partial line renders as plain text (see below), so
-      // a long paragraph streams character by character instead of waiting
-      // for its closing newline and dumping in one piece.
-      const next = target;
-      if (next !== current) {
-        visibleRef.current = next;
-        setVisible(next);
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
       }
-    }, LINE_TICK_MS);
-
-    return () => window.clearInterval(timer);
+    };
   }, [isStreaming]);
 
   return visible;

@@ -360,7 +360,7 @@ describe("AgentInteractionPanel", () => {
     );
   });
 
-  it.each(["codex", "claude-code"])(
+  it.each(["codex"])(
     "loads and answers persisted questions for the %s native CLI backend",
     async (backendId) => {
       const nativeSession = {

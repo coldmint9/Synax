@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Wrench } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { useShellStore } from "../../shared/state/shellStore";
 import { ThinkingTrace } from "./ThinkingTrace";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolBlocksToBatches } from "./toolCallUtils";
@@ -19,15 +20,49 @@ interface Props {
   isStreaming?: boolean;
 }
 
+function sameToolBlocks(
+  previous: TurnContentBlock[],
+  next: TurnContentBlock[],
+): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    const a = previous[index];
+    const b = next[index];
+    if (a === b) continue;
+    if (a.type !== b.type) return false;
+    if (a.type === "thinking" && b.type === "thinking") {
+      if (a.content !== b.content) return false;
+      continue;
+    }
+    if (a.type === "tool_call" && b.type === "tool_call") {
+      if (a.call !== b.call) return false;
+      continue;
+    }
+    if (a.type === "tool_call_group" && b.type === "tool_call_group") {
+      if (
+        a.calls.length !== b.calls.length ||
+        a.calls.some((call, callIndex) => call !== b.calls[callIndex])
+      )
+        return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   toolBlocks: rawToolBlocks,
   maxHeight = "160px",
   isStreaming = false,
 }: Props) {
   const { t, locale } = useLocale();
+  const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const toolBlocks = rawToolBlocks.filter(
     (block) =>
-      block.type !== "thinking" || hasDisplayableReasoning(block.content),
+      block.type === "tool_call" || block.type === "tool_call_group" ||
+      (block.type === "thinking" && showThinking && hasDisplayableReasoning(block.content)),
   );
   // Only the newest thought mounts its row here; the earlier ones are read-only
   // history and would each add a collapsed row that can never change again.
@@ -39,20 +74,10 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
   const activityBlocks = toolBlocks.filter(
     (block) => block.type !== "thinking",
   );
-  const previews = toolBlocks
-    .flatMap((block, index) => {
+  const previews = activityBlocks
+    .flatMap((block) => {
       // Each record previews its latest line: a row reports where the round is
       // now, not the first thing it said.
-      if (block.type === "thinking")
-        return [
-          {
-            id: `thinking-${index}`,
-            text: latestActivityPreview(
-              block.content.replace(/\*\*/g, ""),
-              160,
-            ),
-          },
-        ];
       const calls =
         block.type === "tool_call"
           ? [block.call]
@@ -77,7 +102,15 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
 
   return (
     <div className="bui-tool-group">
-      <ThinkingTrace
+      {/* Reasoning must stay visible when the tool log is collapsed. */}
+      {latestThought?.type === "thinking" && (
+        <ThinkingBlock
+          key="thinking-latest"
+          content={latestThought.content}
+          isStreaming={isStreaming}
+        />
+      )}
+      {calls.length > 0 && <ThinkingTrace
         label={preview?.text ?? t("sessionActivityThinking")}
         title={preview?.text}
         meta={
@@ -105,18 +138,12 @@ export const ToolCallRoundPanel = memo(function ToolCallRoundPanel({
               />
             )),
           )}
-          {latestThought?.type === "thinking" ? (
-            <ThinkingBlock
-              key="thinking-latest"
-              content={latestThought.content}
-              isStreaming={
-                isStreaming &&
-                toolBlocks[toolBlocks.length - 1] === latestThought
-              }
-            />
-          ) : null}
         </div>
-      </ThinkingTrace>
+      </ThinkingTrace>}
     </div>
   );
-});
+}, (previous, next) =>
+  previous.maxHeight === next.maxHeight &&
+  previous.isStreaming === next.isStreaming &&
+  sameToolBlocks(previous.toolBlocks, next.toolBlocks),
+);

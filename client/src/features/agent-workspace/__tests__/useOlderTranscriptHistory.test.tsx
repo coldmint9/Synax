@@ -105,6 +105,9 @@ it("offers an explicit retry after an older page fails", async () => {
   });
   rerender(<Harness />);
   fireEvent.scroll(viewport);
-  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  for (let i = 0; i < 5; i++) fireEvent.scroll(viewport);
+  expect(load).toHaveBeenCalledTimes(1);
+  fireEvent.click(retry);
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
 });

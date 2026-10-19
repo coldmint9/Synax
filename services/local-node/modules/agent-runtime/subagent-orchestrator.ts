@@ -1,5 +1,6 @@
 import type { AgentProfileKind, ThinkingMode } from "./contracts.js";
-import { agentLoopRuntime, type AgentLoopRuntime } from "./loop-runtime.js";
+import type { BackendAdapter } from "./backends/backend-contracts.js";
+import { rustNativeBackend } from "./backends/rust-native-backend.js";
 import {
   agentSessionRuntime,
   type AgentSessionRuntime,
@@ -7,6 +8,7 @@ import {
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { runtimeFacade } from "./sidecar/runtime-facade.js";
 /** A child is governed by execution progress, not a total wall-clock budget. */
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
 export const SUBAGENT_LEASE_DURATION_MS = 30_000;
@@ -88,17 +90,15 @@ export interface RunBatchOptions {
 }
 
 interface OrchestratorDeps {
-  loop: AgentLoopRuntime;
+  loop: BackendAdapter;
   sessions: AgentSessionRuntime;
   store: AgentRuntimeStore;
 }
 
-// Getters defer binding reads to call time. This module and loop-runtime form
-// an import cycle (loop-runtime reuses runChildToCompletion); reading the
-// singletons at module-eval time would hit the temporal dead zone.
+// Getters defer singleton reads across runtime/tool registration cycles.
 const defaultDeps: OrchestratorDeps = {
   get loop() {
-    return agentLoopRuntime;
+    return rustNativeBackend;
   },
   get sessions() {
     return agentSessionRuntime;
@@ -282,15 +282,39 @@ export async function runChildToCompletion(
       : undefined;
 
   try {
-    const { runCoordinator } = await import("./run-coordinator.js");
-    const requestId = `subagent:${childSessionId}:${startedAt}`;
-    await runCoordinator.submitAsync(
-      childSessionId,
-      opts.input ?? {},
-      requestId,
-      opts.resume ? "resume" : "turn",
-    );
-    await runCoordinator.waitForSessionIdle(childSessionId);
+    if (!runtimeFacade.enabled()) {
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      let rejectTimeout!: (error: Error) => void;
+      const arm = () => {
+        if (watchdog) clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          timedOut = true;
+          controller.abort(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
+          rejectTimeout(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
+        }, progressTimeoutMs);
+      };
+      const consume = (async () => {
+        arm();
+        for await (const _chunk of deps.loop.stream(
+          childSessionId,
+          opts.resume ? "resume" : "turn",
+          opts.input ?? {},
+          controller.signal,
+        )) { lastProgressAt = Date.now(); arm(); }
+      })();
+      const timeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
+      const aborted = new Promise<never>((_, reject) => {
+        if (controller.signal.aborted) return reject(controller.signal.reason ?? new Error('Subagent aborted.'));
+        controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('Subagent aborted.')), { once: true });
+      });
+      try { await Promise.race([consume, timeout, aborted]); }
+      finally { if (watchdog) clearTimeout(watchdog); }
+    } else {
+      const { runCoordinator } = await import("./run-coordinator.js");
+      const requestId = `subagent:${childSessionId}:${startedAt}`;
+      await runCoordinator.submitAsync(childSessionId, opts.input ?? {}, requestId, opts.resume ? "resume" : "turn");
+      await runCoordinator.waitForSessionIdle(childSessionId);
+    }
     lastProgressAt = Date.now();
   } catch (err) {
     logger.warn(

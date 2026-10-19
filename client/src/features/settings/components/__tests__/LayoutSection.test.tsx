@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
   hydrateShellPreferences,
   useShellStore,
@@ -13,18 +13,25 @@ const { LayoutSection } = await import("../LayoutSection");
 
 describe("LayoutSection", () => {
   beforeEach(() => {
+    localStorage.clear();
     useShellStore.setState((state) => ({
       preferences: {
         ...state.preferences,
         locale: "en",
-        
+        sessionShowThinking: true,
         sessionFoldWorkRuns: true,
         userMessageFontWeight: 450,
       },
     }));
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, sessionShowThinking: true },
+    }));
+    localStorage.clear();
+  });
 
   it("moves the work-log fold preference into settings", () => {
     render(<LayoutSection />);
@@ -36,6 +43,31 @@ describe("LayoutSection", () => {
     expect(useShellStore.getState().preferences.sessionFoldWorkRuns).toBe(
       false,
     );
+  });
+
+  it("persists the thinking setting and restores it on reload", () => {
+    render(<LayoutSection />);
+
+    const toggle = screen.getByRole("switch", { name: "Show thinking content" });
+    expect(useShellStore.getState().preferences.sessionShowThinking).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(useShellStore.getState().preferences.sessionShowThinking).toBe(false);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    act(() => {
+      useShellStore.setState((state) => ({ preferences: { ...state.preferences, sessionShowThinking: true } }));
+      hydrateShellPreferences();
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("enables thinking by default for existing preferences without the new setting", () => {
+    localStorage.setItem("rumbling-shell-preferences", JSON.stringify({ locale: "en" }));
+    hydrateShellPreferences();
+    render(<LayoutSection />);
+    expect(screen.getByRole("switch", { name: "Show thinking content" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("updates the user message font weight with the range control", () => {

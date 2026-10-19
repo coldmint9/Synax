@@ -13,7 +13,11 @@ describe("ThinkingBlock", () => {
   afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     useShellStore.setState((state) => ({
-      preferences: { ...state.preferences, locale: "en" },
+      preferences: {
+        ...state.preferences,
+        locale: "en",
+        sessionShowThinking: true,
+      },
     }));
   });
 
@@ -29,6 +33,15 @@ describe("ThinkingBlock", () => {
     expect(title.length).toBeLessThanOrEqual(401);
     expect(title).not.toContain("reasoning-");
     expect((container.textContent ?? "").length).toBeLessThan(300);
+  });
+
+  it.each(["visible thought", "**Thinking headline**"])("toggles %s immediately without losing its content", (content) => {
+    const { container } = render(<ThinkingBlock content={content} isStreaming />);
+    expect(container).not.toBeEmptyDOMElement();
+    act(() => useShellStore.getState().setSessionShowThinking(false));
+    expect(container).toBeEmptyDOMElement();
+    act(() => useShellStore.getState().setSessionShowThinking(true));
+    expect(container).toHaveTextContent(content.replaceAll("**", ""));
   });
 
   it("previews the newest reasoning line on a collapsed row", () => {

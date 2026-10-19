@@ -1,8 +1,9 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { SessionStaticTimeline } from "../SessionStaticTimeline";
 import { useAgentSessionStore as store } from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
+import { useShellStore } from "../../../shared/state/shellStore";
 import type {
   AgentRun,
   AgentRunStep,
@@ -86,6 +87,33 @@ const advance = (totalMs: number) => {
 afterEach(() => {
   act(() => store.setState(store.getInitialState()));
   vi.useRealTimers();
+});
+
+it("renders live reasoning independently of the tool log and restores it after toggling", () => {
+  vi.useFakeTimers();
+  useShellStore.setState((s) => ({ preferences: { ...s.preferences, sessionShowThinking: true } }));
+  store.setState({ ...store.getInitialState(), selectedSessionId: session.id, sessions: [session],
+    runs: [run], steps: [liveStep], streamingStepId: liveStep.id, streamingLive: EMPTY_STREAMING_BUFFERS });
+  const { container } = render(<SessionStaticTimeline unifiedLive session={session} runs={[run]}
+    steps={[liveStep]} messages={[]} toolCalls={[]} excludeStepId={liveStep.id} isRunning />);
+  const apply = store.getState().applyLiveEvent;
+  act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "实时思考正文" }));
+  advance(80);
+  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
+  expect(container.querySelector(".bui-thinking-prose")).toHaveTextContent("实时思考正文");
+  act(() => apply({ type: "tool_call", stepId: liveStep.id, toolCall: toolCall("running") }));
+  advance(80);
+  const toolToggle = container.querySelector('[data-variant="coding"] > button') as HTMLButtonElement;
+  fireEvent.click(toolToggle);
+  expect(toolToggle).toHaveAttribute("aria-expanded", "false");
+  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
+  act(() => useShellStore.getState().setSessionShowThinking(false));
+  expect(container).not.toHaveTextContent("实时思考正文");
+  act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "，继续推理" }));
+  advance(80);
+  act(() => useShellStore.getState().setSessionShowThinking(true));
+  expect(container.querySelector(".bui-thinking-prose")).toHaveTextContent("继续推理");
+  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
 });
 
 /**

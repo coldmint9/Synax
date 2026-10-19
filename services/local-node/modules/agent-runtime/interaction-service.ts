@@ -161,8 +161,8 @@ export const interactionService = {
   },
   ready(sessionId: string): AgentInteraction | null {
     const session=store.getSession(sessionId);
-    if(session.status!=='waiting_input')return null;
-    return this.list(sessionId).find(i=>i.runId===session.activeRunId&&i.status==='answered'&&i.response&&!i.consumedAt)??null;
+    if(!['waiting_input','running'].includes(session.status))return null;
+    return this.list(sessionId).find(i=>i.runId===session.activeRunId&&['answered','cancelled'].includes(i.status)&&i.response&&!i.consumedAt)??null;
   },
   request(input: InteractionRequestInput): AgentInteraction {
     const prepared = prepareInteraction(input);

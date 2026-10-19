@@ -17,8 +17,8 @@ import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
 let workspace = "";
 let sessionId = "";
 
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), "Synax-design-"));
   const session = agentSessionRuntime.create({
     projectId: "project-alpha",

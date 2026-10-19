@@ -97,8 +97,8 @@ describe("resolveInitialSessionTitle", () => {
 });
 
 describe("session title after first run", () => {
-  beforeEach(() => {
-    resetAgentRuntimeFixtures();
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
     ensureSynaxAgentRegistered();
     mockGenerateGatewayTextResult.mockReset();
     mockGenerateGatewayTextResult.mockResolvedValue({

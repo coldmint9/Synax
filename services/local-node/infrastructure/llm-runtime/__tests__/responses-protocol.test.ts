@@ -1,7 +1,8 @@
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { generateText } from 'ai'
-import { afterEach, describe, expect, it } from 'vitest'
+import { beforeAll, afterEach, describe, expect, it } from 'vitest'
 import { instantiateProvider, selectLanguageModel } from '../providers/provider-registry.js'
 import type { ResolvedProviderConfig, RuntimeProvider } from '../types.js'
 
@@ -9,6 +10,8 @@ type CapturedRequest = {
   url: string
   body: Record<string, unknown>
 }
+
+beforeAll(async () => { await ensureTestRuntime(); });
 
 const servers: http.Server[] = []
 
@@ -29,8 +32,16 @@ async function startStubServer(payload: unknown): Promise<{ baseUrl: string; req
         url: req.url ?? '',
         body: raw ? JSON.parse(raw) as Record<string, unknown> : {},
       })
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(payload))
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      const value = payload as any
+      if (req.url?.endsWith('/responses')) {
+        res.write(`data: ${JSON.stringify({ type: 'response.output_text.delta', output_index: 0, delta: value.output[0].content[0].text })}\n\n`)
+        res.end(`data: ${JSON.stringify({ type: 'response.completed', response: value })}\n\n`)
+      } else {
+        res.write(`data: ${JSON.stringify({ ...value, object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: value.choices[0].message.content }, finish_reason: null }] })}\n\n`)
+        res.write(`data: ${JSON.stringify({ ...value, object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`)
+        res.end('data: [DONE]\n\n')
+      }
     })
   })
   servers.push(server)

@@ -9,6 +9,7 @@ const isolation = vi.hoisted(() => ({
   dataRoot: '', listSessions: vi.fn(), listGitWorkspaces: vi.fn(),
   createGitWorktree: vi.fn(), removeGitWorktree: vi.fn(), pruneGitWorktrees: vi.fn(),
   previewGitWorktreePath: vi.fn(), previewGitWorktreeCleanup: vi.fn(), cleanupGitWorktrees: vi.fn(), previewGitWorktreePrune: vi.fn(), getRun: vi.fn(),
+  workspaceList: vi.fn(), workspaceIndexProject: vi.fn(),
 }));
 
 // Keep the real route, directory validation and JSON store; isolate unrelated services.
@@ -44,6 +45,13 @@ vi.mock('../../modules/git-workspaces.js', () => ({
   previewGitWorktreeCleanup: isolation.previewGitWorktreeCleanup,
   cleanupGitWorktrees: isolation.cleanupGitWorktrees,
   previewGitWorktreePrune: isolation.previewGitWorktreePrune,
+}));
+vi.mock('../../modules/workspace-index-service.js', () => ({
+  workspaceIndexService: {
+    listChildren: isolation.workspaceList,
+    indexProject: isolation.workspaceIndexProject,
+    start: vi.fn(),
+  },
 }));
 
 let tempDir = '';
@@ -200,6 +208,10 @@ beforeEach(async () => {
   isolation.cleanupGitWorktrees.mockResolvedValue({ results: [] });
   isolation.previewGitWorktreePrune.mockResolvedValue({ paths: [] });
   isolation.getRun.mockReset();
+  isolation.workspaceList.mockResolvedValue({
+    projectId: 'main', rootId: 'main', rootName: 'Project main', rootPath: mainPath,
+    path: '', entries: [], truncated: false, nextCursor: null, revision: 1, indexing: false,
+  });
   isolation.createGitWorktree.mockResolvedValue({ path: '/test/worktree' });
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-projects-workspace-'));
   isolation.dataRoot = path.join(tempDir, 'data');
@@ -344,6 +356,51 @@ describe('workspace creation and repository selection API', () => {
     })).status).toBe(200);
     expect(isolation.pruneGitWorktrees).toHaveBeenCalledWith(localPath, [], expect.any(Function));
   });
+
+  it('delegates scoped directory pages to Rust and translates index errors', async () => {
+    isolation.workspaceList.mockResolvedValue({ entries: [{ name: 'app.ts', path: 'src/app.ts', kind: 'file' }],
+      path: 'src', truncated: false, nextCursor: null, revision: 2, indexing: false });
+    const response = await routes.request('/main/tree?path=src&limit=100&showHidden=1&showIgnored=1');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ path: 'src', revision: 2 });
+    expect(isolation.workspaceList).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'main', root: expect.objectContaining({ id: 'main', path: mainPath }),
+      relativePath: 'src', limit: 100, showHidden: true, showIgnored: true,
+    }));
+    isolation.workspaceList.mockClear();
+    expect((await routes.request('/main/tree?rootId=outside')).status).toBe(404);
+    expect((await routes.request('/main/tree?limit=101')).status).toBe(400);
+    expect(isolation.workspaceList).not.toHaveBeenCalled();
+    for (const [code, status] of [['INVALID_PATH', 400], ['INDEX_CURSOR_STALE', 409], ['INDEX_NOT_FOUND', 404], ['INDEX_FORBIDDEN', 403]] as const) {
+      isolation.workspaceList.mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+      expect((await routes.request('/main/tree?path=src')).status).toBe(status);
+    }
+    isolation.workspaceList.mockRejectedValueOnce(new Error('sidecar stopped'));
+    expect((await routes.request('/main/tree')).status).toBe(503);
+  });
+  it('uses the session worktree for both root discovery and directory reads', async () => {
+    const { runtimeFacade } = await import('../../modules/agent-runtime/sidecar/runtime-facade.js');
+    const worktree = directory('session-worktree');
+    const snapshot = vi.spyOn(runtimeFacade, 'uiSnapshotAuthoritative').mockResolvedValue({
+      session: { id: 'session', projectId: 'main', status: 'completed', sessionMetadata: { backend: { workDir: worktree } } },
+    } as never);
+    const response = await routes.request('/main/workspace?sessionId=session');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ roots: [expect.objectContaining({ path: worktree })] });
+    expect((await routes.request('/main/tree?sessionId=session')).status).toBe(200);
+    expect(isolation.workspaceList).toHaveBeenCalledWith(expect.objectContaining({ root: expect.objectContaining({ path: worktree }) }));
+    snapshot.mockResolvedValue({ session: { id: 'foreign', projectId: 'existing', status: 'completed' } } as never);
+    expect((await routes.request('/main/tree?sessionId=foreign')).status).toBe(404);
+  });
+  it('schedules new workspace roots without waiting for an index response', async () => {
+    const response = await routes.request('/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Indexed', roots: [{ localPath }] }) });
+    expect(response.status).toBe(201);
+    const { project: created } = await response.json() as { project: ProjectRecord };
+    expect(isolation.workspaceIndexProject).toHaveBeenCalledWith(created.id,
+      [expect.objectContaining({ path: localPath, role: 'primary' })]);
+  });
+
 });
 
 describe('project workspace references API', () => {

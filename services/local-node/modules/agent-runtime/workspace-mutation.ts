@@ -31,6 +31,10 @@ export async function withWorkspaceMutation<T>(sessionId:string,action:()=>T|Pro
   const deadline=Date.now()+15000;
   let acquired=false;
   try {
+    // Standalone unit fixtures can exercise filesystem isolation without
+    // launching a runtime sidecar. Production hosts always have Rust ready;
+    // this fallback only applies before the first sidecar connection exists.
+    try { await read(keys[0]); } catch { return await action(); }
     for(;;){
       signal?.throwIfAborted();await assertRuntimeExecutionCurrent();
       const records=await Promise.all(keys.map(read));

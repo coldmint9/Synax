@@ -37,173 +37,19 @@ describe("buildAgentModelOptions", () => {
       { kind: "api" as const, providerId: "studio", modelId: "image", label: "Image", capability: "image_generation" as const },
       { kind: "api" as const, providerId: "studio", modelId: "chat", label: "Chat", capability: "chat" as const },
     ];
-    expect(pickDefaultModelSelection(options, [], {providerId:"studio",modelId:"image"})).toEqual(options[1]);
-    expect(pickDefaultModelSelection([options[0]], [])).toEqual(options[0]);
+    expect(pickDefaultModelSelection(options, {providerId:"studio",modelId:"image"})).toEqual(options[1]);
+    expect(pickDefaultModelSelection([options[0]])).toEqual(options[0]);
   });
-  it("hides registered ACP providers before discovery", () => {
-    expect(
-      buildAgentModelOptions(baseGlobalConfig, [cursorProvider]).acpEndpoints,
-    ).toEqual([]);
+  it("ignores persisted ACP definitions instead of offering a removed runtime", () => {
+    expect(buildAgentModelOptions(baseGlobalConfig, [cursorProvider])).toEqual({ apiModels: [] });
+    expect(buildAgentModelOptions(null, [cursorProvider])).toEqual({ apiModels: [] });
   });
-
-  it.each([
-    { status: "missing", installed: false, handshakeOk: false },
-    { status: "available", installed: true, handshakeOk: false },
-    { status: "available", installed: false, handshakeOk: true },
-  ] as const)("excludes unusable discovery results: %j", (result) => {
-    expect(
-      buildAgentModelOptions(
-        baseGlobalConfig,
-        [cursorProvider],
-        [
-          {
-            id: "cursor-acp",
-            label: "Cursor ACP",
-            command: "agent",
-            selected: false,
-            compatibility: "",
-            ...result,
-          },
-        ],
-      ).acpEndpoints,
-    ).toEqual([]);
+  it("keeps provider-qualified API references without duplicating their prefix", () => {
+    expect(formatModelReference("openai", "fixture")).toBe("openai/fixture");
+    expect(formatModelReference("custom-api:gateway", "custom-api:gateway/model")).toBe("custom-api:gateway/model");
+    expect(formatModelReference(null, "model")).toBe("model");
+    expect(formatModelReference("openai", null)).toBeUndefined();
   });
-
-  it("offers discovered ACP without global settings or enable toggles", () => {
-    const discovery = [
-      {
-        id: "cursor-acp",
-        label: "Cursor ACP",
-        command: "agent",
-        status: "available" as const,
-        installed: true,
-        handshakeOk: true,
-        selected: false,
-        compatibility: "",
-      },
-    ];
-    for (const config of [
-      null,
-      { ...baseGlobalConfig, enabledAcpProviderIds: [] },
-    ]) {
-      expect(
-        buildAgentModelOptions(config, [cursorProvider], discovery)
-          .acpEndpoints,
-      ).toEqual([
-        {
-          kind: "acp",
-          providerId: "cursor-acp",
-          modelId: "cursor-default",
-          label: "Cursor Default",
-          capability: "chat",
-        },
-      ]);
-    }
-  });
-
-  it("expands ACP provider models from discovery catalog", () => {
-    const { acpEndpoints } = buildAgentModelOptions(
-      baseGlobalConfig,
-      [cursorProvider],
-      [
-        {
-          id: "cursor-acp",
-          label: "Cursor ACP",
-          command: "agent",
-          status: "available",
-          installed: true,
-          handshakeOk: true,
-          selected: false,
-          compatibility: "",
-          models: [
-            { id: "auto", label: "Auto" },
-            { id: "gpt-5.4", label: "GPT-5.4" },
-          ],
-        },
-      ],
-    );
-
-    expect(acpEndpoints).toEqual([
-      { kind: "acp", providerId: "cursor-acp", modelId: "auto", label: "Auto", capability: "chat" },
-      {
-        kind: "acp",
-        providerId: "cursor-acp",
-        modelId: "gpt-5.4",
-        label: "GPT-5.4",
-        capability: "chat",
-      },
-    ]);
-  });
-});
-
-describe("formatModelReference ACP provider/model refs", () => {
-  it("formats native and adapter-backed ACP engines as providerId/modelId", () => {
-    expect(formatModelReference("codex-acp", "gpt-5.4")).toBe(
-      "codex-acp/gpt-5.4",
-    );
-    expect(formatModelReference("pi-acp", "default")).toBe("pi-acp/default");
-    expect(formatModelReference("cursor-acp", "auto")).toBe("cursor-acp/auto");
-    expect(formatModelReference("openai", "gpt-5.4")).toBe("openai/gpt-5.4");
-    expect(formatModelReference("custom-api:kiro-local", "claude-opus-5")).toBe(
-      "custom-api:kiro-local/claude-opus-5",
-    );
-    expect(
-      formatModelReference(
-        "custom-api:kiro-local",
-        "custom-api:kiro-local/claude-opus-5",
-      ),
-    ).toBe("custom-api:kiro-local/claude-opus-5");
-    expect(formatModelReference(null, "gpt-5.4")).toBe("gpt-5.4");
-    expect(formatModelReference("codex-acp", null)).toBeUndefined();
-  });
-
-  it("expands pi-acp endpoints from discovery catalog when enabled", () => {
-    const config: GlobalConfig = {
-      ...baseGlobalConfig,
-      enabledAcpProviderIds: ["pi-acp"],
-      defaultProviderId: "pi-acp",
-    };
-    const piProvider: ProviderDef = {
-      id: "pi-acp",
-      label: "Pi ACP",
-      status: "live",
-      kind: "acp",
-      caps: { canFollowUp: true, canCancel: true },
-      models: [{ id: "pi-default", label: "Pi Default", isDefault: true }],
-    };
-    const { acpEndpoints } = buildAgentModelOptions(
-      config,
-      [piProvider],
-      [
-        {
-          id: "pi-acp",
-          label: "Pi ACP",
-          command: "pi-acp",
-          status: "available",
-          installed: true,
-          handshakeOk: true,
-          selected: false,
-          compatibility: "",
-          models: [
-            { id: "auto", label: "Auto" },
-            { id: "gpt-5.4", label: "GPT-5.4" },
-          ],
-        },
-      ],
-    );
-
-    expect(acpEndpoints).toEqual([
-      { kind: "acp", providerId: "pi-acp", modelId: "auto", label: "Auto", capability: "chat" },
-      {
-        kind: "acp",
-        providerId: "pi-acp",
-        modelId: "gpt-5.4",
-        label: "GPT-5.4",
-        capability: "chat",
-      },
-    ]);
-  });
-
   it("exposes configured image and video models as capability-aware options", () => {
     const provider: ProviderDef = {
       id: "custom-api:media",

@@ -5,7 +5,7 @@ import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-fa
 import { RuntimeSidecarError } from '../../../modules/agent-runtime/sidecar/sidecar-client.js';
 import { plannerSessionInput, resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 
-beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 const request = (sessionId: string, body: unknown) => agentRuntimeRoutes.request(`/sessions/${sessionId}/runtime-ticket`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

@@ -1,4 +1,4 @@
-import { applySessionPermissionUpdateAuthoritative } from "./session-permissions.js";
+import { applySessionPermissionUpdate, applySessionPermissionUpdateAuthoritative } from "./session-permissions.js";
 import { normalizeInput, hasInput, inputParts } from "./content-parts.js";
 import { bindValidatedAssetsAuthoritative, validateAssets } from "./media-assets.js";
 import { prepareTurnReferences } from "./turn-references.js";
@@ -74,6 +74,15 @@ export async function acceptRuntimeRunAuthoritative(
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);
   const existingRun = authoritative.run as AgentRun | null | undefined;
+  const previous = [existingRun, ...agentRuntimeStore.listRuns(sessionId)].find(
+    run => (run?.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId === requestId,
+  );
+  if (previous) {
+    if ((previous.metadata.runtime as AcceptedRuntimeInput).inputHash !== inputHash)
+      throw new AgentRuntimeError("This request ID was already used for different input.", "REQUEST_CONFLICT", 409);
+    agentRuntimeStore.acceptRunProjection(previous);
+    return { run: previous, reused: true };
+  }
   if (existingRun && ["queued", "running", "waiting_permission", "waiting_input"].includes(existingRun.status))
     throw new AgentRuntimeError(
       "This session already has an active or pending execution.",
@@ -116,21 +125,6 @@ export async function acceptRuntimeRunAuthoritative(
     ? undefined
     : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
 
-  const previous = agentRuntimeStore.listRuns(sessionId).find(run => (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId === requestId);
-  if (previous) {
-    const run = agentRuntimeStore.listRuns(sessionId).find(item => item.id === previous.id);
-    if (run) {
-      const runtime = run.metadata.runtime as AcceptedRuntimeInput;
-      if (runtime.inputHash !== inputHash)
-        throw new AgentRuntimeError(
-          "This request ID was already used for different input.",
-          "REQUEST_CONFLICT",
-          409,
-        );
-      return { run, reused: true };
-    }
-    if (existingRun?.id === previous.id) return { run: existingRun, reused: true };
-  }
   if (preparedSession.sessionMetadata?.runtimeControl)
     throw new AgentRuntimeError(
       "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
@@ -207,8 +201,13 @@ export async function acceptRuntimeRunAuthoritative(
     false,
   );
   if (admission.reused) {
+    await agentRuntimeStore.hydrateSession(sessionId, true);
     const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-    const reusedRun = snapshot.run?.id === run.id ? (snapshot.run as AgentRun) : run;
+    const reusedRun = snapshot.run?.id === admission.runId
+      ? snapshot.run as AgentRun
+      : agentRuntimeStore.listRuns(sessionId).find(item => item.id === admission.runId);
+    if (!reusedRun) throw new Error("Accepted run receipt has no matching persisted run.");
+    agentRuntimeStore.acceptRunProjection(reusedRun);
     return { run: reusedRun, reused: true };
   }
 
@@ -265,4 +264,47 @@ export function activateAcceptedRun(
   });
 }
 
-export function acceptRuntimeRun(...args: Parameters<typeof acceptRuntimeRunAuthoritative>): ReturnType<typeof acceptRuntimeRunAuthoritative> { return acceptRuntimeRunAuthoritative(...args); }
+/** In-process compatibility admission used by worker/unit hosts without Rust. */
+export async function acceptRuntimeRun(
+  sessionId: string,
+  input: StreamTurnRequest,
+  requestId: string,
+  mode: AgentSessionStreamMode = "turn",
+): Promise<{ run: AgentRun; reused: boolean }> {
+  input = normalizeInput(input);
+  if (input.contentParts && !hasInput(input)) throw new AgentValidationError("Input is empty.");
+  if (!requestId.trim() || requestId.length > 128) throw new AgentValidationError("A request ID of 1–128 characters is required.");
+  if (mode === "resume") throw new AgentValidationError("Resume the pending interaction instead of submitting a new Run.");
+  const inputHash = createHash("sha256").update(JSON.stringify(stable({ input, mode }))).digest("hex");
+  const session = agentRuntimeStore.getSession(sessionId);
+  const previous = agentRuntimeStore.listRuns(sessionId).find(run => (run.metadata.runtime as AcceptedRuntimeInput | undefined)?.requestId === requestId);
+  if (previous) {
+    const runtime = previous.metadata.runtime as AcceptedRuntimeInput;
+    if (runtime.inputHash !== inputHash) throw new AgentRuntimeError("This request ID was already used for different input.", "REQUEST_CONFLICT", 409);
+    return { run: previous, reused: true };
+  }
+  if (agentRuntimeStore.listRuns(sessionId).some(run => ["queued", "running", "waiting_permission", "waiting_input"].includes(run.status)))
+    throw new AgentRuntimeError("This session already has an active or pending execution.", "SESSION_BUSY", 409);
+  const binding = resolveSessionBackend(sessionId);
+  validateBackendTurnInput(binding.id, input);
+  const model = resolveBackendModel(sessionId, input);
+  const workDir = bindSessionWorkDir(sessionId);
+  const runtime: AcceptedRuntimeInput = {
+    version: 1,
+    requestId,
+    inputHash,
+    mode,
+    input: { ...input, ...(model ? { model } : {}) },
+    backendId: binding.id,
+    workDir,
+    previousSessionStatus: session.status,
+  };
+  if (input.permissionTier !== undefined || input.permissionOverrides !== undefined)
+    applySessionPermissionUpdate(sessionId, input);
+  const run = agentRuntimeStore.appendRun({
+    id: makeRuntimeId("run"), sessionId, status: "queued", startedAt: nowIso(), completedAt: null,
+    triggerMessageId: null, currentStep: 0, stopReason: null, model: model ?? null, metadata: { runtime },
+  });
+  agentRuntimeStore.updateSession(sessionId, { status: "queued", activeRunId: run.id, updatedAt: nowIso() });
+  return { run, reused: false };
+}

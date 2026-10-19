@@ -5,7 +5,7 @@ import { toolRegistry } from '../tool-registry.js';
 import { explorerSessionInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('toolRegistry', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('registers progressively described core tools', () => {
     const tools = toolRegistry.list();

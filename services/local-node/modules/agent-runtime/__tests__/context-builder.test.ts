@@ -3,7 +3,7 @@ import { agentContextBuilder } from '../context-builder.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('agentContextBuilder', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('builds context blocks with warnings and citations', () => {
     const bundle = agentContextBuilder.build('project-alpha', {

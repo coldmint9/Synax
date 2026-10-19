@@ -5,7 +5,7 @@ import { agentRuntimeStore } from '../../../modules/agent-runtime/session-store.
 import { executorInput, resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 
 describe('session invocation usage route', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('returns normalized invocation usage', async () => {
     const session = agentSessionRuntime.create(executorInput);

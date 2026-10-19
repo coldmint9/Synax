@@ -294,4 +294,5 @@ export async function acknowledgeRuntimeRecovery(
     pendingResumeToken: null,
     updatedAt: nowIso(),
   });
+  await agentRuntimeStore.flushSession(sessionId);
 }

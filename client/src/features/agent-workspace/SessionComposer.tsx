@@ -83,7 +83,7 @@ import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxPermissionTier,
   readSynaxSessionMode,
-  isAcpSession,
+  isUnsupportedSessionBackend,
   type SynaxPermissionTier,
 } from "./synaxSessionTypes";
 
@@ -291,12 +291,12 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
-  // New sessions always execute on the Synax-native runtime. acp/cli backends
+  // New sessions always execute on the Synax-native runtime. Codex CLI sessions
   // stay reachable through subagent delegation only, so the composer exposes no
   // execution-backend selection at all.
   const backendId = session ? readSessionBackendId(session) : "native";
   const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
-  const cliBackend = backendId === "codex" || backendId === "claude-code";
+  const cliBackend = backendId === "codex";
   useEffect(() => {
     setCliEfforts(undefined);
   }, [session?.id, backendId]);
@@ -345,9 +345,10 @@ export function SessionComposer({
   const updateSessionPermissions = useAgentSessionStore(
     (s) => s.updateSessionPermissions,
   );
-  const acp = backendId !== "native";
+  const externalBackend = backendId !== "native";
+  const unsupportedBackend = isUnsupportedSessionBackend(session);
   const mode = isDraft
-    ? acp
+    ? externalBackend
       ? "chat"
       : draftMode
     : readSynaxSessionMode(session.sessionMetadata);
@@ -356,7 +357,7 @@ export function SessionComposer({
     !editingQueue &&
     !changingMode &&
     canSwitchSessionMode(session, {
-      acp,
+      externalBackend,
       hasPendingPermissions,
       hasPendingInteractions: Boolean(
         session &&
@@ -366,8 +367,8 @@ export function SessionComposer({
           hasPendingInteractions),
       ),
     });
-  const incompatibleModel =
-    backendId === "native" && Boolean(providerId?.endsWith("-acp"));
+  const incompatibleModel = unsupportedBackend ||
+    (backendId === "native" && Boolean(providerId?.endsWith("-acp")));
 
   const handleModeChange = async (next: AgentSessionMode) => {
     if (!modeEnabled)
@@ -449,11 +450,7 @@ export function SessionComposer({
     const model =
       backendId === "native"
         ? formatModelReference(providerId, modelId)
-        : backendId.endsWith("-acp")
-          ? `${backendId}/${providerId === backendId ? (modelId ?? "default") : "default"}`
-          : cliModel !== "default"
-            ? cliModel
-            : undefined;
+        : cliModel !== "default" ? cliModel : undefined;
     const body = {
       message,
       contentParts: media.parts.length
@@ -475,7 +472,7 @@ export function SessionComposer({
             backendId,
             permissionTier: cliBackend ? undefined : permissionTier,
             permissionOverrides: { task: subagentsEnabled ? "allow" : "deny" },
-            mode: acp ? "chat" : draftMode,
+            mode: externalBackend ? "chat" : draftMode,
             prompt: message,
             gitWorkspace,
           }));
@@ -549,7 +546,7 @@ export function SessionComposer({
     references,
     isDraft,
     projectId,
-    acp,
+    externalBackend,
     draftMode,
     gitWorkspace,
     submitSessionDraft,
@@ -606,7 +603,7 @@ export function SessionComposer({
     setReferences(item.references ?? []);
     if (item.reasoningEffort) setReasoningEffort(item.reasoningEffort);
     if (item.model) {
-      if (backendId === "native" || backendId.endsWith("-acp")) {
+      if (backendId === "native") {
         const separator = item.model.indexOf("/");
         if (separator > 0)
           setSelection({
@@ -708,7 +705,7 @@ export function SessionComposer({
       welcomePlaceholderDelay={isCentered ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
       onOverlayOpenChange={setOverlayOpen}
       modelControl={
-        backendId === "codex" || backendId === "claude-code" ? (
+        backendId === "codex" ? (
           <NativeBackendModelPicker
             key={backendId}
             backendId={backendId}
@@ -733,7 +730,7 @@ export function SessionComposer({
               <Target size={14} aria-hidden="true" />
             </span>
           )}
-          {!acp && backendId !== "native" ? (
+          {!externalBackend && backendId !== "native" ? (
             <SessionModePicker
               mode={mode}
               disabled={!modeEnabled}
@@ -788,9 +785,7 @@ export function SessionComposer({
       modelId={modelId}
       capability={capability}
       onModelSelect={(selection) => {
-        const selectedBackend =
-          selection.kind === "acp" ? selection.providerId : "native";
-        if (selectedBackend !== backendId) {
+        if (backendId !== "native") {
           setError(
             zh
               ? "请先选择对应的执行后端；已有会话需新建后切换。"
@@ -816,6 +811,7 @@ export function SessionComposer({
       permissionTier={permissionTier}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={
+        unsupportedBackend ||
         submitting ||
         editingQueue ||
         changingMode ||
@@ -842,9 +838,9 @@ export function SessionComposer({
       )}
       {incompatibleModel && (
         <p role="alert" className="mb-2 px-2 text-xs text-danger">
-          {zh
-            ? "请选择当前后端的模型；切换执行后端需新建会话。"
-            : "Choose a model for this backend; start a new session to change backends."}
+          {unsupportedBackend
+            ? (zh ? "此会话使用的执行后端已移除。历史记录仍可查看，请新建 Synax 会话继续。" : "This session's execution backend has been removed. Its history remains available; start a new Synax session to continue.")
+            : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}
         </p>
       )}
       {session && (

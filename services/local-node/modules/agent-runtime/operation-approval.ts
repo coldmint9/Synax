@@ -132,10 +132,6 @@ export function reviewOperation(
     paths: [...paths],
     gate,
   });
-  if (input.metadata?.source === "acp")
-    return request(
-      "The native operation's filesystem and network scope cannot be verified automatically.",
-    );
   if (input.category === "high_risk" || input.category === "external_execution")
     return request(
       "High-risk or externally executed operations require explicit approval.",

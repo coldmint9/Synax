@@ -26,7 +26,6 @@ vi.mock("../AgentInteractionPanel", () => ({
 vi.mock("../RuntimeRecoveryPanel", () => ({
   RuntimeRecoveryPanel: () => null,
 }));
-vi.mock("../composer/useAcpDiscovery", () => ({ useAcpDiscovery: () => [] }));
 vi.mock("../../settings/useConfig", () => ({
   useConfig: () => ({
     providers: [],

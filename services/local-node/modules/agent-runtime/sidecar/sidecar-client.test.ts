@@ -67,6 +67,37 @@ describe('RuntimeSidecarClient', () => {
     client.close();
   });
 
+  it('serializes repeated correlation IDs and lets Rust reject conflicting bodies', async () => {
+    let inFlight = false;
+    const hashes: string[] = [];
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello') {
+        send(socket, { requestId: '', sessionId: '', epoch: 0, revision: 0,
+          body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: ['admit_run'] } });
+      } else if (envelope.body.type === 'admit_run') {
+        expect(inFlight).toBe(false);
+        inFlight = true;
+        hashes.push(envelope.body.bodyHash);
+        setTimeout(() => {
+          inFlight = false;
+          send(socket, { ...envelope, body: hashes.length === 1
+            ? { type: 'run_admission', runId: 'accepted', reused: false, epoch: 1, revision: 1 }
+            : { type: 'error', code: 'REQUEST_CONFLICT', message: 'different input' } });
+        }, 10);
+      }
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
+    try {
+      const input = { sessionId: 's', requestId: 'same-id', runId: 'proposed', epoch: 0, revision: 0 };
+      const first = client.admitRun({ ...input, bodyHash: 'one' });
+      const second = client.admitRun({ ...input, bodyHash: 'two' });
+      const outcomes = await Promise.allSettled([first, second]);
+      expect(outcomes[0]).toMatchObject({ status: 'fulfilled', value: { runId: 'accepted' } });
+      expect(outcomes[1]).toMatchObject({ status: 'rejected', reason: { code: 'REQUEST_CONFLICT' } });
+      expect(hashes).toEqual(['one', 'two']);
+    } finally { client.close(); }
+  });
+
   it('bounds an unanswered handshake and permits a fresh connection', async () => {
     let attempts = 0;
     const bound = await startServer((socket, envelope) => {

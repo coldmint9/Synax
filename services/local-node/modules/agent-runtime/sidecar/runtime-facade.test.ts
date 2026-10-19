@@ -19,6 +19,65 @@ it('uses only Rust regardless of retired transport flags', () => {
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
   expect(new RuntimeFacade(() => null).streamMode()).toBe('authoritative');
 });
+
+it('projects cache, aggregate usage, and context composition from sidecar history', async () => {
+  const step = {
+    id: 'step-1',
+    sessionId: 's',
+    runId: 'run-1',
+    index: 0,
+    status: 'completed',
+    model: 'deepseek-flash',
+    startedAt: '2026-10-17T00:00:00.000Z',
+    completedAt: '2026-10-17T00:00:01.000Z',
+    finishReason: 'stop',
+    metadata: {
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        prompt_tokens_details: { cached_tokens: 50 },
+      },
+      contextComposition: {
+        version: 2,
+        messages: 20,
+        tools: 10,
+        mcp: 5,
+        skills: 5,
+        system: 0,
+        total: 40,
+        measuredAt: '2026-10-17T00:00:01.000Z',
+      },
+    },
+  };
+  const data: Record<string, unknown[]> = {
+    list_runs: [{
+      id: 'run-1', sessionId: 's', status: 'completed',
+      startedAt: '2026-10-17T00:00:00.000Z', completedAt: '2026-10-17T00:00:01.000Z',
+    }],
+    list_steps: [step],
+    list_tool_calls: [{ id: 'tool-1', sessionId: 's' }],
+    list_work: [],
+    list_aux_usage: [],
+  };
+  const client = remote({
+    uiSnapshot: vi.fn(async () => encode({
+      session: { id: 's', status: 'completed', parentSessionId: null },
+      run: null, cursor: 1, liveChunks: [], completedStepIds: ['step-1'],
+    })),
+    sessionList: vi.fn(async () => encode({
+      items: [{ id: 's', parentSessionId: null }],
+    })),
+    historyCommand: vi.fn(async (input: { operation: string }) =>
+      encode({ items: data[input.operation] ?? [] })),
+  });
+
+  const stats = await new RuntimeFacade(() => client).sessionStatsAuthoritative('s');
+  expect((stats.cache as { latest: { ratio: number } }).latest.ratio).toBe(0.5);
+  expect((stats.cache as { session: { weightedRatio: number } }).session.weightedRatio).toBe(0.5);
+  expect((stats.usage as { self: { input: number; output: number } }).self).toMatchObject({ input: 100, output: 20 });
+  expect(stats.contextComposition).toMatchObject({ total: 40 });
+});
+
 it('awaits the store commit before reading the created projection', async () => {
   const flush = vi.spyOn(agentRuntimeStore, 'flushSession').mockResolvedValue();
   const client = remote({ uiSnapshot: vi.fn(async()=>encode(snapshot)), seedUi: vi.fn() });
@@ -44,10 +103,12 @@ it('submits the terminal run document to Rust and propagates persistence failure
   const updateSession = vi.spyOn(agentRuntimeStore, 'updateSession').mockImplementation(() => { throw new Error('must not write local session'); });
   const run = { id: 'r', sessionId: 's', status: 'failed', completedAt: '2026-10-16T12:00:00.123Z', currentStep: 4, stopReason: 'provider error' } as never;
   const finishRun = vi.fn().mockResolvedValue({ epoch: 2, revision: 3, cursor: 10 });
-  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), finishRun });
+  const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
+  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), finishRun, historyCommand });
   const facade = new RuntimeFacade(() => client);
   await facade.finishExecution('s', run);
   expect(finishRun).toHaveBeenCalledWith({ sessionId: 's', requestId: 'finish:r', runId: 'r', status: 'failed', epoch: 1, revision: 2, run });
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's', operation: 'reconcile_stream' }));
   finishRun.mockRejectedValueOnce(new Error('fsync unavailable'));
   await expect(facade.finishExecution('s', run)).rejects.toThrow('fsync unavailable');
   expect(updateRun).not.toHaveBeenCalled(); expect(updateSession).not.toHaveBeenCalled();
@@ -124,4 +185,21 @@ it('keeps stream history batches within the control frame and refuses oversized 
   expect(requests.every(input => input.operation === 'append_entities' && input.payload.objects.length <= 256 && Buffer.byteLength(JSON.stringify(input.payload)) < 1024 * 1024)).toBe(true);
   expect(requests.flatMap(input => input.payload.objects).length).toBe(300);
   await expect(facade.persistHistoryObject('s', 'runtime.message', { id: 'large', sessionId: 's', content: 'x'.repeat(1024 * 1024) })).rejects.toMatchObject({ code: 'HISTORY_ENTITY_TOO_LARGE' });
+});
+
+it('returns one history page and forwards opaque incremental cursors without hydrating all collections', async () => {
+  const rawCursor = { sessionId: 's', generation: 1, after: 's/73/changes/0001/~' };
+  const historyCommand = vi.fn(async () => encode({
+    messages: [{id:'m', content:'new'}], runs:[], steps:[], toolCalls:[], events:[], permissions:[], removed:[],
+    historyWindow: { revision:2, epoch:1, generation:1, syncCursor:rawCursor, olderCursor:rawCursor, incremental:true },
+  }));
+  const facade = new RuntimeFacade(() => remote({ historyCommand }));
+  const all = vi.spyOn(facade, 'listHistoryObjects');
+  const since = Buffer.from(JSON.stringify(rawCursor)).toString('base64url');
+  const result = await facade.historyWindowAuthoritative('s', undefined, since);
+  expect(historyCommand).toHaveBeenCalledOnce();
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor} }));
+  expect(all).not.toHaveBeenCalled();
+  expect(result.historyWindow.syncCursor).toBe(since);
+  expect(result.messages).toEqual([{id:'m',content:'new'}]);
 });

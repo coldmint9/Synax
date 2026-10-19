@@ -33,7 +33,7 @@ it('mock Jev runs one immutable action without API credentials and reobserves', 
   const { jevSessionToolProvider } = await import('./jev-tool-provider.js');
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Press OK.' });
   updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
   setRuntimeCuaConnection({ generation: 'test', command: process.execPath, args: [fixture], environment: [] });
@@ -52,7 +52,7 @@ it('re-grounds Jev on the primary desktop when the window observation is degrade
   const { jevSessionToolProvider } = await import('./jev-tool-provider.js');
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Continue.' });
   updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
   setRuntimeCuaConnection({ generation: 'test', command: process.execPath, args: [fixture], environment: [{ name: 'MCP_FIXTURE_WINDOW_DEGRADED', value: '1' }] });
@@ -82,7 +82,7 @@ it('keeps the actionable window observation error when the desktop fallback is u
   const { jevSessionToolProvider } = await import('./jev-tool-provider.js');
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Continue.' });
   updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
   setRuntimeCuaConnection({ generation: 'test', command: process.execPath, args: [fixture], environment: [

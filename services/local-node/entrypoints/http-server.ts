@@ -22,7 +22,6 @@ import { serve } from "@hono/node-server";
 import { localAgentNode } from "../composition/agent-node.js";
 import { API_SESSION_LOG_FILE, logger as pinoLogger } from "../infrastructure/runtime/logger.js";
 import { PORT, DATA_ROOT } from "../infrastructure/runtime/env.js";
-import { acpRoutes } from "../transport/http/acp.js";
 import { healthRoutes } from "../transport/http/health.js";
 import { projectRoutes } from "../transport/http/projects.js";
 import { contextRoutes } from "../transport/http/context.js";
@@ -51,6 +50,7 @@ import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
 import { startRustRuntimeSidecar, stopRustRuntimeSidecar, type RustRuntimeSidecarHandle } from "../infrastructure/runtime/rust-sidecar.js";
+import { workspaceIndexService } from "../modules/workspace-index-service.js";
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -97,7 +97,6 @@ app.route("/api/realtime", observations.routes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/projects", projectSettingsRoutes);
 app.route("/api/projects", extensionRoutes);
-app.route("/api/acp", acpRoutes);
 app.route("/api/context", contextRoutes);
 app.route("/api/config", configRoutes);
 app.route("/api/mcp", mcpRoutes);
@@ -137,6 +136,7 @@ process.env.SYNAX_RUNTIME_HOST_ID = runtimeHost.hostId;
 process.env.SYNAX_RUNTIME_DATA_ROOT = path.resolve(DATA_ROOT);
 process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
 process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
+if (process.env.NODE_ENV !== 'test') process.env.SYNAX_AGENT_LOOP_ENGINE ??= 'rust';
 
 ensureGitMrProfileRegistered();
 ensureSynaxAgentRegistered();
@@ -153,10 +153,15 @@ let stopSessionArchiveRetention = () => {};
 async function startRuntime(): Promise<void> {
   process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
+  if (process.env.NODE_ENV !== 'test') process.env.SYNAX_AGENT_LOOP_ENGINE ??= 'rust';
   rustRuntimeSidecar = await startRustRuntimeSidecar();
   await businessStore.refresh();
   await agentRuntimeStore.hydrateSessions();
   await hydrateRuntimeAssets();
+  // Index existing workspace roots after the runtime is ready. The scan is
+  // intentionally fire-and-forget so app startup and the first HTTP response
+  // never wait for a large repository.
+  void workspaceIndexService.start();
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   const recovery = await recoverRuntime(runtimeHost.hostId);
   const mediaJobs = recoverMediaJobs();

@@ -1,5 +1,3 @@
-import { openai } from "@ai-sdk/openai";
-import type { ToolSet } from "ai";
 import { getGlobalConfigForRuntime } from "../runtime/config/config-store.js";
 import type { WebSearchConfig } from "../runtime/config/config-types.js";
 import type { LoopToolSet } from "../../modules/agent-runtime/loop-ai-tools.js";
@@ -28,22 +26,20 @@ export function routeNativeWebSearchTools(
     selection.apiFormat === "openai-responses" &&
     config.routing !== "local" &&
     config.routing !== "disabled" &&
-    (config.routing === "remote" ||
-      support.get(capabilityKey) !== "unsupported");
+    (config.routing === "remote" || support.get(capabilityKey) !== "unsupported");
   if (!canTryNative || !modelToolName) return { tools, native: false };
-
-  const routedTools: ToolSet = {
+  const routedTools = {
     ...tools.tools,
-    [modelToolName]: openai.tools.webSearch({
-      externalWebAccess: config.remote.externalWebAccess,
-      searchContextSize: config.remote.searchContextSize,
-    }),
-  };
-  return {
-    native: true,
-    capabilityKey,
-    tools: { ...tools, tools: routedTools },
-  };
+    [modelToolName]: {
+      id: "openai.web_search",
+      type: "provider-defined",
+      args: {
+        externalWebAccess: config.remote.externalWebAccess,
+        searchContextSize: config.remote.searchContextSize,
+      },
+    },
+  } as LoopToolSet["tools"];
+  return { native: true, capabilityKey, tools: { ...tools, tools: routedTools } };
 }
 
 export function markNativeWebSearchSupported(key: string | undefined): void {

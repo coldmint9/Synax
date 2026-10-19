@@ -4,7 +4,7 @@ import { mcpClientManager } from '../../../infrastructure/mcp/mcp-client-manager
 import { resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 afterEach(() => vi.restoreAllMocks());
 it('tests stdio MCP from the same workspace directory used by the runtime', async () => {
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const probe = vi.spyOn(mcpClientManager, 'probe').mockResolvedValue({ ok: true, tools: [] });
   const response = await mcpRoutes.request('/test?projectId=project-alpha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'example', name: 'Example', command: 'node', args: ['server.js'] }) });
   expect(response.status).toBe(200);

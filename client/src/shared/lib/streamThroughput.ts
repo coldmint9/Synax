@@ -2,51 +2,83 @@
  * Live output-token counter for the streaming throughput readout.
  *
  * Counted at the single place where a live SSE stream fans out inside the
- * renderer (see lib/api/sessionLiveClient), keyed by session: the transcript
+ * renderer (sessionLiveClient), keyed by session: the transcript
  * store and the dock stream both consume the same deltas, so counting inside
  * either consumer would double count or miss events depending on which is
- * attached. Deltas are counted as they arrive, so the total never goes
- * backwards when a step boundary clears the visible live buffer.
+ * attached. Text and reasoning have separate cumulative counts per step.
+ * Snapshots seed the counters without recording historical output as live.
  */
 
-/** CJK ranges where one character is roughly one token, not a quarter. */
-const CJK_CHAR = /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/;
-
-/**
- * Rough token estimate for a streamed chunk: CJK ≈ 1 token per character,
- * latin/whitespace ≈ 4 characters per token. Deliberately cheap and local —
- * provider usage still owns every billed number the UI shows.
- */
-export function estimateStreamTokens(text: string): number {
-  let tokens = 0;
-  for (const char of text) tokens += CJK_CHAR.test(char) ? 1 : 0.25;
-  return tokens;
+interface StreamCounter {
+  steps: Map<string, number>;
+  observed: number;
 }
 
-const counters = new Map<string, number>();
+const counters = new Map<string, StreamCounter>();
 
-/** Count streamed model output; text and reasoning share the output budget. */
-export function noteStreamedOutput(sessionId: string, text: string): void {
-  if (!sessionId || !text) return;
-  counters.set(
-    sessionId,
-    (counters.get(sessionId) ?? 0) + estimateStreamTokens(text),
-  );
+function counterFor(sessionId: string): StreamCounter {
+  let counter = counters.get(sessionId);
+  if (!counter) {
+    counter = { steps: new Map(), observed: 0 };
+    counters.set(sessionId, counter);
+  }
+  return counter;
 }
 
-/** Count the delta-bearing live events; everything else is not output. */
+function noteStepTelemetry(
+  sessionId: string,
+  stepId: unknown,
+  tokens: unknown,
+  kind: "output" | "thinking",
+  observed: boolean,
+): void {
+  if (typeof stepId !== "string" || !stepId) return;
+  if (typeof tokens !== "number" || !Number.isSafeInteger(tokens) || tokens < 0) return;
+  const counter = counterFor(sessionId);
+  const key = `${kind}:${stepId}`;
+  const previous = counter.steps.get(key) ?? 0;
+  if (tokens > previous) {
+    counter.steps.set(key, tokens);
+    if (observed) counter.observed += tokens - previous;
+  }
+}
+
+/** Ingest output telemetry from deltas and reconnect snapshots. */
 export function noteLiveEvent(
   sessionId: string,
-  event: { type: string; delta?: unknown },
+  event: {
+    type: string;
+    stepId?: unknown;
+    outputTokens?: unknown;
+    thinkingTokens?: unknown;
+    liveChunks?: unknown;
+  },
 ): void {
-  if (event.type !== "message_delta" && event.type !== "thought_delta") return;
-  if (typeof event.delta !== "string") return;
-  noteStreamedOutput(sessionId, event.delta);
+  if (!sessionId) return;
+  if (event.type === "message_delta") {
+    noteStepTelemetry(sessionId, event.stepId, event.outputTokens, "output", true);
+    return;
+  }
+  if (event.type === "thought_delta") {
+    noteStepTelemetry(sessionId, event.stepId, event.thinkingTokens, "thinking", true);
+    return;
+  }
+  if (event.type !== "runtime_snapshot" || !Array.isArray(event.liveChunks)) return;
+  for (const chunk of event.liveChunks) {
+    if (!chunk || typeof chunk !== "object") continue;
+    const value = chunk as { type?: unknown; stepId?: unknown; outputTokens?: unknown; thinkingTokens?: unknown };
+    if (value.type === "message_delta")
+      noteStepTelemetry(sessionId, value.stepId, value.outputTokens, "output", false);
+    else if (value.type === "thought_delta")
+      noteStepTelemetry(sessionId, value.stepId, value.thinkingTokens, "thinking", false);
+  }
 }
 
-/** Monotonic estimate of the output tokens this session has streamed. */
+/** Monotonic output + reasoning tokens observed since the live listener attached. */
 export function readStreamedTokens(sessionId: string): number {
-  return counters.get(sessionId) ?? 0;
+  const counter = counters.get(sessionId);
+  if (!counter) return 0;
+  return counter.observed;
 }
 
 /** Test helper — the counters are module state, not store state. */

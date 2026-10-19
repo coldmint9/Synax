@@ -79,7 +79,7 @@ describe('permissionRulesForTier', () => {
 });
 
 describe('resolveSessionPermissionRules', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('prefers permissionTier over profile defaults', () => {
     const rules = resolveSessionPermissionRules(

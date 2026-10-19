@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isProviderSupported, selectLanguageModel } from '../providers/provider-registry.js'
+import { instantiateProvider, isProviderSupported, selectLanguageModel } from '../providers/provider-registry.js'
 
 describe('llm provider registry', () => {
   it('accepts allowlisted AI SDK providers', () => {
@@ -47,3 +47,11 @@ describe('selectLanguageModel protocol routing', () => {
     expect(selectLanguageModel(client, 'gpt-5')).toBe('callable-model')
   })
 })
+
+ it.each(['openai', 'openai-responses', 'anthropic'] as const)('routes callable OpenAI media clients through Rust for %s', async apiFormat => {
+   const client = await instantiateProvider({ id: 'fixture', label: 'Fixture', npm: '@ai-sdk/openai', api: undefined },
+     { providerId: 'fixture', apiFormat, apiKey: 'local', baseUrl: 'http://127.0.0.1:1/v1' });
+   expect(selectLanguageModel(client, 'fixture', undefined, apiFormat)).toMatchObject({
+     provider: 'rust/fixture', specificationVersion: 'v4', modelId: 'fixture',
+   });
+ });

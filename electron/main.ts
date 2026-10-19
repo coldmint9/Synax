@@ -122,9 +122,14 @@ function createWindow(): BrowserWindow {
       : getResourcePath(
           process.platform === "win32" ? "synax-icon.ico" : "synax-icon.png",
         ),
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // Windows uses the renderer-owned controls. macOS keeps the native
+    // hidden-inset titlebar so the traffic lights remain native controls.
+    ...(process.platform === "win32" ? { frame: false, thickFrame: true } : {}),
     ...(process.platform === "darwin"
-      ? { trafficLightPosition: { x: 14, y: 18 } }
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 18 },
+        }
       : {}),
     show: false,
     transparent: process.platform === "darwin",
@@ -154,6 +159,15 @@ function createWindow(): BrowserWindow {
   );
   win.on("closed", () => sessionNotifications.setRendererReady(false));
   win.on("focus", () => sessionNotifications.clearBadge());
+
+  const publishWindowState = () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send("window:state", { maximized: win.isMaximized() });
+    }
+  };
+  win.on("maximize", publishWindowState);
+  win.on("unmaximize", publishWindowState);
+  win.on("restore", publishWindowState);
 
   win.webContents.on("context-menu", (_event, params) => {
     const template = textContextTemplate(params.isEditable, Boolean(params.selectionText));
@@ -303,6 +317,30 @@ function registerIPC(): void {
     return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options);
   });
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("window:minimize", (event) => {
+    if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
+      return false;
+    mainWindow.minimize();
+    return true;
+  });
+  ipcMain.handle("window:toggle-maximize", (event) => {
+    if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
+      return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return true;
+  });
+  ipcMain.handle("window:close", (event) => {
+    if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
+      return false;
+    mainWindow.close();
+    return true;
+  });
+  ipcMain.handle("window:state", (event) => {
+    if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
+      return { maximized: false };
+    return { maximized: mainWindow.isMaximized() };
+  });
   ipcMain.handle("window:mac-appearance:get", (event) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");
     return { platform: process.platform, appearance: macWindowAppearance };

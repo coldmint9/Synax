@@ -19,7 +19,7 @@ import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentNotFoundError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 import { sessionLiveBus } from "./session-live-bus.js";
-import { historyPages, sessionPages } from './sidecar/history-pages.js';
+import { readHistoryList, sessionPages } from './sidecar/history-pages.js';
 import { projectSessionState } from "./session-projection.js";
 import {
   decode,
@@ -176,28 +176,39 @@ export class AgentRuntimeStore {
       await this.flushSession(sessionId);
       await runtimeClient().historyCommand({ sessionId, requestId: `hydrate-history:${sessionId}:${Date.now()}`,
         operation: 'reconcile_stream', payload: {} });
-      const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(
-        await runtimeClient().uiSnapshot(sessionId),
-      );
-      this.sessions.set(sessionId, snapshot.session);
-      for (const [kind, operation] of Object.entries(collections)) {
-        const map = this.collection(kind);
-        for (const [id, record] of map)
-          if (record.sessionId === sessionId) map.delete(id);
-        for await (const page of historyPages<Entity>(runtimeClient(), sessionId, operation)) {
-          for (const record of page) map.set(record.id, record);
-        }
-      }
-      if (snapshot.run)
-        this.collection("run").set(snapshot.run.id, snapshot.run);
-      const control = await patchRuntime(sessionId, "read", {});
-      const permissions = this.collection("permission");
-      for (const permission of control.permissions as PermissionDecision[])
-        permissions.set(permission.id, permission);
-      const interactions = this.collection("interaction");
-      for (const interaction of control.interactions as Entity[])
-        interactions.set(interaction.id, interaction);
+      const previousSession = this.sessions.get(sessionId);
+      const previous = new Map(Object.keys(collections).map(kind => [kind,
+        new Map([...this.collection(kind)].filter(([, record]) => record.sessionId === sessionId)),
+      ]));
+      const [snapshotBytes, entries, control] = await Promise.all([
+        runtimeClient().uiSnapshot(sessionId),
+        Promise.all(Object.entries(collections).map(async ([kind, operation]) =>
+          [kind, await readHistoryList<Entity>(runtimeClient(), sessionId, operation)] as const)),
+        patchRuntime(sessionId, "read", {}),
+      ]);
+      const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(snapshotBytes);
+      const incoming = new Map(entries.map(([kind, records]) => [kind, new Map(records.map(record => [record.id, record]))]));
+      if (snapshot.run) incoming.get("run")!.set(snapshot.run.id, snapshot.run);
+      for (const permission of control.permissions as PermissionDecision[]) incoming.get("permission")!.set(permission.id, permission);
+      for (const interaction of control.interactions as Entity[]) incoming.get("interaction")!.set(interaction.id, interaction);
       await (await import("./media-assets.js")).hydrateSessionAssets(sessionId);
+      // Publish after every read succeeds. Readers must never see an empty
+      // collection between deletion and an awaited history page. A local
+      // update made during the read keeps its identity and pending WAL write.
+      if (this.sessions.get(sessionId) === previousSession) this.sessions.set(sessionId, snapshot.session);
+      for (const [kind, records] of incoming) {
+        const map = this.collection(kind);
+        const before = previous.get(kind)!;
+        for (const [id, old] of before) {
+          if (!map.has(id)) records.delete(id);
+          else if (map.get(id) !== old) records.set(id, map.get(id)!);
+        }
+        for (const [id, value] of map) {
+          if (value.sessionId === sessionId && !before.has(id)) records.set(id, value);
+        }
+        for (const [id, value] of map) if (value.sessionId === sessionId) map.delete(id);
+        for (const [id, value] of records) map.set(id, value);
+      }
       this.loaded.add(sessionId);
     })();
     this.loading.set(sessionId, load);
@@ -379,6 +390,18 @@ export class AgentRuntimeStore {
   archiveSessionTree(id: string): SessionArchiveResult {
     const items = this.listSessionTree(id),
       archivedAt = nowIso();
+    const archivedIds = new Set(items.map((session) => session.id));
+    // Keep parent projections usable immediately after archiving a subtree.
+    // Archived descendants remain addressable through their archive batch, but
+    // they must no longer appear as active children of a live parent.
+    for (const session of this.listSessions({ limit: Infinity })) {
+      if (archivedIds.has(session.id)) continue;
+      const childSessionIds = session.childSessionIds.filter(
+        (childId) => !archivedIds.has(childId),
+      );
+      if (childSessionIds.length !== session.childSessionIds.length)
+        this.updateSession(session.id, { childSessionIds });
+    }
     for (const s of items)
       this.updateSessionMetadata(s.id, { archivedAt, archiveBatchId: id });
     for (const s of items)
@@ -456,12 +479,34 @@ export class AgentRuntimeStore {
           (s) => s.sessionMetadata?.archiveBatchId === archivedBatchId,
         )
       : this.listSessionTree(id);
+    const deletedIds = new Set(items.map((session) => session.id));
+    for (const session of this.listSessions({ limit: Infinity })) {
+      if (deletedIds.has(session.id)) continue;
+      const childSessionIds = session.childSessionIds.filter(
+        (childId) => !deletedIds.has(childId),
+      );
+      if (childSessionIds.length !== session.childSessionIds.length)
+        this.updateSession(session.id, { childSessionIds });
+    }
     for (const s of items) {
       this.updateSession(s.id, {
         sessionMetadata: { ...s.sessionMetadata, deletedAt: nowIso() },
       });
       sessionLiveBus.cleanup(s.id);
       emitRuntimeBusEvent({ type: "session_deleted", sessionId: s.id });
+    }
+    // DELETE is a physical in-process removal. Rust keeps the tombstoned
+    // projection for durable not-found semantics, while this cache must stop
+    // returning the deleted session's messages, runs and artifacts.
+    for (const records of this.entities.values())
+      for (const [recordId, record] of records)
+        if (record.sessionId && deletedIds.has(record.sessionId))
+          records.delete(recordId);
+    for (const sessionId of deletedIds) {
+      this.sessions.delete(sessionId);
+      this.loaded.delete(sessionId);
+      this.tails.delete(sessionId);
+      this.failures.delete(sessionId);
     }
     return items.map((s) => s.id);
   }
@@ -746,10 +791,7 @@ export class AgentRuntimeStore {
     const recordedLimit = this.listRuns(sessionId)
       .map((r) => r.metadata.contextLimit)
       .find((v) => typeof v === "number" && v > 0) as number | undefined;
-    const known =
-      options.configuredContextLimit ??
-      recordedLimit ??
-      projected.reportedWindow;
+    const known = projected.reportedWindow ?? options.configuredContextLimit ?? recordedLimit;
     const limit = known ?? 200_000;
     const activeWorkId = session.sessionMetadata?.activeWorkId;
     const work =

@@ -247,32 +247,6 @@ export interface ProviderListResponse {
   providers: ProviderDef[];
 }
 
-export interface AcpCatalogModel {
-  id: string;
-  label: string;
-  description?: string | null;
-}
-
-export interface AcpDiscoveryItem {
-  id: string;
-  label: string;
-  description?: string;
-  command: string;
-  status: "available" | "installed" | "missing" | "failed";
-  installed: boolean;
-  handshakeOk: boolean;
-  selected: boolean;
-  compatibility: string;
-  error?: string;
-  models?: AcpCatalogModel[];
-}
-
-export interface AcpDiscoveryResponse {
-  selectedProviderId: string;
-  enabledIds: string[];
-  supported: AcpDiscoveryItem[];
-}
-
 export interface AiApiValidateRequest {
   providerId?: string;
   format: ApiFormat;

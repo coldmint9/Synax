@@ -22,8 +22,20 @@ export type SessionLiveEvent =
       stepIndex: number;
       modelCapabilities?: { reasoning: boolean };
     }
-  | { type: "message_delta"; stepId: string; delta: string }
-  | { type: "thought_delta"; stepId: string; delta: string }
+  | {
+      type: "message_delta";
+      stepId: string;
+      delta: string;
+      /** Cumulative output-token estimate for this step at emission time. */
+      outputTokens?: number;
+    }
+  | {
+      type: "thought_delta";
+      stepId: string;
+      delta: string;
+      /** Cumulative reasoning-token estimate for this step at emission time. */
+      thinkingTokens?: number;
+    }
   | { type: "tool_call"; stepId: string; toolCall: ToolCallRecord }
   | { type: "tool_result"; stepId: string; toolCall: ToolCallRecord }
   | { type: "context_compaction_started"; event?: RuntimeEvent }

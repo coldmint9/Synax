@@ -10,8 +10,8 @@ export const TOKEN_RATE_SAMPLE_MS = 5_000;
  *
  * Sampling runs only while `working`: an idle session keeps no timer and
  * reports null, so the panel never shows a stale or invented speed. A window
- * that produced no output (tool execution, approval wait) keeps the previous
- * measurement instead of flickering to zero.
+ * that produced no output (tool execution, approval wait) clears the reading
+ * instead of showing a stale speed.
  */
 export function useSessionTokenRate(
   sessionId: string | null,
@@ -30,7 +30,7 @@ export function useSessionTokenRate(
       const delta = total - previous;
       previous = total;
       previousAt = now;
-      if (elapsed > 0 && delta > 0) setRate(delta / elapsed);
+      setRate(elapsed > 0 && delta > 0 ? delta / elapsed : null);
     }, TOKEN_RATE_SAMPLE_MS);
     return () => window.clearInterval(timer);
   }, [sessionId, working]);

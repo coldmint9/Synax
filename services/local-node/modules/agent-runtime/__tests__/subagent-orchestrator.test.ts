@@ -82,7 +82,7 @@ function makeDeps(behaviors: Record<string, {
   };
 
   const loop = {
-    async *streamRun(childId: string, _input: unknown, signal?: AbortSignal) {
+    async *stream(childId: string, _mode: string, _input: unknown, signal?: AbortSignal) {
       const b = behaviors[childId] ?? { endStatus: 'completed', resultSummary: 'done' };
       const duration = b.durationMs ?? 0;
       await new Promise<void>((resolve, reject) => {
@@ -166,7 +166,7 @@ describe('subagent-orchestrator', () => {
       const deps = makeDeps({});
       deps.createSession({ profileId: 'explorer' });
       const loop = {
-        async *streamRun() { await new Promise(() => {}); yield { type: 'done' } as never; },
+        async *stream() { await new Promise(() => {}); yield { type: 'done' } as never; },
       };
       const pending = runChildToCompletion('child-1', spec('hung'), { progressTimeoutMs: 10_000 }, { ...deps, loop: loop as never });
       await vi.advanceTimersByTimeAsync(5_000);
@@ -185,7 +185,7 @@ describe('subagent-orchestrator', () => {
       const deps = makeDeps({});
       deps.createSession({ profileId: 'explorer' });
       const loop = {
-        async *streamRun() {
+        async *stream() {
           for (let i = 0; i < 5; i++) {
             await new Promise(resolve => setTimeout(resolve, 4_000));
             yield { type: 'done' } as never;
@@ -238,7 +238,7 @@ describe('subagent-orchestrator', () => {
     deps.createSession({ profileId: 'explorer' });
     const controller = new AbortController();
     const loop = {
-      async *streamRun() { await new Promise(() => {}); yield { type: 'done' } as never; },
+      async *stream() { await new Promise(() => {}); yield { type: 'done' } as never; },
     };
     const pending = runChildToCompletion('child-1', spec('cancelled'), { abortSignal: controller.signal }, { ...deps, loop: loop as never });
     controller.abort();

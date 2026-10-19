@@ -15,7 +15,7 @@ function create(mode = 'ready', options: ConstructorParameters<typeof RustRuntim
     else { process.on('SIGINT', () => process.exit(0)); process.stdin.on('end', () => process.exit(0)); }
     if (process.env.MODE !== 'hang') console.log('SYNAX_RUNTIME_READY:' + JSON.stringify({
       type: 'runtime_ready', protocol: process.env.MODE === 'bad' ? 'invalid' : 'synax.runtime.v2',
-      pid: process.pid, port: 34567, socket: process.env.SYNAX_RUNTIME_SIDECAR_SOCKET, capabilities: ['append_receipts'],
+      pid: process.pid, port: 34567, providerPort: 34568, socket: process.env.SYNAX_RUNTIME_SIDECAR_SOCKET, capabilities: ['append_receipts'],
     }));
     if (process.env.MODE === 'crash') setTimeout(() => process.exit(17), 60);
     setInterval(() => {}, 1000);

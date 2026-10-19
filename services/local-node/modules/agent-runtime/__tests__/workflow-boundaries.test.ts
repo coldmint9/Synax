@@ -10,16 +10,16 @@ import { buildLoopStepNote, buildTaskProgressReminder } from '../loop-prompt.js'
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resolveSessionCapabilities } from '../session-capabilities.js';
 import { createPlanArtifact } from '../plan-artifact-store.js';
-import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
+import { resetAgentRuntimeFixtures, admitActiveFixtureRun } from './agent-runtime-fixtures.js';
 
-beforeEach(() => { resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
+beforeEach(async () => { await resetAgentRuntimeFixtures(); ensureSynaxAgentRegistered(); });
 function session(mode: 'chat' | 'plan' | 'goal') {
   return agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'synax', prompt: 'Bounded request', sessionMetadata: { mode } });
 }
-function active(mode: 'chat' | 'plan' | 'goal') {
+async function active(mode: 'chat' | 'plan' | 'goal') {
   const s = session(mode);
   const now = new Date().toISOString();
-  const run = store.appendRun({ id: `run-${s.id}`, sessionId: s.id, status: 'running', startedAt: now, completedAt: null, triggerMessageId: null, currentStep: 1, stopReason: null, model: null, metadata: {} });
+  const run = await admitActiveFixtureRun(s.id);
   store.updateSession(s.id, { status: 'running', activeRunId: run.id });
   workRuntime.attach(s.id, run);
   store.appendRunStep({ id: `step-${s.id}`, sessionId: s.id, runId: run.id, index: 1, status: 'running', startedAt: now, completedAt: null, model: null, finishReason: null, metadata: {} });
@@ -48,11 +48,11 @@ describe('workflow boundaries', () => {
     const s = session('chat');
     expect(toolRegistry.listForSession(s.id).map(t => t.id)).toContain('plan.propose');
     expect(toolRegistry.listForSession(s.id).map(t => t.id)).not.toContain('plan.execute');
-    createPlanArtifact({ sessionId: s.id, plan: { title: 'Saved plan', objective: 'Execute the saved plan', steps: [], acceptanceCriteria: [], humanAcceptanceCriteria: [], assumptions: [], risks: [] }, status: 'saved' });
+    createPlanArtifact({ sessionId: s.id, plan: { title: 'Saved plan', objective: 'Execute the saved plan', steps: [{ id: 'step-1', title: 'Inspect', description: 'Inspect the workspace.', dependsOn: [], expectedFiles: [] }], acceptanceCriteria: ['Workspace inspected'], humanAcceptanceCriteria: [], assumptions: [], risks: [] }, status: 'saved' });
     const ids = toolRegistry.listForSession(s.id).map(t => t.id);
-    expect(ids).not.toContain('plan.execute');
-    expect(ids).toContain('bash');
-    expect(ids).toContain('file.write');
+    expect(ids).toContain('plan.execute');
+    expect(ids).not.toContain('bash');
+    expect(ids).not.toContain('file.write');
   });
   it('plan mounts proposal controls and read tools, not workspace execution', () => {
     const s = session('plan');
@@ -69,7 +69,7 @@ describe('workflow boundaries', () => {
     expect(toolRegistry.listForSession(s.id).map(t => t.id)).toEqual(expect.arrayContaining(['work.checkpoint', 'goal.finish', 'verification.run']));
   });
   it.each(['chat', 'plan'] as const)('%s final text is not subject to receipt or stale goal acceptance', async mode => {
-    const { s, input } = active(mode);
+    const { s, input } = await active(mode);
     store.updateSessionMetadata(s.id, { goal: { objective: 'Old goal', status: 'blocked', reason: 'Old blocker' } });
     const w = workStore.current(s.id)!;
     w.hasChanges = true; w.changeVersion = 2;
@@ -82,15 +82,15 @@ describe('workflow boundaries', () => {
     expect(store.getSession(s.id).sessionMetadata?.goal).toMatchObject({ status: 'blocked' });
   });
   it('chat can end with unfinished TODOs without falsely completing them', async () => {
-    const { s, input } = active('chat');
+    const { s, input } = await active('chat');
     const tasks = new TaskStore(); tasks.create('Remaining work', 'Not done'); tasks.persist(s.id);
     await workRuntime.complete(input, 'Partial result; remaining work is not done.');
     expect(store.getRun(input.runId).metadata.roundHandoff).toMatchObject({ summary: 'Partial result; remaining work is not done.' });
     expect(TaskStore.fromEvents(s.id).list()[0].status).toBe('pending');
     expect(workStore.current(s.id)?.status).toBe('active');
   });
-  it.each(['chat', 'plan'] as const)('%s reminders do not request goal control tools', mode => {
-    const { s } = active(mode);
+  it.each(['chat', 'plan'] as const)('%s reminders do not request goal control tools', async mode => {
+    const { s } = await active(mode);
     expect(workRuntime.prompt(s.id)).not.toMatch(/work\.checkpoint|goal\.finish|verification\.run/);
     expect(buildLoopStepNote({ stepIndex: 50, maxSteps: 50, converging: true, mode })).not.toMatch(/work\.checkpoint|goal\.finish/);
   });
@@ -102,8 +102,8 @@ describe('workflow boundaries', () => {
     // Progress exists but this round already injected it: stay silent.
     expect(buildTaskProgressReminder({ progress: true, alreadyInjected: true })).toBeNull();
   });
-  it('does not ask for task reconciliation twice in the same round', () => {
-    const { s, input } = active('chat');
+  it('does not ask for task reconciliation twice in the same round', async () => {
+    const { s, input } = await active('chat');
     const run = store.getRun(input.runId);
     // Nothing recorded progress in this round: no reminder to reconcile.
     expect(
@@ -141,11 +141,11 @@ describe('workflow boundaries', () => {
     expect(buildTaskProgressReminder({ progress, alreadyInjected })).toBeNull();
   });
   it('goal acceptance cannot be bypassed by plain final text', async () => {
-    const { input } = active('goal');
+    const { input } = await active('goal');
     await expect(workRuntime.complete(input, 'Done')).rejects.toThrow('plain text cannot bypass');
   });
   it('switching workflow reopens the turn without discarding context or accepting the goal', async () => {
-    const { s, input } = active('chat');
+    const { s, input } = await active('chat');
     const work = workStore.current(s.id)!;
     work.checkpoint = { throughStepId: input.stepId, summary: 'Retained memory', createdAt: new Date().toISOString() };
     workStore.save(work);

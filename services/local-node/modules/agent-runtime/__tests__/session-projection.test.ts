@@ -67,12 +67,15 @@ describe('projectSessionSummary', () => {
       sessionMetadata: { mode: 'chat', latestSystemPrompt: 'x'.repeat(4096) },
     }
     const projected = projectSessionSummary(row)
-    expect(projected.sessionMetadata).toEqual({ mode: 'chat' })
+    expect(projected.sessionMetadata).toEqual({ mode: 'chat', historyStorage: 3 })
     expect(JSON.stringify(projected)).not.toContain('x'.repeat(64))
   })
 
-  it('returns the row untouched when no preview is present', () => {
+  it('advertises cursor history for existing sessions without mutating stored metadata', () => {
     const row = session('running')
-    expect(projectSessionSummary(row)).toBe(row)
+    const projected = projectSessionSummary(row)
+    expect(projected.sessionMetadata).toEqual({ historyStorage: 3 })
+    expect(row.sessionMetadata).toEqual({})
+    expect(projectSessionSummary(projected)).toBe(projected)
   })
 })

@@ -54,7 +54,7 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49"
     )]
     pub body: Option<wire_envelope::Body>,
 }
@@ -63,7 +63,7 @@ pub mod wire_envelope {
     use super::{
         WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireCredit, WireError,
         WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
-        WireControlCommand, WireControlState, WireHistoryCommand, WireHistoryState, WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady, WireSessionList, WireSessionListResponse,
+        WireWorkspaceIndexCommand, WireWorkspaceIndexState, WireControlCommand, WireControlState, WireHistoryCommand, WireHistoryState, WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady, WireSessionList, WireSessionListResponse,
         WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot, WireSnapshotResponse,
         WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse, WireImportProjection, WireImportProjectionResponse, WireImportStream, WireImportStreamResponse,
     };
@@ -71,6 +71,10 @@ pub mod wire_envelope {
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "48")]
+        WorkspaceIndexCommand(WireWorkspaceIndexCommand),
+        #[prost(message, tag = "49")]
+        WorkspaceIndexState(WireWorkspaceIndexState),
         #[prost(message, tag = "36")]
         QueueRead(WireQueueRead),
         #[prost(message, tag = "37")]
@@ -170,6 +174,20 @@ pub struct WireQueueRead {}
 pub struct WireQueueState {
     #[prost(bytes = "vec", tag = "1")]
     pub queue_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceIndexCommand {
+    #[prost(string, tag = "1")]
+    pub operation: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceIndexState {
+    #[prost(bytes = "vec", tag = "1")]
+    pub state_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]

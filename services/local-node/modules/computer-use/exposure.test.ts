@@ -22,7 +22,7 @@ it('Jev mode exposes observations but not actions until configured fallback actu
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
   const { enableDirectFallback } = await import('./fallback.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
   updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'direct' } } }, 'test');
   setRuntimeCuaConnection({ generation: 'test', command: process.execPath, args: [fixture], environment: [] });
@@ -43,7 +43,7 @@ it('recovers observation tools on the next warm-up after a late connection or re
   const { mcpSessionToolProvider, warmupMcpForSession } = await import('../../infrastructure/mcp/mcp-session-tool-provider.js');
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
   updateProjectSettings(session.projectId, { computerUse: { strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
   const ids = () => mcpSessionToolProvider.getTools(session.id).map(tool => tool.id);
@@ -73,7 +73,7 @@ it('hides Cua and Jev tools when globally disabled and restores them when enable
   const { jevSessionToolProvider } = await import('./jev-tool-provider.js');
   const { mcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
   const { setRuntimeCuaConnection } = await import('../../infrastructure/mcp/runtime-cua-config.js');
-  resetAgentRuntimeFixtures();
+  await resetAgentRuntimeFixtures();
   const session = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'explorer', prompt: 'Observe a window.' });
   updateGlobalConfig({ computerUse: { enabled: true, strategy: 'jev', jev: { enabled: true, fallback: 'fail_closed' } } }, 'test');
   setRuntimeCuaConnection({ generation: 'toggle', command: process.execPath, args: [fixture], environment: [] });

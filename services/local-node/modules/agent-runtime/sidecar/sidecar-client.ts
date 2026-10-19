@@ -55,7 +55,8 @@ export class RuntimeSidecarClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly requestTimeoutMs: number;
   private handshakeTimer?: ReturnType<typeof setTimeout>;
-  private readonly operationIds = new Set<string>();
+  private readonly operationTails = new Map<string, Promise<void>>();
+  private operationCount = 0;
   private operationBytes = 0;
   private readonly lifetime = new AbortController();
 
@@ -85,6 +86,14 @@ export class RuntimeSidecarClient {
       } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
     });
     return ready;
+  }
+
+  async workspaceIndexCommand(operation: 'register' | 'list' | 'status', payload: unknown): Promise<Uint8Array> {
+    const ready = await this.connect();
+    if (!ready.capabilities.includes('workspace_index')) throw new Error('Rust sidecar must be rebuilt with workspace_index support.');
+    const envelope = await this.request({ type: 'workspace_index_command', operation,
+      payload: new TextEncoder().encode(JSON.stringify(payload)) }, '', 0, 0);
+    return this.expect(envelope, 'workspace_index_state').stateJson;
   }
 
   async health(): Promise<Extract<SidecarBody, { type: 'health_response' }>> {
@@ -236,6 +245,15 @@ export class RuntimeSidecarClient {
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 
+  async resetTestRuntime(): Promise<void> {
+    await this.historyCommandGlobal({
+      sessionId: "__test__",
+      requestId: `test-reset:${randomUUID()}`,
+      operation: "test_reset_runtime",
+      payload: {},
+    });
+  }
+
   async importProjection(sessionId: string, snapshotJson: Uint8Array): Promise<Uint8Array> {
     const envelope = await this.request({ type: 'import_projection', snapshotJson }, sessionId, 0, 0, `import-projection:${sessionId}`);
     return this.expect(envelope, 'import_projection_response').snapshotJson;
@@ -274,15 +292,24 @@ export class RuntimeSidecarClient {
     requestId: string = randomUUID(),
   ): Promise<SidecarEnvelope> {
     if (this.lifetime.signal.aborted) throw new Error('Runtime sidecar client closed.');
-    if (this.operationIds.has(requestId)) throw new Error('A sidecar request with this ID is already in flight.');
-    if (this.operationIds.size >= 128) throw new Error('Runtime sidecar request queue is full.');
+    if (this.operationCount >= 128) throw new Error('Runtime sidecar request queue is full.');
     const frame = this.encode({ requestId, sessionId, epoch, revision, body });
     if (this.operationBytes + frame.length > 8 * 1024 * 1024) throw new Error('Runtime sidecar request byte budget is full.');
-    this.operationIds.add(requestId); this.operationBytes += frame.length;
+    // Correlation IDs cannot be in flight twice on one socket. Serialize
+    // identical IDs without coalescing their bodies: Rust still checks the
+    // durable receipt and rejects conflicting retries.
+    const previous = this.operationTails.get(requestId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const tail = previous.then(() => gate);
+    this.operationTails.set(requestId, tail);
+    this.operationCount++; this.operationBytes += frame.length;
     const deadline = Date.now() + (this.options.retryTimeoutMs ?? 45_000);
     let attempt = 0;
     let lastFailure: unknown;
     try {
+      await previous;
+      if (this.lifetime.signal.aborted) throw new Error('Runtime sidecar client closed.');
       for (;;) {
         if (Date.now() >= deadline) throw lastFailure ?? new RuntimeSidecarTransportError('Runtime retry deadline exceeded.');
         try {
@@ -297,7 +324,11 @@ export class RuntimeSidecarClient {
           await delay(Math.min(100 * 2 ** Math.min(attempt++, 4), 1000, deadline - Date.now()), undefined, { signal: this.lifetime.signal });
         }
       }
-    } finally { this.operationIds.delete(requestId); this.operationBytes -= frame.length; }
+    } finally {
+      release();
+      if (this.operationTails.get(requestId) === tail) this.operationTails.delete(requestId);
+      this.operationCount--; this.operationBytes -= frame.length;
+    }
   }
 
   private async attempt(frame: Buffer, requestId: string, append: boolean, deadline: number): Promise<SidecarEnvelope> {

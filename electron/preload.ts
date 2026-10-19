@@ -4,6 +4,18 @@ const { contextBridge, ipcRenderer } =
 if (process.isMainFrame)
   contextBridge.exposeInMainWorld("electronAPI", {
     platform: process.platform,
+    minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+    toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
+    closeWindow: () => ipcRenderer.invoke("window:close"),
+    getWindowState: () => ipcRenderer.invoke("window:state"),
+    onWindowStateChanged: (callback: (state: { maximized: boolean }) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        state: { maximized: boolean },
+      ) => callback(state);
+      ipcRenderer.on("window:state", listener);
+      return () => ipcRenderer.removeListener("window:state", listener);
+    },
     getMacWindowAppearance: () => ipcRenderer.invoke("window:mac-appearance:get"),
     setMacWindowAppearance: (value: unknown) =>
       ipcRenderer.invoke("window:mac-appearance:set", value),

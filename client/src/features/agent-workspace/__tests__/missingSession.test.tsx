@@ -18,12 +18,14 @@ vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   releaseSessionLiveSubscription: vi.fn(),
 }));
 
-const session = { id: "missing", projectId: "p", status: "running", childSessionIds: [] } as unknown as AgentSession;
+let fixtureId = 0;
+let session = { id: "ars_missing", projectId: "p", status: "running", childSessionIds: [] } as unknown as AgentSession;
 const missing = (id = session.id) => new AppError(`Agent runtime resource not found: ${id}`, {
   level: "business", code: "NOT_FOUND", statusCode: 404,
 });
 
 beforeEach(() => {
+  session = { ...session, id: `ars_missing_${++fixtureId}` };
   useNotificationStore.getState().clearAll();
   resetRuntimeResourceRegistryForTests();
   localStorage.clear();
@@ -136,6 +138,7 @@ describe("missing session cleanup", () => {
     let reject!: (error: Error) => void;
     vi.mocked(api.listMessages).mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
     await store.getState().refreshDetail();
+    await waitFor(() => expect(api.listMessages).toHaveBeenCalledTimes(1));
     const next = { ...session, id: "next" };
     store.setState({ sessions: [session, next] });
     saveSessionLastVisit("p", { kind: "session", sessionId: next.id });
@@ -152,8 +155,10 @@ describe("missing session cleanup", () => {
     let reject!: (error: Error) => void;
     vi.mocked(api.listMessages).mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
     await store.getState().refreshDetail();
+    await waitFor(() => expect(api.listMessages).toHaveBeenCalledTimes(1));
     vi.mocked(api.listMessages).mockResolvedValue({ items: [{ id: "fresh" } as never] });
     await store.getState().refreshDetail();
+    await waitFor(() => expect(store.getState().messages).toEqual([{ id: "fresh" }]));
     reject(missing());
     await act(async () => {});
     expect(store.getState()).toMatchObject({ selectedSessionId: session.id, panelOpen: true, messages: [{ id: "fresh" }], detailError: null });
@@ -216,7 +221,7 @@ describe("missing session routes", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     vi.mocked(api.listMessages).mockRejectedValue(missing());
     const path = `/projects/p/sessions${workflow ? "/workflows" : ""}`;
-    render(<MemoryRouter initialEntries={[`${path}?session=missing&filter=all`]}><RouteHarness workflow={workflow} /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={[`${path}?session=${session.id}&filter=all`]}><RouteHarness workflow={workflow} /></MemoryRouter>);
     await act(async () => {});
     expect(screen.getByTestId("route").textContent).toBe(`${path}?filter=all`);
     expect(loadSessionLastVisit("p")).toBeNull();
@@ -227,7 +232,7 @@ describe("missing session routes", () => {
   });
 
   it("recovers from a persisted last visit without reopening it on remount", async () => {
-    store.setState({ selectedSessionId: null, panelOpen: false, sessions: [] });
+    store.setState({ selectedSessionId: null, panelOpen: false, sessions: [], sessionListTotal: 1, sessionListOffset: 0 });
     saveSessionLastVisit("p", { kind: "session", sessionId: session.id });
     const view = render(<MemoryRouter initialEntries={["/projects/p/sessions"]}><RouteHarness /></MemoryRouter>);
     await waitFor(() => expect(isRuntimeResourceRemoved(session.id)).toBe(true));

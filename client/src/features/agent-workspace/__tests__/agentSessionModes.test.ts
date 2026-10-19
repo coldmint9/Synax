@@ -157,7 +157,7 @@ describe("session mode boundaries", () => {
         sessionMetadata: { acp: { engineModel: "pi-acp/default" } },
       }),
     ).toBe(false);
-    expect(canSwitchSessionMode(undefined, { acp: true })).toBe(false);
+    expect(canSwitchSessionMode(undefined, { externalBackend: true })).toBe(false);
   });
   it("marks waiting input unread and locks free text rather than enqueueing default answers", () => {
     const waiting = { ...session, status: "waiting_input" as const };

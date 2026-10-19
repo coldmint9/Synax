@@ -7,7 +7,7 @@ vi.mock('../../../infrastructure/llm-runtime/provider-check.js', () => ({ assert
 import { AgentProviderNotConfiguredError } from '../runtime-errors.js';
 
 describe('agent runtime route contracts', () => {
-  beforeEach(() => { resetAgentRuntimeFixtures(); configured.mockReset(); });
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); configured.mockReset(); });
 
   it('rejects Native creation when its provider is not configured', async () => {
     configured.mockImplementationOnce(() => { throw new AgentProviderNotConfiguredError(); });

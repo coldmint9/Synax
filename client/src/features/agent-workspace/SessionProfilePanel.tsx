@@ -199,8 +199,8 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
         ? "会话未在生成输出，不做统计"
         : "Not sampling while the session is idle"
       : zh
-        ? "最近 5 秒的实时估算：流式输出 tokens ÷ 用时（含思考内容）"
-        : "Live estimate over the last 5s: streamed output tokens ÷ elapsed (includes reasoning)";
+        ? "最近 5 秒的实时估算：输出与思考 tokens ÷ 用时"
+        : "Live estimate over the last 5s: output and reasoning tokens ÷ elapsed";
   const tokenLabel = summary.available ? formatTokenCount(summary.total) : "—";
   const percentLabel =
     summary.percent === null ? null : `${Number(summary.percent.toFixed(1))}%`;

@@ -1,6 +1,5 @@
 import type { InputModality } from "../content-parts.js";
 import { z } from "zod/v4";
-import { ACP_PROVIDER_IDS } from "../../../infrastructure/runtime/config/acp-provider-ids.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "../contracts.js";
 import type { AgentSessionStreamMode } from "../../../infrastructure/runtime/ipc/agent-session-protocol.js";
 
@@ -15,8 +14,6 @@ const workspaceLocationSchema = z.discriminatedUnion("kind", [
 export const backendIdSchema = z.enum([
   "native",
   "codex",
-  "claude-code",
-  ...ACP_PROVIDER_IDS,
 ]);
 export type BackendId = z.infer<typeof backendIdSchema>;
 export const backendBindingSchema = z.object({
@@ -56,7 +53,7 @@ export interface BackendCapabilities {
 export interface BackendDescription {
   id: BackendId;
   label: string;
-  kind: "native" | "acp" | "cli";
+  kind: "native" | "cli";
   experimental?: boolean;
   capabilities: BackendCapabilities;
 }
@@ -123,41 +120,4 @@ export const BACKENDS: readonly BackendDescription[] = [
       jsonlEvents: "supported",
     },
   },
-  {
-    id: "claude-code",
-    label: "Claude Code CLI",
-    kind: "cli",
-    experimental: true,
-    capabilities: {
-      nativeControls: "unsupported",
-      resume: "supported",
-      permissions: "supported",
-      interactions: "supported",
-      cancel: "supported",
-      chat: "supported",
-      plan: "unsupported",
-      goal: "unsupported",
-      nativeSessionResume: "supported",
-      jsonlEvents: "supported",
-    },
-  },
-  ...ACP_PROVIDER_IDS.map(
-    (id): BackendDescription => ({
-      id,
-      label: id,
-      kind: "acp",
-      capabilities: {
-        nativeControls: "unsupported",
-        resume: "unverified",
-        permissions: "supported",
-        interactions: "unverified",
-        cancel: "supported",
-        chat: "supported",
-        plan: "unsupported",
-        goal: "unsupported",
-        nativeSessionResume: "unverified",
-        jsonlEvents: "supported",
-      },
-    }),
-  ),
 ];

@@ -19,7 +19,7 @@ import {
 } from "./agent-runtime-fixtures.js";
 
 describe("agentSessionRuntime", () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it("creates a role-specific session with context and start event", () => {
     const session = agentSessionRuntime.create(plannerSessionInput);

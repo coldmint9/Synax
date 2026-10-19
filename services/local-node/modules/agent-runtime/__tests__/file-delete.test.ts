@@ -76,7 +76,7 @@ describe('fileDeleteTool', () => {
   });
 
   it('requires write permission approval before deleting', async () => {
-    resetAgentRuntimeFixtures();
+    await resetAgentRuntimeFixtures();
     const session = agentSessionRuntime.create(executorInput);
     const call = await toolRegistry.execute(session.id, 'file.delete', {
       path: 'tmp/agent-runtime-delete.txt',

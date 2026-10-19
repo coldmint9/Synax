@@ -31,7 +31,7 @@ import {
   useAgentSessionStore,
 } from "./state/agentSessionStore";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
-import { readSessionBackendId } from "./synaxSessionTypes";
+import { isUnsupportedSessionBackend } from "./synaxSessionTypes";
 
 const inputClass = "agent-request-input";
 const buttonClass = "agent-request-action";
@@ -920,13 +920,13 @@ export function AgentInteractionPanel({
   // Compact hosts render jump pills; the composer dock renders pending
   // interaction cards in place of the free-text composer.
   const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
-  const acp = readSessionBackendId(session).endsWith("-acp");
+  const unsupportedBackend = isUnsupportedSessionBackend(session);
 
   useEffect(() => {
-    if (!acp && selectedSessionId === session.id)
+    if (!unsupportedBackend && selectedSessionId === session.id)
       void refreshInteractions(session.id);
   }, [
-    acp,
+    unsupportedBackend,
     selectedSessionId,
     session.id,
     session.status,
@@ -935,7 +935,7 @@ export function AgentInteractionPanel({
   ]);
 
   useEffect(() => {
-    if (acp) return;
+    if (unsupportedBackend) return;
     // Event-driven refreshes never fetch inline: they join the workspace's
     // single coalescing scheduler, so a burst of runtime events — a running
     // step, or the teardown of this very session — costs one trailing fetch
@@ -956,7 +956,7 @@ export function AgentInteractionPanel({
       onConnect: schedule,
       events: { session_changed: onEvent, session_step_completed: onEvent },
     });
-  }, [acp, session.id]);
+  }, [unsupportedBackend, session.id]);
 
   const findInteractionTarget = useCallback((itemId: string) => {
     const card = document.getElementById(`interaction-${itemId}`);
@@ -1027,7 +1027,7 @@ export function AgentInteractionPanel({
     [findInteractionTarget, refreshInteractions, session.id],
   );
 
-  if (acp) return null;
+  if (unsupportedBackend) return null;
   const current = state?.sessionId === session.id ? state : null;
   const pending =
     current?.items.filter((item) => item.status === "pending") ?? [];

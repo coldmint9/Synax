@@ -28,8 +28,8 @@ function session(status = 'completed') {
   return item;
 }
 
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
   trashed.mockReset().mockImplementation(async (target: string) => { fs.renameSync(target, path.join(dir, 'trash-copy')); });
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-file-actions-'));

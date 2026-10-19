@@ -11,15 +11,18 @@ let root:string|undefined;
 let starting:Promise<void>|undefined;
 export function ensureTestRuntime():Promise<void> {
   return starting ??= (async()=>{
+    process.env.SYNAX_RUNTIME_TEST_MODE = '1';
     root=await fs.mkdtemp(path.join(os.tmpdir(),'synax-rust-test-'));
     supervisor=new RustRuntimeSupervisor({dataRoot:root});
     await supervisor.start();
-    process.env.SYNAX_RUNTIME_SIDECAR_STREAM='authoritative';
+    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== 'disabled')
+      process.env.SYNAX_RUNTIME_SIDECAR_STREAM='authoritative';
     await businessStore.refresh();
   })();
 }
 export async function clearBusinessTestData():Promise<void> {
   await ensureTestRuntime();await businessStore.flush();
+  await runtimeClient().resetTestRuntime();
   for(const name of BUSINESS_COLLECTIONS){
     const sessionId=`metadata:${name}`;
     let after:string|undefined;

@@ -1,4 +1,4 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
+import { createRustMessages as createAnthropic } from "../../../../test-fixtures/rust-provider.js";
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HistoryCacheAnchor } from '../cache-policy.js';
 import type { LlmGatewayMessage, LlmGatewayRequest, ResolvedModelSelection } from '../types.js';

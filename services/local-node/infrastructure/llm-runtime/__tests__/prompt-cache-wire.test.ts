@@ -1,6 +1,6 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createRustMessages as createAnthropic } from "../../../../test-fixtures/rust-provider.js";
+import { createRustOpenAI as createOpenAI } from "../../../../test-fixtures/rust-provider.js";
+import { createRustCompatible as createOpenAICompatible } from "../../../../test-fixtures/rust-provider.js";
 import { generateText, tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
@@ -70,7 +70,9 @@ function cacheBlocks(value: unknown): Record<string, any>[] {
   const record = value as Record<string, any>;
   return [
     ...("cache_control" in record ? [record] : []),
-    ...Object.values(record).flatMap(cacheBlocks),
+    ...(Array.isArray(record.messages)
+      ? [record.tools, record.system, record.messages]
+      : Object.values(record)).flatMap(cacheBlocks),
   ];
 }
 
@@ -549,10 +551,12 @@ describe("prompt cache policy actual SDK wire", () => {
     expect(capture.requests[0].messages[0].content[0]).toMatchObject({
       prompt_cache_breakpoint: { mode: "explicit" },
     });
-    expect(capture.requests[0].messages.at(-1)).toMatchObject({
-      role: "user",
-      content: "<system-reminder>\nlatest\n</system-reminder>",
-    });
+    const lastUser = capture.requests[0].messages.at(-1);
+    expect(lastUser.role).toBe("user");
+    // Rig may merge adjacent user turns. The volatile tail must remain an
+    // unmarked block after the stable history boundary.
+    expect(Array.isArray(lastUser.content) ? lastUser.content.at(-1) : { type: "text", text: lastUser.content })
+      .toEqual({ type: "text", text: "<system-reminder>\nlatest\n</system-reminder>" });
   });
 
   it("keeps the volatile runtime tail out of the Anthropic system prefix", async () => {

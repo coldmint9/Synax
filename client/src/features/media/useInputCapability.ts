@@ -60,8 +60,7 @@ export function useInputCapability(
     };
   }, [projectId, sessionId, backendId, model, key, version]);
   let reason = error;
-  const deferred = backendId.endsWith("-acp") && !sessionId;
-  if (visualKey && cap && !cap.verified && !deferred)
+  if (visualKey && cap && !cap.verified)
     reason =
       cap.reason ??
       "输入模态未确认，请在设置声明或选择兼容模型 / Input modalities unconfirmed";

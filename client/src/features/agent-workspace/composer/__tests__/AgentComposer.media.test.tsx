@@ -6,7 +6,7 @@ import type { MediaDraft } from '../../../media/useMediaDraft';
 import { AgentComposer } from '../AgentComposer';
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('../../../../adapters/transport/origin', () => ({ apiRequest: mocks.request }));
+vi.mock('../../../../adapters/transport/origin', async original => ({ ...await original<typeof import('../../../../adapters/transport/origin')>(), apiRequest: mocks.request }));
 vi.mock('@/features/media/useInputCapability', () => ({
   useInputCapability: () => ({ blocked: false, error: false, loading: false }),
 }));

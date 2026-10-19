@@ -23,7 +23,6 @@ import {
   selectionKey,
   type AgentModelSelection,
 } from "./modelSelection";
-import { useAcpDiscovery } from "./useAcpDiscovery";
 import { providerDisplayLabel } from "../../settings/lib/providerPresets";
 
 interface Props {
@@ -79,35 +78,18 @@ function ModelPickerContent({
     if (disabled && open) close();
   }, [disabled, open, close]);
   const [searchQuery, setSearchQuery] = useState("");
-  // Only probe ACP when the picker opens — keep session select off the critical path.
-  const acpDiscovery = useAcpDiscovery({ enabled: open });
   useEffect(() => {
     if (!open) setSearchQuery("");
   }, [open]);
 
-  const { apiModels, acpEndpoints } = useMemo(() => {
-    const options = buildAgentModelOptions(
-      globalConfig,
-      providers,
-      acpDiscovery,
-    );
-    if (!backendId) return options;
-    return {
-      apiModels: backendId === "native" ? options.apiModels : [],
-      acpEndpoints: options.acpEndpoints.filter(
-        (option) => option.providerId === backendId,
-      ),
-    };
-  }, [globalConfig, providers, acpDiscovery, backendId]);
-
-  const allOptions = useMemo(
-    () => [...apiModels, ...acpEndpoints],
-    [apiModels, acpEndpoints],
-  );
+  const allOptions = useMemo(() => {
+    if (backendId && backendId !== "native") return [];
+    return buildAgentModelOptions(globalConfig, providers).apiModels;
+  }, [globalConfig, providers, backendId]);
 
   const selected = useMemo(
-    () => findAgentModelSelection(apiModels, acpEndpoints, providerId, modelId, capability),
-    [apiModels, acpEndpoints, providerId, modelId, capability],
+    () => findAgentModelSelection(allOptions, providerId, modelId, capability),
+    [allOptions, providerId, modelId, capability],
   );
 
   const selectedProviderLabel = providerDisplayLabel(providers, providerId);

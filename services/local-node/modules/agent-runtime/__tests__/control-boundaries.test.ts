@@ -12,8 +12,8 @@ import {
 import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
 import type { ToolCallRecord } from "../contracts.js";
 
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
 });
 describe("control authority boundaries", () => {

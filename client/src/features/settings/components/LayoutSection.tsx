@@ -13,6 +13,7 @@ export function LayoutSection() {
   const defaultHome = useShellStore((s) => s.preferences.defaultHome);
   const notifications = useShellStore((s) => s.preferences.notifications);
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
+  const showThinking = useShellStore((s) => s.preferences.sessionShowThinking);
   const agentFontSize = useShellStore((s) => s.preferences.agentFontSize);
   const userMessageFontWeight = useShellStore(
     (s) => s.preferences.userMessageFontWeight,
@@ -21,6 +22,7 @@ export function LayoutSection() {
   const setDefaultHome = useShellStore((s) => s.setDefaultHome);
   const setNotifications = useShellStore((s) => s.setNotifications);
   const setFoldWorkRuns = useShellStore((s) => s.setSessionFoldWorkRuns);
+  const setShowThinking = useShellStore((s) => s.setSessionShowThinking);
   const setAgentFontSize = useShellStore((s) => s.setAgentFontSize);
   const setUserMessageFontWeight = useShellStore(
     (s) => s.setUserMessageFontWeight,
@@ -88,6 +90,18 @@ export function LayoutSection() {
             checked={foldWorkRuns}
             onChange={setFoldWorkRuns}
             aria-label={t("sessionWorkLogToggle")}
+          />
+        </FormRow>
+
+        <FormRow
+          label={t("settingsShowThinking")}
+          description={t("settingsShowThinkingHint")}
+        >
+          <Switch
+            size="sm"
+            checked={showThinking}
+            onChange={setShowThinking}
+            aria-label={t("settingsShowThinking")}
           />
         </FormRow>
 

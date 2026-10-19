@@ -1,4 +1,5 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
+import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ optimize: vi.fn() }));
 vi.mock("../../../modules/agent-runtime/input-optimization.js", () => ({
   optimizeInput: mocks.optimize,
@@ -12,6 +13,7 @@ const request = (body: unknown) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+beforeAll(async () => { await ensureTestRuntime(); });
 beforeEach(() => vi.clearAllMocks());
 it("streams deltas followed by the validated result", async () => {
   mocks.optimize.mockImplementation(async (_input, _signal, onDelta) => {

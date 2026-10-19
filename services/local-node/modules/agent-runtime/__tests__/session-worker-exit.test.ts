@@ -32,7 +32,7 @@ class TestWorker extends EventEmitter {
 }
 
 describe("session worker exit cleanup", () => {
-  beforeEach(() => { resetAgentRuntimeFixtures(); mocks.fork.mockReset(); });
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); mocks.fork.mockReset(); });
 
   it("ignores duplicate exits from an old worker after a replacement starts", async () => {
     const parent = agentSessionRuntime.create(executorInput);

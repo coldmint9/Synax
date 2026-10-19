@@ -3,7 +3,7 @@ import { permissionPolicy } from '../permission-policy.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('permissionPolicy', () => {
-  beforeEach(resetAgentRuntimeFixtures);
+  beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 
   it('asks for shell commands by default', () => {
     const read = permissionPolicy.evaluate({ sessionId: 's1', category: 'read' });

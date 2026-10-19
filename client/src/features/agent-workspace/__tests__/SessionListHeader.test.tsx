@@ -89,4 +89,30 @@ describe("SessionListHeader", () => {
       JSON.parse(localStorage.getItem("rumbling-shell-preferences")!).sessionListDisplayMode,
     ).toBe("title");
   });
+
+  it("toggles between the session list and workspace tree views", () => {
+    const onChange = vi.fn();
+    renderHeader({
+      sidebarView: "sessions",
+      onSidebarViewChange: onChange,
+    });
+
+    const toggle = screen.getByRole("button", { name: "切换到工作区目录树" });
+    fireEvent.click(toggle);
+    expect(onChange).toHaveBeenCalledWith("workspace");
+  });
+});
+
+it('keeps the same collapse element when switching sidebar content', () => {
+  const onCollapsePanel = vi.fn();
+  const base = { listView: 'sessions' as const, workflowCount: 0, searchQuery: '', onSearchChange: noop,
+    onClearInactive: noop, onCollapsePanel, onSidebarViewChange: vi.fn() };
+  const view = render(<SessionListHeader {...base} sidebarView="sessions" />);
+  const collapse = screen.getByRole('button', { name: '收起侧栏' });
+  view.rerender(<SessionListHeader {...base} sidebarView="workspace" />);
+  expect(screen.getByRole('button', { name: '收起侧栏' })).toBe(collapse);
+  expect(screen.queryByRole('button', { name: /刷新/ })).toBeNull();
+  expect(screen.queryByRole('textbox')).toBeNull();
+  fireEvent.click(collapse);
+  expect(onCollapsePanel).toHaveBeenCalledOnce();
 });

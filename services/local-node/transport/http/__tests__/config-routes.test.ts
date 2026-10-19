@@ -11,10 +11,6 @@ describe('config routes', () => {
     expect(body.providers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'opencode-acp',
-          kind: 'acp',
-        }),
-        expect.objectContaining({
           id: 'openai',
           kind: 'api',
           models: expect.arrayContaining([
@@ -53,3 +49,27 @@ describe('config routes', () => {
     expect(body.config.macWindowAppearance).toEqual(appearance)
   })
 })
+
+it.each([
+  { enabledAcpProviderIds: ['codex-acp'] },
+  { defaultProviderId: 'cursor-acp' },
+  { providers: [{ id: 'retired', label: 'Retired ACP', status: 'live', kind: 'acp', caps: { canFollowUp: true, canCancel: true }, models: [] }] },
+])('rejects retired ACP configuration %j', async patch => {
+  const { configRoutes } = await import('../config.js');
+  const response = await configRoutes.request('http://localhost/global', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  expect(response.status).toBe(400);
+});
+
+it('excludes retired providers and connections when normalizing persisted settings', async () => {
+  const { updateGlobalConfig, getGlobalConfigForRuntime } = await import('../../../infrastructure/runtime/config/config-store.js');
+  updateGlobalConfig({ providers: [{ id: 'codex-acp', label: 'Old', kind: 'acp', status: 'live', caps: { canFollowUp: true, canCancel: true }, models: [] }],
+    defaultProviderId: 'codex-acp', enabledAcpProviderIds: ['codex-acp'],
+    providerConnections: { 'codex-acp': { providerId: 'codex-acp', extra: { kind: 'acp' } } } }, 'migration-test');
+  const current = getGlobalConfigForRuntime();
+  expect(current.providers.every(provider => provider.kind === 'api')).toBe(true);
+  expect(current.providerConnections).not.toHaveProperty('codex-acp');
+  expect(current.defaultProviderId).toBe('openai');
+  expect(current.enabledAcpProviderIds).toEqual([]);
+});

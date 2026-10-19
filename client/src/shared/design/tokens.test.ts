@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { THEME_COLOR_KEYS } from '../lib/theme/contract';
@@ -6,7 +7,8 @@ import { THEME_COLOR_KEYS } from '../lib/theme/contract';
 const designDirectory = dirname(new URL(import.meta.url).pathname);
 const repositoryRoot = resolve(designDirectory, '../../../..');
 const task5BoundaryCommit = '02ed537';
-const committedHead = 'HEAD';
+// Pin the historical migration audit to the migration itself.
+const committedHead = '982e2552';
 
 function git(args: string[]): string {
   return execFileSync('git', args, { cwd: repositoryRoot, encoding: 'utf8' });
@@ -32,7 +34,7 @@ function readCommittedFile(filePath: string): string {
 }
 
 const task6CssFiles = enumerateTask6CssFiles();
-const source = readCommittedFile('web/src/react/design/tokens.css');
+const source = readFileSync(resolve(designDirectory, 'tokens.css'), 'utf8');
 const lightTheme = source.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1];
 const darkTheme = source.match(/\.dark\s*\{([\s\S]*?)\n\}/)?.[1];
 const compatibilityBridge = source.match(/:root,\s*\.dark\s*\{([\s\S]*?)\n\}/)?.[1];

@@ -19,8 +19,6 @@ import {
 } from "../media-capabilities.js";
 import {
   codexMediaInput,
-  claudeMediaInput,
-  acpMediaInput,
 } from "../media-backend-input.js";
 import { importToolContent } from "../media-tool-content.js";
 import { mediaReadTool } from "../tools/media-read.js";
@@ -74,7 +72,7 @@ describe("document inputs independent of provider capabilities", () => {
       makePdf("Context", flowchartDrawing, 10),
       "application/pdf",
     );
-    bindAssets(session.id, [{ type: "file", assetId: asset.id }]);
+    await bindAssets(session.id, [{ type: "file", assetId: asset.id }]);
     const capability = vi
       .spyOn(mediaCapabilities, "sessionInputCapabilities")
       .mockResolvedValue(nativeInputCapabilities(visionSelection));
@@ -235,18 +233,6 @@ describe("document inputs independent of provider capabilities", () => {
       capability,
     );
     expect(codex.some((p: any) => p.type === "localImage")).toBe(true);
-    const claude = await claudeMediaInput(
-      { contentParts: parts.slice(0, 1) },
-      "",
-      capability,
-    );
-    expect(
-      claude.some(
-        (p: any) => p.type === "image" && p.source.media_type === "image/png",
-      ),
-    ).toBe(true);
-    const acp = await acpMediaInput(parts.slice(0, 1), "", capability);
-    expect(acp.some((p) => p.type === "image")).toBe(true);
   });
   it.each([
     "text/javascript",
@@ -386,11 +372,7 @@ describe("document inputs independent of provider capabilities", () => {
       expect(JSON.stringify(messages)).not.toContain("base64");
       const codex = await codexMediaInput({ contentParts: parts }, "");
       expect(codex[0]).toMatchObject({ type: "text" });
-      const claude = await claudeMediaInput({ contentParts: parts }, "");
-      expect(claude[0]).toMatchObject({ type: "text" });
-      const acp = await acpMediaInput(parts, "");
-      expect(acp[0]).toMatchObject({ type: "text" });
-      bindAssets(session.id, parts);
+      await bindAssets(session.id, parts);
       const read = await mediaReadTool.execute({
         sessionId: session.id,
         toolCallId: "read",
@@ -507,7 +489,7 @@ describe("document inputs independent of provider capabilities", () => {
           true,
         );
         expect(JSON.stringify(text)).toContain("图片、图表和流程图无法识别");
-        bindAssets(session.id, parts);
+        await bindAssets(session.id, parts);
         const read = await mediaReadTool.execute({
           sessionId: session.id,
           runId: null,

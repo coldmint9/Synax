@@ -13,8 +13,8 @@ let dir: string;
 let repo: string;
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-beforeEach(() => {
-  resetAgentRuntimeFixtures();
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
   ensureSynaxAgentRegistered();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-git-files-'));
   repo = path.join(dir, 'repo');

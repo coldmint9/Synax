@@ -497,6 +497,7 @@ impl SessionShardRouter {
         .await
     }
 
+    #[cfg(test)]
     pub async fn admit_run_with_queue(
         &self,
         session_id: impl Into<String>,
@@ -638,6 +639,7 @@ impl SessionShardRouter {
         }
     }
 
+    #[cfg(test)]
     pub async fn append_stream(
         &self,
         session_id: impl Into<String>,

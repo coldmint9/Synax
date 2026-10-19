@@ -50,6 +50,18 @@ describe('forwardChunkToLiveBus', () => {
     sessionLiveBus.cleanup(sessionId);
   });
 
+  it('retains text and reasoning telemetry across the worker live bridge', () => {
+    const events: unknown[] = [];
+    const unsubscribe = sessionLiveBus.subscribe(sessionId, event => events.push(event));
+    forwardChunkToLiveBus(sessionId, { type: 'message_delta', runId: 'r', stepId: 's', delta: 'answer', outputTokens: 7 });
+    forwardChunkToLiveBus(sessionId, { type: 'thought_delta', runId: 'r', stepId: 's', delta: 'reasoning', thinkingTokens: 11 });
+    expect(events).toEqual([
+      { type: 'message_delta', stepId: 's', delta: 'answer', outputTokens: 7 },
+      { type: 'thought_delta', stepId: 's', delta: 'reasoning', thinkingTokens: 11 },
+    ]);
+    unsubscribe();
+  });
+
   it('maps stream chunks to live events', () => {
     const events: Array<{ type: string; delta?: string }> = [];
     const unsubscribe = sessionLiveBus.subscribe(sessionId, (event) => {

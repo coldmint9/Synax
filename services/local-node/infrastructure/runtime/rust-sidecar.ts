@@ -15,6 +15,7 @@ export interface RustRuntimeSidecarHandle {
   socketPath: string;
   token: string;
   port: number;
+  providerPort: number;
   process: ChildProcess;
   generation: number;
   status: RustRuntimeStatus;
@@ -23,6 +24,7 @@ export interface RustRuntimeSidecarHandle {
 }
 export interface RustRuntimeReady {
   type: 'runtime_ready'; protocol: string; port: number; pid: number;
+  providerPort: number;
   socket: string | null; capabilities: string[];
 }
 interface SupervisorOptions {
@@ -59,6 +61,8 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   readonly historyPath: string;
   process!: ChildProcess;
   port = 0;
+  providerPort = 0;
+  private providerListenPort = 0;
   generation = 0;
   status: RustRuntimeStatus = 'starting';
   private wanted = true;
@@ -113,7 +117,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
     const child = spawn(this.binaryPath, this.options.args ?? [], {
       cwd: process.cwd(),
       env: { ...process.env, ...this.options.env,
-        SYNAX_RUNTIME_SIDECAR_PORT: '0', SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath,
+        SYNAX_RUNTIME_SIDECAR_PORT: '0', SYNAX_RUNTIME_PROVIDER_PORT: String(this.providerListenPort), SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath,
         SYNAX_RUNTIME_SIDECAR_TOKEN: this.token, SYNAX_RUNTIME_HOT_PATH: this.hotPath,
         SYNAX_RUNTIME_HISTORY_PATH: this.historyPath,
         SYNAX_RUNTIME_PARENT_WATCH: '1',
@@ -148,6 +152,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
             const value = JSON.parse(line.slice(READY_PREFIX.length)) as RustRuntimeReady;
             if (value.type !== 'runtime_ready' || value.protocol !== 'synax.runtime.v2' || value.pid !== child.pid ||
                 value.socket !== this.socketPath || !Number.isInteger(value.port) || value.port <= 0 || value.port > 65535 ||
+                !Number.isInteger(value.providerPort) || value.providerPort <= 0 || value.providerPort > 65535 ||
                 !Array.isArray(value.capabilities) || !value.capabilities.includes('append_receipts'))
               throw new Error('Rust runtime returned an incompatible READY payload.');
             cleanup(); resolve(value);
@@ -174,9 +179,10 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
         const stat = lstatSync(this.socketPath, { bigint: true });
         if (stat.isSocket()) this.socketIdentity = { ino: stat.ino, dev: stat.dev };
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      this.port = ready.port; this.generation++; this.status = 'ready'; this.readyAt = Date.now();
+      this.port = ready.port; this.providerPort = ready.providerPort; this.providerListenPort = ready.providerPort; this.generation++; this.status = 'ready'; this.readyAt = Date.now();
       Object.assign(process.env, { SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath, SYNAX_RUNTIME_SIDECAR_TOKEN: this.token,
-        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_HOT_PATH: this.hotPath,
+        SYNAX_RUNTIME_SIDECAR_PID: String(child.pid),
+        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_PROVIDER_PORT: String(this.providerPort), SYNAX_RUNTIME_HOT_PATH: this.hotPath,
         SYNAX_RUNTIME_HISTORY_PATH: this.historyPath });
       for (const waiter of this.waiters) waiter.resolve(); this.waiters.clear();
       logger.info({ binaryPath: this.binaryPath, socketPath: this.socketPath, port: this.port, sidecarPid: child.pid, generation: this.generation, protocol: ready.protocol }, '[runtime-sidecar] started');
@@ -188,7 +194,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
 
   private schedule(error: Error): void {
     if (!this.wanted) return;
-    this.port = 0;
+    this.port = 0; this.providerPort = 0;
     if (process.env.SYNAX_RUNTIME_SIDECAR_TOKEN === this.token) delete process.env.SYNAX_RUNTIME_SIDECAR_PORT;
     if (this.failures >= this.delays.length) { this.fail(error); return; }
     this.status = 'backoff';
@@ -235,8 +241,9 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       await this.pending?.catch(() => {});
       if (process.env.SYNAX_RUNTIME_SIDECAR_TOKEN === this.token) {
         delete process.env.SYNAX_RUNTIME_SIDECAR_TOKEN; delete process.env.SYNAX_RUNTIME_SIDECAR_SOCKET;
-        delete process.env.SYNAX_RUNTIME_SIDECAR_PORT; delete process.env.SYNAX_RUNTIME_HOT_PATH;
+        delete process.env.SYNAX_RUNTIME_SIDECAR_PORT; delete process.env.SYNAX_RUNTIME_PROVIDER_PORT; delete process.env.SYNAX_RUNTIME_HOT_PATH;
         delete process.env.SYNAX_RUNTIME_HISTORY_PATH;
+        delete process.env.SYNAX_RUNTIME_SIDECAR_PID;
       }
       if (this.socketIdentity) {
         try {

@@ -26,8 +26,6 @@ describe('runtime protocol v1', () => {
     expect(BACKENDS.find(backend => backend.id === 'codex')?.capabilities).toMatchObject({
       plan: 'unsupported', goal: 'unsupported', nativeControls: 'unsupported',
     });
-    expect(BACKENDS.find(backend => backend.id === 'claude-code')?.capabilities).toMatchObject({
-      plan: 'unsupported', goal: 'unsupported', nativeControls: 'unsupported',
-    });
+    expect(BACKENDS.some(backend => ['claude-code', 'acp'].includes(backend.id))).toBe(false);
   });
 });

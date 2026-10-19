@@ -837,10 +837,14 @@
     position: relative;
   }
 
+  .electron-windows .workbench-shell {
+    --desktop-titlebar-height: 40px;
+    background: var(--background);
+  }
+
   .electron-macos .workbench-shell {
-    /* macOS traffic lights sit at y=18 with a 14px diameter. A 40px
-       overlay leaves a small breathing room below them without reserving a
-       full toolbar row in the page layout. */
+    /* Hidden-inset keeps the native traffic lights over the page; reserve
+       their compact top area in transcript and workspace-specific layouts. */
     --desktop-titlebar-height: 40px;
     background: var(--background);
   }
@@ -855,6 +859,68 @@
     z-index: 0;
     -webkit-app-region: drag;
     pointer-events: none;
+  }
+
+  /* Windows owns a compact renderer titlebar. Keeping it in normal flow
+     reserves the control row so the first app header cannot sit underneath
+     the minimize, maximize, and close buttons. */
+  .window-chrome {
+    position: relative;
+    flex: 0 0 var(--desktop-titlebar-height, 40px);
+    width: 100%;
+    z-index: 1000;
+    height: var(--desktop-titlebar-height, 40px);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .window-chrome__drag-region {
+    position: absolute;
+    inset: 0;
+    -webkit-app-region: drag;
+  }
+
+  .window-chrome__controls {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+    height: 40px;
+    padding: 4px 8px 0 0;
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
+  }
+
+  .window-chrome__button {
+    display: inline-flex;
+    width: 34px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    color: hsl(var(--muted-foreground));
+    background: transparent;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+
+  .window-chrome__button:hover {
+    color: var(--foreground);
+    background: hsl(var(--muted-hsl) / 0.75);
+  }
+
+  .window-chrome__button:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: -2px;
+  }
+
+  .window-chrome__button--close:hover {
+    color: white;
+    background: hsl(0 72% 52% / 0.9);
   }
 
   .activity-bar {
@@ -5949,8 +6015,8 @@ input[type="radio"] {
   display: none;
 }
 
-/* Native window controls stay native; only the unoccupied titlebar drags. */
-.electron-macos
+/* Keep app controls clickable while the shared desktop titlebar is draggable. */
+.electron
   .workbench-shell
   :is(
     button,

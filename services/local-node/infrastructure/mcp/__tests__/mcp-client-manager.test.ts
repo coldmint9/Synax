@@ -18,6 +18,8 @@ beforeEach(async () => {
   process.env.DATA_ROOT = tempDir;
   process.env.CONFIG_ENCRYPTION_KEY = "unit-test-mcp-secret";
   vi.resetModules();
+  const { ensureTestRuntime } = await import("../../../../test-fixtures/rust-runtime.js");
+  await ensureTestRuntime();
   const configModule = await import("../../runtime/config/config-store.js");
   updateGlobalConfig = configModule.updateGlobalConfig as (
     patch: Record<string, unknown>,
@@ -25,6 +27,8 @@ beforeEach(async () => {
   ) => void;
   const managerModule = await import("../mcp-client-manager.js");
   manager = managerModule.mcpClientManager;
+  const { businessStore } = await import("../../persistence/business-store.js");
+  await businessStore.refresh();
 });
 
 afterEach(async () => {

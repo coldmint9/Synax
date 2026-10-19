@@ -42,8 +42,18 @@ export type SessionLiveEvent =
       stepIndex: number;
       step?: AgentRunStep;
     }
-  | { type: "message_delta"; stepId: string; delta: string }
-  | { type: "thought_delta"; stepId: string; delta: string }
+  | {
+      type: "message_delta";
+      stepId: string;
+      delta: string;
+      outputTokens?: number;
+    }
+  | {
+      type: "thought_delta";
+      stepId: string;
+      delta: string;
+      thinkingTokens?: number;
+    }
   | { type: "tool_call"; stepId: string; toolCall: ToolCallRecord }
   | { type: "tool_result"; stepId: string; toolCall: ToolCallRecord }
   | { type: "context_compaction_started"; event?: RuntimeEvent }

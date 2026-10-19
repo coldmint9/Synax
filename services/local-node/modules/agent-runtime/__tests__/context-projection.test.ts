@@ -21,7 +21,7 @@ import {
 } from "./agent-runtime-fixtures.js";
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 
-beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 // Spies wrap store methods; without restoring, a later spyOn captures the
 // previous spy as "original" and recurses.
 afterEach(() => vi.restoreAllMocks());

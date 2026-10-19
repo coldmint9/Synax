@@ -134,7 +134,7 @@ export const CodeViewer = memo(function CodeViewer({
   }, [content]);
 
   const editable = Boolean(
-    tabId && !inputSource && !truncated && !["image", "svg", "pdf"].includes(previewKind),
+    tabId && !inputSource && !truncated && !["image", "pdf"].includes(previewKind),
   );
 
   const load = useCallback(async () => {

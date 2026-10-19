@@ -9,11 +9,10 @@ import {
   getGlobalConfigForRuntime,
 } from "../../infrastructure/runtime/config/config-store.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { observationLifetime } from "../../infrastructure/runtime/observation-lifetime.js";
 import { SseEventType } from "../../infrastructure/runtime/sse-events.js";
-import { sessionUsesAcpEngine } from "../../modules/agent-runtime/acp-engine/index.js";
 import {
-  closeAcpAgentSessions,
   resumeAgentSessionInBackground,
 } from "../../modules/agent-runtime/agent-stream-proxy.js";
 import {
@@ -68,6 +67,7 @@ import {
 } from "../../modules/agent-runtime/media-capabilities.js";
 import { restorePlanArtifact } from "../../modules/agent-runtime/plan-artifact-store.js";
 import {
+  grantProjectTool,
   listProjectToolGrants,
   revokeProjectToolGrant,
 } from "../../modules/agent-runtime/project-tool-grants.js";
@@ -123,6 +123,7 @@ import {
 import { sessionProcessManager } from "../../modules/agent-runtime/session-process-manager.js";
 import {
   projectSessionState,
+  markRevisionedHistory,
   projectSessionSummary,
 } from "../../modules/agent-runtime/session-projection.js";
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
@@ -163,8 +164,12 @@ export const agentRuntimeRoutes = new Hono();
 agentRuntimeRoutes.use('*', async (c, next) => {
   const id = c.req.param('sessionId') ?? (c.req.path.startsWith('/sessions/') ? c.req.param('id') : undefined);
   try {
+    // History queries already read the authoritative Rust index. Hydrating the
+    // execution working set here would drain every history page before paging.
+    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    if (historyRead) { await next(); return; }
     await agentRuntimeStore.hydrateSessions();
-    if (id) await agentRuntimeStore.hydrateSession(id);
+    if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.hydrateSession(id);
     await next();
     await agentRuntimeStore.flush();
   } catch (error) { return runtimeError(c, error); }
@@ -172,8 +177,9 @@ agentRuntimeRoutes.use('*', async (c, next) => {
 
 const authoritativeEditRequestId = (sessionId: string, requestId: string) =>
   `history_${createHash("sha256").update(`${sessionId}:${requestId}`).digest("hex")}`;
-agentRuntimeRoutes.get("/projects/:projectId/tool-grants", (c) => {
+agentRuntimeRoutes.get("/projects/:projectId/tool-grants", async (c) => {
   try {
+    await businessStore.refresh(["tool-grants"]);
     return c.json({ items: listProjectToolGrants(c.req.param("projectId")) });
   } catch (error) {
     return runtimeError(c, error);
@@ -195,6 +201,13 @@ agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");
+    // These are collection endpoints whose first path segment is a literal,
+    // not a session ID. Hono middleware patterns also match them as
+    // `/sessions/:sessionId`, so skip the per-session projection guard here.
+    if (id === "search" || id === "badges") {
+      await next();
+      return;
+    }
     if (id) {
       {
         try {
@@ -264,7 +277,6 @@ async function archiveSessionAfterShutdown(
       undefined,
       expectedRunId,
     );
-    await closeAcpAgentSessions(sessionIds);
     await stopSessionBackgroundProcesses(sessionIds);
     {
       await Promise.all(
@@ -410,7 +422,9 @@ agentRuntimeRoutes.post(
 );
 async function withAuthoritativeSessionPayload(sessionId: string) {
   const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
-  const session = projectSessionState(snapshot.session as never);
+  const session = markRevisionedHistory(
+    projectSessionState(snapshot.session as never),
+  );
   const [workItems, contextItems] = await Promise.all([
     runtimeFacade.listHistoryObjects(sessionId, "list_work"),
     runtimeFacade.listHistoryObjects(sessionId, "list_contexts"),
@@ -1186,7 +1200,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
   try {
     const id = c.req.param("sessionId");
     return c.json(
-      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor")),
+      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor"), c.req.query("since"), c.req.query("view") === "timeline"),
     );
   } catch (error) {
     return runtimeError(c, error);
@@ -1347,14 +1361,16 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", async (c) => {
         "list_steps",
       );
       return c.json({
-        items: items.filter(
-          (item) =>
-            (
-              item as {
-                runId?: string;
-              }
-            ).runId === c.req.param("runId"),
-        ),
+        items: items
+          .filter(
+            (item) =>
+              (
+                item as {
+                  runId?: string;
+                }
+              ).runId === c.req.param("runId"),
+          )
+          .map((item) => projectRunStepForWire(item as never)),
       });
     }
   } catch (error) {
@@ -1364,10 +1380,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/steps", async (c) => {
 agentRuntimeRoutes.get("/sessions/:sessionId/steps", async (c) => {
   try {
     return c.json({
-      items: await runtimeFacade.listHistoryObjects(
+      items: (await runtimeFacade.listHistoryObjects(
         c.req.param("sessionId"),
         "list_steps",
-      ),
+      )).map((item) => projectRunStepForWire(item as never)),
     });
   } catch (error) {
     return runtimeError(c, error);
@@ -1469,7 +1485,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
       .number()
       .int()
       .min(0)
-      .safeParse(c.req.header("Last-Event-ID") ?? c.req.query("after") ?? "0");
+      .safeParse(c.req.query("after") ?? c.req.header("Last-Event-ID") ?? "0");
     if (!after.success) return validationError(c, after.error);
     return observeRunResponse(c, sessionId, runId, after.data);
   } catch (error) {
@@ -1527,6 +1543,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
     );
     return c.json({
       ...snapshot,
+      session: projectSessionState(snapshot.session),
       liveChunks: snapshot.liveChunks ?? [],
       completedStepIds: snapshot.completedStepIds ?? [],
     });
@@ -1747,11 +1764,13 @@ agentRuntimeRoutes.get("/sessions/:sessionId/artifacts", async (c) => {
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/tool-calls", async (c) => {
   try {
-    agentSessionRuntime.get(c.req.param("sessionId"));
+    const sessionId = c.req.param("sessionId");
+    agentSessionRuntime.get(sessionId);
+    await agentRuntimeStore.flushSession(sessionId);
     return c.json({
       items: (
         await runtimeFacade.listHistoryObjects(
-          c.req.param("sessionId"),
+          sessionId,
           "list_tool_calls",
         )
       ).map((item) => projectToolCallForWire(item as never)),
@@ -2375,6 +2394,8 @@ agentRuntimeRoutes.post(
         backend.replyPermission?.(sessionId, decision.id, parsed.data.reply);
         return c.json(decision);
       }
+      if (parsed.data.reply === "always" && typeof decision.metadata?.toolId === "string")
+        grantProjectTool(sessionId, decision.metadata.toolId, decision.id);
       logger.info(
         {
           sessionId,
@@ -2395,7 +2416,7 @@ agentRuntimeRoutes.post(
             .session as never,
         );
       }
-      if (decision.resumeToken && !sessionUsesAcpEngine(sessionId)) {
+      if (decision.resumeToken) {
         logger.info(
           {
             sessionId,
@@ -2642,6 +2663,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
         `session-pin:${id}:${parsed.data.pinned}`,
         { sessionMetadata: { pinned: parsed.data.pinned } },
       )) as AgentSession;
+      await agentRuntimeStore.hydrateSession(id, true);
       return c.json({
         session: projectSessionSummary(projectSessionState(patched as never)),
       });
@@ -2660,9 +2682,10 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const id = c.req.param("sessionId");
-    const session = projectSessionState(
-      (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
-    );
+    const localSession = agentRuntimeStore.tryGetSession(id);
+    const session = localSession
+      ? projectSessionState(localSession)
+      : projectSessionState((await runtimeFacade.uiSnapshotAuthoritative(id)).session as never);
     if (
       session.parentSessionId ||
       !["synax", "goal"].includes(session.profileId)
@@ -2686,6 +2709,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
         409,
       );
     const mode = parsed.data.mode;
+    const previousMode = workflowMode(session);
     {
       const patched = (await runtimeFacade.sessionPatch(
         id,
@@ -2699,7 +2723,8 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
           },
         },
       )) as AgentSession;
-      workRuntime.onModeChanged(id, workflowMode(patched));
+      await agentRuntimeStore.hydrateSession(id, true);
+      workRuntime.onModeChanged(id, previousMode);
       return c.json({ session: patched });
     }
   } catch (error) {

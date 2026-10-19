@@ -21,8 +21,26 @@ export class LoopResumeService {
     return this.permissions.findByResumeToken(sessionId, session.pendingResumeToken) ?? null;
   }
 
-  resolvePendingRun(sessionId: string): PendingRunResume | null {
-    const permission = this.resolvePendingPermission(sessionId);
+  async resolvePendingRun(sessionId: string): Promise<PendingRunResume | null> {
+    // Permission replies are committed to the authoritative Rust projection
+    // before the background resume is scheduled. Refresh the local working
+    // set so the resumed loop sees the resolved permission and current run.
+    await this.store.hydrateSession(sessionId, true);
+    const session = this.store.getSession(sessionId);
+    const permission = this.resolvePendingPermission(sessionId) ??
+      this.permissions
+        .list(sessionId)
+        .filter(
+          (item) =>
+            item.runId === session.activeRunId &&
+            (item.action === "allow" || item.action === "deny") &&
+            Boolean(item.userReply) &&
+            Boolean(item.resolvedAt) &&
+            Boolean(item.resumeToken),
+        )
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .at(-1) ??
+      null;
     if (!permission?.runId || !permission.stepId) return null;
     const run = this.store.getRun(permission.runId);
     const step = this.store.getRunStep(permission.stepId);

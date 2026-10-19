@@ -23,7 +23,6 @@ import {
   buildAgentModelOptions,
   pickDefaultModelSelection,
 } from "../composer/modelSelection";
-import { useAcpDiscovery } from "../composer/useAcpDiscovery";
 import {
   isDockSessionActive,
   resolveDockSessionTitle,
@@ -45,7 +44,6 @@ export function AgentDock({ projectId }: Props) {
   const { t } = useLocale();
   const navigate = useNavigate();
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
-  const acpDiscovery = useAcpDiscovery();
 
   const dockState = useAgentDockStore((s) => s.dockState);
   const setDockState = useAgentDockStore((s) => s.setDockState);
@@ -191,10 +189,9 @@ export function AgentDock({ projectId }: Props) {
   useEffect(() => {
     if (!globalConfig) return;
     if (providerId && modelId) return;
-    const { apiModels, acpEndpoints } = buildAgentModelOptions(
+    const { apiModels } = buildAgentModelOptions(
       globalConfig,
       providers,
-      acpDiscovery,
     );
     const preferred = effectiveConfig
       ? {
@@ -204,7 +201,6 @@ export function AgentDock({ projectId }: Props) {
       : null;
     const picked = pickDefaultModelSelection(
       apiModels,
-      acpEndpoints,
       preferred,
     );
     if (picked) {
@@ -214,7 +210,6 @@ export function AgentDock({ projectId }: Props) {
   }, [
     globalConfig,
     providers,
-    acpDiscovery,
     effectiveConfig,
     providerId,
     modelId,

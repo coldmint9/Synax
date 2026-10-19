@@ -2,8 +2,8 @@ import { persistInlineVisualization } from "../visualization-integration.js";
 import { hasInlineMedia, normalizeMediaPayload, redactInlineMedia } from '../media-tool-content.js';
 import type { RuntimeContentPart } from '../content-parts.js';
 import { normalizeInput, hasInput } from '../content-parts.js';
-import { AsyncQueue } from '../../acp/protocol/async-queue.js';
-import { captureFileChangeBaseline, captureFileChanges, type FileChangeBaseline } from '../../acp/file-change-capture.js';
+import { AsyncQueue } from '../async-queue.js';
+import { captureFileChangeBaseline, captureFileChanges, type FileChangeBaseline } from '../file-change-capture.js';
 import { agentRuntimeStore as store } from '../session-store.js';
 import { agentEventService as events } from '../event-service.js';
 import { activateAcceptedRun, acceptedInputRequestId } from '../run-admission.js';
@@ -12,6 +12,7 @@ import { interactionService } from '../interaction-service.js';
 import { validateBackendTurnInput } from './backend-binding.js';
 import { bindSessionWorkDir } from '../tools/workspace.js';
 import { externalWorkspace } from './external-workspace.js';
+import { countTokens } from '../context-tokenizer.js';
 import type { AgentRun, AgentRunStep, AgentRunStreamChunk, PermissionReply, StreamTurnRequest, ToolCallRecord, CapabilityCategory } from '../contracts.js';
 import type { InteractionReply, HumanQuestion } from '../control-contracts.js';
 
@@ -27,6 +28,7 @@ export class ExternalTurn {
   private readonly inputs = new Map<string, (reply: InteractionReply) => void>();
   private text = '';
   private thought = '';
+  private outputModel: string | undefined;
   private ended = false;
   private finishing = false;
   private readonly mediaTasks: Promise<void>[] = [];
@@ -51,6 +53,7 @@ export class ExternalTurn {
     this.run = store.updateRun(this.run.id, { metadata: { ...this.run.metadata, reasoningEffort: input.reasoningEffort ?? null } });
     this.step = store.appendRunStep({ id: makeRuntimeId('step'), sessionId, runId: this.run.id, index: 1, status: 'running',
       model: input.model ?? null, startedAt: nowIso(), completedAt: null, finishReason: null, metadata: { backendId, externalTurn: true, reasoningEffort: input.reasoningEffort ?? null } });
+    this.outputModel = input.model;
     store.updateSession(sessionId, { status: 'running', activeRunId: this.run.id, pendingResumeToken: null, blockedReason: null, updatedAt: nowIso() });
     this.emit({ type: 'message', message: user }); this.emit({ type: 'run_started', run: this.run }); this.emit({ type: 'step_started', step: this.step });
   }
@@ -59,10 +62,12 @@ export class ExternalTurn {
   delta(value: string, thought = false): void {
     if (this.ended || this.finishing || !value) return;
     if (thought) this.thought += value; else this.text += value;
-    this.emit({ type: thought ? 'thought_delta' : 'message_delta', runId: this.run.id, stepId: this.step.id, delta: value });
+    this.emit({ type: thought ? 'thought_delta' : 'message_delta', runId: this.run.id, stepId: this.step.id, delta: value,
+      ...(thought ? { thinkingTokens: countTokens(this.thought, this.outputModel) } : { outputTokens: countTokens(this.text, this.outputModel) }) });
   }
   model(value?: string): void {
     if (!value) return;
+    this.outputModel = value;
     store.updateRun(this.run.id, { model: value }); store.updateRunStep(this.step.id, { model: value });
   }
   usage(usage: Record<string, unknown>): void {

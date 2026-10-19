@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
+import { beforeAll, describe, it, expect } from 'vitest';
 import { extensionStore } from '../extension-store.js';
 import { customExtensionSchema } from '../schemas.js';
 describe('project extensions', () => {
@@ -65,3 +66,5 @@ describe('project extensions', () => {
     ).toBe(true);
   });
 });
+
+beforeAll(ensureTestRuntime);

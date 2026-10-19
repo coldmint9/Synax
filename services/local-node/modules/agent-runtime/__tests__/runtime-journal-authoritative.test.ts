@@ -38,8 +38,8 @@ function sessionRun() {
 }
 
 describe('authoritative sidecar runtime journal projection', () => {
-  beforeEach(() => {
-    resetAgentRuntimeFixtures();
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
     sidecar.mode.mockReturnValue('authoritative');
     sidecar.replay.mockReset();
     sidecar.snapshot.mockReset();

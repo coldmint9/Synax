@@ -436,8 +436,6 @@ function readAgentEditedPaths(
           if (change && typeof change === "object")
             add((change as { path?: unknown }).path);
         }
-    } else if (/^claude-code\.(Write|Edit|NotebookEdit)$/.test(call.toolId)) {
-      add(input.file_path ?? input.notebook_path);
     } else if (call.toolId === "file.patch") {
       for (const candidate of patchFilePaths(input.patch)) add(candidate);
     } else if (AGENT_WRITE_TOOL_IDS.has(call.toolId)) {

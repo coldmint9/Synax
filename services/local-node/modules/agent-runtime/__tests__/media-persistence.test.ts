@@ -95,7 +95,7 @@ vi.mock(
     };
   },
 );
-beforeEach(resetAgentRuntimeFixtures);
+beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 afterEach(() => vi.unstubAllGlobals());
 describe("media tool assets survive the runtime boundary", () => {
   it("generates speech, transcribes the stored audio, and generates video through generic model factories", async () => {
@@ -259,7 +259,7 @@ describe("media tool assets survive the runtime boundary", () => {
       const part = await saveGeneratedMedia(session.projectId, {
         mediaType,
         uint8Array: bytes,
-      });
+      }, undefined, session.id);
       expect(part.type).toBe(type);
       agentRuntimeStore.appendMessage({
         id: `message-${type}`,

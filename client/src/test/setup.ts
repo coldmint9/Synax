@@ -21,7 +21,7 @@ for (const method of ['focus', 'blur', 'scrollIntoView'] as const) {
 // Node's experimental global storage is not the browser's Storage implementation.
 const browserStorageInstances: Storage[] = []
 for (const key of ['localStorage', 'sessionStorage'] as const) {
-  const storage = new window.Storage()
+  const storage = window[key]
   browserStorageInstances.push(storage)
   Object.defineProperty(globalThis, key, { configurable: true, value: storage })
   Object.defineProperty(window, key, { configurable: true, value: storage })

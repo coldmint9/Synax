@@ -10,8 +10,8 @@ import { setSessionWorkspaceRoot } from '../tools/workspace.js';
 import { explorerSessionInput, executorInput, resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 
 describe('resolveSessionCapabilities', () => {
-  beforeEach(() => {
-    resetAgentRuntimeFixtures();
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
   });
 
   it('returns profile-scoped tools and active skills for explorer sessions', () => {
@@ -30,7 +30,8 @@ describe('resolveSessionCapabilities', () => {
     expect(caps.tools.available.some((tool) => tool.id === 'file.write')).toBe(false);
     expect(caps.tools.visible).toEqual(caps.tools.available);
     expect(caps.skills.active).toEqual([]);
-    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(expect.arrayContaining(['synax-builtin/synax-explore', 'synax-builtin/visualize']));
+    expect(caps.skills.candidates.map((skill) => skill.id)).toEqual(expect.arrayContaining(['synax-builtin/synax-explore']));
+    expect(caps.skills.candidates.some((skill) => skill.id.endsWith('/visualize'))).toBe(true);
     expect(caps.skills.candidates.some((skill) => skill.id.includes('interactive-artifacts'))).toBe(false);
   });
 
@@ -45,8 +46,8 @@ describe('resolveSessionCapabilities', () => {
 });
 
 describe('read-before-write', () => {
-  beforeEach(() => {
-    resetAgentRuntimeFixtures();
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
   });
 
   it('auto-reads an unread existing file instead of blocking file.write', async () => {

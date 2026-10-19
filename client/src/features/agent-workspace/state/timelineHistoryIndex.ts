@@ -34,10 +34,10 @@ export function extendTimelineIndex(
   older: HistoryWindowResponse,
 ): Pick<SessionDetailCacheEntry, "timelineMessages" | "timelineRuns" | "timelineSteps" | "timelineToolCalls" | "timelineIndexLoaded"> {
   return {
-    timelineMessages: unique(older.messages.map(previewTimelineMessage), current.timelineMessages ?? current.messages.map(previewTimelineMessage)),
-    timelineRuns: unique(older.runs, current.timelineRuns ?? current.runs),
-    timelineSteps: unique(older.steps, current.timelineSteps ?? current.steps),
-    timelineToolCalls: unique(older.toolCalls, current.timelineToolCalls ?? current.toolCalls),
+    timelineMessages: unique(older.messages.map(previewTimelineMessage), current.timelineMessages ?? current.messages.map(previewTimelineMessage)).filter(item => !current.historyDeleted?.messages?.includes(item.id)),
+    timelineRuns: unique(older.runs, current.timelineRuns ?? current.runs).filter(item => !current.historyDeleted?.runs?.includes(item.id)),
+    timelineSteps: unique(older.steps, current.timelineSteps ?? current.steps).filter(item => !current.historyDeleted?.steps?.includes(item.id)),
+    timelineToolCalls: unique(older.toolCalls, current.timelineToolCalls ?? current.toolCalls).filter(item => !current.historyDeleted?.toolCalls?.includes(item.id)),
     timelineIndexLoaded: !older.historyWindow.olderCursor,
   };
 }

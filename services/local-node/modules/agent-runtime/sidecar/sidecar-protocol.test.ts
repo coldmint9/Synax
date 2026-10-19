@@ -17,6 +17,8 @@ describe("runtime sidecar protobuf codec", () => {
       { type: 'event_batch' as const, events: [{ sequence: 0, runId: 'r', kind: 'heartbeat', payload: new Uint8Array([0, 128, 255]), ephemeral: true }] },
       { type: 'admit_run' as const, bodyHash: 'hash', runId: 'r', queueItemJson: new Uint8Array([0, 128, 255]), runJson: new Uint8Array([1, 2, 3]) },
       { type: 'finish_run' as const, runId: 'r', status: 'failed', runJson: new Uint8Array([0, 128, 255]) },
+      { type: 'workspace_index_command' as const, operation: 'list', payload: new Uint8Array([0, 128, 255]) },
+      { type: 'workspace_index_state' as const, stateJson: new Uint8Array([0, 128, 255]) },
     ]) {
       const envelope = { requestId: 'ui', sessionId: 's', epoch: 0, revision: 0, body };
       expect(decodeEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
