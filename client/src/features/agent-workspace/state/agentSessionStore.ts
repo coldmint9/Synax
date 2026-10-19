@@ -74,7 +74,6 @@ import {
   applyThoughtDelta,
   applyToolCall,
   applyToolResult,
-  LIVE_PREVIEW_OMISSION,
   hasStreamingContent,
   snapshotStreamingBuffers,
   type StreamingLiveBuffers,
@@ -83,6 +82,11 @@ import {
   clearSessionLastVisit,
   loadSessionLastVisit,
 } from "../sessionLastVisit";
+import {
+  attachSnapshotRunIds,
+  retirePersistedSnapshots,
+  type CompletedLiveStep,
+} from "./liveStepRetirement";
 
 // Only a missing session itself is terminal, not a missing nested resource,
 // unsupported endpoint, permission failure, or transient network error.
@@ -341,61 +345,6 @@ function isTerminalSessionStatus(
     status === "interrupted" ||
     status === "paused"
   );
-}
-
-type CompletedLiveStep =
-  AgentSessionStoreState["streamingCompletedSteps"][number];
-
-function confirmedLiveStep(
-  snapshot: CompletedLiveStep,
-  steps: AgentRunStep[],
-  messages: AgentRuntimeMessage[],
-  toolCalls: ToolCallRecord[],
-): boolean {
-  const step = steps.find((item) => item.id === snapshot.stepId);
-  if (!step) return false;
-  const runId = snapshot.runId ?? step.runId;
-  const answers = messages.filter(
-    (message) =>
-      message.role === "assistant" &&
-      message.metadata?.type !== "thinking" &&
-      message.metadata?.kind !== "thought" &&
-      (message.stepId === snapshot.stepId ||
-        (!message.stepId && Boolean(runId) && message.runId === runId)),
-  );
-  const text = snapshot.blocks
-    .filter((block) => block.type === "text")
-    .map((block) => block.content.trim())
-    .filter(Boolean)
-    .map((part) =>
-      part.startsWith(LIVE_PREVIEW_OMISSION)
-        ? part.slice(LIVE_PREVIEW_OMISSION.length).trim()
-        : part,
-    )
-    .filter(Boolean);
-  if (text.length > 0) {
-    const persistedText = answers.map((message) => message.content).join("\n");
-    return text.every((part) => persistedText.includes(part));
-  }
-  if (
-    snapshot.blocks.some((block) => block.type === "thinking") &&
-    !messages.some(
-      (message) =>
-        message.stepId === snapshot.stepId &&
-        (message.metadata?.type === "thinking" ||
-          message.metadata?.kind === "thought" ||
-          (typeof message.metadata?.thought === "string" && Boolean(message.metadata.thought.trim()))),
-    )
-  )
-    return false;
-  const toolIds = snapshot.blocks.flatMap((block) =>
-    block.type === "tool_call"
-      ? [block.call.id]
-      : block.type === "tool_call_group"
-        ? block.calls.map((call) => call.id)
-        : [],
-  );
-  return toolIds.every((id) => toolCalls.some((call) => call.id === id));
 }
 
 function trimSessionDetailCache(
@@ -875,12 +824,7 @@ export interface AgentSessionStoreState {
   streamingRetry: LlmRetryState | null;
   streamingStepId: string | null;
   streamingLive: StreamingLiveBuffers;
-  streamingCompletedSteps: Array<{
-    stepId: string;
-    stepIndex: number;
-    runId?: string;
-    blocks: TurnContentBlock[];
-  }>;
+  streamingCompletedSteps: CompletedLiveStep[];
   contextCompactionNotice: ContextCompactionNotice | null;
 
   inputQueues: Record<string, QueuedInput[]>;
@@ -1034,6 +978,29 @@ function snapshotCurrentStep(
       blocks: snapshotStreamingBuffers(state.streamingLive),
     },
   ].slice(-8);
+}
+
+/**
+ * Retire live snapshots whose content the refreshed transcript now shows.
+ *
+ * The row must disappear in the same commit that renders the persisted
+ * message: keeping the snapshot until a later refresh copies the answer, and
+ * dropping it before the message lands makes the answer blink out. Incremental
+ * pages omit unchanged tool calls, so those are verified leniently.
+ */
+function retireSnapshots(
+  snapshots: AgentSessionStoreState["streamingCompletedSteps"],
+  steps: AgentRunStep[],
+  messages: AgentRuntimeMessage[],
+  toolCalls: ToolCallRecord[],
+  incremental: boolean,
+): AgentSessionStoreState["streamingCompletedSteps"] {
+  return retirePersistedSnapshots(
+    snapshots,
+    steps,
+    messages,
+    incremental ? undefined : toolCalls,
+  );
 }
 
 export const useAgentSessionStore = create<AgentSessionStoreState>(
@@ -2301,6 +2268,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                                 cacheEntry,
                               )
                             : cacheEntry;
+                        const incremental = Boolean(cacheEntry.historyWindow?.incremental);
                         const currentStatus = s.sessions.find(
                           (item) => item.id === targetSessionId,
                         )?.status;
@@ -2308,14 +2276,22 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                         const snapshots = terminal
                           ? snapshotCurrentStep(s)
                           : s.streamingCompletedSteps;
-                        const pendingSnapshots = snapshots.filter(
-                          (snapshot) =>
-                            !confirmedLiveStep(
-                              snapshot,
-                              merged.steps,
-                              merged.messages,
-                              merged.toolCalls,
-                            ),
+                        // A snapshot without a run identity cannot recognise
+                        // the persisted answer once its step leaves the warm
+                        // `steps` page. Re-anchor them before deciding.
+                        const anchored = attachSnapshotRunIds(
+                          snapshots,
+                          merged.steps,
+                          merged.runs,
+                          s.sessions.find((item) => item.id === targetSessionId)
+                            ?.activeRunId,
+                        );
+                        const pendingSnapshots = retireSnapshots(
+                          anchored,
+                          merged.steps,
+                          merged.messages,
+                          merged.toolCalls,
+                          incremental,
                         );
                         pendingFinalReply = terminal && pendingSnapshots.length > 0;
                         const preserveLive = isActiveSessionStatus(currentStatus);
@@ -2904,6 +2880,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         get().panelOpen
       ) {
         get().markSessionRead(sessionId);
+        // The run just settled. Live snapshots become eligible for retirement
+        // as soon as the persisted answer arrives, so a stale snapshot can no
+        // longer pin a copied answer to the end of the transcript.
+        set((s) => {
+          const pendingSnapshots = retireSnapshots(
+            s.streamingCompletedSteps,
+            s.steps,
+            s.messages,
+            s.toolCalls,
+            false,
+          );
+          return pendingSnapshots === s.streamingCompletedSteps
+            ? {}
+            : { streamingCompletedSteps: pendingSnapshots };
+        });
       }
       if (!patched && typeof patch.title === "string") {
         void get().refreshSessions();

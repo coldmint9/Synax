@@ -23,6 +23,7 @@ const STATIC_GLYPH: Partial<Record<DockSessionStatus, string>> = {
 const STATUS_CLASS: Record<DockSessionStatus, string> = {
   running: "text-primary",
   waiting_permission: "text-warning",
+  waiting_input: "text-warning",
   completed: "text-success",
   failed: "text-destructive",
   idle: "text-muted-foreground/35",

@@ -1,5 +1,6 @@
 import { act,render,fireEvent,screen,waitFor } from '@testing-library/react';
 import { beforeEach,afterEach,describe,expect,it,vi } from 'vitest';
+import { useState } from 'react';
 import { SessionHistoryProvider,useSessionHistory } from '../SessionHistoryContext';
 import { MessageActionToolbar } from '../MessageActionToolbar';
 import { UserMessageBlock } from '../UserMessageBlock';
@@ -199,13 +200,37 @@ describe('history impact confirmation',()=>{
    expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
    expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
  });
- it('blocks edit/resend for an append-only fork before requesting any history mutation', async () => {
+it('blocks edit/resend for an append-only fork before requesting any history mutation', async () => {
    const forked={...session,sessionMetadata:{...session.sessionMetadata,historyRollbackEnabled:false}};
    render(<SessionHistoryProvider session={forked} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
    expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
    expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
    expect(screen.getByRole('note')).toHaveTextContent('只追加历史');
- });
+});
+describe('checkpoint request scheduling',()=>{
+  function Boundary({session}: {session: AgentSession}){
+    const [messages,setMessages]=useState<{id:string}[]>([]);
+    return <SessionHistoryProvider session={session} messages={messages as never}>
+      <button onClick={()=>setMessages(m=>[...m,{id:`m${m.length}`}])}>Append message</button>
+    </SessionHistoryProvider>;
+  }
+  it('does not fetch checkpoints while a run is active',async()=>{
+    const running={...session,status:'running' as const};
+    render(<Boundary session={running}/>);
+    fireEvent.click(screen.getByRole('button',{name:'Append message'}));
+    fireEvent.click(screen.getByRole('button',{name:'Append message'}));
+    await act(async()=>{await Promise.resolve();});
+    expect(conversationHistoryApi.list).not.toHaveBeenCalled();
+  });
+  it('fetches once when the run settles and ignores later message growth',async()=>{
+    const {rerender}=render(<Boundary session={{...session,status:'running' as const}}/>);
+    rerender(<Boundary session={{...session,status:'completed' as const}}/>);
+    await waitFor(()=>expect(conversationHistoryApi.list).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button',{name:'Append message'}));
+    await act(async()=>{await Promise.resolve();});
+    expect(conversationHistoryApi.list).toHaveBeenCalledTimes(1);
+  });
+});
 
 });

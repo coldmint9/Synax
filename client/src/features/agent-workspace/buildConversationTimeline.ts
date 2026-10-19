@@ -378,8 +378,8 @@ function workLogEntry(
 
 /** Keep the entire completed reply (text → preview → text) outside the work log. */
 function splitTurnAnswer(turn: InterleavedTurn): {
-  process: TurnContentBlock[];
-  answer: TurnContentBlock[];
+  process: readonly TurnContentBlock[];
+  answer: readonly TurnContentBlock[];
 } {
   const visualIndex = turn.blocks.findIndex(
     (block) => block.type === "visualization",
@@ -413,7 +413,7 @@ function splitTurnAnswer(turn: InterleavedTurn): {
 
 function turnWithBlocks(
   turn: InterleavedTurn,
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
 ): InterleavedTurn {
   return { ...turn, blocks };
 }

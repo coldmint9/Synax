@@ -29,6 +29,18 @@ const CF_AGENT_LOOPS: &str = "agent_loops";
 const SNAPSHOT_CACHE_CAPACITY: u64 = 4096;
 const EVENT_RETENTION: u64 = 1024;
 const HISTORY_OUTBOX_MAINTENANCE_BATCH: usize = 256;
+/// Control commands that neither mutate state nor own an idempotency hazard.
+/// They answer from live authority state, so a durable receipt would only
+/// accumulate bytes: a caller that reuses such a request ID still gets a fresh
+/// authoritative answer, and a caller that mints a new one per call (execution
+/// fences) must not add permanent rows.
+const RECEIPT_FREE_CONTROL_OPERATIONS: [&str; 2] = ["read", "execution_check"];
+/// A retry window never spans an outage longer than this, so successes older
+/// than it are retired instead of kept forever.
+const CONTROL_RECEIPT_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+/// Receipt keys tie-break on a monotonic sequence so pruning walks oldest first.
+const CONTROL_RECEIPT_PRUNE_LIMIT: u32 = 2048;
+const CONTROL_RECEIPT_PREFIX: &str = "command/";
 
 #[derive(Debug, Clone, Default)]
 pub struct HistoryOutboxSessionPage {
@@ -197,6 +209,9 @@ pub struct ControlState {
 struct StoredControlCommandReceipt {
     #[serde(default)]
     history_generation: u64,
+    /// Wall-clock insert time; drives the receipt TTL sweep.
+    #[serde(default)]
+    stored_at: u64,
     identity: String,
     result: crate::actor::ControlCommandReceipt,
 }
@@ -708,38 +723,34 @@ impl HotStore {
                 RuntimeError::InvalidCommand("control command exceeds bounds".into()).into(),
             );
         }
-        if operation == "read" {
-            let state = self.read_session(session_id)?;
-            ensure_epoch(&state, epoch)?;
-            ensure_revision(&state, revision)?;
-            return Ok(ControlCommandReceipt {
-                state_json: serde_json::to_vec(&self.read_control_state(session_id)?)?,
-                snapshot: state.snapshot(), event: None, reused: false,
-            });
-        }
         let value: serde_json::Value = if payload.is_empty() {
             serde_json::Value::Null
         } else {
             serde_json::from_slice(payload)?
         };
-        // A live authority read, never a replayed receipt or a UI snapshot. The
-        // shard serializes it with admission, lease changes and finish_run.
-        if operation == "execution_check" {
-            let expected = crate::execution::ExecutionLease::decode(session_id, &value)?;
-            let state = self.read_session(session_id)?;
-            let control = self.read_control_state(session_id)?;
-            expected.assert_current(state.active_run_id.as_deref(), control.execution_lease.as_ref())?;
-            return Ok(ControlCommandReceipt {
-                state_json: serde_json::to_vec(&serde_json::json!({"executionLease": control.execution_lease}))?,
-                snapshot: state.snapshot(), event: None, reused: false,
-            });
+        if RECEIPT_FREE_CONTROL_OPERATIONS.contains(&operation) {
+            return self.read_only_control(session_id, operation, epoch, revision, &value);
         }
         let identity = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&("control.v1", operation, &value))?)
         );
-        let receipt_key = control_receipt_key(session_id, request_id);
-        if let Some(bytes) = self.get(CF_CONTROLS, receipt_key.as_bytes())? {
+        // Receipt rows are written under the stream cursor they produced, which
+        // makes the column family sort by insertion order for the TTL sweep.
+        // Lookup therefore goes through a request ID index that records which
+        // cursor owns the row; without it every retry would append a new one.
+        let lookup_key = control_receipt_lookup_key(session_id, request_id);
+        let stored_sequence = self
+            .get(CF_CONTROLS, lookup_key.as_bytes())?
+            .and_then(|bytes| serde_json::from_slice::<u64>(&bytes).ok());
+        if let Some(sequence) = stored_sequence {
+            let receipt_key = control_receipt_key(sequence, session_id, request_id);
+            let Some(bytes) = self.get(CF_CONTROLS, receipt_key.as_bytes())? else {
+                return Err(RuntimeError::StorageUnavailable(
+                    "control receipt index points at a missing receipt".into(),
+                )
+                .into());
+            };
             let saved: StoredControlCommandReceipt = serde_json::from_slice(&bytes)?;
             let current=self.read_session(session_id)?;
             if current.history_generation!=saved.history_generation {return Err(RuntimeError::StaleEpoch{expected:saved.result.snapshot.epoch,actual:current.epoch}.into());}
@@ -1301,20 +1312,137 @@ impl HotStore {
                 event: Some(event),
                 reused: false,
             };
+            // One bounded sweep per successful write keeps acquisition cost
+            // constant while still draining the tail.
+            self.queue_control_receipt_prune(&mut batch)?;
             self.put_batch(
                 &mut batch,
                 CF_CONTROLS,
-                receipt_key,
+                control_receipt_key(state.cursor, session_id, request_id),
                 &serde_json::to_vec(&StoredControlCommandReceipt {
                     history_generation: state.history_generation,
+                    stored_at: now_ms(),
                     identity,
                     result: result.clone(),
                 })?,
+            )?;
+            self.put_batch(
+                &mut batch,
+                CF_CONTROLS,
+                lookup_key,
+                &serde_json::to_vec(&state.cursor)?,
             )?;
             self.write_with_durability(batch, Durability::Sync)?;
             result
         };
         Ok(snapshot)
+    }
+
+    /// Retire control receipts that no in-flight retry can still match.
+    ///
+    /// Receipt keys sort by insertion sequence, so the walk reaches the oldest
+    /// rows first and stops after one bounded batch.
+    fn queue_control_receipt_prune(&self, batch: &mut WriteBatch) -> Result<(), StorageError> {
+        let cf = self.cf(CF_CONTROLS)?;
+        let mut stale = Vec::new();
+        for row in self.db.iterator_cf(
+            cf,
+            rocksdb::IteratorMode::From(
+                CONTROL_RECEIPT_PREFIX.as_bytes(),
+                rocksdb::Direction::Forward,
+            ),
+        ) {
+            let (key, value) = row?;
+            if stale.len() >= CONTROL_RECEIPT_PRUNE_LIMIT as usize {
+                break;
+            }
+            let Ok(text) = std::str::from_utf8(&key) else {
+                break;
+            };
+            let Some((sequence, owner)) = text
+                .strip_prefix(CONTROL_RECEIPT_PREFIX)
+                .and_then(|rest| rest.split_once('/'))
+            else {
+                break;
+            };
+            // `_index/...` rows sort after every receipt row, so reaching one
+            // ends receipt pruning. An unparseable head is an index row only if
+            // it is the reserved prefix; anything else is unexpected and stops
+            // the sweep instead of guessing.
+            let Ok(_sequence) = sequence.parse::<u64>() else {
+                break;
+            };
+            let Ok(receipt) = serde_json::from_slice::<StoredControlCommandReceipt>(&value) else {
+                continue;
+            };
+            if now_ms().saturating_sub(receipt.stored_at) <= CONTROL_RECEIPT_TTL_MS {
+                continue;
+            }
+            // `owner` is `{session_id}/{request_id}`. The index row must be
+            // dropped with the receipt or a retry would resolve to a missing row.
+            let (owner_session, request_id) = owner
+                .split_once('/')
+                .map(|(session, request)| (session.to_owned(), request.to_owned()))
+                .unwrap_or_default();
+            stale.push((
+                key.clone(),
+                control_receipt_lookup_key(&owner_session, &request_id),
+            ));
+        }
+        for (receipt, index) in stale {
+            batch.delete_cf(cf, receipt);
+            batch.delete_cf(cf, index);
+        }
+        Ok(())
+    }
+
+    /// Answer an authority read from committed state. Receipt-free operations
+    /// never persist a receipt, an index row or a WAL sync.
+    fn read_only_control(
+        &self,
+        session_id: &str,
+        operation: &str,
+        epoch: u64,
+        revision: u64,
+        value: &serde_json::Value,
+    ) -> Result<crate::actor::ControlCommandReceipt, StorageError> {
+        use crate::actor::ControlCommandReceipt;
+        let state = self.read_session(session_id)?;
+        // `read` echoes the caller's fence, so a stale one is rejected instead
+        // of being answered from newer state. Fence probes carry their own
+        // authority and validate against the lease below.
+        if operation == "read" {
+            ensure_epoch(&state, epoch)?;
+            ensure_revision(&state, revision)?;
+        }
+        // A live authority read, never a replayed receipt or a UI snapshot. The
+        // shard serializes it with admission, lease changes and finish_run.
+        let state_json = match operation {
+            "execution_check" => {
+                let expected = crate::execution::ExecutionLease::decode(session_id, value)?;
+                let control = self.read_control_state(session_id)?;
+                expected.assert_current(
+                    state.active_run_id.as_deref(),
+                    control.execution_lease.as_ref(),
+                )?;
+                serde_json::to_vec(&serde_json::json!({"executionLease": control.execution_lease}))?
+            }
+            "read" => serde_json::to_vec(&self.read_control_state(session_id)?)?,
+            // Unreachable through `RECEIPT_FREE_CONTROL_OPERATIONS`; kept so a
+            // new entry cannot silently answer with another operation's state.
+            other => {
+                return Err(RuntimeError::InvalidCommand(format!(
+                    "control operation {other} is not receipt-free"
+                ))
+                .into())
+            }
+        };
+        Ok(ControlCommandReceipt {
+            state_json,
+            snapshot: state.snapshot(),
+            event: None,
+            reused: false,
+        })
     }
     fn queue_mutation(
         &self,
@@ -2726,8 +2854,31 @@ fn control_state_key(session_id: &str) -> String {
     format!("state/{session_id}")
 }
 
-fn control_receipt_key(session_id: &str, request_id: &str) -> String {
-    format!("command/{session_id}/{request_id}")
+/// Receipt rows are `command/{sequence:020}/{session_id}/{request_id}`.
+///
+/// The leading monotonic sequence makes the column family sort by insertion
+/// time, which lets the TTL sweep walk and delete a bounded batch from the
+/// oldest end instead of scanning every session.
+fn control_receipt_key(sequence: u64, session_id: &str, request_id: &str) -> String {
+    format!("{CONTROL_RECEIPT_PREFIX}{sequence:020}/{session_id}/{request_id}")
+}
+
+/// Index lookup key. The sequence is unknown before the lookup, so the write
+/// path records the produced cursor in the index value instead. Keyed by request
+/// ID alone, this row is also what a retry reads, so it never duplicates.
+fn control_receipt_lookup_key(session_id: &str, request_id: &str) -> String {
+    format!("{}{session_id}/{request_id}", CONTROL_RECEIPT_INDEX_PREFIX)
+}
+
+/// Prefix of the request ID index. Must sort after every `command/<digits>`
+/// receipt row so the TTL sweep sees sequence rows first.
+const CONTROL_RECEIPT_INDEX_PREFIX: &str = "command/_index/";
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn required_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str, StorageError> {
@@ -4125,6 +4276,134 @@ mod tests {
             assert_eq!(result.snapshot.revision, 0);
         }
         assert_eq!(store.db.iterator_cf(store.cf(CF_CONTROLS).unwrap(), rocksdb::IteratorMode::Start).count(), before);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn execution_fence_probes_never_persist_receipts() {
+        let path = temp_path("fence-probes");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        // The probe asserts against a live lease; an absent one is rejected as
+        // superseded, which the fence client treats as a real answer.
+        store
+            .admit_run_with_document(
+                "s",
+                "req",
+                "body",
+                "r",
+                1,
+                0,
+                &[],
+                &serde_json::to_vec(&serde_json::json!({
+                    "id": "r",
+                    "sessionId": "s",
+                    "status": "queued",
+                    "startedAt": "2026-10-17T00:00:00Z",
+                    "completedAt": null,
+                    "metadata": {"runtime": {"requestId": "req"}}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let lease = serde_json::json!({
+            "sessionId": "s", "runId": "r", "epoch": "e", "hostId": "h", "closed": false
+        });
+        store
+            .control_command(
+                "s",
+                "open-lease",
+                1,
+                1,
+                "execution_open",
+                &serde_json::to_vec(&lease).unwrap(),
+            )
+            .unwrap();
+        let before = store
+            .db
+            .iterator_cf(store.cf(CF_CONTROLS).unwrap(), rocksdb::IteratorMode::Start)
+            .count();
+        // The sidecar fence client mints a fresh request ID per probe, so a
+        // receipt here would be unreachable and accumulate for every chunk.
+        for i in 0..128 {
+            let result = store
+                .control_command(
+                    "s",
+                    &format!("probe-{i}"),
+                    1,
+                    2,
+                    "execution_check",
+                    &serde_json::to_vec(&lease).unwrap(),
+                )
+                .unwrap();
+            assert!(result.event.is_none());
+        }
+        assert_eq!(
+            store
+                .db
+                .iterator_cf(store.cf(CF_CONTROLS).unwrap(), rocksdb::IteratorMode::Start)
+                .count(),
+            before
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn stale_control_receipts_are_pruned_with_their_index() {
+        let path = temp_path("receipt-ttl");
+        let store = HotStore::open(&path).unwrap();
+        store.ui_snapshot("s", Some(&ui_seed())).unwrap();
+        let old = StoredControlCommandReceipt {
+            history_generation: 0,
+            stored_at: 1,
+            identity: "stale".into(),
+            result: crate::actor::ControlCommandReceipt {
+                state_json: Vec::new(),
+                snapshot: store.snapshot("s").unwrap(),
+                event: None,
+                reused: false,
+            },
+        };
+        let mut batch = WriteBatch::default();
+        // Sorted ahead of the live receipt (cursor 1) exactly as real rows are,
+        // so the sweep meets the expired row before anything newer.
+        store
+            .put_batch(
+                &mut batch,
+                CF_CONTROLS,
+                control_receipt_key(0, "s", "stale-request"),
+                &serde_json::to_vec(&old).unwrap(),
+            )
+            .unwrap();
+        store
+            .put_batch(
+                &mut batch,
+                CF_CONTROLS,
+                control_receipt_lookup_key("s", "stale-request"),
+                &serde_json::to_vec(&0u64).unwrap(),
+            )
+            .unwrap();
+        store.write_with_durability(batch, Durability::Sync).unwrap();
+
+        // A successful command triggers exactly one bounded sweep.
+        store
+            .control_command(
+                "s",
+                "stop",
+                1,
+                0,
+                "stop_begin",
+                br#"{"runId":"r","reason":"test"}"#,
+            )
+            .unwrap();
+
+        let exists = |key: String| store.get(CF_CONTROLS, key.as_bytes()).unwrap().is_some();
+        assert!(!exists(control_receipt_key(0, "s", "stale-request")));
+        assert!(!exists(control_receipt_lookup_key("s", "stale-request")));
+        // The live receipt and its index must survive the sweep.
+        assert!(exists(control_receipt_lookup_key("s", "stop")));
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }

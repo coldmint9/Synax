@@ -35,7 +35,9 @@ export function groupActivityEntries(
             id: `${entry.id}:activity:${index}`,
             turn: { ...entry.turn, blocks: [] },
           };
-        pending.turn.blocks.push(block);
+        // A group grows across model steps, so it is rebuilt instead of
+        // mutated: `TurnContentBlock[]` is readonly once it reaches a row.
+        pending.turn.blocks = [...pending.turn.blocks, block];
         pending.turn.status = entry.turn.status;
       } else {
         flush();
@@ -52,7 +54,7 @@ export function groupActivityEntries(
           "messageId" in previousBlock &&
           previousBlock.messageId === messageId
         ) {
-          previous.turn.blocks.push(block);
+          previous.turn.blocks = [...previous.turn.blocks, block];
           return;
         }
         result.push({

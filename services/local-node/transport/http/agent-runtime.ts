@@ -198,16 +198,143 @@ agentRuntimeRoutes.delete("/projects/:projectId/tool-grants/:toolId", (c) => {
     return runtimeError(c, error);
   }
 });
+/**
+ * Collection endpoints whose first segment is a literal action, not a session id.
+ *
+ * `/sessions/:sessionId` and `/sessions/:sessionId/*` match any single segment,
+ * and Hono resolves to `TrieRouter` for this app, which walks routes in
+ * registration order and collects *every* matching pattern. Registering these
+ * literals first means the session guard below never claims them, so they cannot
+ * answer `Agent runtime resource not found: <action>`. New `/sessions/<literal>`
+ * endpoints must be registered in this block, above the guard.
+ */
+agentRuntimeRoutes.get("/sessions/search", async (c) => {
+  const parsed = z
+    .object({
+      projectId: z.string().min(1).max(128),
+      q: z.string().trim().min(1).max(256),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      offset: z.coerce.number().int().min(0).default(0),
+    })
+    .safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const { projectId, q, limit, offset } = parsed.data;
+    {
+      const sessions = (await runtimeFacade.listSessionProjection())
+        .map((item) => projectSessionState(item as never))
+        .filter(
+          (session) =>
+            session.projectId === projectId &&
+            !session.parentSessionId &&
+            !session.sessionMetadata?.archivedAt &&
+            !session.sessionMetadata?.deletedAt,
+        );
+      const lowered = q.toLocaleLowerCase();
+      const matches = (
+        await Promise.all(
+          sessions.map(async (session) => {
+            if (
+              session.title?.toLocaleLowerCase().includes(lowered) ||
+              session.prompt.toLocaleLowerCase().includes(lowered)
+            )
+              return {
+                session,
+                snippet: (session.title || session.prompt).slice(0, 160),
+                updatedAt: session.updatedAt,
+              };
+            const message = (
+              (await runtimeFacade.listMessageHistory(
+                session.id,
+              )) as AgentRuntimeMessage[]
+            ).find((item) =>
+              item.content.toLocaleLowerCase().includes(lowered),
+            );
+            return message
+              ? {
+                  session,
+                  snippet: message.content.slice(0, 160),
+                  updatedAt: session.updatedAt,
+                }
+              : null;
+          }),
+        )
+      )
+        .filter(
+          (
+            item,
+          ): item is {
+            session: AgentSession;
+            snippet: string;
+            updatedAt: string;
+          } => Boolean(item),
+        )
+        .sort(
+          (a, b) =>
+            b.updatedAt.localeCompare(a.updatedAt) ||
+            a.session.id.localeCompare(b.session.id),
+        );
+      const page = matches.slice(offset, offset + limit + 1);
+      return c.json({
+        items: page
+          .slice(0, limit)
+          .map((item) => ({
+            session: projectSessionSummary(item.session),
+            snippet: item.snippet,
+          })),
+        hasMore: page.length > limit,
+      });
+    }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+/** Badge counts only need id/status/updatedAt; a dedicated sparse projection
+ *  keeps per-project polling payloads at bytes-per-row instead of kilobytes. */
+agentRuntimeRoutes.get("/sessions/badges", async (c) => {
+  const projectIds = (c.req.query("projectIds") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  if (projectIds.length === 0) return c.json({ items: [] });
+  try {
+    {
+      const selected = new Set(projectIds);
+      return c.json({
+        items: (await runtimeFacade.listSessionProjection())
+          .map((item) => projectSessionState(item as never))
+          .filter(
+            (session) =>
+              selected.has(session.projectId) &&
+              !session.sessionMetadata?.archivedAt &&
+              !session.sessionMetadata?.deletedAt,
+          )
+          .map((session) => ({
+            id: session.id,
+            projectId: session.projectId,
+            status: session.status,
+            updatedAt: session.updatedAt,
+          })),
+      });
+    }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.post(
+  "/sessions/archive-inactive",
+  archiveInactiveSessionsRoute,
+);
+agentRuntimeRoutes.post(
+  "/sessions/clear-inactive",
+  archiveInactiveSessionsRoute,
+);
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
     const id = c.req.param("sessionId");
-    // These are collection endpoints whose first path segment is a literal,
-    // not a session ID. Hono middleware patterns also match them as
-    // `/sessions/:sessionId`, so skip the per-session projection guard here.
-    if (id === "search" || id === "badges") {
-      await next();
-      return;
-    }
     if (id) {
       {
         try {
@@ -420,8 +547,10 @@ agentRuntimeRoutes.post(
     }
   },
 );
-async function withAuthoritativeSessionPayload(sessionId: string) {
-  const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+async function withAuthoritativeSessionPayload(
+  sessionId: string,
+  snapshot: Awaited<ReturnType<typeof runtimeFacade.uiSnapshotAuthoritative>>,
+) {
   const session = markRevisionedHistory(
     projectSessionState(snapshot.session as never),
   );
@@ -691,7 +820,13 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     }
     {
       await runtimeFacade.ensureUiProjection(session.id);
-      return c.json(await withAuthoritativeSessionPayload(session.id), 201);
+      return c.json(
+        await withAuthoritativeSessionPayload(
+          session.id,
+          await runtimeFacade.uiSnapshotAuthoritative(session.id),
+        ),
+        201,
+      );
     }
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
@@ -709,87 +844,6 @@ agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
       sessionProcessManager.beginContextCompaction(c.req.param("id")),
       202,
     );
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-agentRuntimeRoutes.get("/sessions/search", async (c) => {
-  const parsed = z
-    .object({
-      projectId: z.string().min(1).max(128),
-      q: z.string().trim().min(1).max(256),
-      limit: z.coerce.number().int().min(1).max(100).default(50),
-      offset: z.coerce.number().int().min(0).default(0),
-    })
-    .safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
-  if (!parsed.success) return validationError(c, parsed.error);
-  try {
-    const { projectId, q, limit, offset } = parsed.data;
-    {
-      const sessions = (await runtimeFacade.listSessionProjection())
-        .map((item) => projectSessionState(item as never))
-        .filter(
-          (session) =>
-            session.projectId === projectId &&
-            !session.parentSessionId &&
-            !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt,
-        );
-      const lowered = q.toLocaleLowerCase();
-      const matches = (
-        await Promise.all(
-          sessions.map(async (session) => {
-            if (
-              session.title?.toLocaleLowerCase().includes(lowered) ||
-              session.prompt.toLocaleLowerCase().includes(lowered)
-            )
-              return {
-                session,
-                snippet: (session.title || session.prompt).slice(0, 160),
-                updatedAt: session.updatedAt,
-              };
-            const message = (
-              (await runtimeFacade.listMessageHistory(
-                session.id,
-              )) as AgentRuntimeMessage[]
-            ).find((item) =>
-              item.content.toLocaleLowerCase().includes(lowered),
-            );
-            return message
-              ? {
-                  session,
-                  snippet: message.content.slice(0, 160),
-                  updatedAt: session.updatedAt,
-                }
-              : null;
-          }),
-        )
-      )
-        .filter(
-          (
-            item,
-          ): item is {
-            session: AgentSession;
-            snippet: string;
-            updatedAt: string;
-          } => Boolean(item),
-        )
-        .sort(
-          (a, b) =>
-            b.updatedAt.localeCompare(a.updatedAt) ||
-            a.session.id.localeCompare(b.session.id),
-        );
-      const page = matches.slice(offset, offset + limit + 1);
-      return c.json({
-        items: page
-          .slice(0, limit)
-          .map((item) => ({
-            session: projectSessionSummary(item.session),
-            snippet: item.snippet,
-          })),
-        hasMore: page.length > limit,
-      });
-    }
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -836,43 +890,14 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
     }
   }
 });
-/** Badge counts only need id/status/updatedAt; a dedicated sparse projection
- *  keeps per-project polling payloads at bytes-per-row instead of kilobytes. */
-agentRuntimeRoutes.get("/sessions/badges", async (c) => {
-  const projectIds = (c.req.query("projectIds") ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .slice(0, 50);
-  if (projectIds.length === 0) return c.json({ items: [] });
-  try {
-    {
-      const selected = new Set(projectIds);
-      return c.json({
-        items: (await runtimeFacade.listSessionProjection())
-          .map((item) => projectSessionState(item as never))
-          .filter(
-            (session) =>
-              selected.has(session.projectId) &&
-              !session.sessionMetadata?.archivedAt &&
-              !session.sessionMetadata?.deletedAt,
-          )
-          .map((session) => ({
-            id: session.id,
-            projectId: session.projectId,
-            status: session.status,
-            updatedAt: session.updatedAt,
-          })),
-      });
-    }
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
+  const sessionId = c.req.param("sessionId");
   try {
     return c.json(
-      await withAuthoritativeSessionPayload(c.req.param("sessionId")),
+      await withAuthoritativeSessionPayload(
+        sessionId,
+        await runtimeFacade.uiSnapshotAuthoritative(sessionId),
+      ),
     );
   } catch (error) {
     return runtimeError(c, error);
@@ -1188,14 +1213,6 @@ async function archiveInactiveSessionsRoute(c: Context) {
     return runtimeError(c, error);
   }
 }
-agentRuntimeRoutes.post(
-  "/sessions/archive-inactive",
-  archiveInactiveSessionsRoute,
-);
-agentRuntimeRoutes.post(
-  "/sessions/clear-inactive",
-  archiveInactiveSessionsRoute,
-);
 agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
   try {
     const id = c.req.param("sessionId");
@@ -2305,7 +2322,12 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
       sessionId,
       parsed.data,
     );
-    return c.json(await withAuthoritativeSessionPayload(updated.id));
+    return c.json(
+      await withAuthoritativeSessionPayload(
+        updated.id,
+        await runtimeFacade.uiSnapshotAuthoritative(updated.id),
+      ),
+    );
   } catch (error) {
     return runtimeError(c, error);
   }

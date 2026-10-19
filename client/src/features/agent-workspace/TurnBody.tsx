@@ -74,7 +74,7 @@ function segmentKey(
 }
 
 function renderTurnBlocks(
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
   onExpandChild?: (sessionId: string) => void,
   rowKeyPrefix = "",
   isStreaming = false,

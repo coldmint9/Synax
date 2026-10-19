@@ -46,6 +46,47 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+/**
+ * How long a successful execution-fence probe stays authoritative. Stream
+ * chunks arrive in bursts, so this bounds the authorisation round trips to the
+ * pre-stream check plus a few during long turns.
+ */
+const EXECUTION_LEASE_REVALIDATE_MS = 1_000;
+
+/**
+ * Control operations that can close, replace or unpin a lease. A cached
+ * "current" answer is only trusted until one of these runs.
+ */
+const LEASE_MUTATING_CONTROL_OPERATIONS = new Set([
+  "execution_open",
+  "execution_close",
+  "stop_begin",
+  "stop_cancel",
+  "session_patch",
+]);
+
+
+type ExecutionLeaseIdentity = {
+  sessionId: string;
+  runId: string;
+  epoch: string;
+  hostId: string;
+};
+
+function executionLeaseKey(context: ExecutionLeaseIdentity): string {
+  return `${context.runId}/${context.epoch}/${context.hostId}`;
+}
+
+/**
+ * Last successful execution-fence probe per session, for the lease it proved.
+ *
+ * Module-scoped on purpose: one process can hold several clients for the same
+ * sidecar, and a lease revoked through one of them must not stay "proven" in
+ * another. Only a fresh successful probe is ever cached, so a stale entry can
+ * delay detection by at most one revalidation window.
+ */
+const executionLeaseChecks = new Map<string, { key: string; at: number }>();
+
 export class RuntimeSidecarClient {
   private socket: net.Socket | undefined;
   private buffer = Buffer.alloc(0);
@@ -156,9 +197,17 @@ export class RuntimeSidecarClient {
   }
 
   /** Compact actor-serialized authority read; UI state may already be terminal. */
-  async assertExecutionLease(context: { sessionId: string; runId: string; epoch: string; hostId: string }): Promise<void> {
+  async assertExecutionLease(context: ExecutionLeaseIdentity): Promise<void> {
+    // Called once per stream chunk. The lease can only be revoked by a state
+    // change the writer observes anyway, so a short replay window is enough to
+    // keep the fence honest without a round trip per token. Superseded answers
+    // are never cached: the next check reads authority again.
+    const key = executionLeaseKey(context);
+    const checked = executionLeaseChecks.get(context.sessionId);
+    if (checked?.key === key && Date.now() - checked.at < EXECUTION_LEASE_REVALIDATE_MS) return;
     await this.controlCommand({ sessionId: context.sessionId, requestId: randomUUID(),
       epoch: 0, revision: 0, operation: 'execution_check', payload: context });
+    executionLeaseChecks.set(context.sessionId, { key, at: Date.now() });
   }
 
   async activateRun(input: { requestId?: string; sessionId: string; epoch: number; revision: number; run: unknown }): Promise<Extract<SidecarBody, { type: 'snapshot_response' }>> {
@@ -196,6 +245,10 @@ export class RuntimeSidecarClient {
       input.requestId,
     );
     const body = this.expect(envelope, 'control_state');
+    // Any fence-moving command may revoke a lease this client cached. Dropping
+    // the entry makes the next token revalidate instead of trusting a stale
+    // "current" answer.
+    if (LEASE_MUTATING_CONTROL_OPERATIONS.has(input.operation)) executionLeaseChecks.clear();
     return { stateJson: body.stateJson, epoch: envelope.epoch, revision: envelope.revision };
   }
 

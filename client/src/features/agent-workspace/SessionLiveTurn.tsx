@@ -16,7 +16,7 @@ import { latestThinkingIndex } from "./activityText";
 import { useShellStore } from "../../shared/state/shellStore";
 
 function renderLiveSegments(
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
   isStreaming: boolean,
   rowKeyPrefix = "",
 ) {
@@ -76,7 +76,7 @@ const CompletedStepView = memo(function CompletedStepView({
   blocks,
   stepId,
 }: {
-  blocks: TurnContentBlock[];
+  blocks: readonly TurnContentBlock[];
   stepId: string;
 }) {
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
@@ -129,7 +129,7 @@ interface Props {
   streamingCompletedSteps: Array<{
     stepId: string;
     stepIndex: number;
-    blocks: TurnContentBlock[];
+    blocks: readonly TurnContentBlock[];
   }>;
   scrollContainerRef?: React.RefObject<HTMLElement | null>;
 }

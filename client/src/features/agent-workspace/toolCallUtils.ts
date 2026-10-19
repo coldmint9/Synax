@@ -22,7 +22,9 @@ export function formatToolDuration(startedAt: string, endedAt: string): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export function flattenToolBlocks(blocks: TurnContentBlock[]): ToolCallView[] {
+export function flattenToolBlocks(
+  blocks: readonly TurnContentBlock[],
+): ToolCallView[] {
   const calls: ToolCallView[] = [];
   for (const block of blocks) {
     if (block.type === "tool_call") calls.push(block.call);
@@ -55,7 +57,7 @@ function splitParallelGroupByToolId(calls: ToolCallView[]): ToolCallBatch[] {
 
 /** Each inner batch is one summary row; parallel same-tool calls share a row. */
 export function toolBlocksToBatches(
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
 ): ToolCallBatch[] {
   const batches: ToolCallBatch[] = [];
   for (const block of blocks) {
@@ -69,7 +71,7 @@ export function toolBlocksToBatches(
 }
 
 export function isFinalTextBlock(
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
   index: number,
 ): boolean {
   if (blocks[index]?.type !== "text") return false;
@@ -98,7 +100,7 @@ export type TurnRenderSegment =
     };
 
 export function buildTurnRenderSegments(
-  blocks: TurnContentBlock[],
+  blocks: readonly TurnContentBlock[],
 ): TurnRenderSegment[] {
   const segments: TurnRenderSegment[] = [];
   let i = 0;

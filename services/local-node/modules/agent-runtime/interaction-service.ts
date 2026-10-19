@@ -28,6 +28,39 @@ const conflict = (message: string): never => {
   throw new AgentRuntimeError(message, "INTERACTION_CONFLICT", 409);
 };
 
+/** A session parks on one checkpoint at a time, so its status only describes
+ *  the newest one. A form stays answerable while the same run is merely held
+ *  by another checkpoint (for example a permission prompt). */
+function holdsForm(session: ReturnType<typeof store.getSession>): boolean {
+  return ["waiting_input", "waiting_permission", "running"].includes(
+    session.status,
+  );
+}
+
+function runCanAnswer(
+  session: ReturnType<typeof store.getSession>,
+  runId: string,
+): boolean {
+  if (
+    ["completed", "cancelled", "failed", "interrupted", "paused"].includes(
+      session.status,
+    )
+  )
+    return false;
+  let active: string | null = session.activeRunId ?? null;
+  if (!active) {
+    active =
+      store
+        .listRuns(session.id)
+        .find((run) =>
+          ["waiting_input", "waiting_permission", "running"].includes(
+            run.status,
+          ),
+        )?.id ?? null;
+  }
+  return active === runId;
+}
+
 type InteractionRequestInput = {
   sessionId: string;
   runId: string;
@@ -161,7 +194,7 @@ export const interactionService = {
   },
   ready(sessionId: string): AgentInteraction | null {
     const session=store.getSession(sessionId);
-    if(!['waiting_input','running'].includes(session.status))return null;
+    if(!holdsForm(session))return null;
     return this.list(sessionId).find(i=>i.runId===session.activeRunId&&['answered','cancelled'].includes(i.status)&&i.response&&!i.consumedAt)??null;
   },
   request(input: InteractionRequestInput): AgentInteraction {
@@ -196,7 +229,7 @@ export const interactionService = {
           return i;
         conflict("The interaction was already resolved or cancelled.");
       }
-      if (session.status !== "waiting_input" || session.activeRunId !== i.runId)
+      if (!runCanAnswer(session, i.runId))
         conflict("This run no longer accepts input.");
       const validActions =
         i.kind === "clarification"
@@ -293,7 +326,7 @@ export const interactionService = {
       if (i.status !== "pending")
         conflict("The interaction was already resolved or cancelled.");
       const session = store.getSession(sessionId);
-      if (session.status !== "waiting_input" || session.activeRunId !== i.runId)
+      if (!runCanAnswer(session, i.runId))
         conflict("This run no longer accepts input.");
       const plan = session.sessionMetadata?.plan as
         | { revision?: number }

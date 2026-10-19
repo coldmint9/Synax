@@ -53,7 +53,8 @@ export interface InterleavedTurn {
   duration: string | null;
   /** Null while the step is still running, so the UI can omit the stamp. */
   completedAt: string | null;
-  blocks: TurnContentBlock[];
+  /** A live snapshot contributes a frozen array; readers must not mutate it. */
+  blocks: readonly TurnContentBlock[];
 }
 
 function computeDuration(step: AgentRunStep): string | null {

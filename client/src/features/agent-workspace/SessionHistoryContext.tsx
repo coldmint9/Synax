@@ -55,6 +55,17 @@ const ACTIVE_STATUSES = new Set<AgentSession["status"]>([
   "waiting_permission",
   "waiting_input",
 ]);
+// 只有会话停在这些边界上时才可能新增 checkpoint：运行中的 delta、工具调用和
+// 步骤推进都不会改变可回滚的消息边界，因此不值得再请求一次。
+const SETTLED_STATUSES = new Set<AgentSession["status"]>([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "paused",
+  "waiting_permission",
+  "waiting_input",
+]);
 export const useSessionHistory = () => useContext(HistoryContext);
 const PRESERVED_KIND_ZH: Record<
   NonNullable<HistoryPreview["preservedFiles"]>[number]["kind"],
@@ -72,6 +83,50 @@ interface Pending {
   message?: string;
   requestId: string;
   sessionId: string;
+}
+function findCheckpoint(
+  summary: HistorySummary,
+  messages: AgentRuntimeMessage[],
+  messageId: string | undefined,
+  stepId: string | undefined,
+  zh: boolean,
+): MessageCheckpoint | undefined {
+  if (messageId?.startsWith("user-input-"))
+    return summary.checkpoints.find((c) => c.initialInput);
+  const found = summary.checkpoints.find((c) =>
+    messageId
+      ? c.messageId === messageId
+      : stepId && c.kind === "reply" && c.stepId === stepId,
+  );
+  if (!found && summary.rollbackEnabled === false) {
+    const reply = messages.find((message) =>
+      messageId ? message.id === messageId : message.stepId === stepId,
+    );
+    if (reply?.role === "assistant" && !reply.metadata?.partial)
+      return {
+        id: `message:${reply.id}`,
+        kind: "reply",
+        messageId: reply.id,
+        stepId: reply.stepId,
+        available: true,
+        reason: null,
+        canRollback: false,
+        hasLaterHistory: false,
+        initialInput: false,
+      };
+  }
+  const projected = messages.find(
+    (message) => message.id === found?.messageId,
+  )?.historyProjection;
+  return found?.kind === "input" && projected
+    ? {
+        ...found,
+        available: false,
+        reason: zh
+          ? "这是长消息预览，请勿用截断内容覆盖原消息"
+          : "This is a long-message preview; editing it would overwrite omitted content",
+      }
+    : found;
 }
 export function SessionHistoryProvider({
   session,
@@ -93,7 +148,10 @@ export function SessionHistoryProvider({
   const resolver = useRef<((ok: boolean) => void) | null>(null);
   const requestEpoch = useRef(0);
   const sessionId = session?.id;
-  const messageIdsKey = JSON.stringify(messages.map(message => message.id));
+  // 消息列表只用来过滤结果，不再作为请求触发器；否则每次流式增量都会带上
+  // 一份新的 id 列表再请求一遍 checkpoints。
+  const messageIds = useRef<string[]>([]);
+  messageIds.current = messages.map((message) => message.id);
   useConversationHistoryVisit(sessionId);
   const [includeFiles, setIncludeFiles] = useState(true);
   const forkInFlight = useRef(false);
@@ -103,7 +161,7 @@ export function SessionHistoryProvider({
       // fetch instead of surfacing a NOT_FOUND the user never caused.
       if (!sessionId || isRuntimeResourceGone(sessionId)) return;
       try {
-        const result = await conversationHistoryApi.list(sessionId, signal, JSON.parse(messageIdsKey) as string[]);
+        const result = await conversationHistoryApi.list(sessionId, signal, messageIds.current);
         if (!signal?.aborted) {
           setSummary(result);
           setLoadError(null);
@@ -112,19 +170,24 @@ export function SessionHistoryProvider({
         if (!signal?.aborted) setLoadError((e as Error).message);
       }
     },
-    [sessionId, messageIdsKey],
+    [sessionId],
   );
+  // 与 refresh 不同，这里把结果返回给调用方：用户点击历史操作时可以直接使用
+  // 刚取到的摘要，而不必等待下一轮渲染。
+  const loadSummary = useCallback(async (): Promise<HistorySummary | null> => {
+    const id = sessionId;
+    if (!id) return null;
+    return (await conversationHistoryApi.list(id, undefined, messageIds.current)) ?? null;
+  }, [sessionId]);
+  // 会话边界只在中断、停止、等待和完成时变化。一次运行期间不再跟随每次
+  // 状态/消息变化重新拉取；在此之前由用户的编辑、回滚、分叉操作按需加载。
+  const settledStatus = session?.status;
   useEffect(() => {
     const controller = new AbortController();
+    if (!settledStatus || !SETTLED_STATUSES.has(settledStatus)) return;
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [
-    refresh,
-    session?.status,
-    session?.updatedAt,
-    messages.length,
-    messages[messages.length - 1]?.id,
-  ]);
+  }, [refresh, settledStatus]);
   useEffect(
     () =>
       subscribe({
@@ -155,7 +218,7 @@ export function SessionHistoryProvider({
     resolver.current?.(ok);
     resolver.current = null;
   }, []);
-  const request = useCallback(
+  const historyRequest = useCallback(
     async (
       action: HistoryAction,
       checkpoint: MessageCheckpoint,
@@ -321,6 +384,34 @@ export function SessionHistoryProvider({
     },
     [sessionId, session, executing, zh, close, refresh],
   );
+  // 边界摘要可能还没加载（运行中不预取）：用当前消息和步骤重新定位 checkpoint，
+  // 只在用户真正点击编辑、回滚或分叉时发起这一次请求。
+  const request = useCallback(
+    async (
+      action: HistoryAction,
+      checkpoint: MessageCheckpoint,
+      message?: string,
+      workspaceMode?: ForkWorkspaceMode,
+    ): Promise<boolean> => {
+      const current = summary?.sessionId === sessionId ? summary : await loadSummary?.();
+      if (!current) return false;
+      const resolved = findCheckpoint(
+        current,
+        messages,
+        checkpoint.messageId,
+        checkpoint.stepId ?? undefined,
+        zh,
+      );
+      if (!resolved)
+        throw new Error(
+          zh
+            ? "此消息没有可用的会话检查点"
+            : "No conversation checkpoint for this message",
+        );
+      return historyRequest(action, resolved, message, workspaceMode);
+    },
+    [historyRequest, loadSummary, messages, zh],
+  );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing || pending.checkpoint.transcriptOnly) return;
     setIncludeFiles(value);
@@ -370,65 +461,34 @@ export function SessionHistoryProvider({
     }
   };
   const value = useMemo<ContextValue>(
-    () => ({
+    () => {
+      // 摘要按需加载期间不预取，因此"未加载"不等于"不可用"：只在真正失败时
+      // 报告原因，否则按钮会在运行期间永久置灰。
+      const notLoaded =
+        loadError || (zh ? "回复结束后可操作" : "Available once the run settles");
+      return {
       reason:
         summary && summary.sessionId === sessionId
           ? summary.stopRequired && session && ACTIVE_STATUSES.has(session.status)
             ? null
             : summary.reason
-          : loadError ||
-            (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
+          : notLoaded,
       forkReason:
         summary && summary.sessionId === sessionId
           ? summary.forkReason !== undefined
             ? summary.forkReason
             : summary.reason
-          : loadError ||
-            (zh ? "正在检查会话边界" : "Checking conversation checkpoints"),
+          : notLoaded,
       running: Boolean(session && ACTIVE_STATUSES.has(session.status)),
       busy: Boolean(pending) || executing,
       error,
       request,
       checkpoint: (messageId, stepId) => {
         if (!summary || summary.sessionId !== sessionId) return undefined;
-        if (messageId?.startsWith("user-input-"))
-          return summary.checkpoints.find((c) => c.initialInput);
-        const found = summary.checkpoints.find((c) =>
-          messageId
-            ? c.messageId === messageId
-            : stepId && c.kind === "reply" && c.stepId === stepId,
-        );
-        if (!found && summary.rollbackEnabled === false) {
-          const reply = messages.find((message) =>
-            messageId ? message.id === messageId : message.stepId === stepId,
-          );
-          if (reply?.role === "assistant" && !reply.metadata?.partial)
-            return {
-              id: `message:${reply.id}`,
-              kind: "reply",
-              messageId: reply.id,
-              stepId: reply.stepId,
-              available: true,
-              reason: null,
-              canRollback: false,
-              hasLaterHistory: false,
-              initialInput: false,
-            };
-        }
-        const projected = messages.find(
-          (message) => message.id === found?.messageId,
-        )?.historyProjection;
-        return found?.kind === "input" && projected
-          ? {
-              ...found,
-              available: false,
-              reason: zh
-                ? "这是长消息预览，请勿用截断内容覆盖原消息"
-                : "This is a long-message preview; editing it would overwrite omitted content",
-            }
-          : found;
+        return findCheckpoint(summary, messages, messageId, stepId, zh);
       },
-    }),
+      };
+    },
     [
       session,
       sessionId,

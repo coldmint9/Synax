@@ -14,8 +14,30 @@ export type DockSessionStatus =
   | "idle"
   | "running"
   | "waiting_permission"
+  | "waiting_input"
   | "completed"
   | "failed";
+
+/** Checkpoints the runtime is parked on until a human answers. */
+function isWaiting(status: DockSessionStatus): boolean {
+  return status === "waiting_permission" || status === "waiting_input";
+}
+
+function hasOpenForm(sessionId: string | null): boolean {
+  if (!sessionId) return false;
+  const state = useAgentSessionStore.getState();
+  return (
+    state.interactionState?.sessionId === sessionId &&
+    state.interactionState.items.some((item) => item.status === "pending")
+  );
+}
+
+/** A run parked on a form stays parked: the status that resumes it only
+ *  follows the reply. `waiting_input` alone can be stale after the answer, so
+ *  the dock also asks whether a form is still open. */
+function holdsAnsweredForm(session: DockSessionState): boolean {
+  return session.status === "waiting_input" && hasOpenForm(session.sessionId);
+}
 
 export interface DockToolCall {
   id: string;
@@ -116,22 +138,24 @@ export function applyDockStreamChunk(
     case "thought_delta":
       return {
         ...state,
-        status:
-          state.status === "waiting_permission" ? state.status : "running",
+        status: isWaiting(state.status) ? state.status : "running",
         streamingThinking: state.streamingThinking + (typed.delta ?? ""),
       };
     case "message_delta":
       return {
         ...state,
-        status:
-          state.status === "waiting_permission" ? state.status : "running",
+        status: isWaiting(state.status) ? state.status : "running",
         streamingText: state.streamingText + (typed.delta ?? ""),
       };
     case "tool_call":
-      if (!typed.toolCall) return { ...state, status: "running" };
+      if (!typed.toolCall)
+        return {
+          ...state,
+          status: isWaiting(state.status) ? state.status : "running",
+        };
       return {
         ...state,
-        status: "running",
+        status: isWaiting(state.status) ? state.status : "running",
         toolCalls: upsertToolCall(state.toolCalls, typed.toolCall),
       };
     case "tool_result":
@@ -169,7 +193,7 @@ export function applyDockStreamChunk(
         streamingText: "",
       };
     case "done":
-      if (state.status === "waiting_permission") return state;
+      if (isWaiting(state.status)) return state;
       return { ...state, status: "completed", error: null };
     default:
       return state.status === "idle" ? { ...state, status: "running" } : state;
@@ -184,21 +208,19 @@ export function applyDockLiveEvent(
     case "thought_delta":
       return {
         ...state,
-        status:
-          state.status === "waiting_permission" ? state.status : "running",
+        status: isWaiting(state.status) ? state.status : "running",
         streamingThinking: state.streamingThinking + event.delta,
       };
     case "message_delta":
       return {
         ...state,
-        status:
-          state.status === "waiting_permission" ? state.status : "running",
+        status: isWaiting(state.status) ? state.status : "running",
         streamingText: state.streamingText + event.delta,
       };
     case "tool_call":
       return {
         ...state,
-        status: "running",
+        status: isWaiting(state.status) ? state.status : "running",
         toolCalls: upsertToolCall(state.toolCalls, event.toolCall),
       };
     case "tool_result":
@@ -207,7 +229,17 @@ export function applyDockLiveEvent(
         toolCalls: upsertToolCall(state.toolCalls, event.toolCall),
       };
     case "step_started":
-      return { ...state, status: "running" };
+      return {
+        ...state,
+        status: isWaiting(state.status) ? state.status : "running",
+      };
+    case "runtime_state":
+      // Stream records carry the authoritative session patch: the only event
+      // that reports a `waiting_input` checkpoint in the dock.
+      return applyDockSessionPatch(
+        state,
+        event.patch as Record<string, unknown>,
+      );
     default:
       return state;
   }
@@ -219,11 +251,20 @@ export function applyDockSessionPatch(
 ): DockSessionState {
   const next = { ...state };
   if (patch.status === "running") {
-    next.status = "running";
-    next.error = null;
+    // A queued `running` patch must not erase a form nobody answered yet.
+    if (!holdsAnsweredForm(state)) {
+      next.status = "running";
+      next.error = null;
+    }
   }
-  if (patch.status === "waiting_permission") {
-    next.status = "waiting_permission";
+  if (patch.status === "waiting_permission" || patch.status === "waiting_input") {
+    next.status = patch.status;
+    if (patch.status === "waiting_input" && state.sessionId) {
+      // The dock renders the form instead of its prompt: make sure it is loaded.
+      void useAgentSessionStore
+        .getState()
+        .refreshInteractions(state.sessionId);
+    }
   }
   if (patch.status === "completed") {
     next.status = "completed";
@@ -246,7 +287,7 @@ export function applyDockSessionPatch(
 }
 
 export function isDockSessionActive(status: DockSessionStatus): boolean {
-  return status === "running" || status === "waiting_permission";
+  return status === "running" || isWaiting(status);
 }
 
 export async function streamDockSessionTurn(
