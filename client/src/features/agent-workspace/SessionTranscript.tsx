@@ -223,7 +223,9 @@ export function SessionTranscript({
     if (compacting) scrollToBottom(true);
   }, [compacting, compactionId]);
 
-  const olderHistory = useOlderTranscriptHistory(scrollRef, sessionId, active);
+  const olderHistory = useOlderTranscriptHistory(
+    scrollRef, sessionId, active && revealed && !waitingForHistory,
+  );
 
   // Trigger 1: a new submission lands — jump to the bottom and re-pin.
   useLayoutEffect(() => {

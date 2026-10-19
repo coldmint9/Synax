@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "synax-runtime-sidecar"
-version = "2.1.1"
+version = "2.1.5"
 dependencies = [
  "async-stream",
  "bytes",

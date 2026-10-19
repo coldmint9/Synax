@@ -12,7 +12,7 @@ interface ScrollAnchor {
   height: number;
 }
 
-/** Load older pages only at the top, preserving the visible row on prepend. */
+/** Prefetch within one viewport of the start, preserving the reader's position. */
 export function useOlderTranscriptHistory(
   scrollRef: RefObject<HTMLDivElement | null>,
   sessionId: string | null,
@@ -28,17 +28,21 @@ export function useOlderTranscriptHistory(
   const [error, setError] = useState("");
   const pending = useRef<ScrollAnchor | null>(null);
   const busy = useRef(false);
-  const failedCursor = useRef<string | null>(null);
+  const blockedCursor = useRef<string | null>(null);
   const generation = useRef(0);
 
   useLayoutEffect(() => {
     generation.current++;
     busy.current = false;
     pending.current = null;
-    failedCursor.current = null;
+    blockedCursor.current = null;
     setLoading(false);
     setError("");
-  }, [sessionId]);
+    return () => {
+      generation.current++;
+      pending.current = null;
+    };
+  }, [sessionId, page?.epoch]);
 
   useLayoutEffect(() => {
     const anchor = pending.current;
@@ -49,18 +53,18 @@ export function useOlderTranscriptHistory(
     }
     if (anchor.firstId === firstId && anchor.cursor === page?.olderCursor) return;
     const element = scrollRef.current;
-    if (element && anchor.firstId !== firstId && element.scrollTop <= 160) {
+    if (element) {
       element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
     }
     pending.current = null;
-  }, [firstId, page?.olderCursor, scrollRef, sessionId]);
+  }, [firstId, page?.olderCursor, page?.epoch, scrollRef, sessionId]);
 
   const loadOlder = useCallback(async (manual = false) => {
     const element = scrollRef.current;
-    if (!active || !sessionId || !element || !page?.olderCursor || busy.current ||
+    if (!active || !sessionId || !element || element.clientHeight === 0 || !page?.olderCursor || busy.current ||
         useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
-    if (!manual && failedCursor.current === page.olderCursor) return;
-    failedCursor.current = null;
+    if (!manual && blockedCursor.current === page.olderCursor) return;
+    blockedCursor.current = null;
     busy.current = true;
     const token = ++generation.current;
     const cursor = page.olderCursor;
@@ -73,14 +77,17 @@ export function useOlderTranscriptHistory(
     try {
       await useAgentSessionStore.getState().loadOlderHistory();
     } catch (cause) {
-      pending.current = null;
       if (generation.current === token) {
-        failedCursor.current = cursor;
+        pending.current = null;
+        blockedCursor.current = cursor;
         setError(String(cause));
       }
     } finally {
       if (generation.current === token) {
         const state = useAgentSessionStore.getState();
+        // A discarded/no-progress page must not become an automatic request loop.
+        if (state.sessionDetailCache[sessionId]?.historyWindow?.olderCursor === cursor)
+          blockedCursor.current = cursor;
         if (pending.current?.sessionId === sessionId &&
             pending.current.firstId === state.messages[0]?.id &&
             pending.current.cursor === state.sessionDetailCache[sessionId]?.historyWindow?.olderCursor)
@@ -89,20 +96,45 @@ export function useOlderTranscriptHistory(
         setLoading(false);
       }
     }
-  }, [active, firstId, page?.olderCursor, scrollRef, sessionId]);
+  }, [active, firstId, page?.olderCursor, page?.epoch, scrollRef, sessionId]);
 
   useEffect(() => {
     const element = scrollRef.current;
     if (!active || !element || !sessionId || !page?.olderCursor) return;
+    let frame = 0;
+    const check = () => {
+      frame = 0;
+      if (element.clientHeight === 0) return;
+      const maxTop = element.scrollHeight - element.clientHeight;
+      const nearStart = element.scrollTop <= Math.max(96, element.clientHeight);
+      // Opening a short but scrollable transcript should still show the latest
+      // page. Prefetch once the reader leaves the bottom, or fill an empty viewport.
+      if (maxTop <= 1 || (nearStart && (element.scrollTop <= 1 || maxTop - element.scrollTop > 48)))
+        void loadOlder();
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(check);
+    };
     const onScroll = () => {
-      if (element.scrollTop <= 96) void loadOlder();
+      if (pending.current) {
+        pending.current.top = element.scrollTop;
+        pending.current.height = element.scrollHeight;
+      }
+      schedule();
     };
     element.addEventListener("scroll", onScroll, { passive: true });
-    // A short page may not scroll; keep fetching while the reader is at the top.
-    if (element.scrollTop <= 96 || element.scrollHeight <= element.clientHeight)
-      void loadOlder();
-    return () => element.removeEventListener("scroll", onScroll);
-  }, [active, loadOlder, page?.olderCursor, scrollRef, sessionId]);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(element);
+    if (element.firstElementChild) observer?.observe(element.firstElementChild);
+    // Recheck after each request settles, even if its cursor was already
+    // published while busy. Lazy rows and viewport resizes can change the edge.
+    schedule();
+    return () => {
+      element.removeEventListener("scroll", onScroll);
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [active, loadOlder, loading, page?.olderCursor, scrollRef, sessionId]);
 
   return { loading, error, retry: () => loadOlder(true) };
 }
