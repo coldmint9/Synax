@@ -23,6 +23,7 @@
   border-top: 0;
   box-shadow: none;
 }
+.electron-windows .terminal-drawer--maximized { top: var(--window-toolbar-height); }
 .electron-macos .terminal-drawer--maximized .terminal-drawer-header {
   /* Leave room for the native window controls at every interface scale. */
   padding-left: calc(80px / var(--ui-font-scale, 1));

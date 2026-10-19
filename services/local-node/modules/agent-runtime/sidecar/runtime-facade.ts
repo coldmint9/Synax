@@ -26,7 +26,7 @@ import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
-import { hydrateHistoryValues, readHistoryList, readSessionList } from './history-pages.js';
+import { historyPages, hydrateHistoryValues, readHistoryList, readSessionList } from './history-pages.js';
 import { fileCommand, previewRuntimeFiles, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
 export type RuntimeSidecarStreamMode = "authoritative";
 const HISTORY_ENTITY_PAGE_BYTES = 768 * 1024;
@@ -811,6 +811,26 @@ export class RuntimeFacade {
   }
   async listMessageHistory(sessionId: string): Promise<unknown[]> {
     return this.listHistoryObjects(sessionId, 'list_messages');
+  }
+  async messageHistoryBoundsAuthoritative(sessionId: string): Promise<{
+    firstMessageId?: string;
+    lastMessageId?: string;
+  }> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    // checkpoint 只需首尾 ID。全量翻页会在运行中因 revision 变化重读整份历史。
+    const readBoundary = async (reverse: boolean) => {
+      for await (const page of historyPages<Pick<AgentRuntimeMessage, 'id'>>(
+        client, sessionId, 'list_messages', { reverse, limit: 1 },
+      )) {
+        return page[0]?.id;
+      }
+      return undefined;
+    };
+    const [firstMessageId, lastMessageId] = await Promise.all([
+      readBoundary(false), readBoundary(true),
+    ]);
+    return { firstMessageId, lastMessageId };
   }
   async listSessionProjection(): Promise<unknown[]> {
     const client = this.clientFactory();

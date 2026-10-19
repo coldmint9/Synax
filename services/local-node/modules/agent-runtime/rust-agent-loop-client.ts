@@ -20,6 +20,7 @@ export type RustAgentLoopProviderRequest = {
   tools?: unknown[];
   toolChoice?: unknown;
   maxOutputTokens?: number;
+  /** Legacy wire compatibility only; Rust does not enforce step budgets. */
   maxSteps?: number;
   runtimeBinding?: { sessionId: string; runId: string };
   contextPolicy?: { contextLimit: number; outputReserve: number; keepRecentMessages?: number };
@@ -32,6 +33,7 @@ export type RustAgentLoopEvent = {
   sequence?: number;
   step?: number;
   attempt?: number;
+  maxRetries?: number;
   contextId?: string;
   requestId?: string;
   startedAt?: string;
@@ -45,6 +47,9 @@ export type RustAgentLoopEvent = {
   disposition?: { status: "completed" | "blocked" | "failed" | "interrupted"; reason: string; summary: string };
   message?: { role: string; content: unknown };
   delta?: string;
+  /** Cumulative per-step estimates normalized from all provider protocols. */
+  outputTokens?: number;
+  thinkingTokens?: number;
   toolCallId?: string;
   toolName?: string;
   input?: unknown;

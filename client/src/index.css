@@ -830,7 +830,6 @@
   }
 
   .workbench-shell {
-    --workbench-island-top: 8px;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -843,52 +842,29 @@
   }
 
   .electron-macos .workbench-shell {
-    /* Hidden-inset keeps the native traffic lights over the page; reserve
-       their compact top area in transcript and workspace-specific layouts. */
+    /* The global toolbar owns the native traffic-light safe area. */
     --desktop-titlebar-height: 40px;
     background: var(--background);
   }
 
-  .electron-macos .workbench-shell::before {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 80px;
-    right: 0;
-    height: var(--desktop-titlebar-height);
-    z-index: 0;
-    -webkit-app-region: drag;
-    pointer-events: none;
-  }
-
-  /* Windows owns a compact renderer titlebar. Keeping it in normal flow
-     reserves the control row so the first app header cannot sit underneath
-     the minimize, maximize, and close buttons. */
+  /* Window controls occupy the right-hand safe area of the global toolbar. */
   .window-chrome {
-    position: relative;
-    flex: 0 0 var(--desktop-titlebar-height, 40px);
-    width: 100%;
+    position: absolute;
+    top: 0;
+    right: 0;
     z-index: 1000;
-    height: var(--desktop-titlebar-height, 40px);
+    width: 114px;
+    height: var(--window-toolbar-height);
     pointer-events: none;
     user-select: none;
   }
-
-  .window-chrome__drag-region {
-    position: absolute;
-    inset: 0;
-    -webkit-app-region: drag;
-  }
-
   .window-chrome__controls {
-    position: absolute;
-    top: 0;
-    right: 0;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
+    justify-content: flex-end;
     gap: 2px;
-    height: 40px;
-    padding: 4px 8px 0 0;
+    height: 100%;
+    padding-right: 8px;
     pointer-events: auto;
     -webkit-app-region: no-drag;
   }
@@ -991,6 +967,7 @@
 
   .workbench-island {
     flex: 1;
+    min-height: 0;
     background: var(--background);
     overflow: hidden;
     display: flex;
@@ -1042,24 +1019,6 @@
     flex-direction: column;
     position: relative;
   }
-
-  /* Center the whole island group on the default Work content-column anchor.
-     The project slot participates in layout: growing it to the right moves the
-     primary pill left by half that growth. Work's live slot still follows its
-     actual conversation column. Both routes share the same top inset. */
-  /* Give the expanded project group a little more room on the right. */
-  /* No project means no sidebar to compensate for. Keep macOS titlebar
-     positioning and the project/conversation/viewer layouts unchanged. */
-  /* Git and Settings have no session sidebar. Center their island on the
-     full viewport rather than the Work conversation column. */
-  /* Keep the primary controls at their natural size while the project slot grows. */
-
-  /* Animate actual layout width so both pills move together, not just pixels.
-     The measured natural width includes translated labels and toolbar modes. */
-
-  /* Visual enter animation on the pill content */
-
-  /* Visual exit animation */
 
   @keyframes pill-fade-in {
     0% {
@@ -3913,6 +3872,7 @@ input[type="radio"] {
 /* Viewport units do not account for CSS zoom. Compensate once at the shell
    so its centered content stays inside the visible viewport at every size. */
 .app-viewport {
+  position: relative;
   width: calc(100vw / var(--ui-font-scale, 1));
   height: calc(100dvh / var(--ui-font-scale, 1));
 }
@@ -6015,7 +5975,7 @@ input[type="radio"] {
   display: none;
 }
 
-/* Keep app controls clickable while the shared desktop titlebar is draggable. */
+/* Interactive controls stay outside the desktop window drag regions. */
 .electron
   .workbench-shell
   :is(

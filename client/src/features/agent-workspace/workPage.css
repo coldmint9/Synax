@@ -30,16 +30,13 @@
     inset 0 0 0 1px rgb(255 255 255 / 0.045);
 }
 .work-page {
-  --work-transcript-top-inset: 56px;
+  --work-transcript-top-inset: 20px;
   --work-transcript-bottom-inset: calc(
     var(--agent-command-rail-height, 0px) + 16px
   );
   --work-transcript-surface: var(--background);
   gap: 0;
   padding: 0;
-}
-.electron-macos .work-page {
-  --work-transcript-top-inset: calc(var(--desktop-titlebar-height, 40px) + 8px);
 }
 .dark .work-page {
   --work-transcript-surface: var(--background);
@@ -93,6 +90,9 @@
   padding-block: 0;
   scroll-padding-top: var(--work-transcript-top-inset);
   scroll-padding-bottom: var(--work-transcript-bottom-inset);
+}
+.work-content-layout:has(> .work-quick-actions) {
+  --work-transcript-top-inset: 52px;
 }
 .work-page .session-transcript-body {
   padding-top: var(--work-transcript-top-inset);
@@ -158,27 +158,8 @@
   background: transparent;
   border-bottom: 1px solid var(--work-line);
 }
-/* Native controls: y=18 + 14/2 = 25px. Match the toolbar center:
-   panel inset 6 + card border 1 + header padding 5 + row height 26/2. */
-.electron-macos .work-page .session-list-card--sessions .session-list-header {
-  padding-top: 5px;
-}
-.electron-macos .work-page .session-list-titlebar-row {
-  height: 26px;
-  min-height: 26px;
-}
-/* Keep the first header row beside the macOS window controls. This preserves
-   the compact titlebar instead of pushing the search and list content down. */
-.electron-macos
-  .work-page
-  .session-list-header[data-list-view="sessions"]
-  .session-list-titlebar-row,
-.electron-macos
-  .work-page
-  .session-list-header[data-list-view="workflow"]
-  .session-list-back {
-  padding-left: 70px;
-}
+/* Local sidebar actions share one baseline below the global toolbar. */
+.work-page .session-list-titlebar-row { min-height: 30px; }
 .work-page .session-list-header input {
   height: 26px;
   font-size: 11px;
@@ -1026,7 +1007,7 @@
 .bui-process-meta {
   flex-wrap: wrap;
 }
-/* The viewer shares the conversation layout and receives the compact island. */
+/* Document tabs stay local; global navigation remains above the workspace. */
 .workbench-shell .workspace-viewer-header {
   display: flex;
   align-items: center;
@@ -1074,42 +1055,12 @@
   min-width: 0;
 }
 
-/* The conversation slot follows its actual column, including sidebar resizing.
-   Share the global island inset now that the conversation has no card offset. */
-.workbench-island-anchor,
-.workbench-island-mount {
-  display: contents;
-}
-.workspace-island-slot--conversation {
-  position: absolute;
-  top: var(--workbench-island-top);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  width: max-content;
-  max-width: calc(100% - 24px);
-}
-.work-content-layout:has(> .work-quick-actions)
-  > .workspace-island-slot--conversation {
-  max-width: calc(100% - 88px);
-}
-.workspace-island-slot--viewer {
-  flex: 0 0 auto;
-  min-width: 0;
-}
 .work-content-layout:has(.workspace-viewer-header) > .work-quick-actions {
   top: 8px;
   right: 6px;
 }
 .work-content-layout:has(> .work-quick-actions) .workspace-viewer-header {
   padding-right: 40px;
-}
-.electron-macos
-  .work-page:has(
-    .session-panel-host--left:is([hidden], [data-collapsed="true"])
-  )
-  .workspace-viewer-header {
-  padding-left: 80px;
 }
 /* A narrow viewer gives tabs their own row instead of hiding menu actions. */
 @container (max-width: 520px) {

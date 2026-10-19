@@ -47,7 +47,6 @@ export function WindowChrome() {
 
   return (
     <div className="window-chrome" data-maximized={maximized}>
-      <div className="window-chrome__drag-region" aria-hidden="true" />
       <div className="window-chrome__controls" role="toolbar" aria-label="Window controls">
         <button
           type="button"

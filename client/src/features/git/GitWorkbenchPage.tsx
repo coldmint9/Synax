@@ -276,7 +276,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <option value="presets">预设</option>
         </select>
         {view !== "worktrees" && <>
-        <span className="wh-divider" aria-hidden="true" />
         <button
           type="button"
           className="wh-pill-btn wh-pill-btn--primary"
@@ -285,7 +284,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           aria-label="新建 MR"
           title="新建 MR"
         >
-          <Plus size={14} />
+          <Plus size={15} aria-hidden="true" />
           <span className="git-island-action-label">新建 MR</span>
         </button>
         </>}

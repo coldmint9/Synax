@@ -1007,6 +1007,10 @@ export class AgentLoopRuntime {
               yield { type: "event", event: contextEvent };
             }
             if (event.type === "retry_status") {
+              if (event.retry.phase === "waiting" || event.retry.phase === "group_wait") {
+                streamedThought = "";
+                streamedOutput = "";
+              }
               this.store.updateRunStep(step.id, {
                 metadata: {
                   ...this.store.getRunStep(step.id).metadata,

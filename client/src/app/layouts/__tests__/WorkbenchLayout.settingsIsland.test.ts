@@ -2,14 +2,11 @@ import postcss from 'postcss';
 import { describe, expect, it } from 'vitest';
 import css from '../../../index.css?raw';
 import deckCss from '../../../shared/design/command-deck.css?raw';
-import workPageCss from '../../../features/agent-workspace/workPage.css?raw';
 import layoutSource from '../WorkbenchLayout.tsx?raw';
 import headerSource from '../WorkbenchHeader.tsx?raw';
 import gitWorkbenchCss from '../../../features/git/gitWorkbench.css?raw';
 
 const stylesheet = postcss.parse(css + '\n' + deckCss);
-const workPageStylesheet = postcss.parse(workPageCss);
-const fullWidth = '.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"], :not([data-active-panel])) .workbench-header';
 function declaration(selector: string, property: string, root = stylesheet) {
   let value: string | undefined;
   root.walkRules(rule => {
@@ -21,28 +18,23 @@ function declaration(selector: string, property: string, root = stylesheet) {
 }
 
 describe('canonical command deck', () => {
-  it('centers Git, Settings and the empty workspace without a phantom sidebar', () => {
-    expect(layoutSource).toContain('data-active-panel={activePanel ?? undefined}');
-    expect(layoutSource).toContain('data-has-project={!!effectiveProjectId}');
-    expect(declaration(fullWidth, '--island-center-offset')).toBe('0px');
+  it('reserves a global row instead of positioning controls over page content', () => {
+    expect(declaration('.workbench-header', 'position')).toBe('relative');
+    expect(declaration('.workbench-header', 'flex')).toBe('0 0 auto');
+    expect(declaration('.workbench-header', 'left')).toBeUndefined();
+    expect(headerSource).not.toContain('<WorkbenchIsland');
   });
-  it('shares a top inset with the conversation slot and keeps controls outside drag regions', () => {
-    expect(declaration('.workbench-header', 'top')).toContain('var(--workbench-island-top');
-    expect(declaration('.workspace-island-slot--conversation', 'top', workPageStylesheet)).toBe('var(--workbench-island-top)');
+  it('leaves platform control clearance in the top row and keeps actions clickable', () => {
+    expect(declaration('.electron-windows .workbench-header__bar', 'padding-right')).toBe('126px');
+    expect(declaration('.electron-macos .workbench-header__bar', 'padding-left')).toContain('88px');
+    expect(declaration('.workbench-header__bar', '-webkit-app-region')).toBe('drag');
     expect(declaration('.wh-btn', '-webkit-app-region')).toBe('no-drag');
   });
-  it('keeps contextual tools in flow while their measured width expands', () => {
-    expect(declaration('.workbench-header', 'left')).toBe('calc(50% + var(--island-center-offset))');
-    expect(declaration('.wh-pill-slot', 'width')).toBe('0');
-    expect(declaration('.wh-pill-slot.open', 'width')).toBe('calc(var(--toolbar-width, 0px) + var(--toolbar-gap))');
-    expect(declaration('.wh-pill-slot', '--toolbar-gap')).toBe('8px');
-    expect(declaration('.wh-pill-slot', 'transition')).toBeUndefined();
-    expect(declaration('.synax-island', 'flex')).toBe('0 0 auto');
-  });
-  it('uses capsule geometry and removes the pixel branding from the Island', () => {
-    expect(declaration('.synax-island', 'border-radius')).toBe('9999px');
-    expect(declaration('.workbench-header--docked .synax-island', 'border-radius')).toBe('9999px');
-    expect(headerSource).not.toContain('PixelMark');
+  it('keeps Git controls in the centered navigation row', () => {
+    expect(declaration('.workbench-header__navigation', 'display')).toBe('flex');
+    expect(declaration('.workbench-header__git-tools', 'overflow-x')).toBe('auto');
+    expect(declaration('.workbench-header__git-tools .git-island-toolbar', 'width')).toBe('max-content');
+    expect(headerSource).toContain('<GitToolbarTarget />');
   });
   it('renders a full borderless raised pill rather than a blurred underline', () => {
     expect(declaration('.island-selection-pill', 'top')).toBe('0');
@@ -56,7 +48,7 @@ describe('canonical command deck', () => {
     expect(declaration('.synax-island', 'background')).toBe('transparent');
     expect(declaration('.synax-island', 'box-shadow')).toBe('none');
     expect(declaration('.synax-island', 'backdrop-filter')).toBeUndefined();
-    expect(headerSource).toContain('<IslandSurface kind="primary">');
+    expect(headerSource).toContain('<header className="workbench-header"');
     expect(headerSource).not.toContain('<Dropdown');
   });
   it('paints one solid island material in both themes without changing other glass surfaces', () => {
@@ -96,15 +88,15 @@ describe('canonical command deck', () => {
     expect(declaration('.dark .synax-island', '--island-ink-halo')).toContain('var(--theme-shadow-rgb)');
   });
   it('represents collapsible navigation as toggle buttons, not fake tabs with no panel', () => {
-    const nav = headerSource.split('function MainNavTabs(')[1].split('function GitToolbar(')[0];
+    const nav = headerSource.split('function MainNavTabs(')[1].split('function GoalToolbar(')[0];
     expect(nav).toContain('aria-pressed={activePanel === tab.id}');
     expect(nav).not.toContain('Tabs.ListContainer');
     expect(nav).toContain('onClick={() => onPanelToggle(tab.id)}');
   });
-  it('retains the Git secondary island and document reading gutter', () => {
+  it('retains Git actions and removes the obsolete overlay gutter', () => {
     expect(layoutSource).toContain('<GitToolbarProvider>');
-    expect(headerSource).toContain('<ToolbarPill visible={gitToolbarVisible}>');
+    expect(headerSource).toContain('gitToolbarVisible &&');
     expect(headerSource).toContain('<GitToolbarTarget />');
-    expect(declaration('.git-workbench', 'padding', postcss.parse(gitWorkbenchCss))).toBe('56px 32px 28px');
+    expect(declaration('.git-workbench', 'padding', postcss.parse(gitWorkbenchCss))).toBe('24px 32px 28px');
   });
 });

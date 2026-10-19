@@ -19,7 +19,6 @@ import { sessionPath } from "../../features/agent-workspace/sessionRoutes";
 import { resolveSessionsEntryPath } from "../../features/agent-workspace/sessionLastVisit";
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
-import { WorkbenchIslandProvider } from "./WorkbenchIsland";
 import { GitToolbarProvider } from "../../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../../shared/ui/ToastContainer";
@@ -248,58 +247,56 @@ function WorkbenchLayoutContent() {
     <SessionEnvironmentProvider
       sessionId={chromeMode === "global" ? null : selectedSessionId}
     >
-      <WorkbenchIslandProvider>
-        <div
-          className="workbench-shell"
-          data-chrome-mode={chromeMode}
-          data-has-project={!!effectiveProjectId}
-          data-active-panel={activePanel ?? undefined}
-        >
-          <WorkbenchHeader
-            chromeMode={chromeMode}
-            activePanel={activePanel}
-            onPanelToggle={handlePanelToggle}
-            hasProject={!!effectiveProjectId}
-            projectName={projectName}
-            currentProjectId={effectiveProjectId}
-            projects={projects}
-            onProjectSwitch={(id) => navigate(resolveSessionsEntryPath(id))}
-            onCreateProject={() => setCreateDialogOpen(true)}
-            onRemoveProject={handleRemoveProject}
-          />
-          <div className="workbench-island">
-            <div className="island-body">
-              {/* Sessions are never retained across page switches. */}
-              {effectiveProjectId && <>
-                {activePanel === "sessions" && (
-                  <Suspense fallback={<PageLoading />}>
-                    <SessionsPage />
-                  </Suspense>
-                )}
-              </>}
-              {/* Outlet for non-cached routes (welcome, settings) */}
-              <div
-                className={
-                  isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
-                }
-              >
-                <Outlet
-                  context={{ onCreateProject: () => setCreateDialogOpen(true), onRemoveProject: handleRemoveProject }}
-                />
-              </div>
+      <div
+        className="workbench-shell"
+        data-chrome-mode={chromeMode}
+        data-has-project={!!effectiveProjectId}
+        data-active-panel={activePanel ?? undefined}
+      >
+        <WorkbenchHeader
+          chromeMode={chromeMode}
+          activePanel={activePanel}
+          onPanelToggle={handlePanelToggle}
+          hasProject={!!effectiveProjectId}
+          projectName={projectName}
+          currentProjectId={effectiveProjectId}
+          projects={projects}
+          onProjectSwitch={(id) => navigate(resolveSessionsEntryPath(id))}
+          onCreateProject={() => setCreateDialogOpen(true)}
+          onRemoveProject={handleRemoveProject}
+        />
+        <div className="workbench-island">
+          <div className="island-body">
+            {/* Sessions are never retained across page switches. */}
+            {effectiveProjectId && <>
+              {activePanel === "sessions" && (
+                <Suspense fallback={<PageLoading />}>
+                  <SessionsPage />
+                </Suspense>
+              )}
+            </>}
+            {/* Outlet for non-cached routes (welcome, settings) */}
+            <div
+              className={
+                isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
+              }
+            >
+              <Outlet
+                context={{ onCreateProject: () => setCreateDialogOpen(true), onRemoveProject: handleRemoveProject }}
+              />
             </div>
           </div>
-          <TerminalDrawer
-            projectId={effectiveProjectId}
-            sessionId={selectedSessionId}
-          />
-          <ProjectCreateDialog
-            open={createDialogOpen}
-            onClose={() => setCreateDialogOpen(false)}
-          />
-          <ToastContainer />
         </div>
-      </WorkbenchIslandProvider>
+        <TerminalDrawer
+          projectId={effectiveProjectId}
+          sessionId={selectedSessionId}
+        />
+        <ProjectCreateDialog
+          open={createDialogOpen}
+          onClose={() => setCreateDialogOpen(false)}
+        />
+        <ToastContainer />
+      </div>
     </SessionEnvironmentProvider>
   );
 }

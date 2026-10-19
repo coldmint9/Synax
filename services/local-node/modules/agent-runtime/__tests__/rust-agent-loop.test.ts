@@ -61,8 +61,8 @@ async function start(protocol: Protocol, maxSteps = 3) {
   loops.push(loopId);
   return loopId;
 }
-function observe(loopId: string, after = 0) {
-  return streamRustAgentLoop({ ...input("openai"), loopId, after }, AbortSignal.timeout(5000));
+function observe(loopId: string, after = 0, timeout = 5000) {
+  return streamRustAgentLoop({ ...input("openai"), loopId, after }, AbortSignal.timeout(timeout));
 }
 async function collect(stream: AsyncGenerator<RustAgentLoopEvent>) {
   const events: RustAgentLoopEvent[] = [];
@@ -145,7 +145,11 @@ it.each(protocols)("%s streams before upstream completion and replays a terminal
   const seen: RustAgentLoopEvent[] = [];
   for await (const e of stream) {
     seen.push(e);
-    if (e.type === "text-delta") { expect(e.delta).toBe("First token"); break; }
+    if (e.type === "text-delta") {
+      expect(e.delta).toBe("First token");
+      expect(e.outputTokens).toBeGreaterThan(0);
+      break;
+    }
   }
   // The observer has detached while the upstream is still open.
   expect(seen.some(e => e.type === "done")).toBe(false);
@@ -171,12 +175,15 @@ it.each(protocols)("%s preserves the assistant turn and accepts reordered, idemp
   const stream = observe(id);
   let cursor = 0;
   const calls: RustAgentLoopEvent[] = [];
+  const reasoningEvents: RustAgentLoopEvent[] = [];
   for await (const e of stream) {
     cursor = e.sequence!;
+    if (e.type === "reasoning-delta") reasoningEvents.push(e);
     if (e.type === "tool-call") calls.push(e);
     if (calls.length === 2) break;
   }
   expect(calls.map(e => e.toolCallId)).toEqual(["call_0", "call_1"]);
+  expect(reasoningEvents[0]?.thinkingTokens).toBeGreaterThan(0);
   expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: "unknown", result: {} })).status).toBe(409);
   for (const call of calls.toReversed()) {
     const payload = { loopId: id, toolCallId: call.toolCallId, result: { echoed: call.toolCallId } };
@@ -197,19 +204,30 @@ it.each(protocols)("%s preserves the assistant turn and accepts reordered, idemp
   if (protocol === "openai-responses") expect(history).toContain("opaque-fixture");
 });
 
-it("honors maxSteps and reports one failure without a false success", async () => {
-  respond = (_request, response) => { begin("openai", response); tool("openai", response, 0); end("openai", response, true); };
-  const id = await start("openai", 1);
+it.each([undefined, 1])("continues beyond former step limits (legacy maxSteps=%s)", async maxSteps => {
+  const rounds = maxSteps === undefined ? 40 : 260;
+  respond = (_request, response) => {
+    begin("openai", response);
+    if (requests.length <= rounds) {
+      chat(response, { tool_calls: [{ index: 0, id: `round-${requests.length}`, type: "function", function: { name: "echo", arguments: '{"value":"ok"}' } }] });
+      end("openai", response, true);
+    } else { text("openai", response, "Finished all requested work."); end("openai", response); }
+  };
+  const started = await post("/agent-loop/start", { ...input("openai"), maxSteps });
+  expect(started.status).toBe(200);
+  const { loopId } = await started.json(); loops.push(loopId);
   const events: RustAgentLoopEvent[] = [];
-  for await (const e of observe(id)) {
-    events.push(e);
-    if (e.type === "tool-call") await post("/agent-loop/tool-result", { loopId: id, toolCallId: e.toolCallId, result: "ok" });
+  for await (const event of observe(loopId, 0, 60_000)) {
+    events.push(event);
+    if (event.type === "tool-call") {
+      expect((await post("/agent-loop/tool-result", { loopId, toolCallId: event.toolCallId, result: "ok" })).status).toBe(200);
+    }
   }
-  expect(events.at(-1)?.error).toContain("step limit exceeded");
-  expect(events.filter(e => e.type === "error")).toHaveLength(1);
-  expect(events.some(e => e.type === "done")).toBe(false);
-  expect(requests).toHaveLength(1);
-});
+  expect(events.filter(event => event.type === "error")).toEqual([]);
+  expect(events.filter(event => event.type === "step-started")).toHaveLength(rounds + 1);
+  expect(events.at(-1)?.type).toBe("done");
+  expect(requests).toHaveLength(rounds + 1);
+}, 60_000);
 
 it("cancellation stops upstream and resolves only after the terminal event exists", async () => {
   let disconnected = false;
@@ -226,11 +244,84 @@ it("cancellation stops upstream and resolves only after the terminal event exist
   await vi.waitFor(() => expect(disconnected).toBe(true));
 });
 
-it("never executes malformed streamed tool arguments", async () => {
-  respond = (_request, response) => { begin("openai", response); tool("openai", response, 0, '{"bad":'); end("openai", response, true); };
+it.each(protocols)("%s stops after two argument correction retries without executing malformed tools", async protocol => {
+  respond = (_request, response) => { begin(protocol, response); tool(protocol, response, 0, '{"bad":'); end(protocol, response, true); };
+  const events = await collect(observe(await start(protocol)));
+  expect(events.at(-1)?.type).toBe("error");
+  expect(events.at(-1)?.error).toContain("tool 'echo'");
+  expect(events.at(-1)?.error).toContain("call_0");
+  expect(events.at(-1)?.error).toContain("EOF while parsing a value at line 1 column 7");
+  expect(events.some(e => e.type === "tool-call")).toBe(false);
+  expect(requests).toHaveLength(3);
+  expect(events.filter(e => e.type === "step-restarted")).toHaveLength(2);
+});
+
+it.each(protocols)("%s regenerates malformed arguments before delivering any tool from the batch", async protocol => {
+  respond = (_request, response) => {
+    begin(protocol, response);
+    if (requests.length === 1) {
+      text(protocol, response, "Discard this partial answer.");
+      tool(protocol, response, 0);
+      tool(protocol, response, 1, '{"value":"private-incomplete');
+      end(protocol, response, true);
+    } else if (requests.length === 2) {
+      tool(protocol, response, 0, '{"value":"corrected"}');
+      end(protocol, response, true);
+    } else { text(protocol, response, "Finished."); end(protocol, response); }
+  };
+  const id = await start(protocol);
+  const events: RustAgentLoopEvent[] = [];
+  for await (const e of observe(id)) {
+    events.push(e);
+    if (e.type === "tool-call") {
+      expect(e.input).toEqual({ value: "corrected" });
+      expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: e.toolCallId, result: "ok" })).status).toBe(200);
+    }
+  }
+  expect(events.at(-1)?.type).toBe("done");
+  expect(events.filter(e => e.type === "tool-call")).toHaveLength(1);
+  expect(events.filter(e => e.type === "step-restarted")).toMatchObject([
+    { step: 1, reason: "invalid_tool_arguments", maxRetries: 2 },
+  ]);
+  const retry = JSON.stringify(requests[1].body);
+  expect(retry).toContain("No tools from this response were executed");
+  expect(retry).toContain("complete JSON object");
+  expect(retry).not.toContain("private-incomplete");
+  expect(retry).not.toContain("Discard this partial answer");
+  expect(requests).toHaveLength(3);
+});
+
+it.each(protocols)("%s repairs literal control characters in long code tool arguments", async protocol => {
+  respond = (_request, response) => {
+    begin(protocol, response);
+    if (requests.length === 1) {
+      tool(protocol, response, 0, '{"content":"line one\nline two","path":"game.html"}');
+      end(protocol, response, true);
+    } else { text(protocol, response, "Finished."); end(protocol, response); }
+  };
+  const id = await start(protocol);
+  const events: RustAgentLoopEvent[] = [];
+  for await (const e of observe(id)) {
+    events.push(e);
+    if (e.type === "tool-call") {
+      expect(e.input).toEqual({ content: "line one\nline two", path: "game.html" });
+      expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: e.toolCallId, result: "ok" })).status).toBe(200);
+    }
+  }
+  expect(events.at(-1)?.type).toBe("done");
+  expect(events.filter(e => e.type === "step-restarted")).toHaveLength(0);
+  expect(requests).toHaveLength(2);
+});
+
+it("does not retry unrelated provider failures as invalid arguments", async () => {
+  respond = (_request, response) => {
+    response.writeHead(401, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "Invalid API key", type: "authentication_error" } }));
+  };
   const events = await collect(observe(await start("openai")));
   expect(events.at(-1)?.type).toBe("error");
-  expect(events.some(e => e.type === "tool-call")).toBe(false);
+  expect(requests).toHaveLength(1);
+  expect(events.some(e => e.type === "step-restarted")).toBe(false);
 });
 
 async function crashAndRestartSidecar() {
@@ -248,7 +339,7 @@ it.each(protocols)("%s resumes a durable tool checkpoint after a sidecar crash",
       tool(protocol, response, 0); tool(protocol, response, 1); end(protocol, response, true);
     } else { text(protocol, response, "Recovered."); end(protocol, response); }
   };
-  const id = await start(protocol);
+  const id = await start(protocol, 1);
   let cursor = 0;
   const calls: RustAgentLoopEvent[] = [];
   for await (const e of observe(id)) {
@@ -262,7 +353,7 @@ it.each(protocols)("%s resumes a durable tool checkpoint after a sidecar crash",
   // Result acceptance itself survives restart, even before execution resumes.
   expect((await post("/agent-loop/tool-result", first)).status).toBe(200);
   expect((await post("/agent-loop/tool-result", { ...first, result: "changed" })).status).toBe(409);
-  expect((await post("/agent-loop/resume", { ...input(protocol), loopId: id })).status).toBe(200);
+  expect((await post("/agent-loop/resume", { ...input(protocol, 1), loopId: id })).status).toBe(200);
   expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: "call_0", result: "after crash" })).status).toBe(200);
   const rest = await collect(observe(id, cursor));
   expect(rest.at(-1)?.type).toBe("done");

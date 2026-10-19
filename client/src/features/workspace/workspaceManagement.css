@@ -1,7 +1,7 @@
 .workspace-manager {
   height: 100%;
   overflow: auto;
-  padding: 76px 28px 64px;
+  padding: 28px 28px 64px;
   color: var(--theme-text);
 }
 .workspace-manager-content {

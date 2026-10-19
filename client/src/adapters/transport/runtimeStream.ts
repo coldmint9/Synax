@@ -3,6 +3,7 @@ import type { LlmRetryState, SessionLiveEvent } from './sessionLive'
 
 export interface RuntimeChunk {
   type: string
+  run?: AgentRun
   runId?: string
   stepId?: string
   retry?: LlmRetryState
@@ -36,6 +37,7 @@ export interface RuntimeSnapshotEvent {
   type: 'runtime_snapshot'
   sessionId: string
   session: AgentSession
+  run?: AgentRun | null
   cursor: number
   liveChunks: RuntimeChunk[]
   completedStepIds: string[]
@@ -72,6 +74,7 @@ export class RuntimeStreamProjector {
       type: 'runtime_snapshot',
       sessionId: value.session.id,
       session: value.session,
+      ...(value.run ? { run: value.run } : {}),
       cursor: value.cursor,
       liveChunks: value.liveChunks,
       completedStepIds: value.completedStepIds,
@@ -94,7 +97,9 @@ export class RuntimeStreamProjector {
       ? [{ type: 'input_queue_changed', sessionId: value.sessionId, queueRevision: value.chunk.queueRevision ?? 0 }]
       : []
     if (stateChanged || refresh || reset) {
-      output.push({ type: 'runtime_state', sessionId: value.sessionId, patch: value.state, reset, refresh })
+      const run = value.chunk.run
+      output.push({ type: 'runtime_state', sessionId: value.sessionId, patch: value.state, reset, refresh,
+        ...(run?.sessionId === value.sessionId && run.id === value.runId ? { run } : {}) })
       this.stateKey = key
     }
     if (reset) this.stepId = null

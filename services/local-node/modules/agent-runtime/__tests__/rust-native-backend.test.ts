@@ -20,7 +20,7 @@ let requests: Array<Record<string, unknown>>;
 let sessionId: string;
 let multiple = false;
 let askHuman = false;
-let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" = "normal";
+let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" = "normal";
 let mediaAssetId: string;
 beforeEach(async () => {
   vi.stubEnv("SYNAX_AGENT_LOOP_ENGINE", "rust");
@@ -42,7 +42,9 @@ beforeEach(async () => {
     const chunk = (delta: object, finish_reason: string | null = null) => response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
     response.writeHead(200, { "content-type": "text/event-stream" });
     const call = (index: number, name: string, args: unknown) => chunk({ tool_calls: [{ index, id: `provider-call-${requests.length}-${index}`, type: "function", function: { name: name.replaceAll(".", "_"), arguments: JSON.stringify(args) } }] });
-    if (scenario === "media" && requests.length === 1) {
+    if (scenario === "long" && requests.length <= 34) {
+      call(0, "file.list", { path: "." }); chunk({}, "tool_calls");
+    } else if (scenario === "media" && requests.length === 1) {
       call(0, "agent.discover", { ids: ["media.read"] }); chunk({}, "tool_calls");
     } else if (scenario === "media" && requests.length === 2) {
       call(0, "media.read", { assetId: mediaAssetId }); chunk({}, "tool_calls");
@@ -345,3 +347,13 @@ it("persists Rust compaction checkpoints and accounts for auxiliary requests onc
     expect(JSON.stringify(requests.at(-1))).toContain("USER_INVARIANT");
   } finally { selection.mockRestore(); }
 }, 20_000);
+
+it("keeps an admitted native run going past 32 steps and ignores legacy maxSteps", async () => {
+  scenario = "long";
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Continue until all reads finish", maxSteps: 1 }, "unlimited-native");
+  await coordinator.waitForIdle();
+  expect(store.getRun(accepted.run.id).status, JSON.stringify(store.getRun(accepted.run.id))).toBe("completed");
+  expect(requests).toHaveLength(35);
+  expect(store.listRunSteps(accepted.run.id)).toHaveLength(35);
+  expect(store.listToolCalls(sessionId).filter(call => call.toolId === "file.list" && call.status === "completed")).toHaveLength(34);
+}, 45_000);

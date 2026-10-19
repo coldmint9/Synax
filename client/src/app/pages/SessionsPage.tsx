@@ -2,7 +2,6 @@ import "../../features/agent-workspace/sessionPerformance.css";
 import "../../features/agent-workspace/workPage.css";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { WorkbenchIslandSlot } from "../layouts/WorkbenchIsland";
 import { Dialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody } from "@/shared/ui/ui/Dialog";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -309,7 +308,6 @@ export default memo(function SessionsPage() {
         {showTranscript ? (
           <div ref={setLayoutElement} className="work-session-layout" data-subagent-fullscreen={subagentFullscreen ? "true" : undefined}>
             <div className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${subagentFullscreen ? "hidden" : "flex"}`}>
-              <WorkbenchIslandSlot placement="conversation" />
               {agentSessionId && (
                 <WorkQuickActions
                   showDetailsButton={!wideWorkspace || workspaceFullscreen}
@@ -355,12 +353,10 @@ export default memo(function SessionsPage() {
           </div>
         ) : isNewDraft ? (
           <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
-            <WorkbenchIslandSlot placement="conversation" />
             <SessionComposer projectId={projectId} layout="centered" />
           </div>
         ) : (
           <div className="work-content-layout flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-            <WorkbenchIslandSlot placement="conversation" />
             <p className="text-sm text-muted-foreground">
               {canCreateSession
                 ? t("sessionSelectOrCreate")

@@ -17,27 +17,6 @@ vi.mock("../../../shared/hooks/useLocale", () => ({
 vi.mock("../../../features/agent-workspace/projectSessionBadges", () => ({
   useProjectSessionBadges: () => ({ badges: {}, refresh: async () => {} }),
 }));
-vi.mock("../WorkbenchIsland", () => ({
-  WorkbenchIsland: ({
-    children,
-  }: {
-    children: (compact: boolean) => ReactNode;
-  }) => children(false),
-}));
-vi.mock("../IslandSurface", () => ({
-  IslandSurface: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
-vi.mock("../ToolbarPill", () => ({
-  ToolbarPill: ({
-    visible,
-    children,
-  }: {
-    visible: boolean;
-    children: ReactNode;
-  }) => (visible ? children : null),
-}));
 vi.mock("../useIslandPresence", () => ({
   useIslandPresence: (open: boolean) => ({ ref: () => {}, present: open }),
 }));
@@ -97,6 +76,22 @@ async function openRemoval(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("workbench action state", () => {
+  it("keeps the workspace menu and navigation in the same header when entering a viewer", async () => {
+    const user = userEvent.setup();
+    const view = render(<WorkbenchHeader {...base} />, { wrapper });
+    const header = screen.getByRole("banner", { name: "Workspace toolbar" });
+    const switcher = screen.getByRole("button", { name: "appSwitchProject" });
+    await user.click(switcher);
+    const search = await screen.findByRole("textbox", { name: "Search workspaces" });
+    await user.type(search, "Exam");
+    view.rerender(<WorkbenchHeader {...base} chromeMode="workspaceFocus" />);
+    expect(screen.getByRole("banner", { name: "Workspace toolbar" })).toBe(header);
+    expect(screen.getByRole("button", { name: "appSwitchProject" })).toBe(switcher);
+    expect(screen.getByRole("textbox", { name: "Search workspaces" })).toHaveValue("Exam");
+    expect(within(header).getByRole("button", { name: "Work" })).toHaveTextContent("Work");
+    expect(within(header).getByRole("button", { name: "Git" })).toHaveTextContent("Git");
+  });
+
   it("filters workspaces and supports keyboard return from target actions", async () => {
     const user = userEvent.setup();
     render(

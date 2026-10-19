@@ -1,24 +1,111 @@
-/* One command deck, one material envelope. Controls never carry a second glass layer. */
+/* One native-style toolbar: title, segmented navigation and grouped actions. */
+:root { --window-toolbar-height: 64px; }
 .workbench-header {
-  --island-center-offset: 130px;
-  position: fixed;
-  top: var(--workbench-island-top, 12px);
-  left: calc(50% + var(--island-center-offset));
-  transform: translateX(-50%);
+  --toolbar-surface: color-mix(in srgb, var(--ui-panel) 76%, var(--ui-panel-soft));
+  --toolbar-border: color-mix(in srgb, var(--ui-line-strong) 60%, transparent);
+  --toolbar-selection: color-mix(in srgb, var(--ui-text) 9%, var(--ui-panel));
+  --toolbar-hover: color-mix(in srgb, var(--ui-text) 5%, var(--ui-panel));
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+  container: workbench-toolbar / inline-size;
   z-index: 30;
-  display: flex;
+  color: var(--ui-text);
+  background: var(--background);
+  border-bottom: 1px solid color-mix(in srgb, var(--ui-line) 60%, transparent);
+}
+.workbench-header__bar {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
-  width: max-content;
-  max-width: calc(100% - 2 * var(--island-center-offset) - 24px);
+  gap: 20px;
+  min-height: var(--window-toolbar-height);
+  padding: 10px 16px;
+  -webkit-app-region: drag;
+}
+.electron-macos .workbench-header__bar {
+  padding-left: max(88px, calc(88px / var(--ui-font-scale, 1)));
+}
+.electron-windows .workbench-header__bar { padding-right: 126px; }
+.workbench-header__workspace { min-width: 0; justify-self: start; max-width: 100%; }
+.workbench-header__workspace .wh-project-trigger {
+  min-width: 0;
+  max-width: 100%;
+  height: 44px;
+  padding: 3px 8px;
+  gap: 8px;
+  justify-content: flex-start;
+  border-radius: 10px;
+  text-align: left;
+}
+.wh-project-copy { display: flex; flex-direction: column; min-width: 0; }
+.workbench-header__workspace .wh-project-label {
+  max-width: 240px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 650;
+  letter-spacing: -.02em;
   white-space: nowrap;
 }
-.workbench-shell:is([data-active-panel="git"], [data-active-panel="settings"], [data-has-project="false"], :not([data-active-panel])) .workbench-header { --island-center-offset: 0px; }
-.workbench-shell .workspace-island-slot .workbench-header {
-  position: relative;
-  inset: auto;
-  width: max-content;
-  max-width: 100%;
-  transform: none;
+.wh-project-subtitle {
+  overflow: hidden;
+  color: var(--ui-subtle);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.workbench-header__workspace .wh-project-trigger > svg { flex-shrink: 0; color: var(--ui-subtle); }
+.workbench-header__navigation { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.workbench-header__navigation .wh-tabs,
+.workbench-header__actions {
+  padding: 3px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 999px;
+  background: var(--toolbar-surface);
+  box-shadow: 0 1px 2px rgb(var(--theme-shadow-rgb) / .025);
+}
+.workbench-header__navigation .wh-tabs { flex: 0 0 auto; }
+.workbench-header__navigation .wh-tab { min-width: 64px; height: 30px; padding-inline: 12px; border-radius: 999px; font-size: 12px; }
+.workbench-header__navigation .wh-tab > span { display: inline; }
+.workbench-header__git-tools {
+  display: flex;
+  min-width: 0;
+  max-width: min(100%, 440px);
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.workbench-header__git-tools::-webkit-scrollbar { display: none; }
+.workbench-header__git-tools .git-island-toolbar { width: max-content; min-height: 38px; }
+.workbench-header__actions { justify-self: end; justify-content: flex-end; gap: 2px; }
+.workbench-header__bar :is(button, a, input, select, nav, [role="button"], .workbench-header__actions) { -webkit-app-region: no-drag; }
+.workbench-header .wh-btn { flex: 0 0 32px; width: 32px; height: 30px; border-radius: 999px; }
+.workbench-header .wh-btn:is(:hover, .active),
+.workbench-header .wh-project-trigger:hover { background: var(--toolbar-hover); color: var(--ui-text); box-shadow: none; }
+.workbench-header .wh-tab[aria-pressed="true"] { background: var(--toolbar-selection); color: var(--ui-text); box-shadow: none; }
+.workbench-header .wh-tab:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--toolbar-hover); }
+.workbench-header .island-selection-pill { border-radius: 999px; background: var(--toolbar-selection); box-shadow: none; }
+.workbench-header :is(.wh-btn, .wh-tab, .wh-project-trigger):focus-visible { outline: 2px solid var(--theme-focus); outline-offset: 2px; }
+.workbench-header__actions .subagent-island-anchor { margin-left: 0; }
+.workbench-header__actions .synax-island-material.liquid-glass-surface[data-glass-state] { min-height: 30px; padding: 0; }
+.workbench-header__actions .synax-island-material > .liquid-glass-backdrop { box-shadow: none; background: transparent; }
+@container workbench-toolbar (max-width: 1000px) {
+  .workbench-header__bar { gap: 12px; }
+  .workbench-header__workspace .wh-project-label { max-width: 180px; }
+}
+@container workbench-toolbar (max-width: 680px) {
+  .workbench-header__bar { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .workbench-header__navigation { grid-row: 2; grid-column: 1 / -1; justify-self: center; max-width: 100%; }
+  .workbench-header__actions { grid-row: 1; grid-column: 2; }
+  .workbench-header__workspace .wh-project-label { max-width: 160px; }
+  .electron-macos .workbench-header__bar { padding-right: 12px; }
+  .electron-windows .workbench-header__bar { padding-left: 12px; }
+}
+@media (forced-colors: active) {
+  .workbench-header :is(.wh-tab[aria-pressed="true"], .wh-btn.active) { outline: 1px solid Highlight; outline-offset: -2px; }
 }
 .synax-island, .wh-pill {
   position: relative;
@@ -32,7 +119,6 @@
   box-shadow: none;
   isolation: isolate;
 }
-.workbench-header > .synax-island { min-width: 0; max-width: 100%; }
 .synax-island-material.liquid-glass-surface[data-glass-state] {
   /* One solid pill envelope for every island: an opaque soft surface instead of
      a blurred backdrop. The selected pill stays one step lighter (--ui-panel),
@@ -65,7 +151,6 @@
 .synax-island-material.liquid-glass-surface[data-glass-state] > :is(.liquid-glass-svg, .liquid-glass-gpu-host) {
   display: none;
 }
-.workbench-island-mount > .workbench-header > .synax-island { transform-origin: top left; }
 .wh-pill-slot {
   flex: 0 0 auto;
   width: 0;
@@ -131,15 +216,8 @@
 .wh-pill-btn--danger-soft { color: hsl(var(--destructive)); background: hsl(var(--destructive) / .08); border-color: transparent; }
 .wh-pill-btn:disabled { opacity: .4; cursor: not-allowed; }
 .wh-pill-btn:active:not(:disabled) { box-shadow: var(--ui-shadow-inset); }
-.workbench-header--docked .synax-island { border-radius: 9999px; }
-.workbench-header--docked .synax-island-material { min-height: 34px; padding: 3px; gap: 1px; }
-.workbench-header--docked :is(.wh-btn, .wh-tab, .wh-project-trigger, .wh-goal-menu) { width: 28px; min-width: 28px; height: 28px; padding: 0; border-radius: 8px; }
-.workbench-header--docked .wh-divider { margin-inline: 3px; height: 12px; }
 .work-quick-actions.wh-pill { position: absolute; top: 14px; right: 10px; z-index: 25; height: 32px; padding: 2px; border: 1px solid var(--ui-line); background: var(--ui-panel); box-shadow: var(--ui-shadow-control); }
 @media (max-width: 760px) {
-  .workbench-header { left: 8px; right: 8px; max-width: none; width: auto; transform: none; }
-  .workbench-shell .workspace-island-slot .workbench-header { left: auto; right: auto; width: max-content; max-width: 100%; }
-  .workbench-header > .synax-island { flex: 1 1 auto; }
   .synax-island-material.liquid-glass-surface[data-glass-state] { gap: 1px; padding: 4px; min-height: 40px; }
   .wh-project-label { max-width: 70px; }
   .wh-tab { width: 30px; min-width: 30px; padding: 0; }

@@ -20,6 +20,90 @@ use std::collections::{HashMap, HashSet};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
+/// Only this error is eligible for model-side argument correction. Never
+/// dispatch Rig's partial-object fallback or expose the argument payload.
+#[derive(Debug, thiserror::Error)]
+#[error("provider returned invalid JSON arguments for tool '{tool_name}' (call '{call_id}'): {detail}")]
+pub(crate) struct InvalidToolArguments {
+    tool_name: String,
+    call_id: String,
+    detail: String,
+}
+
+impl InvalidToolArguments {
+    fn new(tool_name: &str, call_id: &str, arguments: &str, truncated: bool) -> Self {
+        let mut detail = match serde_json::from_str::<Value>(arguments) {
+            Err(error) => error.to_string(),
+            Ok(Value::String(inner)) => match serde_json::from_str::<Value>(&inner) {
+                Err(error) => format!("encoded arguments: {error}"),
+                Ok(_) => "expected a JSON object".into(),
+            },
+            Ok(_) => "expected a JSON object".into(),
+        };
+        if truncated {
+            detail.push_str("; the response reached the output token limit");
+        }
+        Self { tool_name: tool_name.into(), call_id: call_id.into(), detail }
+    }
+}
+
+/// DeepSeek-compatible gateways occasionally emit literal newlines, tabs or
+/// other control bytes inside a JSON string when a tool argument contains a
+/// large source file. JSON requires those bytes to be escaped. Repair only
+/// this unambiguous encoding defect; never close missing containers or accept
+/// Rig's partial-object fallback, because that could execute truncated code.
+fn repair_tool_arguments(text: &str) -> Option<serde_json::Map<String, Value>> {
+    fn parse(value: &str) -> Option<serde_json::Map<String, Value>> {
+        match serde_json::from_str::<Value>(value).ok()? {
+            Value::Object(object) => Some(object),
+            _ => None,
+        }
+    }
+
+    let trimmed = text.trim();
+    if let Some(object) = parse(trimmed) {
+        return Some(object);
+    }
+    let fenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```JSON"))
+        .and_then(|value| value.strip_suffix("```"))
+        .map(str::trim);
+    if let Some(object) = fenced.and_then(parse) {
+        return Some(object);
+    }
+
+    let mut repaired = String::with_capacity(trimmed.len() + 32);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in trimmed.chars() {
+        match ch {
+            '"' if !escaped => {
+                in_string = !in_string;
+                repaired.push('"');
+            }
+            '\\' if in_string && !escaped => {
+                escaped = true;
+                repaired.push('\\');
+            }
+            '\n' if in_string => repaired.push_str("\\n"),
+            '\r' if in_string => repaired.push_str("\\r"),
+            '\t' if in_string => repaired.push_str("\\t"),
+            ch if in_string && ch.is_control() => {
+                repaired.push_str(&format!("\\u{:04x}", ch as u32));
+            }
+            ch => {
+                repaired.push(ch);
+                escaped = false;
+            }
+        }
+        if escaped && ch != '\\' {
+            escaped = false;
+        }
+    }
+    parse(&repaired)
+}
+
 fn model(input: &ProviderRequest) -> Result<DynModel<Completion>, Error> {
     let extra = crate::provider_metadata::RequestMetadata::new(input)?;
     let key = input.api_key.clone().unwrap_or_default();
@@ -63,21 +147,33 @@ pub(crate) fn provider_events(input: ProviderRequest) -> BoxStream<'static, Resu
         let request = request(&input)?;
         let mut stream = model(&input)?.stream(request)?;
         yield json!({"type":"stream-start","warnings":[]});
+        // Rig normalizes OpenAI Chat, OpenAI Responses and Anthropic streams
+        // into the same events. Keep cumulative display telemetry here so the
+        // native loop exposes the same live token counters for all protocols.
+        let mut streamed_output = String::new();
+        let mut streamed_reasoning = String::new();
         let mut reasoning_sent = HashMap::<usize, String>::new();
         while let Some(item) = stream.next().await {
             match item? {
-                Item::Event(StreamEvent::Text { part, text }) =>
-                    yield json!({"type":"text-delta","id":format!("rust-text-{}",part.index()),"delta":text}),
+                Item::Event(StreamEvent::Text { part, text }) => {
+                    streamed_output.push_str(&text);
+                    yield json!({"type":"text-delta","id":format!("rust-text-{}",part.index()),"delta":text,
+                        "outputTokens":crate::loop_context::tokens(&streamed_output)});
+                }
                 Item::Event(StreamEvent::Reasoning { part, text }) => {
                     reasoning_sent.entry(part.index()).or_default().push_str(&text);
-                    yield json!({"type":"reasoning-delta","id":format!("rust-reasoning-{}",part.index()),"delta":text});
+                    streamed_reasoning.push_str(&text);
+                    yield json!({"type":"reasoning-delta","id":format!("rust-reasoning-{}",part.index()),"delta":text,
+                        "thinkingTokens":crate::loop_context::tokens(&streamed_reasoning)});
                 }
                 Item::Event(StreamEvent::End { part, content: AssistantContent::Reasoning(reasoning) }) => {
                     // A compatible server may send reasoning only in item.done.
                     let sent = reasoning_sent.entry(part.index()).or_default();
                     if let Some(suffix) = reasoning.text.strip_prefix(sent.as_str()) {
                         if !suffix.is_empty() {
-                            yield json!({"type":"reasoning-delta","id":format!("rust-reasoning-{}",part.index()),"delta":suffix});
+                            streamed_reasoning.push_str(suffix);
+                            yield json!({"type":"reasoning-delta","id":format!("rust-reasoning-{}",part.index()),"delta":suffix,
+                                "thinkingTokens":crate::loop_context::tokens(&streamed_reasoning)});
                         }
                     }
                     if let Some(native) = reasoning.native {
@@ -100,12 +196,18 @@ pub(crate) fn provider_events(input: ProviderRequest) -> BoxStream<'static, Resu
         for call in response.tool_calls() {
             let id = call.id.to_string();
             if !ids.insert(id.clone()) { Err(format!("provider returned duplicate tool call ID '{id}'"))?; }
-            if call.function.invalid_arguments.is_some() {
-                Err(format!("provider returned invalid JSON arguments for tool '{id}'"))?;
-            }
             let name = call.function.name.as_str();
             let runtime_name = tool_names.runtime_name(name);
-            calls.push(json!({"type":"tool-call","toolCallId":id,"toolName":runtime_name,"input":call.function.arguments}));
+            let arguments = if let Some(raw) = &call.function.invalid_arguments {
+                match repair_tool_arguments(raw) {
+                    Some(repaired) => Value::Object(repaired),
+                    None => Err(InvalidToolArguments::new(runtime_name, &id, raw,
+                        matches!(response.finish_reason(), Some(FinishReason::Length))))?,
+                }
+            } else {
+                Value::Object(call.function.arguments.clone())
+            };
+            calls.push(json!({"type":"tool-call","toolCallId":id,"toolName":runtime_name,"input":arguments}));
         }
         let usage = &response.usage;
         yield json!({"type":"raw","rawValue":response.raw});
@@ -655,5 +757,31 @@ fn content_text(value: &Value) -> String {
             .join(""),
         Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repair_tool_arguments;
+
+    #[test]
+    fn repairs_literal_control_bytes_inside_large_code_strings() {
+        let repaired = repair_tool_arguments(
+            "{\"path\":\"game.html\",\"content\":\"const title = \\\"鹈鹕\\\";\nconsole.log(title);\"}",
+        )
+        .expect("literal newline should be escaped");
+        assert_eq!(repaired["path"], "game.html");
+        assert_eq!(repaired["content"], "const title = \"鹈鹕\";\nconsole.log(title);");
+    }
+
+    #[test]
+    fn never_repairs_a_truncated_object() {
+        assert!(repair_tool_arguments("{\"path\":\"game.html\",\"content\":\"const x = 1").is_none());
+    }
+
+    #[test]
+    fn strips_json_code_fences_without_changing_unicode() {
+        let repaired = repair_tool_arguments("```json\n{\"text\":\"中文\"}\n```").unwrap();
+        assert_eq!(repaired["text"], "中文");
     }
 }

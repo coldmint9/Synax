@@ -1,3 +1,4 @@
+import { streamTurnRequestSchema } from "../contracts.js";
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentRuntimeRoutes } from '../../../transport/http/agent-runtime.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
@@ -65,4 +66,11 @@ describe('agent runtime route contracts', () => {
     expect(runs.status).toBe(200);
     expect(artifacts.status).toBe(200);
   });
+});
+
+it("accepts legacy maxSteps without a step ceiling", () => {
+  for (const maxSteps of [0, 1, 501, 10_000]) {
+    expect(streamTurnRequestSchema.parse({ message: "Continue", maxSteps }).maxSteps).toBe(maxSteps);
+  }
+  expect(streamTurnRequestSchema.parse({ message: "Continue" }).maxSteps).toBeUndefined();
 });

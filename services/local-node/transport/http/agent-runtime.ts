@@ -166,7 +166,7 @@ agentRuntimeRoutes.use('*', async (c, next) => {
   try {
     // History queries already read the authoritative Rust index. Hydrating the
     // execution working set here would drain every history page before paging.
-    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
     await agentRuntimeStore.hydrateSessions();
     if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.hydrateSession(id);
@@ -2778,27 +2778,30 @@ const forkActionSchema = historyActionSchema.extend({
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]),
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
+  const encoded = c.req.query("messageIds");
+  let messageIds: string[] | undefined;
+  if (encoded !== undefined) {
+    let value: unknown;
+    try {
+      value = JSON.parse(encoded);
+    } catch {
+      return c.json({ error: "Invalid messageIds JSON" }, 400);
+    }
+    // 已加载的消息会随翻页累积，筛选条件不能限制为 64 条。
+    const parsed = z.array(z.string().min(1).max(256)).safeParse(value);
+    if (!parsed.success) return validationError(c, parsed.error);
+    messageIds = parsed.data;
+  }
   try {
-    const encoded = c.req.query("messageIds");
-    const messageIds =
-      encoded === undefined
-        ? undefined
-        : z
-            .array(z.string().min(1).max(256))
-            .max(64)
-            .parse(JSON.parse(encoded));
     {
       const sessionId = c.req.param("sessionId");
-      const [head, checkpoints, messages, control] = await Promise.all([
+      const [head, checkpoints, bounds, control] = await Promise.all([
         runtimeFacade.historyHeadAuthoritative(sessionId),
         runtimeFacade.listHistoryCheckpoints(sessionId),
-        runtimeFacade.listMessageHistory(sessionId) as Promise<
-          AgentRuntimeMessage[]
-        >,
+        runtimeFacade.messageHistoryBoundsAuthoritative(sessionId),
         runtimeFacade.controlState(sessionId) as Promise<{runtimeControl?:{historyRequestId?:string}}>,
       ]);
       const messageSet = messageIds ? new Set(messageIds) : undefined;
-      const latestMessageId = messages.at(-1)?.id;
       return c.json({
         sessionId,
         revision: head.revision,
@@ -2828,10 +2831,10 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
             reason: null,
             transcriptOnly: false,
             destructive: true,
-            hasLaterHistory: checkpoint.metadata.messageId !== latestMessageId,
+            hasLaterHistory: checkpoint.metadata.messageId !== bounds.lastMessageId,
             initialInput:
               checkpoint.metadata.kind === "input" &&
-              messages[0]?.id === checkpoint.metadata.messageId,
+              bounds.firstMessageId === checkpoint.metadata.messageId,
           })),
       });
     }

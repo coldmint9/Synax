@@ -23,6 +23,7 @@ const RUN_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
   "failed",
   "cancelled",
   "interrupted",
+  "blocked",
 ];
 
 function useSessionTranscriptStatic() {
@@ -171,8 +172,21 @@ export function SessionTranscript({
     streamingCompletedSteps,
     streamingLive,
   ]);
+  // Tool calls already render their own live row. Keeping the generic
+  // thinking placeholder mounted beneath that row makes a healthy tool-only
+  // turn look stalled, and after twenty seconds it incorrectly shows the
+  // network/provider warning from ThinkingIndicator.
+  const hasLiveToolActivity =
+    streamingLive.pendingToolCalls.length > 0 ||
+    streamingLive.blocks.some(
+      (block) => block.type === "tool_call" || block.type === "tool_call_group",
+    );
   const runFinished = Boolean(
-    responseRun && RUN_TERMINAL_STATUSES.includes(responseRun.status),
+    (responseRun && RUN_TERMINAL_STATUSES.includes(responseRun.status)) ||
+      (pending &&
+        session &&
+        !session.activeRunId &&
+        RUN_TERMINAL_STATUSES.includes(session.status as AgentRunStatus)),
   );
   // A running session row is not enough to show thinking: during a switch its
   // detail snapshot may still be loading.
@@ -185,6 +199,7 @@ export function SessionTranscript({
     responseRun?.status !== "waiting_input" &&
     !hasAssistantText &&
     !hasAssistantThinking &&
+    !hasLiveToolActivity &&
     !runFinished &&
     (Boolean(pending) ||
       session?.status === "queued" ||

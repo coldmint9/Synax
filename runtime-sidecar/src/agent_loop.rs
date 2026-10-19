@@ -4,6 +4,7 @@
 use crate::loop_context::{self, Compaction, ContextAction, ContextPolicy};
 use crate::loop_policy::{self, Decision, Disposition, RuntimeBinding};
 use crate::provider::{ProviderRequest, provider_events};
+use crate::provider_adapter::InvalidToolArguments;
 use crate::storage::HotStore;
 use crate::{actor::SessionShardRouter, execution::ExecutionLease};
 use futures_util::StreamExt;
@@ -19,6 +20,7 @@ use uuid::Uuid;
 const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
 const TERMINAL_RETENTION_MS: u64 = 15 * 60 * 1000;
 const MAX_ACTIVE_LOOPS: usize = 128;
+const MAX_TOOL_ARGUMENT_RETRIES: u32 = 2;
 type LoopError = Box<dyn std::error::Error + Send + Sync>;
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -31,8 +33,10 @@ fn now_ms() -> u64 {
 pub(crate) struct AgentLoopRequest {
     #[serde(flatten)]
     pub provider: ProviderRequest,
-    #[serde(default = "default_max_steps", rename = "maxSteps")]
-    pub max_steps: u32,
+    // Retain old request/checkpoint bytes for idempotency, but never use this
+    // retired field to stop execution. New callers do not send a step budget.
+    #[serde(default, rename = "maxSteps", skip_serializing_if = "Option::is_none")]
+    pub legacy_max_steps: Option<u64>,
     #[serde(default, rename = "runtimeBinding")]
     pub runtime_binding: Option<RuntimeBinding>,
     #[serde(default, rename = "requestId")]
@@ -41,9 +45,6 @@ pub(crate) struct AgentLoopRequest {
     pub context_policy: Option<ContextPolicy>,
     #[serde(default, rename = "executionContext")]
     pub execution_context: Option<ExecutionLease>,
-}
-fn default_max_steps() -> u32 {
-    32
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -108,6 +109,12 @@ enum Phase {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+struct ToolArgumentRetry {
+    attempt: u32,
+    error: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct Checkpoint {
     version: u32,
     #[serde(default)]
@@ -122,6 +129,8 @@ struct Checkpoint {
     step_context: Option<StepContextRequest>,
     #[serde(default)]
     compacted_step: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_argument_retry: Option<ToolArgumentRetry>,
     sequence: u64,
     event_bytes: usize,
     terminal_at: Option<u64>,
@@ -314,9 +323,6 @@ impl AgentLoopManager {
         if let Some(policy) = &request.context_policy {
             policy.validate()?;
         }
-        if request.max_steps == 0 || request.max_steps > 256 {
-            return Err("maxSteps must be between 1 and 256".into());
-        }
         if request
             .request_id
             .as_ref()
@@ -393,6 +399,7 @@ impl AgentLoopManager {
                     call_tools: HashMap::new(),
                     step_context: None,
                     compacted_step: None,
+                    tool_argument_retry: None,
                     sequence: 0,
                     event_bytes: 0,
                     terminal_at: None,
@@ -676,9 +683,6 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         continue;
                     }
                 }
-                if step > checkpoint.request.max_steps {
-                    return Err("agent loop step limit exceeded".into());
-                }
                 let context_id = format!("{}:{step}", handle.id);
                 let mut state = handle.state.lock().await;
                 let mut next = state.checkpoint.clone();
@@ -842,9 +846,6 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         continue;
                     }
                 }
-                if step > checkpoint.request.max_steps {
-                    return Err("agent loop step limit exceeded".into());
-                }
                 if attempt == 0 {
                     if let Some(policy) = &checkpoint.request.context_policy {
                         let action = if checkpoint.compacted_step == Some(step) {
@@ -881,7 +882,13 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         step,
                         attempt: attempt + 1,
                     };
-                    let event = json!({"type":if attempt == 0 { "step-started" } else { "step-restarted" },"step":step,"attempt":attempt + 1});
+                    let mut event = json!({"type":if attempt == 0 { "step-started" } else { "step-restarted" },"step":step,"attempt":attempt + 1});
+                    if let Some(retry) = &next.tool_argument_retry {
+                        event["reason"] = json!("invalid_tool_arguments");
+                        event["error"] = json!(retry.error);
+                        event["attempt"] = json!(retry.attempt);
+                        event["maxRetries"] = json!(MAX_TOOL_ARGUMENT_RETRIES);
+                    }
                     handle.commit(&mut state, next, vec![event], false).await?;
                 }
                 let mut events = provider_events(checkpoint.request.provider.clone());
@@ -890,6 +897,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 let mut calls = Vec::new();
                 let mut assistant = None;
                 let mut final_events = Vec::new();
+                let mut argument_error = None;
                 loop {
                     let event = tokio::select! {
                         biased;
@@ -904,7 +912,14 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     let Some(event) = event else {
                         break;
                     };
-                    let mut event = event?;
+                    let mut event = match event {
+                        Ok(event) => event,
+                        Err(error) if error.is::<InvalidToolArguments>() => {
+                            argument_error = Some(error);
+                            break;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     event["step"] = json!(step);
                     match event["type"].as_str() {
                         Some("assistant-message") => {
@@ -923,6 +938,21 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         Some("finish") => final_events.push(event),
                         _ => handle.emit(event, false).await?,
                     }
+                }
+                if let Some(error) = argument_error {
+                    let retries = checkpoint.tool_argument_retry.as_ref().map_or(0, |retry| retry.attempt);
+                    if retries >= MAX_TOOL_ARGUMENT_RETRIES {
+                        return Err(error);
+                    }
+                    let reason = format!("{error}. No tools from this response were executed. Retry the intended tool calls using a complete JSON object matching each tool's schema, with properly escaped strings and no Markdown fences. If the response was truncated, use smaller calls.");
+                    let mut state = handle.state.lock().await;
+                    let mut next = state.checkpoint.clone();
+                    next.tool_argument_retry = Some(ToolArgumentRetry { attempt: retries + 1, error: error.to_string() });
+                    // Persist the correction and retry budget together. The
+                    // rejected assistant/tool batch is never added to history.
+                    next.request.provider.prompt.push(json!({"role":"user","content":[{"type":"text","text":reason}]}));
+                    handle.commit(&mut state, next, vec![json!({"type":"policy-correction","step":step,"reason":reason})], false).await?;
+                    continue;
                 }
                 let assistant =
                     assistant.ok_or("provider response is missing assistant content")?;
@@ -953,6 +983,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 let invalid_batch = loop_policy::validate_tool_batch(&final_events);
                 let mut state = handle.state.lock().await;
                 let mut next = state.checkpoint.clone();
+                next.tool_argument_retry = None;
                 next.request.provider.prompt.push(assistant);
                 for call in final_events
                     .iter()
@@ -1110,17 +1141,27 @@ mod tests {
     }
 
     #[test]
-    fn reads_camel_case_step_limit() {
-        assert_eq!(request().max_steps, 1);
+    fn retains_legacy_step_budget_for_checkpoint_identity_without_a_default() {
+        assert_eq!(request().legacy_max_steps, Some(1));
+        let request: AgentLoopRequest =
+            serde_json::from_value(json!({"apiFormat":"invalid","model":"test"})).unwrap();
+        assert_eq!(request.legacy_max_steps, None);
+        assert!(
+            serde_json::to_value(request)
+                .unwrap()
+                .get("maxSteps")
+                .is_none()
+        );
     }
 
     #[tokio::test]
-    async fn rejects_invalid_step_limits() {
+    async fn accepts_retired_step_budgets_without_admission_limits() {
         let loops = AgentLoopManager::default();
-        let mut req = request();
-        req.max_steps = 0;
-        assert!(loops.start(req.clone()).await.is_err());
-        req.max_steps = 257;
-        assert!(loops.start(req).await.is_err());
+        for value in [0, 1, 257, 10_000] {
+            let mut req = request();
+            req.legacy_max_steps = Some(value);
+            let id = loops.start(req).await.unwrap();
+            loops.cancel(&id).await.unwrap();
+        }
     }
 }

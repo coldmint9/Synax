@@ -1,5 +1,5 @@
-/* The header is SessionListHeader in both views: identical traffic-light inset
-   and collapse-button position. Project names belong to the scrollable tree. */
+/* Both views share SessionListHeader below the global toolbar.
+   Project names belong to the scrollable tree. */
 .workspace-directory-tree-panel { padding: 5px 6px; }
 .workspace-directory-tree-level { list-style: none; margin: 0; padding: 0; }
 .workspace-directory-tree-row {

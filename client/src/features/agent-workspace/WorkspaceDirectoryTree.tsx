@@ -1,10 +1,11 @@
-import { ChevronRight, File, Folder, FolderOpen, LoaderCircle } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { projectApi, type ProjectWorkspaceRoot, type WorkspaceTreeListing } from "../../adapters/transport/project";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { Button } from "../../shared/ui/ui/Button";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
+import { FileTypeIcon } from "./FileTypeIcon";
 
 const keyOf = (rootId: string, path: string) => JSON.stringify([rootId, path]);
 interface Level { page?: WorkspaceTreeListing; loading?: boolean; error?: string }
@@ -153,7 +154,7 @@ function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?
             data-ignored={entry.ignored || undefined} style={{ paddingLeft: 27 + depth * 14 }}
             disabled={!sessionId} title={entry.path}
             onClick={() => sessionId && openWorkspaceFile(sessionId, entry.path, null, root.id, root.name)}>
-            <File size={14} aria-hidden="true" /><span className="truncate">{entry.name}</span>
+            <FileTypeIcon path={entry.path} size={14} /><span className="truncate">{entry.name}</span>
           </button></li>)}
       {state?.error && <li className="workspace-directory-tree-error" role="alert">
         <span title={state.error}>{t("workspaceDirectoryTreeFailed")}</span>

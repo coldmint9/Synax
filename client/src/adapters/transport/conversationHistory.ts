@@ -50,11 +50,17 @@ const post = <T>(sessionId: string, route: string, body: unknown) =>
     silent: true,
   });
 export const conversationHistoryApi = {
-  list: (sessionId: string, signal?: AbortSignal, messageIds?: readonly string[]) =>
-    apiRequest<HistorySummary>(`${base(sessionId)}/checkpoints${messageIds ? `?messageIds=${encodeURIComponent(JSON.stringify(messageIds))}` : ""}`, {
+  list: (sessionId: string, signal?: AbortSignal, messageIds?: readonly string[]) => {
+    // 筛选只是响应优化。长会话使用无筛选查询，兼容旧服务的 64 条限制并避免 URL 超长。
+    const encoded = messageIds && messageIds.length <= 64
+      ? encodeURIComponent(JSON.stringify(messageIds))
+      : undefined;
+    const query = encoded !== undefined && encoded.length <= 6000 ? `?messageIds=${encoded}` : "";
+    return apiRequest<HistorySummary>(`${base(sessionId)}/checkpoints${query}`, {
       signal,
       silent: true,
-    }),
+    });
+  },
   preview: (
     sessionId: string,
     checkpointId: string,

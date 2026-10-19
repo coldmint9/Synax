@@ -568,10 +568,9 @@ export const streamTurnRequestSchema = z.object({
   maxSteps: z
     .number()
     .int()
-    .positive()
-    .max(500)
+    .nonnegative()
     .describe(
-      "Soft convergence threshold for the current round, not a hard step limit.",
+      "Deprecated compatibility field. The native agent loop has no step limit.",
     )
     .optional(),
   locale: z.enum(["zh", "en"]).optional(),

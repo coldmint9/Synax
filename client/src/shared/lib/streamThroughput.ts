@@ -51,6 +51,7 @@ export function noteLiveEvent(
     stepId?: unknown;
     outputTokens?: unknown;
     thinkingTokens?: unknown;
+    retry?: { phase?: unknown };
     liveChunks?: unknown;
   },
 ): void {
@@ -63,7 +64,21 @@ export function noteLiveEvent(
     noteStepTelemetry(sessionId, event.stepId, event.thinkingTokens, "thinking", true);
     return;
   }
+  if (event.type === "retry_status" &&
+      (event.retry?.phase === "waiting" || event.retry?.phase === "group_wait")) {
+    // A restarted request reuses the step identity but starts its counters at
+    // zero. Keep already observed output while accepting the new attempt.
+    const counter = counters.get(sessionId);
+    if (typeof event.stepId === "string") {
+      counter?.steps.delete(`output:${event.stepId}`);
+      counter?.steps.delete(`thinking:${event.stepId}`);
+    }
+    return;
+  }
   if (event.type !== "runtime_snapshot" || !Array.isArray(event.liveChunks)) return;
+  // The snapshot is the current attempt's baseline, including a retry that
+  // happened while disconnected. Historical output never adds to live speed.
+  counterFor(sessionId).steps.clear();
   for (const chunk of event.liveChunks) {
     if (!chunk || typeof chunk !== "object") continue;
     const value = chunk as { type?: unknown; stepId?: unknown; outputTokens?: unknown; thinkingTokens?: unknown };

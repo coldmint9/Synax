@@ -1,4 +1,5 @@
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawn, type ChildProcess } from "node:child_process";
+import type { Writable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,7 @@ import {
   waitForAuthoritativeLease,
 } from "./process-ownership.js";
 import { parseWslUncPath } from "../workspace-location.js";
+import { guardProcessGroup } from "./process-guardian.js";
 import {
   findWslOwnedProcess,
   wslCommandSpec,
@@ -75,29 +77,51 @@ export function spawnOwnedProcess(
         ownerId: ticket.id,
       })
     : { command, args };
-  const child = fork(launcherPath(), [], {
+  // The gate is replaced by the target with exec: PID, process group and owner
+  // marker remain stable, without a Node/Electron helper for every command.
+  // fd 3 keeps the start handshake separate from the command's stdin.
+  const direct = grouped && !wsl && !options.background;
+  const env = {
+    ...(wsl
+      ? wslLauncherEnvironment(options.env)
+      : externalCommandEnvironment(options.env, options.inheritEnv !== false)),
+    SYNAX_PROCESS_OWNER: ticket.id,
+    ELECTRON_RUN_AS_NODE: "1",
+  };
+  const child = direct ? spawn("/bin/sh", [
+    "-c",
+    'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; '
+      + 'command -v "$1" >/dev/null 2>&1 || { printf "ENOENT: %s\\n" "$1" >&2; exit 127; }; exec "$@"',
+    "synax-command",
+    ...(options.shell ? ["/bin/sh", "-c", [command, ...args].join(" ")] : [command, ...args]),
+  ], {
+    cwd: options.cwd,
+    detached: true,
+    env,
+    stdio: [options.stdin ?? "pipe", "pipe", "pipe", "pipe"],
+  }) : fork(launcherPath(), [], {
     cwd: wsl ? undefined : options.cwd,
     detached: grouped,
     env: {
-      ...(wsl
-        ? wslLauncherEnvironment(options.env)
-        : externalCommandEnvironment(
-            options.env,
-            options.inheritEnv !== false,
-          )),
-      SYNAX_PROCESS_OWNER: ticket.id,
+      ...env,
       ELECTRON_RUN_AS_NODE: "1",
     },
     execArgv: [],
     stdio: [options.stdin ?? "pipe", "pipe", "pipe", "ipc"],
   });
+  const gate = direct ? child.stdio[3] as Writable : undefined;
+  gate?.on("error", () => { /* cancellation may close the gate before start */ });
   let completedCode: number | null = null;
   child.on("message", (message: any) => {
     if (message?.type === "finished" && typeof message.code === "number")
       completedCode = message.code;
   });
   const sendStart = () => {
-    if (child.killed || child.exitCode !== null) return;
+    if (child.killed || child.exitCode !== null || child.signalCode !== null) return;
+    if (gate) {
+      gate.end("start\n");
+      return;
+    }
     child.send({
       type: "start",
       command: target.command,
@@ -113,10 +137,14 @@ export function spawnOwnedProcess(
       releaseOwnedProcess(ticket.id, completedCode ?? code),
     );
     child.once("error", () => releaseOwnedProcess(ticket.id));
-    void waitForAuthoritativeLease(ticket.id).then(sendStart).catch(() => {
+    void Promise.all([
+      waitForAuthoritativeLease(ticket.id),
+      direct && child.pid ? guardProcessGroup(child) : Promise.resolve(),
+    ]).then(sendStart).catch(() => {
       try { child.kill("SIGKILL"); } catch {}
       releaseOwnedProcess(ticket.id);
     });
+    child.once("close", () => gate?.destroy());
     if (wsl) {
       void (async () => {
         for (let attempt = 0; attempt < 20; attempt += 1) {

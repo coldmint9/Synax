@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RuntimeStreamProjector, type RuntimeSnapshot, type RuntimeStreamRecord } from './runtimeStream'
-import type { AgentSession, AgentRunStep } from './agentRuntime'
+import type { AgentSession, AgentRunStep, AgentRun } from './agentRuntime'
 const session = { id: 'session', status: 'running', activeRunId: 'run', pendingResumeToken: null, blockedReason: null, updatedAt: '' } as AgentSession
 const step = { id: 'step', runId: 'run', sessionId: 'session', index: 1, status: 'running' } as AgentRunStep
 const snapshot = { session, run: null, cursor: 10, liveChunks: [{ type: 'step_started', step },
@@ -10,6 +10,16 @@ const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId:
   chunk: { type: 'message_delta', stepId: 'step', delta: ' rest', outputTokens: 3 } }
 
 describe('runtime stream projection', () => {
+  it('preserves the authoritative run from snapshots and terminal records', () => {
+    const projector = new RuntimeStreamProjector();
+    const run = { id: 'run', sessionId: 'session', status: 'running', metadata: {} } as AgentRun;
+    expect(projector.snapshot({ ...snapshot, run })[0]).toMatchObject({ run });
+    const finished = { ...run, status: 'completed' as const, triggerMessageId: 'user-1' };
+    expect(projector.record({ ...record,
+      state: { ...session, status: 'completed', activeRunId: null },
+      chunk: { type: 'run_finished', run: finished },
+    })).toEqual([expect.objectContaining({ type: 'runtime_state', run: finished })]);
+  });
   it('preserves cumulative thinking telemetry and deduplicates repeated records', () => {
     const projector = new RuntimeStreamProjector();
     projector.snapshot(snapshot);

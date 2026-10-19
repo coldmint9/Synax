@@ -1,8 +1,6 @@
-import { ToolbarPill } from "./ToolbarPill";
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
 import { Terminal as TerminalIcon } from "lucide-react";
-import { IslandSurface } from "./IslandSurface";
 import { ThemeToggle } from "../../shared/ui/ThemeToggle";
 import { useTerminalStore } from "../../features/terminal/terminalStore";
 import { useState, useCallback, useEffect } from "react";
@@ -17,10 +15,9 @@ import {
   GitMerge,
   Bot,
   Settings2,
-  ChevronDown,
   Target,
 } from "lucide-react";
-import { useShellStore, type ProjectSummary } from "../../shared/state/shellStore";
+import type { ProjectSummary } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 import {
@@ -30,7 +27,6 @@ import {
 import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/sessionWorkspaceStore";
 import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
-import { WorkbenchIsland } from "./WorkbenchIsland";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
 
@@ -61,11 +57,9 @@ const navTabs: { id: ActivityPanel; icon: typeof Bot; label: string }[] = [
 function ProjectSessionBadgeMark({
   badge,
   showCount = false,
-  className,
 }: {
   badge?: ProjectSessionBadge;
   showCount?: boolean;
-  className?: string;
 }) {
   const { t } = useLocale();
   if (!badge?.total) return null;
@@ -82,7 +76,7 @@ function ProjectSessionBadgeMark({
   return (
     <span
       role="img"
-      className={["project-session-badge", className].filter(Boolean).join(" ")}
+      className="project-session-badge"
       title={label}
       aria-label={label}
     >
@@ -109,7 +103,7 @@ function ProjectSwitcher({
   onCreateProject,
   onRemoveRequest,
   onOpen,
-  iconOnly = false,
+  subtitle,
 }: {
   hasProject: boolean;
   projectName: string;
@@ -119,15 +113,16 @@ function ProjectSwitcher({
   onCreateProject: () => void;
   onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
-  iconOnly?: boolean;
+  subtitle: string;
 }) {
   const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
   return <WorkspaceSwitcher
     hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
     projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
-    onRemoveRequest={onRemoveRequest} iconOnly={iconOnly}
+    onRemoveRequest={onRemoveRequest}
+    subtitle={subtitle}
     onOpen={() => { onOpen?.(); void refresh(); }}
-    badge={<ProjectSessionBadgeMark badge={badges[currentProjectId]} className={iconOnly ? "project-session-badge--icon-trigger" : undefined} />}
+    badge={<ProjectSessionBadgeMark badge={badges[currentProjectId]} />}
     renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;
 }
@@ -136,19 +131,17 @@ function MainNavTabs({
   activePanel,
   hasProject,
   onPanelToggle,
-  iconOnly = false,
 }: {
   activePanel: ActivityPanel | null;
   hasProject: boolean;
   onPanelToggle: (panel: ActivityPanel) => void;
-  iconOnly?: boolean;
 }) {
   const { t } = useLocale();
 
   return (
     <nav
       aria-label={t("workspaceMainNav")}
-      className={`wh-tabs ${iconOnly ? "wh-tabs--icon-only" : ""}`}
+      className="wh-tabs"
     >
       <IslandSelection activeKey={activePanel} className="wh-tabs-list">
         {navTabs
@@ -166,8 +159,8 @@ function MainNavTabs({
                 aria-label={tab.label}
                 className={`wh-tab wh-tab--${tab.id} ${activePanel === tab.id ? "bg-primary/10 text-primary" : ""}`}
               >
-                <Icon size={13} />
-                {!iconOnly && <span>{tab.label}</span>}
+                <Icon size={15} aria-hidden="true" />
+                <span>{tab.label}</span>
               </Button>
             );
           })}
@@ -176,32 +169,23 @@ function MainNavTabs({
   );
 }
 
-function GoalToolbarPill({
-  sessionId,
-  visible,
-  iconOnly = false,
-}: {
-  sessionId: string | null;
-  visible: boolean;
-  iconOnly?: boolean;
-}) {
+function GoalToolbar({ sessionId }: { sessionId: string | null }) {
   const { locale } = useLocale();
   const label = locale === "zh" ? "目标" : "Goal";
+  if (!sessionId) return null;
   return (
-    <ToolbarPill visible={visible && Boolean(sessionId)}>
-      {sessionId && (
-        <Popover>
-          {({ open }) => <>
-          <Tooltip content={label}><PopoverButton className={`wh-goal-menu ${iconOnly ? "wh-goal-menu--icon" : ""}`} aria-label={label}>
-            <Target size={14} />{!iconOnly && <span>{label}</span>}<ChevronDown size={11} aria-hidden="true" />
-          </PopoverButton></Tooltip>
-          <IslandPopoverPanel open={open} focus className="goal-monitor-menu" aria-label={label}>
-            <GoalMonitorPanel sessionId={sessionId} />
-          </IslandPopoverPanel>
-          </>}
-        </Popover>
-      )}
-    </ToolbarPill>
+    <Popover>
+      {({ open }) => <>
+        <Tooltip content={label}>
+          <PopoverButton className="wh-btn" aria-label={label}>
+            <Target size={16} aria-hidden="true" />
+          </PopoverButton>
+        </Tooltip>
+        <IslandPopoverPanel open={open} focus className="goal-monitor-menu" aria-label={label}>
+          <GoalMonitorPanel sessionId={sessionId} />
+        </IslandPopoverPanel>
+      </>}
+    </Popover>
   );
 }
 
@@ -217,7 +201,7 @@ export function WorkbenchHeader({
   onCreateProject,
   onRemoveProject,
 }: WorkbenchHeaderProps) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const location = useLocation();
   const terminalOpen = useTerminalStore((state) => state.open);
   const gitToolbarVisible =
@@ -257,96 +241,63 @@ export function WorkbenchHeader({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [chromeMode, selectedSessionId]);
 
-  const placement =
-    chromeMode === "workspaceDock" || chromeMode === "workspaceFocus"
-      ? "viewer"
-      : activePanel === "sessions"
-        ? "conversation"
-        : "global";
+  const terminalLabel = locale === "zh" ? "终端" : "Terminal";
+  const gitViews: Record<string, string> = locale === "zh"
+    ? { requests: "合并请求", branches: "历史树", worktrees: "工作树", presets: "预设" }
+    : { requests: "Merge requests", branches: "History", worktrees: "Worktrees", presets: "Presets" };
+  const subtitle = activePanel === "git"
+    ? `Git · ${location.pathname.includes("/git/mr/")
+      ? (locale === "zh" ? "合并请求" : "Merge request")
+      : gitViews[new URLSearchParams(location.search).get("view") ?? "branches"] ?? gitViews.branches}`
+    : activePanel === "settings" ? t("appSettings")
+    : activePanel === "sessions" ? (locale === "zh" ? "Work · 会话与工作区" : "Work · Conversations & workspace")
+    : locale === "zh" ? "Synax 工作区" : "Synax workspace";
 
   return (
-    <WorkbenchIsland placement={placement}>
-      {(compact) => (
-        <div
-          className={`workbench-header${compact ? " workbench-header--docked" : ""}`}
-        >
-          <>
-            <IslandSurface kind="primary">
-                <div className="project-switcher-anchor">
-                  <ProjectSwitcher
-                    hasProject={hasProject}
-                    projectName={projectName}
-                    currentProjectId={currentProjectId}
-                    projects={projects}
-                    onProjectSwitch={onProjectSwitch}
-                    onCreateProject={onCreateProject}
-                    onRemoveRequest={handleRemoveClick}
-                    onOpen={() => setProjectSwitcherUsed(true)}
-                    iconOnly={compact}
-                  />
-
-                  <ProjectImportHint
-                    hasProject={hasProject}
-                    targetActivated={projectSwitcherUsed}
-                    onImport={onCreateProject}
-                  />
-                </div>
-
-                <div className="wh-divider" />
-
-                <MainNavTabs
-                  activePanel={activePanel}
-                  hasProject={hasProject}
-                  onPanelToggle={onPanelToggle}
-                  iconOnly={compact}
-                />
-
-                <div className="wh-divider" />
-
-                <div className="wh-actions">
-                  <Tooltip content={useShellStore.getState().preferences.locale === "zh" ? "终端" : "Terminal"}><button
-                    type="button"
-                    className={`wh-btn ${terminalOpen ? "active" : ""}`}
-                    aria-pressed={terminalOpen}
-                    aria-label={
-                      useShellStore.getState().preferences.locale === "zh"
-                        ? "终端"
-                        : "Terminal"
-                    }
-                    onClick={() => useTerminalStore.getState().toggle()}
-                  >
-                    <TerminalIcon size={15} />
-                  </button></Tooltip>
-                  <Tooltip content={t("appSettings")}><button
-                    type="button"
-                    className={`wh-btn ${activePanel === "settings" ? "active" : ""}`}
-                    aria-pressed={activePanel === "settings"}
-                    aria-label={t("appSettings")}
-                    onClick={() => onPanelToggle("settings")}
-                  >
-                    <Settings2 size={15} />
-                  </button></Tooltip>
-                  <ThemeToggle />
-                </div>
-            </IslandSurface>
-
-            {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
-              <SubagentIsland sessionId={selectedSessionId} />
-            ) : null}
-
-            <GoalToolbarPill
-              sessionId={goalSessionId}
-              visible={hasProject && Boolean(goalSessionId)}
-              iconOnly={compact}
-            />
-            <ToolbarPill visible={gitToolbarVisible}>
-              <GitToolbarTarget />
-            </ToolbarPill>
-          </>
-
-          <WorkspaceRemoveDialog workspace={deleteTarget} currentProjectId={currentProjectId} onRemove={onRemoveProject} onClose={() => setDeleteTarget(null)} />
+    <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
+      <div className="workbench-header__bar">
+        <div className="project-switcher-anchor workbench-header__workspace">
+          <ProjectSwitcher
+            hasProject={hasProject}
+            projectName={projectName}
+            currentProjectId={currentProjectId}
+            projects={projects}
+            onProjectSwitch={onProjectSwitch}
+            onCreateProject={onCreateProject}
+            onRemoveRequest={handleRemoveClick}
+            onOpen={() => setProjectSwitcherUsed(true)}
+            subtitle={subtitle}
+          />
+          <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
         </div>
-      )}
-    </WorkbenchIsland>
+        <div className="workbench-header__navigation">
+          <MainNavTabs activePanel={activePanel} hasProject={hasProject} onPanelToggle={onPanelToggle} />
+          {gitToolbarVisible && <div className="workbench-header__git-tools"><GitToolbarTarget /></div>}
+        </div>
+        <div className="wh-actions workbench-header__actions">
+          {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
+            <SubagentIsland sessionId={selectedSessionId} />
+          ) : null}
+          <GoalToolbar sessionId={hasProject ? goalSessionId : null} />
+          <Tooltip content={terminalLabel}>
+            <button type="button" className={`wh-btn ${terminalOpen ? "active" : ""}`}
+              aria-pressed={terminalOpen} aria-label={terminalLabel}
+              onClick={() => useTerminalStore.getState().toggle()}>
+              <TerminalIcon size={16} aria-hidden="true" />
+            </button>
+          </Tooltip>
+          <Tooltip content={t("appSettings")}>
+            <button type="button" className={`wh-btn ${activePanel === "settings" ? "active" : ""}`}
+              aria-pressed={activePanel === "settings"} aria-label={t("appSettings")}
+              onClick={() => onPanelToggle("settings")}>
+              <Settings2 size={16} aria-hidden="true" />
+            </button>
+          </Tooltip>
+          <ThemeToggle />
+        </div>
+      </div>
+      <WorkspaceRemoveDialog workspace={deleteTarget} currentProjectId={currentProjectId}
+        onRemove={onRemoveProject} onClose={() => setDeleteTarget(null)} />
+    </header>
   );
 }

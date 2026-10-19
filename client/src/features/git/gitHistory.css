@@ -1,7 +1,7 @@
 /* Layout and graph coordinates live here; surface and control styling use Tailwind. */
 .git-workbench-modern {
   --git-soft-line: color-mix(in srgb, var(--ui-line) 55%, transparent);
-  padding: 80px clamp(16px, 3vw, 56px) 24px;
+  padding: 24px clamp(16px, 3vw, 56px) 24px;
   background: color-mix(in srgb, var(--ui-text) 2%, var(--ui-canvas));
   color: var(--ui-text);
 }
@@ -343,12 +343,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .git-workbench-modern {
-    padding-top: 72px;
+    padding-top: 24px;
   }
 }
 @media (max-width: 639px) {
   .git-workbench-modern {
-    padding: 64px 12px 12px;
+    padding: 20px 12px 12px;
   }
   .git-page-heading {
     gap: 12px;

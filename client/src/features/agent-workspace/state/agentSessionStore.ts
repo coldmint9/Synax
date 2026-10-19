@@ -2696,6 +2696,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             );
             return {
               sessions,
+              ...(event.run?.sessionId === event.sessionId
+                ? { runs: upsertById(state.runs, event.run) }
+                : {}),
               steps: next.steps,
               toolCalls: next.toolCalls,
               streamingStepId: runtimeActive ? next.streamingStepId : null,
@@ -2717,6 +2720,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         case "runtime_state": {
           get().patchSession(event.sessionId, event.patch);
           if (get().selectedSessionId !== event.sessionId) break;
+          // Lifecycle chunks carry the authoritative run even when the latest
+          // history page contains only messages. Do not leave the first send
+          // tied to its queued POST receipt until the user reloads the chat.
+          if (event.run?.sessionId === event.sessionId) {
+            const run = event.run;
+            set((state) => ({ runs: upsertById(state.runs, run) }));
+          }
           const terminal = [
             "completed",
             "failed",

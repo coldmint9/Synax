@@ -1,7 +1,7 @@
 .git-workbench {
   height: 100%;
   overflow: auto;
-  padding: 56px 32px 28px;
+  padding: 24px 32px 28px;
   color: var(--foreground);
   font-size: 13px;
 }
@@ -477,7 +477,7 @@
 }
 @media (max-width: 850px) {
   .git-workbench {
-    padding: 56px 16px 20px;
+    padding: 20px 16px;
   }
   .mr-detail-columns {
     grid-template-columns: 1fr;
@@ -517,44 +517,62 @@
   }
 }
 
-/* Controls hosted in the secondary island, not the page body. */
-.git-island-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
+/* Git views form one segmented group beside the global Work / Git switch. */
+.git-island-toolbar { display: flex; align-items: center; gap: 10px; }
 .git-island-views {
   display: flex;
   align-items: center;
-  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--toolbar-border, var(--ui-line));
+  border-radius: 999px;
+  background: var(--toolbar-surface, var(--ui-panel));
 }
-.git-island-view-select {
-  display: none;
+.git-island-toolbar .wh-pill-btn {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ui-text);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
 }
-.git-island-toolbar .wh-divider {
-  margin-inline: 3px;
+.git-island-toolbar .wh-pill-btn[aria-current="page"] { background: var(--toolbar-selection, var(--ui-panel-soft)); }
+.git-island-toolbar .wh-pill-btn:hover:not(:disabled):not([aria-current="page"]) { background: var(--toolbar-hover, var(--ui-panel-soft)); }
+.git-island-toolbar .wh-pill-btn--primary {
+  min-height: 38px;
+  gap: 5px;
+  border: 1px solid var(--toolbar-border, var(--ui-line));
+  background: var(--toolbar-surface, var(--ui-panel));
 }
-@media (max-width: 760px) {
-  .git-island-views {
-    display: none;
-  }
+.git-island-toolbar .wh-pill-btn:focus-visible { outline: 2px solid var(--theme-focus); outline-offset: -2px; }
+.git-island-view-select { display: none; }
+/* Container width follows interface zoom as well as the actual window width. */
+@container workbench-toolbar (max-width: 1100px) {
+  .git-island-views { display: none; }
   .git-island-view-select {
     display: block;
-    max-width: 100px;
-    border: none;
+    min-height: 38px;
+    max-width: 120px;
+    padding: 6px 10px;
+    border: 1px solid var(--toolbar-border);
     border-radius: 999px;
-    background: hsl(var(--primary) / 0.08);
-    color: var(--foreground);
-    padding: 4px 6px;
-    font-size: 11px;
+    background: var(--toolbar-surface);
+    color: var(--ui-text);
+    font: 12px var(--font-interface);
+    -webkit-app-region: no-drag;
   }
-  .git-island-action-label {
-    display: none;
-  }
-  .git-island-toolbar .wh-pill-btn {
-    width: 26px;
-    padding-inline: 0;
-  }
+  .git-island-view-select:focus-visible { outline: 2px solid var(--theme-focus); outline-offset: 2px; }
+  .git-island-action-label { display: none; }
+  .git-island-toolbar .wh-pill-btn--primary { width: 38px; padding: 0; }
+  .git-island-toolbar { gap: 6px; }
+}
+@media (forced-colors: active) {
+  .git-island-toolbar .wh-pill-btn[aria-current="page"] { outline: 1px solid Highlight; outline-offset: -2px; }
 }
 
 .mr-branches-card {

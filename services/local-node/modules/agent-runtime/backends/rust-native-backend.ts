@@ -33,6 +33,7 @@ import { modelContentParts } from "../media-assets.js";
 import { resolveMediaMessages } from "../media-capabilities.js";
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 import { getGlobalConfigForRuntime } from "../../../infrastructure/runtime/config/config-store.js";
+import { countTokens } from "../context-tokenizer.js";
 
 function toolSchema(value: unknown): Record<string, unknown> {
   return z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
@@ -167,7 +168,7 @@ export class RustNativeBackend implements BackendAdapter {
         apiKey: selection.config.apiKey ?? selection.config.options?.apiKey as string | undefined
           ?? selection.provider.env.map(name => process.env[name]?.trim()).find(Boolean),
         headers: selection.config.options?.headers as Record<string, string> | undefined,
-        model: selection.modelId, prompt: promptMessages, tools, maxOutputTokens: outputReserve, maxSteps: input.maxSteps ?? 32,
+        model: selection.modelId, prompt: promptMessages, tools, maxOutputTokens: outputReserve,
       }, signal, async loopId => {
         this.activeLoops.set(sessionId, loopId);
         run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopId: loopId } });
@@ -247,14 +248,23 @@ export class RustNativeBackend implements BackendAdapter {
         } else if (event.type === "step-restarted") {
           if (!step) throw new Error("Rust restart has no persisted step.");
           text = ""; thought = ""; assistant = undefined;
+          const correctingArguments = event.reason === "invalid_tool_arguments";
           yield { type: "retry_status", runId: run.id, stepId: step.id, retry: {
-            reason: "network", phase: "waiting", group: 1, attempt: event.attempt ?? 1,
-            maxRetries: 0, nextRetryAt: null, error: "Rust runtime recovered an interrupted model request.",
+            reason: correctingArguments ? "upstream" : "network", phase: "waiting", group: 1, attempt: event.attempt ?? 1,
+            maxRetries: event.maxRetries ?? 0, nextRetryAt: null,
+            error: event.error ?? "Rust runtime recovered an interrupted model request.",
           } };
         } else if (event.type === "text-delta" || event.type === "reasoning-delta") {
           if (!step) throw new Error("Rust output has no step.");
           if (event.type === "text-delta") text += event.delta ?? ""; else thought += event.delta ?? "";
-          yield { type: event.type === "text-delta" ? "message_delta" : "thought_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "" };
+          const reportedTokens = event.type === "text-delta" ? event.outputTokens : event.thinkingTokens;
+          // Older sidecars/checkpoints may not carry live token telemetry.
+          const telemetry = typeof reportedTokens === "number" && Number.isSafeInteger(reportedTokens) && reportedTokens >= 0
+            ? reportedTokens
+            : countTokens(event.type === "text-delta" ? text : thought, selection.modelId);
+          yield event.type === "text-delta"
+            ? { type: "message_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", outputTokens: telemetry }
+            : { type: "thought_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", thinkingTokens: telemetry };
         } else if (event.type === "usage") {
           if (!step) throw new Error("Rust usage has no step.");
           store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata, usage: event.usage } });

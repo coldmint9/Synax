@@ -16,20 +16,10 @@ function declaration(selector: string, property: string) {
 }
 
 describe("workspace layout constraints", () => {
-  it("centers the macOS task toolbar at the native traffic-light center", () => {
-    const padding = declaration(
-      ".electron-macos .work-page .session-list-card--sessions .session-list-header",
-      "padding-top",
-    );
-    const rowHeight = declaration(
-      ".electron-macos .work-page .session-list-titlebar-row",
-      "height",
-    );
-    expect(padding).toBe("5px");
-    expect(rowHeight).toBe("26px");
-    expect(6 + 1 + parseFloat(padding!) + parseFloat(rowHeight!) / 2).toBe(
-      18 + 14 / 2,
-    );
+  it("keeps sidebar actions below the global toolbar without a second traffic-light inset", () => {
+    expect(declaration(".work-page .session-list-titlebar-row", "min-height")).toBe("30px");
+    expect(css).not.toContain("padding-left: 70px");
+    expect(css).not.toContain(".workspace-island-slot--conversation");
   });
 
   it("does not reserve empty space between content-sized sidebar panels", () => {

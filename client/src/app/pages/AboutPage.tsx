@@ -20,7 +20,7 @@ export default function AboutPage() {
   return (
     <ScrollArea className="h-full overflow-y-auto">
       <Surface tone="default" className="min-h-full">
-        <div className="mx-auto max-w-2xl px-6 pt-20 pb-12">
+        <div className="mx-auto max-w-2xl px-6 pt-8 pb-12">
           <div className="mb-8 flex items-start gap-4">
             <IconSurface tone="primary" size="xl" className="rounded-2xl">
               <span className="text-2xl font-bold">S</span>

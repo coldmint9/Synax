@@ -71,6 +71,7 @@ it("hydrates a reconnect snapshot in one visible state transition", () => {
     blockedReason: null,
     updatedAt: "2026-01-01T00:00:00Z",
   } as AgentSession;
+  const run = { id: "run", sessionId: "s", status: "running", metadata: {} } as never;
   const step = {
     id: "snapshot-step",
     sessionId: "s",
@@ -92,6 +93,7 @@ it("hydrates a reconnect snapshot in one visible state transition", () => {
     type: "runtime_snapshot",
     sessionId: "s",
     session,
+    run,
     cursor: 12,
     completedStepIds: [],
     liveChunks: [

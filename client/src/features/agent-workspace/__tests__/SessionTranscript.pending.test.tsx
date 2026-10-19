@@ -8,6 +8,7 @@ import {
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { usePendingSubmissionStore } from "../state/pendingSubmissionStore";
 import { SessionTranscript } from "../SessionTranscript";
+import { RuntimeStreamProjector } from "../../../adapters/transport/runtimeStream";
 
 vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
@@ -192,7 +193,7 @@ it("holds partial history until the initial snapshot is ready, then preserves it
   expect(screen.getByText(message.content)).toBe(answer);
 });
 
-it("keeps the dot matrix through tool-only work and removes it at the first assistant line", async () => {
+it("replaces the initial placeholder with tool activity and clears the submission at the first assistant line", async () => {
   let finish!: (result: { run: AgentRun; reused: boolean }) => void;
   vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(
     () =>
@@ -250,6 +251,7 @@ it("keeps the dot matrix through tool-only work and removes it at the first assi
   );
 
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
+  expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 
   act(() =>
     useAgentSessionStore.setState({
@@ -388,3 +390,37 @@ it("hides the generic thinking placeholder after real thinking appears", () => {
 
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
+
+it.each(["completed", "failed", "interrupted", "blocked"] as const)(
+  "settles a first submission from a %s live run before history and the POST reply catch up",
+  async (status) => {
+    let finish!: (value: { run: AgentRun; reused: boolean }) => void;
+    vi.spyOn(agentRuntimeApi, "submitRun").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
+    useAgentSessionStore.setState({ sessions: [session], detailLoading: false });
+    render(<SessionTranscript />);
+    let sending!: Promise<void>;
+    act(() => { sending = useAgentSessionStore.getState().sendSessionMessage("s1", { message: "First request" }); });
+    const pending = usePendingSubmissionStore.getState().items.s1;
+    const finished: AgentRun = { ...run, status, triggerMessageId: "persisted-user",
+      metadata: { runtime: { requestId: pending.requestId } } };
+    // Rust messages identify the run, but do not carry the POST requestId.
+    act(() => useAgentSessionStore.setState({
+      messages: [{ ...pending.message, id: "persisted-user", runId: run.id, metadata: {} }],
+      runs: [],
+    }));
+    const projector = new RuntimeStreamProjector();
+    act(() => {
+      for (const event of projector.record({ sequence: 1, sessionId: "s1", runId: run.id,
+        chunk: { type: "run_finished", run: finished },
+        state: { ...session, status: status === "blocked" ? "completed" : status,
+          activeRunId: null, pendingResumeToken: null, blockedReason: null, updatedAt: "" },
+      })) useAgentSessionStore.getState().applyLiveEvent(event, "s1");
+    });
+    expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
+    expect(screen.getAllByText("First request")).toHaveLength(1);
+    expect(usePendingSubmissionStore.getState().items.s1).toBeUndefined();
+    await act(async () => { finish({ run, reused: false }); await sending; });
+    expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
+  },
+);

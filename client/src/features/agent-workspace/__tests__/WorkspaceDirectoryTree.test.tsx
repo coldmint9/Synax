@@ -46,6 +46,7 @@ it('loads directories on expansion and opens a file in the matching root', async
   fireEvent.click(await screen.findByRole('button', { name: 'app.ts' }));
   expect(useSessionWorkspaceStore.getState().sessions.s.tabs[0]).toMatchObject({ path: 'src/app.ts', rootId: 'p' });
   expect(projectApi.getWorkspace).toHaveBeenCalledWith('p', 's');
+  expect(screen.getByRole('button', { name: 'app.ts' }).querySelector('[data-file-type-icon="app.ts"]')).toHaveClass('file-type-icon');
 });
 it('requests continuation pages and restarts on a stale cursor', async () => {
   vi.mocked(projectApi.getWorkspace).mockResolvedValue({ roots: [roots[0]] });

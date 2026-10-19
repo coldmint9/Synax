@@ -57,6 +57,30 @@ describe("streamThroughput", () => {
     noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 23 });
     expect(readStreamedTokens("s1")).toBe(5);
   });
+
+  it("counts a restarted request even when it reuses the step with smaller totals", () => {
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 80 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 20 });
+    noteLiveEvent("s1", { type: "retry_status", stepId: "step-1", retry: { phase: "waiting" } });
+    noteLiveEvent("s1", { type: "retry_status", stepId: "step-1", retry: { phase: "group_wait" } });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 3 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 4 });
+    noteLiveEvent("s1", { type: "retry_status", stepId: "step-1", retry: { phase: "recovered" } });
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 5 });
+    expect(readStreamedTokens("s1")).toBe(109);
+  });
+
+  it("replaces the baseline when a request restarted while disconnected", () => {
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 80 });
+    noteLiveEvent("s1", { type: "runtime_snapshot", liveChunks: [
+      { type: "message_delta", stepId: "step-1", outputTokens: 3 },
+      { type: "thought_delta", stepId: "step-1", thinkingTokens: 4 },
+    ] });
+    expect(readStreamedTokens("s1")).toBe(80);
+    noteLiveEvent("s1", { type: "message_delta", stepId: "step-1", outputTokens: 5 });
+    noteLiveEvent("s1", { type: "thought_delta", stepId: "step-1", thinkingTokens: 6 });
+    expect(readStreamedTokens("s1")).toBe(84);
+  });
 });
 
 describe("useSessionTokenRate", () => {

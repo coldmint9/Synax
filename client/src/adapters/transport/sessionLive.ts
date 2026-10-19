@@ -11,6 +11,7 @@ import {
   type RuntimeStreamRecord,
 } from "./runtimeStream";
 import type {
+  AgentRun,
   AgentRunStep,
   AgentSession,
   RuntimeEvent,
@@ -33,6 +34,7 @@ export type SessionLiveEvent =
       type: "runtime_state";
       sessionId: string;
       patch: Partial<AgentSession>;
+      run?: AgentRun;
       reset: boolean;
       refresh: boolean;
     }

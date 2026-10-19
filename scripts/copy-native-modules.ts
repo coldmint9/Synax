@@ -133,8 +133,10 @@ for (const name of ["analyzer-worker.cjs", "scan-pipeline-worker.thread.cjs"]) {
 rmSync(join(serverDist, "migrations"), { recursive: true, force: true });
 
 mkdirSync(join(serverDist, "workers"), { recursive: true });
-cpSync(
-  join(root, "services/worker/jobs/owned-process-runner.cjs"),
-  join(serverDist, "workers/owned-process-runner.cjs"),
-);
+for (const name of ["owned-process-runner.cjs", "process-guardian.cjs"]) {
+  cpSync(
+    join(root, "services/worker/jobs", name),
+    join(serverDist, "workers", name),
+  );
+}
 console.log("native modules ready.");
