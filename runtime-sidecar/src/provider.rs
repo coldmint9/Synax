@@ -76,7 +76,7 @@ pub async fn serve_http(
     listener: TcpListener,
     token: String,
     mut shutdown: watch::Receiver<bool>,
-    store: Option<Arc<crate::storage::HotStore>>,
+    store: Option<Arc<crate::jsonl::hot::HotOps>>,
     router: Arc<crate::actor::SessionShardRouter>,
 ) -> Result<(), std::io::Error> {
     let token = Arc::new(token);

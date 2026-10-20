@@ -5,7 +5,7 @@ use crate::loop_context::{self, Compaction, ContextAction, ContextPolicy};
 use crate::loop_policy::{self, Decision, Disposition, RuntimeBinding};
 use crate::provider::{ProviderRequest, provider_events};
 use crate::provider_adapter::InvalidToolArguments;
-use crate::storage::HotStore;
+use crate::jsonl::hot::HotOps as HotStore;
 use crate::{actor::SessionShardRouter, execution::ExecutionLease};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};

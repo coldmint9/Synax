@@ -42,10 +42,13 @@ export class SkillSourceService {
     for (const source of DEFAULT_SOURCES) {
       if (store.get('skill-sources',source.id)) continue;
       const now=new Date().toISOString();
-      store.put('skill-sources',source.id,{...source,lastSyncAt:null,lastSyncError:null,createdAt:now,updatedAt:now});
+      // Business-store reads clone what was written, so always persist a full
+      // record: a config object without its id/label/priority reads back as an
+      // invalid source and used to crash listSources' label comparison.
+      store.put<SkillSourceRecord>('skill-sources',source.id,{id:source.id,label:source.label,type:source.type,enabled:source.enabled,priority:source.priority,readOnly:source.readOnly,config:source.config,lastSyncAt:null,lastSyncError:null,createdAt:now,updatedAt:now});
     }
   }
-  listSources():SkillSourceRecord[] {this.ensureDefaultSources();return store.list<SkillSourceRecord>('skill-sources').sort((a,b)=>b.priority-a.priority || a.label.localeCompare(b.label));}
+  listSources():SkillSourceRecord[] {this.ensureDefaultSources();return store.list<SkillSourceRecord>('skill-sources').filter(source=>Boolean(source?.id && source.label)).sort((a,b)=>b.priority-a.priority || a.label.localeCompare(b.label));}
   getSource(id:string):SkillSourceRecord|null {this.ensureDefaultSources();return store.get<SkillSourceRecord>('skill-sources',id) ?? null;}
   createSource(input:{id:string;label:string;type:SkillSourceType;enabled?:boolean;priority?:number;readOnly?:boolean;config?:SkillSourceConfig}):SkillSourceRecord {
     this.ensureDefaultSources();if(this.getSource(input.id)) throw new Error(`Skill source already exists: ${input.id}`);

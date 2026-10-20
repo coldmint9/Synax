@@ -11,9 +11,25 @@ import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { RunCoordinator } from "../run-coordinator.js";
 import { interactionService } from "../interaction-service.js";
 import { permissionPolicy } from "../permission-policy.js";
+import { runCoordinator as _rcProbe } from "../run-coordinator.js";
 import { createAsset } from "../media-assets.js";
 import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
 import { replyAndContinueInteraction } from "../interaction-reply.js";
+import fsx from "node:fs";
+const debug = function (label: string, value: unknown) { fsx.appendFileSync("/tmp/synax-probe.log", "[[P]] " + label + " " + (typeof value === "string" ? value : JSON.stringify(value)) + "\n"); };
+import { runtimeFacade as _rfProbe } from "../sidecar/runtime-facade.js";
+debug("sidecar-port", JSON.stringify({ env: process.env.SYNAX_RUNTIME_PROVIDER_PORT, delegate: (globalThis as any).__synaxPortSnap }));
+for (const name of ["controlCommand", "finishExecution", "admitExecution", "stopSessionAuthoritative"] as const) {
+  const anyFacade: any = _rfProbe;
+  const orig = anyFacade[name].bind(anyFacade);
+  anyFacade[name] = async (...args: any[]) => {
+    const tag = JSON.stringify(args.map((a: any) => a && typeof a === "object" ? Object.keys(a).slice(0, 3) : String(a).slice(0, 40)));
+    debug("enter " + name, tag);
+    try { const result = await orig(...args); debug("ok " + name, tag); return result; }
+    catch (error) { debug("ERR " + name, tag + " => " + (error as Error).message + " || " + String((error as Error).stack).split("\n").slice(0, 5).join(" | ")); throw error; }
+  };
+}
+
 
 let root: string;
 let provider: http.Server;
@@ -24,6 +40,38 @@ let multiple = false;
 let askHuman = false;
 let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" = "normal";
 let mediaAssetId: string;
+{
+  const anyStore: any = store;
+  const origAppend = anyStore.appendMessage.bind(anyStore);
+  anyStore.appendMessage = (message: any) => { const r = origAppend(message); if (String(r.content).includes("Question") && message.metadata?.runtimeReminder) debug("MODEL-TOLD", String(r.content)); return r; };
+}
+if (process.env.PROBE_TARGET) debug("target", process.env.PROBE_TARGET);
+for (const [name, target] of [["saveRecord", store], ["appendPermission", store]] as const) {
+  const anyTarget: any = target;
+  const orig = anyTarget[name].bind(anyTarget);
+  anyTarget[name] = (...args: any[]) => { let r: any; try { r = orig(...args); } catch (e) { debug("save " + name + " THREW", (e as Error).message + " || " + String((e as Error).stack).split("\n").slice(0,8).join(" | ")); throw e; } debug("save " + name, JSON.stringify({ kind: args[0] && typeof args[0] === "object" && "resolvedAt" in args[0] ? "record" : args[0], id: r?.id, sessionId: r?.sessionId })); return r; };
+}
+for (const name of ["resume", "launchAccepted"] as const) {
+  const anyRc: any = _rcProbe;
+  if (typeof anyRc[name] !== "function") { debug("missing " + name, ""); continue; }
+  const orig = anyRc[name].bind(anyRc);
+  anyRc[name] = (...args: any[]) => { debug("rc " + name, String(args[0]).slice(0, 20)); try { return orig(...args); } catch (e) { debug("rc " + name + " THREW", (e as Error).message); throw e; } };
+}
+for (const name of ["consumeAuthoritative", "ready", "pending", "resume"] as const) {
+  const anyIs: any = interactionService;
+  if (typeof anyIs[name] !== "function") continue;
+  const orig = anyIs[name].bind(anyIs);
+  anyIs[name] = (...args: any[]) => { try { const r = orig(...args); if (name !== "pending") debug("isvc " + name, String(r === null ? null : (r?.id ?? typeof r))); else debug("isvc pending", String(r?.id ?? null)); return r; } catch (e) { debug("isvc " + name + " THREW", (e as Error).message + " || " + String((e as Error).stack).split("\n").slice(0,6).join(" | ")); throw e; } };
+}
+for (const name of ["resumePendingRun", "resolvePendingRun"] as const) {
+  try {
+    const mod: any = await import("./loop-resume.js");
+    const anySvc: any = mod.loopResumeService;
+    if (typeof anySvc[name] !== "function") continue;
+    const orig = anySvc[name].bind(anySvc);
+    anySvc[name] = async (...args: any[]) => { const r = await orig(...args); debug("resume " + name, String(r?.toolCall?.id ?? r)); return r; };
+  } catch {}
+}
 beforeEach(async () => {
   vi.stubEnv("SYNAX_AGENT_LOOP_ENGINE", "rust");
   vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "1");
@@ -36,6 +84,7 @@ beforeEach(async () => {
   scenario = "normal";
   coordinator = new RunCoordinator();
   provider = http.createServer(async (request, response) => {
+    debug("provider request", String(request.url) + " auth=" + String(request.headers.authorization).slice(0, 12) + " keys=" + Object.keys(request.headers).join(","));
     let body = "";
     for await (const chunk of request) body += chunk;
     requests.push(JSON.parse(body));
@@ -79,6 +128,8 @@ beforeEach(async () => {
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>(resolve => provider.listen(0, "127.0.0.1", resolve));
+  globalThis.__synaxPortSnap = { port: (provider.address() as { port: number }).port, env: process.env.SYNAX_RUNTIME_PROVIDER_PORT };
+  debug("provider listen", JSON.stringify({ port: (provider.address() as { port: number }).port, runtimeProviderPort: process.env.SYNAX_RUNTIME_PROVIDER_PORT, token: Boolean(process.env.SYNAX_RUNTIME_SIDECAR_TOKEN), dataRoot: DATA_ROOT, engine: process.env.SYNAX_AGENT_LOOP_ENGINE }));
   updateGlobalConfig({ defaultApiProviderId: "openai", providerConnections: {
     openai: { providerId: "openai", apiKey: "local", baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`, extra: { kind: "api", apiFormat: "openai", model: "fixture" } },
   } }, "rust-native-test");
@@ -93,13 +144,17 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 async function submit() {
+  debug("submit() entered", "");
   const accepted = await coordinator.submitAsync(sessionId, { message: "Please write the files" }, "rust-test");
+  debug("submit: submitted", accepted.run.id);
   await coordinator.waitForIdle();
+  debug("submit: idle", JSON.stringify({ run: store.getRun(accepted.run.id).status, stop: store.getRun(accepted.run.id).stopReason, session: store.getSession(sessionId).status, requests: requests.length, blocked: store.getSession(sessionId).blockedReason }));
   expect(store.getRun(accepted.run.id).status).toBe("waiting_permission");
   expect(requests).toHaveLength(1);
   return accepted.run.id;
 }
 async function reply(action: "once" | "reject") {
+  debug("reply() entered", action);
   const pending = store.listPermissions(sessionId).find(permission => permission.action === "ask")!;
   expect(pending).toBeDefined();
   permissionPolicy.reply(sessionId, pending.id, action);
@@ -121,6 +176,7 @@ it("resumes the exact provider call after approval and preserves step usage/hist
   for (const step of store.listRunSteps(runId)) expect(step.metadata.usage).toMatchObject({ inputTokens: 10, outputTokens: 4 });
 }, 15_000);
 it("returns denial to Rust without executing the requested write", async () => {
+  debug("TEST-ENTER denial", "");
   const runId = await submit();
   await reply("reject");
   expect(store.getRun(runId).status).toBe("completed");

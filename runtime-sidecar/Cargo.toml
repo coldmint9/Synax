@@ -21,6 +21,9 @@ sha2 = "0.10"
 tiktoken-rs = "0.12"
 tokio = { version = "1", features = ["macros", "net", "io-util", "io-std", "signal", "sync", "rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
-rocksdb = { version = "0.25", default-features = false }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[lib]
+path = "src/lib.rs"
+arc-swap = "1"

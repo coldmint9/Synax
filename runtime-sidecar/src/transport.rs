@@ -58,8 +58,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
 type WebSocket = WebSocketStream<TcpStream>;
 
 async fn reconcile_history_from_hot(
-    hot: &crate::storage::HotStore,
-    history: &crate::history::HistoryStore,
+    hot: &crate::jsonl::hot::HotOps,
+    history: &crate::jsonl::history_ops::HistoryOps,
     session_id: &str,
     _request_id: &str,
 ) -> Result<Vec<u8>, String> {
@@ -94,6 +94,16 @@ async fn reconcile_history_from_hot(
             }
         }
     }
+    // Events are chronological, so the last object per identity is the newest
+    // value. Collapse before batching: a later batch must not be shadowed by a
+    // replayed earlier state from a previous batch.
+    let mut newest: std::collections::BTreeMap<(String, String), Value> = std::collections::BTreeMap::new();
+    for object in objects {
+        let kind = object["kind"].as_str().unwrap_or_default().to_owned();
+        let id = object["value"]["id"].as_str().unwrap_or_default().to_owned();
+        newest.insert((kind, id), object);
+    }
+    let objects: Vec<Value> = newest.into_values().collect();
     let mut reconciled = 0usize;
     let mut last: Option<Value> = None;
     let mut batch: Vec<Value> = Vec::new();
@@ -151,8 +161,8 @@ pub struct TransportContext {
     pub tickets: Arc<TicketStore>,
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
-    pub hot_store: Option<Arc<crate::storage::HotStore>>,
-    pub history: Option<Arc<crate::history::HistoryStore>>,
+    pub hot_store: Option<Arc<crate::jsonl::hot::HotOps>>,
+    pub history: Option<Arc<crate::jsonl::history_ops::HistoryOps>>,
     pub outbox_scan_cursor: Arc<std::sync::Mutex<Option<String>>>,
 }
 
@@ -1103,27 +1113,16 @@ async fn execute_wire(
                 Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
             }
         }
-        Some(wire_envelope::Body::ImportProjection(projection)) => {
-            if !local_control {
-                return (envelope(wire_error("FORBIDDEN", "projection import requires private control transport")), false);
-            }
-            let Some(store) = context.hot_store.as_ref() else {
-                return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
-            };
-            match store.import_ui_projection_async(session_id.clone(), projection.snapshot_json).await {
-                Ok(snapshot_json) => (WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
-                    body: Some(wire_envelope::Body::ImportProjectionResponse(WireImportProjectionResponse { snapshot_json })) }, false),
-                Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
-            }
-        }
-        Some(wire_envelope::Body::ImportStream(stream)) => {
-            if !local_control { return (envelope(wire_error("FORBIDDEN", "stream import requires private control transport")), false); }
-            let Some(store) = context.hot_store.as_ref() else { return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false); };
-            match store.import_stream_async(session_id.clone(), stream.events_json).await {
-                Ok(snapshot_json) => (WireEnvelope { request_id, session_id, epoch: 0, revision: 0, body: Some(wire_envelope::Body::ImportStreamResponse(WireImportStreamResponse { snapshot_json })) }, false),
-                Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
-            }
-        }
+        // Legacy migration commands. Sessions now seed through `seed_ui`, so
+        // there is no separate import step; answer explicitly instead of
+        // silently dropping the frame.
+        Some(wire_envelope::Body::ImportProjection(_)) | Some(wire_envelope::Body::ImportStream(_)) => (
+            envelope(wire_error(
+                "INVALID_COMMAND",
+                "projection import is not supported; sessions seed through seed_ui",
+            )),
+            false,
+        ),
         Some(wire_envelope::Body::FinishRun(finish)) => {
             match context
                 .router
@@ -1317,8 +1316,8 @@ fn decode_durability(value: u32) -> Durability {
     }
 }
 
-fn history_error_to_wire(error: crate::history::HistoryError) -> wire_envelope::Body {
-    use crate::history::HistoryError;
+fn history_error_to_wire(error: crate::jsonl::error::HistoryError) -> wire_envelope::Body {
+    use crate::jsonl::error::HistoryError;
     match error {
         HistoryError::StaleCursor => wire_error("HISTORY_STALE", "Conversation changed. Refresh history."),
         HistoryError::RevisionConflict { expected, actual } =>
@@ -1328,15 +1327,14 @@ fn history_error_to_wire(error: crate::history::HistoryError) -> wire_envelope::
         HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
         HistoryError::InvalidCommand(message) => wire_error("INVALID_COMMAND", &message),
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
-        HistoryError::Rocks(error) => wire_error("STORAGE_UNAVAILABLE", &error.to_string()),
         HistoryError::Serialization(error) => wire_error("HISTORY_ERROR", &error.to_string()),
     }
 }
 
-fn storage_error_to_wire(error: crate::storage::StorageError) -> wire_envelope::Body {
+fn storage_error_to_wire(error: crate::jsonl::hot::StorageError) -> wire_envelope::Body {
     match error {
-        crate::storage::StorageError::Runtime(error) => error_to_wire(error),
-        crate::storage::StorageError::DiskFull => wire_error("DISK_FULL", "storage disk full"),
+        crate::jsonl::hot::StorageError::Runtime(error) => error_to_wire(error),
+        crate::jsonl::hot::StorageError::DiskFull => wire_error("DISK_FULL", "storage disk full"),
         other => wire_error("STORAGE_UNAVAILABLE", &other.to_string()),
     }
 }

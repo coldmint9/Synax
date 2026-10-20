@@ -2,7 +2,8 @@ use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::storage::{HotStore, StorageError, append_fingerprint};
+use crate::jsonl::hot::{HotOps as HotStore, StorageError};
+use crate::session_types::append_fingerprint;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -1702,7 +1703,7 @@ mod tests {
     #[tokio::test]
     async fn replayed_receipts_cannot_reactivate_finished_run() {
         let path = std::env::temp_dir().join(format!("synax-receipt-{}", uuid::Uuid::new_v4()));
-        let store = Arc::new(HotStore::open(&path).unwrap());
+        let store = Arc::new(HotStore::open_blocking(&path, Default::default()).unwrap());
         let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
         router
             .admit_run("s", "start1", "body1", "r1", 1, 0)
@@ -1797,7 +1798,7 @@ mod tests {
     #[tokio::test]
     async fn ephemeral_append_is_live_only_and_does_not_advance_replay_cursor() {
         let path = std::env::temp_dir().join(format!("synax-ephemeral-{}", uuid::Uuid::new_v4()));
-        let store = Arc::new(HotStore::open(&path).unwrap());
+        let store = Arc::new(HotStore::open_blocking(&path, Default::default()).unwrap());
         let router = SessionShardRouter::with_store(1, 16, store).unwrap();
         router.admit_run_with_queue("s", "start", "body", "r", 1, 0, Vec::new()).await.unwrap();
         let (_snapshot, backlog, mut receiver) = router.subscribe("s", 0).await.unwrap();
@@ -1821,7 +1822,7 @@ mod tests {
             let path =
                 std::env::temp_dir().join(format!("synax-live-finish-{}", uuid::Uuid::new_v4()));
             let store = if persistent {
-                Some(Arc::new(HotStore::open(&path).unwrap()))
+                Some(Arc::new(HotStore::open_blocking(&path, Default::default()).unwrap()))
             } else {
                 None
             };
@@ -1874,7 +1875,7 @@ mod tests {
     #[tokio::test]
     async fn queue_updates_fan_out_once_and_do_not_rewind_actor_state_on_receipt_retry() {
         let path = std::env::temp_dir().join(format!("synax-queue-actor-{}", uuid::Uuid::new_v4()));
-        let store = Arc::new(HotStore::open(&path).unwrap());
+        let store = Arc::new(HotStore::open_blocking(&path, Default::default()).unwrap());
         let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
         router
             .ui_snapshot(
@@ -1927,7 +1928,7 @@ mod tests {
     #[tokio::test]
     async fn replayed_control_receipt_cannot_restore_an_old_execution_fence() {
         let path = std::env::temp_dir().join(format!("synax-control-fence-{}", uuid::Uuid::new_v4()));
-        let store = Arc::new(HotStore::open(&path).unwrap());
+        let store = Arc::new(HotStore::open_blocking(&path, Default::default()).unwrap());
         let router = SessionShardRouter::with_store(1, 16, store.clone()).unwrap();
         router.ui_snapshot("s".into(), Some(br#"{"id":"s","projectId":"p","status":"queued","updatedAt":"2026-10-18"}"#.to_vec())).await.unwrap();
         router.admit_run("s", "start1", "body1", "r1", 1, 0).await.unwrap();

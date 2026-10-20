@@ -51,11 +51,15 @@ try {
   if (!response.ok) throw new Error(`health returned ${response.status}`);
   const body = await response.text();
   if (!body.includes('ok')) throw new Error(`unexpected health body: ${body}`);
-  const hotPath = join(runtimeDir, 'runtime-hot');
+  // The sidecar now owns a JSONL store root (a `LOCK` file appears on open)
+  // instead of the two RocksDB directories.
+  const storePath = join(runtimeDir, 'jsonl');
+  const lockPath = join(storePath, 'LOCK');
   const deadline = Date.now() + 5_000;
-  while (!existsSync(hotPath) && Date.now() < deadline)
+  while (!existsSync(lockPath) && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 25));
-  if (!existsSync(hotPath)) throw new Error('Rust sidecar runtime-hot directory was not created');
+  if (!existsSync(lockPath)) throw new Error('Rust sidecar jsonl store lock was not created');
+  if (existsSync(join(runtimeDir, 'runtime-hot'))) throw new Error('the legacy RocksDB hot directory must not be created');
   console.log('node runtime supervisor startup smoke passed');
 } finally {
   child.kill('SIGTERM');
