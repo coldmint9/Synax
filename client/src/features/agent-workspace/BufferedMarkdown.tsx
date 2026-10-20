@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SessionMarkdown } from "./SessionMarkdown";
 import { MarkdownCodeFrame } from "../../shared/ui/markdown/MarkdownCodeFrame";
 
@@ -7,28 +7,22 @@ const LINE_TICK_MS = 32;
 function useLineBufferedText(text: string, isStreaming: boolean): string {
   const targetRef = useRef(text);
   const visibleRef = useRef(isStreaming ? "" : text);
-  const timerRef = useRef<number | null>(null);
-  const streamingRef = useRef(isStreaming);
   const [visible, setVisible] = useState(visibleRef.current);
 
-  streamingRef.current = isStreaming;
-
-  const scheduleFlush = useCallback(() => {
-    if (
-      !streamingRef.current ||
-      timerRef.current !== null ||
-      visibleRef.current === targetRef.current
-    )
-      return;
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (!streamingRef.current) return;
+  // A steady heartbeat, independent of how fast deltas arrive: each tick
+  // reveals everything received so far. Scheduling the reveal from the
+  // effect instead would add a full tick of latency to every burst, so the
+  // faster the model streams, the further the display falls behind.
+  useEffect(() => {
+    if (!isStreaming) return;
+    const timer = window.setInterval(() => {
       const target = targetRef.current;
       if (visibleRef.current === target) return;
       visibleRef.current = target;
       setVisible(target);
     }, LINE_TICK_MS);
-  }, []);
+    return () => window.clearInterval(timer);
+  }, [isStreaming]);
 
   useEffect(() => {
     targetRef.current = text;
@@ -37,23 +31,12 @@ function useLineBufferedText(text: string, isStreaming: boolean): string {
       setVisible(text);
       return;
     }
-
     // A restarted live block should not retain text from the previous block.
     if (!text.startsWith(visibleRef.current)) {
       visibleRef.current = "";
       setVisible("");
     }
-    scheduleFlush();
-  }, [text, isStreaming, scheduleFlush]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [isStreaming]);
+  }, [text, isStreaming]);
 
   return visible;
 }

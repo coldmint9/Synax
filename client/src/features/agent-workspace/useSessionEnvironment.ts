@@ -8,9 +8,11 @@ import {
 } from "../../adapters/transport/agentRuntime";
 
 // External editors do not publish runtime events. Keep a slow safety net,
-// while event bursts share one refresh after the server's 5s cache expires.
+// while event bursts share one refresh. A running agent fires many events per
+// step; matching the server's git-safe cache window keeps those bursts from
+// turning into a request every few seconds.
 const REFRESH_MS = 120_000;
-const EVENT_REFRESH_MS = 5_000;
+const EVENT_REFRESH_MS = 15_000;
 const EVENT_BATCH_MS = 250;
 const RESUME_STALE_MS = 30_000;
 const cache = new Map<string, { value: SessionEnvironment; checkedAt: number }>();
@@ -144,6 +146,9 @@ export function useSessionEnvironment(sessionId: string | null) {
       reload: async () => {
         // A user action may follow a mutation. Never reuse a pre-mutation read.
         if (inFlight) await inFlight;
+        // Drop the shared cache entry so this read reflects the mutation
+        // instead of the snapshot taken before it.
+        cache.delete(id);
         await run(false);
       },
       invalidate: markDirty,

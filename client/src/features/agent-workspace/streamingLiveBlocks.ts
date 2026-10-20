@@ -17,6 +17,23 @@ export const EMPTY_STREAMING_BUFFERS: StreamingLiveBuffers = {
   pendingToolCalls: [],
 };
 
+/**
+ * Whether a live buffer would render any row.
+ *
+ * The buffers are mutable on purpose (tool results rewrite the pending list in
+ * place before the next React notification), so the live region decides
+ * "empty after the last painted frame" from the store instead of reading mixed
+ * old/new props during a render.
+ */
+export function isStreamingLiveEmpty(state: StreamingLiveBuffers): boolean {
+  return (
+    state.blocks.length === 0 &&
+    state.pendingToolCalls.length === 0 &&
+    !state.pendingText.trim() &&
+    !hasDisplayableReasoning(state.pendingThinking)
+  );
+}
+
 const LIVE_TEXT_CHARS = 64 * 1024;
 export const LIVE_PREVIEW_OMISSION =
   "[Earlier live preview omitted; final message is retained]\n";

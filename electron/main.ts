@@ -1,4 +1,4 @@
-import { getRuntimeConnection } from "./lib/runtime-connection.js";
+import { createRuntimeConnectionBroker } from "./lib/runtime-connection.js";
 import {
   SessionNotifications,
   isTrustedNotificationSender,
@@ -47,6 +47,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
+// Token reads and ticket handshakes share one cached broker so reconnects and
+// every authenticated request stop paying a disk read on the main loop.
+const runtimeConnectionBroker = createRuntimeConnectionBroker(getDataRoot());
 let mainWindow: BrowserWindow | null = null;
 let macWindowAppearance: MacWindowAppearance = DEFAULT_MAC_WINDOW_APPEARANCE;
 let windowDarkTheme = nativeTheme.shouldUseDarkColors;
@@ -443,7 +446,7 @@ function registerIPC(): void {
   });
   ipcMain.handle("app:runtime-connection", async (event, sessionId, clientId, snapshot) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted runtime connection request.");
-    return getRuntimeConnection(sessionId, clientId, snapshot);
+    return runtimeConnectionBroker.connection({ sessionId, clientId, snapshot });
   });
   ipcMain.handle("app:runtime-token", async (event) => {
     const url = event.senderFrame?.url ?? "";
@@ -452,12 +455,8 @@ function registerIPC(): void {
       url.startsWith(`http://localhost:${process.env.WEB_PORT ?? "5173"}/`);
     if (!mainWindow || event.sender !== mainWindow.webContents || !trusted)
       throw new Error("Untrusted runtime credential request.");
-    return (
-      await fs.readFile(
-        path.join(getDataRoot(), "runtime-access-token"),
-        "utf8",
-      )
-    ).trim();
+    // Reused by every authenticated request, so cache it like the handshake.
+    return runtimeConnectionBroker.token();
   });
   ipcMain.on("terminal:focus", (event, focused) => {
     if (event.sender === mainWindow?.webContents) {

@@ -658,10 +658,10 @@ export function scheduleSessionRefresh(
       target === "usage" || target === "interactions" ? 500 : 1200,
     );
 }
-function scheduleLiveRefreshDetail(): void {
+function scheduleLiveRefreshDetail(target: "detail" | "usage" = "detail"): void {
   scheduleSessionRefresh(
     useAgentSessionStore.getState().selectedSessionId,
-    "detail",
+    target,
   );
 }
 function scheduleInvocationUsageRefresh(): void {
@@ -2687,11 +2687,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           // The snapshot repairs the visible stream immediately. Reconcile
           // persisted messages and stats in the background without clearing the
           // just-hydrated turn again.
-          scheduleLiveRefreshDetail();
+          // A live run already pushes its steps and messages; only the
+          // lightweight counters need a background reconcile mid-run.
+          scheduleLiveRefreshDetail(runtimeActive ? "usage" : "detail");
           break;
         }
         case "media_job":
-          if (streamVisible) scheduleLiveRefreshDetail();
+          // Asset progress lands on the fast ring; rebuilding the whole
+          // transcript for every media tick is what kept history hot.
+          if (streamVisible) scheduleLiveRefreshDetail("usage");
           break;
         case "runtime_state": {
           get().patchSession(event.sessionId, event.patch);

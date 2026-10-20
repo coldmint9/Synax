@@ -208,6 +208,10 @@ class SessionProcessManager {
         if (item.kind === "error") {
           throw new AgentRuntimeError(item.error, item.code ?? "STREAM_ERROR", item.code === "EXECUTION_SUPERSEDED" ? 409 : 500);
         }
+        // The worker flushes its checkpoint before stream:done. Refresh the
+        // host cache before idle release so exit cleanup preserves a waiting
+        // run instead of interrupting the stale running projection.
+        await agentRuntimeStore.hydrateSession(sessionId, true);
         break;
       }
     } finally {

@@ -17,6 +17,22 @@ export class AgentNotFoundError extends AgentRuntimeError {
   }
 }
 
+/**
+ * The session exists but its UI projection cannot be served right now (a
+ * repair or migration is required). This is retryable and must never be
+ * reported as a missing session: the projection is a cache, while the durable
+ * session row decides whether the id exists.
+ */
+export class AgentProjectionUnavailableError extends AgentRuntimeError {
+  constructor(id: string, code = 'PROJECTION_RECOVERING') {
+    super(
+      `Agent runtime projection is recovering: ${id}`,
+      code,
+      503,
+    );
+  }
+}
+
 export class AgentValidationError extends AgentRuntimeError {
   constructor(message: string) {
     super(message, 'VALIDATION_ERROR', 400);

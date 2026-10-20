@@ -141,19 +141,45 @@ describe("interaction reply gating", () => {
     });
   });
 
-  it("still rejects a form whose run has finished", () => {
+  it.each(["completed", "interrupted", "failed", "paused", "cancelled"] as const)("accepts an unanswered form after the session became %s", (status) => {
     const { interactionId } = ask();
+    const runStatus = status === "paused" ? "interrupted" : status;
+    store.updateRun(runId, { status: runStatus, completedAt: nowIso() });
     store.updateSession(sessionId, {
-      status: "completed",
+      status,
       activeRunId: null,
       completedAt: nowIso(),
     });
-    expect(() =>
-      interactionService.reply(sessionId, interactionId, {
-        revision: 1,
-        action: "submit",
-        answers: { file: "README.md" },
-      }),
-    ).toThrow(/no longer accepts input/);
+    const reply = { revision: 1, action: "submit", answers: { file: "README.md" } };
+    const interaction = interactionService.reply(sessionId, interactionId, reply);
+    expect(interaction).toMatchObject({ status: "answered", response: reply,
+      restartRequestId: `interaction-restart:${interactionId}` });
+    expect(interactionService.reply(sessionId, interactionId, reply)).toEqual(interaction);
+    expect(store.getSession(sessionId)).toMatchObject({ status, activeRunId: null });
+    expect(store.getRun(runId).status).toBe(runStatus);
+    expect(interactionService.ready(sessionId)).toBeNull();
+  });
+
+  it("does not submit an old form into a different active run", () => {
+    const { interactionId } = ask();
+    store.updateRun(runId, { status: "interrupted", completedAt: nowIso() });
+    store.updateSession(sessionId, { status: "running", activeRunId: "new-run" });
+    expect(() => interactionService.reply(sessionId, interactionId, {
+      revision: 1, action: "submit", answers: { file: "README.md" },
+    })).toThrow(/no longer accepts input/);
+    expect(interactionService.pending(sessionId)?.id).toBe(interactionId);
+  });
+
+  it("still validates an inactive form before resolving it", () => {
+    const { interactionId } = ask();
+    store.updateRun(runId, { status: "interrupted", completedAt: nowIso() });
+    store.updateSession(sessionId, { status: "paused", activeRunId: null });
+    expect(() => interactionService.reply(sessionId, interactionId, {
+      revision: 2, action: "submit", answers: { file: "README.md" },
+    })).toThrow(/stale/);
+    expect(() => interactionService.reply(sessionId, interactionId, {
+      revision: 1, action: "submit", answers: {},
+    })).toThrow(/Answer required/);
+    expect(interactionService.pending(sessionId)?.id).toBe(interactionId);
   });
 });

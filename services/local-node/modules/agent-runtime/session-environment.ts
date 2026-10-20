@@ -201,11 +201,13 @@ export interface SessionEnvironmentFileMedia {
 // launch the same five Git commands independently. Never cache mutating commands.
 const gitReads = new Map<string, { root: string; at: number; pending: boolean; bytes: number; value: Promise<string> }>();
 const GIT_CACHE_BYTES = 16 * 1024 * 1024;
+/** Working files change far more often than branch, HEAD, or committed diffs. */
+const GIT_CACHE_TTL_MS = 15_000;
 const sessionRoots = new Map<string, Set<string>>();
 async function git(workspacePath: string, args: string[], input?: string): Promise<string> {
   const key = JSON.stringify([workspacePath, args, input]);
   const previous = gitReads.get(key);
-  if (previous && (previous.pending || Date.now() - previous.at < 5000)) return previous.value;
+  if (previous && (previous.pending || Date.now() - previous.at < GIT_CACHE_TTL_MS)) return previous.value;
   const entry = { root: workspacePath, at: Date.now(), pending: true, bytes: 0, value: Promise.resolve("") };
   entry.value = runCommand("git", args, { cwd: workspacePath, maxBufferBytes: MAX_BUFFER, stdin: input, timeoutMs: 30_000 })
     .then(result => {
@@ -476,11 +478,14 @@ function getSession(sessionId: string) {
 /**
  * Cache + single-flight for the workspace/profile snapshot.
  *
- * The panel polls this endpoint while a run is in flight, and every call used
- * to spawn four git processes (status/diff/rev-parse/branch). Coalescing the
- * polls keeps that side-channel work from competing with the run itself.
+ * A running agent creates files every few seconds, which invalidates the
+ * exact snapshot but not the git facts behind it. Serve the last snapshot
+ * during a run and let the slower revalidation pick up file changes, while
+ * the git cache below keeps the subprocess cost bounded.
  */
 const ENVIRONMENT_CACHE_TTL_MS = 5_000;
+const ACTIVE_ENVIRONMENT_CACHE_TTL_MS = 60_000;
+const ACTIVE_STATUSES = new Set(["running", "queued", "waiting_permission", "waiting_input"]);
 const environmentCache = new Map<
   string,
   { at: number; value: SessionEnvironment; authoritative: boolean }
@@ -492,7 +497,13 @@ export async function getSessionEnvironment(
   runtime?: SessionEnvironmentRuntimeRecords,
 ): Promise<SessionEnvironment> {
   const cached = environmentCache.get(sessionId);
-  if (cached && cached.authoritative === Boolean(runtime) && Date.now() - cached.at < ENVIRONMENT_CACHE_TTL_MS) {
+  // An active run revalidates beside its own workspace writes; a settled
+  // session keeps the cheap TTL so external edits still show up quickly.
+  const ttl =
+    runtime && ACTIVE_STATUSES.has(String(runtime.session?.status))
+      ? ACTIVE_ENVIRONMENT_CACHE_TTL_MS
+      : ENVIRONMENT_CACHE_TTL_MS;
+  if (cached && cached.authoritative === Boolean(runtime) && Date.now() - cached.at < ttl) {
     return cached.value;
   }
   const pending = environmentInFlight.get(sessionId);

@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunStreamChunk, StreamTurnRequest } from '../../../modules/agent-runtime/contracts.js';
 import { agentRuntimeStore } from '../../../modules/agent-runtime/session-store.js';
 import { activateAcceptedRun } from '../../../modules/agent-runtime/run-admission.js';
-import { resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
+import { admitActiveFixtureRun, resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 import { runCoordinator } from '../../../modules/agent-runtime/run-coordinator.js';
 import { normalizeAgentSessionStatus } from '../../../modules/agent-runtime/session-projection.js';
 import { agentRuntimeRoutes } from '../agent-runtime.js';
 import { sessionLiveBus } from '../../../modules/agent-runtime/session-live-bus.js';
+import { interactionService } from '../../../modules/agent-runtime/interaction-service.js';
+import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
 const mock = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../../modules/agent-runtime/backend-execution.js', () => ({ executeBackendSession: mock.execute }));
 vi.mock('../../../infrastructure/llm-runtime/provider-check.js', () => ({ assertLlmProviderConfigured: vi.fn() }));
@@ -64,6 +66,46 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
+  it.each(['submit', 'skip', 'cancel'] as const)('accepts %s on a saved form after restart and deduplicates HTTP retries', async (action) => {
+    const id = await createSession('synax');
+    const run = await admitActiveFixtureRun(id, 'Ask which file');
+    const now = new Date().toISOString();
+    const step = agentRuntimeStore.appendRunStep({ id: `step-${run.id}`, runId: run.id, sessionId: id,
+      index: 1, status: 'running', model: null, startedAt: now, completedAt: null, finishReason: null, metadata: {} });
+    const call = agentRuntimeStore.appendToolCall({ id: `call-${run.id}`, sessionId: id, runId: run.id, stepId: step.id,
+      modelToolCallId: 'provider-question', toolId: 'human.ask', category: 'task', mutability: 'task', argsHash: '',
+      inputSummary: 'Which file?', inputRef: {}, outputSummary: null, outputRef: null, status: 'running',
+      permissionDecisionId: null, startedAt: now, endedAt: null, error: null });
+    const form = await interactionService.requestAuthoritative({ sessionId: id, runId: run.id, stepId: step.id,
+      toolCallId: call.id, kind: 'clarification', request: { title: 'Pick a file',
+        questions: [{ id: 'file', type: 'text', label: 'Which file?' }] } });
+    await runtimeFacade.stopSessionAuthoritative(id, 'paused', 'App restarted');
+    agentRuntimeStore.reset();
+    release();
+    const body = { revision: form.revision, action, ...(action === 'submit' ? { answers: { file: 'README.md' } } : {}) };
+    const path = `/sessions/${id}/interactions/${form.id}/reply`;
+    const results = await Promise.all([request('POST', path, body), request('POST', path, body)]);
+    for (const response of results) {
+      expect(response.status, response.body).toBe(200);
+      expect(JSON.parse(response.body).interaction).toMatchObject({ status: action === 'cancel' ? 'cancelled' : 'answered',
+        response: body, restartRequestId: `interaction-restart:${form.id}`, consumedAt: expect.any(String) });
+    }
+    await runCoordinator.waitForIdle();
+    expect((await request('POST', path, body)).status).toBe(200);
+    await runCoordinator.waitForIdle();
+    expect(mock.execute).toHaveBeenCalledTimes(action === 'cancel' ? 0 : 1);
+    expect(agentRuntimeStore.listRuns(id)).toHaveLength(action === 'cancel' ? 1 : 2);
+    expect(agentRuntimeStore.getRun(run.id).status).toBe('interrupted');
+    expect(agentRuntimeStore.getSession(id).activeRunId).toBeNull();
+    const saved = JSON.parse((await request('GET', `/sessions/${id}/interactions`)).body).interactions;
+    expect(saved).toEqual([expect.objectContaining({ id: form.id, consumedAt: expect.any(String), response: expect.objectContaining(body) })]);
+    if (action !== 'cancel') {
+      const input = mock.execute.mock.calls[0][2] as StreamTurnRequest;
+      expect(input.message).toContain('Which file?');
+      expect(input.message).toContain(action === 'submit' ? 'README.md' : 'Do not treat it as a refusal');
+    }
+  });
+
   it('delivers manual compaction progress, completion and failure on the unified session stream', async () => {
     const id = await createSession();
     let text = '';

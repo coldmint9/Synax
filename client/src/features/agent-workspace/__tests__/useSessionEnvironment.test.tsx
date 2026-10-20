@@ -89,7 +89,7 @@ it("filters unrelated sessions and metadata churn, and batches relevant parent/c
   emit("session_changed", "unrelated", { status: "completed" });
   emit("session_changed", "parent", { title: "renamed", updatedAt: "now" });
   emit("session_changed", "parent", { sessionMetadata: { contextCompaction: { stage: "running" } } });
-  await advance(5_000);
+  await advance(15_000);
   expect(fetch).toHaveBeenCalledTimes(1);
   fetch.mockResolvedValue({ ...snapshot, subagents: [{ ...snapshot.subagents[0], status: "completed" }] });
   emit("session_changed", "child", { status: "completed" });
@@ -106,10 +106,10 @@ it("does not repeatedly refresh for unchanged workspace metadata in full metadat
   await advance();
   const backend = { workDir: "/repo", workspaceRoots: [{ id: "root" }] };
   emit("session_changed", "metadata", { sessionMetadata: { backend, preview: "first" } });
-  await advance(5_000);
+  await advance(15_000);
   expect(fetch).toHaveBeenCalledTimes(2);
   emit("session_changed", "metadata", { sessionMetadata: { backend, preview: "second" } });
-  await advance(5_000);
+  await advance(15_000);
   expect(fetch).toHaveBeenCalledTimes(2);
   emit("session_changed", "metadata", { sessionMetadata: { backend: { ...backend, workDir: "/new" } } });
   await advance(250);
@@ -120,11 +120,11 @@ it("bounds continuous events without starving refreshes", async () => {
   const fetch = vi.spyOn(api, "getSessionEnvironment").mockResolvedValue(environment("continuous"));
   renderHook(() => useSessionEnvironment("continuous"));
   await advance();
-  for (let index = 0; index < 100; index++) {
+  for (let index = 0; index < 300; index++) {
     emit("session_step_completed", "continuous");
     await advance(100);
   }
-  expect(fetch).toHaveBeenCalledTimes(3); // initial plus one at 5s and 10s
+  expect(fetch).toHaveBeenCalledTimes(3); // initial plus one at 15s and 30s
 });
 
 it("keeps background refresh quiet and preserves identity when only the timestamp changes", async () => {
@@ -135,7 +135,7 @@ it("keeps background refresh quiet and preserves identity when only the timestam
   const request = deferred();
   fetch.mockReturnValueOnce(request.promise);
   emit("session_step_completed", "quiet");
-  await advance(5_000);
+  await advance(15_000);
   expect(hook.result.current.loading).toBe(false);
   await act(async () => { request.resolve({ ...snapshot, refreshedAt: "second" }); });
   expect(hook.result.current.environment).toBe(snapshot);
@@ -159,7 +159,7 @@ it("queues one trailing refresh for invalidations during a request", async () =>
   await advance(10_000);
   expect(fetch).toHaveBeenCalledTimes(1);
   await act(async () => { initial.resolve(environment("trailing")); });
-  await advance(4_999);
+  await advance(14_999);
   expect(fetch).toHaveBeenCalledTimes(1);
   await advance(1);
   expect(fetch).toHaveBeenCalledTimes(2);
@@ -259,7 +259,7 @@ it("catches up after reconnecting even when a pre-reconnect request is pending",
   expect(fetch).toHaveBeenCalledTimes(2);
   act(() => { for (const subscription of runtime.handlers) subscription.onConnect?.(); });
   await act(async () => { request.resolve(snapshot); });
-  await advance(5_000);
+  await advance(15_000);
   expect(fetch).toHaveBeenCalledTimes(3);
   expect(hook.result.current.environment?.branch).toBe("reconnected");
 });

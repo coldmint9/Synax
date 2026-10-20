@@ -60,6 +60,7 @@ import {
 } from "../../modules/agent-runtime/input-optimization.js";
 import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
 import { interactionService } from "../../modules/agent-runtime/interaction-service.js";
+import { replyAndContinueInteraction } from "../../modules/agent-runtime/interaction-reply.js";
 import {
   draftInputCapabilities,
   sessionInputCapabilities,
@@ -75,6 +76,7 @@ import { runCoordinator } from "../../modules/agent-runtime/run-coordinator.js";
 import { runtimeBus } from "../../modules/agent-runtime/runtime-bus.js";
 import {
   AgentNotFoundError,
+  AgentProjectionUnavailableError,
   AgentRuntimeError,
   AgentValidationError,
 } from "../../modules/agent-runtime/runtime-errors.js";
@@ -347,11 +349,27 @@ for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
           )
             return runtimeError(c, new AgentNotFoundError(id));
         } catch (error) {
+          // A sidecar without a durable session row is the only "missing"
+          // answer. Every projection state (missing, migrating, rebuilding) is
+          // a cache concern: it is retryable and must not be reported as a
+          // deleted session, or clients discard sessions that still exist.
           if (
             error instanceof RuntimeSidecarError &&
             error.code === "PROJECTION_MISSING"
+          ) {
+            if (!(await runtimeFacade.sessionExists(id)))
+              return runtimeError(c, new AgentNotFoundError(id));
+            return runtimeError(c, new AgentProjectionUnavailableError(id));
+          }
+          if (
+            error instanceof RuntimeSidecarError &&
+            (error.code === "PROJECTION_MIGRATION_REQUIRED" ||
+              error.code === "PROJECTION_TOO_LARGE")
           )
-            return runtimeError(c, new AgentNotFoundError(id));
+            return runtimeError(
+              c,
+              new AgentProjectionUnavailableError(id, error.code),
+            );
           return runtimeError(c, error);
         }
       }
@@ -2654,15 +2672,10 @@ agentRuntimeRoutes.post(
         !backend.hasPendingInteraction?.(sessionId, id)
       )
         return c.json({ error: "Native input request expired." }, 409);
-      const interaction = await interactionService.replyAuthoritative(
-        sessionId,
-        id,
-        parsed.data,
-      );
-      if (backendId === "native") {
-        if (interactionService.ready(sessionId))
-          resumeAgentSessionInBackground(sessionId);
-      } else backend.replyInteraction?.(sessionId, id);
+      const interaction = backendId === "native"
+        ? await replyAndContinueInteraction(sessionId, id, parsed.data)
+        : await interactionService.replyAuthoritative(sessionId, id, parsed.data);
+      if (backendId !== "native") backend.replyInteraction?.(sessionId, id);
       return c.json({ interaction });
     } catch (error) {
       return runtimeError(c, error);

@@ -15,12 +15,21 @@ export interface CompletedLiveStep {
   stepId: string;
   stepIndex: number;
   runId?: string;
+  /**
+   * The live stream had already painted rows for this step.
+   *
+   * A bridge may replay `step_started` for a step that is still streaming; that
+   * re-announcement parks the painted content here. Only a step that the
+   * transcript actually showed may be parked, so a stream that never mounted
+   * cannot pull a persisted step back out of the static timeline.
+   */
+  rendered?: boolean;
   blocks: readonly TurnContentBlock[];
 }
 
 export type LiveStepSnapshot = Pick<
   CompletedLiveStep,
-  "stepId" | "stepIndex" | "runId"
+  "stepId" | "stepIndex" | "runId" | "rendered"
 > & { blocks: readonly TurnContentBlock[] };
 
 function isThinkingMessage(message: AgentRuntimeMessage): boolean {
@@ -58,6 +67,20 @@ function isShown(part: string, shown: string): boolean {
   // Allow the persisted answer to be a strict suffix of what is on screen:
   // trimming above can cut the preview marker in the middle of a sentence.
   return shown.trimEnd() === part.trimEnd();
+}
+
+/**
+ * A streamed prefix of the persisted answer is already shown.
+ *
+ * The live text is normally shorter than the stored message: it is compared
+ * while it is still being written. `isShown` is one-directional on purpose —
+ * the reverse check below would retire a snapshot every time the model streams
+ * a token, because that token is not in the (older) persisted copy yet.
+ */
+function isPrefixOf(part: string, shown: string): boolean {
+  if (shown.includes(part)) return true;
+  if (part.length < 8) return false;
+  return shown.trimStart().startsWith(part.trimStart());
 }
 
 function persistedText(
@@ -154,7 +177,7 @@ export function isLiveStepPersisted(
   const text = snapshotText(snapshot.blocks);
   if (text.length > 0) {
     const shown = persistedText(messages, snapshot.stepId, runId);
-    return text.every((part) => isShown(part, shown));
+    return text.every((part) => isPrefixOf(part, shown));
   }
   const toolIds = snapshotToolIds(snapshot.blocks);
   // A step that produced tool calls closes on those calls. Reasoning is often

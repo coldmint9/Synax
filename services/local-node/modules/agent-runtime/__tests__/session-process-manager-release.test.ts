@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { forkMock, getSessionMock, tryGetSessionMock, listSessionTreeMock,
+const { forkMock, hydrateSessionMock, getSessionMock, tryGetSessionMock, listSessionTreeMock,
   listRunsMock, listRunStepsMock, updateSessionMock, updateRunMock, updateRunStepMock } = vi.hoisted(() => ({
   forkMock: vi.fn(),
+  hydrateSessionMock: vi.fn(),
   getSessionMock: vi.fn(),
   tryGetSessionMock: vi.fn(),
   listSessionTreeMock: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 vi.mock("../session-store.js", () => ({
   agentRuntimeStore: {
+    hydrateSession: hydrateSessionMock,
     getSession: getSessionMock,
     tryGetSession: tryGetSessionMock,
     listSessionTree: listSessionTreeMock,
@@ -105,6 +107,7 @@ function createMockChild(sessionId: string) {
 describe("sessionProcessManager idle child release", () => {
   beforeEach(() => {
     forkMock.mockReset();
+    hydrateSessionMock.mockReset().mockResolvedValue(undefined);
     getSessionMock.mockReset();
     tryGetSessionMock.mockReset();
     listSessionTreeMock.mockReset().mockImplementation((id: string) => [getSessionMock(id)]);
@@ -191,11 +194,15 @@ describe("sessionProcessManager idle child release", () => {
   );
 
   it.each(["waiting_input", "waiting_permission", "running"])(
-    "preserves durable %s state only during idle release",
+    "refreshes stale host state before releasing a worker with durable %s state",
     async (status) => {
       const id = "sess-release-a";
-      const session = { id, projectId: "proj-test", status, activeRunId: "run-wait",
-        pendingResumeToken: "interaction:pending" };
+      const session = { id, projectId: "proj-test", status: "running", activeRunId: "run-wait",
+        pendingResumeToken: null as string | null };
+      hydrateSessionMock.mockImplementation(async () => {
+        session.status = status;
+        session.pendingResumeToken = "interaction:pending";
+      });
       getSessionMock.mockReturnValue(session);
       tryGetSessionMock.mockReturnValue(session);
       listRunsMock.mockReturnValue([{ id: "run-wait", status }]);
@@ -210,6 +217,7 @@ describe("sessionProcessManager idle child release", () => {
         /* drain the paused turn */
       }
       await sessionProcessManager.waitForIdleSessions([id]);
+      expect(hydrateSessionMock).toHaveBeenCalledWith(id, true);
       expect(child.kill).toHaveBeenCalled();
       expect(sessionProcessManager.canSpawnChild(id)).toBe(true);
       if (status === "running") {

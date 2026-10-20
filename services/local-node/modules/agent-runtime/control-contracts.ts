@@ -172,6 +172,8 @@ export interface AgentInteraction {
   createdAt: string;
   resolvedAt: string | null;
   consumedAt?: string | null;
+  /** Stable admission identity when a reply continues a finished run in a new turn. */
+  restartRequestId?: string;
 }
 
 export function validateAnswers(

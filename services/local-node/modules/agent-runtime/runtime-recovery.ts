@@ -111,6 +111,19 @@ async function recoverAuthoritativeRuntime(
         resumable.push(session.id);
       continue;
     }
+    const unconfirmed =
+      !active &&
+      !execution.activeRunId &&
+      control.runtimeControl != null &&
+      !processUnknown;
+    if (unconfirmed) {
+      // stop_unconfirmed is idempotent and always rewrites the same
+      // unconfirmed marker. Its request id is fixed per session, and Rust
+      // rejects a reused id whose payload differs (the reason carries a
+      // timestamp), so replaying it on every start would fail boot for good.
+      reviewed++;
+      continue;
+    }
     if (
       !active &&
       !execution.activeRunId &&

@@ -137,6 +137,20 @@ function isExpectedMissingRuntimeResource(err: AppError): boolean {
   return Boolean(match && isRuntimeResourceGone(match[1]));
 }
 
+const TRANSIENT_RUNTIME_CODES = new Set([
+  "PROJECTION_RECOVERING",
+  "PROJECTION_MISSING",
+  "PROJECTION_MIGRATION_REQUIRED",
+]);
+
+/**
+ * Runtime failures the client recovers from by itself (a projection being
+ * rebuilt, a runtime that is starting up). They must never reach a toast.
+ */
+function isTransientRuntimeError(err: AppError): boolean {
+  return Boolean(err.code && TRANSIENT_RUNTIME_CODES.has(err.code));
+}
+
 function routeError(err: AppError): void {
   if (err.level === "system") {
     console.error(
@@ -148,6 +162,10 @@ function routeError(err: AppError): void {
     return;
   }
   console.warn("[business]", err.message, err.code ?? "", err.statusCode ?? "");
+  // A recovering projection is a cache miss, not a missing session: the
+  // runtime repairs it on the next read, so surfacing it as "resource not
+  // found" would report a failure the user never experienced.
+  if (isTransientRuntimeError(err)) return;
   const message = userMessage(err);
   if (isExpectedMissingRuntimeResource(err)) return;
   const isMissingRuntimeResource =

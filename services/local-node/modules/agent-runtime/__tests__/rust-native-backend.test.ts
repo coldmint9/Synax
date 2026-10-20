@@ -12,6 +12,8 @@ import { RunCoordinator } from "../run-coordinator.js";
 import { interactionService } from "../interaction-service.js";
 import { permissionPolicy } from "../permission-policy.js";
 import { createAsset } from "../media-assets.js";
+import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
+import { replyAndContinueInteraction } from "../interaction-reply.js";
 
 let root: string;
 let provider: http.Server;
@@ -141,15 +143,26 @@ it("resumes two approvals in one Rust step without repeating the first tool", as
   expect(requests).toHaveLength(2);
 });
 
-it("suspends on human input and resumes with the saved answer", async () => {
+it.each(["1", "0"])("suspends on human input and resumes with the saved answer (in-process=%s)", async (inProcess) => {
+  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", inProcess);
+  vi.stubEnv("DATA_ROOT", DATA_ROOT);
   askHuman = true;
   store.updateSession(sessionId, { profileId: "synax" });
   const accepted = await coordinator.submitAsync(sessionId, { message: "Ask which file" }, "human-test");
   await coordinator.waitForIdle();
-  expect(store.getRun(accepted.run.id).status).toBe("waiting_input");
+  expect(store.getRun(accepted.run.id).status, JSON.stringify(store.getRun(accepted.run.id))).toBe("waiting_input");
+  expect(store.getSession(sessionId)).toMatchObject({ status: "waiting_input", activeRunId: accepted.run.id });
   expect(requests).toHaveLength(1);
   const interaction = interactionService.pending(sessionId)!;
   expect(interaction).not.toBeNull();
+  expect(store.getSession(sessionId).pendingResumeToken).toBe(`interaction:${interaction.id}`);
+  expect(store.getRunStep(interaction.stepId)).toMatchObject({ status: "waiting_input", completedAt: null });
+  expect(store.getToolCall(sessionId, interaction.toolCallId)).toMatchObject({ status: "pending", endedAt: null });
+  if (inProcess === "0") {
+    // A reopened app has no in-memory coordinator or form cache.
+    store.reset();
+    coordinator = new RunCoordinator();
+  }
   await interactionService.replyAuthoritative(sessionId, interaction.id, { revision: interaction.revision, action: "submit", answers: { file: "README.md" } });
   coordinator.resume(sessionId);
   await coordinator.waitForIdle();
@@ -157,7 +170,51 @@ it("suspends on human input and resumes with the saved answer", async () => {
   expect(requests).toHaveLength(2);
   expect(JSON.stringify(requests[1])).toContain("README.md");
   expect(interactionService.pending(sessionId)).toBeNull();
-});
+  expect(store.listToolCalls(sessionId)).toHaveLength(1);
+  expect(store.getToolCall(sessionId, interaction.toolCallId).status).toBe("completed");
+}, 20_000);
+
+it.each(["paused", "completed"] as const)("restarts from a saved form after shutdown and cache loss (status=%s)", async (status) => {
+  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+  vi.stubEnv("DATA_ROOT", DATA_ROOT);
+  askHuman = true;
+  store.updateSession(sessionId, { profileId: "synax" });
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Ask which file" }, "restart-form");
+  await coordinator.waitForIdle();
+  const interaction = interactionService.pending(sessionId)!;
+  expect(interaction).toBeTruthy();
+
+  await coordinator.interrupt(sessionId, "Application shutting down");
+  const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
+  await runtimeFacade.stopSessionAuthoritative(sessionId, "paused", "Runtime restarted during execution");
+  if (status === "completed") store.updateSession(sessionId, { status });
+  await store.flushSession(sessionId);
+  expect((await runtimeFacade.snapshotAuthoritative(sessionId)).activeRunId).toBeFalsy();
+  store.reset();
+  coordinator = new RunCoordinator();
+
+  const reply = { revision: interaction.revision, action: "submit" as const, answers: { file: "README.md" } };
+  const responses = await Promise.all([1, 2].map(() => replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator)));
+  expect(responses.every(item => item.status === "answered" && item.consumedAt)).toBe(true);
+  await coordinator.waitForIdle();
+  const restarted = store.listRuns(sessionId).find(run => run.id !== accepted.run.id)!;
+  expect(restarted).toMatchObject({ status: "completed", metadata: {
+    runtime: { requestId: `interaction-restart:${interaction.id}` },
+  } });
+  expect(store.getRun(accepted.run.id).status).toBe("interrupted");
+  expect(requests).toHaveLength(2);
+  const history = requests[1].messages as Array<Record<string, unknown>>;
+  expect(history.find(message => message.role === "tool" && message.tool_call_id === "provider-call-0")?.content).toContain("README.md");
+  expect(history.at(-1)?.role).toBe("user");
+  expect(history.at(-1)?.content).toContain("Which file?");
+  expect(history.at(-1)?.content).toContain("README.md");
+  await replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator);
+  await coordinator.waitForIdle();
+  expect(requests).toHaveLength(2);
+  expect(store.listRuns(sessionId)).toHaveLength(2);
+  expect(store.listToolCalls(sessionId)).toHaveLength(1);
+  expect(interactionService.pending(sessionId)).toBeNull();
+}, 25_000);
 
 it("keeps tool call/result identities in the next user turn", async () => {
   await submit();

@@ -1,7 +1,12 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { agentRuntimeRoutes } from "../agent-runtime.js";
 import { runtimeFacade } from "../../../modules/agent-runtime/sidecar/runtime-facade.js";
 import { RuntimeSidecarError } from "../../../modules/agent-runtime/sidecar/sidecar-client.js";
+import { resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
+
+beforeEach(async () => {
+  await resetAgentRuntimeFixtures();
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -54,19 +59,31 @@ for (const endpoint of collectionEndpoints) {
   });
 }
 
-it("still reports a genuinely missing session as not found", async () => {
-  const guard = vi
-    .spyOn(runtimeFacade, "uiSnapshotAuthoritative")
-    .mockImplementation(projectionMissing);
+it("reports a session without a durable registration as not found", async () => {
+  vi.spyOn(runtimeFacade, "uiSnapshotAuthoritative").mockImplementation(
+    projectionMissing,
+  );
+  vi.spyOn(runtimeFacade, "sessionExists").mockResolvedValue(false);
   const response = await agentRuntimeRoutes.request(
     "http://localhost/sessions/ars_missing/snapshot",
   );
-  expect(guard).toHaveBeenCalledWith("ars_missing");
   expect(response.status).toBe(404);
   expect(await response.json()).toMatchObject({
     code: "NOT_FOUND",
     error: "Agent runtime resource not found: ars_missing",
   });
+});
+
+it("reports a lost projection of an existing session as retryable, not missing", async () => {
+  vi.spyOn(runtimeFacade, "uiSnapshotAuthoritative").mockImplementation(
+    projectionMissing,
+  );
+  vi.spyOn(runtimeFacade, "sessionExists").mockResolvedValue(true);
+  const response = await agentRuntimeRoutes.request(
+    "http://localhost/sessions/ars_live/snapshot",
+  );
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({ code: "PROJECTION_RECOVERING" });
 });
 
 it("keeps guarding session detail reads", async () => {

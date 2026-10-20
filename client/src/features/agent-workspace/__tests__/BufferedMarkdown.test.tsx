@@ -51,19 +51,23 @@ describe("BufferedMarkdown", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not keep a polling timer alive after the stream catches up", () => {
+  it("keeps one steady heartbeat regardless of how deltas arrive", () => {
     vi.useFakeTimers();
-    const { rerender } = render(
-      <BufferedMarkdown content="streamed" isStreaming />,
+    const { container, rerender } = render(
+      <BufferedMarkdown content="one" isStreaming />,
     );
+    expect(vi.getTimerCount()).toBe(1);
 
+    // Deltas arriving mid-tick must not stack extra timers or push the
+    // reveal back: the first tick reveals the latest text.
+    rerender(<BufferedMarkdown content="one two" isStreaming />);
+    rerender(<BufferedMarkdown content="one two three" isStreaming />);
     expect(vi.getTimerCount()).toBe(1);
     act(() => vi.advanceTimersByTime(40));
-    expect(vi.getTimerCount()).toBe(0);
+    expect(container).toHaveTextContent("one two three");
 
-    rerender(<BufferedMarkdown content="streamed more" isStreaming />);
-    expect(vi.getTimerCount()).toBe(1);
-    act(() => vi.advanceTimersByTime(40));
+    // The heartbeat stops with the stream.
+    rerender(<BufferedMarkdown content="one two three" isStreaming={false} />);
     expect(vi.getTimerCount()).toBe(0);
   });
 

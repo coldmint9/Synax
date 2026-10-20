@@ -1,4 +1,13 @@
-import { memo, useMemo, type RefObject } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import { shallow } from "zustand/shallow";
 import { Skeleton } from "@/shared/ui/ui/Display";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -21,7 +30,9 @@ import {
 import { groupActivityEntries } from "./groupActivityEntries";
 import {
   EMPTY_STREAMING_BUFFERS,
+  isStreamingLiveEmpty,
   materializeLiveBlocks,
+  type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { useShellStore } from "../../shared/state/shellStore";
@@ -184,6 +195,73 @@ function renderTimelineRows({
 }
 
 /** Only the tail is rebuilt for tokens; all rows share one stable React parent. */
+/**
+ * Buffers the live region last painted.
+ *
+ * Rendered state legitimately trails the store (tools update the pending list
+ * in place; a deferred buffer and a ref-lowered `React.memo` can deliver the
+ * old and the new buffer in either order). Deciding "nothing to show" from the
+ * store is authoritative for a step that already painted: an empty store buffer
+ * then means the step moved into the transcript, never that the running command
+ * vanished. Reading the emptiness from props instead made the row blink out for
+ * one commit and reappear on the next render.
+ */
+const paintedLive: {
+  stepId: string | null;
+  live: StreamingLiveBuffers;
+  set: Dispatch<SetStateAction<StreamingLiveBuffers>> | null;
+} = { stepId: null, live: EMPTY_STREAMING_BUFFERS, set: null };
+
+function paintLiveStep(stepId: string | null): void {
+  if (stepId === paintedLive.stepId) return;
+  paintedLive.stepId = stepId;
+  paintedLive.live = EMPTY_STREAMING_BUFFERS;
+  paintedLive.set?.(EMPTY_STREAMING_BUFFERS);
+}
+
+function TrackedLiveStepView({
+  stepId,
+  live,
+}: {
+  stepId: string;
+  live: StreamingLiveBuffers;
+}) {
+  const [painted, setPainted] = useState(live);
+  useEffect(() => {
+    paintedLive.set = setPainted;
+    paintedLive.live = painted;
+    return () => {
+      if (paintedLive.set === setPainted) paintedLive.set = null;
+    };
+  }, [painted]);
+  if (painted !== live) setPainted(live);
+  const shown = isStreamingLiveEmpty(live) && !isStreamingLiveEmpty(painted)
+    ? painted
+    : live;
+  return (
+    <TimelineRow
+      entry={{
+        id: stepId,
+        kind: "agent",
+        createdAt: "",
+        label: "",
+        turn: {
+          stepId,
+          index: 0,
+          status: "running",
+          duration: null,
+          completedAt: null,
+          blocks: materializeLiveBlocks(shown),
+        },
+      }}
+      sessionId={undefined}
+      isWorking
+      isStreaming
+      eager
+    />
+  );
+}
+
 function TimelineRows({
   history,
   entries,

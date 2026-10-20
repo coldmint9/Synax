@@ -1,22 +1,53 @@
-import { afterEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ start: vi.fn(async () => 3219), read: vi.fn(async () => 'private-api-token\n') }));
-vi.mock('./node-sidecar.js', () => ({ startSidecar: mocks.start }));
-vi.mock('./data-paths.js', () => ({ getDataRoot: () => '/isolated' }));
-vi.mock('node:fs/promises', () => ({ readFile: mocks.read }));
-import { getRuntimeConnection } from './runtime-connection.js';
-afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
-it('keeps API credentials in main and returns only the short-lived connection descriptor', async () => {
-  const descriptor = { transport: 'rust', ticket: { token: 'one-use-ticket' } };
-  const fetch = vi.fn(async () => ({ ok: true, json: async () => descriptor }));
-  vi.stubGlobal('fetch', fetch);
-  expect(await getRuntimeConnection('session', 'window', true)).toEqual(descriptor);
-  expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:3219/api/agent-runtime/sessions/session/runtime-ticket', expect.objectContaining({
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer private-api-token' },
-    body: JSON.stringify({ clientId: 'window', snapshot: true }),
-  }));
-});
-it('rejects malformed IPC arguments before starting a service or reading credentials', async () => {
-  await expect(getRuntimeConnection({}, 'window', true)).rejects.toThrow('Invalid runtime connection');
-  await expect(getRuntimeConnection('session', 'window', 'true')).rejects.toThrow('Invalid runtime connection');
-  expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.read).not.toHaveBeenCalled();
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { AccessTokenCache, RuntimeConnectionBroker, validateRuntimeConnectionRequest } from "./runtime-connection.js";
+
+async function tokenFile(text = "secret\n"): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), "synax-runtime-connection-"));
+  const file = path.join(root, "runtime-access-token");
+  await writeFile(file, text);
+  return file;
+}
+
+function ticketResponse(): Response {
+  return new Response(JSON.stringify({ transport: "rust", ticket: {} }), { status: 200 });
+}
+
+describe("runtime connection broker", () => {
+  it("rejects malformed renderer requests before touching the backend", () => {
+    expect(() => validateRuntimeConnectionRequest({ sessionId: "", clientId: "c", snapshot: true })).toThrow();
+    expect(() => validateRuntimeConnectionRequest({ sessionId: "s", clientId: "c", snapshot: "yes" })).toThrow();
+  });
+
+  it("reads the access token once for consecutive handshakes", async () => {
+    const file = await tokenFile();
+    const tokens = new AccessTokenCache(file);
+    const fetch = vi.fn(async () => ticketResponse());
+    const broker = new RuntimeConnectionBroker({ tokenFile: file, port: async () => 4321, fetch });
+    await broker.connection({ sessionId: "s", clientId: "c", snapshot: true });
+    await broker.connection({ sessionId: "s", clientId: "c", snapshot: false });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await tokens.read()).toBe("secret");
+  });
+
+  it("shares one handshake between reconnect calls and backs off after a failure", async () => {
+    const file = await tokenFile();
+    let release: (() => void) | undefined;
+    const fetch = vi.fn(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return ticketResponse();
+    });
+    const broker = new RuntimeConnectionBroker({ tokenFile: file, port: async () => 4321, fetch });
+    const first = broker.connection({ sessionId: "s", clientId: "c", snapshot: true });
+    const second = broker.connection({ sessionId: "s", clientId: "c", snapshot: true });
+    expect(first).toBe(second);
+    release?.();
+
+    const failing = new RuntimeConnectionBroker({ tokenFile: file, port: async () => 4321,
+      fetch: async () => new Response("no", { status: 503 }) });
+    await expect(failing.connection({ sessionId: "s", clientId: "c", snapshot: true })).rejects.toThrow();
+    await expect(failing.connection({ sessionId: "s", clientId: "c", snapshot: true })).rejects.toThrow(/backing off/);
+  });
 });
