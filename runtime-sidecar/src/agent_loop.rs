@@ -185,9 +185,8 @@ impl LoopHandle {
             next.terminal_at = Some(now_ms());
         }
         if let Some(store) = &self.store {
-            if let Err(error) = store
-                .commit_agent_loop_async(self.id.clone(), serde_json::to_vec(&next)?, encoded)
-                .await
+            if let Err(error) = store.commit_agent_loop(self.id.clone(), serde_json::to_vec(&next)?, encoded)
+
             {
                 state.failure = Some(error.to_string());
                 self.changed.send_modify(|revision| *revision += 1);
@@ -268,7 +267,7 @@ impl AgentLoopManager {
         let Some(store) = &self.store else {
             return Ok(None);
         };
-        let Some((checkpoint, events)) = store.load_agent_loop_async(id.to_owned()).await? else {
+        let Some((checkpoint, events)) = store.load_agent_loop(id.to_owned())? else {
             return Ok(None);
         };
         let checkpoint: Checkpoint = serde_json::from_slice(&checkpoint)?;
@@ -631,9 +630,7 @@ async fn runtime_facts(
         .as_ref()
         .ok_or("native loop requires durable runtime storage")?;
     let snapshot: Value = serde_json::from_slice(
-        &store
-            .ui_snapshot_async(binding.session_id.clone(), None)
-            .await?,
+        &store.ui_snapshot(&binding.session_id, None).map_err(|error| error.to_string())?,
     )?;
     let session = snapshot["session"].clone();
     let run = snapshot["run"].clone();
@@ -647,7 +644,7 @@ async fn runtime_facts(
             return Err("invalid runtime parent chain".into());
         }
         let snapshot: Value =
-            serde_json::from_slice(&store.ui_snapshot_async(parent, None).await?)?;
+            serde_json::from_slice(&store.ui_snapshot(&parent, None)?)?;
         root = snapshot["session"].clone();
     }
     Ok(Some((session, root, run)))

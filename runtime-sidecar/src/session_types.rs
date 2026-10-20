@@ -117,11 +117,11 @@ impl From<StorageError> for RuntimeError {
     }
 }
 
-impl From<StorageError> for crate::jsonl::error::HistoryError {
+impl From<StorageError> for crate::jsonl::history::HistoryError {
     fn from(error: StorageError) -> Self {
         match error {
             StorageError::Runtime(error) => Self::InvalidCommand(error.to_string()),
-            StorageError::Serialization(error) => Self::Serialization(error),
+            StorageError::Serialization(error) => Self::InvalidCommand(error.to_string()),
             StorageError::DiskFull => Self::InvalidCommand("storage disk full".into()),
         }
     }

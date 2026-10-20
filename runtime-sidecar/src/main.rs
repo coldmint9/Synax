@@ -1,30 +1,9 @@
-mod actor;
-mod agent_loop;
-mod commit;
-mod completion;
-mod control;
-mod execution;
-mod flow;
-mod history;
-mod input_queue;
-mod loop_policy;
-mod loop_context;
-mod projection;
-mod provider;
-mod provider_adapter;
-mod provider_metadata;
-mod provider_tool_names;
-mod protocol;
-mod storage;
-mod tickets;
-mod transport;
-mod workspace_index;
-
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::actor::SessionShardRouter;
-use crate::storage::HotStore;
+use synax_runtime_sidecar::actor::SessionShardRouter;
+use synax_runtime_sidecar::{control, jsonl, protocol, provider, tickets, transport, workspace_index};
+
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use transport::{TransportContext, cleanup_socket, serve_websocket, socket_path_from_env};
@@ -67,23 +46,7 @@ async fn terminate_signal() -> std::io::Result<()> {
     }
 }
 
-fn env_duration_ms(name: &str, default_ms: u64) -> Duration {
-    let milliseconds = std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_ms);
-    Duration::from_millis(milliseconds)
-}
 
-fn env_usize(name: &str, default: usize, max: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-        .min(max)
-}
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("SYNAX_RUNTIME_SIDECAR_TOKEN")
@@ -99,17 +62,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let provider_listener = TcpListener::bind(("127.0.0.1", provider_port)).await?;
     let provider_port = provider_listener.local_addr()?.port();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
-        .map(HotStore::open)
-        .transpose()?;
-    let hot_store = hot_store.map(Arc::new);
-    let history_store = std::env::var_os("SYNAX_RUNTIME_HISTORY_PATH")
-        .map(history::HistoryStore::open)
-        .transpose()?;
-    let router = match hot_store.clone() {
-        Some(store) => SessionShardRouter::with_store(16, 1024, store.clone())?,
-        None => SessionShardRouter::new(16, 1024)?,
-    };
+    let store_root = std::env::var_os("SYNAX_RUNTIME_STORE_PATH")
+        .map(std::path::PathBuf::from)
+        .ok_or("SYNAX_RUNTIME_STORE_PATH is required")?;
+    let store = Arc::new(jsonl::store::JsonlStore::open(&store_root)?);
+    let hot = Arc::new(jsonl::hot::HotOps::new(store.clone()));
+    let history = Arc::new(jsonl::history::HistoryOps::new(store));
+    let router = SessionShardRouter::with_store(16, 1024, hot.clone())?;
     let context = TransportContext {
         workspace_index: workspace_index::WorkspaceIndex::new(),
         token: Arc::from(token),
@@ -117,9 +76,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
-        hot_store: hot_store.clone(),
-        history: history_store.map(Arc::new),
-        outbox_scan_cursor: Arc::new(std::sync::Mutex::new(None)),
+        hot_store: Some(hot.clone()),
+        history: Some(history),
     };
 
     #[cfg(unix)]
@@ -152,23 +110,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         provider_listener,
         context.token.to_string(),
         shutdown_rx.clone(),
-        hot_store.clone(),
+        Some(hot.clone()),
         context.router.clone(),
     ));
 
-    let maintenance_task = hot_store.as_ref().map(|_| {
-        tokio::spawn(transport::run_history_outbox_maintenance(
-            context.clone(),
-            shutdown_rx.clone(),
-            env_duration_ms("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_MS", 5_000),
-            env_usize(
-                "SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_SESSIONS",
-                128,
-                4_096,
-            ),
-            env_usize("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_BATCH", 256, 256),
-        ))
-    });
 
     #[cfg(unix)]
     let unix_task = unix_listener.map(|listener| {
@@ -199,9 +144,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = shutdown_tx.send(true);
     let _ = websocket_task.await;
     let _ = provider_task.await;
-    if let Some(task) = maintenance_task {
-        let _ = task.await;
-    }
+    let _ = tokio::task::spawn_blocking(move || hot.flush()).await;
     #[cfg(unix)]
     if let Some(task) = unix_task {
         let _ = task.await;

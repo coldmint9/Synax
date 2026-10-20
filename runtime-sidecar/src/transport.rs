@@ -57,91 +57,6 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
 
 type WebSocket = WebSocketStream<TcpStream>;
 
-async fn reconcile_history_from_hot(
-    hot: &crate::jsonl::hot::HotOps,
-    history: &crate::jsonl::history_ops::HistoryOps,
-    session_id: &str,
-    _request_id: &str,
-) -> Result<Vec<u8>, String> {
-    let events = hot
-        .history_outbox_async(session_id.to_owned(), 4096)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut objects: Vec<Value> = Vec::new();
-    let source_range = format!("outbox:{}:{}", events.first().map(|event| event.sequence).unwrap_or(0), events.last().map(|event| event.sequence).unwrap_or(0));
-    for event in events.iter().filter(|event| !event.ephemeral) {
-        let payload: Value = serde_json::from_slice(&event.payload).map_err(|error| error.to_string())?;
-        let chunk = payload.get("chunk").cloned().unwrap_or(Value::Null);
-        for (field, kind) in [("permission", "runtime.permission"), ("interaction", "runtime.interaction"), ("message", "runtime.message")] {
-            if let Some(value) = chunk.get(field) {
-                if value["id"].is_string() && value["sessionId"].as_str() == Some(session_id) {
-                    objects.push(serde_json::json!({"kind":kind,"value":value}));
-                }
-            }
-        }
-        let kind = match chunk.get("type").and_then(Value::as_str) {
-            Some("run_started") | Some("run_activated") | Some("run_finished") | Some("run_completed") | Some("run_failed") | Some("run_resumed") => Some(("runtime.run", chunk.get("run"))),
-            Some("step_started") => Some(("runtime.step", chunk.get("step"))),
-            Some("tool_call") | Some("tool_result") | Some("permission_requested") => Some(("runtime.tool_call", chunk.get("toolCall"))),
-            Some("event") => Some(("runtime.event", chunk.get("event"))),
-            _ => None,
-        };
-        if let Some((kind, Some(value))) = kind {
-            if value.get("id").and_then(Value::as_str).is_some()
-                && value.get("sessionId").and_then(Value::as_str) == Some(session_id)
-            {
-                objects.push(serde_json::json!({"kind": kind, "value": value}));
-            }
-        }
-    }
-    // Events are chronological, so the last object per identity is the newest
-    // value. Collapse before batching: a later batch must not be shadowed by a
-    // replayed earlier state from a previous batch.
-    let mut newest: std::collections::BTreeMap<(String, String), Value> = std::collections::BTreeMap::new();
-    for object in objects {
-        let kind = object["kind"].as_str().unwrap_or_default().to_owned();
-        let id = object["value"]["id"].as_str().unwrap_or_default().to_owned();
-        newest.insert((kind, id), object);
-    }
-    let objects: Vec<Value> = newest.into_values().collect();
-    let mut reconciled = 0usize;
-    let mut last: Option<Value> = None;
-    let mut batch: Vec<Value> = Vec::new();
-    let mut bytes = 16usize;
-    for object in objects {
-        let cost = serde_json::to_vec(&object).map_err(|error| error.to_string())?.len();
-        if !batch.is_empty() && (batch.len() >= 128 || bytes + cost > 768 * 1024) {
-            let result = history.command_async(
-                session_id.to_owned(),
-                format!("{source_range}:{reconciled}"),
-                "append_entities".to_owned(),
-                serde_json::to_vec(&serde_json::json!({"objects": batch})).map_err(|error| error.to_string())?,
-            ).await.map_err(|error| error.to_string())?;
-            last = serde_json::from_slice(&result).ok();
-            reconciled += 1;
-            batch = Vec::new();
-            bytes = 16;
-        }
-        batch.push(object);
-        bytes += cost;
-    }
-    if !batch.is_empty() {
-        let result = history.command_async(
-            session_id.to_owned(),
-            format!("{source_range}:{reconciled}"),
-            "append_entities".to_owned(),
-            serde_json::to_vec(&serde_json::json!({"objects": batch})).map_err(|error| error.to_string())?,
-        ).await.map_err(|error| error.to_string())?;
-        last = serde_json::from_slice(&result).ok();
-        reconciled += 1;
-    }
-    if let Some(last) = events.last() {
-        hot.history_outbox_ack_async(session_id.to_owned(), last.sequence)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    serde_json::to_vec(&serde_json::json!({"reconciledBatches": reconciled, "hotCursor": events.last().map(|event| event.sequence), "head": last})).map_err(|error| error.to_string())
-}
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -162,8 +77,7 @@ pub struct TransportContext {
     pub shutdown: watch::Sender<bool>,
     pub router: Arc<SessionShardRouter>,
     pub hot_store: Option<Arc<crate::jsonl::hot::HotOps>>,
-    pub history: Option<Arc<crate::jsonl::history_ops::HistoryOps>>,
-    pub outbox_scan_cursor: Arc<std::sync::Mutex<Option<String>>>,
+    pub history: Option<Arc<crate::jsonl::history::HistoryOps>>,
 }
 
 impl TransportContext {
@@ -192,79 +106,6 @@ impl TransportContext {
                     .map(|value| (*value).to_owned())
                     .collect(),
             })),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct HistoryOutboxMaintenanceReport {
-    pub sessions_scanned: usize,
-    pub sessions_with_work: usize,
-    pub removed: usize,
-    pub sessions_with_more: usize,
-}
-
-pub async fn maintain_history_outbox_once(
-    context: &TransportContext,
-    max_sessions: usize,
-    max_entries: usize,
-) -> Result<HistoryOutboxMaintenanceReport, String> {
-    let Some(hot) = context.hot_store.as_ref() else {
-        return Ok(HistoryOutboxMaintenanceReport::default());
-    };
-
-    if max_sessions == 0 {
-        return Ok(HistoryOutboxMaintenanceReport::default());
-    }
-    let cursor = context
-        .outbox_scan_cursor
-        .lock()
-        .ok()
-        .and_then(|cursor| cursor.clone());
-    let page = hot
-        .history_outbox_sessions_async(cursor, max_sessions)
-        .await
-        .map_err(|error| error.to_string())?;
-    if let Ok(mut scan_cursor) = context.outbox_scan_cursor.lock() {
-        *scan_cursor = page.next_key.clone();
-    }
-    let sessions = page.session_ids;
-    let count = sessions.len().min(max_sessions);
-    let mut report = HistoryOutboxMaintenanceReport::default();
-    for session_id in sessions.iter().take(count) {
-        let result = hot
-            .history_outbox_maintain_async(session_id.clone(), max_entries)
-            .await
-            .map_err(|error| error.to_string())?;
-        report.sessions_scanned += 1;
-        report.removed += result.removed;
-        if result.removed > 0 || result.has_more_acked {
-            report.sessions_with_work += 1;
-        }
-        if result.has_more_acked {
-            report.sessions_with_more += 1;
-        }
-    }
-    Ok(report)
-}
-
-pub async fn run_history_outbox_maintenance(
-    context: TransportContext,
-    mut shutdown: watch::Receiver<bool>,
-    interval: Duration,
-    max_sessions: usize,
-    max_entries: usize,
-) {
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = ticker.tick() => {
-                if let Err(error) = maintain_history_outbox_once(&context, max_sessions, max_entries).await {
-                    eprintln!("[runtime-sidecar] history outbox maintenance deferred: {error}");
-                }
-            }
         }
     }
 }
@@ -977,72 +818,55 @@ async fn execute_wire(
                     false,
                 );
             }
-            if command.operation == "history_outbox_status" {
-                let Some(hot) = context.hot_store.as_ref() else {
-                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+            // The outbox was folded into the hot commit: these answer without writing.
+            if matches!(
+                command.operation.as_str(),
+                "history_outbox_status" | "maintain_history_outbox" | "ack_history_outbox" | "reconcile_stream"
+            ) {
+                let through = serde_json::from_slice::<Value>(&command.payload)
+                    .ok()
+                    .and_then(|value| value.get("through").and_then(Value::as_u64));
+                let state = match command.operation.as_str() {
+                    "history_outbox_status" => serde_json::json!({"pending": 0}),
+                    "maintain_history_outbox" => serde_json::json!({"ackedThrough": Value::Null, "removed": 0, "hasMoreAcked": false}),
+                    "ack_history_outbox" => serde_json::json!({"ackedThrough": through}),
+                    _ => serde_json::json!({"reconciled": 0}),
                 };
-                let payload: Value = match serde_json::from_slice(&command.payload) {
-                    Ok(value) => value,
-                    Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
-                };
-                let limit = payload.get("limit").and_then(Value::as_u64).unwrap_or(4096).clamp(1, 4096) as usize;
-                return match hot.history_outbox_async(session_id.clone(), limit).await {
-                    Ok(events) => {
-                        let state = serde_json::json!({
-                            "pending": events.len(),
-                            "firstSequence": events.first().map(|event| event.sequence),
-                            "lastSequence": events.last().map(|event| event.sequence),
-                            "truncated": events.len() >= limit,
-                        });
-                        (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&state).unwrap_or_default() })) }, false)
-                    }
-                    Err(error) => (envelope(storage_error_to_wire(error)), false),
-                };
+                return (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: request.epoch,
+                        revision: request.revision,
+                        body: Some(wire_envelope::Body::HistoryState(WireHistoryState {
+                            state_json: serde_json::to_vec(&state).unwrap_or_default(),
+                        })),
+                    },
+                    false,
+                );
             }
             if command.operation == "test_reset_runtime" {
                 if std::env::var("SYNAX_RUNTIME_TEST_MODE") != Ok("1".to_owned()) {
                     return (envelope(wire_error("FORBIDDEN", "test reset is only available in test mode")), false);
                 }
-                let Some(hot) = context.hot_store.as_ref() else {
+                let Some(hot) = context.hot_store.clone() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
-                return match hot.reset_for_tests_async().await {
-                    Ok(()) => (envelope(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ok": true})).unwrap_or_default() })), false),
-                    Err(error) => (envelope(storage_error_to_wire(error)), false),
+                return match tokio::task::spawn_blocking(move || hot.reset_for_tests()).await {
+                    Ok(Ok(())) => (envelope(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ok": true})).unwrap_or_default() })), false),
+                    Ok(Err(error)) => (envelope(storage_error_to_wire(error)), false),
+                    Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
                 };
             }
-            if command.operation == "maintain_history_outbox" {
-                let Some(hot) = context.hot_store.as_ref() else {
-                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
-                };
-                let payload: Value = match serde_json::from_slice(&command.payload) {
-                    Ok(value) => value,
-                    Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
-                };
-                let max_entries = payload.get("maxEntries").and_then(Value::as_u64).unwrap_or(256).clamp(1, 256) as usize;
-                return match hot.history_outbox_maintain_async(session_id.clone(), max_entries).await {
-                    Ok(result) => {
-                        let state = serde_json::json!({
-                            "ackedThrough": result.acked_through,
-                            "removed": result.removed,
-                            "hasMoreAcked": result.has_more_acked,
-                        });
-                        (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&state).unwrap_or_default() })) }, false)
-                    }
-                    Err(error) => (envelope(storage_error_to_wire(error)), false),
-                };
-            }
-            let Some(history) = context.history.as_ref() else {
+            let Some(history) = context.history.clone() else {
                 return (
                     envelope(wire_error("HISTORY_UNAVAILABLE", "runtime history is not configured")),
                     false,
                 );
             };
-            if command.operation == "reconcile_stream" {
-                let Some(hot) = context.hot_store.as_ref() else {
-                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
-                };
-                return match reconcile_history_from_hot(hot, history, &session_id, &request_id).await {
+            let reply = history.command_async(session_id.clone(), request_id.clone(), command.operation, command.payload).await;
+            return match reply {
+            
                     Ok(state_json) => (
                         WireEnvelope {
                             request_id,
@@ -1053,49 +877,8 @@ async fn execute_wire(
                         },
                         false,
                     ),
-                    Err(message) => (envelope(wire_error("HISTORY_ERROR", &message)), false),
-                };
-            }
-            if command.operation == "ack_history_outbox" {
-                let Some(hot) = context.hot_store.as_ref() else {
-                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
-                };
-                let payload: Value = match serde_json::from_slice(&command.payload) {
-                    Ok(value) => value,
-                    Err(error) => return (envelope(wire_error("INVALID_COMMAND", &error.to_string())), false),
-                };
-                let Some(through) = payload.get("through").and_then(Value::as_u64) else {
-                    return (envelope(wire_error("INVALID_COMMAND", "outbox ack requires through")), false);
-                };
-                return match hot.history_outbox_ack_async(session_id.clone(), through).await {
-                    Ok(()) => (WireEnvelope { request_id, session_id, epoch: request.epoch, revision: request.revision, body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ackedThrough": through})).unwrap_or_default() })) }, false),
-                    Err(error) => (envelope(storage_error_to_wire(error)), false),
-                };
-            }
-            match history
-                .command_async(
-                    session_id.clone(),
-                    request_id.clone(),
-                    command.operation,
-                    command.payload,
-                )
-                .await
-            {
-                Ok(state_json) => (
-                    WireEnvelope {
-                        request_id,
-                        session_id,
-                        epoch: request.epoch,
-                        revision: request.revision,
-                        body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json })),
-                    },
-                    false,
-                ),
-                Err(error) => (
-                    envelope(history_error_to_wire(error)),
-                    false,
-                ),
-            }
+                    Err(error) => (envelope(history_error_to_wire(error)), false),
+            };
         }
         Some(wire_envelope::Body::SessionList(request)) => {
             if !local_control {
@@ -1104,14 +887,17 @@ async fn execute_wire(
             let Some(store) = context.hot_store.as_ref() else {
                 return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
             };
-            match store.session_list_async(request.after).await {
-                Ok(sessions_json) => (
-                    WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
-                        body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) },
-                    false,
-                ),
-                Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
-            }
+            let cursor = crate::jsonl::store::ListIndex::decode_cursor(&request.after);
+            let (items, next) = store.store().list().read().page(cursor.as_ref(), 64);
+            let sessions_json = serde_json::to_vec(&serde_json::json!({
+                "items": items,
+                "next": next.map(|key| crate::jsonl::store::ListIndex::encode_cursor(&key)),
+            })).unwrap_or_default();
+            (
+                WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
+                    body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) },
+                false,
+            )
         }
         // Legacy migration commands. Sessions now seed through `seed_ui`, so
         // there is no separate import step; answer explicitly instead of
@@ -1316,8 +1102,8 @@ fn decode_durability(value: u32) -> Durability {
     }
 }
 
-fn history_error_to_wire(error: crate::jsonl::error::HistoryError) -> wire_envelope::Body {
-    use crate::jsonl::error::HistoryError;
+fn history_error_to_wire(error: crate::jsonl::history::HistoryError) -> wire_envelope::Body {
+    use crate::jsonl::history::HistoryError;
     match error {
         HistoryError::StaleCursor => wire_error("HISTORY_STALE", "Conversation changed. Refresh history."),
         HistoryError::RevisionConflict { expected, actual } =>
@@ -1327,7 +1113,7 @@ fn history_error_to_wire(error: crate::jsonl::error::HistoryError) -> wire_envel
         HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
         HistoryError::InvalidCommand(message) => wire_error("INVALID_COMMAND", &message),
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
-        HistoryError::Serialization(error) => wire_error("HISTORY_ERROR", &error.to_string()),
+        other => wire_error("HISTORY_ERROR", &other.to_string()),
     }
 }
 

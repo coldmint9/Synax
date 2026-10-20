@@ -10,9 +10,12 @@ rig-core = { version = "0.44", default-features = false, features = ["reqwest", 
 http = "1"
 bytes = "1"
 futures-util = "0.3"
+arc-swap = "1"
 async-stream = "0.3"
 ignore = "0.4"
 notify = "8"
+parking_lot = "0.12"
+im = "15"
 prost = "0.14"
 moka = { version = "0.12", features = ["future"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +27,7 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["h
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
+
 [lib]
+name = "synax_runtime_sidecar"
 path = "src/lib.rs"
-arc-swap = "1"
