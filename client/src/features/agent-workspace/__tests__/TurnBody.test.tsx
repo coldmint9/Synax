@@ -51,7 +51,8 @@ describe("TurnBody continuous process", () => {
   it("keeps the process open as an answer arrives and the turn completes", () => {
     const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("live")] }} entryId="live" isWorking />);
     const header = container.querySelector(".session-process-trigger");
-    expect(header?.querySelector(".bui-status")).toHaveAttribute("data-state", "running");
+    // A live row reads as the thought ticker; it no longer reports "进行中".
+    expect(header?.querySelector(".bui-status")).toBeNull();
     const turn = { ...emptyTurn, blocks: [tool("live"), { type: "text" as const, content: "Final answer" }] };
     rerender(<TurnBody turn={turn} entryId="live" isWorking />);
     expect(container.querySelector(".session-process-trigger")).toBe(header);
@@ -59,6 +60,25 @@ describe("TurnBody continuous process", () => {
     rerender(<TurnBody turn={{ ...turn, status: "completed" }} entryId="live" />);
     expect(header).toHaveAttribute("aria-expanded", "true");
     expect(header?.querySelector(".bui-status")).toHaveAttribute("data-state", "completed");
+  });
+
+  it("ticks the tail of the newest thought while the turn is live", () => {
+    const blocks: TurnContentBlock[] = [
+      { type: "thinking", content: "First thought" },
+      tool("ticker"),
+      { type: "thinking", content: "Older line\nNewest thought tail" },
+    ];
+    const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="ticker" isWorking />);
+    const header = container.querySelector(".session-process-trigger")!;
+    expect(header.querySelector(".session-process-ticker")?.textContent).toBe(
+      "正在思考:「Newest thought tail」正在思考:「Newest thought tail」",
+    );
+    expect(header.querySelector(".bui-status")).toBeNull();
+    expect(header.querySelector(".session-process-chevron")).toBeNull();
+    // A finished row goes back to the call-count summary.
+    rerender(<TurnBody turn={{ ...emptyTurn, status: "completed", blocks }} entryId="ticker" />);
+    expect(header.querySelector(".session-process-ticker")).toBeNull();
+    expect(header).toHaveTextContent("处理过程");
   });
 
   it("restores manually expanded tool details after history remounts", () => {
@@ -96,5 +116,29 @@ describe("TurnBody continuous process", () => {
     expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
     rerender(<TurnBody turn={{ ...emptyTurn, status: "completed" }} entryId="empty" />);
     expect(container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
+  });
+
+  it("reveals rows appended while the turn streams and leaves history still", () => {
+    const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("streamed")] }} entryId="streamed" isStreaming isWorking />);
+    const flow = container.querySelector(".session-conversation-flow");
+    expect(flow).toHaveClass("session-flow-append");
+    // Frozen at mount: finishing the turn must not replay the reveal, and the
+    // rows already appended keep the class they animated with.
+    rerender(<TurnBody turn={{ ...emptyTurn, status: "completed", blocks: [tool("streamed")] }} entryId="streamed" />);
+    expect(flow).toHaveClass("session-flow-append");
+    expect(flow?.querySelector(".session-flow-entry")).toBeInTheDocument();
+  });
+
+  it("does not reveal a turn restored from history", () => {
+    const { container } = render(<TurnBody turn={{ ...emptyTurn, status: "completed", blocks: [tool("history")] }} entryId="history" />);
+    expect(container.querySelector(".session-conversation-flow")).not.toHaveClass("session-flow-append");
+  });
+
+  it("renders reply actions only for the final reply row", () => {
+    const turn = { ...emptyTurn, blocks: [{ type: "text" as const, content: "Final answer" }] };
+    const { container, rerender } = render(<TurnBody turn={turn} entryId="actions" />);
+    expect(container.querySelector('[role="toolbar"]')).not.toBeNull();
+    rerender(<TurnBody turn={turn} entryId="actions" showActions={false} />);
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
   });
 });

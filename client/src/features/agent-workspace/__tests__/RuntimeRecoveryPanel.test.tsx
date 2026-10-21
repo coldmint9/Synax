@@ -1,44 +1,28 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeRecoveryPanel } from "../RuntimeRecoveryPanel";
-import {
-  agentRuntimeApi,
-  type AgentSession,
-} from "../../../adapters/transport/agentRuntime";
-import { useAgentSessionStore } from "../state/agentSessionStore";
+import type { AgentSession } from "../../../adapters/transport/agentRuntime";
 vi.mock("../../../shared/hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en" }),
 }));
 
-describe("stale execution cleanup", () => {
-  it("lets the user retry process cleanup in one click without submitting a new run", async () => {
+describe("stale execution notice", () => {
+  it("explains an unsettled stop without asking the user to retry cleanup", () => {
     const session = {
       id: "recovery",
       sessionMetadata: {
         runtimeControl: { state: "unconfirmed", reason: "Review changes." },
       },
     } as AgentSession;
-    const recover = vi
-      .spyOn(agentRuntimeApi, "acknowledgeRecovery")
-      .mockResolvedValue({
-        session: { ...session, status: "interrupted", sessionMetadata: {} },
-      });
-    const submit = vi.spyOn(agentRuntimeApi, "submitRun");
-    useAgentSessionStore.setState({
-      refreshSessions: vi.fn(async () => {}),
-      refreshDetail: vi.fn(async () => {}),
-      patchSession: vi.fn(() => true),
-    });
     render(<RuntimeRecoveryPanel session={session} />);
-    const button = screen.getByRole("button", {
-      name: /Retry process cleanup/,
-    });
-    expect(button).toBeEnabled();
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await userEvent.click(button);
-    await waitFor(() => expect(recover).toHaveBeenCalledWith("recovery"));
-    expect(submit).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
+    expect(screen.getByText("Previous execution was interrupted")).toBeVisible();
+    expect(screen.getByText("Review changes.")).toBeVisible();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing for a settled session", () => {
+    const session = { id: "idle", sessionMetadata: {} } as AgentSession;
+    const { container } = render(<RuntimeRecoveryPanel session={session} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

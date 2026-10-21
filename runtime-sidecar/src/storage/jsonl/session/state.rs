@@ -190,7 +190,7 @@ impl SessionActor {
                     sequence: event.sequence,
                     run_id: event.run_id.clone(),
                     kind: event.kind.clone(),
-                    payload: event.payload.clone(),
+                    payload: std::sync::Arc::from(event.payload.clone()),
                 },
             );
         }

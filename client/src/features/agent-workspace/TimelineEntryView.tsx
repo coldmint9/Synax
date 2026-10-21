@@ -120,6 +120,7 @@ export const TimelineEntryView = memo(function TimelineEntryView({
       isWorking={isWorking}
       turn={entry.turn}
       entryId={entry.id}
+      showActions={entry.finalReply === true}
       onExpandChild={onExpandChild}
     />
   );

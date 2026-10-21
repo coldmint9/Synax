@@ -22,6 +22,7 @@ import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { ensureSessionRecovered } from './session-recovery.js';
+import { logger } from "../../infrastructure/runtime/logger.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -92,7 +93,7 @@ export async function acceptRuntimeRunAuthoritative(
       409,
     );
 
-  const preparedSession = agentRuntimeStore.getSession(sessionId);
+  let preparedSession = agentRuntimeStore.getSession(sessionId);
   const preparedBinding = resolveSessionBackend(sessionId);
   if (profileService.getForSession(preparedSession).executionHost === "embedded")
     throw new AgentRuntimeError(
@@ -127,9 +128,24 @@ export async function acceptRuntimeRunAuthoritative(
     ? undefined
     : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
 
+  if (preparedSession.sessionMetadata?.runtimeControl) {
+    // Heal the fence before rejecting: recovery is automatic, so a stale stop
+    // must not turn the composer into a retry button the user has to press.
+    const { runCoordinator } = await import("./run-coordinator.js");
+    await runCoordinator.reconcileFencedSession(sessionId).catch((error) => {
+      logger.warn(
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Execution recovery retry failed",
+      );
+    });
+    preparedSession = agentRuntimeStore.getSession(sessionId);
+  }
   if (preparedSession.sessionMetadata?.runtimeControl)
     throw new AgentRuntimeError(
-      "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
+      "Execution shutdown is pending. This session resumes automatically once the previous run stops.",
       "RECOVERY_REQUIRED",
       409,
     );

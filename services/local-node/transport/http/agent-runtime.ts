@@ -87,7 +87,6 @@ import {
   RUNTIME_PROTOCOL_SCHEMA,
   RUNTIME_PROTOCOL_VERSION,
 } from "../../modules/agent-runtime/runtime-protocol.js";
-import { acknowledgeRuntimeRecovery } from "../../modules/agent-runtime/runtime-recovery.js";
 import {
   deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
@@ -1544,22 +1543,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
       .safeParse(c.req.query("after") ?? c.req.header("Last-Event-ID") ?? "0");
     if (!after.success) return validationError(c, after.error);
     return observeRunResponse(c, sessionId, runId, after.data);
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
-agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  try {
-    const id = c.req.param("sessionId");
-    await runCoordinator.reconcileFailedStop(id);
-    await acknowledgeRuntimeRecovery(id);
-    return c.json({
-      session: projectSessionState(
-        (await runtimeFacade.uiSnapshotAuthoritative(id)).session,
-      ),
-    });
   } catch (error) {
     return runtimeError(c, error);
   }

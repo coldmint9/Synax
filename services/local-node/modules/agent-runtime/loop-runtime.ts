@@ -1146,7 +1146,6 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1273,7 +1272,6 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1326,7 +1324,6 @@ export class AgentLoopRuntime {
                 completedAt: nowIso(),
                 finishReason: "input_injected",
               });
-              await captureCompletedReply(sessionId, step.id);
               void sessionHooks.emit({
                 type: "step:after",
                 sessionId,
@@ -1347,7 +1344,6 @@ export class AgentLoopRuntime {
               this.store.updateRunStep(step.id, {
                 status: "completed", completedAt: nowIso(), finishReason: "presentation_repair",
               });
-              await captureCompletedReply(sessionId, step.id);
               void sessionHooks.emit({ type: "step:after", sessionId, runId: run.id, stepIndex: step.index });
               currentPrompt = presentationCheck.retry;
               continue;
@@ -1408,7 +1404,6 @@ export class AgentLoopRuntime {
                   completedAt: nowIso(),
                   finishReason: "round_yielded",
                 });
-                await captureCompletedReply(sessionId, step.id);
                 void sessionHooks.emit({
                   type: "step:after",
                   sessionId,
@@ -1496,7 +1491,6 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1546,7 +1540,6 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1810,7 +1803,6 @@ export class AgentLoopRuntime {
               usage: modelResult.step.usage,
             },
           });
-          await captureCompletedReply(sessionId, step.id);
           void sessionHooks.emit({
             type: "step:after",
             sessionId,
@@ -2112,8 +2104,14 @@ export class AgentLoopRuntime {
               });
           }
           try {
-            await captureCompletedReply(sessionId);
             const finalRun = this.store.getRun(run.id);
+            // A paused Run has no final reply yet; it pins one when it settles.
+            if (
+              !["queued", "running", "waiting_permission", "waiting_input"].includes(
+                finalRun.status,
+              )
+            )
+              await captureCompletedReply(sessionId);
             void sessionHooks.emit({
               type: "run:completed",
               sessionId,

@@ -266,7 +266,7 @@ fn replay_segment(
                 sequence: event.sequence,
                 run_id: event.run_id,
                 kind: event.kind,
-                payload: event.payload,
+                payload: std::sync::Arc::from(event.payload),
             });
             while loaded.events.len() as u64 > EVENT_WINDOW {
                 loaded.events.pop_front();

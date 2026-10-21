@@ -1,4 +1,4 @@
-import { lazy, Suspense, useId } from "react";
+import { lazy, Suspense, useId, useState } from "react";
 import { Button as HeadlessButton } from "@headlessui/react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
 const InlineVisualization = lazy(() =>
@@ -10,11 +10,16 @@ import type { InlineVisualizationReference } from "./visualizationTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
-import { ChevronRight, MessageSquare, Zap } from "lucide-react";
+import { MessageSquare, Zap } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
 import { aggregateToolStatus } from "./toolCallPresentation";
-import { activityPreview, hasDisplayableReasoning } from "./activityText";
+import {
+  activityPreview,
+  hasDisplayableReasoning,
+  latestActivityPreview,
+  thinkingBannerPhrase,
+} from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
 import { MediaParts } from "../media/MediaParts";
 import type {
@@ -54,6 +59,30 @@ function sourceLabel(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * Tail of the newest thought still streaming into this turn.
+ *
+ * A live process row reads as "where is the model now", so it shows the end of
+ * the latest reasoning instead of a call count. Headline-only reasoning
+ * (`**Inspecting routes**`) has no prose to read from, so its last headline is
+ * the preview.
+ */
+function latestThinkingTail(
+  blocks: readonly TurnContentBlock[],
+  max = 60,
+): string | null {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.type !== "thinking" || !block.content.trim()) continue;
+    const banner = thinkingBannerPhrase(block.content);
+    const tail = banner
+      ? activityPreview(banner, max)
+      : latestActivityPreview(block.content, max);
+    if (tail) return tail;
+  }
+  return null;
 }
 
 function segmentKey(
@@ -104,6 +133,10 @@ export function TurnContent({
 }) {
   const { locale } = useLocale();
   const [expanded, toggle] = useActivityDisclosure(rowKeyPrefix ? `process:${rowKeyPrefix}` : undefined, defaultExpanded);
+  // A live turn keeps growing after it mounts: rows appended while it streams
+  // reveal themselves so new tool rounds read as a continuation, not a pop.
+  // Frozen at mount, so a finished turn never replays the reveal.
+  const [appendReveal] = useState(isStreaming);
   const flowId = useId();
   const segments = buildTurnRenderSegments(blocks).filter(
     (segment) => segment.type !== "thinking" || hasDisplayableReasoning(segment.content),
@@ -119,6 +152,14 @@ export function TurnContent({
   const status = isWorking && toolStatus === "completed" ? "running" : toolStatus;
   const failure = calls.find((call) => call.status === "failed" || call.status === "denied");
   const foldedPreview = failure?.outputSummary ? activityPreview(failure.outputSummary, 180) : processPreview;
+  // Only a live row ticks: history keeps the call-count summary, which is the
+  // part that stays true once the turn has stopped thinking.
+  const thinkingTail = isWorking ? latestThinkingTail(blocks) : null;
+  const tickerText = thinkingTail
+    ? locale === "zh"
+      ? `正在思考:「${thinkingTail}」`
+      : `Thinking: "${thinkingTail}"`
+    : null;
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "visualization")
@@ -192,20 +233,40 @@ export function TurnContent({
     return null;
   };
   return (
-    <div className="session-conversation-flow" data-has-activity={hasActivity || undefined}>
+    <div
+      className={
+        appendReveal
+          ? "session-conversation-flow session-flow-append"
+          : "session-conversation-flow"
+      }
+      data-has-activity={hasActivity || undefined}
+    >
       {hasActivity && (
         <HeadlessButton
           type="button"
           className="session-process-trigger"
           aria-expanded={expanded}
           aria-controls={segments.slice(0, lastActivity + 1).map((_, i) => `${flowId}-${i}`).join(" ")}
+          aria-label={tickerText ?? undefined}
           onClick={toggle}
         >
-          <span>{locale === "zh" ? "处理过程" : "Process"}</span>
-          {calls.length > 0 && <span>{locale === "zh" ? `${calls.length} 次工具调用` : `${calls.length} tool calls`}</span>}
-          {processMeta && <span>{processMeta}</span>}
-          <span className="session-process-status"><ActivityStatus status={status} /></span>
-          <ChevronRight size={14} className="session-process-chevron" aria-hidden="true" />
+          {tickerText ? (
+            <span className="session-process-ticker" aria-hidden="true">
+              <span className="session-process-ticker-track">
+                <span className="session-process-ticker-copy">{tickerText}</span>
+                <span className="session-process-ticker-copy" aria-hidden="true">{tickerText}</span>
+              </span>
+            </span>
+          ) : (
+            <>
+              <span>{locale === "zh" ? "处理过程" : "Process"}</span>
+              {calls.length > 0 && <span>{locale === "zh" ? `${calls.length} 次工具调用` : `${calls.length} tool calls`}</span>}
+              {processMeta && <span>{processMeta}</span>}
+            </>
+          )}
+          {status !== "running" && (
+            <span className="session-process-status"><ActivityStatus status={status} /></span>
+          )}
         </HeadlessButton>
       )}
       {!expanded && foldedPreview && <div className="session-process-preview" data-error={Boolean(failure) || undefined}>{foldedPreview}</div>}
@@ -220,7 +281,6 @@ export function TurnContent({
               className={activity ? "session-flow-entry" : "session-flow-entry session-answer-region"}
               data-process={inProcess || undefined}
               data-activity={activity || undefined}
-              data-connected={index < lastActivity || undefined}
               data-answer-start={hasActivity && index === lastActivity + 1 || undefined}
               hidden={inProcess && !expanded}
             >
@@ -242,12 +302,19 @@ export function TurnBody({
   onExpandChild,
   isStreaming = false,
   isWorking = isStreaming,
+  showActions = true,
 }: {
   turn: InterleavedTurn;
   entryId: string;
   onExpandChild?: (sessionId: string) => void;
   isStreaming?: boolean;
   isWorking?: boolean;
+  /**
+   * Whether this row is the round's final reply. Process rows leave the
+   * copy / fork / rollback toolbar to that row instead of mounting an idle
+   * placeholder under every step.
+   */
+  showActions?: boolean;
 }) {
   const history = useSessionHistory();
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
@@ -275,7 +342,7 @@ export function TurnBody({
       ) : (
         <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} isStreaming={isStreaming} isWorking={isWorking} />
       )}
-      {hasAnswer && (
+      {hasAnswer && showActions && (
         <MessageActionToolbar
           role="assistant"
           text={text}

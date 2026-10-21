@@ -113,6 +113,8 @@ interface Props {
   scrollRootRef?: RefObject<HTMLElement | null>;
   /** Live output must appear in the same paint, without an estimated-height placeholder. */
   eager?: boolean;
+  /** This row was just appended to the tail; reveal it instead of popping in. */
+  appended?: boolean;
   children: ReactNode;
 }
 
@@ -135,9 +137,13 @@ export function TimelineLazyEntry({
   estimate,
   scrollRootRef,
   eager = false,
+  appended = false,
   children,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // Frozen at mount: rows are keyed by entry id, so a row that was appended is
+  // a new node. Later renders must not withdraw the class mid-animation.
+  const [revealOnAppend] = useState(appended);
   // Without IntersectionObserver (unit tests, older runtimes) render eagerly
   // rather than leaving the transcript permanently blank.
   const [mounted, setMounted] = useState(
@@ -211,7 +217,7 @@ export function TimelineLazyEntry({
       ref={ref}
       id={sessionEntryDomId(entryId)}
       data-session-entry={entryId}
-      className="scroll-mt-4"
+      className={revealOnAppend ? "session-entry-appended scroll-mt-4" : "scroll-mt-4"}
       style={visible ? undefined : { minHeight: Math.round(reservedHeight) }}
     >
       {visible ? children : null}

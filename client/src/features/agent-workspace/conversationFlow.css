@@ -19,6 +19,29 @@
   font-size: 12px;
 }
 .session-process-status { margin-left: auto; }
+/* A live row is a readout of the newest thought, not a second transcript: the
+   teaser sweeps across one line instead of wrapping into a paragraph. */
+.session-process-ticker {
+  display: block;
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 18px), transparent);
+}
+.session-process-ticker-track {
+  display: inline-flex;
+  width: max-content;
+  animation: session-process-ticker 3s linear infinite;
+}
+.session-process-ticker-copy { padding-right: 48px; white-space: nowrap; }
+.session-process-trigger:hover .session-process-ticker-track,
+.session-process-trigger:focus-visible .session-process-ticker-track { animation-play-state: paused; }
+@keyframes session-process-ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
 .session-process-preview {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -31,8 +54,6 @@
   line-height: 1.65;
 }
 .session-process-preview[data-error="true"] { color: var(--danger); }
-.session-process-chevron { flex-shrink: 0; transition: transform 150ms ease; }
-.session-process-trigger[aria-expanded="true"] .session-process-chevron { transform: rotate(90deg); }
 .session-process-trigger:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
@@ -41,16 +62,6 @@
 .session-flow-content { display: flex; flex-direction: column; gap: 12px; }
 .session-flow-entry { position: relative; min-width: 0; }
 .session-flow-entry[hidden] { display: none; }
-.session-flow-entry[data-connected]::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 12px;
-  bottom: -24px;
-  width: 1px;
-  background: var(--flow-line);
-  pointer-events: none;
-}
 .session-flow-entry.session-answer-region { margin-top: 0; }
 .session-flow-entry.session-answer-region[data-process] { padding-left: 25px; }
 .session-flow-comment-icon {
@@ -75,15 +86,23 @@
 }
 .session-flow-tools > .bui-tool,
 .session-flow-tools > .bui-thinking { position: relative; }
-.session-flow-tools > :not(:last-child)::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 14px;
-  bottom: -24px;
-  width: 1px;
-  background: var(--flow-line, var(--bui-line));
-  pointer-events: none;
+
+/* A live turn grows in place: rows appended while it streams fade in, so new
+   tool rounds and reasoning read as a continuation of the flow. */
+.session-flow-append .session-flow-entry,
+.session-flow-append .session-flow-tools > .bui-tool,
+.session-flow-append .session-flow-tools > .bui-thinking {
+  animation: session-flow-append 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes session-flow-append {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .bui-thinking .bui-thinking-trigger {
@@ -202,7 +221,11 @@
   .bui-tool .bui-tool-trigger { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .session-process-chevron,
   .bui-thinking .bui-thinking-chevron,
   .bui-thinking .bui-thinking-reveal { transition: none; }
+  .session-process-ticker-track { animation: none; }
+  .session-process-ticker-copy[aria-hidden="true"] { display: none; }
+  .session-flow-append .session-flow-entry,
+  .session-flow-append .session-flow-tools > .bui-tool,
+  .session-flow-append .session-flow-tools > .bui-thinking { animation: none; }
 }

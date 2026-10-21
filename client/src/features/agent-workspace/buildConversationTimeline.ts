@@ -64,6 +64,11 @@ export type ConversationTimelineEntry =
       createdAt: string;
       label: string;
       turn: InterleavedTurn;
+      /**
+       * The round's final reply row. Copy / fork / rollback only belong there:
+       * a Run writes one row per step, and process rows have no reply to act on.
+       */
+      finalReply?: boolean;
     }
   | {
       id: string;
@@ -506,6 +511,7 @@ function foldRound(
       ...answerItem.entry,
       // A distinct anchor: the same step id also names the folded process row.
       id: `${answerItem.entry.id}-answer`,
+      finalReply: true,
       label:
         truncate(
           answer
@@ -569,6 +575,72 @@ function foldCompletedRounds(
   }
 
   return folded;
+}
+
+/**
+ * Give each Run exactly one actionable reply row.
+ *
+ * A live or unfolded Run keeps one row per step, and every row that carries
+ * commentary would otherwise render copy / fork / rollback. Only the row that
+ * closes the Run is a reply the reader can act on; the earlier rows are process
+ * output. A finished Run has already been folded, so its answer row is marked
+ * while folding and this pass leaves it alone.
+ */
+function markFinalReplyRows(
+  items: TimelineItem[],
+  stepById: Map<string, AgentRunStep>,
+  runStatusByStepId: Map<string, AgentRun["status"] | undefined>,
+): TimelineItem[] {
+  const rows = items.slice();
+  const rowsByRun = new Map<
+    string,
+    { status?: AgentRun["status"]; indexes: number[] }
+  >();
+  rows.forEach((item, index) => {
+    if (item.entry.kind !== "agent") return;
+    const stepId = item.entry.turn.stepId;
+    const step = stepById.get(stepId);
+    // Standalone replies have no step; each is its own final reply.
+    const key = step ? `run:${step.runId}` : `entry:${item.entry.id}`;
+    const bucket = rowsByRun.get(key);
+    if (bucket) bucket.indexes.push(index);
+    else
+      rowsByRun.set(key, {
+        status: runStatusByStepId.get(stepId),
+        indexes: [index],
+      });
+  });
+  for (const { status, indexes } of rowsByRun.values()) {
+    const marked = indexes.some((index) => {
+      const entry = rows[index].entry;
+      return entry.kind === "agent" && entry.finalReply;
+    });
+    if (marked) continue;
+    // A Run still producing steps has no final reply yet; marking a provisional
+    // row would move three idle buttons down the transcript on every step.
+    if (!isRunComplete(status)) continue;
+    // An unfolded Run ends with steps that only log tool calls; the reply the
+    // reader sees is its newest row that actually carries an answer.
+    let last: number | undefined;
+    for (const index of indexes) {
+      const entry = rows[index].entry;
+      if (
+        entry.kind === "agent" &&
+        entry.turn.blocks.some(
+          (block) =>
+            block.type === "media" ||
+            block.type === "visualization" ||
+            (block.type === "text" && block.content.trim() !== ""),
+        )
+      )
+        last = index;
+    }
+    if (last === undefined) continue;
+    const entry = rows[last].entry;
+    if (entry.kind !== "agent") continue;
+    rows[last] = { ...rows[last], entry: { ...entry, finalReply: true } };
+  }
+  return rows;
 }
 
 export function buildConversationTimeline(
@@ -772,20 +844,24 @@ export function buildConversationTimeline(
       items.splice(next < 0 ? items.length : next, 0, row);
     }
   }
-  if (options?.foldWorkRuns === false) return items.map((item) => item.entry);
-
   const stepById = new Map(filteredSteps.map((step) => [step.id, step]));
   const runStatusById = new Map(runs.map((run) => [run.id, run.status]));
   const runStatusByStepId = new Map(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return foldCompletedRounds(
-    items,
-    stepById,
-    runStatusByStepId,
-    standaloneReplyIds,
-  ).map((item) => item.entry);
+  const rows =
+    options?.foldWorkRuns === false
+      ? items
+      : foldCompletedRounds(
+          items,
+          stepById,
+          runStatusByStepId,
+          standaloneReplyIds,
+        );
+  return markFinalReplyRows(rows, stepById, runStatusByStepId).map(
+    (item) => item.entry,
+  );
 }
 
 export function sessionEntryDomId(entryId: string): string {

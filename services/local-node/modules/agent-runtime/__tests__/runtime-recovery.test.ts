@@ -23,7 +23,7 @@ describe("recoverRuntime", () => {
       expect(hydrate).not.toHaveBeenCalled();
     } finally { list.mockRestore(); hydrate.mockRestore(); }
   });
-  it("keeps clearing a stranded runtime control marker across repeated starts", async () => {
+  it("settles a stranded runtime control marker instead of parking a manual retry", async () => {
     const sessionId = agentSessionRuntime.create(plannerSessionInput).id;
     const run = await admitActiveFixtureRun(sessionId, "Ask which file");
     await runtimeFacade.finishExecution(sessionId, { ...run, status: "completed", completedAt: new Date().toISOString() });
@@ -40,16 +40,18 @@ describe("recoverRuntime", () => {
     await agentRuntimeStore.hydrateSession(sessionId, true);
 
     await expect(recoverRuntime("host-first-start")).resolves.toBeDefined();
-    // Every start used to replay the same stop_unconfirmed request id with a
-    // fresh timestamped reason, which Rust rejects as a request conflict.
+    // A stable acknowledgement id keeps repeated starts idempotent.
     await expect(recoverRuntime("host-later-start")).resolves.toBeDefined();
     await expect(recoverRuntime("host-later-start")).resolves.toBeDefined();
-    // The stranded marker is durable; recovery reports it without stalling boot.
+    // The fence is gone without any user action, so the session can run again.
     const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: { state?: string } };
-    expect(control.runtimeControl?.state).toBe("unconfirmed");
+    expect(control.runtimeControl ?? null).toBeNull();
+    const settled = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+    expect(settled.session.status).toBe("interrupted");
+    expect((settled.session.sessionMetadata as { runtimeControl?: unknown } | undefined)?.runtimeControl ?? null).toBeNull();
   });
 
-  it("migrates a legacy recovery receipt whose absent run was encoded as null", async () => {
+  it("settles a legacy recovery receipt whose absent run was encoded as null", async () => {
     const sessionId = agentSessionRuntime.create(plannerSessionInput).id;
     const reason = "The runtime restarted without a confirmed active run. Continue the session explicitly.";
     const snapshot = await runtimeClient().snapshot(sessionId);
@@ -74,6 +76,36 @@ describe("recoverRuntime", () => {
 
     await expect(recoverRuntime("legacy-receipt-host")).resolves.toBeDefined();
     const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: { state?: string } };
-    expect(control.runtimeControl?.state).toBe("unconfirmed");
+    expect(control.runtimeControl ?? null).toBeNull();
+  });
+
+  it("clears a stop fence whose run id no longer matches anything", async () => {
+    const sessionId = agentSessionRuntime.create(plannerSessionInput).id;
+    const run = await admitActiveFixtureRun(sessionId, "Ask which file");
+    await runtimeFacade.finishExecution(sessionId, {
+      ...run,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+    });
+    const snapshot = await runtimeClient().snapshot(sessionId);
+    // The stop was acknowledged nowhere: `finish` closes the lease but keeps
+    // the control fence, which would block every later execution.
+    await runtimeClient().controlCommand({
+      sessionId,
+      requestId: `stop_unconfirmed:${sessionId}:${run.id}`,
+      epoch: snapshot.epoch,
+      revision: snapshot.revision,
+      operation: "stop_unconfirmed",
+      payload: { runId: run.id, reason: "Shutdown was not confirmed." },
+    });
+    await agentRuntimeStore.hydrateSession(sessionId, true);
+
+    await recoverRuntimeSession("other-host", sessionId);
+
+    const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: unknown };
+    expect(control.runtimeControl ?? null).toBeNull();
+    const settled = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+    expect(settled.session.status).toBe("interrupted");
+    expect((settled.session.sessionMetadata as { runtimeControl?: unknown } | undefined)?.runtimeControl ?? null).toBeNull();
   });
 });

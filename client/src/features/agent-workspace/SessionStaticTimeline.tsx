@@ -31,6 +31,8 @@ import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { isLiveStepPersisted } from "./state/liveStepRetirement";
 import { useShellStore } from "../../shared/state/shellStore";
+import { useAppendedEntryIds } from "./useAppendedEntryIds";
+import "./transcriptAppend.css";
 
 interface Props {
   unifiedLive?: boolean;
@@ -63,6 +65,7 @@ type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
   entry: ConversationTimelineEntry;
   isWorking: boolean;
   isStreaming: boolean;
+  appended: boolean;
 };
 
 const EMPTY_LIVE_SEED: readonly TurnContentBlock[] = [];
@@ -134,6 +137,7 @@ const TimelineRow = memo(
     isStreaming,
     eager,
     cacheVersion,
+    appended,
   }: RowProps) {
     const key = `${sessionId ?? "standalone"}:${cacheVersion ?? "initial"}:${entry.kind}-${entry.id}`;
     return (
@@ -143,6 +147,7 @@ const TimelineRow = memo(
         estimate={estimateEntryHeight(entry)}
         scrollRootRef={scrollRootRef}
         eager={eager}
+        appended={appended}
       >
         <TimelineEntryView
           entry={entry}
@@ -178,7 +183,8 @@ function renderTimelineRows({
   eager,
   cacheVersion,
   liveEntryIds,
-}: RowsProps) {
+  appendedIds,
+}: RowsProps & { appendedIds: ReadonlySet<string> }) {
   // The initial scroll lands at the bottom before paint. Mount its surrounding
   // rows in the same commit instead of revealing them one observer tick later.
   const initialViewportHeight = scrollRootRef?.current?.clientHeight || 800;
@@ -250,6 +256,7 @@ function renderTimelineRows({
         scrollRootRef={scrollRootRef}
         eager={eager || index >= eagerStart}
         cacheVersion={entryCacheVersion}
+        appended={appendedIds.has(entry.id)}
         isWorking={Boolean(streaming && index === latestActivityIndex)}
         isStreaming={Boolean(
           streaming &&
@@ -303,6 +310,8 @@ function TimelineRows({
     });
     return groupActivityEntries(rows);
   }, [entries, live, liveId, liveSeed]);
+  // Appending a row reveals it; a history page or a folded round must not.
+  const appendedIds = useAppendedEntryIds(combined, sessionId);
   const rows = useMemo(
     () =>
       renderTimelineRows({
@@ -314,6 +323,7 @@ function TimelineRows({
         scrollRootRef,
         cacheVersion,
         liveEntryIds,
+        appendedIds,
       }),
     [
       combined,
@@ -324,6 +334,7 @@ function TimelineRows({
       scrollRootRef,
       cacheVersion,
       liveEntryIds,
+      appendedIds,
     ],
   );
   return <>{rows}</>;

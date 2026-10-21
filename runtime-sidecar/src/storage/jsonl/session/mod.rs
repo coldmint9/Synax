@@ -50,7 +50,9 @@ pub struct CommittedEvent {
     pub sequence: u64,
     pub run_id: String,
     pub kind: String,
-    pub payload: Vec<u8>,
+    /// Shared because every hot commit publishes the same bounded event
+    /// window through both the actor and the immutable reader lake.
+    pub payload: Arc<[u8]>,
 }
 
 /// The immutable value readers observe.
@@ -77,7 +79,7 @@ impl Lake {
                 sequence: event.sequence,
                 run_id: event.run_id.clone(),
                 kind: event.kind.clone(),
-                payload: event.payload.clone(),
+                payload: event.payload.to_vec(),
                 ephemeral: false,
             })
             .collect()

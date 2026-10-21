@@ -34,7 +34,11 @@ import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
-import { restoreUnlaunchedInput } from "./runtime-recovery.js";
+import {
+  currentRuntimeHostId,
+  recoverRuntimeSession,
+  restoreUnlaunchedInput,
+} from "./runtime-recovery.js";
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
@@ -794,6 +798,17 @@ export class RunCoordinator {
     owner.stopFailed = false;
     owner.finalizers = [];
     await this.interrupt(sessionId, "Recovery rechecked the owned processes.");
+  }
+  /** Admission heals a stop fence in place instead of asking the user to retry.
+   * A stop that is still in flight is left alone; admission stays fenced. */
+  async reconcileFencedSession(sessionId: string): Promise<void> {
+    const owner = this.owners.get(sessionId);
+    if (owner) {
+      if (!owner.stopping || !owner.stopFailed) return;
+      await this.reconcileFailedStop(sessionId);
+      return;
+    }
+    await recoverRuntimeSession(currentRuntimeHostId(), sessionId, true);
   }
   async waitForIdle(): Promise<void> {
     while (this.owners.size || this.queueDispatches.size) {

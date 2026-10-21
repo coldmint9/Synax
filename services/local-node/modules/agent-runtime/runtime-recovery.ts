@@ -12,10 +12,151 @@ import {
 } from "./process-ownership.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { nowIso } from "./runtime-ids.js";
-import { AgentRuntimeError } from "./runtime-errors.js";
 import type { AgentRun, AgentSession, StreamTurnRequest } from "./contracts.js";
 import type { RuntimeExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { runtimeClient } from "./sidecar/runtime-repository.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
+
+/** Restart cleanup is bounded and automatic. A lease whose ownership cannot be
+ * proven must never leave a session waiting on a human decision. */
+const STOP_ATTEMPTS = 3;
+const STOP_BACKOFF_MS = 150;
+
+export function currentRuntimeHostId(): string {
+  return process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
+}
+
+async function stopLeases(
+  records: OwnedProcessRecord[],
+): Promise<OwnedProcessRecord[]> {
+  let unresolved = records;
+  for (let attempt = 1; attempt <= STOP_ATTEMPTS && unresolved.length; attempt++) {
+    if (attempt > 1)
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, STOP_BACKOFF_MS * (attempt - 1)),
+      );
+    const retry: OwnedProcessRecord[] = [];
+    for (const record of unresolved) {
+      registerAuthoritativeLease(record);
+      if (!(await stopRecordedProcess(record))) retry.push(record);
+    }
+    unresolved = retry;
+  }
+  return unresolved;
+}
+
+/** Unverifiable ownership is released and logged instead of blocking the
+ * session forever: the recorded pid may already belong to another process. */
+async function releaseLeases(
+  sessionId: string,
+  records: OwnedProcessRecord[],
+): Promise<Array<Record<string, unknown>>> {
+  if (!records.length) return [];
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  const released: Array<Record<string, unknown>> = [];
+  for (const record of records) {
+    const detail = {
+      leaseId: record.id,
+      pid: record.pid,
+      commandLabel: record.command_label,
+      hostId: record.host_id,
+    };
+    await runtimeFacade
+      .controlCommand({
+        sessionId,
+        requestId: `release-unconfirmed:${sessionId}:${record.id}`,
+        operation: "lease_close",
+        payload: { leaseId: record.id },
+      })
+      .catch((error) =>
+        logger.warn(
+          { sessionId, ...detail, error },
+          "Unconfirmed process lease could not be released",
+        ),
+      );
+    logger.warn(
+      { sessionId, ...detail },
+      "Process ownership was not confirmed after restart; the lease is released",
+    );
+    released.push(detail);
+  }
+  return released;
+}
+
+/** A fence identity keeps the acknowledgement idempotent per fence instead of
+ * colliding with an older receipt for the same session. */
+function fenceIdentity(runtimeControl: unknown): string {
+  if (runtimeControl && typeof runtimeControl === "object") {
+    const marker = runtimeControl as { runId?: unknown; updatedAt?: unknown };
+    const parts = [marker.runId, marker.updatedAt].filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    );
+    if (parts.length) return parts.join(":");
+  }
+  return nowIso();
+}
+
+/** `stop_ack` is the operation that clears the durable stop fence and leaves the
+ * projection interrupted; `resume` assumes a run that can continue. */
+async function clearControlFence(
+  sessionId: string,
+  runId: string,
+  reason: string,
+  runtimeControl: unknown,
+): Promise<void> {
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  await runtimeFacade.controlCommand({
+    sessionId,
+    requestId: `recovery-stop-ack:v2:${sessionId}:${fenceIdentity(runtimeControl)}`,
+    operation: "stop_ack",
+    payload: { runId, reason },
+  });
+}
+
+async function settleRuntimeFence(
+  sessionId: string,
+  session: AgentSession,
+  reason: string,
+  released: Array<Record<string, unknown>>,
+  runtimeControl: unknown,
+): Promise<void> {
+  const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+  // The acknowledgement projects "interrupted"; a session that was already
+  // finished keeps its own status so the restart is not reported as a stop.
+  const status =
+    session.activeRunId || ["running", "stopping", "queued"].includes(session.status)
+      ? "interrupted"
+      : session.status;
+  const blockedReason = released.length ? reason : null;
+  await clearControlFence(sessionId, session.activeRunId ?? "", reason, runtimeControl);
+  await runtimeFacade.sessionPatch(
+    sessionId,
+    `recovery-fence:${sessionId}:${fenceIdentity(runtimeControl)}`,
+    {
+      status,
+      activeRunId: null,
+      pendingResumeToken: null,
+      blockedReason,
+      updatedAt: nowIso(),
+      sessionMetadata: { runtimeControl: null },
+    },
+  );
+  if (!agentRuntimeStore.tryGetSession(sessionId)) return;
+  agentRuntimeStore.updateSessionMetadata(sessionId, {
+    runtimeControl: null,
+    ...(released.length
+      ? { runtimeRecovery: { state: "released", at: nowIso(), leases: released } }
+      : {}),
+  });
+  agentRuntimeStore.updateSession(sessionId, {
+    status,
+    activeRunId: null,
+    pendingResumeToken: null,
+    blockedReason,
+    updatedAt: nowIso(),
+  });
+  await agentRuntimeStore.flushSession(sessionId);
+}
 
 /** Recover one session before admitting new work; unrelated sessions never wait. */
 export async function recoverRuntimeSession(
@@ -34,7 +175,7 @@ export async function recoverRuntimeSession(
   // A session admitted after boot belongs to this host and must not be swept
   // later by a slower background enumeration.
   if (!includeCurrentHost && control.executionLease?.hostId === hostId && !control.executionLease.closed) return unchanged;
-  let processUnknown = false;
+  const leases: OwnedProcessRecord[] = [];
   for (const raw of Array.isArray(control.processLeases) ? control.processLeases : []) {
     if (!raw || typeof raw !== "object") continue;
     const lease = raw as Record<string, unknown>;
@@ -54,13 +195,28 @@ export async function recoverRuntimeSession(
       runtime_pgid: typeof lease.runtimePgid === "number" ? lease.runtimePgid : null,
     };
     if (!record.id) continue;
-    registerAuthoritativeLease(record);
-    if (!(await stopRecordedProcess(record))) processUnknown = true;
+    leases.push(record);
   }
+  const unresolved = await stopLeases(leases);
+  const processUnknown = unresolved.length > 0;
   if (!execution.activeRunId && !control.runtimeControl && !processUnknown &&
       !["running", "stopping", "queued"].includes(session.status)) return unchanged;
-  if (!execution.activeRunId && control.runtimeControl != null && !processUnknown)
+
+  if (!execution.activeRunId) {
+    // Nothing is executing, so this fence can only block the session. Settle it
+    // here instead of parking a manual retry in front of the composer.
+    const released = await releaseLeases(sessionId, unresolved);
+    await settleRuntimeFence(
+      sessionId,
+      session,
+      released.length
+        ? "Process shutdown remains unconfirmed after runtime restart."
+        : "The runtime restarted without a confirmed active run.",
+      released,
+      control.runtimeControl,
+    );
     return { reviewed: 1, resumable: [] };
+  }
 
   // The common completed/idle case above never loads transcript collections.
   const active = execution.activeRunId
@@ -69,16 +225,41 @@ export async function recoverRuntimeSession(
     : undefined;
   await agentRuntimeStore.hydrateSession(sessionId, true);
   const local = agentRuntimeStore.tryGetSession(sessionId);
-  if (active && !processUnknown && ["completed", "failed", "blocked", "cancelled", "interrupted"].includes(active.status)) {
-    await runtimeFacade.finishExecution(sessionId, active);
-    await agentRuntimeStore.hydrateSession(sessionId, true);
-    return { reviewed: 1, resumable: [] };
-  }
   const reason = processUnknown
     ? "Process shutdown remains unconfirmed after runtime restart."
     : active
       ? "The runtime restarted during execution. The previous run was interrupted."
-      : "The runtime restarted without a confirmed active run. Continue the session explicitly.";
+      : "The runtime restarted without a confirmed active run.";
+  if (!active) {
+    await settleRuntimeFence(
+      sessionId,
+      session,
+      reason,
+      await releaseLeases(sessionId, unresolved),
+      control.runtimeControl,
+    );
+    return { reviewed: 1, resumable: [] };
+  }
+  if (active && !processUnknown && ["completed", "failed", "blocked", "cancelled", "interrupted"].includes(active.status)) {
+    await runtimeFacade.finishExecution(sessionId, active);
+    if (control.runtimeControl) {
+      await clearControlFence(sessionId, active.id, reason, control.runtimeControl);
+      // The acknowledgement projects "interrupted"; restore what the finished
+      // run actually was so the session does not look stopped by the user.
+      await runtimeFacade.sessionPatch(
+        sessionId,
+        `recovery-fence:${sessionId}:${active.id}`,
+        {
+          status: normalizeAgentSessionStatus(active.status),
+          activeRunId: null,
+          blockedReason: null,
+          sessionMetadata: { runtimeControl: null },
+        },
+      );
+    }
+    await agentRuntimeStore.hydrateSession(sessionId, true);
+    return { reviewed: 1, resumable: [] };
+  }
   if (active && !processUnknown) {
     // Close the old executor before changing any user-visible pending work.
     const lease = control.executionLease;
@@ -120,6 +301,9 @@ export async function recoverRuntimeSession(
       },
     };
     await runtimeFacade.finishExecution(session.id, finalRun);
+    // `finish` closes the execution lease but keeps the durable stop fence;
+    // without this ack the session could never open a new execution again.
+    await clearControlFence(session.id, finalRun.id, reason, control.runtimeControl);
     await runtimeFacade.sessionPatch(session.id, `recovery:${session.id}:${finalRun.id}`, {
       status: "paused",
       activeRunId: null,
@@ -145,29 +329,16 @@ export async function recoverRuntimeSession(
       }
     }
   } else {
-    await runtimeFacade.controlCommand({
-      sessionId: session.id,
-      // The original recovery request id was also used by older builds with
-      // a nullable runId. Keep this recovery command on a new semantic id so
-      // an old receipt cannot turn a harmless restart into REQUEST_CONFLICT.
-      requestId: `recovery-unconfirmed:v2:${session.id}`,
-      operation: "stop_unconfirmed",
-      // Rust projections encode an absent active run as an empty string in
-      // some legacy snapshots; the request identity must stay canonical.
-      payload: {
-        runId: (snapshot.session as AgentSession).activeRunId || null,
-        reason,
-      },
-    });
-    if (local) {
-      try {
-        agentRuntimeStore.updateSessionMetadata(session.id, {
-          runtimeControl: { state: "unconfirmed", source: "restart", reason },
-        });
-      } catch {
-        // Keep the durable Rust recovery fence even when the mirror is stale.
-      }
-    }
+    // A recorded run whose processes could not be confirmed: interrupt it and
+    // settle the fence in the same pass. Leases that cannot be verified are
+    // released with a log entry, never left for the user to retry by hand.
+    await settleRuntimeFence(
+      session.id,
+      session,
+      reason,
+      await releaseLeases(session.id, unresolved),
+      control.runtimeControl,
+    );
   }
   await agentRuntimeStore.flushSession(sessionId);
   return { reviewed: 1, resumable: [] };
@@ -207,49 +378,4 @@ export function restoreUnlaunchedInput(
     | { input?: StreamTurnRequest }
     | undefined;
   return accepted?.input ? { ...accepted.input, ...input } : input;
-}
-
-export async function acknowledgeRuntimeRecovery(
-  sessionId: string,
-): Promise<void> {
-  const session = (await import("./sidecar/runtime-facade.js")).runtimeFacade.uiSnapshotAuthoritative(sessionId).then((snapshot) => snapshot.session as AgentSession);
-  const resolvedSession = await session;
-  const records = (((await import("./sidecar/runtime-facade.js")).runtimeFacade.controlState(sessionId) as Promise<{ processLeases?: unknown[] }>).then((state) => (Array.isArray(state.processLeases) ? state.processLeases : []).flatMap((raw) => {
-        if (!raw || typeof raw !== "object") return [];
-        const lease = raw as Record<string, unknown>;
-        if (typeof lease.leaseId !== "string") return [];
-        const record = { id: lease.leaseId, host_id: String(lease.hostId ?? "unknown"), session_id: sessionId, run_id: typeof lease.runId === "string" ? lease.runId : null, pid: typeof lease.pid === "number" ? lease.pid : null, process_group: typeof lease.processGroup === "number" ? lease.processGroup : 0, command_label: typeof lease.commandLabel === "string" ? lease.commandLabel : "runtime process", state: typeof lease.state === "string" ? lease.state : "active", runtime_kind: lease.runtimeKind === "wsl" ? "wsl" : undefined, runtime_distribution: typeof lease.runtimeDistribution === "string" ? lease.runtimeDistribution : null, runtime_pid: typeof lease.runtimePid === "number" ? lease.runtimePid : null, runtime_pgid: typeof lease.runtimePgid === "number" ? lease.runtimePgid : null } as OwnedProcessRecord;
-        registerAuthoritativeLease(record);
-        return [record];
-      })));
-  const resolvedRecords = await records;
-  for (const record of resolvedRecords)
-    if (!(await stopRecordedProcess(record)))
-      throw new AgentRuntimeError(
-        "A recorded process is still unconfirmed; this session cannot resume yet. Retry process cleanup.",
-        "PROCESS_UNCONFIRMED",
-        409,
-      );
-  if (!resolvedSession.sessionMetadata?.runtimeControl) return;
-  {
-    const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-    await runtimeFacade.controlCommand({
-      sessionId,
-      requestId: `recovery-ack:${sessionId}`,
-      operation: "resume",
-      payload: { runId: resolvedSession.activeRunId },
-    });
-  }
-  agentRuntimeStore.updateSessionMetadata(sessionId, {
-    runtimeControl: null,
-    lastRecoveryAcknowledgedAt: nowIso(),
-  });
-  agentRuntimeStore.updateSession(sessionId, {
-    status: "interrupted",
-    activeRunId: null,
-    blockedReason: null,
-    pendingResumeToken: null,
-    updatedAt: nowIso(),
-  });
-  await agentRuntimeStore.flushSession(sessionId);
 }

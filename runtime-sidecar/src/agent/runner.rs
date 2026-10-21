@@ -189,8 +189,29 @@ impl LoopHandle {
         if state.execution.terminal_at.is_some() {
             return Err("agent loop is already terminal".into());
         }
-        let next = state.execution.clone();
-        self.commit(&mut state, next, vec![event], terminal).await
+        // Stream events are emitted for every provider delta. Do not route
+        // this through `commit`: cloning `ExecutionState` also clones the
+        // complete provider prompt, tool definitions and accumulated tool
+        // results. With a long prompt, five concurrent sessions turn a small
+        // delta into a large transient allocation on every token.
+        let sequence = state.execution.sequence + 1;
+        let mut event = event;
+        let object = event.as_object_mut().ok_or("invalid loop event")?;
+        object.insert("loopId".into(), json!(self.id));
+        object.insert("sequence".into(), json!(sequence));
+        let bytes = serde_json::to_vec(&event)?;
+        let event_bytes = state.execution.event_bytes.saturating_add(bytes.len());
+        if !terminal && event_bytes > MAX_REPLAY_BYTES {
+            return Err("agent loop event journal capacity exceeded".into());
+        }
+        state.execution.sequence = sequence;
+        state.execution.event_bytes = event_bytes;
+        if terminal {
+            state.execution.terminal_at = Some(now_ms());
+        }
+        state.events.push(event);
+        self.changed.send_modify(|revision| *revision += 1);
+        Ok(())
     }
 }
 
@@ -278,7 +299,24 @@ impl AgentLoopManager {
                 tracing::error!(event = "agent.terminal_commit_failed", error_kind = crate::logging::error_kind(error.as_ref()),
                     "Could not persist terminal agent state");
             }
-            handle.state.lock().await.running = false;
+            let mut state = handle.state.lock().await;
+            state.running = false;
+            // A terminal loop is retained briefly for idempotent replay, but
+            // it no longer needs the full prompt, tool schema or tool-result
+            // map. Keeping those roots for the retention window makes finished
+            // sessions look like active sessions in the heap profile.
+            state.execution.request.provider.prompt.clear();
+            state.execution.request.provider.tools.clear();
+            state.execution.request.provider.provider_options = Value::Null;
+            state.execution.request.provider.response_options = Value::Null;
+            state.execution.request.provider.cache_policy = Value::Null;
+            state.execution.request.provider.headers.clear();
+            state.execution.request.provider.api_key = None;
+            state.execution.step_context = None;
+            state.execution.pending.clear();
+            state.execution.results.clear();
+            state.execution.call_tools.clear();
+            state.execution.tool_argument_retry = None;
             handle.changed.send_modify(|revision| *revision += 1);
         }.instrument(span));
     }
