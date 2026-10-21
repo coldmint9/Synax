@@ -995,6 +995,7 @@ function snapshotCurrentStep(
     {
       stepId: state.streamingStepId,
       stepIndex: step?.index ?? state.streamingCompletedSteps.length + 1,
+      startedAt: step?.startedAt,
       runId:
         step?.runId ??
         state.sessions.find((item) => item.id === state.selectedSessionId)
@@ -2795,7 +2796,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 };
                 return {
                   streamingRetry: null,
-                  streamingCompletedSteps: snapshotCurrentStep(settled),
+                  streamingCompletedSteps: retireSnapshots(
+                    snapshotCurrentStep(settled), state.steps, state.messages, state.toolCalls, false,
+                  ),
                   streamingStepId: null,
                   streamingLive: EMPTY_STREAMING_BUFFERS,
                 };

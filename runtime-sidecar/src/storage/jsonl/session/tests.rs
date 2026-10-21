@@ -244,8 +244,10 @@ fn uncommitted_v2_tail_never_becomes_visible_on_reopen_or_retry() {
     file.write_all(&(bytes.len() as u32).to_le_bytes()).unwrap(); file.write_all(&bytes).unwrap();
     file.write_all(&[12,0]).unwrap(); drop(file);
     let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), original);
+    // Opening the root is lazy; repair only the session when it is accessed.
+    assert!(std::fs::metadata(&path).unwrap().len() > original);
     assert_eq!(serde_json::from_slice::<serde_json::Value>(&before).unwrap(), serde_json::from_slice::<serde_json::Value>(&ops.ui_snapshot("s", None).unwrap()).unwrap());
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), original);
     ops.append_stream("s", "r", "p", 2, 1, Durability::Sync, vec![delta("a", "new")]).unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -68,6 +68,15 @@ const collections = {
 } as const;
 const copy = <T,>(value: T): T => structuredClone(value);
 
+/** A failed page must not release the session's loading slot while sibling
+ * reads are still opening files or publishing caches. */
+async function readAll<T extends readonly unknown[]>(reads: { [K in keyof T]: Promise<T[K]> }): Promise<T> {
+  const results = await Promise.allSettled(reads);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return results.map(result => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
+}
+
 /** Execution working set. Rust is the sole durable repository. Callers load before
  * executing and await flush before acknowledging commands or yielding worker IPC. */
 export class AgentRuntimeStore {
@@ -77,6 +86,7 @@ export class AgentRuntimeStore {
   private failures = new Map<string, unknown>();
   private loaded = new Set<string>();
   private loading = new Map<string, Promise<void>>();
+  private listing?: Promise<void>;
   private staged?: { writes: Array<() => void>; undo: Array<() => void> };
   transaction<T>(action: () => T): T {
     const outer = !this.staged;
@@ -159,11 +169,20 @@ export class AgentRuntimeStore {
       }
     });
   }
-  async hydrateSessions(): Promise<void> {
-    await this.flush();
-    for await (const items of sessionPages<AgentSession>(runtimeClient())) {
-      for (const session of items) this.sessions.set(session.id, copy(session));
-    }
+  async hydrateSessions(signal?: AbortSignal): Promise<void> {
+    if (this.listing) return this.listing;
+    const previous = new Map(this.sessions);
+    this.listing = (async () => {
+      for await (const items of sessionPages<AgentSession>(runtimeClient(), signal)) {
+        for (const session of items) {
+          if (!session || typeof session.id !== 'string') continue;
+          // Background list pages must not overwrite a newly admitted run or
+          // local edits made while the index was still replaying old sessions.
+          if (this.sessions.get(session.id) === previous.get(session.id)) this.sessions.set(session.id, copy(session));
+        }
+      }
+    })().finally(() => { this.listing = undefined; });
+    return this.listing;
   }
   async hydrateSession(sessionId: string, refresh = false): Promise<void> {
     if (this.loaded.has(sessionId) && !refresh) {
@@ -180,9 +199,9 @@ export class AgentRuntimeStore {
       const previous = new Map(Object.keys(collections).map(kind => [kind,
         new Map([...this.collection(kind)].filter(([, record]) => record.sessionId === sessionId)),
       ]));
-      const [snapshotBytes, entries, control] = await Promise.all([
+      const [snapshotBytes, entries, control] = await readAll([
         runtimeClient().uiSnapshot(sessionId),
-        Promise.all(Object.entries(collections).map(async ([kind, operation]) =>
+        readAll(Object.entries(collections).map(async ([kind, operation]) =>
           [kind, await readHistoryList<Entity>(runtimeClient(), sessionId, operation)] as const)),
         patchRuntime(sessionId, "read", {}),
       ]);
@@ -217,6 +236,13 @@ export class AgentRuntimeStore {
     } finally {
       this.loading.delete(sessionId);
     }
+  }
+  /** Refresh the small projection at request boundaries without loading history. */
+  async hydrateSessionSummary(sessionId: string): Promise<void> {
+    await this.flushSession(sessionId);
+    const previous = this.sessions.get(sessionId);
+    const snapshot = decode<{ session: AgentSession }>(await runtimeClient().uiSnapshot(sessionId));
+    if (this.sessions.get(sessionId) === previous) this.sessions.set(sessionId, snapshot.session);
   }
   private collection(kind: string): Map<string, Entity> {
     let map = this.entities.get(kind);

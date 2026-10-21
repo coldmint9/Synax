@@ -33,6 +33,8 @@ impl ListIndex {
     }
 
     fn apply(&mut self, mut row: ListRecord) {
+        // Control probes can open an unseeded session. It has no list row yet.
+        if !row.del && !row.h.is_object() { return; }
         if let Some(metadata) = row.h.get_mut("sessionMetadata").and_then(Value::as_object_mut) { metadata.remove("latestSystemPrompt"); }
         if let Some(previous) = self.by_id.remove(&row.s) {
             self.rows.remove(&previous);

@@ -9,12 +9,20 @@ function isRevisionConflict(error: unknown): error is RuntimeSidecarError {
   return error instanceof RuntimeSidecarError && error.code === 'REVISION_CONFLICT';
 }
 
-export async function* sessionPages<T>(client: RuntimeSidecarClient): AsyncGenerator<T[]> {
+export async function* sessionPages<T>(client: RuntimeSidecarClient, signal?: AbortSignal): AsyncGenerator<T[]> {
   let after: string | undefined;
-  do {
-    const page = JSON.parse(Buffer.from(await client.sessionList(after)).toString('utf8')) as { items: T[]; next?: string };
+  while (true) {
+    signal?.throwIfAborted();
+    const page = JSON.parse(Buffer.from(await client.sessionList(after)).toString('utf8')) as { items: T[]; next?: string; loading?: boolean };
+    if (page.loading) {
+      // Each IPC request stays short while Rust builds the index in the background.
+      await new Promise<void>(resolve => setTimeout(resolve, 100));
+      continue;
+    }
+    signal?.throwIfAborted();
     yield page.items; after = page.next;
-  } while (after);
+    if (!after) break;
+  }
 }
 
 export async function readSessionList<T>(client: RuntimeSidecarClient): Promise<T[]> {

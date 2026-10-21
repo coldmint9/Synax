@@ -94,7 +94,15 @@ rg 'provider.failed|provider.retry_scheduled|agent.failed' "$HOME/.synax/v2/logs
 
 父进程先退出、关闭日志读端时，stderr 的 `BrokenPipe` / `ConnectionReset` / `NotConnected` 被识别为可选日志通道断开：只记录一次 `logging.stderr_closed`，关闭后续 stderr 写入，文件日志继续保存。其他 I/O 错误仍计数并上报 `logging.write_failed`，不会被静默忽略。
 
-桌面端等待 API READY 的上限为 120 秒，覆盖 Rust 启动之后的存储载入和会话恢复。Node 的 `runtime.startup_phase` 记录各阶段开始、完成和耗时，便于区分启动慢与 Rust 崩溃。
+桌面端等待 API READY 的上限为 120 秒。API 仅等待 Rust 监听器和小型业务配置就绪，历史会话与恢复不参与启动屏障。Node 的 `runtime.startup_phase` 记录各阶段开始、完成和耗时，便于区分启动慢与 Rust 崩溃。
+
+## 会话冷加载
+
+- Rust 打开数据根时只取得进程锁，不重放所有会话。会话表的全局锁只用于登记加载槽；磁盘读取与 WAL 重放在会话自己的初始化锁下执行。同一会话共享一次加载，不同会话独立加载。历史存储也复用这一机制，避免并发打开同一文件。
+- 会话摘要索引首次请求时在后台重建，最多同时加载两个会话。索引完成前 IPC 返回 `loading: true`，Node 异步轮询；不会把未完成的索引当成空列表。列表查询仍需等待索引完整，健康检查和指定会话的读取不等待它。
+- API 的通用中间件不再载入全量会话或资源。指定会话先读小型摘要；执行时才加载它的历史工作集，附件按引用加载。列表、归档批处理等确实需要全集的操作单独请求索引。
+- 启动后后台恢复以两个并发任务处理会话。交互请求可直接进入目标会话的恢复，不排在整个队列后面；同一会话共享恢复任务，成功后才允许提交新执行。已完成／空闲会话只检查投影和执行状态，不加载整份历史。失败的恢复只阻止该会话的新执行，可以按需重试。
+- 背景列表刷新保留读取期间的本地更新，防止旧摘要覆盖新接管的执行。退出时取消排队工作，等待已经开始的恢复落盘后停止 Rust。
 
 ## 验证
 
@@ -104,6 +112,7 @@ npm run runtime-sidecar:test
 node scripts/runtime-sidecar-cargo.mjs build
 SYNAX_RUNTIME_SIDECAR_BIN="$PWD/runtime-sidecar/target/debug/synax-runtime-sidecar" npm test -- services/local-node/infrastructure/llm-runtime
 npm run typecheck
+SYNAX_RUNTIME_SIDECAR_BIN="$PWD/runtime-sidecar/target/debug/synax-runtime-sidecar" node --import tsx/esm scripts/runtime-sidecar-cold-start-smoke.ts
 ```
 
 供应商集成测试使用真实 Rust 进程和本地模拟 HTTP 服务，验证实际发出的请求；重试次数和长等待用 Rust 暂停时钟测试，避免真实等待数分钟。

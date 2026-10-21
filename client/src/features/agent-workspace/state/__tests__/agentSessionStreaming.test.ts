@@ -195,3 +195,21 @@ it("publishes a token burst once and leaves no idle drain timer", () => {
   expect(vi.getTimerCount()).toBe(0);
   unsubscribe();
 });
+
+it("does not park already persisted reasoning again when the terminal event arrives", () => {
+  const step = {
+    id: "first", sessionId: "s", runId: "run", index: 1, status: "completed",
+    startedAt: "2026-01-01T00:00:01Z", completedAt: "2026-01-01T00:00:04Z", metadata: {},
+  } as AgentRunStep;
+  store.setState({ steps: [step], sessions: [{ id: "s", status: "running", activeRunId: "run" } as AgentSession] });
+  delta("Reasoning for the first reply", "thought_delta");
+  store.getState().applyLiveEvent({ type: "message", message: {
+    id: "reply", sessionId: "s", runId: "run", stepId: "first", role: "assistant",
+    content: "Saved answer", metadata: { thought: "Reasoning for the first reply" }, createdAt: "2026-01-01T00:00:04Z",
+  } });
+  store.getState().applyLiveEvent({ type: "runtime_state", sessionId: "s", patch: { status: "completed", activeRunId: null }, reset: true, refresh: false });
+  expect(store.getState().streamingCompletedSteps).toEqual([]);
+  expect(store.getState().messages.map(message => message.content)).toContain("Saved answer");
+  start("second");
+  expect(store.getState().streamingCompletedSteps).toEqual([]);
+});

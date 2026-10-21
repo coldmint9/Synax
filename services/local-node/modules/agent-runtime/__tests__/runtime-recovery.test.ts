@@ -1,16 +1,28 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { admitActiveFixtureRun, resetAgentRuntimeFixtures, plannerSessionInput } from "./agent-runtime-fixtures.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { runtimeFacade } from "../sidecar/runtime-facade.js";
 import { runtimeClient } from "../sidecar/runtime-repository.js";
-import { recoverRuntime } from "../runtime-recovery.js";
+import { recoverRuntime, recoverRuntimeSession } from "../runtime-recovery.js";
 
 beforeEach(async () => {
   await resetAgentRuntimeFixtures();
 });
 
 describe("recoverRuntime", () => {
+  it('recovers an idle target without enumerating sessions or reading every transcript collection', async () => {
+    const session = agentSessionRuntime.create(plannerSessionInput);
+    await agentRuntimeStore.flushSession(session.id);
+    await runtimeFacade.sessionPatch(session.id, 'idle-before-boot', { status: 'completed', activeRunId: null });
+    const list = vi.spyOn(runtimeFacade, 'listSessionProjection').mockRejectedValue(new Error('global index not ready'));
+    const hydrate = vi.spyOn(agentRuntimeStore, 'hydrateSession').mockRejectedValue(new Error('history should remain cold'));
+    try {
+      await expect(recoverRuntimeSession('new-host', session.id)).resolves.toMatchObject({ reviewed: 0 });
+      expect(list).not.toHaveBeenCalled();
+      expect(hydrate).not.toHaveBeenCalled();
+    } finally { list.mockRestore(); hydrate.mockRestore(); }
+  });
   it("keeps clearing a stranded runtime control marker across repeated starts", async () => {
     const sessionId = agentSessionRuntime.create(plannerSessionInput).id;
     const run = await admitActiveFixtureRun(sessionId, "Ask which file");

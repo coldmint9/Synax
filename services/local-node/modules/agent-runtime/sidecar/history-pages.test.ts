@@ -1,8 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeSidecarError, type RuntimeSidecarClient } from './sidecar-client.js';
-import { hydrateHistoryValues, readHistoryList } from './history-pages.js';
+import { hydrateHistoryValues, readHistoryList, readSessionList, sessionPages } from './history-pages.js';
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+
+it('waits asynchronously for the session index without treating partial discovery as an empty list', async () => {
+  const sessionList = vi.fn()
+    .mockResolvedValueOnce(encode({ items: [], loading: true }))
+    .mockResolvedValueOnce(encode({ items: [{ id: 'first' }], next: 'next' }))
+    .mockResolvedValueOnce(encode({ items: [{ id: 'second' }] }));
+  await expect(readSessionList({ sessionList } as unknown as RuntimeSidecarClient)).resolves.toEqual([{ id: 'first' }, { id: 'second' }]);
+  expect(sessionList.mock.calls).toEqual([[undefined], [undefined], ['next']]);
+});
+
+it('stops index polling when the host is shutting down', async () => {
+  const controller = new AbortController();
+  const sessionList = vi.fn(async () => { controller.abort(); return encode({ items: [], loading: true }); });
+  const read = async () => { for await (const _items of sessionPages({ sessionList } as unknown as RuntimeSidecarClient, controller.signal)) { /* no partial publication */ } };
+  await expect(read()).rejects.toThrow();
+  expect(sessionList).toHaveBeenCalledTimes(1);
+});
 
 describe('readHistoryList', () => {
   it('restarts the whole paged read when a live session advances its revision', async () => {

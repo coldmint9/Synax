@@ -107,6 +107,8 @@ async fn run(logs: &mut logging::LoggingGuard) -> Result<(), Box<dyn std::error:
         router: Arc::new(router),
         hot_store: Some(hot.clone()),
         history: Some(history),
+        test_reset_gate: (std::env::var("SYNAX_RUNTIME_TEST_MODE").as_deref() == Ok("1"))
+            .then(|| Arc::new(tokio::sync::RwLock::new(()))),
     };
 
     #[cfg(unix)]

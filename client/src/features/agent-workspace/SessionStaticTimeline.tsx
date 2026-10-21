@@ -29,6 +29,7 @@ import {
 } from "./streamingLiveBlocks";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { isLiveStepPersisted } from "./state/liveStepRetirement";
 import { useShellStore } from "../../shared/state/shellStore";
 
 interface Props {
@@ -352,11 +353,19 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       : undefined,
   );
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
-  const snapshots = useAgentSessionStore((s) =>
+  const parkedSnapshots = useAgentSessionStore((s) =>
     unifiedLive && !browsingHistory ? s.streamingCompletedSteps : null,
   );
   const liveId = useAgentSessionStore((s) =>
     unifiedLive && !browsingHistory ? s.streamingStepId : null,
+  );
+  // History can reach this render before the store retires its parked row.
+  // Keep a current live seed, but never let stale reasoning hide a saved reply.
+  const snapshots = useMemo(
+    () => parkedSnapshots?.filter(snapshot =>
+      snapshot.stepId === liveId || !isLiveStepPersisted(snapshot, steps, messages, toolCalls),
+    ) ?? null,
+    [parkedSnapshots, liveId, steps, messages, toolCalls],
   );
   const showLive = Boolean(liveId && excludeStepId === liveId);
   const liveEntryIds = useMemo(
@@ -416,18 +425,24 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       },
     );
     for (const snapshot of pendingSnapshots) {
+      const step = steps.find(step => step.id === snapshot.stepId);
+      const run = runs.find(run => run.id === (snapshot.runId ?? step?.runId));
+      const createdAt = step?.startedAt ?? snapshot.startedAt ?? run?.startedAt ?? "";
       const interactionIndex = entries.findIndex(
         (entry) =>
           entry.kind === "interaction" &&
           entry.interaction.stepId === snapshot.stepId,
       );
+      const laterIndex = entries.findIndex(entry =>
+        Date.parse(entry.createdAt) > Date.parse(createdAt),
+      );
       entries.splice(
-        interactionIndex < 0 ? entries.length : interactionIndex,
+        interactionIndex >= 0 ? interactionIndex : laterIndex >= 0 ? laterIndex : entries.length,
         0,
         {
           id: snapshot.stepId,
           kind: "agent",
-          createdAt: "",
+          createdAt,
           label: "",
           turn: {
             stepId: snapshot.stepId,

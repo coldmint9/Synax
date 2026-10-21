@@ -66,6 +66,21 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
+  it('opens a cold target session without enumerating every session or hydrating its history', async () => {
+    const id = await createSession('synax');
+    agentRuntimeStore.reset();
+    const all = vi.spyOn(agentRuntimeStore, 'hydrateSessions').mockRejectedValue(new Error('unrelated session index blocked'));
+    const history = vi.spyOn(agentRuntimeStore, 'hydrateSession').mockRejectedValue(new Error('full transcript should be lazy'));
+    try {
+      expect((await request('GET', '/protocol')).status).toBe(200);
+      const snapshot = await request('GET', `/sessions/${id}/snapshot`);
+      expect(snapshot.status, snapshot.body).toBe(200);
+      const detail = await request('GET', `/sessions/${id}`);
+      expect(detail.status, detail.body).toBe(200);
+      expect(all).not.toHaveBeenCalled();
+      expect(history).not.toHaveBeenCalled();
+    } finally { all.mockRestore(); history.mockRestore(); }
+  });
   it.each(['submit', 'skip', 'cancel'] as const)('accepts %s on a saved form after restart and deduplicates HTTP retries', async (action) => {
     const id = await createSession('synax');
     const run = await admitActiveFixtureRun(id, 'Ask which file');
@@ -139,6 +154,9 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
     const stopping = request('POST', `/sessions/${id}/cancel`);
     try {
       await vi.waitFor(async () => {
+        // A running snapshot can predate the cancel request now that reads no
+        // longer wait behind the global session refresh. Wait for the actual fence.
+        expect(runCoordinator.isStopping(id)).toBe(true);
         const state = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
         expect(state.session.status).toBe('running');
       });

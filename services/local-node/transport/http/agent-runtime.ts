@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { matchedRoutes } from 'hono/route';
 import { streamSSE } from "hono/streaming";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
@@ -160,20 +161,33 @@ import {
   workspaceRootLocation,
 } from "../../modules/project-workspace.js";
 import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
+import { ensureSessionRecovered } from '../../modules/agent-runtime/session-recovery.js';
 export const agentRuntimeRoutes = new Hono();
 // Load the execution working set at the HTTP boundary, and acknowledge only
 // after all mutations have reached Rust.
 agentRuntimeRoutes.use('*', async (c, next) => {
-  const id = c.req.param('sessionId') ?? (c.req.path.startsWith('/sessions/') ? c.req.param('id') : undefined);
+  if (!matchedRoutes(c).some(route => route.method !== 'ALL')) return next();
+  // Wildcard middleware runs before Hono binds parameters for the final route.
+  const segment = /\/sessions\/([^/]+)/.exec(c.req.path)?.[1];
+  const id = segment && !['search', 'badges', 'archive-inactive', 'clear-inactive'].includes(segment)
+    ? decodeURIComponent(segment) : undefined;
   try {
     // History queries already read the authoritative Rust index. Hydrating the
     // execution working set here would drain every history page before paging.
-    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
-    await agentRuntimeStore.hydrateSessions();
-    if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.hydrateSession(id);
+    if (id && !['search', 'badges'].includes(id)) {
+      await ensureSessionRecovered(id);
+      await agentRuntimeStore.hydrateSessionSummary(id);
+      if (c.req.method !== 'GET' && !c.req.path.endsWith('/runtime-ticket')) await agentRuntimeStore.hydrateSession(id);
+      if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
+    } else if (/\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
+      // Only collection operations need the complete session summary index.
+      await agentRuntimeStore.hydrateSessions();
+    }
     await next();
-    await agentRuntimeStore.flush();
+    if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.flushSession(id);
+    else if (c.req.method !== 'GET') await agentRuntimeStore.flush();
   } catch (error) { return runtimeError(c, error); }
 });
 
@@ -740,6 +754,13 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    const ancestors = new Set<string>();
+    for (let parentId = parsed.data.parentSessionId; parentId && !ancestors.has(parentId);) {
+      ancestors.add(parentId);
+      await ensureSessionRecovered(parentId);
+      await agentRuntimeStore.hydrateSession(parentId);
+      parentId = agentRuntimeStore.getSession(parentId).parentSessionId ?? undefined;
+    }
     let projectLocation = resolveProjectWorkspaceLocation(
       parsed.data.projectId,
     );
@@ -2330,7 +2351,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
     const session = projectSessionState(
       (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never,
     );
-    if (session.sessionMetadata?.runtimeControl)
+    if (runCoordinator.isStopping(sessionId) || session.sessionMetadata?.runtimeControl)
       return c.json(
         { error: "Wait for execution shutdown before changing permissions." },
         409,
@@ -2654,7 +2675,7 @@ agentRuntimeRoutes.post(
     try {
       const sessionId = c.req.param("sessionId");
       if (
-        agentRuntimeStore.getSession(sessionId).sessionMetadata?.runtimeControl
+        runCoordinator.isStopping(sessionId) || agentRuntimeStore.getSession(sessionId).sessionMetadata?.runtimeControl
       )
         return c.json(
           { error: "Execution is stopping or requires recovery." },

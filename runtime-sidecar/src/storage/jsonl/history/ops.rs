@@ -1,10 +1,9 @@
 //! The command façade: one entry point per history RPC, receipt fencing and
 //! the append-then-publish write path shared by every operation.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
-use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
@@ -24,21 +23,23 @@ use super::{
 use crate::storage::jsonl::layout;
 use crate::storage::jsonl::record::Record;
 use crate::storage::jsonl::store::JsonlStore;
+use crate::storage::session_cache::SessionCache;
 
 /// Objects are referenced by content hash and fully contained in their bytes.
 const OBJECT_DIGEST: &str = "sha256";
 
 pub struct HistoryOps {
     store: Arc<JsonlStore>,
-    sessions: Arc<Mutex<HashMap<String, Arc<HistorySession>>>>,
+    sessions: Arc<SessionCache<Arc<HistorySession>>>,
     slots: Arc<Semaphore>,
 }
 
 impl HistoryOps {
+    pub(crate) fn clear_cache_for_tests(&self) { self.sessions.clear(); }
     pub fn new(store: Arc<JsonlStore>) -> Self {
         Self {
             store,
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(SessionCache::default()),
             slots: Arc::new(Semaphore::new(32)),
         }
     }
@@ -61,7 +62,9 @@ impl HistoryOps {
             store: self.store.clone(),
             sessions: self.sessions.clone(),
         };
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
+            let _entered = span.enter();
             let _permit = permit;
             task.command(&session_id, &request_id, &operation, &payload)
         })
@@ -72,7 +75,7 @@ impl HistoryOps {
 
 struct HistoryTask {
     store: Arc<JsonlStore>,
-    sessions: Arc<Mutex<HashMap<String, Arc<HistorySession>>>>,
+    sessions: Arc<SessionCache<Arc<HistorySession>>>,
 }
 
 /// Query ids are correlation only: persisted query results are never
@@ -154,16 +157,7 @@ impl HistoryTask {
     }
 
     fn session(&self, session_id: &str) -> Result<Arc<HistorySession>, HistoryError> {
-        if let Some(session) = self.sessions.lock().get(session_id) {
-            return Ok(session.clone());
-        }
-        let opened = Arc::new(HistorySession::open(self.root(), session_id)?);
-        let mut sessions = self.sessions.lock();
-        if let Some(existing) = sessions.get(session_id) {
-            return Ok(existing.clone());
-        }
-        sessions.insert(session_id.to_owned(), opened.clone());
-        Ok(opened)
+        self.sessions.get_or_try_init(session_id, || HistorySession::open(self.root(), session_id).map(Arc::new))
     }
 
     #[allow(clippy::too_many_lines)]

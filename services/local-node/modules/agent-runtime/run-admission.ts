@@ -21,6 +21,7 @@ import { agentRuntimeStore } from "./session-store.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import { ensureSessionRecovered } from './session-recovery.js';
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -70,6 +71,7 @@ export async function acceptRuntimeRunAuthoritative(
     .update(JSON.stringify(stable({ input, mode })))
     .digest("hex");
   await runtimeFacade.ensureUiProjection(sessionId);
+  await ensureSessionRecovered(sessionId);
   await agentRuntimeStore.hydrateSession(sessionId);
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);

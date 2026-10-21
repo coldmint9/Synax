@@ -79,6 +79,8 @@ pub struct TransportContext {
     pub router: Arc<SessionShardRouter>,
     pub hot_store: Option<Arc<crate::storage::jsonl::hot::HotOps>>,
     pub history: Option<Arc<crate::storage::jsonl::history::HistoryOps>>,
+    /// Test teardown deletes the store; production requests never use this gate.
+    pub test_reset_gate: Option<Arc<tokio::sync::RwLock<()>>>,
 }
 
 impl TransportContext {
@@ -557,7 +559,16 @@ async fn execute_wire(
         session_id = %request.session_id, operation);
     async {
         let started = std::time::Instant::now();
+        let reset = matches!(&request.body, Some(wire_envelope::Body::HistoryCommand(command)) if command.operation == "test_reset_runtime");
+        let mut read_guard = None;
+        let mut reset_guard = None;
+        if let Some(gate) = &context.test_reset_gate {
+            if reset { reset_guard = Some(gate.write().await); }
+            else { read_guard = Some(gate.read().await); }
+        }
         let result = execute_wire_inner(request, context, local_control).await;
+        drop(read_guard);
+        drop(reset_guard);
         if let Some(wire_envelope::Body::Error(error)) = &result.0.body {
             tracing::warn!(event = "runtime.command_failed", code = %error.code,
                 duration_ms = started.elapsed().as_millis() as u64, "Runtime command failed");
@@ -880,11 +891,11 @@ async fn execute_wire_inner(
                 );
             }
             if command.operation == "reconcile_stream" {
-                if let (Some(hot), Some(history)) = (context.hot_store.clone(), context.history.clone()) {
+                if let (Some(_), Some(history)) = (context.hot_store.as_ref(), context.history.clone()) {
                     // Reconciliation fills gaps; it must never overwrite newer
                     // authoritative entities with old lifecycle events.
                     let mut latest = std::collections::BTreeMap::new();
-                    let through = match hot.snapshot(&session_id) {
+                    let through = match context.router.snapshot(session_id.clone()).await {
                         Ok(state) => state.cursor,
                         Err(error) => return (envelope(error_to_wire(error)), false),
                     };
@@ -970,6 +981,8 @@ async fn execute_wire_inner(
                 let Some(hot) = context.hot_store.clone() else {
                     return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
                 };
+                hot.store().wait_for_index_scan().await;
+                if let Some(history) = &context.history { history.clear_cache_for_tests(); }
                 return match tokio::task::spawn_blocking(move || hot.reset_for_tests()).await {
                     Ok(Ok(())) => (envelope(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ok": true})).unwrap_or_default() })), false),
                     Ok(Err(error)) => (envelope(storage_error_to_wire(error)), false),
@@ -1005,11 +1018,17 @@ async fn execute_wire_inner(
             let Some(store) = context.hot_store.as_ref() else {
                 return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
             };
+            let ready = match store.store().index_ready() {
+                Ok(ready) => ready,
+                Err(error) => return (envelope(wire_error("STORAGE_UNAVAILABLE", &error)), false),
+            };
             let cursor = crate::storage::jsonl::store::ListIndex::decode_cursor(&request.after);
-            let (items, next) = store.store().list().read().page(cursor.as_ref(), 64);
+            // Do not expose a partial list as a completed empty result.
+            let (items, next) = if ready { store.store().list().read().page(cursor.as_ref(), 64) } else { (Vec::new(), None) };
             let sessions_json = serde_json::to_vec(&serde_json::json!({
                 "items": items,
                 "next": next.map(|key| crate::storage::jsonl::store::ListIndex::encode_cursor(&key)),
+                "loading": !ready,
             })).unwrap_or_default();
             (
                 WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
