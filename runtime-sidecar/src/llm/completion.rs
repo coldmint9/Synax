@@ -26,7 +26,7 @@ pub(crate) fn provider_events(input: ProviderRequest) -> BoxStream<'static, Resu
         .unwrap_or(crate::llm::retry::MAX_RETRIES)
         .min(crate::llm::retry::MAX_RETRIES);
     crate::logging::observe_stream(
-        crate::llm::retry::with_retry(move || provider_events_once(input.clone()), max_retries), span)
+        crate::llm::retry::with_retry(move || super::scheduling::schedule(input.clone(), provider_events_once), max_retries), span)
 }
 
 fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Value, Error>> {
@@ -78,8 +78,24 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
                 _ => {}
             }
         }
-        let response = stream.finish().await?;
-        if let Some(error) = &response.error { Err(error.clone())?; }
+        let mut response = stream.finish().await?;
+        // The Responses API ends a turn it cut short as `incomplete`, and Rig
+        // keeps the provider's own reason as the failure text
+        // (`Response incomplete: <reason>`). A limit the provider reached is a
+        // truncated answer, not a failed request: keep the content the user
+        // already read and end the step as a length stop. A turn that produced
+        // nothing at all stays an error, so the loop never retries it forever.
+        let truncated =
+            truncation_reason(response.error.as_deref(), !response.choice.is_empty())
+                .map(str::to_owned);
+        if let Some(reason) = &truncated {
+            tracing::warn!(event = "provider.incomplete", reason = %reason,
+                "Provider ended the response early; keeping the truncated answer");
+            response.error = None;
+            response = response.with_finish_reason(FinishReason::Length);
+        } else if let Some(error) = &response.error {
+            Err(error.clone())?;
+        }
         if input.response_format.as_ref().is_some_and(|format| format["type"] == "json") {
             let text: String = response.choice.iter().filter_map(|part| match part {
                 AssistantContent::Text(text) => Some(text.text.as_str()),
@@ -88,6 +104,7 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
             let value: Value = serde_json::from_str(&text)?;
             yield json!({"type":"structured-output","value":value});
         }
+        let limit_reached = truncated.is_some();
         let mut ids = HashSet::new();
         let mut calls = Vec::new();
         for call in response.tool_calls() {
@@ -99,7 +116,7 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
                 match repair_tool_arguments(raw) {
                     Some(repaired) => Value::Object(repaired),
                     None => Err(InvalidToolArguments::new(runtime_name, &id, raw,
-                        matches!(response.finish_reason(), Some(FinishReason::Length))))?,
+                        limit_reached || matches!(response.finish_reason(), Some(FinishReason::Length))))?,
                 }
             } else {
                 Value::Object(call.function.arguments.clone())
@@ -121,7 +138,7 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
         let (reason, raw) = match response.finish_reason() {
             Some(FinishReason::Stop) => ("stop", "stop".to_owned()),
             Some(FinishReason::ToolCalls) => ("tool-calls", "tool_use".to_owned()),
-            Some(FinishReason::Length) => ("length", "max_tokens".to_owned()),
+            Some(FinishReason::Length) => ("length", truncated.unwrap_or_else(|| "max_tokens".to_owned())),
             Some(FinishReason::ContentFilter) => ("content-filter", "content_filter".to_owned()),
             Some(FinishReason::Other(raw)) => ("other", raw),
             Some(_) => ("other", "unknown".to_owned()),
@@ -129,6 +146,28 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
         };
         yield json!({"type":"finish","finishReason":reason,"rawFinishReason":raw});
     })
+}
+
+/// The provider's own reason for ending a response early, when Rig reports it
+/// as `Response incomplete: <reason>` (`rig-core`'
+/// `responses_api::finish_reason_of`). Only that status keeps the streamed
+/// answer: a failed or cancelled response stays an error.
+fn incomplete_reason(error: &str) -> Option<&str> {
+    let reason = error
+        .strip_prefix("Response incomplete")?
+        .trim_start_matches(':')
+        .trim();
+    Some(reason)
+}
+
+/// The reason a cut-short turn is kept, if it is one: the provider reported an
+/// incomplete response and there is a partial answer to keep. A turn that
+/// produced nothing is a failure the loop may retry, never a silent success.
+fn truncation_reason<'a>(error: Option<&'a str>, has_answer: bool) -> Option<&'a str> {
+    if !has_answer {
+        return None;
+    }
+    error.and_then(incomplete_reason)
 }
 
 fn display_block(block: &AssistantContent) -> Value {
@@ -142,5 +181,42 @@ fn display_block(block: &AssistantContent) -> Value {
         }
         AssistantContent::Opaque(opaque) => json!({"type":"opaque_reasoning","data":opaque.item}),
         _ => serde_json::to_value(block).unwrap_or(Value::Null),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{incomplete_reason, truncation_reason};
+
+    #[test]
+    fn keeps_a_cut_short_answer_instead_of_failing_the_turn() {
+        assert_eq!(truncation_reason(Some("Response incomplete: length"), true), Some("length"));
+        assert_eq!(
+            truncation_reason(Some("Response incomplete: max_output_tokens"), true),
+            Some("max_output_tokens")
+        );
+        assert_eq!(
+            truncation_reason(Some("Response incomplete: max_tool_calls"), true),
+            Some("max_tool_calls")
+        );
+        assert_eq!(
+            truncation_reason(Some("Response incomplete without a provider reason"), true),
+            Some("without a provider reason")
+        );
+    }
+
+    #[test]
+    fn keeps_reported_failures_fatal() {
+        assert_eq!(truncation_reason(Some("Response failed: server_error: upstream refused"), true), None);
+        assert_eq!(truncation_reason(Some("Response cancelled: client closed the request"), true), None);
+        assert_eq!(truncation_reason(Some("Response ended while in_progress"), true), None);
+        assert_eq!(truncation_reason(Some("error decoding response body"), true), None);
+        assert_eq!(truncation_reason(None, true), None);
+    }
+
+    #[test]
+    fn keeps_a_turn_without_an_answer_fatal() {
+        assert_eq!(truncation_reason(Some("Response incomplete: length"), false), None);
+        assert_eq!(incomplete_reason("Response incomplete: length"), Some("length"));
     }
 }

@@ -4,16 +4,17 @@ import { nowIso } from './runtime-ids.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
+import { streamBatchGroups } from './runtime-stream-projection.js';
 
-/**
- * The journal admission budget uses this conservative upper bound for the
- * coalesced stream cadence. The writer itself no longer schedules a delta timer.
- */
+/** Maximum number of model deltas in one authoritative append. */
 export const DELTA_FLUSH_MS = 40;
+const DELTA_BATCH_LIMIT = 8;
 
 /** Shared by background runs and embedded hosts; it never moves a host or takes ownership of its tools. */
 export class RuntimeStreamWriter {
   private pending: AgentRunStreamChunk[] = [];
+  private deltaPending: AgentRunStreamChunk[] = [];
+  private deltaTimer?: ReturnType<typeof setTimeout>;
   private writes = new Set<Promise<void>>();
   private writeFailure?: Error;
   private runStatus?: string;
@@ -39,6 +40,8 @@ export class RuntimeStreamWriter {
   write(chunk: AgentRunStreamChunk): void {
     if (!this.isCurrent()) { this.abandon(); return; }
     if ('run' in chunk && chunk.run) this.runStatus = chunk.run.status;
+    const isDelta = chunk.type === 'message_delta' || chunk.type === 'thought_delta';
+    if (chunk.type === 'step_started' || !isDelta) this.flush();
     if (chunk.type === 'step_started') {
       this.partialStepId = chunk.step.id;
       this.partialContent = '';
@@ -61,11 +64,25 @@ export class RuntimeStreamWriter {
       commit.push(...this.pending);
       this.pending = [];
     }
-    // loop-delta-bursts already coalesces model deltas before they reach the
-    // runtime writer. Persist each coalesced event directly so this layer does
-    // not concatenate the same stream a second time or schedule another timer.
-    commit.push(chunk);
-    this.commit(commit);
+    if (isDelta) {
+      if (commit.length) {
+        this.commit(commit);
+        commit.length = 0;
+      }
+      this.deltaPending.push(chunk);
+      if (this.deltaPending.length >= DELTA_BATCH_LIMIT) this.flush();
+      else if (!this.deltaTimer) {
+        this.deltaTimer = setTimeout(() => {
+          this.deltaTimer = undefined;
+          try { this.flush(); } catch (error) {
+            this.writeFailure = error instanceof Error ? error : new Error(String(error));
+          }
+        }, DELTA_FLUSH_MS);
+      }
+    } else {
+      commit.push(chunk);
+      this.commit(commit);
+    }
     // A completed write-class tool call invalidates the cached workspace
     // snapshot so the next environment poll reflects the edit immediately.
     if (chunk.type === 'tool_result' && chunk.toolCall && (chunk.toolCall as { mutability?: string }).mutability === 'write') {
@@ -79,7 +96,7 @@ export class RuntimeStreamWriter {
     if (!runId || chunks.length === 0) return;
     if (this.writeFailure) throw this.writeFailure;
     if (this.sidecarPending >= 128) throw new Error('Runtime sidecar stream queue is full.');
-    this.enqueueSidecar(runId, chunks);
+    for (const group of streamBatchGroups(chunks)) this.enqueueSidecar(runId, group);
   }
 
   private enqueueSidecar(runId: string, chunks: AgentRunStreamChunk[]): void {
@@ -129,15 +146,27 @@ export class RuntimeStreamWriter {
 
   abandon(): void {
     this.pending = [];
+    this.deltaPending = [];
+    if (this.deltaTimer) clearTimeout(this.deltaTimer);
+    this.deltaTimer = undefined;
   }
 
   flush(): void {
     if (!this.isCurrent()) { this.abandon(); return; }
+    if (this.deltaTimer) {
+      clearTimeout(this.deltaTimer);
+      this.deltaTimer = undefined;
+    }
+    if (this.deltaPending.length) {
+      const deltas = this.deltaPending;
+      this.deltaPending = [];
+      this.commit(deltas);
+    }
   }
 }
 
 export async function* recordRuntimeStream(sessionId: string, source: AsyncGenerator<AgentRunStreamChunk>): AsyncGenerator<AgentRunStreamChunk> {
   const writer = new RuntimeStreamWriter(sessionId);
-  try { for await (const chunk of source) { writer.write(chunk); yield chunk; await writer.settled(); } }
+  try { for await (const chunk of source) { writer.write(chunk); yield chunk; } }
   finally { writer.flush(); await writer.settled(); await writer.prepareFinish(); writer.finish(); await writer.settled(); }
 }

@@ -1,3 +1,5 @@
+import { appendHistoryPayload } from "./history-upload.js";
+import { boundedStreamChunk } from "../runtime-stream-projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   decodeUiSnapshot,
@@ -65,6 +67,18 @@ function makeClient(): RuntimeSidecarClient | null {
   }
   return connection.client;
 }
+// Control traffic has its own socket as well as reserved server execution/byte budgets.
+let controlConnection: { socketPath: string; token: string; client: RuntimeSidecarClient } | undefined;
+function makeControlClient(): RuntimeSidecarClient | null {
+  const socketPath = process.env.SYNAX_RUNTIME_SIDECAR_SOCKET;
+  const token = process.env.SYNAX_RUNTIME_SIDECAR_TOKEN;
+  if (!socketPath || !token) { controlConnection?.client.close(); controlConnection = undefined; return null; }
+  if (!controlConnection || controlConnection.socketPath !== socketPath || controlConnection.token !== token) {
+    controlConnection?.client.close();
+    controlConnection = { socketPath, token, client: new RuntimeSidecarClient({ socketPath, token }) };
+  }
+  return controlConnection.client;
+}
 export interface RuntimeAdmissionInput {
   sessionId: string;
   run: AgentRun;
@@ -82,6 +96,7 @@ export interface RuntimeStreamInput {
 }
 export class RuntimeFacade {
   private readonly pendingHistoryWrites = new Map<string, Set<Promise<void>>>();
+  private readonly inFlightHistoryReads = new Map<string, Promise<unknown[]>>();
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
   ) {}
@@ -348,9 +363,9 @@ export class RuntimeFacade {
     operation: string;
     payload?: unknown;
   }): Promise<unknown> {
-    const client = this.clientFactory();
+    const client = this.clientFactory === makeClient ? makeControlClient() : this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    await this.ensureUiProjection(input.sessionId);
+    if (!["execution_check", "execution_close", "stop_begin", "stop_unconfirmed", "resume", "lease_open", "lease_close"].includes(input.operation)) await this.ensureUiProjection(input.sessionId);
     for (let attempt = 0; ; attempt++) {
       const snapshot = await client.snapshot(input.sessionId);
       try {
@@ -707,12 +722,14 @@ export class RuntimeFacade {
     };
     for (const object of objects) {
       const size = Buffer.byteLength(JSON.stringify(object)) + 1;
-      if (size > budget)
-        throw new AgentRuntimeError(
-          "History entity exceeds the control frame budget; blob storage is required.",
-          "HISTORY_ENTITY_TOO_LARGE",
-          413,
-        );
+      if (size > budget) {
+        await flush();
+        const client = this.clientFactory();
+        if (!client) throw new Error("Runtime sidecar client is not configured.");
+        const payload = { objects: [object], ...(ifAbsent ? { ifAbsent: true } : {}) };
+        await appendHistoryPayload(client, sessionId, `history-append:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`, payload);
+        continue;
+      }
       if (batch.length >= 256 || bytes + size > budget) await flush();
       batch.push(object);
       bytes += size;
@@ -871,7 +888,16 @@ export class RuntimeFacade {
   ): Promise<unknown[]> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
-    return readHistoryList(client, sessionId, operation);
+    const key = `${sessionId}:${operation}`;
+    const existing = this.inFlightHistoryReads.get(key);
+    if (existing) return existing;
+    const read = readHistoryList(client, sessionId, operation).finally(() => {
+      if (this.inFlightHistoryReads.get(key) === read) {
+        this.inFlightHistoryReads.delete(key);
+      }
+    });
+    this.inFlightHistoryReads.set(key, read);
+    return read;
   }
   async persistTerminalInfo(
     projectId: string,
@@ -1903,6 +1929,11 @@ export class RuntimeFacade {
   async appendStreamAuthoritative(input: RuntimeStreamInput): Promise<number> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
+    const originals = input.chunks as AgentRunStreamChunk[];
+    const chunks = originals.map(boundedStreamChunk);
+    const externalized = originals.filter((chunk, index) => chunk !== chunks[index]);
+    // Make the referenced full records durable before publishing their previews.
+    if (externalized.length) await this.persistStreamHistory(input.sessionId, externalized);
     const ack = await client.appendStream({
       sessionId: input.sessionId,
       runId: input.runId,
@@ -1911,7 +1942,7 @@ export class RuntimeFacade {
       epoch: input.epoch,
       revision: input.revision,
       durability: "group_commit",
-      events: input.chunks.map((chunk) => ({
+      events: chunks.map((chunk) => ({
         kind:
           typeof chunk === "object" && chunk && "type" in chunk
             ? String(

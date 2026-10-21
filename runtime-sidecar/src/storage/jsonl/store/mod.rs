@@ -176,6 +176,9 @@ impl JsonlStore {
         let mut failure = None;
         while let Some(result) = loads.next().await {
             if let Err(error) = result { failure.get_or_insert(error); }
+            // Index construction only needs the row; do not leave every cold
+            // session's actor and event window resident after the scan.
+            self.evict_idle();
         }
         failure.map_or(Ok(()), Err)
     }
@@ -215,6 +218,43 @@ impl JsonlStore {
         Ok(())
     }
 
+    /// Release completed sessions from the hot cache once no operation still
+    /// owns a handle. The durable list index remains available for listings.
+    pub fn evict_idle(&self) -> usize {
+        self.root.sessions.remove_if(|handle| {
+            // The cache's handle and its cell each own the actor. Any caller
+            // clone adds another pair, so exactly two means no in-flight use.
+            if Arc::strong_count(&handle.actor) != 2 {
+                return false;
+            }
+            let mut actor = handle.actor.lock();
+            actor.subscribers.retain(|subscriber| !subscriber.is_closed());
+            if !actor.subscribers.is_empty()
+                || actor.state.active_run_id.is_some()
+                || !actor.active_runs.is_empty()
+                || !actor.activated_runs.is_empty()
+                || actor.control.runtime_control.is_some()
+                || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
+            {
+                return false;
+            }
+            actor.files.sync().is_ok()
+        })
+    }
+
+    pub(crate) fn cached_session_idle(&self, session_id: &str) -> bool {
+        let Some(handle) = self.root.sessions.get(session_id) else {
+            return true;
+        };
+        let actor = handle.actor.lock();
+        actor.subscribers.iter().all(|subscriber| subscriber.is_closed())
+            && actor.state.active_run_id.is_none()
+            && actor.active_runs.is_empty()
+            && actor.activated_runs.is_empty()
+            && actor.control.runtime_control.is_none()
+            && actor.control.execution_lease.as_ref().is_none_or(|lease| lease.closed)
+    }
+
     pub fn update_list(&self, row: ListRecord) -> JsonlResult<()> {
         self.root.list.write().upsert(row);
         Ok(())
@@ -234,7 +274,7 @@ impl JsonlStore {
     }
 }
 
-/// A handle whose actor, lake and cell all point at each other.
+/// Construct a handle whose actor keeps only a weak back-reference to its cell.
 pub fn build_handle(root: &Path, session_id: &str, loaded: load::Loaded) -> SessionHandle {
     let id = session_id.to_owned();
     let actor = Arc::new(Mutex::new(SessionActor::from_loaded(loaded, 128)));
@@ -262,7 +302,7 @@ pub fn build_handle(root: &Path, session_id: &str, loaded: load::Loaded) -> Sess
     {
         let mut guard = actor.lock();
         guard.id = id.clone();
-        guard.cell = Some(cell.clone());
+        guard.cell = Some(Arc::downgrade(&cell));
     }
     let handle = SessionHandle {
         id,

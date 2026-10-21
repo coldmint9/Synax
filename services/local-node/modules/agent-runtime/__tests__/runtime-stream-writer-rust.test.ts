@@ -24,6 +24,34 @@ it('writes ordered Rust batches and never selects the retired disabled transport
   expect(transport.persistStreamHistory).toHaveBeenCalledTimes(2);
 });
 
+it('coalesces eight deltas and flushes them before the next boundary', async () => {
+  vi.useFakeTimers();
+  const writer = new RuntimeStreamWriter('s', 'r');
+  writer.write({ type: 'step_started', step });
+  for (let index = 0; index < 8; index++) {
+    writer.write({ type: 'message_delta', runId: 'r', stepId: step.id, delta: String(index) });
+  }
+  await writer.settled();
+  expect(transport.appendStreamAuthoritative).toHaveBeenCalledTimes(2);
+  expect((transport.appendStreamAuthoritative.mock.calls[1][0] as { chunks: AgentRunStreamChunk[] }).chunks).toHaveLength(8);
+  writer.write({ type: 'tool_call', runId: 'r', stepId: step.id, toolCall: {} as never });
+  await writer.settled();
+  expect(transport.appendStreamAuthoritative).toHaveBeenCalledTimes(3);
+  vi.useRealTimers();
+});
+
+it('flushes a short delta burst on the bounded timer', async () => {
+  vi.useFakeTimers();
+  const writer = new RuntimeStreamWriter('s', 'r');
+  writer.write({ type: 'step_started', step });
+  writer.write({ type: 'message_delta', runId: 'r', stepId: step.id, delta: 'a' });
+  expect(transport.appendStreamAuthoritative).toHaveBeenCalledTimes(0);
+  vi.advanceTimersByTime(40);
+  await writer.settled();
+  expect(transport.appendStreamAuthoritative).toHaveBeenCalledTimes(2);
+  vi.useRealTimers();
+});
+
 it('publishes interrupted assistant output and awaits that final write', async () => {
   async function* source(): AsyncGenerator<AgentRunStreamChunk> {
     yield { type: 'run_started', run };

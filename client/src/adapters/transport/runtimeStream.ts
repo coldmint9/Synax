@@ -2,6 +2,7 @@ import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, Permiss
 import type { LlmRetryState, SessionLiveEvent } from './sessionLive'
 
 export interface RuntimeChunk {
+  execution?: import("./agentRuntime").ToolExecutionProgress;
   type: string
   run?: AgentRun
   runId?: string
@@ -48,6 +49,7 @@ export interface RuntimeSnapshotEvent {
 
 /** Chunks the store consumes locally by upserting the payload they carry; they must not trigger a full detail refresh. */
 const LOCAL_CHUNK_TYPES = new Set([
+  'execution_status',
   'message_delta',
   'thought_delta',
   'tool_call',
@@ -122,6 +124,8 @@ export class RuntimeStreamProjector {
     if (value.chunk.type === 'event' && event?.sessionId === value.sessionId)
       output.push({ type: 'event', event })
     if (terminal || value.state.activeRunId !== value.runId) return output
+    if (value.chunk.type === 'execution_status' && value.chunk.execution)
+      output.push({ type: 'execution_status', sessionId: value.sessionId, runId: value.runId, execution: value.chunk.execution })
     return [...output, ...this.live(value.chunk)]
   }
 

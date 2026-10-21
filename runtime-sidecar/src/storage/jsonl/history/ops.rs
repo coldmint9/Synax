@@ -36,6 +36,12 @@ pub struct HistoryOps {
 
 impl HistoryOps {
     pub(crate) fn clear_cache_for_tests(&self) { self.sessions.clear(); }
+    pub fn evict_idle(&self) -> usize {
+        let store = self.store.clone();
+        self.sessions.remove_if(|session| {
+            Arc::strong_count(session) == 1 && store.cached_session_idle(&session.session_id)
+        })
+    }
     pub fn new(store: Arc<JsonlStore>) -> Self {
         Self {
             store,
@@ -215,6 +221,7 @@ impl HistoryTask {
             "history_sync" => serialized(&history_sync(ops.index(), session_id, &value)?)?,
             "object_value_chunk" => ops.object_value_chunk(&value)?,
             "append_entities" => ops.append_entities(&value)?,
+            "append_entities_blob" => ops.append_entities_blob(&value)?,
             "put_object" => ops.put_object(&value)?,
             "put_blob_chunk" => ops.put_blob_chunk(&value)?,
             "put_blob_manifest" => ops.put_blob_manifest(&value)?,
@@ -1241,6 +1248,29 @@ impl SessionOps<'_> {
             self.stage_append(value, expected)?;
         }
         serialized(&self.index().head)
+    }
+
+    fn append_entities_blob(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
+        let blob_id = required_string(value, "blobId")?;
+        let manifest = self.blob_manifest(blob_id)?.ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
+        let size = required_u64(&manifest, "size")?;
+        let total = required_u64(&manifest, "total")?;
+        if size > MAX_COMMAND_BYTES as u64 || total == 0 || total > MAX_BLOB_CHUNKS {
+            return Err(HistoryError::InvalidCommand("history upload exceeds bounds".into()));
+        }
+        let expected = required_string(value, "sha256")?;
+        if manifest["sha256"].as_str() != Some(expected) { return Err(HistoryError::InvalidCommand("history upload digest mismatch".into())); }
+        let mut bytes = Vec::with_capacity(size as usize);
+        for index in 0..total {
+            let chunk = self.blob_chunk(blob_id, index)?.ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
+            if bytes.len() + chunk.len() > MAX_COMMAND_BYTES { return Err(HistoryError::InvalidCommand("history upload exceeds bounds".into())); }
+            bytes.extend(chunk);
+        }
+        if bytes.len() as u64 != size || layout::sha256_hex(&bytes) != expected {
+            return Err(HistoryError::InvalidCommand("history upload digest mismatch".into()));
+        }
+        let payload: Value = serde_json::from_slice(&bytes).map_err(|_| HistoryError::InvalidCommand("invalid history upload JSON".into()))?;
+        self.append_entities(&payload)
     }
 
     /// Build revision `head.revision + 1` from the staged entities and the

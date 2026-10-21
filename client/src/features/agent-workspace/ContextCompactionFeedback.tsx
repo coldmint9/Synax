@@ -30,7 +30,7 @@ export function ContextCompactionFeedback({
   return (
     <div
       role={failed ? "alert" : "status"}
-      className={`flex items-center gap-2 px-1 py-2 text-xs ${failed ? "text-danger" : "text-muted-foreground"}`}
+      className={`flex items-center gap-2 px-1 py-2 text-[11px] ${failed ? "text-danger" : "text-muted-foreground"}`}
     >
       <Icon size={14} aria-hidden="true" />
       <span>

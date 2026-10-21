@@ -5,9 +5,16 @@ import {
   waitForAuthoritativeLease,
   hasBackgroundProcesses,
   hasLocalBackgroundProcesses,
+  listOwnedProcesses,
+  stopRecordedProcess,
 } from "./process-ownership.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { resourceRequest, type OverdueResource } from "./resource-admission.js";
+import { outsideExecutionContext } from "../../infrastructure/runtime/execution-context.js";
+import { businessStore } from "../../infrastructure/persistence/business-store.js";
+import { skillSourceService } from "../skills/skill-source-service.js";
 import fs from "node:fs";
 import path from "node:path";
 import { runtimeAsset } from "../../infrastructure/runtime/runtime-paths.js";
@@ -49,8 +56,21 @@ const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
 const CHILD_READY_TIMEOUT_MS = AGENT_SESSION_CHILD_READY_TIMEOUT_MS;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 5 * 60_000;
+let preparingWorkerMetadata: Promise<void> | undefined;
+
+function prepareWorkerMetadata(): Promise<void> {
+  if (!process.env.SYNAX_RUNTIME_PROVIDER_PORT) return Promise.resolve();
+  // Default sources are create-if-missing. Seed once in the host before fork,
+  // so simultaneous cold workers never race to create the same metadata key.
+  return preparingWorkerMetadata ??= outsideExecutionContext(async () => {
+    await businessStore.refresh(["skill-sources"]);
+    skillSourceService.ensureDefaultSources();
+    await businessStore.flush(["skill-sources"]);
+  }).finally(() => { preparingWorkerMetadata = undefined; });
+}
 
 type StreamQueueItem =
+  | { kind: "parked" }
   | { kind: "chunk"; chunk: AgentRunStreamChunk }
   | { kind: "done" }
   | { kind: "error"; error: string; code?: string };
@@ -100,6 +120,7 @@ interface ContextCompactionRequest {
 }
 
 interface SessionChildState {
+  ownerId: string;
   sessionId: string;
   child: ChildProcess;
   streams: Map<string, ActiveStream>;
@@ -119,7 +140,59 @@ function resolveAgentSessionRunnerPath(): string {
   return runner;
 }
 
-class SessionProcessManager {
+export class SessionProcessManager {
+  private readonly streamControllers = new Map<string, AbortController>();
+  private readonly parkedChildren = new WeakSet<ChildProcess>();
+  private readonly pendingStarts: string[] = [];
+  assertCanQueueChild(): void {
+    if (this.pendingStarts.length >= 128) throw new AgentRuntimeError("Session worker queue is full.", "SESSION_LIMIT", 429);
+  }
+  private pendingStartEligible(id: string): boolean {
+    return ![...this.resourceCleanup.values()].some(ids => ids.includes(id)) && ![...this.terminatingChildren.values()].includes(id);
+  }
+  private resourceWatch?: ReturnType<typeof setInterval>;
+  private checkingResources = false;
+  private readonly resourceCleanup = new Map<string, string[]>();
+
+  private watchResources(): void {
+    if (this.resourceWatch || !process.env.SYNAX_RUNTIME_PROVIDER_PORT) return;
+    this.resourceWatch = setInterval(() => {
+      if (this.checkingResources) return;
+      this.checkingResources = true;
+      void outsideExecutionContext(() => this.reconcileResources()).catch(error => logger.warn({ error: String(error) }, "Resource supervisor check failed"))
+        .finally(() => { this.checkingResources = false; });
+    }, 2_000);
+    this.resourceWatch.unref();
+  }
+
+  private async reconcileResources(): Promise<void> {
+    for (const state of this.children.values()) {
+      if (state.child.connected) state.child.send?.({ type: "stream:yield-request", requested: this.pendingStarts.length > 0 });
+    }
+    const { requests } = await resourceRequest<{ requests: OverdueResource[] }>("overdue", {});
+    for (const request of requests) {
+      const state = [...this.children.values()].find(child => child.ownerId === request.ownerId);
+      if (state) this.releaseChild(state.sessionId, "Tool execution exceeded its deadline or stopped responding.", { pushStreamError: true });
+    }
+    for (const [ownerId, sessionIds] of this.resourceCleanup) {
+      const owner = await resourceRequest<{ active: boolean }>("owner", { ownerId });
+      if (!owner.active) { this.resourceCleanup.delete(ownerId); continue; }
+      let confirmed = true;
+      for (const sessionId of sessionIds) {
+        const records = await listOwnedProcesses(sessionId);
+        for (const record of records) {
+          if (record.state === "active" && !(await stopRecordedProcess(record))) confirmed = false;
+        }
+      }
+      if (confirmed) {
+        await resourceRequest("release-owner", { ownerId });
+        this.resourceCleanup.delete(ownerId);
+      }
+    }
+    if (!this.children.size && !this.terminatingChildren.size && !this.resourceCleanup.size) {
+      clearInterval(this.resourceWatch); this.resourceWatch = undefined;
+    }
+  }
   private readonly children = new Map<string, SessionChildState>();
   private readonly activeMainStreams = new Set<string>();
   /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
@@ -133,13 +206,15 @@ class SessionProcessManager {
   }
 
   canSpawnChild(sessionId?: string): boolean {
+    if (sessionId && [...this.resourceCleanup.values()].some(ids => ids.includes(sessionId))) return false;
     if (sessionId && [...this.terminatingChildren.values()].includes(sessionId))
       return false;
     if (sessionId) {
       const existing = this.children.get(sessionId);
       if (existing?.child.connected) return true;
     }
-    return this.countChildren() < MAX_AGENT_SESSION_PROCESSES;
+    const first = this.pendingStarts.find(id => this.pendingStartEligible(id));
+    return this.countChildren() < MAX_AGENT_SESSION_PROCESSES && (!first || first === sessionId);
   }
 
   assertCanSpawnChild(sessionId?: string): void {
@@ -165,8 +240,10 @@ class SessionProcessManager {
       );
     }
 
-    this.assertCanSpawnChild(sessionId);
-
+    this.assertCanQueueChild();
+    const controller = new AbortController();
+    abortSignal = abortSignal ? AbortSignal.any([abortSignal, controller.signal]) : controller.signal;
+    this.streamControllers.set(sessionId, controller);
     this.activeMainStreams.add(sessionId);
     const streamId = randomUUID();
     const queue = new StreamQueue();
@@ -174,7 +251,26 @@ class SessionProcessManager {
     let onAbort: (() => void) | undefined;
 
     try {
+      this.pendingStarts.push(sessionId);
+      const queuedAt = nowIso();
+      const deadline = Date.now() + 300_000;
+      if (!this.canSpawnChild(sessionId) && input.acceptedRunId) {
+        const run = agentRuntimeStore.updateRun(input.acceptedRunId, {
+          execution: { phase: "queued_resources", resource: "worker", queuedAt },
+        });
+        yield { type: "execution_status", runId: run.id, execution: run.execution! };
+      }
+      if (!this.canSpawnChild(sessionId)) for (const state of this.children.values()) if (state.child.connected)
+        state.child.send?.({ type: "stream:yield-request", requested: true });
+      while (!this.canSpawnChild(sessionId)) {
+        abortSignal?.throwIfAborted();
+        if (Date.now() >= deadline) throw new AgentRuntimeError("Timed out waiting for a session worker.", "SESSION_QUEUE_TIMEOUT", 429);
+        await delay(100, undefined, { signal: abortSignal });
+      }
+      abortSignal?.throwIfAborted();
       childState = await this.ensureChild(sessionId);
+      const queuedIndex = this.pendingStarts.indexOf(sessionId);
+      if (queuedIndex >= 0) this.pendingStarts.splice(queuedIndex, 1);
       childState.streams.set(streamId, { streamId, queue });
 
       onAbort = () => {
@@ -205,6 +301,31 @@ class SessionProcessManager {
           yield item.chunk;
           continue;
         }
+        if (item.kind === "parked") {
+          childState.streams.delete(streamId);
+          this.parkedChildren.add(childState.child);
+          this.releaseChild(sessionId, "Yielding this worker at a completed step.", { idle: true });
+          this.activeMainStreams.add(sessionId);
+          this.pendingStarts.push(sessionId);
+          await agentRuntimeStore.hydrateSession(sessionId, true);
+          const runId = input.acceptedRunId ?? agentRuntimeStore.getSession(sessionId).activeRunId;
+          if (!runId) throw new AgentRuntimeError("Parked execution no longer exists.", "EXECUTION_SUPERSEDED", 409);
+          const parked = agentRuntimeStore.updateRun(runId, { execution: { phase: "queued_resources", resource: "worker", queuedAt: nowIso() } });
+          yield { type: "execution_status", runId, execution: parked.execution! };
+          const resumeDeadline = Date.now() + 300_000;
+          while (!this.canSpawnChild(sessionId)) {
+            if (Date.now() >= resumeDeadline) throw new AgentRuntimeError("Timed out waiting to resume a session worker.", "SESSION_QUEUE_TIMEOUT", 429);
+            await delay(100, undefined, { signal: abortSignal });
+          }
+          abortSignal?.throwIfAborted();
+          childState = await this.ensureChild(sessionId);
+          const index = this.pendingStarts.indexOf(sessionId);
+          if (index >= 0) this.pendingStarts.splice(index, 1);
+          childState.streams.set(streamId, { streamId, queue });
+          input = { ...input, acceptedRunId: runId, resumeExecution: true };
+          childState.child.send?.({ type: "stream:start", streamId, mode: "resume", input });
+          continue;
+        }
         if (item.kind === "error") {
           throw new AgentRuntimeError(item.error, item.code ?? "STREAM_ERROR", item.code === "EXECUTION_SUPERSEDED" ? 409 : 500);
         }
@@ -215,6 +336,9 @@ class SessionProcessManager {
         break;
       }
     } finally {
+      const queuedIndex = this.pendingStarts.indexOf(sessionId);
+      if (queuedIndex >= 0) this.pendingStarts.splice(queuedIndex, 1);
+      this.streamControllers.delete(sessionId);
       if (onAbort) {
         abortSignal?.removeEventListener("abort", onAbort);
       }
@@ -392,6 +516,7 @@ class SessionProcessManager {
     reason = "Agent runtime session deleted by user.",
   ): void {
     for (const sessionId of sessionIds) {
+      this.streamControllers.get(sessionId)?.abort(new Error(reason));
       for (const [child, id] of this.terminatingChildren) {
         if (id === sessionId) this.idleChildren.delete(child);
       }
@@ -564,6 +689,7 @@ class SessionProcessManager {
   }
 
   private async ensureChild(sessionId: string): Promise<SessionChildState> {
+    await prepareWorkerMetadata();
     const existing = this.children.get(sessionId);
     if (existing && existing.child.connected) {
       return existing;
@@ -603,12 +729,14 @@ class SessionProcessManager {
     child.once("close", () => releaseOwnedProcess(processTicket.id));
     child.once("error", () => releaseOwnedProcess(processTicket.id));
     const state: SessionChildState = {
+      ownerId: processTicket.id,
       sessionId,
       child,
       streams: new Map(),
       compactions: new Map(),
     };
     this.children.set(sessionId, state);
+    this.watchResources();
 
     child.stdout?.on("data", (chunk: Buffer) => {
       logger.debug(
@@ -635,6 +763,11 @@ class SessionProcessManager {
     });
 
     child.on("exit", (code, signal) => {
+      // A worker exit alone does not prove that its detached commands stopped.
+      if (process.env.SYNAX_RUNTIME_PROVIDER_PORT) {
+        const ids = agentRuntimeStore.tryGetSession(sessionId) ? agentRuntimeStore.listSessionTree(sessionId).map(session => session.id) : [sessionId];
+        this.resourceCleanup.set(processTicket.id, ids);
+      }
       const intentional = this.releasingChildren.delete(sessionId);
       if (!intentional && code !== 0 && code !== null) {
         logger.error(
@@ -649,7 +782,7 @@ class SessionProcessManager {
       }
       const current = this.children.get(sessionId);
       const released = this.terminatingChildren.has(child);
-      if (current?.child === child || (released && !current)) {
+      if (!this.parkedChildren.has(child) && (current?.child === child || (released && !current))) {
         // Descendants execute in this worker too. Its exit confirms they can
         // no longer update their own sessions, runs or steps.
         try {
@@ -697,7 +830,7 @@ class SessionProcessManager {
         }
         this.children.delete(sessionId);
       }
-      if (!current || current.child === child)
+      if (!this.parkedChildren.has(child) && (!current || current.child === child))
         this.activeMainStreams.delete(sessionId);
     });
 
@@ -826,6 +959,11 @@ class SessionProcessManager {
       const stream = state.streams.get(message.streamId);
       stream?.queue.push({ kind: "done" });
       stream?.queue.close();
+      return;
+    }
+
+    if (message.type === "stream:parked") {
+      state.streams.get(message.streamId)?.queue.push({ kind: "parked" });
       return;
     }
 

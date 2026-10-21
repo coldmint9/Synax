@@ -1,5 +1,24 @@
 import type { AgentRunStreamChunk } from "./contracts.js";
 
+export function boundedStreamChunk(chunk: AgentRunStreamChunk): AgentRunStreamChunk {
+  return Buffer.byteLength(JSON.stringify(chunk)) > 64 * 1024 ? projectReplayChunk(chunk) : chunk;
+}
+
+/** Preserve producer sequencing by splitting before assigning each append ID. */
+export function streamBatchGroups(chunks: AgentRunStreamChunk[]): AgentRunStreamChunk[][] {
+  const groups: AgentRunStreamChunk[][] = [];
+  let group: AgentRunStreamChunk[] = [];
+  let bytes = 0;
+  for (const chunk of chunks) {
+    const size = Buffer.byteLength(JSON.stringify(boundedStreamChunk(chunk))) + 2048;
+    if (size > 512 * 1024) throw new Error("Stream event exceeds the preview budget; externalize its content first.");
+    if (bytes + size > 512 * 1024 && group.length) { groups.push(group); group = []; bytes = 0; }
+    group.push(chunk); bytes += size;
+  }
+  if (group.length) groups.push(group);
+  return groups;
+}
+
 /** The replay journal is a disposable UI feed, not a second copy of tool output
  * or a model context snapshot. Authoritative content stays in the message store. */
 export function projectReplayChunk(

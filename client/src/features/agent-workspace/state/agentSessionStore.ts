@@ -10,6 +10,12 @@ import { create } from "zustand";
 import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
 import { hydrateHistoryMessageContent } from "./hydrateHistoryMessageContent";
 import {
+  detailEntryBytes,
+  readPersistedDetail,
+  scheduleDeletePersistedDetail,
+  schedulePersistDetail,
+} from "./sessionCache";
+import {
   extendTimelineIndex,
   previewTimelineMessage,
   seedTimelineIndex,
@@ -231,21 +237,31 @@ export function isSessionUnread(
   );
 }
 
-const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 4;
+// The persisted cache refills evicted sessions without a round trip, so the
+// in-memory tier can stay warm across a wider working set of open sessions.
+const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 8;
 /**
  * Completed pages are safe to show immediately, but they still need a bounded
  * freshness window so a session revisited later cannot remain stale forever.
  */
 export const SESSION_INACTIVE_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+/**
+ * A snapshot taken after the run settled is the finished transcript. It only
+ * changes when the runtime rewrites history (signalled as `historyReset`) or the
+ * session starts another run (status becomes active), so it can be trusted far
+ * longer than a mid-run page.
+ */
+export const RESTORED_TERMINAL_TRUST_MS = 30 * 60 * 1000;
 
 function isFreshInactivePageCache(
   cache: SessionDetailCacheEntry | undefined,
+  ttl = SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
   now = Date.now(),
 ): boolean {
   return Boolean(
     cache?.cachedAt &&
       now - cache.cachedAt >= 0 &&
-      now - cache.cachedAt < SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
+      now - cache.cachedAt < ttl,
   );
 }
 
@@ -261,6 +277,13 @@ export interface SessionDetailCacheEntry {
   sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
   lastVisitedAt?: number;
+  /**
+   * Painted from the persisted cache. The value is the runtime status the
+   * snapshot was captured under: a copy saved mid-run must be reconciled before
+   * a completed session can be trusted, while a completed copy is the finished
+   * transcript and only changes on a rewrite or a new run.
+   */
+  restored?: "active" | "terminal";
   historyWindow?: HistoryWindowState;
   historyPagesLoaded?: boolean;
   timelineMessages?: AgentRuntimeMessage[];
@@ -298,6 +321,13 @@ let activeTranscriptRefresh: {
 } | null = null;
 let detailRefreshEpoch = 0;
 const terminalHistoryErrors = new Map<string, string>();
+/**
+ * Stats, todos and usage are derived from the whole transcript. Reading them on
+ * every panel open (and every poll of a live run) dominated the request burst
+ * without ever changing between two consecutive reads.
+ */
+const PROFILE_REFRESH_MS = 60_000;
+const profileFetchedAt = new Map<string, number>();
 function isPermanentHistoryError(error: unknown): boolean {
   const value = error as { code?: string; statusCode?: number } | null;
   return value?.code === "HISTORY_ENTITY_TOO_LARGE" || value?.code === "HISTORY_PAGE_REQUIRED" ||
@@ -353,24 +383,7 @@ function trimSessionDetailCache(
 ): Record<string, SessionDetailCacheEntry> {
   // Account UTF-16 retained payload without allocating JSON copies. Shared
   // objects may be over-counted across entries: conservative is preferable.
-  const measure = (
-    value: unknown,
-    budget: number,
-    seen = new WeakSet<object>(),
-  ): number => {
-    if (typeof value === "string") return value.length * 2 + 16;
-    if (!value || typeof value !== "object") return 16;
-    if (seen.has(value)) return 0;
-    seen.add(value);
-    let bytes = 32;
-    for (const key in value) {
-      bytes +=
-        key.length * 2 +
-        measure((value as Record<string, unknown>)[key], budget - bytes, seen);
-      if (bytes > budget) break;
-    }
-    return bytes;
-  };
+  // The same estimator sizes the persisted records.
   const next: Record<string, SessionDetailCacheEntry> = {};
   let remaining = 16 * 1024 * 1024;
   const inactive = Object.keys(cache)
@@ -386,7 +399,7 @@ function trimSessionDetailCache(
       ? [selectedSessionId, ...inactive]
       : inactive;
   for (const key of keys) {
-    const size = measure(cache[key], remaining);
+    const size = detailEntryBytes(cache[key], remaining);
     if (size > remaining) continue;
     next[key] = cache[key];
     remaining -= size;
@@ -878,6 +891,8 @@ export interface AgentSessionStoreState {
     projectId: string | null,
   ) => void;
   openPanel: (sessionId: string, options?: { forceFresh?: boolean }) => void;
+  /** Paint the persisted last-known-good transcript before its refresh lands. */
+  paintPersistedDetail: (sessionId: string) => Promise<void>;
   closePanel: () => void;
   loadOlderHistory: () => Promise<void>;
   loadTimelineIndex: () => Promise<void>;
@@ -1488,7 +1503,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     discardRemovedSessions: (deletedSessionIds, projectId) => {
       markRuntimeResourcesRemoved(deletedSessionIds);
+      // A deleted or archived row must not repaint from disk on the next start.
+      scheduleDeletePersistedDetail(deletedSessionIds);
       const deleted = new Set(deletedSessionIds);
+      for (const id of deleted) profileFetchedAt.delete(id);
       useSessionWorkspaceStore.getState().removeSessions(deleted);
       const lastVisit = projectId ? loadSessionLastVisit(projectId) : null;
       if (
@@ -1530,6 +1548,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     resetConversationHistory: (sessionId) => {
       terminalHistoryErrors.delete(sessionId);
+      // The runtime just rewrote this transcript; the persisted page is now a
+      // different conversation and must not be painted again.
+      scheduleDeletePersistedDetail([sessionId]);
       const selected = get().selectedSessionId === sessionId;
       const alreadyRefreshing =
         activeDetailRefresh?.sessionId === sessionId ||
@@ -1590,7 +1611,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const liveSession = isActiveSessionStatus(session?.status);
       const forceFresh = options?.forceFresh === true;
       const existingCache = get().sessionDetailCache[sessionId];
-      const cacheFresh = isFreshInactivePageCache(existingCache);
+      // A copy saved mid-run cannot answer for a session that has since settled;
+      // a copy saved after completion is the finished transcript, so reopening
+      // it inside the trust window costs nothing.
+      const cacheFresh =
+        existingCache?.restored === "active"
+          ? false
+          : existingCache?.restored === "terminal"
+            ? isFreshInactivePageCache(
+                existingCache,
+                RESTORED_TERMINAL_TRUST_MS,
+              )
+            : isFreshInactivePageCache(existingCache);
       if (panelOpen && prev === sessionId) {
         if (!forceFresh && !liveSession && cacheFresh) return;
         if (
@@ -1614,6 +1646,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Paint the last complete page immediately, including active sessions.
       // Live events and the change cursor reconcile it in the background.
       const cached = existingCache;
+      // A process restart starts with an empty memory tier. Paint the persisted
+      // entry now; the refresh below reconciles it with `since=<syncCursor>`.
+      if (!cached) void get().paintPersistedDetail(sessionId);
       const needsRefresh =
         forceFresh ||
         !cacheFresh ||
@@ -1687,6 +1722,50 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       clearInvocationUsageRefresh();
       clearFinalReplyRetry();
       set({ panelOpen: false });
+    },
+
+    paintPersistedDetail: async (sessionId) => {
+      if (get().sessionDetailCache[sessionId]?.cachedAt) return;
+      const projectId = get().projectId;
+      const entry = await readPersistedDetail(sessionId, projectId);
+      if (!entry || get().projectId !== projectId) return;
+      // A refresh (or a switch back) may have produced a fresher entry while the
+      // read was in flight; never let the disk copy win that race.
+      if (get().sessionDetailCache[sessionId]?.cachedAt) return;
+      const selected = get().selectedSessionId === sessionId;
+      const painted = { ...entry };
+      set((state) => ({
+        sessionDetailCache: trimSessionDetailCache(
+          {
+            ...state.sessionDetailCache,
+            [sessionId]: selected
+              ? {
+                  ...painted,
+                  sessionStats: entry.sessionStats ?? state.sessionStats,
+                  sessionTodos: entry.sessionTodos ?? state.sessionTodos,
+                  sessionInvocationUsage:
+                    entry.sessionInvocationUsage ??
+                    state.sessionInvocationUsage,
+                }
+              : painted,
+          },
+          state.selectedSessionId,
+        ),
+        ...(selected
+          ? {
+              detailLoading: false,
+              runs: entry.runs,
+              steps: entry.steps,
+              events: entry.events,
+              messages: entry.messages,
+              toolCalls: entry.toolCalls,
+              permissions: entry.permissions,
+              sessionStats: entry.sessionStats,
+              sessionTodos: entry.sessionTodos,
+              sessionInvocationUsage: entry.sessionInvocationUsage,
+            }
+          : {}),
+      }));
     },
 
     loadOlderHistory: async () => {
@@ -1784,6 +1863,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ),
           };
         });
+        schedulePersistDetail(
+          sessionId,
+          get().projectId,
+          get().sessionDetailCache[sessionId],
+          isActiveSessionStatus(
+            get().sessions.find((session) => session.id === sessionId)?.status,
+          )
+            ? "active"
+            : "terminal",
+        );
       })();
       activeOlderHistory = { sessionId, promise };
       try {
@@ -2083,6 +2172,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               get().discardRemovedSessions([targetSessionId], targetProjectId);
               return true;
             };
+            // Stats, todos and usage are derived from the entire transcript, and
+            // the poll re-ran them on every tick of a live session. Keep them on
+            // a slower clock: a fresh read still wins, a burst does not.
+            const profileFresh =
+              !forceFresh &&
+              Date.now() - (profileFetchedAt.get(targetSessionId) ?? 0) <
+                PROFILE_REFRESH_MS;
+            // A failed read must retry on the next tick instead of being
+            // remembered as a fresh window.
+            let profileFailed = false;
             const profileUpdates = [
               ...(!get().sessions.some(
                 (session) => session.id === targetSessionId,
@@ -2110,7 +2209,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                       }),
                   ]
                 : []),
-              agentRuntimeApi
+              profileFresh ? Promise.resolve() : agentRuntimeApi
                 .getSessionStats(targetSessionId)
                 .then((stats) => {
                   if (!isCurrent()) return;
@@ -2129,8 +2228,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 })
                 .catch(() => {
                   /* stats are optional */
+                  profileFailed = true;
                 }),
-              agentRuntimeApi
+              profileFresh ? Promise.resolve() : agentRuntimeApi
                 .getSessionTodos(targetSessionId)
                 .then((todosRes) => {
                   if (!isCurrent()) return;
@@ -2149,8 +2249,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 })
                 .catch(() => {
                   /* todos are optional */
+                  profileFailed = true;
                 }),
-              agentRuntimeApi
+              profileFresh ? Promise.resolve() : agentRuntimeApi
                 .getSessionInvocationUsage(targetSessionId)
                 .then((usage) => {
                   if (!isCurrent()) return;
@@ -2169,6 +2270,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 })
                 .catch(() => {
                   /* retain the most recent successful usage snapshot */
+                  profileFailed = true;
                 }),
             ];
 
@@ -2185,6 +2287,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ].includes(polledStatus ?? "");
             if (options?.background && !forceFresh && sessionActive && cachedEntry?.cachedAt) {
               await Promise.all(profileUpdates);
+              if (!profileFresh && !profileFailed)
+                profileFetchedAt.set(targetSessionId, Date.now());
               if (isCurrent()) set({ detailLoading: false, detailRefreshing: false });
               continue;
             }
@@ -2304,6 +2408,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                             merged[collection], beforeRead[collection], s[collection],
                           );
                         }
+                        // This response was reconciled against the runtime, so the
+                        // entry no longer carries a restore-time provenance.
+                        merged.restored = undefined;
                         const incremental = Boolean(cacheEntry.historyWindow?.incremental);
                         const currentStatus = s.sessions.find(
                           (item) => item.id === targetSessionId,
@@ -2369,6 +2476,23 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                         scheduleFinalReplyRetry(targetSessionId);
                       else clearFinalReplyRetry();
 
+                      // A running session mutates on every chunk; its durable
+                      // copy is written when the run settles or the reader
+                      // leaves. Streaming a transcript to disk every poll would
+                      // serialize megabytes for a page nobody will read cold.
+                      schedulePersistDetail(
+                        targetSessionId,
+                        targetProjectId,
+                        get().sessionDetailCache[targetSessionId],
+                        isActiveSessionStatus(
+                          get().sessions.find(
+                            (session) => session.id === targetSessionId,
+                          )?.status,
+                        )
+                          ? "active"
+                          : "terminal",
+                      );
+
                       const session = get().sessions.find(
                         (s) => s.id === targetSessionId,
                       );
@@ -2412,6 +2536,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 activeTranscriptRefresh = null;
             });
             await Promise.all(profileUpdates);
+            if (!profileFresh && !profileFailed)
+              profileFetchedAt.set(targetSessionId, Date.now());
             // The transcript refresh keeps running without holding the poll loop.
             void transcriptTask;
           } catch {
@@ -2681,6 +2807,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "execution_status": {
+          if (!streamVisible || event.sessionId !== get().selectedSessionId) break;
+          set(state => ({ runs: state.runs.map(run => run.id === event.runId && run.sessionId === event.sessionId
+            ? { ...run, execution: event.execution } : run) }));
+          break;
+        }
         case "message": {
           if (!streamVisible || event.message.sessionId !== get().selectedSessionId) break;
           set((state) => {
@@ -3009,3 +3141,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
   }),
 );
+
+// Live chunks mutate the cache entry outside any refresh transaction, so the
+// moment the reader leaves a session is the cheapest point to make its
+// transcript durable for the next process start.
+useAgentSessionStore.subscribe((state, previous) => {
+  const left = previous.selectedSessionId;
+  if (!left || left === state.selectedSessionId) return;
+  schedulePersistDetail(
+    left,
+    previous.projectId,
+    previous.sessionDetailCache[left],
+    isActiveSessionStatus(
+      previous.sessions.find((session) => session.id === left)?.status,
+    )
+      ? "active"
+      : "terminal",
+  );
+});

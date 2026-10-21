@@ -99,7 +99,6 @@ import {
 } from "../../modules/agent-runtime/session-commit-message-stream.js";
 import { resolveSessionConfiguredContextLimit } from "../../modules/agent-runtime/session-context-limit.js";
 import {
-  getSessionEnvironment,
   getSessionEnvironmentFile,
   getSessionEnvironmentFileMedia,
   getSessionInputSourceContentFromRecord,
@@ -109,6 +108,13 @@ import {
   saveSessionEnvironmentFile,
   trashSessionEnvironmentFile,
 } from "../../modules/agent-runtime/session-environment.js";
+import {
+  getSessionEnvironmentInputs,
+  getSessionEnvironmentOutputs,
+  getSessionEnvironmentRoots,
+  getSessionEnvironmentSubagents,
+} from "../../modules/agent-runtime/session-environment-cards.js";
+import { getWorkspaceGitChanges } from "../../modules/agent-runtime/workspace-git-changes.js";
 import {
   createSessionGitBranch,
   listSessionGitBranches,
@@ -1859,54 +1865,134 @@ agentRuntimeRoutes.delete(
     }
   },
 );
-agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
+/**
+ * Workspace-scoped Git changes.
+ *
+ * Every session on the same checkout reads this one resource, so switching
+ * sessions is a cache hit instead of another `git status`. The client sends the
+ * revision it already holds; a match answers `{ unchanged: true }` with no file
+ * list at all.
+ */
+agentRuntimeRoutes.get("/projects/:projectId/git-changes", async (c) => {
   try {
-    const sessionId = c.req.param("sessionId");
-    {
-      const [snapshot, tools, messages, projections, assets] =
-        await Promise.all([
-          runtimeFacade.uiSnapshotAuthoritative(sessionId),
-          runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
-          runtimeFacade.listMessageHistory(sessionId),
-          runtimeFacade.listSessionProjection(),
-          runtimeFacade.listBoundAssets(sessionId),
-        ]);
-      const session = projectSessionState(
-        snapshot.session as never,
-      ) as AgentSession;
-      const children = projections
-        .map((item) => projectSessionState(item as never) as AgentSession)
-        .filter(
-          (item) =>
-            !item.sessionMetadata?.archivedAt &&
-            !item.sessionMetadata?.deletedAt,
-        )
-        .filter(
-          (item) =>
-            item.parentSessionId === sessionId ||
-            session.childSessionIds.includes(item.id),
-        );
-      return c.json(
-        await getSessionEnvironment(sessionId, {
-          session,
-          toolCalls: tools as ToolCallRecord[],
-          messages: messages as AgentRuntimeMessage[],
-          children,
-          assetNames: new Map(
-            (
-              assets as Array<{
-                id: string;
-                filename: string;
-              }>
-            ).map((asset) => [asset.id, asset.filename]),
-          ),
-        }),
-      );
-    }
+    const changes = await getWorkspaceGitChanges({
+      projectId: c.req.param("projectId"),
+      sessionId: c.req.query("sessionId") || undefined,
+      clientRevision: c.req.query("revision") || undefined,
+    });
+    c.header("Cache-Control", "no-store");
+    return c.json(changes);
   } catch (error) {
     return runtimeError(c, error);
   }
 });
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/roots",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentRoots(sessionId, async () => {
+          const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/subagents",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentSubagents(sessionId, async () => {
+          const [snapshot, projections] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listSessionProjection(),
+          ]);
+          const session = projectSessionState(
+            snapshot.session as never,
+          ) as AgentSession;
+          const children = projections
+            .map((item) => projectSessionState(item as never) as AgentSession)
+            .filter(
+              (item) =>
+                !item.sessionMetadata?.archivedAt &&
+                !item.sessionMetadata?.deletedAt,
+            )
+            .filter(
+              (item) =>
+                item.parentSessionId === sessionId ||
+                session.childSessionIds.includes(item.id),
+            );
+          return { session, children };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/inputs",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentInputs(sessionId, async () => {
+          const [snapshot, tools, messages, assets] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+            runtimeFacade.listMessageHistory(sessionId),
+            runtimeFacade.listBoundAssets(sessionId),
+          ]);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+            toolCalls: tools as ToolCallRecord[],
+            messages: messages as AgentRuntimeMessage[],
+            assetNames: new Map(
+              (
+                assets as Array<{
+                  id: string;
+                  filename: string;
+                }>
+              ).map((asset) => [asset.id, asset.filename]),
+            ),
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/outputs",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentOutputs(sessionId, async () => {
+          const [snapshot, tools] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+          ]);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+            toolCalls: tools as ToolCallRecord[],
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/input-source/:toolCallId",
   async (c) => {
@@ -2600,24 +2686,31 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
       patch?: Record<string, unknown>;
     }) => {
       if (lifetime.signal.aborted) return;
-      const current =
+      // `projectId` lets workspace-scoped consumers (Git changes, cards) drop
+      // the right cache without resolving the session first.
+      const current = agentRuntimeStore.tryGetSession(event.sessionId);
+      const needsProjection =
         event.patch &&
         ("status" in event.patch ||
           "activeRunId" in event.patch ||
-          "sessionMetadata" in event.patch)
-          ? agentRuntimeStore.tryGetSession(event.sessionId)
-          : undefined;
-      const projected = current ? projectSessionState(current) : undefined;
-      const wire = projected
-        ? {
-            ...event,
-            patch: {
-              ...event.patch,
-              status: projected.status,
-              activeRunId: projected.activeRunId,
-            },
-          }
-        : event;
+          "sessionMetadata" in event.patch);
+      const projected = current && needsProjection
+        ? projectSessionState(current)
+        : undefined;
+      const projectId = current?.projectId;
+      const wire = {
+        ...(projected
+          ? {
+              ...event,
+              patch: {
+                ...event.patch,
+                status: projected.status,
+                activeRunId: projected.activeRunId,
+              },
+            }
+          : event),
+        ...(projectId ? { projectId } : {}),
+      };
       stream
         .writeSSE({ event: event.type, data: JSON.stringify(wire) })
         .catch(lifetime.stop);

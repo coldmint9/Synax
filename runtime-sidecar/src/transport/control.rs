@@ -18,12 +18,16 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 pub struct ControlBudget {
     requests: Arc<Semaphore>,
     response_bytes: Arc<Semaphore>,
+    critical_requests: Arc<Semaphore>,
+    critical_bytes: Arc<Semaphore>,
 }
 impl ControlBudget {
     pub fn new() -> Self {
         Self {
             requests: Arc::new(Semaphore::new(128)),
             response_bytes: Arc::new(Semaphore::new(8 * 1024 * 1024)),
+            critical_requests: Arc::new(Semaphore::new(16)),
+            critical_bytes: Arc::new(Semaphore::new(2 * 1024 * 1024)),
         }
     }
 }
@@ -98,8 +102,14 @@ where
                 break Err(TransportError::Protocol("control drain timed out".into()));
             }
         }
-        let global = budget.requests.clone().try_acquire_owned().ok();
-        let response_budget = budget.response_bytes.clone();
+        let critical = match &request.body {
+            Some(wire_envelope::Body::Health(_) | wire_envelope::Body::Snapshot(_)) => true,
+            Some(wire_envelope::Body::ControlCommand(command)) => matches!(command.operation.as_str(),
+                "execution_check" | "execution_open" | "execution_close" | "stop_begin" | "stop_unconfirmed" | "resume" | "read"),
+            _ => false,
+        };
+        let global = if critical { &budget.critical_requests } else { &budget.requests }.clone().try_acquire_owned().ok();
+        let response_budget = if critical { &budget.critical_bytes } else { &budget.response_bytes }.clone();
         let responses = responses.clone();
         let execute = execute.clone();
         jobs.spawn(async move {

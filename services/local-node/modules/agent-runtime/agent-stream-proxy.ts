@@ -47,7 +47,7 @@ export function assertCanStartAgentSessionProcess(sessionId?: string): void {
       429,
     );
   }
-  sessionProcessManager.assertCanSpawnChild(sessionId);
+  sessionProcessManager.assertCanQueueChild();
 }
 
 async function* withSessionTitleScheduling(

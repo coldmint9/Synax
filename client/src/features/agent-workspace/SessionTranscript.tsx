@@ -17,6 +17,7 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { AgentConversationView } from "./AgentConversationView";
 import { sessionCompaction } from "./sessionCompaction";
 import { SessionNavigationPanel } from "./SessionNavigationPanel";
+import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import type { AgentRunStatus } from "../../adapters/transport/agentRuntime";
 
 const RUN_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
@@ -309,7 +310,7 @@ export function SessionTranscript({
         >
           <div className="session-transcript-body">
             {error && projected.messages.length > 0 && (
-              <div role="alert" className="px-4 py-2 text-sm text-muted-foreground">
+              <div role="alert" className="px-4 py-2 text-[13px] text-muted-foreground">
                 {locale === "zh" ? "历史更新失败，已保留加载的内容。" : "History could not be updated. Loaded content is preserved."}{" "}
                 <button type="button" className="underline" onClick={() => void useAgentSessionStore.getState().refreshDetail({ forceFresh: true })}>
                   {locale === "zh" ? "重试" : "Retry"}
@@ -319,7 +320,7 @@ export function SessionTranscript({
             {olderHistory.loading && (
               <div
                 role="status"
-                className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm"
+                className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-[11px] text-muted-foreground shadow-sm"
               >
                 {locale === "zh"
                   ? "正在加载更早消息…"
@@ -329,7 +330,7 @@ export function SessionTranscript({
             {olderHistory.error && (
               <div
                 role="alert"
-                className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-xs text-danger shadow-sm"
+                className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-[11px] text-danger shadow-sm"
               >
                 {locale === "zh"
                   ? "加载更早消息失败。"
@@ -346,7 +347,7 @@ export function SessionTranscript({
             {waitingForHistory ? null : error && projected.messages.length === 0 && !showLiveBlock ? (
               <div
                 role="alert"
-                className="p-6 text-center text-sm text-muted-foreground"
+                className="p-6 text-center text-[13px] text-muted-foreground"
               >
                 <p>
                   {locale === "zh"
@@ -391,7 +392,7 @@ export function SessionTranscript({
                         }
                       />
                     ) : compactionNotice?.status === "failed" ? (
-                      <p role="alert" className="text-xs text-danger">
+                      <p role="alert" className="text-[11px] text-danger">
                         {compactionNotice.error}
                       </p>
                     ) : showThinking ? (
@@ -403,6 +404,14 @@ export function SessionTranscript({
             )}
           </div>
         </div>
+        {active && !preparing && (
+          // Fades in above the composer once the reader leaves the live edge,
+          // so returning to the newest message never needs a long scroll.
+          <ScrollToBottomButton
+            scrollRef={scrollRef}
+            onScrollToBottom={() => scrollToBottom(true)}
+          />
+        )}
         {active && !preparing && <SessionNavigationPanel scrollRootRef={scrollRef} />}
       </div>
     </div>

@@ -2,18 +2,13 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileDiff } from "lucide-react";
 import {
-  agentRuntimeApi,
   type SessionEnvironmentFile,
 } from "../../adapters/transport/agentRuntime";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { openWorkspaceDiff } from "./state/sessionWorkspaceStore";
-import { isRuntimeResourceGone } from "../../shared/lib/runtimeResourceRegistry";
 
-/** Poll cadence is a drift safety net only: write tool results invalidate the
- *  server cache, and the toolCalls upsert retriggers an immediate reload below. */
-const RUNNING_REFRESH_MS = 30_000;
-const IDLE_REFRESH_MS = 30_000;
+const EMPTY_FILES: SessionEnvironmentFile[] = [];
 
 function statusLabel(status: SessionEnvironmentFile["status"]): string {
   switch (status) {
@@ -35,56 +30,33 @@ function statusLabel(status: SessionEnvironmentFile["status"]): string {
 /**
  * Floating summary of the files this session's agent has written so far.
  *
- * The list is attributed server-side from the session's own write tool calls,
- * so hand edits the user made in the same checkout are not counted. It is
- * driven by the live tool-call stream (which changes the moment an edit lands)
- * plus a slow poll that picks up diff sizes.
+ * Attribution is derived on the client: the workspace Git layer knows which
+ * files changed in the checkout, the session's outputs card knows which paths
+ * this agent wrote, and the intersection is what this pill shows. Both layers
+ * already refresh from runtime events, so the island owns no poll of its own.
  */
 export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
   sessionId,
   isRunning,
 }: {
   sessionId: string;
-  isRunning: boolean;
+  /** Kept in the pill's DOM state so styling can react to a live run. */
+  isRunning?: boolean;
 }) {
-  const [files, setFiles] = useState<SessionEnvironmentFile[]>([]);
+  const { sessionId: environmentSessionId, environment } =
+    useSessionWorkspaceEnvironment(sessionId);
+  const files =
+    environmentSessionId === sessionId
+      ? (environment?.agentChangedFiles ?? EMPTY_FILES)
+      : EMPTY_FILES;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  // Tool call count is a live signal from the session stream; a completed edit
-  // bumps it and we refresh immediately instead of waiting for the poll.
-  const toolCallCount = useAgentSessionStore((state) => state.toolCalls.length);
 
   useEffect(() => {
-    setFiles([]);
     setOpen(false);
   }, [sessionId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      // The poll can outlive a session teardown by a tick; never fetch for a
-      // session the removal registry already knows is gone.
-      if (isRuntimeResourceGone(sessionId)) return;
-      try {
-        const environment =
-          await agentRuntimeApi.getSessionEnvironment(sessionId);
-        if (!cancelled) setFiles(environment.agentChangedFiles ?? []);
-      } catch {
-        // Keep the previous summary; a transient failure should not blank it.
-      }
-    };
-    void load();
-    const timer = window.setInterval(
-      () => void load(),
-      isRunning ? RUNNING_REFRESH_MS : IDLE_REFRESH_MS,
-    );
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [sessionId, isRunning, toolCallCount]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -150,6 +122,7 @@ export const SessionFileChangeIsland = memo(function SessionFileChangeIsland({
         ref={pillRef}
         type="button"
         className="session-file-island-pill"
+        data-running={isRunning ? "true" : undefined}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={`${files.length} 个文件已更改`}

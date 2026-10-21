@@ -76,8 +76,9 @@ async fn handle_connection(
     // Only log known routes, never a query string (which may carry credentials).
     let route = match request.path.split('?').next().unwrap_or("") {
         value @ ("/agent-loop/start" | "/agent-loop/resume" | "/agent-loop/check" | "/agent-loop/context" |
-            "/agent-loop/tool-result" | "/agent-loop/cancel" | "/agent-loop/events" |
+            "/agent-loop/tool-result" | "/agent-loop/cancel" | "/agent-loop/events" | "/agent-loop/ack" |
             "/provider/prepare" | "/provider/stream" | "/media/stream") => value,
+        value @ ("/resources/request" | "/resources/release" | "/resources/release-owner" | "/resources/overdue" | "/resources/owner") => value,
         _ => "unknown",
     };
     tracing::Span::current().record("method", match request.method.as_str() { "GET" => "GET", "POST" => "POST", _ => "other" });
@@ -89,6 +90,50 @@ async fn handle_connection(
     }
     if request.content_length > MAX_BODY_BYTES {
         write_json_error(&mut stream, 413, "provider request is too large").await?;
+        return Ok(());
+    }
+    if request.path.starts_with("/resources/") && request.method == "POST" {
+        let input: Value = serde_json::from_slice(&request.body)?;
+        let scheduler = crate::runtime::resources::shared();
+        let result: Result<Value, String> = match request.path.as_str() {
+            "/resources/request" => {
+                let resource: Result<crate::runtime::resources::ResourceRequest, _> = serde_json::from_value(input["request"].clone());
+                let context: Result<crate::runtime::execution::ExecutionLease, _> = serde_json::from_value(input["executionContext"].clone());
+                match (resource, context) {
+                    (Ok(mut resource), Ok(context)) if context.session_id == resource.session_id && context.run_id == resource.run_id && context.epoch == resource.epoch => {
+                        match loops.check_resource(&context).await {
+                            Ok(root) => { resource.root_session_id = root; scheduler.request(resource).map(|s| json!(s)) },
+                            Err(error) => Err(error.to_string()),
+                        }
+                    },
+                    _ => Err("resource request requires a matching execution lease".into()),
+                }
+            },
+            "/resources/release" => scheduler.release(input["id"].as_str().unwrap_or(""), input["ownerId"].as_str().unwrap_or("")).map(|_| json!({"ok":true})),
+            "/resources/release-owner" => { scheduler.release_owner(input["ownerId"].as_str().unwrap_or("")); Ok(json!({"ok":true})) },
+            "/resources/overdue" => Ok(json!({"requests":scheduler.overdue()})),
+            "/resources/owner" => Ok(json!({"active":scheduler.has_owner(input["ownerId"].as_str().unwrap_or(""))})),
+            _ => Err("unknown resource operation".into()),
+        };
+        match result {
+            Ok(value) => write_json(&mut stream, 200, &value).await?,
+            Err(error) => write_json_error(&mut stream, 409, &error).await?,
+        }
+        return Ok(());
+    }
+    if request.method == "POST" && request.path == "/agent-loop/ack" {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Ack {
+            loop_id: String,
+            through: u64,
+            execution_context: Option<crate::runtime::execution::ExecutionLease>,
+        }
+        let input: Ack = serde_json::from_slice(&request.body)?;
+        match loops.acknowledge_events(&input.loop_id, input.through, input.execution_context.as_ref()).await {
+            Ok(()) => write_json(&mut stream, 200, &json!({"ok":true})).await?,
+            Err(error) => write_json_error(&mut stream, 409, &error.to_string()).await?,
+        }
         return Ok(());
     }
     if request.method == "POST" && request.path == "/agent-loop/check" {
@@ -159,7 +204,7 @@ async fn handle_connection(
             write_json_error(&mut stream, 400, "loopId is required").await?;
             return Ok(());
         };
-        let after = match params.get("after").unwrap_or(&"0").parse::<usize>() {
+        let after = match params.get("after").unwrap_or(&"0").parse::<u64>() {
             Ok(after) => after,
             Err(_) => {
                 write_json_error(&mut stream, 400, "invalid event cursor").await?;
@@ -175,8 +220,14 @@ async fn handle_connection(
         };
         record_status(200);
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n").await?;
-        while let Some(event) = events.next().await? {
-            write_chunk(&mut stream, &event).await?;
+        loop {
+            let mut disconnected = [0u8; 1];
+            let event = tokio::select! {
+                _ = stream.read(&mut disconnected) => return Ok(()),
+                event = events.next() => event?,
+            };
+            let Some(event) = event else { break; };
+            write_chunk_bytes(&mut stream, &event).await?;
         }
         stream.write_all(b"0\r\n\r\n").await?;
         let _ = stream.shutdown().await;
@@ -314,10 +365,14 @@ async fn write_chunk(stream: &mut TcpStream, value: &Value) -> Result<(), std::i
     let mut bytes = serde_json::to_vec(value)
         .unwrap_or_else(|_| b"{\"type\":\"error\",\"error\":\"serialization error\"}".to_vec());
     bytes.push(b'\n');
+    write_chunk_bytes(stream, &bytes).await
+}
+
+async fn write_chunk_bytes(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), std::io::Error> {
     stream
         .write_all(format!("{:X}\r\n", bytes.len()).as_bytes())
         .await?;
-    stream.write_all(&bytes).await?;
+    stream.write_all(bytes).await?;
     stream.write_all(b"\r\n").await
 }
 

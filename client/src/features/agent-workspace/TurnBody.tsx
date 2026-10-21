@@ -13,11 +13,10 @@ import { useShellStore } from "../../shared/state/shellStore";
 import { MessageSquare, Zap } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
-import { aggregateToolStatus } from "./toolCallPresentation";
+import { aggregateToolStatus, toolCallPresentation } from "./toolCallPresentation";
 import {
   activityPreview,
   hasDisplayableReasoning,
-  latestActivityPreview,
   thinkingBannerPhrase,
 } from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
@@ -27,12 +26,36 @@ import type {
   TurnContentBlock,
 } from "./buildInterleavedTurns";
 import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCallRoundPanel } from "./ToolCallRoundPanel";
+import { toolRoundRows } from "./ToolCallRoundPanel";
 import { StreamingTextBlock } from "./StreamingTextBlock";
+import { StreamingActivityLine } from "./StreamingActivityLine";
+import {
+  VirtualActivityWindow,
+  type ActivityWindowRow,
+} from "./VirtualActivityWindow";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { buildTurnRenderSegments, flattenToolBlocks } from "./toolCallUtils";
+import {
+  buildTurnRenderSegments,
+  flattenToolBlocks,
+} from "./toolCallUtils";
 import "./conversationFlow.css";
+
+/** How much of the newest thought the live line keeps for its scrolling tail. */
+const LINE_MAX_CHARS = 240;
+
+/**
+ * Continuous tail of a reasoning body, flattened for a single line.
+ *
+ * Reasoning arrives in paragraphs and list items; the live line wants the end
+ * of what is being said, not the last item alone. Only the tail is normalised
+ * so a 90k-character thought costs no more than a short one.
+ */
+function thoughtTail(content: string, max = LINE_MAX_CHARS): string {
+  const cut = content.length > max ? content.slice(-max) : content;
+  const tail = cut.replace(/\s+/g, " ").trim();
+  return content.length > max ? `…${tail}` : tail;
+}
 
 function TranscriptVisualization({
   reference,
@@ -42,7 +65,7 @@ function TranscriptVisualization({
   return (
     <Suspense
       fallback={
-        <div className="text-xs text-muted-foreground" role="status">
+        <div className="text-[11px] text-muted-foreground" role="status">
           正在加载预览…
         </div>
       }
@@ -62,25 +85,40 @@ function sourceLabel(url: string): string {
 }
 
 /**
- * Tail of the newest thought still streaming into this turn.
+ * Newest activity of a live turn, formatted as the process line's content.
  *
- * A live process row reads as "where is the model now", so it shows the end of
- * the latest reasoning instead of a call count. Headline-only reasoning
- * (`**Inspecting routes**`) has no prose to read from, so its last headline is
- * the preview.
+ * A running turn moves between reasoning and calls, so the line reports
+ * whichever came last: the tail of the newest thought, or the newest call with
+ * its target. Past thoughts and calls keep their own rows below.
  */
-function latestThinkingTail(
-  blocks: readonly TurnContentBlock[],
-  max = 60,
+function latestActivityLine(
+  segments: ReturnType<typeof buildTurnRenderSegments>,
+  zh: boolean,
 ): string | null {
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index];
-    if (block.type !== "thinking" || !block.content.trim()) continue;
-    const banner = thinkingBannerPhrase(block.content);
-    const tail = banner
-      ? activityPreview(banner, max)
-      : latestActivityPreview(block.content, max);
-    if (tail) return tail;
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment.type === "thinking") {
+      if (!segment.content.trim()) continue;
+      const banner = thinkingBannerPhrase(segment.content);
+      const tail = banner
+        ? activityPreview(banner, LINE_MAX_CHARS)
+        : thoughtTail(segment.content);
+      if (tail) return zh ? `正在思考:「${tail}」` : `Thinking: "${tail}"`;
+      continue;
+    }
+    if (segment.type === "tool_round") {
+      const calls = flattenToolBlocks(segment.toolBlocks);
+      const call = calls[calls.length - 1];
+      if (!call) continue;
+      const presentation = toolCallPresentation(call, zh ? "zh" : "en");
+      const detail = presentation.target
+        ? `${presentation.name} · ${activityPreview(presentation.target, 80)}`
+        : presentation.name;
+      const verb = call.status === "running"
+        ? zh ? "正在调用" : "Calling"
+        : zh ? "最近调用" : "Last call";
+      return zh ? `${verb}:「${detail}」` : `${verb}: "${detail}"`;
+    }
   }
   return null;
 }
@@ -150,16 +188,13 @@ export function TurnContent({
   const hasActivity = lastActivity >= 0;
   const toolStatus = calls.length ? aggregateToolStatus(calls) : "completed";
   const status = isWorking && toolStatus === "completed" ? "running" : toolStatus;
-  const failure = calls.find((call) => call.status === "failed" || call.status === "denied");
-  const foldedPreview = failure?.outputSummary ? activityPreview(failure.outputSummary, 180) : processPreview;
-  // Only a live row ticks: history keeps the call-count summary, which is the
+  // A folded row previews the newest thought only. Error output belongs to the
+  // tool row that produced it: promoting it here turns the folded summary into
+  // an alert the reader never asked to reopen.
+  const foldedPreview = processPreview;
+  // Only a live row streams: history keeps the call-count summary, which is the
   // part that stays true once the turn has stopped thinking.
-  const thinkingTail = isWorking ? latestThinkingTail(blocks) : null;
-  const tickerText = thinkingTail
-    ? locale === "zh"
-      ? `正在思考:「${thinkingTail}」`
-      : `Thinking: "${thinkingTail}"`
-    : null;
+  const activityLine = isWorking ? latestActivityLine(segments, locale === "zh") : null;
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "visualization")
@@ -180,8 +215,6 @@ export function TurnContent({
           rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined}
         />
       );
-    if (segment.type === "tool_round")
-      return <ToolCallRoundPanel key={key} toolBlocks={segment.toolBlocks} isStreaming={isWorking} rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined} />;
     if (segment.type === "text")
       return (
         <StreamingTextBlock
@@ -200,7 +233,7 @@ export function TurnContent({
               href={source.url}
               target="_blank"
               rel="noreferrer"
-              className="max-w-full truncate rounded-md border border-default-200 px-2 py-1 text-[11px] text-primary hover:bg-default-100"
+              className="max-w-full truncate rounded-md border border-default-200 px-2 py-1 text-[10px] text-primary hover:bg-default-100"
               title={source.title || source.url}
             >
               {index + 1}. {source.title || sourceLabel(source.url)}
@@ -220,7 +253,7 @@ export function TurnContent({
       return (
         <div
           key={key}
-          className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning"
+          className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[10px] text-warning"
         >
           <Zap size={12} />
           <span>
@@ -232,6 +265,49 @@ export function TurnContent({
       );
     return null;
   };
+  // One row per record: a thought, or one call batch. A live turn shows the
+  // newest rows in a fixed window; a finished turn lays the same rows out in
+  // place, so completing a turn never rebuilds what the reader opened.
+  const processRows: ActivityWindowRow[] = [];
+  if (hasActivity && expanded) {
+    segments.forEach((segment, index) => {
+      if (index > lastActivity) return;
+      const key = segmentKey(segment, index);
+      if (segment.type === "tool_round") {
+        const roundRows = toolRoundRows(segment.toolBlocks, {
+          isStreaming: isWorking,
+          rememberKey: rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined,
+        });
+        roundRows.forEach((row) => {
+          processRows.push({
+            key: `${key}:${row.key}`,
+            node: (
+              <div className="session-flow-entry" data-process data-activity>
+                {row.node}
+              </div>
+            ),
+          });
+        });
+        return;
+      }
+      const activity = segment.type === "thinking";
+      processRows.push({
+        key,
+        node: (
+          <div
+            className={activity ? "session-flow-entry" : "session-flow-entry session-answer-region"}
+            data-process
+            data-activity={activity || undefined}
+          >
+            {!activity && (
+              <MessageSquare className="session-flow-comment-icon" size={16} aria-hidden="true" />
+            )}
+            {render(segment, index)}
+          </div>
+        ),
+      });
+    });
+  }
   return (
     <div
       className={
@@ -246,17 +322,12 @@ export function TurnContent({
           type="button"
           className="session-process-trigger"
           aria-expanded={expanded}
-          aria-controls={segments.slice(0, lastActivity + 1).map((_, i) => `${flowId}-${i}`).join(" ")}
-          aria-label={tickerText ?? undefined}
+          aria-controls={`${flowId}-process`}
+          aria-label={activityLine ?? undefined}
           onClick={toggle}
         >
-          {tickerText ? (
-            <span className="session-process-ticker" aria-hidden="true">
-              <span className="session-process-ticker-track">
-                <span className="session-process-ticker-copy">{tickerText}</span>
-                <span className="session-process-ticker-copy" aria-hidden="true">{tickerText}</span>
-              </span>
-            </span>
+          {activityLine ? (
+            <StreamingActivityLine text={activityLine} streaming={isWorking} />
           ) : (
             <>
               <span>{locale === "zh" ? "处理过程" : "Process"}</span>
@@ -269,25 +340,28 @@ export function TurnContent({
           )}
         </HeadlessButton>
       )}
-      {!expanded && foldedPreview && <div className="session-process-preview" data-error={Boolean(failure) || undefined}>{foldedPreview}</div>}
+      {!expanded && foldedPreview && <div className="session-process-preview">{foldedPreview}</div>}
       <div className="session-flow-content">
+        {hasActivity && (
+          <div
+            id={`${flowId}-process`}
+            className="session-process-window"
+            data-process
+            hidden={!expanded}
+          >
+            <VirtualActivityWindow rows={processRows} windowed={isWorking} />
+          </div>
+        )}
         {segments.map((segment, index) => {
-          const inProcess = index <= lastActivity;
-          const activity = segment.type === "thinking" || segment.type === "tool_round";
+          if (index <= lastActivity) return null;
           return (
             <div
               key={segmentKey(segment, index)}
               id={`${flowId}-${index}`}
-              className={activity ? "session-flow-entry" : "session-flow-entry session-answer-region"}
-              data-process={inProcess || undefined}
-              data-activity={activity || undefined}
+              className="session-flow-entry session-answer-region"
               data-answer-start={hasActivity && index === lastActivity + 1 || undefined}
-              hidden={inProcess && !expanded}
             >
-              {(!inProcess || expanded) && <>
-                {inProcess && !activity && <MessageSquare className="session-flow-comment-icon" size={16} aria-hidden="true" />}
-                {render(segment, index)}
-              </>}
+              {render(segment, index)}
             </div>
           );
         })}

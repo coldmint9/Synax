@@ -88,6 +88,16 @@ export class AgentRuntimeStore {
   private loading = new Map<string, Promise<void>>();
   private listing?: Promise<void>;
   private staged?: { writes: Array<() => void>; undo: Array<() => void> };
+  /**
+   * One session panel open fans out into ~10 read requests, and each of them
+   * used to re-read the same authoritative summary. A short lease collapses the
+   * burst into one snapshot; mutations invalidate it immediately.
+   */
+  private readonly summaryLeases = new Map<
+    string,
+    { at: number; task: Promise<void> }
+  >();
+  private static readonly SUMMARY_LEASE_MS = 250;
   transaction<T>(action: () => T): T {
     const outer = !this.staged;
     const batch = (this.staged ??= { writes: [], undo: [] });
@@ -118,6 +128,8 @@ export class AgentRuntimeStore {
   }
 
   private queue(sessionId: string, action: () => Promise<void>): void {
+    // The summary is about to change; the next reader must not reuse the lease.
+    this.summaryLeases.delete(sessionId);
     if (this.staged) {
       this.staged.writes.push(() => this.queue(sessionId, action));
       return;
@@ -185,6 +197,7 @@ export class AgentRuntimeStore {
     return this.listing;
   }
   async hydrateSession(sessionId: string, refresh = false): Promise<void> {
+    this.summaryLeases.delete(sessionId);
     if (this.loaded.has(sessionId) && !refresh) {
       await this.flushSession(sessionId);
       return;
@@ -239,6 +252,22 @@ export class AgentRuntimeStore {
   }
   /** Refresh the small projection at request boundaries without loading history. */
   async hydrateSessionSummary(sessionId: string): Promise<void> {
+    const lease = this.summaryLeases.get(sessionId);
+    if (lease && Date.now() - lease.at < AgentRuntimeStore.SUMMARY_LEASE_MS)
+      return lease.task;
+    const task = this.readSessionSummary(sessionId);
+    this.summaryLeases.set(sessionId, { at: Date.now(), task });
+    if (this.summaryLeases.size > 128)
+      this.summaryLeases.delete(this.summaryLeases.keys().next().value!);
+    try {
+      await task;
+    } catch (error) {
+      if (this.summaryLeases.get(sessionId)?.task === task)
+        this.summaryLeases.delete(sessionId);
+      throw error;
+    }
+  }
+  private async readSessionSummary(sessionId: string): Promise<void> {
     await this.flushSession(sessionId);
     const previous = this.sessions.get(sessionId);
     const snapshot = decode<{ session: AgentSession }>(await runtimeClient().uiSnapshot(sessionId));
@@ -270,6 +299,7 @@ export class AgentRuntimeStore {
     const snapshot = copy(value);
     this.set(this.collection(kind), value.id, snapshot);
     const scope = value.sessionId ?? `context:${value.id}`;
+    this.summaryLeases.delete(scope);
     this.queue(scope, () =>
       persistEntity(scope, `runtime.${kind}`, {
         ...snapshot,

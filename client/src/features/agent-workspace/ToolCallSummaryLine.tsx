@@ -7,6 +7,7 @@ import type { ToolCallView } from "./buildInterleavedTurns";
 import { toolCallPresentation } from "./toolCallPresentation";
 import { activityPreview, latestActivityPreview } from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
+import { ExecutionProgressLabel } from "./ExecutionProgressLabel";
 
 interface Props {
   call: ToolCallView;
@@ -23,6 +24,21 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({ call, rem
   );
   const Icon = presentation.icon;
   const hasDetails = Boolean(call.inputSummary || call.outputSummary);
+  const failed = call.status === "failed" || call.status === "denied";
+  // One record, one line: a folded call reports how it ended, an open call
+  // reports its input. The full input/output stay in the details body.
+  const summary = call.outputSummary
+    ? (failed ? activityPreview : latestActivityPreview)(call.outputSummary, 180)
+    : "";
+  const detail = !expanded && summary
+    ? (
+        <span className="bui-tool-result" data-error={failed || undefined} title={summary}>
+          {summary}
+        </span>
+      )
+    : presentation.target
+      ? <span className="bui-tool-target" title={presentation.target}>{presentation.target}</span>
+      : null;
   const heading = (
     <>
       <span className="bui-tool-symbol">
@@ -30,13 +46,15 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({ call, rem
       </span>
       <span className="bui-tool-copy">
         <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
-        {presentation.target && <span className="bui-tool-target" title={presentation.target}>{presentation.target}</span>}
+        {detail}
       </span>
       <span className="bui-tool-meta">
         {call.duration && <span>{call.duration}</span>}
-        <ActivityStatus
-          status={call.status}
-        />
+        {call.status === "running" && call.execution && call.execution.phase !== "waiting_model"
+          ? <ExecutionProgressLabel progress={call.execution} />
+          : <ActivityStatus status={call.status} />}
+        {call.status !== "running" && (call.execution?.queueWaitMs ?? 0) >= 1000 &&
+          <span>{locale === "zh" ? "排队" : "Queued"} {((call.execution?.queueWaitMs ?? 0) / 1000).toFixed(1)}s</span>}
         {hasDetails &&
           (expanded ? (
             <ChevronDown size={11} className="bui-chevron" aria-hidden="true" />
@@ -65,11 +83,6 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({ call, rem
         </HeadlessButton>
       ) : (
         <div className="bui-tool-trigger">{heading}</div>
-      )}
-      {!expanded && call.outputSummary && (
-        <div className="bui-tool-result" data-error={call.status === "failed" || call.status === "denied" || undefined}>
-          {(call.status === "failed" || call.status === "denied" ? activityPreview : latestActivityPreview)(call.outputSummary, 180)}
-        </div>
       )}
       {expanded && hasDetails && (
         <div id={detailsId} className="bui-tool-details">

@@ -432,7 +432,7 @@ impl SessionActor {
                 for key in patch.keys() {
                     if !matches!(
                         key.as_str(),
-                        "status" | "currentStep" | "completedAt" | "stopReason" | "triggerMessageId" | "metadata" | "model"
+                        "status" | "currentStep" | "completedAt" | "stopReason" | "triggerMessageId" | "metadata" | "model" | "execution"
                     ) {
                         return Err(RuntimeError::InvalidCommand(format!("run field cannot be patched: {key}")));
                     }

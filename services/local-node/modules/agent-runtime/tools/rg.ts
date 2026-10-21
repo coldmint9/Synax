@@ -5,6 +5,8 @@ import { grepSearchTool } from "./grep-search.js";
 
 const rgArgsSchema = z
   .object({
+    timeoutMs: z.number().int().min(100).max(120_000).optional(),
+    includeIgnored: z.boolean().optional(),
     mode: z
       .enum(["search", "files"])
       .default("search")

@@ -22,6 +22,7 @@ import type {
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | { type: "execution_status"; sessionId: string; runId: string; execution: import("./agentRuntime").ToolExecutionProgress }
   | { type: "message"; message: AgentRuntimeMessage }
   | { type: "event"; event: RuntimeEvent }
   | { type: "permission_updated"; permission: PermissionDecision }

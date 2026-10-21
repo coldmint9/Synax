@@ -286,6 +286,7 @@ export interface AgentSession {
 }
 
 export interface AgentRun {
+  execution?: ToolExecutionProgress;
   id: string;
   sessionId: string;
   status: AgentRunStatus;
@@ -347,6 +348,7 @@ export interface AgentRuntimeMessage {
 }
 
 export interface ToolCallRecord {
+  execution?: ToolExecutionProgress;
   contentParts?: RuntimeContentPart[];
   id: string;
   sessionId: string;
@@ -579,6 +581,9 @@ export const streamTurnRequestSchema = z.object({
   permissionOverrides: permissionOverridesSchema.optional(),
 });
 export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
+  /** Internal cooperative worker handoff; never accepted from public JSON. */
+  resumeExecution?: boolean;
+  shouldYieldWorker?: () => boolean;
   /** Internal admission token; intentionally absent from the public request schema. */
   referenceContext?: import("./turn-reference-state.js").TurnReferenceContext;
   acceptedRunId?: string;
@@ -586,6 +591,7 @@ export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
 };
 
 export interface ToolExecutionInput {
+  onProgress?: (progress: { files?: number; bytes?: number; matches?: number }) => void;
   abortSignal?: AbortSignal;
   sessionId: string;
   runId: string | null;
@@ -596,6 +602,19 @@ export interface ToolExecutionInput {
   mutability: ToolMutability;
   args: unknown;
   pattern?: string;
+}
+
+export interface ToolExecutionProgress {
+  phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
+  resource?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  deadline?: string;
+  lastProgressAt?: string;
+  queueWaitMs?: number;
+  files?: number;
+  bytes?: number;
+  matches?: number;
 }
 
 export interface ToolExecutionArtifactInput {
@@ -618,6 +637,7 @@ export interface ToolExecutionResult {
 }
 
 export interface RegisteredTool {
+  executionTimeoutMs?: number;
   /** Set by the MCP adapter only when the server explicitly declares read-only. */
   codeModeReadOnly?: boolean;
   id: string;
@@ -747,6 +767,8 @@ export interface CompactionRecord {
 }
 
 export type AgentRunStreamChunk =
+  | { type: "worker_yield"; runId: string }
+  | { type: "execution_status"; runId: string; execution: ToolExecutionProgress }
   | { type: "input_queue_changed"; sessionId: string; queueSize: number; queueRevision: number; forceInjectItemId: string | null }
   | { type: "run_activated"; run: AgentRun }
   | { type: "run_finished"; runId: string; run?: AgentRun }

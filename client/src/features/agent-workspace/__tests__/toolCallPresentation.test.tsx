@@ -58,13 +58,15 @@ describe("tool call display names", () => {
     expect(container.querySelector(".bui-tool-details")).toBeNull();
   });
 
-  it("shows edited files in the collapsed row while preserving the raw patch", () => {
+  it("shows the edited file on the open row while preserving the raw patch", () => {
     const edit = { ...call, toolId: "file.patch", inputSummary: JSON.stringify({
       patch: "*** Begin Patch\n*** Update File: client/src/Button.tsx\n@@\n-old\n+new\n*** End Patch",
     }) };
     const { container, getByRole } = render(<ToolCallSummaryLine call={edit} />);
-    expect(container.querySelector(".bui-tool-target")).toHaveTextContent("client/src/Button.tsx");
+    // Folded rows report the completion summary; the input appears once open.
+    expect(container.querySelector(".bui-tool-result")).toHaveTextContent("internal-123");
     fireEvent.click(getByRole("button"));
+    expect(container.querySelector(".bui-tool-target")).toHaveTextContent("client/src/Button.tsx");
     expect(container.querySelector("pre")?.textContent).toBe(edit.inputSummary);
   });
 

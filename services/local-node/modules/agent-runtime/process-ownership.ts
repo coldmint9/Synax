@@ -51,25 +51,106 @@ export function hasLocalBackgroundProcesses(sessionId: string): boolean {
   return false;
 }
 const authoritativeLeaseWrites = new Map<string, Promise<void>>();
-const authoritative = () => process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative";
+type LeaseMirrorRecord = {
+  id: string;
+  sessionId?: string | null;
+  runId?: string | null;
+  pid?: number | null;
+  processGroup?: number;
+  runtimeKind?: string;
+  runtimeDistribution?: string | null;
+  runtimePid?: number | null;
+  runtimePgid?: number | null;
+  state?: string;
+  commandLabel?: string;
+  kind?: string;
+  workerOwned?: boolean;
+};
+type LeaseMirrorRequest = {
+  operation: "lease_open" | "lease_close";
+  record: LeaseMirrorRecord;
+};
+const pendingLeaseMirrors = new Map<string, LeaseMirrorRequest>();
+const leaseMirrorWorkers = new Map<string, Promise<void>>();
+const appliedLeaseMirrorFingerprints = new Map<string, string>();
+
+function leaseMirrorFingerprint(request: LeaseMirrorRequest): string {
+  return JSON.stringify([request.operation, request.record]);
+}
+
+function startLeaseMirrorWorker(id: string): Promise<void> {
+  const existing = leaseMirrorWorkers.get(id);
+  if (existing) return existing;
+  // Launcher callbacks can report the same lease several times in quick
+  // succession (prepare, pid, runtime target, close). Keep only the latest
+  // state while one authoritative write is in flight.
+  const worker = (async () => {
+    while (true) {
+      const request = pendingLeaseMirrors.get(id);
+      if (!request) return;
+      pendingLeaseMirrors.delete(id);
+      const fingerprint = leaseMirrorFingerprint(request);
+      if (appliedLeaseMirrorFingerprints.get(id) === fingerprint) continue;
+      const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
+      await runtimeFacade.controlCommand({
+        sessionId: request.record.sessionId!,
+        requestId: `lease:${request.record.id}:${request.operation}:${request.record.pid ?? "none"}`,
+        operation: request.operation,
+        payload: {
+          leaseId: request.record.id,
+          hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`,
+          runId: request.record.runId,
+          pid: request.record.pid,
+          processGroup: request.record.processGroup ?? 0,
+          runtimeKind: request.record.runtimeKind,
+          runtimeDistribution: request.record.runtimeDistribution,
+          runtimePid: request.record.runtimePid,
+          runtimePgid: request.record.runtimePgid,
+          state: request.record.state,
+          commandLabel: request.record.commandLabel,
+          kind: request.record.kind,
+          workerOwned: request.record.workerOwned,
+        },
+      });
+      appliedLeaseMirrorFingerprints.set(id, fingerprint);
+    }
+  })();
+  leaseMirrorWorkers.set(id, worker);
+  void worker.then(() => {
+    if (leaseMirrorWorkers.get(id) !== worker) return;
+    leaseMirrorWorkers.delete(id);
+    if (pendingLeaseMirrors.has(id)) {
+      const next = startLeaseMirrorWorker(id);
+      authoritativeLeaseWrites.set(id, next);
+    }
+  }, () => {
+    if (leaseMirrorWorkers.get(id) !== worker) return;
+    leaseMirrorWorkers.delete(id);
+    if (pendingLeaseMirrors.has(id)) {
+      const next = startLeaseMirrorWorker(id);
+      authoritativeLeaseWrites.set(id, next);
+    }
+  });
+  return worker;
+}
 
 function mirrorProcessLease(
   operation: "lease_open" | "lease_close",
-  record: { id: string; sessionId?: string | null; runId?: string | null; pid?: number | null; processGroup?: number; runtimeKind?: string; runtimeDistribution?: string | null; runtimePid?: number | null; runtimePgid?: number | null; state?: string; commandLabel?: string; kind?: string; workerOwned?: boolean },
+  record: LeaseMirrorRecord,
 ): Promise<void> {
   if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM !== "authoritative" || !record.sessionId) return Promise.resolve();
-  const write = import("./sidecar/runtime-facade.js").then(({ runtimeFacade }) =>
-    runtimeFacade.controlCommand({
-      sessionId: record.sessionId!,
-      requestId: `lease:${record.id}:${operation}:${record.pid ?? "none"}`,
-      operation,
-      payload: { leaseId: record.id, hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`, runId: record.runId, pid: record.pid, processGroup: record.processGroup ?? 0, runtimeKind: record.runtimeKind, runtimeDistribution: record.runtimeDistribution, runtimePid: record.runtimePid, runtimePgid: record.runtimePgid, state: record.state, commandLabel: record.commandLabel, kind: record.kind, workerOwned: record.workerOwned },
-    }),
-  );
-  const result = write.then(() => undefined);
+  const request: LeaseMirrorRequest = { operation, record: { ...record } };
+  const fingerprint = leaseMirrorFingerprint(request);
+  const pending = pendingLeaseMirrors.get(record.id);
+  if (pending && leaseMirrorFingerprint(pending) === fingerprint)
+    return authoritativeLeaseWrites.get(record.id) ?? Promise.resolve();
+  if (appliedLeaseMirrorFingerprints.get(record.id) === fingerprint && !pendingLeaseMirrors.has(record.id))
+    return Promise.resolve();
+  pendingLeaseMirrors.set(record.id, request);
+  const result = startLeaseMirrorWorker(record.id);
   authoritativeLeaseWrites.set(record.id, result);
   void result.then(() => {
-    if (authoritativeLeaseWrites.get(record.id) === result) authoritativeLeaseWrites.delete(record.id);
+    if (authoritativeLeaseWrites.get(record.id) === result && !pendingLeaseMirrors.has(record.id)) authoritativeLeaseWrites.delete(record.id);
   }, () => {
     if (authoritativeLeaseWrites.get(record.id) === result) authoritativeLeaseWrites.delete(record.id);
   });

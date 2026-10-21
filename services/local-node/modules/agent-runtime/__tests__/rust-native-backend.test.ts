@@ -18,6 +18,8 @@ import { replyAndContinueInteraction } from "../interaction-reply.js";
 import fsx from "node:fs";
 const debug = function (label: string, value: unknown) { fsx.appendFileSync("/tmp/synax-probe.log", "[[P]] " + label + " " + (typeof value === "string" ? value : JSON.stringify(value)) + "\n"); };
 import { runtimeFacade as _rfProbe } from "../sidecar/runtime-facade.js";
+import { RustNativeBackend } from "../backends/rust-native-backend.js";
+import { sessionProcessManager } from "../session-process-manager.js";
 debug("sidecar-port", JSON.stringify({ env: process.env.SYNAX_RUNTIME_PROVIDER_PORT, delegate: (globalThis as any).__synaxPortSnap }));
 for (const name of ["controlCommand", "finishExecution", "admitExecution", "stopSessionAuthoritative"] as const) {
   const anyFacade: any = _rfProbe;
@@ -40,6 +42,65 @@ let multiple = false;
 let askHuman = false;
 let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" = "normal";
 let mediaAssetId: string;
+let longToolRounds = 34;
+
+it("lets a waiting conversation take a real worker at a safe step boundary", async () => {
+  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+  vi.stubEnv("DATA_ROOT", DATA_ROOT);
+  scenario = "long"; longToolRounds = 6;
+  const manager = sessionProcessManager as any;
+  const original = manager.canSpawnChild.bind(manager);
+  const cap = vi.spyOn(manager, "canSpawnChild").mockImplementation((value: unknown) => {
+    const id = typeof value === "string" ? value : undefined;
+    return original(id) && (Boolean(id && manager.children.get(id)?.child.connected) || manager.countChildren() < 2);
+  });
+  const messages = vi.spyOn(manager, "handleChildMessage");
+  const ids = [sessionId, ...Array.from({ length: 2 }, () => agentSessionRuntime.create({
+    projectId: "project-alpha", profileId: "executor", prompt: "Read files", workDir: root,
+  }).id)];
+  try {
+    const accepted = await Promise.all(ids.map(id => coordinator.submitAsync(id, { message: "Inspect files" }, `worker-fairness:${id}`)));
+    await coordinator.waitForIdle();
+    expect(messages.mock.calls.some(([, message]) => (message as { type?: string })?.type === "stream:parked")).toBe(true);
+    for (const [index, id] of ids.entries()) {
+      await store.hydrateSession(id, true);
+      expect(store.getRun(accepted[index].run.id).status, JSON.stringify(store.getRun(accepted[index].run.id))).toBe("completed");
+      expect(store.listMessages(id).filter(message => message.role === "user")).toHaveLength(1);
+    }
+  } finally {
+    await Promise.all(ids.map(id => coordinator.interrupt(id, "Fairness test cleanup")));
+    await coordinator.waitForIdle();
+    cap.mockRestore(); messages.mockRestore();
+  }
+}, 60_000);
+
+it("hands off at completed steps and reattaches without replaying user input or tools", async () => {
+  scenario = "long"; longToolRounds = 3;
+  let handoffs = 0;
+  const fair = new RunCoordinator({
+    async *execute(id, mode, input, signal) {
+      for (;;) {
+        let parked = false;
+        const backend = new RustNativeBackend();
+        for await (const chunk of backend.stream(id, mode, { ...input, shouldYieldWorker: () => true }, signal)) {
+          if (chunk.type === "worker_yield") { parked = true; handoffs++; break; }
+          yield chunk;
+        }
+        if (!parked) return;
+        mode = "resume"; input = { ...input, resumeExecution: true };
+      }
+    },
+    async interrupt() {},
+  });
+  coordinator = fair;
+  const accepted = await fair.submitAsync(sessionId, { message: "Continue until all reads finish" }, "fair-handoff");
+  await fair.waitForIdle();
+  expect(store.getRun(accepted.run.id).status, JSON.stringify(store.getRun(accepted.run.id))).toBe("completed");
+  expect(handoffs).toBeGreaterThan(0);
+  expect(requests).toHaveLength(4);
+  expect(store.listMessages(sessionId).filter(message => message.role === "user")).toHaveLength(1);
+  expect(new Set(store.listToolCalls(sessionId).map(call => call.modelToolCallId)).size).toBe(store.listToolCalls(sessionId).length);
+}, 30_000);
 {
   const anyStore: any = store;
   const origAppend = anyStore.appendMessage.bind(anyStore);
@@ -81,7 +142,7 @@ beforeEach(async () => {
   requests = [];
   multiple = false;
   askHuman = false;
-  scenario = "normal";
+  scenario = "normal"; longToolRounds = 34;
   coordinator = new RunCoordinator();
   provider = http.createServer(async (request, response) => {
     debug("provider request", String(request.url) + " auth=" + String(request.headers.authorization).slice(0, 12) + " keys=" + Object.keys(request.headers).join(","));
@@ -93,7 +154,7 @@ beforeEach(async () => {
     const chunk = (delta: object, finish_reason: string | null = null) => response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
     response.writeHead(200, { "content-type": "text/event-stream" });
     const call = (index: number, name: string, args: unknown) => chunk({ tool_calls: [{ index, id: `provider-call-${requests.length}-${index}`, type: "function", function: { name: name.replaceAll(".", "_"), arguments: JSON.stringify(args) } }] });
-    if (scenario === "long" && requests.length <= 34) {
+    if (scenario === "long" && requests.length <= longToolRounds) {
       call(0, "file.list", { path: "." }); chunk({}, "tool_calls");
     } else if (scenario === "media" && requests.length === 1) {
       call(0, "agent.discover", { ids: ["media.read"] }); chunk({}, "tool_calls");
@@ -466,4 +527,5 @@ it("keeps an admitted native run going past 32 steps and ignores legacy maxSteps
   expect(requests).toHaveLength(35);
   expect(store.listRunSteps(accepted.run.id)).toHaveLength(35);
   expect(store.listToolCalls(sessionId).filter(call => call.toolId === "file.list" && call.status === "completed")).toHaveLength(34);
-}, 45_000);
+// This is a 35-round durability check, not a latency benchmark.
+}, 90_000);

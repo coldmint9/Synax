@@ -66,6 +66,28 @@ impl<T: Clone> SessionCache<T> {
     pub(crate) fn clear(&self) {
         self.slots.write().clear();
     }
+
+    /// Remove initialized entries that have no in-flight initializer or caller.
+    /// The predicate runs while the map is held so a removed key cannot race a
+    /// second cold open.
+    pub(crate) fn remove_if(&self, mut predicate: impl FnMut(&T) -> bool) -> usize {
+        let mut removed = 0;
+        self.slots.write().retain(|_, slot| {
+            if Arc::strong_count(slot) != 1 {
+                return true;
+            }
+            let Some(value) = slot.value.get() else {
+                return true;
+            };
+            if predicate(value) {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        removed
+    }
 }
 
 #[cfg(test)]

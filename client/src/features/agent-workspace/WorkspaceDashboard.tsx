@@ -23,11 +23,13 @@ import {
 } from "lucide-react";
 import type {
   EnvironmentChangeStatus,
-  SessionEnvironment,
   SessionEnvironmentFile,
   SessionEnvironmentInputSource,
-  SessionEnvironmentRepository,
 } from "../../adapters/transport/agentRuntime";
+import type {
+  WorkspaceEnvironmentRepository,
+  WorkspaceEnvironmentView,
+} from "./workspaceEnvironmentView";
 import {
   DashboardPanel,
   WorkspaceDashboardLayout,
@@ -58,7 +60,6 @@ import {
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { SessionCommitDialog } from "./SessionCommitDialog";
-import { useSessionEnvironment } from "./useSessionEnvironment";
 import { getProjectThemeColor } from "./projectThemeColor";
 import { useShellStore } from "../../shared/state/shellStore";
 
@@ -191,8 +192,8 @@ function RepositoryProjectCard({
   revertingPaths,
 }: {
   sessionId: string;
-  environment: SessionEnvironment;
-  repository: SessionEnvironmentRepository;
+  environment: WorkspaceEnvironmentView;
+  repository: WorkspaceEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
   changedFilesView: "tree" | "flat";
@@ -326,7 +327,7 @@ function WorkspaceFilesDashboardPanel({
   workspacePath,
 }: {
   sessionId: string;
-  repositories: SessionEnvironmentRepository[];
+  repositories: WorkspaceEnvironmentRepository[];
   inputSources?: SessionEnvironmentInputSource[];
   outputFiles?: string[];
   workspacePath?: string;
@@ -411,7 +412,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   reload: providedReload,
 }: {
   sessionId: string | null;
-  environment?: SessionEnvironment | null;
+  environment?: WorkspaceEnvironmentView | null;
   loading?: boolean;
   reload?: () => void | Promise<void>;
 }) {
@@ -421,15 +422,11 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
   const projectId = useShellStore((state) => state.currentProjectId);
   const c = useWorkspaceCopy();
-  // The workspace panel already polls this snapshot; only fall back to owning
-  // the request when rendered standalone.
-  const owned = useSessionEnvironment(
-    providedEnvironment === undefined ? sessionId : null,
-  );
-  const environment =
-    providedEnvironment === undefined ? owned.environment : providedEnvironment;
-  const loading = providedLoading ?? owned.loading;
-  const reload = providedReload ?? owned.reload;
+  // Both layers (workspace Git + session cards) are owned by the environment
+  // provider; a standalone render only paints what it was handed.
+  const environment = providedEnvironment ?? null;
+  const loading = providedLoading ?? false;
+  const reload = providedReload ?? (() => undefined);
   const [changedFilesView, setChangedFilesView] = useState<"tree" | "flat">(
     "flat",
   );
@@ -897,8 +894,8 @@ function RepositoryRowActions({
   reload,
 }: {
   sessionId: string;
-  environment: SessionEnvironment;
-  repository: SessionEnvironmentRepository;
+  environment: WorkspaceEnvironmentView;
+  repository: WorkspaceEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
 }) {
@@ -964,8 +961,8 @@ function RepositoryCard({
   embedded = false,
   branchInSwitcher = false,
 }: {
-  environment: SessionEnvironment;
-  repository?: SessionEnvironmentRepository;
+  environment: WorkspaceEnvironmentView;
+  repository?: WorkspaceEnvironmentRepository;
   loading: boolean;
   reload: () => void | Promise<void>;
   embedded?: boolean;

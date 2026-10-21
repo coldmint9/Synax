@@ -8,24 +8,6 @@ import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 vi.mock("../ThinkingBlock", () => ({
   ThinkingBlock: ({ content }: { content: string }) => <div>{content}</div>,
 }));
-vi.mock("../ToolCallRoundPanel", () => ({
-  ToolCallRoundPanel: ({
-    toolBlocks,
-    isStreaming,
-  }: {
-    toolBlocks: TurnContentBlock[];
-    isStreaming?: boolean;
-  }) => (
-    <div data-live-tools={isStreaming || undefined}>
-      {toolBlocks
-        .map((block) =>
-          block.type === "tool_call" ? block.call.inputSummary : "",
-        )
-        .join("")}
-    </div>
-  ),
-}));
-
 const blocks: TurnContentBlock[] = [
   { type: "thinking", content: "Locating BUI styles elsewhere" },
   {
@@ -67,7 +49,7 @@ describe("SessionLiveTurn", () => {
       1,
     );
     expect(
-      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+      screen.getAllByText("Found matches"),
     ).toHaveLength(1);
 
     rerender(<SessionLiveTurn {...props} steps={[persisted]} />);
@@ -91,7 +73,7 @@ describe("SessionLiveTurn", () => {
     );
     expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(2);
     expect(
-      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+      screen.getAllByText("Found matches"),
     ).toHaveLength(2);
   });
 
@@ -116,11 +98,11 @@ describe("SessionLiveTurn", () => {
       1,
     );
     expect(
-      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
+      screen.getAllByText("Found matches"),
     ).toHaveLength(1);
-    expect(container.querySelectorAll('[data-live-tools="true"]')).toHaveLength(
-      1,
-    );
+    expect(
+      container.querySelectorAll('.session-process-window-viewport[data-windowed="true"]'),
+    ).toHaveLength(1);
   });
 
   it("keeps the activity rail live while the final answer starts streaming", () => {
@@ -137,7 +119,9 @@ describe("SessionLiveTurn", () => {
     );
 
     expect(
-      document.querySelectorAll('[data-live-tools="true"]'),
+      document.querySelectorAll(
+        '.session-process-window-viewport[data-windowed="true"] .bui-tool',
+      ),
     ).toHaveLength(1);
   });
 

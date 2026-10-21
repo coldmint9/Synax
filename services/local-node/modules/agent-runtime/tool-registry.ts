@@ -1,3 +1,4 @@
+import { withToolResource } from "./resource-admission.js";
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { hydrateRuntimeAssets } from "./media-assets.js";
 import { waitForCodeRead } from "./code-mode/cancellation.js";
@@ -20,7 +21,7 @@ import {
   type RuntimeContentPart,
 } from "./content-parts.js";
 import { bindAssets, validateAssets, sessionHasAsset } from "./media-assets.js";
-import { assertRuntimeExecutionCurrent, isExecutionSuperseded } from "../../infrastructure/runtime/execution-context.js";
+import { assertRuntimeExecutionCurrent, isExecutionSuperseded, currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { workTools } from "./tools/work-tools.js";
 import { verificationTool } from "./tools/verification.js";
 import { workRuntime } from "./work-runtime.js";
@@ -112,6 +113,7 @@ function summarize(value: unknown): string {
 }
 
 export interface ExecuteToolOptions {
+  onProgress?: (record: ToolCallRecord) => void;
   /** Internal read-only composition: never suspend for approval. */
   codeModeParentId?: string;
   abortSignal?: AbortSignal;
@@ -572,6 +574,7 @@ export class ToolRegistry {
     sessionId: string,
     permission: PermissionDecision,
     abortSignal?: AbortSignal,
+    onProgress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
@@ -597,6 +600,7 @@ export class ToolRegistry {
       record.inputRef,
       permission,
       abortSignal,
+      onProgress,
     );
   }
 
@@ -828,6 +832,7 @@ export class ToolRegistry {
       args,
       decision,
       options.abortSignal,
+      options.onProgress,
     );
   }
 
@@ -838,6 +843,7 @@ export class ToolRegistry {
     args: unknown,
     permission?: PermissionDecision,
     abortSignal?: AbortSignal,
+    onProgress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
@@ -930,7 +936,19 @@ export class ToolRegistry {
               outputSummary: null,
               outputRef: null,
             });
+      let lastProgress = 0;
+      const report = (execution: NonNullable<ToolCallRecord["execution"]>) => {
+        const previous = this.store.getToolCall(sessionId, running.id).execution;
+        const updated = this.store.updateToolCall(sessionId, running.id, { execution: { ...previous, ...execution } });
+        onProgress?.(updated);
+      };
       const input: ToolExecutionInput = {
+        onProgress: progress => {
+          if (Date.now() - lastProgress < 1_000) return;
+          lastProgress = Date.now();
+          const current = this.store.getToolCall(sessionId, running.id).execution;
+          report({ ...current, phase: "executing_tool", ...progress, lastProgressAt: nowIso() });
+        },
         abortSignal,
         sessionId,
         runId: running.runId,
@@ -1033,7 +1051,7 @@ export class ToolRegistry {
         const result = inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
         // Only reads may abandon their local wait. A writer retains its claim
         // until the underlying operation settles, even after cancellation.
-        return codeParentId(record) && !checkpointMutation
+        return codeParentId(record) && !checkpointMutation && !currentExecutionContext()
           ? waitForCodeRead(result, abortSignal)
           : result;
       };
@@ -1052,15 +1070,13 @@ export class ToolRegistry {
             ...("movePath" in hunk && hunk.movePath ? [hunk.movePath] : []),
           ])
           .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
-      const result = checkpointMutation
-        ? await withWorkspaceMutation(
-            sessionId,
-            executeTool,
-            false,
-            undoPaths,
-            abortSignal,
-          )
-        : await executeTool();
+      const result = await withToolResource(tool, input, report, async toolSignal => {
+        input.abortSignal = toolSignal;
+        abortSignal = toolSignal;
+        return checkpointMutation
+          ? withWorkspaceMutation(sessionId, executeTool, false, undoPaths, toolSignal)
+          : executeTool();
+      });
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(
             () => undefined,

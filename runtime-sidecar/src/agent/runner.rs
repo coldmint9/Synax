@@ -1,5 +1,5 @@
-//! Process-local model/tool execution. Observers replay an in-memory event
-//! stream; committed conversation history is owned by the session store.
+//! Process-local model/tool execution. The host drains a pending delivery
+//! queue; committed conversation history is owned by the session store.
 
 use crate::agent::context::{self as loop_context, Compaction, ContextAction, ContextPolicy};
 use crate::agent::policy::{self as loop_policy, Decision, Disposition, RuntimeBinding};
@@ -11,14 +11,14 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 use tracing::Instrument;
 
-const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PENDING_EVENT_BYTES: usize = 32 * 1024 * 1024;
 const TERMINAL_RETENTION_MS: u64 = 15 * 60 * 1000;
 const MAX_ACTIVE_LOOPS: usize = 128;
 const MAX_TOOL_ARGUMENT_RETRIES: u32 = 2;
@@ -59,6 +59,14 @@ pub(crate) struct ToolResultRequest {
     pub is_error: bool,
     #[serde(default, rename = "executionContext")]
     pub execution_context: Option<ExecutionLease>,
+}
+
+impl ToolResultRequest {
+    fn fingerprint(&self) -> [u8; 32] {
+        let mut value = json!([self.is_error, self.result]);
+        value.sort_all_objects();
+        Sha256::digest(serde_json::to_vec(&value).expect("tool results serialize")).into()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -128,16 +136,58 @@ struct ExecutionState {
     compacted_step: Option<u32>,
     tool_argument_retry: Option<ToolArgumentRetry>,
     sequence: u64,
-    event_bytes: usize,
     terminal_at: Option<u64>,
     cancel_requested: bool,
 }
 
 struct LoopState {
     execution: ExecutionState,
-    events: Vec<Value>,
+    events: VecDeque<LoopEvent>,
+    acknowledged: u64,
+    pending_bytes: usize,
+    terminal_results: HashMap<String, [u8; 32]>,
     running: bool,
     failure: Option<String>,
+}
+
+/// Encode once for delivery and reconnect. Avoid a JSON object tree per token.
+#[derive(Clone)]
+struct LoopEvent {
+    sequence: u64,
+    bytes: Arc<[u8]>,
+}
+
+impl LoopEvent {
+    fn encode(loop_id: &str, sequence: u64, mut value: Value) -> Result<Self, LoopError> {
+        let object = value.as_object_mut().ok_or("invalid loop event")?;
+        object.insert("loopId".into(), json!(loop_id));
+        object.insert("sequence".into(), json!(sequence));
+        let mut bytes = serde_json::to_vec(&value)?;
+        bytes.push(b'\n');
+        Ok(Self { sequence, bytes: bytes.into() })
+    }
+}
+
+impl LoopState {
+    fn check_cursor(&self, after: u64) -> Result<(), LoopError> {
+        if after < self.acknowledged {
+            return Err("event cursor expired: output was already acknowledged by the host".into());
+        }
+        if after > self.execution.sequence {
+            return Err("event cursor is ahead of the loop".into());
+        }
+        Ok(())
+    }
+
+    fn acknowledge(&mut self, through: u64) -> Result<(), LoopError> {
+        if through <= self.acknowledged { return Ok(()); }
+        self.check_cursor(through)?;
+        while self.events.front().is_some_and(|event| event.sequence <= through) {
+            self.pending_bytes -= self.events.pop_front().unwrap().bytes.len();
+        }
+        self.acknowledged = through;
+        Ok(())
+    }
 }
 
 struct LoopHandle {
@@ -163,15 +213,13 @@ impl LoopHandle {
             return Err(error.clone().into());
         }
         let mut published = Vec::with_capacity(events.len());
-        for mut event in events {
+        let mut pending_bytes = state.pending_bytes;
+        for event in events {
             next.sequence += 1;
-            let object = event.as_object_mut().ok_or("invalid loop event")?;
-            object.insert("loopId".into(), json!(self.id));
-            object.insert("sequence".into(), json!(next.sequence));
-            let bytes = serde_json::to_vec(&event)?;
-            next.event_bytes += bytes.len();
-            if !terminal && next.event_bytes > MAX_REPLAY_BYTES {
-                return Err("agent loop event journal capacity exceeded".into());
+            let event = LoopEvent::encode(&self.id, next.sequence, event)?;
+            pending_bytes += event.bytes.len();
+            if !terminal && pending_bytes > MAX_PENDING_EVENT_BYTES {
+                return Err("agent loop pending event capacity exceeded".into());
             }
             published.push(event);
         }
@@ -179,6 +227,7 @@ impl LoopHandle {
             next.terminal_at = Some(now_ms());
         }
         state.execution = next;
+        state.pending_bytes = pending_bytes;
         state.events.extend(published);
         self.changed.send_modify(|revision| *revision += 1);
         Ok(())
@@ -189,27 +238,24 @@ impl LoopHandle {
         if state.execution.terminal_at.is_some() {
             return Err("agent loop is already terminal".into());
         }
+        if let Some(error) = &state.failure { return Err(error.clone().into()); }
         // Stream events are emitted for every provider delta. Do not route
         // this through `commit`: cloning `ExecutionState` also clones the
         // complete provider prompt, tool definitions and accumulated tool
         // results. With a long prompt, five concurrent sessions turn a small
         // delta into a large transient allocation on every token.
         let sequence = state.execution.sequence + 1;
-        let mut event = event;
-        let object = event.as_object_mut().ok_or("invalid loop event")?;
-        object.insert("loopId".into(), json!(self.id));
-        object.insert("sequence".into(), json!(sequence));
-        let bytes = serde_json::to_vec(&event)?;
-        let event_bytes = state.execution.event_bytes.saturating_add(bytes.len());
-        if !terminal && event_bytes > MAX_REPLAY_BYTES {
-            return Err("agent loop event journal capacity exceeded".into());
+        let event = LoopEvent::encode(&self.id, sequence, event)?;
+        let pending_bytes = state.pending_bytes + event.bytes.len();
+        if !terminal && pending_bytes > MAX_PENDING_EVENT_BYTES {
+            return Err("agent loop pending event capacity exceeded".into());
         }
         state.execution.sequence = sequence;
-        state.execution.event_bytes = event_bytes;
+        state.pending_bytes = pending_bytes;
         if terminal {
             state.execution.terminal_at = Some(now_ms());
         }
-        state.events.push(event);
+        state.events.push_back(event);
         self.changed.send_modify(|revision| *revision += 1);
         Ok(())
     }
@@ -218,16 +264,18 @@ impl LoopHandle {
 pub(crate) struct LoopSubscription {
     handle: Arc<LoopHandle>,
     changed: watch::Receiver<u64>,
-    cursor: usize,
+    cursor: u64,
 }
 impl LoopSubscription {
-    pub(crate) async fn next(&mut self) -> Result<Option<Value>, LoopError> {
+    pub(crate) async fn next(&mut self) -> Result<Option<Arc<[u8]>>, LoopError> {
         loop {
             {
                 let state = self.handle.state.lock().await;
-                if let Some(event) = state.events.get(self.cursor) {
-                    self.cursor += 1;
-                    return Ok(Some(event.clone()));
+                state.check_cursor(self.cursor)?;
+                let offset = (self.cursor - state.acknowledged) as usize;
+                if let Some(event) = state.events.get(offset) {
+                    self.cursor = event.sequence;
+                    return Ok(Some(event.bytes.clone()));
                 }
                 if let Some(error) = &state.failure {
                     return Err(error.clone().into());
@@ -248,6 +296,19 @@ pub(crate) struct AgentLoopManager {
     router: Option<Arc<SessionShardRouter>>,
 }
 impl AgentLoopManager {
+    pub(crate) async fn check_resource(&self, context: &ExecutionLease) -> Result<String, LoopError> {
+        let router = self.router.as_ref().ok_or("execution authority is unavailable")?;
+        router.control_command(context.session_id.clone(), Uuid::new_v4().to_string(), 0, 0,
+            "execution_check".into(), serde_json::to_vec(context)?).await?;
+        let mut root = context.session_id.clone();
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(root.clone()) || seen.len() > 64 { return Err("invalid session ancestry".into()); }
+            let snapshot: Value = serde_json::from_slice(&router.ui_snapshot(root.clone(), None).await?)?;
+            let Some(parent) = snapshot["session"]["parentSessionId"].as_str() else { return Ok(root) };
+            root = parent.to_owned();
+        }
+    }
     pub(crate) fn new(store: Option<Arc<HotStore>>) -> Self {
         Self {
             store,
@@ -314,6 +375,8 @@ impl AgentLoopManager {
             state.execution.request.provider.api_key = None;
             state.execution.step_context = None;
             state.execution.pending.clear();
+            state.terminal_results = state.execution.results.iter()
+                .map(|(id, result)| (id.clone(), result.fingerprint())).collect();
             state.execution.results.clear();
             state.execution.call_tools.clear();
             state.execution.tool_argument_retry = None;
@@ -404,11 +467,13 @@ impl AgentLoopManager {
                     compacted_step: None,
                     tool_argument_retry: None,
                     sequence: 0,
-                    event_bytes: 0,
                     terminal_at: None,
                     cancel_requested: false,
                 },
-                events: Vec::new(),
+                events: VecDeque::new(),
+                acknowledged: 0,
+                pending_bytes: 0,
+                terminal_results: HashMap::new(),
                 running: true,
                 failure: None,
             }),
@@ -467,18 +532,31 @@ impl AgentLoopManager {
     pub(crate) async fn subscribe_events(
         &self,
         id: &str,
-        after: usize,
+        after: u64,
     ) -> Result<LoopSubscription, LoopError> {
         let handle = self.get(id).await?;
         let changed = handle.changed.subscribe();
-        if after > handle.state.lock().await.events.len() {
-            return Err("event cursor is ahead of the loop".into());
-        }
+        handle.state.lock().await.check_cursor(after)?;
         Ok(LoopSubscription {
             handle,
             changed,
             cursor: after,
         })
+    }
+
+    pub(crate) async fn acknowledge_events(
+        &self, id: &str, through: u64, context: Option<&ExecutionLease>,
+    ) -> Result<(), LoopError> {
+        let handle = self.get(id).await?;
+        let mut state = handle.state.lock().await;
+        // Delivery may be acknowledged after execution ends. Match its owner
+        // directly; an execution_check would reject a completed run's final ACK.
+        if let Some(expected) = &state.execution.request.execution_context {
+            if context.is_none_or(|context| !expected.same_owner(context)) {
+                return Err("event acknowledgement requires the execution owner".into());
+            }
+        }
+        state.acknowledge(through)
     }
 
     pub(crate) async fn send_tool_result(
@@ -488,6 +566,10 @@ impl AgentLoopManager {
         let handle = self.get(&request.loop_id).await?;
         check_execution(&handle, request.execution_context.as_ref()).await?;
         let mut state = handle.state.lock().await;
+        if let Some(saved) = state.terminal_results.get(&request.tool_call_id) {
+            return if saved == &request.fingerprint() { Ok(()) }
+                else { Err("conflicting tool result".into()) };
+        }
         let mut next = state.execution.clone();
         let tool_call_id = request.tool_call_id.clone();
         let is_error = request.is_error;
@@ -858,9 +940,11 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
             }
             Phase::Finish { step, disposition } => return Ok(LoopFinish::Done(step, disposition)),
             Phase::Model { step, attempt } => {
+                let mut model_request = execution.request.provider.clone();
                 if let Some((session, root, run)) =
                     runtime_facts(handle, &execution.request).await?
                 {
+                    model_request.cache_policy["rootSessionId"] = root["id"].clone();
                     if let Decision::Finish(disposition) =
                         loop_policy::before_model(&session, &root, &run)
                     {
@@ -919,7 +1003,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     }
                     handle.commit(&mut state, next, vec![event], false).await?;
                 }
-                let mut events = provider_events(execution.request.provider.clone());
+                let mut events = provider_events(model_request);
                 check_execution(handle, execution.request.execution_context.as_ref()).await?;
                 let mut lease_tick = tokio::time::interval(std::time::Duration::from_millis(500));
                 let mut calls = Vec::new();
@@ -1134,6 +1218,125 @@ mod tests {
         serde_json::from_value(json!({"apiFormat":"invalid","model":"test","maxSteps":1})).unwrap()
     }
 
+    fn pending_loop(id: &str) -> Arc<LoopHandle> {
+        let (changed, _) = watch::channel(0);
+        let (cancel, _) = watch::channel(false);
+        Arc::new(LoopHandle {
+            id: id.into(), store: None, router: None, changed, cancel,
+            state: Mutex::new(LoopState {
+                execution: ExecutionState {
+                    version: 1, initial_hash: String::new(), request: request(),
+                    phase: Phase::Model { step: 1, attempt: 1 }, pending: HashSet::new(),
+                    results: HashMap::new(), call_tools: HashMap::new(), step_context: None,
+                    compacted_step: None, tool_argument_retry: None, sequence: 0,
+                    terminal_at: None, cancel_requested: false,
+                },
+                events: VecDeque::new(), acknowledged: 0, pending_bytes: 0,
+                terminal_results: HashMap::new(),
+                running: true, failure: None,
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn acknowledgements_free_payloads_without_losing_pending_deliveries() {
+        let loops = AgentLoopManager::default();
+        let handle = pending_loop("pending");
+        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+        handle.emit(json!({"type":"text-delta","delta":"已处理"}), false).await.unwrap();
+        handle.emit(json!({"type":"tool-call","toolCallId":"permission"}), false).await.unwrap();
+        handle.emit(json!({"type":"tool-call","toolCallId":"next-tool"}), false).await.unwrap();
+        let released = Arc::downgrade(&handle.state.lock().await.events[0].bytes);
+        let mut observer = loops.subscribe_events(&handle.id, 0).await.unwrap();
+        let first: Value = serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
+        assert_eq!(first["sequence"], 1);
+        loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
+        loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
+        assert!(released.upgrade().is_none());
+        assert!(loops.acknowledge_events(&handle.id, 4, None).await.is_err());
+        assert!(loops.subscribe_events(&handle.id, 0).await.is_err());
+        let boundary: Value = serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
+        assert_eq!(boundary["toolCallId"], "permission");
+        drop(observer);
+        // Permission handling can close the stream before its generator ACKs.
+        // Resume at the host's handled cursor, retaining the next tool request.
+        loops.acknowledge_events(&handle.id, 2, None).await.unwrap();
+        let mut resumed = loops.subscribe_events(&handle.id, 2).await.unwrap();
+        let next: Value = serde_json::from_slice(&resumed.next().await.unwrap().unwrap()).unwrap();
+        assert_eq!(next["toolCallId"], "next-tool");
+        handle.emit(json!({"type":"done"}), true).await.unwrap();
+        let final_event = resumed.next().await.unwrap().unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&final_event).unwrap()["sequence"], 4);
+        assert!(resumed.next().await.unwrap().is_none());
+        loops.acknowledge_events(&handle.id, 4, None).await.unwrap();
+        let state = handle.state.lock().await;
+        assert_eq!(state.pending_bytes, 0);
+        assert!(state.events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn five_long_running_streams_retain_only_the_unacknowledged_batch() {
+        let loops = AgentLoopManager::default();
+        let mut handles = Vec::new();
+        for index in 0..5 {
+            let handle = pending_loop(&format!("memory-{index}"));
+            loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+            handles.push(handle);
+        }
+        // More than the former 32 MiB lifetime limit per loop, with five active
+        // queues. Only eight delivered-but-unacknowledged packets may survive.
+        let delta = "x".repeat(32 * 1024);
+        for sequence in 1..=1040 {
+            for handle in &handles {
+                handle.emit(json!({"type":"text-delta","delta":delta}), false).await.unwrap();
+                let state = handle.state.lock().await;
+                assert!(state.events.len() <= 8);
+                assert!(state.pending_bytes < 264 * 1024);
+                drop(state);
+                if sequence % 8 == 0 {
+                    loops.acknowledge_events(&handle.id, sequence, None).await.unwrap();
+                }
+            }
+        }
+        for handle in &handles {
+            let state = handle.state.lock().await;
+            assert_eq!(state.execution.sequence, 1040);
+            assert_eq!(state.pending_bytes, 0);
+            assert!(state.events.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_capacity_failure_does_not_publish_a_sequence_gap() {
+        let handle = pending_loop("capacity");
+        handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES;
+        assert!(handle.emit(json!({"type":"text-delta","delta":"full"}), false).await.is_err());
+        {
+            let mut state = handle.state.lock().await;
+            let next = state.execution.clone();
+            assert!(handle.commit(&mut state, next, vec![json!({"type":"tool-call"})], false).await.is_err());
+            assert_eq!(state.execution.sequence, 0);
+            assert!(state.events.is_empty());
+        }
+        handle.emit(json!({"type":"error","error":"delivery stalled"}), true).await.unwrap();
+        assert_eq!(handle.state.lock().await.execution.sequence, 1);
+    }
+
+    #[tokio::test]
+    async fn completed_run_ack_still_requires_its_execution_owner() {
+        let loops = AgentLoopManager::default();
+        let handle = pending_loop("owner");
+        let lease = ExecutionLease { session_id: "session".into(), run_id: "run".into(), epoch: "epoch".into(), host_id: "host".into(), closed: false };
+        handle.state.lock().await.execution.request.execution_context = Some(lease.clone());
+        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+        handle.emit(json!({"type":"done"}), true).await.unwrap();
+        assert!(loops.acknowledge_events(&handle.id, 1, None).await.is_err());
+        let other = ExecutionLease { epoch: "other".into(), ..lease.clone() };
+        assert!(loops.acknowledge_events(&handle.id, 1, Some(&other)).await.is_err());
+        loops.acknowledge_events(&handle.id, 1, Some(&lease)).await.unwrap();
+        assert_eq!(handle.state.lock().await.pending_bytes, 0);
+    }
+
     #[tokio::test]
     async fn terminal_events_are_replayed_and_stream_closes() {
         let loops = AgentLoopManager::default();
@@ -1141,7 +1344,7 @@ mod tests {
         let mut first = loops.subscribe_events(&id, 0).await.unwrap();
         let mut seen = Vec::new();
         while let Some(event) = first.next().await.unwrap() {
-            seen.push(event);
+            seen.push(serde_json::from_slice::<Value>(&event).unwrap());
         }
         assert_eq!(seen[0]["type"], "loop-started");
         assert_eq!(seen.last().unwrap()["type"], "error");
@@ -1149,10 +1352,11 @@ mod tests {
         assert!(!seen.iter().any(|e| e["type"] == "done"));
         let mut replay = loops.subscribe_events(&id, 1).await.unwrap();
         for event in seen.iter().skip(1) {
-            assert_eq!(replay.next().await.unwrap().as_ref(), Some(event));
+            let bytes = replay.next().await.unwrap().unwrap();
+            assert_eq!(&serde_json::from_slice::<Value>(&bytes).unwrap(), event);
         }
         assert!(replay.next().await.unwrap().is_none());
-        assert!(loops.subscribe_events(&id, seen.len() + 1).await.is_err());
+        assert!(loops.subscribe_events(&id, seen.len() as u64 + 1).await.is_err());
         loops.cancel(&id).await.unwrap();
     }
 

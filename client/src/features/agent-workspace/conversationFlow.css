@@ -16,31 +16,28 @@
   margin-bottom: 12px;
   text-align: left;
   color: var(--flow-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 .session-process-status { margin-left: auto; }
-/* A live row is a readout of the newest thought, not a second transcript: the
-   teaser sweeps across one line instead of wrapping into a paragraph. */
-.session-process-ticker {
+/* A live row is a readout of the newest thought or call, not a second
+   transcript: one fixed line whose tail follows the stream. */
+.session-process-line {
+  position: relative;
   display: block;
   flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 18px), transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 18px), transparent);
 }
-.session-process-ticker-track {
-  display: inline-flex;
-  width: max-content;
-  animation: session-process-ticker 3s linear infinite;
+.session-process-line[data-overflow="true"] {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px);
+  mask-image: linear-gradient(90deg, transparent, #000 12px);
 }
-.session-process-ticker-copy { padding-right: 48px; white-space: nowrap; }
-.session-process-trigger:hover .session-process-ticker-track,
-.session-process-trigger:focus-visible .session-process-ticker-track { animation-play-state: paused; }
-@keyframes session-process-ticker {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
+.session-process-line-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+  transition: transform 160ms linear;
 }
 .session-process-preview {
   display: -webkit-box;
@@ -50,10 +47,9 @@
   overflow-wrap: anywhere;
   margin: -5px 0 8px 25px;
   color: var(--flow-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.65;
 }
-.session-process-preview[data-error="true"] { color: var(--danger); }
 .session-process-trigger:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
@@ -125,7 +121,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--bui-muted);
 }
@@ -134,15 +130,15 @@
   color: var(--bui-muted);
   background: none;
   animation: none;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.65;
   font-weight: 400;
 }
-.bui-thinking .bui-thinking-meta { font-size: 11px; margin-top: 3px; }
+.bui-thinking .bui-thinking-meta { font-size: 10px; margin-top: 3px; }
 .bui-thinking .bui-thinking-chevron { margin: 4px 0 0 auto; }
 .bui-thinking[data-expanded="true"] .bui-thinking-chevron { transform: rotate(90deg); }
 .bui-thinking .bui-thinking-trace { margin: 0 0 0 25px; padding-left: 0; border-left: 0; }
-.bui-thinking .bui-thinking-body { font-size: 13px; line-height: 1.65; }
+.bui-thinking .bui-thinking-body { font-size: 12px; line-height: 1.65; }
 
 .bui-tool .bui-tool-trigger {
   display: grid;
@@ -163,7 +159,7 @@
   max-width: none;
   white-space: normal;
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.65;
   font-weight: 500;
 }
@@ -175,14 +171,14 @@
   border-radius: 0;
   padding: 0;
   background: none;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.65;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.bui-tool .bui-tool-meta { gap: 7px; margin-top: 4px; font-size: 11px; }
+.bui-tool .bui-tool-meta { gap: 7px; margin-top: 4px; font-size: 10px; }
 .bui-tool .bui-tool-count,
-.session-conversation-flow .bui-status { font-size: 11px; }
+.session-conversation-flow .bui-status { font-size: 10px; }
 .bui-tool-result {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -191,7 +187,7 @@
   overflow-wrap: anywhere;
   margin: 3px 0 0 25px;
   color: var(--bui-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.65;
 }
 .bui-tool-result[data-error="true"] {
@@ -202,12 +198,118 @@
 }
 .bui-tool .bui-tool-details,
 .bui-tool .bui-tool-batch-body { margin: 10px 0 0 25px; padding-left: 12px; }
-.bui-tool .bui-tool-details pre { font-size: 12px; }
-.bui-tool .bui-tool-detail-label { font-size: 11px; }
+.bui-tool .bui-tool-details pre { font-size: 11px; }
+.bui-tool .bui-tool-detail-label { font-size: 10px; }
 .bui-tool-batch-body { display: flex; flex-direction: column; gap: 12px; }
 .bui-tool[data-tool-status="running"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--accent); }
 .bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
 .bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
+
+/* A live turn keeps its records in one window: seven one-line rows, a
+   scrollable body, and a fading bottom edge while more records wait below. */
+.session-process-window { min-width: 0; }
+.session-process-window[hidden] { display: none; }
+.session-process-window-frame { position: relative; min-width: 0; }
+/* The bottom edge blurs and fades while records wait below the window. */
+.session-process-window-frame[data-fade]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 34px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--surface) 92%, transparent)
+  );
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent, #000 70%);
+}
+.session-process-window-viewport {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.session-process-window-viewport[data-windowed] {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.session-process-window-row { min-width: 0; min-height: 30px; }
+.session-process-window-spacer { flex: 0 0 auto; }
+
+/* One record, one line: the call type and its input share the heading row,
+   and a folded record reports how it ended in that same row. */
+.session-conversation-flow .bui-tool .bui-tool-trigger {
+  align-items: center;
+  padding: 3px 0;
+}
+.session-conversation-flow .bui-tool .bui-tool-copy {
+  flex-direction: row;
+  align-items: baseline;
+  flex: 1;
+  gap: 8px;
+}
+.session-conversation-flow .bui-tool .bui-tool-label {
+  flex-shrink: 0;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.session-conversation-flow .bui-tool .bui-tool-target,
+.session-conversation-flow .bui-tool .bui-tool-result {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.session-conversation-flow .bui-tool .bui-tool-target { font-family: var(--font-mono); }
+.session-conversation-flow .bui-tool .bui-tool-meta { margin-top: 0; }
+.session-conversation-flow .bui-tool .bui-tool-details,
+.session-conversation-flow .bui-tool .bui-tool-batch-body { margin-top: 6px; }
+
+/* Reasoning folds to the same single line so the window height holds. */
+.session-conversation-flow .bui-thinking .bui-thinking-trigger {
+  align-items: center;
+  padding: 3px 0;
+}
+.session-conversation-flow .bui-thinking .bui-thinking-symbol { margin-top: 0; }
+.session-conversation-flow .bui-thinking-copy {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+.session-conversation-flow .bui-thinking .bui-thinking-label {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.session-conversation-flow .bui-thinking-preview {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+  font-size: 12px;
+}
+.session-conversation-flow .bui-thinking .bui-thinking-meta { margin-top: 0; }
+.session-conversation-flow .bui-thinking .bui-thinking-chevron { margin: 0 0 0 2px; }
 
 @container conversation-flow (max-width: 420px) {
   .bui-tool .bui-tool-trigger { grid-template-columns: 16px minmax(0, 1fr); }
@@ -223,8 +325,7 @@
 @media (prefers-reduced-motion: reduce) {
   .bui-thinking .bui-thinking-chevron,
   .bui-thinking .bui-thinking-reveal { transition: none; }
-  .session-process-ticker-track { animation: none; }
-  .session-process-ticker-copy[aria-hidden="true"] { display: none; }
+  .session-process-line-track { transition: none; }
   .session-flow-append .session-flow-entry,
   .session-flow-append .session-flow-tools > .bui-tool,
   .session-flow-append .session-flow-tools > .bui-thinking { animation: none; }

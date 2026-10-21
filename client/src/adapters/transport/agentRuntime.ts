@@ -1,3 +1,16 @@
+export interface ToolExecutionProgress {
+  phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
+  resource?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  deadline?: string;
+  lastProgressAt?: string;
+  queueWaitMs?: number;
+  files?: number;
+  bytes?: number;
+  matches?: number;
+}
+
 import { SESSION_PAGE_SIZE } from "../../shared/lib/sessionListPaging";
 import type { ContextCompactionState } from "../../../../services/local-node/modules/agent-runtime/context-compaction-types";
 export type { ContextCompactionState };
@@ -209,6 +222,7 @@ export interface AgentSession {
 }
 
 export interface AgentRun {
+  execution?: ToolExecutionProgress;
   id: string;
   sessionId: string;
   status: AgentRunStatus;
@@ -246,6 +260,7 @@ export type ToolCallStatus =
   | "compacted";
 
 export interface ToolCallRecord {
+  execution?: ToolExecutionProgress;
   outputRef?: unknown;
   contentParts?: RuntimeContentPart[];
   id: string;
@@ -625,27 +640,14 @@ export interface SessionBackgroundProcess {
   ports?: number[];
 }
 
-export interface SessionEnvironment {
-  repositories?: SessionEnvironmentRepository[];
-  sessionId: string;
-  projectId: string;
-  workspacePath: string;
-  branch: string;
-  headCommitSha: string;
-  dirty: boolean;
-  additions: number;
-  deletions: number;
-  changedFiles: SessionEnvironmentFile[];
-  /** Files this session's agent wrote/edited/deleted (still uncommitted). */
-  agentChangedFiles: SessionEnvironmentFile[];
-  /** Optional for historical snapshots; independent of uncommitted Git changes. */
-  outputFiles?: string[];
-  inputSources: SessionEnvironmentInputSource[];
-  subagents: SessionEnvironmentSubagent[];
-  refreshedAt: string;
-}
-
-export interface SessionEnvironmentRepository {
+/**
+ * Workspace-level Git facts for one project member.
+ *
+ * Two conversations opened on the same checkout share this object: it is keyed
+ * by the canonical workspace path on the server and by `projectId` in the
+ * client cache, never by session id.
+ */
+export interface WorkspaceRepositoryGit {
   rootId: string;
   name: string;
   role: "primary" | "reference";
@@ -657,9 +659,61 @@ export interface SessionEnvironmentRepository {
   additions: number;
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
-  agentChangedFiles: SessionEnvironmentFile[];
-  outputFiles?: string[];
-  inputSources: SessionEnvironmentInputSource[];
+  /** Content hash of these facts; unchanged roots keep their object identity. */
+  revision: string;
+}
+
+export interface WorkspaceGitChanges {
+  projectId: string;
+  /** Content hash of every repository revision in this workspace. */
+  revision: string;
+  /** True when the request revision already matched; `repositories` is empty. */
+  unchanged: boolean;
+  repositories: WorkspaceRepositoryGit[];
+  refreshedAt: string;
+}
+
+/** Session-scoped workspace binding; no Git probe, no transcript read. */
+export interface SessionEnvironmentRoot {
+  rootId: string;
+  name: string;
+  role: "primary" | "reference";
+  status: "ready" | "missing";
+  workspacePath: string;
+}
+
+export interface SessionEnvironmentRoots {
+  sessionId: string;
+  projectId: string;
+  workspacePath: string;
+  repositories: SessionEnvironmentRoot[];
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentSubagents {
+  sessionId: string;
+  subagents: SessionEnvironmentSubagent[];
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentInputs {
+  sessionId: string;
+  projectId: string;
+  primaryRootId: string;
+  /** Input sources of this conversation, keyed by workspace root id. */
+  byRoot: Record<string, SessionEnvironmentInputSource[]>;
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentOutputs {
+  sessionId: string;
+  projectId: string;
+  primaryRootId: string;
+  /** Existing files this conversation wrote, keyed by workspace root id. */
+  byRoot: Record<string, string[]>;
+  /** Every path this conversation's agent wrote, before existence filtering. */
+  editedPathsByRoot: Record<string, string[]>;
+  refreshedAt: string;
 }
 
 export interface SessionEnvironmentFileView {
@@ -1163,9 +1217,35 @@ export const agentRuntimeApi = {
         body: JSON.stringify({ branch, rootId, transferChanges }),
       },
     ),
-  getSessionEnvironment: (sessionId: string) =>
-    request<SessionEnvironment>(
-      `/sessions/${encodeURIComponent(sessionId)}/environment`,
+  /** Workspace-level Git facts shared by every session of one project. */
+  getWorkspaceGitChanges: (
+    projectId: string,
+    options?: { sessionId?: string; revision?: string },
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.sessionId) params.set("sessionId", options.sessionId);
+    if (options?.revision) params.set("revision", options.revision);
+    const query = params.toString();
+    return request<WorkspaceGitChanges>(
+      `/projects/${encodeURIComponent(projectId)}/git-changes${query ? `?${query}` : ""}`,
+      { cache: "no-store" },
+    );
+  },
+  getSessionEnvironmentRoots: (sessionId: string) =>
+    request<SessionEnvironmentRoots>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/roots`,
+    ),
+  getSessionEnvironmentSubagents: (sessionId: string) =>
+    request<SessionEnvironmentSubagents>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/subagents`,
+    ),
+  getSessionEnvironmentInputs: (sessionId: string) =>
+    request<SessionEnvironmentInputs>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/inputs`,
+    ),
+  getSessionEnvironmentOutputs: (sessionId: string) =>
+    request<SessionEnvironmentOutputs>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/outputs`,
     ),
   getSessionEnvironmentFile: (
     sessionId: string,

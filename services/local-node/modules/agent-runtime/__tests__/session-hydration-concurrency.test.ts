@@ -73,3 +73,24 @@ it('does not let background list pages overwrite a session changed while loading
     expect(store.getSession(session.id).title).toBe('New title during cold loading');
   } finally { release(); await loading; list.mockRestore(); }
 });
+
+it("collapses a panel's summary reads into one snapshot and re-reads after a write", async () => {
+  const session = agentSessionRuntime.create({ projectId: "project-alpha", profileId: "synax", prompt: "fixture" });
+  const client = runtimeClient();
+  const snapshot = vi.spyOn(client, "uiSnapshot");
+  try {
+    // Opening a session fans out into many GETs; each used to re-read the summary.
+    await Promise.all([
+      store.hydrateSessionSummary(session.id),
+      store.hydrateSessionSummary(session.id),
+      store.hydrateSessionSummary(session.id),
+    ]);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    store.appendMessage({
+      id: "lease-message", sessionId: session.id, runId: "run", stepId: null,
+      role: "user", content: "x", metadata: {}, createdAt: new Date().toISOString(),
+    });
+    await store.hydrateSessionSummary(session.id);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  } finally { snapshot.mockRestore(); }
+});

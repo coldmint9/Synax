@@ -18,6 +18,7 @@ export interface AgentSessionChildInit {
 }
 
 export type AgentSessionParentMessage =
+  | { type: "stream:yield-request"; requested: boolean }
   | { type: "session:initialize" }
   | {
       type: "stream:start";
@@ -36,6 +37,7 @@ export type AgentSessionParentMessage =
   | { type: "context:compact"; requestId: string };
 
 export type AgentSessionChildMessage =
+  | { type: "stream:parked"; sessionId: string; streamId: string }
   | {
       type: "session:subtree-stopped";
       requestId: string;
@@ -82,6 +84,7 @@ export function isAgentSessionChildMessage(
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
+    type === "stream:parked" ||
     type === "session:subtree-stopped" ||
     type === "session:booted" ||
     type === "session:ready" ||
@@ -101,6 +104,7 @@ export function isAgentSessionParentMessage(
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
+    type === "stream:yield-request" ||
     type === "session:interrupt-subtree" ||
     type === "session:initialize" ||
     type === "stream:start" ||

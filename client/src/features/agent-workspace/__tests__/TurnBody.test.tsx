@@ -24,14 +24,14 @@ describe("TurnBody continuous process", () => {
       { type: "text", content: "Final answer" },
     ];
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="ordered" isWorking />);
-    const rows = [...container.querySelectorAll(".session-flow-content > .session-flow-entry")];
+    const rows = [...container.querySelectorAll(".session-flow-entry")];
     expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("First thought"), expect.stringContaining("command-one"),
+      expect.stringContaining("First thought"), expect.stringContaining("result-one"),
       expect.stringContaining("Progress update"), expect.stringContaining("Second thought"),
-      expect.stringContaining("command-two"), expect.stringContaining("Final answer"),
+      expect.stringContaining("result-two"), expect.stringContaining("Final answer"),
     ]);
-    expect(rows[1]).toHaveTextContent("result-one");
-    expect(rows[4]).toHaveTextContent("result-two");
+    // Folded records preview how they ended; the input stays behind a click.
+    expect(rows[1]).not.toHaveTextContent("command-one");
     expect(container.querySelectorAll("[data-activity-body]")).toHaveLength(0);
     expect(rows[5]).not.toHaveAttribute("data-process");
   });
@@ -51,7 +51,7 @@ describe("TurnBody continuous process", () => {
   it("keeps the process open as an answer arrives and the turn completes", () => {
     const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("live")] }} entryId="live" isWorking />);
     const header = container.querySelector(".session-process-trigger");
-    // A live row reads as the thought ticker; it no longer reports "进行中".
+    // A live row reads as the streaming activity line; it no longer reports "进行中".
     expect(header?.querySelector(".bui-status")).toBeNull();
     const turn = { ...emptyTurn, blocks: [tool("live"), { type: "text" as const, content: "Final answer" }] };
     rerender(<TurnBody turn={turn} entryId="live" isWorking />);
@@ -62,23 +62,34 @@ describe("TurnBody continuous process", () => {
     expect(header?.querySelector(".bui-status")).toHaveAttribute("data-state", "completed");
   });
 
-  it("ticks the tail of the newest thought while the turn is live", () => {
+  it("streams the tail of the newest thought into one fixed line", () => {
     const blocks: TurnContentBlock[] = [
       { type: "thinking", content: "First thought" },
-      tool("ticker"),
+      tool("stream"),
       { type: "thinking", content: "Older line\nNewest thought tail" },
     ];
-    const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="ticker" isWorking />);
+    const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="stream" isWorking />);
     const header = container.querySelector(".session-process-trigger")!;
-    expect(header.querySelector(".session-process-ticker")?.textContent).toBe(
-      "正在思考:「Newest thought tail」正在思考:「Newest thought tail」",
+    expect(header.querySelector(".session-process-line")?.textContent).toBe(
+      "正在思考:「Older line Newest thought tail」",
     );
     expect(header.querySelector(".bui-status")).toBeNull();
     expect(header.querySelector(".session-process-chevron")).toBeNull();
     // A finished row goes back to the call-count summary.
-    rerender(<TurnBody turn={{ ...emptyTurn, status: "completed", blocks }} entryId="ticker" />);
-    expect(header.querySelector(".session-process-ticker")).toBeNull();
+    rerender(<TurnBody turn={{ ...emptyTurn, status: "completed", blocks }} entryId="stream" />);
+    expect(header.querySelector(".session-process-line")).toBeNull();
     expect(header).toHaveTextContent("处理过程");
+  });
+
+  it("reports the newest call once a live turn stops thinking", () => {
+    const blocks: TurnContentBlock[] = [
+      { type: "thinking", content: "Planning the change" },
+      tool("call-line"),
+    ];
+    const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="call-line" isWorking />);
+    expect(container.querySelector(".session-process-line")?.textContent).toBe(
+      "最近调用:「执行命令 · command-call-line」",
+    );
   });
 
   it("restores manually expanded tool details after history remounts", () => {

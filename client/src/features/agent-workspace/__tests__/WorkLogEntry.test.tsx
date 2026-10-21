@@ -125,14 +125,17 @@ describe("WorkLogEntry", () => {
     ).not.toBeNull();
   });
 
-  it("keeps a failed tool's reason visible even when the history process is folded", () => {
+  it("keeps a failed tool's output out of the folded summary", () => {
     const failed = turn(9, "Earlier reasoning");
     const tool = failed.blocks.find((block) => block.type === "tool_call")!;
     if (tool.type === "tool_call") {
       tool.call = { ...tool.call, status: "failed", outputSummary: "Permission denied\nExit code: 1" };
     }
     const { container } = render(<WorkLogEntry entry={{ ...ENTRY, id: "failed-folded-log", turns: [failed] }} />);
-    expect(container.querySelector(".session-process-preview")).toHaveTextContent("Permission denied");
+    // The failure is reported by the row status; folding must not replay the
+    // error text as the preview.
+    expect(container.querySelector(".session-process-preview")).not.toHaveTextContent("Permission denied");
+    expect(container.querySelector(".bui-status")).toHaveAttribute("data-state", "failed");
     expect(container.querySelector(".bui-tool-details")).toBeNull();
   });
 });

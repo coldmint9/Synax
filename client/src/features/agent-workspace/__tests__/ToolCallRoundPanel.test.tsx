@@ -22,10 +22,12 @@ describe("ToolCallRoundPanel continuous rows", () => {
       { type: "thinking", content: "First thought" }, { type: "tool_call", call: toolCall("one") },
       { type: "thinking", content: "Second thought" }, { type: "tool_call", call: toolCall("two") },
     ]} />);
-    expect([...container.querySelector(".bui-tool-list")!.children].map((row) => row.textContent)).toEqual([
-      expect.stringContaining("First thought"), expect.stringContaining("one.ts"),
-      expect.stringContaining("Second thought"), expect.stringContaining("two.ts"),
+    const rows = [...container.querySelector(".bui-tool-list")!.children];
+    expect(rows.map((row) => row.className)).toEqual([
+      "bui-thinking", "bui-tool", "bui-thinking", "bui-tool",
     ]);
+    expect(rows[0]).toHaveTextContent("First thought");
+    expect(rows[2]).toHaveTextContent("Second thought");
     expect(container.querySelectorAll("[data-activity-body]")).toHaveLength(0);
     act(() => useShellStore.getState().setSessionShowThinking(false));
     expect(container.querySelectorAll(".bui-thinking")).toHaveLength(0);
@@ -39,11 +41,11 @@ describe("ToolCallRoundPanel continuous rows", () => {
     expect(container.querySelector(".bui-thinking")).toBe(row);
     expect(row?.querySelector("button")).toHaveAttribute("aria-expanded", "false");
   });
-  it("shows every parallel target and reveals its individual calls in place", () => {
+  it("shows every grouped target and reveals its individual calls in place", () => {
     const { container, getByRole } = render(<ToolCallRoundPanel toolBlocks={[
       { type: "tool_call_group", calls: [toolCall("one"), toolCall("two")] },
     ]} />);
-    expect(container).toHaveTextContent("2 个并行调用");
+    expect(container).toHaveTextContent("2 次调用");
     expect(container).toHaveTextContent("one.ts · two.ts");
     expect(container.querySelector(".bui-tool-batch-body")).toBeNull();
     fireEvent.click(getByRole("button"));

@@ -268,6 +268,9 @@ impl UiSnapshot {
             self.run = run.clone();
         }
         match kind {
+            "execution_status" if self.run["id"].as_str() == Some(run_id) => {
+                self.run["execution"] = chunk["execution"].clone();
+            }
             "step_started" => {
                 if chunk["step"]["id"].as_str().is_none()
                     || chunk["step"]["runId"].as_str() != Some(run_id)
@@ -311,7 +314,9 @@ impl UiSnapshot {
                 }
             }
             "tool_call" | "tool_result" if matching_step => {
-                self.live_chunks.push(chunk.clone());
+                if let Some(index) = self.live_chunks.iter().position(|existing| existing["type"] == chunk["type"] && existing["toolCall"]["id"] == chunk["toolCall"]["id"]) {
+                    self.live_chunks[index] = chunk.clone();
+                } else { self.live_chunks.push(chunk.clone()); }
             }
             "message"
                 if chunk["message"]["role"] == "assistant"

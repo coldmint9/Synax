@@ -33,6 +33,10 @@ export type RustAgentLoopProviderRequest = {
 };
 
 export type RustAgentLoopEvent = {
+  phase?: "queued_resources" | "waiting_model";
+  resource?: string;
+  queuedAt?: number;
+  deadline?: number;
   type: string;
   loopId?: string;
   sequence?: number;
@@ -130,6 +134,7 @@ export async function* streamRustAgentLoop(
   request: RustAgentLoopProviderRequest,
   signal?: AbortSignal,
   onStarted?: (loopId: string) => void | Promise<void>,
+  acknowledgeThrough?: () => number,
 ): AsyncGenerator<RustAgentLoopEvent> {
   const input = { ...request, requestId: request.requestId ?? randomUUID() };
   let loopId = request.loopId;
@@ -144,10 +149,27 @@ export async function* streamRustAgentLoop(
   await onStarted?.(loopId);
   const ownsExecution = !request.loopId || request.resumeLoop;
   let cursor = request.after ?? 0;
+  let acknowledged = 0;
+  let handledBytes = 0;
+  let lastAckAt = Date.now();
+  const acknowledge = async () => {
+    const through = Math.min(cursor, acknowledgeThrough?.() ?? cursor);
+    if (through <= acknowledged) return;
+    const response = await bridgeRequest("/agent-loop/ack", {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({ loopId, through, executionContext: request.executionContext }),
+    }, signal);
+    if (!response.ok) throw await bridgeError(response, "Rust event acknowledgement failed");
+    acknowledged = through;
+    handledBytes = 0;
+    lastAckAt = Date.now();
+  };
   let recoveryDeadline: number | undefined;
   for (;;) {
     signal?.throwIfAborted();
     if (ownsExecution) await resumeLoop(input, loopId, signal);
+    // A permission/input resume supplies the last event handled by the host.
+    await acknowledge();
     const response = await bridgeRequest(`/agent-loop/events?loopId=${encodeURIComponent(loopId)}&after=${cursor}`, { headers: authHeaders() }, signal);
     if (!response.ok || !response.body) throw await bridgeError(response, "Rust agent loop event stream failed");
     const reader = response.body.getReader();
@@ -170,8 +192,13 @@ export async function* streamRustAgentLoop(
           if (event.sequence! <= cursor) continue;
           if (event.sequence !== cursor + 1) throw new Error("Rust event replay has a cursor gap.");
           yield event;
+          // Only resuming this generator proves the consumer handled the event.
+          // A pipelined consumer supplies a fence for in-flight tool executions.
           cursor = event.sequence;
+          handledBytes += Buffer.byteLength(line);
           recoveryDeadline = undefined;
+          if (cursor - acknowledged >= 32 || handledBytes >= 64 * 1024 || Date.now() - lastAckAt >= 250)
+            await acknowledge();
           if (["done", "cancelled", "error"].includes(event.type)) return;
         }
         if (next.done) { disconnected = true; break; }
@@ -179,6 +206,10 @@ export async function* streamRustAgentLoop(
     } finally {
       await reader.cancel().catch(() => undefined);
       reader.releaseLock();
+      // A consumer may return at a permission or terminal event. Release only
+      // the preceding, completed deliveries; the supplied resume cursor will
+      // acknowledge the boundary event when that consumer returns.
+      if (!signal?.aborted) await acknowledge();
     }
     if (!disconnected) throw new Error("Rust observation ended unexpectedly.");
     recoveryDeadline ??= Date.now() + 45_000;

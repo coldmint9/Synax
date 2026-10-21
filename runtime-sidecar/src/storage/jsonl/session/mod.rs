@@ -13,7 +13,7 @@ pub mod sync;
 mod tests;
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
@@ -105,7 +105,7 @@ pub struct SessionActor {
     pub active_runs: std::collections::HashMap<String, serde_json::Value>,
     pub activated_runs: std::collections::HashSet<String>,
     /// The store-owned cell this actor lives in.
-    pub cell: Option<Arc<SessionHandleCell>>,
+    pub cell: Option<Weak<SessionHandleCell>>,
     pub terminated_runs: std::collections::HashSet<String>,
 }
 

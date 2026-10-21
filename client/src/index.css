@@ -3706,13 +3706,13 @@ input[type="radio"] {
 }
 
 /* Agent conversation typography. It follows the global interface font
-   setting (default 15px); the global #app scale keeps all UI text in sync. */
+   setting (default 14px); the global #app scale keeps all UI text in sync. */
 :root {
-  --agent-chat-font-size: 15px;
+  --agent-chat-font-size: 14px;
 }
 .agent-conversation-copy {
   font-family: var(--font-interface);
-  font-size: var(--agent-chat-font-size, 15px) !important;
+  font-size: var(--agent-chat-font-size, 14px) !important;
   font-weight: 450;
   letter-spacing: -0.012em;
   font-optical-sizing: auto;
@@ -3970,7 +3970,7 @@ input[type="radio"] {
     0 1px 2px hsl(var(--foreground-hsl) / 0.06),
     0 8px 20px -8px hsl(var(--foreground-hsl) / 0.22);
   color: hsl(var(--foreground-hsl));
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
@@ -4032,13 +4032,83 @@ input[type="radio"] {
   width: 100%;
   padding: 6px 8px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 10px;
   color: hsl(var(--foreground-hsl));
   text-align: left;
   cursor: pointer;
 }
 .session-file-island-row:hover {
   background: hsl(var(--secondary) / 0.7);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Jump-to-latest button
+   Sits centered directly above the composer and fades in whenever the reader
+   scrolls out of the transcript's bottom tenth. It is mounted for the whole
+   session and driven by data-visible, so appearing costs no layout work and the
+   hidden state never swallows a click meant for the transcript underneath.
+   ─────────────────────────────────────────────────────────────────────────── */
+.session-scroll-to-bottom {
+  position: absolute;
+  left: 50%;
+  z-index: 24;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid hsl(var(--border-hsl) / 0.75);
+  border-radius: 999px;
+  background: hsl(var(--card) / 0.82);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.7) inset,
+    0 2px 6px hsl(var(--foreground-hsl) / 0.08),
+    0 10px 24px -10px hsl(var(--foreground-hsl) / 0.28);
+  color: hsl(var(--foreground-hsl));
+  cursor: pointer;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 6px) scale(0.94);
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.22, 0.9, 0.28, 1),
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.dark .session-scroll-to-bottom {
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.08) inset,
+    0 2px 6px hsl(0 0% 0% / 0.45),
+    0 12px 28px -12px hsl(0 0% 0% / 0.6);
+}
+.session-scroll-to-bottom[data-visible="true"] {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+.session-scroll-to-bottom:hover {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border-hsl));
+}
+.session-scroll-to-bottom:active {
+  transform: translate(-50%, 0) scale(0.94);
+}
+.session-scroll-to-bottom:focus-visible {
+  outline: 2px solid hsl(var(--primary) / 0.5);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-scroll-to-bottom {
+    transition: none;
+  }
+  /* The hidden state still needs the offset removed, since scale and translate
+     are the only thing the transition was carrying. */
+  .session-scroll-to-bottom[data-visible="true"] {
+    transform: translate(-50%, 0);
+  }
 }
 
 .file-type-icon {
@@ -4060,7 +4130,7 @@ input[type="radio"] {
 
 .session-file-island-status {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 9px;
   color: hsl(var(--muted-foreground));
 }
 .session-file-island-path {

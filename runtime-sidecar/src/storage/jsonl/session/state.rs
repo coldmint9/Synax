@@ -10,6 +10,7 @@ use crate::storage::jsonl::record::{EventRecord, LineWriter, ReceiptRecord, Reco
 use crate::storage::jsonl::segment::Projection;
 use crate::storage::jsonl::session::{CommittedEvent, StoredReceipt, push_event};
 use crate::storage::jsonl::write::{Kind, Slot};
+use std::sync::Weak;
 
 use super::SessionActor;
 
@@ -265,7 +266,11 @@ impl SessionActor {
 
     /// The handle this actor belongs to.
     pub fn this(&self) -> super::SessionHandle {
-        let cell = self.cell.clone().expect("an actor is attached before it serves");
+        let cell = self
+            .cell
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .expect("the owning session handle must remain alive while an actor serves");
         super::SessionHandle {
             id: self.id.clone(),
             actor: cell.actor.clone(),

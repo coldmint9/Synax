@@ -97,6 +97,8 @@ async fn run(logs: &mut logging::LoggingGuard) -> Result<(), Box<dyn std::error:
     let store = Arc::new(jsonl::store::JsonlStore::open(&store_root)?);
     let hot = Arc::new(jsonl::hot::HotOps::new(store.clone()));
     let history = Arc::new(jsonl::history::HistoryOps::new(store));
+    let history_for_sweep = history.clone();
+    let hot_for_sweep = hot.clone();
     let router = SessionShardRouter::with_store(16, 1024, hot.clone())?;
     let context = TransportContext {
         workspace_index: workspace_index::WorkspaceIndex::new(),
@@ -168,7 +170,7 @@ async fn run(logs: &mut logging::LoggingGuard) -> Result<(), Box<dyn std::error:
     });
 
     let mut shutdown_signal = shutdown_rx.clone();
-    let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(30));
+    let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(5));
     // Keep signal/watch futures alive across logging ticks.
     let ctrl_c = tokio::signal::ctrl_c();
     let terminate = terminate_signal();
@@ -180,7 +182,14 @@ async fn run(logs: &mut logging::LoggingGuard) -> Result<(), Box<dyn std::error:
             result = &mut terminate => { result?; break "sigterm"; },
             _ = &mut parent => break "parent_closed",
             result = shutdown_signal.changed() => { result?; break "control"; },
-            _ = health_tick.tick() => logs.report_dropped(),
+            _ = health_tick.tick() => {
+                logs.report_dropped();
+                let hot_evicted = hot_for_sweep.store().evict_idle();
+                let history_evicted = history_for_sweep.evict_idle();
+                if hot_evicted != 0 || history_evicted != 0 {
+                    tracing::debug!(event = "storage.idle_evicted", hot = hot_evicted, history = history_evicted, "Released idle session caches");
+                }
+            },
         }
     };
     tracing::Span::current().record("stage", "shutdown");

@@ -1,3 +1,8 @@
+import { toolEventStream, WORKER_PORTABLE_TOOLS } from "./tool-event-stream.js";
+import { hasBackgroundProcesses } from "../process-ownership.js";
+import { getBrowserSession } from "../tools/browser/browser-manager.js";
+import { resolvePermissionDecision } from "../permission-policy.js";
+import type { RustAgentLoopEvent } from "../rust-agent-loop-client.js";
 import * as z from "zod/v4";
 import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
 import { resolveGatewaySelection } from "../../../infrastructure/llm-runtime/gateway.js";
@@ -45,19 +50,22 @@ export class RustNativeBackend implements BackendAdapter {
   private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[] }>();
 
   async *stream(sessionId: string, mode: string, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
+    const observation = new AbortController();
+    const workSignal = signal ? AbortSignal.any([signal, observation.signal]) : observation.signal;
     await store.hydrateSession(sessionId);
     await businessStore.refresh();
-    const resumed = mode === "resume";
+    const resumed = mode === "resume" || input.resumeExecution === true;
+    let completedWorkerStep = false;
     if (resumed) {
       const activeId = store.getSession(sessionId).activeRunId;
       const loopId = activeId ? store.getRun(activeId).metadata.rustLoopId : undefined;
       if (typeof loopId !== "string") throw new Error("RUN_INTERRUPTED: previous execution is unavailable.");
       await assertRustAgentLoopAvailable(loopId, input.executionContext, signal);
     }
-    const readyInteraction = resumed ? interactionService.list(sessionId).find(item =>
+    const readyInteraction = resumed && !input.resumeExecution ? interactionService.list(sessionId).find(item =>
       item.runId === store.getSession(sessionId).activeRunId && ["answered", "cancelled"].includes(item.status) && item.response && !item.consumedAt) : undefined;
     const resolvedInteraction = readyInteraction ? await interactionService.consumeAuthoritative(sessionId) : null;
-    const pending = resumed && !resolvedInteraction ? await loopResumeService.resolvePendingRun(sessionId) : null;
+    const pending = resumed && !input.resumeExecution && !resolvedInteraction ? await loopResumeService.resolvePendingRun(sessionId) : null;
     const session = store.getSession(sessionId);
     if (resumed && !session.activeRunId) throw new Error("Session has no active Rust run to resume.");
     const prompt = input.message?.trim() || session.prompt;
@@ -158,6 +166,7 @@ export class RustNativeBackend implements BackendAdapter {
           executionContext: input.executionContext,
           isError: ["failed", "denied", "cancelled"].includes(exec.record.status), signal });
       };
+      const delivery = { through: this.loopSequences.get(run.id) ?? Number(run.metadata.rustLoopSequence ?? 0) };
       const events = streamRustAgentLoop({
         requestId: `native-loop:${run.id}`,
         loopId: resumed ? run.metadata.rustLoopId as string : undefined,
@@ -173,11 +182,11 @@ export class RustNativeBackend implements BackendAdapter {
         headers: selection.config.options?.headers as Record<string, string> | undefined,
         model: selection.modelId, prompt: promptMessages, tools, maxOutputTokens: outputReserve,
         cachePolicy: { adapter: selection.provider.npm, mode: selection.config.options?.promptCaching, chatBreakpoints: selection.config.options?.chatCacheBreakpoints, sessionId, projectId: session.projectId },
-      }, signal, async loopId => {
+      }, workSignal, async loopId => {
         this.activeLoops.set(sessionId, loopId);
         run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopId: loopId } });
         await store.flushSession(sessionId);
-      });
+      }, () => delivery.through);
       if (resolvedInteraction) {
         const call = store.getToolCall(sessionId, resolvedInteraction.toolCallId);
         if (!call.modelToolCallId) throw new Error("Human input has no provider call identity.");
@@ -194,9 +203,94 @@ export class RustNativeBackend implements BackendAdapter {
         yield { type: "tool_result", runId: run.id, stepId: pending.step.id, toolCall: exec.record };
         await resultFor(exec, call.modelToolCallId, run.metadata.rustLoopId as string);
       }
-      for await (const event of events) {
-        if (event.type === "context-request") {
+      const executeRequestedTool = async (event: RustAgentLoopEvent, emit: (chunk: AgentRunStreamChunk) => void) => {
+          if (!step || !event.loopId || !event.toolCallId) throw new Error("Invalid Rust tool request.");
+          // The host executes one requested operation. Rust owns the ordered
+          // program and its result receipts; never reuse a Node batch loop.
+          if (store.getRun(run.id).execution?.phase !== "executing_tool") {
+            run = store.updateRun(run.id, { execution: { phase: "executing_tool", startedAt: nowIso() } });
+            emit({ type: "execution_status", runId: run.id, execution: run.execution! });
+          }
+          const previous = store.listToolCalls(sessionId).find(call => call.runId === run.id && call.modelToolCallId === event.toolCallId);
+          let exec: ExecuteToolResult;
+          if (previous) {
+            if (previous.status === "running") throw new Error("Tool execution has no terminal receipt; inspect its effects before recovery.");
+            exec = { record: previous, permission: previous.permissionDecisionId
+              ? store.listPermissions(sessionId).find(permission => permission.id === previous.permissionDecisionId) : undefined };
+          } else {
+            exec = await toolRegistry.execute(sessionId, event.toolName ?? "", event.input ?? {}, {
+              runId: run.id, stepId: step.id, modelToolCallId: event.toolCallId,
+              resumeToken: `${run.id}:${step.id}:${event.toolCallId}`, abortSignal: workSignal,
+              onProgress: toolCall => emit({ type: "tool_call", runId: run.id, stepId: toolCall.stepId!, toolCall }),
+            });
+          }
+          if (exec.interactionId) {
+            waiting = true;
+            this.loopSequences.set(run.id, Math.max(this.loopSequences.get(run.id) ?? 0, event.sequence ?? 0));
+            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
+            emit({ type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record });
+            const requested = store.listEvents(sessionId).find(item => item.type === "interaction_requested" && item.payload?.interactionId === exec.interactionId);
+            if (requested) emit({ type: "event", event: requested });
+            emit({ type: "done", sessionId, runId: run.id });
+            return;
+          }
+          if (exec.permission?.action === "ask") {
+            run = store.updateRun(run.id, { status: "waiting_permission", stopReason: exec.permission.reason });
+            store.updateRunStep(step.id, { status: "waiting_permission", finishReason: "permission_required" });
+            store.updateSession(sessionId, { status: "waiting_permission", activeRunId: run.id,
+              pendingResumeToken: exec.permission.resumeToken, blockedReason: exec.permission.reason, updatedAt: nowIso() });
+            this.loopSequences.set(run.id, Math.max(this.loopSequences.get(run.id) ?? 0, event.sequence ?? 0));
+            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
+            waiting = true;
+            emit({ type: "permission_requested", runId: run.id, stepId: step.id, permission: exec.permission, toolCall: exec.record });
+            return;
+          }
+          emit({ type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record });
+          emit({ type: "tool_result", runId: run.id, stepId: step.id, toolCall: exec.record });
+          await resultFor(exec, event.toolCallId, event.loopId);
+
+        this.loopSequences.set(run.id, Math.max(this.loopSequences.get(run.id) ?? 0, event.sequence ?? 0));
+      };
+      for await (const item of toolEventStream(events, {
+        progress: delivery, execute: executeRequestedTool, shouldStop: () => waiting, abort: () => observation.abort(),
+        canParallel: event => {
+          // An approval checkpoint is exclusive, including for read tools.
+          // Execution still performs the authoritative permission review again.
+          try {
+            const tool = toolRegistry.getForSession(sessionId, event.toolName ?? "");
+            const current = store.getSession(sessionId);
+            return resolvePermissionDecision({ sessionId, category: tool.category, internalGate: tool.internalGate,
+              pattern: tool.getPattern?.(event.input) ?? tool.id, rules: current.permissionRules,
+              isSubSession: Boolean(current.parentSessionId),
+              metadata: { toolId: tool.id, args: event.input, mutability: tool.mutability },
+            }).action === "allow";
+          } catch { return false; }
+        },
+      })) {
+        if ("chunk" in item) { yield item.chunk; continue; }
+        const event = item.event;
+        if (event.type === "execution-status" && event.phase) {
+          run = store.updateRun(run.id, { execution: { phase: event.phase, resource: event.resource,
+            queuedAt: event.queuedAt ? new Date(event.queuedAt).toISOString() : undefined,
+            startedAt: event.startedAt ? new Date(event.startedAt).toISOString() : undefined,
+            deadline: event.deadline ? new Date(event.deadline).toISOString() : undefined } });
+          yield { type: "execution_status", runId: run.id, execution: run.execution! };
+        } else if (event.type === "context-request") {
           if (!event.loopId || !event.contextId || !event.step) throw new Error("Invalid Rust context request.");
+          // Rust is parked at its context barrier: the previous tool receipts
+          // are durable and no new provider request has started. Leave this
+          // context event unacknowledged for the replacement worker to handle.
+          if (completedWorkerStep && input.shouldYieldWorker?.() && this.activeLoops.size <= 1 && !getBrowserSession(sessionId) &&
+              store.listToolCalls(sessionId).filter(call => call.runId === run.id).every(call => WORKER_PORTABLE_TOOLS.has(call.toolId)) &&
+              !(await hasBackgroundProcesses(sessionId, true))) {
+            waiting = true;
+            const through = Math.max(0, (event.sequence ?? 1) - 1);
+            this.loopSequences.set(run.id, through);
+            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: through } });
+            await store.flushSession(sessionId);
+            yield { type: "worker_yield", runId: run.id };
+            return;
+          }
           step = store.listRunSteps(run.id).find(item => item.index === event.step) ?? store.appendRunStep({
             id: makeRuntimeId("stp"), sessionId, runId: run.id, index: event.step, status: "running",
             model: selection.modelId, startedAt: nowIso(), completedAt: null, finishReason: null, metadata: { engine: "rust" },
@@ -262,6 +356,10 @@ export class RustNativeBackend implements BackendAdapter {
           } };
         } else if (event.type === "text-delta" || event.type === "reasoning-delta") {
           if (!step) throw new Error("Rust output has no step.");
+          if (store.getRun(run.id).execution?.phase !== "generating") {
+            run = store.updateRun(run.id, { execution: { phase: "generating", lastProgressAt: nowIso() } });
+            yield { type: "execution_status", runId: run.id, execution: run.execution! };
+          }
           if (event.type === "text-delta") text += event.delta ?? ""; else thought += event.delta ?? "";
           const reportedTokens = event.type === "text-delta" ? event.outputTokens : event.thinkingTokens;
           // Older sidecars/checkpoints may not carry live token telemetry.
@@ -284,46 +382,6 @@ export class RustNativeBackend implements BackendAdapter {
               content: text, metadata: { engine: "rust", thought, rustMessage: event.message }, createdAt: nowIso() });
             yield { type: "message", message: assistant };
           }
-        } else if (event.type === "tool-call") {
-          if (!step || !event.loopId || !event.toolCallId) throw new Error("Invalid Rust tool request.");
-          // The host executes one requested operation. Rust owns the ordered
-          // program and its result receipts; never reuse a Node batch loop.
-          const previous = store.listToolCalls(sessionId).find(call => call.runId === run.id && call.modelToolCallId === event.toolCallId);
-          let exec: ExecuteToolResult;
-          if (previous) {
-            if (previous.status === "running") throw new Error("Tool execution has no terminal receipt; inspect its effects before recovery.");
-            exec = { record: previous, permission: previous.permissionDecisionId
-              ? store.listPermissions(sessionId).find(permission => permission.id === previous.permissionDecisionId) : undefined };
-          } else {
-            exec = await toolRegistry.execute(sessionId, event.toolName ?? "", event.input ?? {}, {
-              runId: run.id, stepId: step.id, modelToolCallId: event.toolCallId,
-              resumeToken: `${run.id}:${step.id}:${event.toolCallId}`, abortSignal: signal,
-            });
-          }
-          if (exec.interactionId) {
-            waiting = true;
-            this.loopSequences.set(run.id, event.sequence ?? 0);
-            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
-            yield { type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record };
-            const requested = store.listEvents(sessionId).find(item => item.type === "interaction_requested" && item.payload?.interactionId === exec.interactionId);
-            if (requested) yield { type: "event", event: requested };
-            yield { type: "done", sessionId, runId: run.id };
-            return;
-          }
-          if (exec.permission?.action === "ask") {
-            run = store.updateRun(run.id, { status: "waiting_permission", stopReason: exec.permission.reason });
-            store.updateRunStep(step.id, { status: "waiting_permission", finishReason: "permission_required" });
-            store.updateSession(sessionId, { status: "waiting_permission", activeRunId: run.id,
-              pendingResumeToken: exec.permission.resumeToken, blockedReason: exec.permission.reason, updatedAt: nowIso() });
-            this.loopSequences.set(run.id, event.sequence ?? 0);
-            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
-            waiting = true;
-            yield { type: "permission_requested", runId: run.id, stepId: step.id, permission: exec.permission, toolCall: exec.record };
-            return;
-          }
-          yield { type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record };
-          yield { type: "tool_result", runId: run.id, stepId: step.id, toolCall: exec.record };
-          await resultFor(exec, event.toolCallId, event.loopId);
         } else if (event.type === "tool-result") {
           if (!step || !event.toolCallId) throw new Error("Rust tool result has no step or identity.");
           const id = `msg_tool_${run.id}_${event.toolCallId}`;
@@ -338,6 +396,7 @@ export class RustNativeBackend implements BackendAdapter {
         } else if (event.type === "finish") {
           lastFinish = event.finishReason ?? "stop";
         } else if (event.type === "step-completed") {
+          completedWorkerStep = true;
           if (step) {
             step = store.updateRunStep(step.id, { status: "completed", completedAt: nowIso(), finishReason: lastFinish });
             if (!step.metadata.rustAfterHook) {
@@ -359,6 +418,7 @@ export class RustNativeBackend implements BackendAdapter {
         this.loopSequences.set(run.id, event.sequence ?? 0);
         run = store.getRun(run.id);
       }
+      if (waiting) return;
       if (!terminal) throw new Error("Rust loop ended without a terminal event.");
       if (step) store.updateRunStep(step.id, { status: "completed", completedAt: nowIso(), finishReason: lastFinish,
         metadata: { ...store.getRunStep(step.id).metadata, thought } });
@@ -390,6 +450,7 @@ export class RustNativeBackend implements BackendAdapter {
       yield interrupted ? { type: "run_completed", run: failed } : { type: "run_failed", run: failed, error: message };
       yield { type: "done", sessionId, runId: run.id };
     } finally {
+      observation.abort();
       if (!waiting) { this.activeLoops.delete(sessionId); this.preparedContexts.delete(run.id); this.loopSequences.delete(run.id); }
     }
   }

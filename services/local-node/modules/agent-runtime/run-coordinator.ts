@@ -432,7 +432,6 @@ export class RunCoordinator {
       if ("run" in chunk && chunk.run)
         agentRuntimeStore.acceptRunProjection(chunk.run);
       writer.write(chunk);
-      await writer.settled();
     };
     const flush = async () => {
       writer.flush();

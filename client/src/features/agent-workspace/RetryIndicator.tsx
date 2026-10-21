@@ -68,7 +68,7 @@ export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
               : `${attempt} · Retrying in ${seconds}s`;
   const Icon = retry.reason === "network" ? WifiOff : RotateCw;
   return (
-    <div data-testid="retry-indicator" className="flex items-start gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-foreground">
+    <div data-testid="retry-indicator" className="flex items-start gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-[11px] text-foreground">
       <Icon size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
       <div className="min-w-0">
         <div role="status" aria-live="polite" aria-atomic="true" className="font-medium">

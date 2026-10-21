@@ -28,6 +28,22 @@ fn opening_the_store_does_not_replay_unrelated_sessions() {
     std::fs::remove_dir_all(path).unwrap();
 }
 
+#[test]
+fn idle_eviction_releases_the_actor_and_handle_cell() {
+    let path = std::env::temp_dir().join(format!("synax-idle-eviction-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let handle = store.session("idle").unwrap();
+    let actor = Arc::downgrade(&handle.actor);
+    let cell = Arc::downgrade(handle.cell());
+    drop(handle);
+    assert_eq!(store.evict_idle(), 1);
+    assert_eq!(actor.strong_count(), 0);
+    assert_eq!(cell.strong_count(), 0);
+    assert!(actor.upgrade().is_none());
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
 #[tokio::test]
 async fn index_scan_reuses_loaded_handles_and_publishes_complete_pages_after_reopen() {
     let path = std::env::temp_dir().join(format!("synax-lazy-index-{}", uuid::Uuid::new_v4()));

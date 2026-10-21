@@ -4,6 +4,7 @@ import type { ToolCallView, TurnContentBlock } from "./buildInterleavedTurns";
 export function toolCallRecordToView(tc: ToolCallRecord): ToolCallView {
   return {
     id: tc.id,
+    execution: tc.execution,
     contentParts: tc.contentParts,
     ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
     toolId: tc.toolId,
@@ -11,7 +12,7 @@ export function toolCallRecordToView(tc: ToolCallRecord): ToolCallView {
     outputSummary: tc.outputSummary ?? tc.error ?? "",
     status: tc.status,
     category: tc.category,
-    duration: tc.endedAt ? formatToolDuration(tc.startedAt, tc.endedAt) : null,
+    duration: tc.endedAt ? formatToolDuration(tc.execution?.startedAt ?? tc.startedAt, tc.endedAt) : null,
     mutability: tc.mutability,
   };
 }

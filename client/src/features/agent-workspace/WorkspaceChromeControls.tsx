@@ -12,7 +12,7 @@ import { useLocale } from "../../shared/hooks/useLocale";
 import { useContextMenu } from "../../shared/ui/context-menu/ContextMenuProvider";
 import { fileContextEntries } from "./workspaceContextMenus";
 import { handleError } from "../../shared/lib/errors";
-import type { SessionEnvironment } from "../../adapters/transport/agentRuntime";
+import type { WorkspaceEnvironmentView } from "./workspaceEnvironmentView";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { getProjectThemeColor } from "./projectThemeColor";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
@@ -39,7 +39,7 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
   active: boolean;
   sessionId: string;
   activeRef: React.Ref<HTMLDivElement>;
-  environment: SessionEnvironment | null;
+  environment: WorkspaceEnvironmentView | null;
   activate: () => void;
   close: () => void;
   closeOthers: () => void;

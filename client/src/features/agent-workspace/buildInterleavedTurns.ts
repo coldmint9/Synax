@@ -10,6 +10,7 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 
 export interface ToolCallView {
+  execution?: ToolCallRecord["execution"];
   outputRef?: unknown;
   contentParts?: RuntimeContentPart[];
   id: string;
@@ -255,12 +256,13 @@ export function buildInterleavedTurns(
             contentParts: tc.contentParts,
             ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
             toolId: tc.toolId,
+            execution: tc.execution,
             inputSummary: tc.inputSummary ?? "",
             outputSummary: tc.outputSummary ?? tc.error ?? "",
             status: tc.status,
             category: tc.category,
             duration: tc.endedAt
-              ? computeToolDuration(tc.startedAt, tc.endedAt)
+              ? computeToolDuration(tc.execution?.startedAt ?? tc.startedAt, tc.endedAt)
               : null,
             mutability: tc.mutability,
           },

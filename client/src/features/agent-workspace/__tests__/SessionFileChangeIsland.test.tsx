@@ -6,19 +6,22 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import type {
-  SessionEnvironment,
-  SessionEnvironmentFile,
-} from "../../../adapters/transport/agentRuntime";
+import type { SessionEnvironmentFile } from "../../../adapters/transport/agentRuntime";
+import type { WorkspaceEnvironmentView } from "../workspaceEnvironmentView";
 
-const getSessionEnvironment = vi.fn();
 const openWorkspaceDiff = vi.fn();
+const environmentState = vi.hoisted(() => ({
+  sessionId: "sess-1" as string | null,
+  environment: null as WorkspaceEnvironmentView | null,
+}));
 
-vi.mock("../../../adapters/transport/agentRuntime", () => ({
-  agentRuntimeApi: {
-    getSessionEnvironment: (...args: unknown[]) =>
-      getSessionEnvironment(...args),
-  },
+vi.mock("../SessionEnvironmentContext", () => ({
+  useSessionWorkspaceEnvironment: () => ({
+    sessionId: environmentState.sessionId,
+    environment: environmentState.environment,
+    loading: false,
+    reload: async () => undefined,
+  }),
 }));
 
 vi.mock("../state/sessionWorkspaceStore", () => ({
@@ -43,11 +46,15 @@ function file(
 
 function environment(
   agentChangedFiles: SessionEnvironmentFile[],
-): SessionEnvironment {
+): WorkspaceEnvironmentView {
   return {
     sessionId: "sess-1",
     projectId: "p1",
     workspacePath: "/tmp/ws",
+    rootId: "p1",
+    name: "Project",
+    role: "primary",
+    status: "ready",
     branch: "main",
     headCommitSha: "abc",
     dirty: agentChangedFiles.length > 0,
@@ -55,16 +62,16 @@ function environment(
     deletions: agentChangedFiles.reduce((sum, f) => sum + f.deletions, 0),
     changedFiles: agentChangedFiles,
     agentChangedFiles,
-    inputFiles: [],
+    outputFiles: [],
+    inputSources: [],
+    repositories: [],
     subagents: [],
     refreshedAt: "2026-01-01T00:00:00Z",
   };
 }
 
 async function renderIsland() {
-  const utils = render(
-    <SessionFileChangeIsland sessionId="sess-1" isRunning={false} />,
-  );
+  const utils = render(<SessionFileChangeIsland sessionId="sess-1" />);
   await act(async () => {
     await Promise.resolve();
   });
@@ -73,34 +80,32 @@ async function renderIsland() {
 
 describe("SessionFileChangeIsland", () => {
   beforeEach(() => {
-    getSessionEnvironment.mockReset();
     openWorkspaceDiff.mockReset();
+    environmentState.sessionId = "sess-1";
+    environmentState.environment = null;
   });
 
   afterEach(() => {
     cleanup();
-    vi.useRealTimers();
   });
 
   it("renders nothing while the agent has not written anything", async () => {
-    getSessionEnvironment.mockResolvedValue(environment([]));
+    environmentState.environment = environment([]);
     await renderIsland();
 
     expect(document.querySelector(".session-file-island-pill")).toBeNull();
   });
 
   it("summarises the session files with added and removed line counts", async () => {
-    getSessionEnvironment.mockResolvedValue(
-      environment([
-        file({ path: "src/app.ts", additions: 6, deletions: 1 }),
-        file({
-          path: "src/new.ts",
-          status: "added",
-          additions: 12,
-          deletions: 0,
-        }),
-      ]),
-    );
+    environmentState.environment = environment([
+      file({ path: "src/app.ts", additions: 6, deletions: 1 }),
+      file({
+        path: "src/new.ts",
+        status: "added",
+        additions: 12,
+        deletions: 0,
+      }),
+    ]);
     await renderIsland();
 
     const pill = document.querySelector(".session-file-island-pill");
@@ -111,9 +116,7 @@ describe("SessionFileChangeIsland", () => {
   });
 
   it("lists the changed files and opens a diff tab when one is picked", async () => {
-    getSessionEnvironment.mockResolvedValue(
-      environment([file({ path: "src/app.ts" })]),
-    );
+    environmentState.environment = environment([file({ path: "src/app.ts" })]);
     await renderIsland();
 
     fireEvent.click(screen.getByRole("button", { name: "1 个文件已更改" }));
@@ -128,32 +131,11 @@ describe("SessionFileChangeIsland", () => {
     expect(openWorkspaceDiff).toHaveBeenCalledWith("sess-1", "src/app.ts");
   });
 
-  it("stays visible after a run finishes and hides once changes are cleared", async () => {
-    vi.useFakeTimers();
-    getSessionEnvironment.mockResolvedValue(environment([file()]));
-    const view = render(
-      <SessionFileChangeIsland sessionId="sess-1" isRunning />,
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const pill = screen.getByRole("button", { name: "1 个文件已更改" });
+  it("does not paint another session's changes", async () => {
+    environmentState.environment = environment([file()]);
+    environmentState.sessionId = "another-session";
+    await renderIsland();
 
-    view.rerender(
-      <SessionFileChangeIsland sessionId="sess-1" isRunning={false} />,
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
-    });
-    expect(pill).toBeVisible();
-
-    getSessionEnvironment.mockResolvedValue(environment([]));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
-    });
-    expect(screen.queryByRole("button", { name: "1 个文件已更改" })).toBeNull();
+    expect(document.querySelector(".session-file-island-pill")).toBeNull();
   });
 });

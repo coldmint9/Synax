@@ -27,6 +27,7 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
   const status = aggregateToolStatus(calls);
   const targets = useMemo(() => [...new Set(calls.map((call) => toolCallPresentation(call, locale).target).filter(Boolean))].join(" · "), [calls, locale]);
   const failed = calls.find((call) => call.status === "failed" || call.status === "denied");
+  const failurePreview = failed?.outputSummary ? activityPreview(failed.outputSummary, 180) : "";
 
   if (calls.length === 1) return <ToolCallSummaryLine call={calls[0]} rememberKey={rememberKey} />;
 
@@ -44,10 +45,14 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
         </span>
         <span className="bui-tool-copy">
           <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
-          {targets && <span className="bui-tool-target" title={targets}>{targets}</span>}
+          {!expanded && failurePreview ? (
+            <span className="bui-tool-result" data-error="true" title={failurePreview}>{failurePreview}</span>
+          ) : targets ? (
+            <span className="bui-tool-target" title={targets}>{targets}</span>
+          ) : null}
         </span>
         <span className="bui-tool-meta">
-          <span className="bui-tool-count">{locale === "zh" ? `${calls.length} 个并行调用` : `${calls.length} parallel calls`}</span>
+          <span className="bui-tool-count">{locale === "zh" ? `${calls.length} 次调用` : `${calls.length} calls`}</span>
           <ActivityStatus status={status} />
           {expanded ? (
             <ChevronDown size={11} className="bui-chevron" aria-hidden="true" />
@@ -60,7 +65,6 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
           )}
         </span>
       </HeadlessButton>
-      {!expanded && failed?.outputSummary && <div className="bui-tool-result" data-error="true">{activityPreview(failed.outputSummary, 180)}</div>}
       {expanded && (
         <div id={detailsId} className="bui-tool-batch-body">
           {calls.map((call) => (

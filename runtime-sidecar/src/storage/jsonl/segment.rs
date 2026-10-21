@@ -431,6 +431,9 @@ impl Projection {
             self.run = run.clone();
         }
         match kind {
+            "execution_status" if self.run.get("id").and_then(PValue::as_str) == Some(run_id) => {
+                if let Some(execution) = chunk.get("execution") { self.run.set("execution", execution.clone()); }
+            }
             "step_started" => {
                 let step_id = chunk
                     .get("step")
@@ -494,7 +497,11 @@ impl Projection {
                 }
             }
             "tool_call" | "tool_result" if matching_step => {
-                self.live_chunks.push_back(chunk.clone());
+                let id = chunk.get("toolCall").and_then(|call| call.get("id"));
+                let existing = self.live_chunks.iter().position(|entry| entry.get("type") == chunk.get("type") &&
+                    entry.get("toolCall").and_then(|call| call.get("id")) == id);
+                if let Some(index) = existing { self.live_chunks.set(index, chunk.clone()); }
+                else { self.live_chunks.push_back(chunk.clone()); }
             }
             "message"
                 if chunk

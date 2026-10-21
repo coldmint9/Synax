@@ -246,6 +246,7 @@ function WorkbenchLayoutContent() {
   return (
     <SessionEnvironmentProvider
       sessionId={chromeMode === "global" ? null : selectedSessionId}
+      projectId={effectiveProjectId}
     >
       <div
         className="workbench-shell"

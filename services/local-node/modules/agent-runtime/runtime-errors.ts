@@ -1,4 +1,7 @@
-import { RuntimeSidecarError } from "./sidecar/sidecar-client.js";
+import {
+  RuntimeSidecarError,
+  RuntimeSidecarTransportError,
+} from "./sidecar/sidecar-client.js";
 import { VersionStoreError } from "./validation/limits.js";
 export class AgentRuntimeError extends Error {
   constructor(
@@ -53,6 +56,12 @@ export class AgentProviderNotConfiguredError extends AgentRuntimeError {
 
 export function toRuntimeError(error: unknown): AgentRuntimeError {
   if (error instanceof AgentRuntimeError) return error;
+  if (error instanceof RuntimeSidecarTransportError)
+    return new AgentRuntimeError(
+      error.message,
+      "RUNTIME_TRANSPORT_UNAVAILABLE",
+      503,
+    );
   if (error instanceof RuntimeSidecarError) {
     if (error.message.includes('entity exceeds history page byte budget'))
       return new AgentRuntimeError(error.message, 'HISTORY_ENTITY_TOO_LARGE', 413);
