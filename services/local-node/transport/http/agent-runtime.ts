@@ -179,15 +179,16 @@ agentRuntimeRoutes.use('*', async (c, next) => {
   try {
     // History queries already read the authoritative Rust index. Hydrating the
     // execution working set here would drain every history page before paging.
-    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
     if (id && !['search', 'badges'].includes(id)) {
       await ensureSessionRecovered(id);
       await agentRuntimeStore.hydrateSessionSummary(id);
       if (c.req.method !== 'GET' && !c.req.path.endsWith('/runtime-ticket')) await agentRuntimeStore.hydrateSession(id);
       if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
-    } else if (/\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
-      // Only collection operations need the complete session summary index.
+    } else if (c.req.method !== 'GET' && /\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
+      // Collection reads use the authoritative summary index directly. Loading
+      // the execution mirror first would walk the same index a second time.
       await agentRuntimeStore.hydrateSessions();
     }
     await next();
@@ -359,8 +360,10 @@ for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
     if (id) {
       {
         try {
+          const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
           const projected = projectSessionState(
-            (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
+            (historyRead ? await runtimeFacade.sessionSummaryAuthoritative(id) :
+              (await runtimeFacade.uiSnapshotAuthoritative(id)).session) as never,
           );
           if (
             projected.sessionMetadata?.archivedAt ||
@@ -933,6 +936,13 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
       return runtimeError(c, error);
     }
   }
+});
+agentRuntimeRoutes.get("/sessions/:sessionId/summary", async (c) => {
+  try {
+    return c.json({ session: projectSessionSummary(projectSessionState(
+      await runtimeFacade.sessionSummaryAuthoritative(c.req.param("sessionId")),
+    )) });
+  } catch (error) { return runtimeError(c, error); }
 });
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
@@ -3094,6 +3104,16 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               checkpointId: input.checkpointId,
               revision: input.revision,
               requestId: input.requestId,
+              // Forking only reads the source. Do not force a running source
+              // through the rollback fence or reject the copy because its
+              // append-only head advanced after the preview.
+              allowSourceChanges: [
+                "stopping",
+                "running",
+                "queued",
+                "waiting_permission",
+                "waiting_input",
+              ].includes(source.status),
             });
             const updated = await runtimeFacade.sessionPatch(
               target.id,

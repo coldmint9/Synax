@@ -23,6 +23,54 @@ fn temp() -> Value {
     Value::Object(Default::default())
 }
 
+#[test]
+fn history_index_snapshot_preserves_cursors_and_replays_only_the_committed_tail() {
+    let root = temp_root("index-checkpoint");
+    let (store, ops) = open(&root);
+    ok(&ops, "s", "first", "append_entities", objects(serde_json::json!([message("a", 1, "a"), message("b", 2, "b")])));
+    let window = ok(&ops, "s", "window", "history_sync", serde_json::json!({"limit":1}));
+    assert_eq!(window["messages"][0]["id"], "b");
+    assert_eq!(ops.evict_idle(), 0);
+    assert_eq!(ops.evict_with_policy(0, std::time::Duration::ZERO), 1);
+    let directory = super::history_path(&root, "s").unwrap();
+    let (snapshot, offset) = super::checkpoint::read(&directory, "s").unwrap();
+    assert_eq!(snapshot.head.revision, 1);
+    ok(&ops, "s", "second", "append_entities", objects(serde_json::json!([message("c", 3, "c")])));
+    // Replay directly from the persisted position before dropping the writer
+    // (normal release will replace the snapshot with the newer index).
+    let mut index = snapshot;
+    let end = super::replay_into(&directory.join(super::HISTORY_FILE), &mut index, false, offset).unwrap();
+    assert!(end > offset);
+    let delta = super::sync::history_sync(&index, "s", &serde_json::json!({"since":window["historyWindow"]["syncCursor"]})).unwrap();
+    assert_eq!(delta["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(delta["messages"][0]["id"], "c");
+    let older = super::sync::history_sync(&index, "s", &serde_json::json!({"cursor":window["historyWindow"]["olderCursor"]})).unwrap();
+    assert_eq!(older["messages"][0]["id"], "a");
+    drop(ops); drop(store);
+    let session = super::HistorySession::open(&root, "s").unwrap();
+    assert_eq!(session.lock.lock().checkpoint_offset, end);
+    assert_eq!(session.lock.lock().index.head.revision, 2);
+    drop(session);
+    std::fs::write(directory.join("history-index.bin"), b"corrupt").unwrap();
+    let repaired = super::HistorySession::open(&root, "s").unwrap();
+    assert_eq!(repaired.lock.lock().checkpoint_offset, 0);
+    assert_eq!(repaired.lock.lock().index.head.revision, 2);
+    drop(repaired);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn commits_publish_the_new_query_index_to_other_sessions_without_reopening() {
+    let root = temp_root("published-index");
+    let (store, ops) = open(&root);
+    let latest = ok(&ops, "s", "append", "append_entities", objects(serde_json::json!([message("latest", 1, "new content")])));
+    ok(&ops, "copy", "fork", "fork", serde_json::json!({"sourceSessionId":"s"}));
+    let copied = ok(&ops, "copy", "head", "head_read", temp());
+    assert_eq!(copied["objectId"], latest["objectId"]);
+    drop(ops); drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn call(
     ops: &HistoryOps,
     session: &str,

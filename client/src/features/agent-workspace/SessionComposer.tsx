@@ -206,7 +206,10 @@ export function SessionComposer({
   // hydration pass never resurrects a just-removed attachment.
   const contextPartsKey = JSON.stringify(media.parts);
   useEffect(() => {
-    if (!isDraft || submitting || !draftMediaHydrated) return;
+    // Hold the snapshot while uploads run so the cache never records a
+    // half-attached draft.
+    if (!isDraft || submitting || !draftMediaHydrated || media.uploading)
+      return;
     saveDraftComposerContext(projectId, {
       parts: JSON.parse(contextPartsKey) as RuntimeContentPart[],
       references,
@@ -216,6 +219,7 @@ export function SessionComposer({
     projectId,
     submitting,
     draftMediaHydrated,
+    media.uploading,
     contextPartsKey,
     references,
   ]);
@@ -429,8 +433,8 @@ export function SessionComposer({
     if (capability !== "chat") return;
     const message = content.trim();
     if (
-      (!message && !media.parts.length) ||
-      !media.ready ||
+      (!message && !media.items.length) ||
+      media.blocked ||
       readSubmitting() ||
       editingQueue ||
       submitLock.current === viewScope.current ||
@@ -451,19 +455,27 @@ export function SessionComposer({
       backendId === "native"
         ? formatModelReference(providerId, modelId)
         : cliModel !== "default" ? cliModel : undefined;
-    const body = {
-      message,
-      contentParts: media.parts.length
-        ? [
-            ...(message ? [{ type: "text" as const, text: message }] : []),
-            ...media.parts,
-          ]
-        : undefined,
-      model,
-      reasoningEffort,
-      references,
-    };
     try {
+      // Attachments upload in the background; the send waits for whichever
+      // ones are still in flight instead of disabling the composer.
+      const uploaded = media.hasPendingUploads()
+        ? await media.waitForUploads()
+        : {
+            parts: media.parts,
+            itemIds: media.items.map((item) => item.id),
+          };
+      const body = {
+        message,
+        contentParts: uploaded.parts.length
+          ? [
+              ...(message ? [{ type: "text" as const, text: message }] : []),
+              ...uploaded.parts,
+            ]
+          : undefined,
+        model,
+        reasoningEffort,
+        references,
+      };
       if (isDraft) {
         const created =
           createdDraftRef.current ??
@@ -500,7 +512,8 @@ export function SessionComposer({
       }
       if (!isDraft || isCurrent()) {
         setContent("");
-        media.clear();
+        // Attachments added while this send waited stay in the composer.
+        media.clear(uploaded.itemIds);
         setReferences([]);
       }
     } catch (error) {

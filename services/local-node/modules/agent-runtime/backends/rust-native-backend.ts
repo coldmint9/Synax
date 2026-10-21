@@ -37,6 +37,8 @@ import { resolveMediaMessages } from "../media-capabilities.js";
 import { buildLoopToolSet } from "../loop-ai-tools.js";
 import { getGlobalConfigForRuntime } from "../../../infrastructure/runtime/config/config-store.js";
 import { countTokens } from "../context-tokenizer.js";
+import { logger } from "../../../infrastructure/runtime/logger.js";
+import { toRuntimeError } from "../runtime-errors.js";
 
 function toolSchema(value: unknown): Record<string, unknown> {
   return z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
@@ -443,6 +445,9 @@ export class RustNativeBackend implements BackendAdapter {
       const message = error instanceof Error ? error.message : String(error);
       if (compacting) emitSessionLive(sessionId, { type: "context_compaction_failed", error: message });
       const interrupted = signal?.aborted || message === "Rust loop cancelled." || message.includes("RUN_INTERRUPTED");
+      if (!interrupted) logger.error({ sessionId, runId: run.id, stepId: step?.id,
+        code: toRuntimeError(error).code, err: error,
+      }, "[agent-runtime] native run failed");
       if (step) store.updateRunStep(step.id, { status: interrupted ? "interrupted" : "failed", completedAt: nowIso(), finishReason: message });
       const failed = store.updateRun(run.id, { status: interrupted ? "interrupted" : "failed", completedAt: nowIso(), stopReason: message });
       store.updateSession(sessionId, { status: interrupted ? "paused" : "failed", activeRunId: null, pendingResumeToken: null,

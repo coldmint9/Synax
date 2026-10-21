@@ -58,9 +58,10 @@ import {
 } from "./permission-policy.js";
 import { profileService, type ProfileService } from "./profile-service.js";
 import {
-  AgentNotFoundError,
+  AgentToolNotFoundError,
   AgentPermissionError,
   AgentValidationError,
+  isToolResolutionError,
 } from "./runtime-errors.js";
 import { sandboxPolicy, withSandboxApproval, withProjectToolApproval } from "./sandbox/index.js";
 import { hasProjectToolGrant } from "./project-tool-grants.js";
@@ -554,7 +555,7 @@ export class ToolRegistry {
 
   get(toolId: string): RegisteredTool {
     const tool = this.tools.get(toolId);
-    if (!tool) throw new AgentNotFoundError(toolId);
+    if (!tool) throw new AgentToolNotFoundError(toolId);
     return tool;
   }
 
@@ -589,9 +590,15 @@ export class ToolRegistry {
       );
     }
     const record = this.store.getToolCall(sessionId, permission.toolCallId);
-    const tool = this.getForSession(sessionId, record.toolId);
     if (record.status !== "pending") {
       return { record, permission };
+    }
+    let tool: RegisteredTool;
+    try {
+      tool = this.getForSession(sessionId, record.toolId);
+    } catch (error) {
+      if (!isToolResolutionError(error)) throw error;
+      return { ...this.rejectUnresolvedTool(sessionId, record.toolId, record.inputRef, {}, error, record), permission };
     }
     return this.performExecution(
       sessionId,
@@ -614,7 +621,13 @@ export class ToolRegistry {
     await hydrateRuntimeAssets([sessionId]);
     const session = this.store.getSession(sessionId);
     const profile = this.profiles.getForSession(session);
-    const tool = this.getForSession(sessionId, toolId);
+    let tool: RegisteredTool;
+    try {
+      tool = this.getForSession(sessionId, toolId);
+    } catch (error) {
+      if (!isToolResolutionError(error)) throw error;
+      return this.rejectUnresolvedTool(sessionId, toolId, args, options, error);
+    }
 
     this.capabilities.noteUse(sessionId, toolId);
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
@@ -834,6 +847,50 @@ export class ToolRegistry {
       options.abortSignal,
       options.onProgress,
     );
+  }
+
+  /** Persist a terminal receipt before replying to the model. In particular,
+   * a resumed approval updates its existing receipt so recovery cannot replay it. */
+  private rejectUnresolvedTool(
+    sessionId: string,
+    toolId: string,
+    args: unknown,
+    options: ExecuteToolOptions,
+    error: AgentToolNotFoundError | AgentPermissionError,
+    existing?: ToolCallRecord,
+  ): ExecuteToolResult {
+    const now = nowIso();
+    const result = { error: true, code: error.code, message: error.message };
+    const patch = {
+      status: error instanceof AgentPermissionError ? "denied" as const : "failed" as const,
+      outputSummary: error.message,
+      outputRef: result,
+      endedAt: now,
+      error: error.message,
+    };
+    const record = existing
+      ? this.store.updateToolCall(sessionId, existing.id, patch)
+      : this.store.appendToolCall({
+          id: makeRuntimeId("tc"), sessionId,
+          runId: options.runId ?? null, stepId: options.stepId ?? null,
+          modelToolCallId: options.modelToolCallId ?? null,
+          toolId, category: "context", mutability: "read",
+          argsHash: this.store.hashArgs(args), inputSummary: summarize(args), inputRef: args ?? null,
+          permissionDecisionId: null, startedAt: now, ...patch,
+        });
+    this.events.append({
+      sessionId, type: "tool_result", summary: error.message,
+      payload: {
+        runId: record.runId, stepId: record.stepId, toolCallId: record.id,
+        toolId, status: record.status, code: error.code, error: error.message,
+        ...(codeParentId(record) ? { parentToolCallId: codeParentId(record) } : {}),
+      },
+    });
+    // Keep identifiers for diagnosis without logging arguments or file contents.
+    logger.warn({ sessionId, runId: record.runId, stepId: record.stepId,
+      toolCallId: record.id, modelToolCallId: record.modelToolCallId, toolId, code: error.code,
+    }, "[agent-runtime] tool resolution rejected; returning error to model");
+    return { record, toolResult: { result, displaySummary: error.message, artifacts: [] } };
   }
 
   private async performExecution(

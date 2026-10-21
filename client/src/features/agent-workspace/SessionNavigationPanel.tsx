@@ -188,8 +188,6 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
     timelineSteps,
     timelineToolCalls,
     timelineIndexLoaded,
-    timelineIndexError,
-    loadTimelineIndex,
     loadHistoryUntil,
   } = useAgentSessionStore(
     useShallow((state) => ({
@@ -222,19 +220,12 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
       timelineIndexLoaded: state.selectedSessionId
         ? state.sessionDetailCache[state.selectedSessionId]?.timelineIndexLoaded
         : undefined,
-      timelineIndexError: state.selectedSessionId
-        ? state.sessionDetailCache[state.selectedSessionId]?.timelineIndexError
-        : undefined,
-      loadTimelineIndex: state.loadTimelineIndex,
       loadHistoryUntil: state.loadHistoryUntil,
     })),
   );
 
-  useEffect(() => {
-    if (selectedSessionId && historyWindow?.hasEarlier && !timelineIndexLoaded && !timelineIndexError)
-      void loadTimelineIndex();
-  }, [historyWindow?.hasEarlier, historyWindow?.revision, loadTimelineIndex, selectedSessionId, timelineIndexLoaded, timelineIndexError]);
-
+  // Navigation follows the pages the reader has loaded. Mounting the rail
+  // must not walk the entire transcript behind a bounded first-page request.
   const indexReady = Boolean(timelineIndexLoaded || !historyWindow?.hasEarlier);
   const timelineRunsSource = indexReady ? (timelineRuns ?? runs) : runs;
   const timelineStepsSource = indexReady ? (timelineSteps ?? steps) : steps;
@@ -351,7 +342,7 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
     [indexReady, loadHistoryUntil, scrollRootRef],
   );
 
-  if (turns.length === 0 || (historyWindow?.hasEarlier && !timelineIndexLoaded && !timelineIndexError)) return null;
+  if (turns.length === 0) return null;
 
   const hoveredTurn = hoverIndex === null ? null : turns[hoverIndex];
   const preview = hoveredTurn

@@ -112,8 +112,10 @@ fn window_page(
             after.insert(kind.into(), None);
             continue;
         }
-        let candidates = index.entity_keys_rev(kind)
-            .filter(|(key, _)| start.as_ref().is_none_or(|start| *key < start));
+        if start.as_ref().is_some_and(|key| !key.starts_with(&format!("{kind}\0"))) {
+            return Err(invalid("history window cursor collection mismatch"));
+        }
+        let candidates = index.entity_keys_before(kind, start.as_deref());
 
         let mut last = None;
         let mut more = false;
@@ -202,14 +204,14 @@ fn change_page(
     let mut last = cursor.after.clone();
     let mut count = 0usize;
     let mut more = false;
-    for ((revision, offset), change) in &index.changes {
-        if *revision > until {
-            break;
-        }
+    let position = cursor.after.strip_prefix(&changes_prefix(session))
+        .and_then(|value| value.split_once('/'))
+        .and_then(|(revision, offset)| Some((revision.parse::<u64>().ok()?,
+            if offset == "~" { usize::MAX } else { offset.parse::<usize>().ok()? })))
+        .ok_or_else(|| invalid("history change cursor position is invalid"))?;
+    use std::ops::Bound::{Excluded, Included};
+    for ((revision, offset), change) in index.changes.range((Excluded(position), Included((until, usize::MAX)))) {
         let key = change_key(session, *revision, *offset);
-        if key <= cursor.after {
-            continue;
-        }
         let Some(entity) = index.objects.get(&change.object_id) else {
             continue;
         };

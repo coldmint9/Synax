@@ -3,11 +3,13 @@ import { beforeEach,afterEach,describe,expect,it,vi } from 'vitest';
 import { useState } from 'react';
 import { SessionHistoryProvider,useSessionHistory } from '../SessionHistoryContext';
 import { MessageActionToolbar } from '../MessageActionToolbar';
+import { TurnBody } from '../TurnBody';
+import userEvent from '@testing-library/user-event';
 import { UserMessageBlock } from '../UserMessageBlock';
 import { conversationHistoryApi } from '../../../adapters/transport/conversationHistory';
 import { useShellStore } from '../../../shared/state/shellStore';
 import { useAgentSessionStore } from '../state/agentSessionStore';
-import type { AgentSession } from '../../../adapters/transport/agentRuntime';
+import type { AgentRuntimeMessage, AgentSession } from '../../../adapters/transport/agentRuntime';
 vi.mock('../useConversationHistoryVisit',()=>({useConversationHistoryVisit:vi.fn()}));
 vi.mock('../../../adapters/transport/runtimeEventBus',()=>({subscribe:()=>()=>{}}));
 vi.mock('../../../adapters/transport/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn()}}));
@@ -26,6 +28,36 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.restoreAllMocks());
 describe('history impact confirmation',()=>{
+ function Reply(){return <TurnBody entryId="reply" turn={{stepId:'step',index:0,status:'completed',duration:null,completedAt:null,blocks:[{type:'text',content:'Reply',messageId:'msg'}]}}/>;}
+ it('does not invent fork-only checkpoints when an ordinary session has no saved boundaries',async()=>{
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,rollbackEnabled:false,reason:null,checkpoints:[]});
+   const messages=[{id:'msg',role:'assistant',stepId:'step',metadata:{}}] as AgentRuntimeMessage[];
+   render(<SessionHistoryProvider session={session} messages={messages}><Reply/></SessionHistoryProvider>);
+   await waitFor(()=>expect(conversationHistoryApi.list).toHaveBeenCalled());
+   const rollback=screen.getByRole('button',{name:'回滚到此处'});
+   expect(rollback).toHaveAttribute('aria-disabled','true');
+   expect(screen.getByRole('button',{name:'从此处分叉'})).toBeDisabled();
+   await userEvent.hover(rollback);
+   expect(await screen.findByRole('tooltip')).toHaveTextContent('此消息没有可用的会话检查点');
+   expect(screen.queryByText(/分叉会话不支持回滚/)).not.toBeInTheDocument();
+   fireEvent.click(rollback);
+   expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
+ });
+ it('allows a saved checkpoint in a fork to reach the rollback preview',async()=>{
+   const forked={...session,sessionMetadata:{...session.sessionMetadata,forkedFromSessionId:'source'}};
+   render(<SessionHistoryProvider session={forked} messages={[]}><Reply/></SessionHistoryProvider>);
+   const rollback=screen.getByRole('button',{name:'回滚到此处'});
+   await waitFor(()=>expect(rollback).not.toHaveAttribute('aria-disabled','true'));
+   fireEvent.click(rollback);
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',true));
+ });
+ it('preserves the actual reason when a stored checkpoint cannot roll back',async()=>{
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[{...cp,canRollback:false,reason:'检查点暂不可用'}]});
+   render(<SessionHistoryProvider session={session} messages={[]}><Reply/></SessionHistoryProvider>);
+   await waitFor(()=>expect(conversationHistoryApi.list).toHaveBeenCalled());
+   await userEvent.hover(screen.getByRole('button',{name:'回滚到此处'}));
+   expect(await screen.findByRole('tooltip')).toHaveTextContent('检查点暂不可用');
+ });
  it('confirms irreversible trimming without exposing file restoration',async()=>{
    function Trim(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,destructive:true})}>Trim</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><Trim/></SessionHistoryProvider>);

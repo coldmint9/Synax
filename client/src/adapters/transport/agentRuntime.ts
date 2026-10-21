@@ -977,6 +977,8 @@ export const agentRuntimeApi = {
   },
   getSession: (sessionId: string) =>
     request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
+  getSessionSummary: (sessionId: string) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/summary`),
   getSessionPlan: (sessionId: string) =>
     request<{ plan: AgentPlanArtifact | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/plan`,

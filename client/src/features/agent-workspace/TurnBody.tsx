@@ -1,5 +1,4 @@
-import { lazy, Suspense, useId, useState } from "react";
-import { Button as HeadlessButton } from "@headlessui/react";
+import { lazy, Suspense, useState } from "react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
@@ -10,52 +9,22 @@ import type { InlineVisualizationReference } from "./visualizationTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
-import { MessageSquare, Zap } from "lucide-react";
+import { Zap } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
-import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
-import { aggregateToolStatus, toolCallPresentation } from "./toolCallPresentation";
-import {
-  activityPreview,
-  hasDisplayableReasoning,
-  thinkingBannerPhrase,
-} from "./activityText";
-import { useActivityDisclosure } from "./useActivityDisclosure";
+import { hasDisplayableReasoning } from "./activityText";
+import { ConversationActivityGroup } from "./ConversationActivityGroup";
 import { MediaParts } from "../media/MediaParts";
 import type {
   InterleavedTurn,
   TurnContentBlock,
 } from "./buildInterleavedTurns";
-import { ThinkingBlock } from "./ThinkingBlock";
-import { toolRoundRows } from "./ToolCallRoundPanel";
 import { StreamingTextBlock } from "./StreamingTextBlock";
-import { StreamingActivityLine } from "./StreamingActivityLine";
-import {
-  VirtualActivityWindow,
-  type ActivityWindowRow,
-} from "./VirtualActivityWindow";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import {
   buildTurnRenderSegments,
-  flattenToolBlocks,
 } from "./toolCallUtils";
 import "./conversationFlow.css";
-
-/** How much of the newest thought the live line keeps for its scrolling tail. */
-const LINE_MAX_CHARS = 240;
-
-/**
- * Continuous tail of a reasoning body, flattened for a single line.
- *
- * Reasoning arrives in paragraphs and list items; the live line wants the end
- * of what is being said, not the last item alone. Only the tail is normalised
- * so a 90k-character thought costs no more than a short one.
- */
-function thoughtTail(content: string, max = LINE_MAX_CHARS): string {
-  const cut = content.length > max ? content.slice(-max) : content;
-  const tail = cut.replace(/\s+/g, " ").trim();
-  return content.length > max ? `…${tail}` : tail;
-}
 
 function TranscriptVisualization({
   reference,
@@ -82,45 +51,6 @@ function sourceLabel(url: string): string {
   } catch {
     return url;
   }
-}
-
-/**
- * Newest activity of a live turn, formatted as the process line's content.
- *
- * A running turn moves between reasoning and calls, so the line reports
- * whichever came last: the tail of the newest thought, or the newest call with
- * its target. Past thoughts and calls keep their own rows below.
- */
-function latestActivityLine(
-  segments: ReturnType<typeof buildTurnRenderSegments>,
-  zh: boolean,
-): string | null {
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const segment = segments[index];
-    if (segment.type === "thinking") {
-      if (!segment.content.trim()) continue;
-      const banner = thinkingBannerPhrase(segment.content);
-      const tail = banner
-        ? activityPreview(banner, LINE_MAX_CHARS)
-        : thoughtTail(segment.content);
-      if (tail) return zh ? `正在思考:「${tail}」` : `Thinking: "${tail}"`;
-      continue;
-    }
-    if (segment.type === "tool_round") {
-      const calls = flattenToolBlocks(segment.toolBlocks);
-      const call = calls[calls.length - 1];
-      if (!call) continue;
-      const presentation = toolCallPresentation(call, zh ? "zh" : "en");
-      const detail = presentation.target
-        ? `${presentation.name} · ${activityPreview(presentation.target, 80)}`
-        : presentation.name;
-      const verb = call.status === "running"
-        ? zh ? "正在调用" : "Calling"
-        : zh ? "最近调用" : "Last call";
-      return zh ? `${verb}:「${detail}」` : `${verb}: "${detail}"`;
-    }
-  }
-  return null;
 }
 
 function segmentKey(
@@ -154,10 +84,7 @@ export function TurnContent({
   rowKeyPrefix = "",
   isStreaming = false,
   isWorking = isStreaming,
-  defaultExpanded = true,
-  processOnly = false,
-  processMeta,
-  processPreview,
+  defaultExpanded,
 }: {
   blocks: readonly TurnContentBlock[];
   onExpandChild?: (sessionId: string) => void;
@@ -165,36 +92,11 @@ export function TurnContent({
   isStreaming?: boolean;
   isWorking?: boolean;
   defaultExpanded?: boolean;
-  processOnly?: boolean;
-  processMeta?: string;
-  processPreview?: string | null;
 }) {
-  const { locale } = useLocale();
-  const [expanded, toggle] = useActivityDisclosure(rowKeyPrefix ? `process:${rowKeyPrefix}` : undefined, defaultExpanded);
-  // A live turn keeps growing after it mounts: rows appended while it streams
-  // reveal themselves so new tool rounds read as a continuation, not a pop.
-  // Frozen at mount, so a finished turn never replays the reveal.
   const [appendReveal] = useState(isStreaming);
-  const flowId = useId();
   const segments = buildTurnRenderSegments(blocks).filter(
     (segment) => segment.type !== "thinking" || hasDisplayableReasoning(segment.content),
   );
-  const calls = flattenToolBlocks(blocks);
-  let lastActivity = -1;
-  segments.forEach((segment, index) => {
-    if (segment.type === "thinking" || segment.type === "tool_round") lastActivity = index;
-  });
-  if (processOnly && segments.length) lastActivity = segments.length - 1;
-  const hasActivity = lastActivity >= 0;
-  const toolStatus = calls.length ? aggregateToolStatus(calls) : "completed";
-  const status = isWorking && toolStatus === "completed" ? "running" : toolStatus;
-  // A folded row previews the newest thought only. Error output belongs to the
-  // tool row that produced it: promoting it here turns the folded summary into
-  // an alert the reader never asked to reopen.
-  const foldedPreview = processPreview;
-  // Only a live row streams: history keeps the call-count summary, which is the
-  // part that stays true once the turn has stopped thinking.
-  const activityLine = isWorking ? latestActivityLine(segments, locale === "zh") : null;
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "visualization")
@@ -206,15 +108,6 @@ export function TurnContent({
       );
     if (segment.type === "media")
       return <MediaParts key={key} parts={segment.parts} />;
-    if (segment.type === "thinking")
-      return (
-        <ThinkingBlock
-          isStreaming={isStreaming && segment === segments[segments.length - 1]}
-          key={key}
-          content={segment.content}
-          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined}
-        />
-      );
     if (segment.type === "text")
       return (
         <StreamingTextBlock
@@ -265,107 +158,44 @@ export function TurnContent({
       );
     return null;
   };
-  // One row per record: a thought, or one call batch. A live turn shows the
-  // newest rows in a fixed window; a finished turn lays the same rows out in
-  // place, so completing a turn never rebuilds what the reader opened.
-  const processRows: ActivityWindowRow[] = [];
-  if (hasActivity && expanded) {
-    segments.forEach((segment, index) => {
-      if (index > lastActivity) return;
-      const key = segmentKey(segment, index);
-      if (segment.type === "tool_round") {
-        const roundRows = toolRoundRows(segment.toolBlocks, {
-          isStreaming: isWorking,
-          rememberKey: rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined,
-        });
-        roundRows.forEach((row) => {
-          processRows.push({
-            key: `${key}:${row.key}`,
-            node: (
-              <div className="session-flow-entry" data-process data-activity>
-                {row.node}
-              </div>
-            ),
-          });
-        });
-        return;
+  // Commentary stays in the reading lane. Only adjacent thoughts and tools
+  // share a disclosure, so folding an action never hides the text around it.
+  const content = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const key = segmentKey(segment, index);
+    if (segment.type === "thinking" || segment.type === "tool_round") {
+      const activityBlocks: TurnContentBlock[] = [];
+      while (index < segments.length) {
+        const activity = segments[index];
+        if (activity.type === "thinking") activityBlocks.push(activity);
+        else if (activity.type === "tool_round") activityBlocks.push(...activity.toolBlocks);
+        else break;
+        index += 1;
       }
-      const activity = segment.type === "thinking";
-      processRows.push({
-        key,
-        node: (
-          <div
-            className={activity ? "session-flow-entry" : "session-flow-entry session-answer-region"}
-            data-process
-            data-activity={activity || undefined}
-          >
-            {!activity && (
-              <MessageSquare className="session-flow-comment-icon" size={16} aria-hidden="true" />
-            )}
-            {render(segment, index)}
-          </div>
-        ),
-      });
-    });
+      const working = isWorking && index === segments.length;
+      content.push(
+        <ConversationActivityGroup
+          key={key}
+          blocks={activityBlocks}
+          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined}
+          working={working}
+          streaming={isStreaming && working}
+          defaultExpanded={defaultExpanded}
+        />,
+      );
+      index -= 1;
+      continue;
+    }
+    content.push(
+      <div key={key} className="session-flow-entry session-answer-region">
+        {render(segment, index)}
+      </div>,
+    );
   }
   return (
-    <div
-      className={
-        appendReveal
-          ? "session-conversation-flow session-flow-append"
-          : "session-conversation-flow"
-      }
-      data-has-activity={hasActivity || undefined}
-    >
-      {hasActivity && (
-        <HeadlessButton
-          type="button"
-          className="session-process-trigger"
-          aria-expanded={expanded}
-          aria-controls={`${flowId}-process`}
-          aria-label={activityLine ?? undefined}
-          onClick={toggle}
-        >
-          {activityLine ? (
-            <StreamingActivityLine text={activityLine} streaming={isWorking} />
-          ) : (
-            <>
-              <span>{locale === "zh" ? "处理过程" : "Process"}</span>
-              {calls.length > 0 && <span>{locale === "zh" ? `${calls.length} 次工具调用` : `${calls.length} tool calls`}</span>}
-              {processMeta && <span>{processMeta}</span>}
-            </>
-          )}
-          {status !== "running" && (
-            <span className="session-process-status"><ActivityStatus status={status} /></span>
-          )}
-        </HeadlessButton>
-      )}
-      {!expanded && foldedPreview && <div className="session-process-preview">{foldedPreview}</div>}
-      <div className="session-flow-content">
-        {hasActivity && (
-          <div
-            id={`${flowId}-process`}
-            className="session-process-window"
-            data-process
-            hidden={!expanded}
-          >
-            <VirtualActivityWindow rows={processRows} windowed={isWorking} />
-          </div>
-        )}
-        {segments.map((segment, index) => {
-          if (index <= lastActivity) return null;
-          return (
-            <div
-              key={segmentKey(segment, index)}
-              id={`${flowId}-${index}`}
-              className="session-flow-entry session-answer-region"
-              data-answer-start={hasActivity && index === lastActivity + 1 || undefined}
-            >
-              {render(segment, index)}
-            </div>
-          );
-        })}
-      </div>
+    <div className={appendReveal ? "session-conversation-flow session-flow-append" : "session-conversation-flow"}>
+      <div className="session-flow-content">{content}</div>
     </div>
   );
 }
@@ -391,6 +221,7 @@ export function TurnBody({
   showActions?: boolean;
 }) {
   const history = useSessionHistory();
+  const { locale } = useLocale();
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const visibleBlocks = showThinking
     ? turn.blocks
@@ -402,6 +233,24 @@ export function TurnBody({
       (block) => block.type === "media" || block.type === "visualization",
     )?.messageId;
   const checkpoint = history?.checkpoint(messageId, turn.stepId);
+  // The provider may still be loading persisted checkpoints while a response
+  // is streaming. Keep the fork affordance available and let the request
+  // resolve the stored checkpoint by message/step id after the user chooses a
+  // workspace mode.
+  const forkCheckpoint =
+    checkpoint ??
+    (history?.running && !isStreaming && (messageId || turn.stepId)
+      ? {
+          id: `message:${messageId ?? turn.stepId}`,
+          kind: "reply" as const,
+          messageId: messageId ?? "",
+          stepId: turn.stepId ?? null,
+          available: true,
+          reason: null,
+          hasLaterHistory: true,
+          initialInput: false,
+        }
+      : undefined);
   const text = textBlocks.map((block) => block.content).join("\n\n");
   const hasAnswer = Boolean(
     text ||
@@ -431,14 +280,16 @@ export function TurnBody({
           }
           rollbackDisabledReason={
             checkpoint?.canRollback === false
-              ? "分叉会话不支持回滚 / Forked conversations are append-only"
+              ? history?.reason || checkpoint.reason || (locale === "zh"
+                ? "此消息没有可用的回滚检查点"
+                : "No rollback checkpoint for this message")
               : undefined
           }
           busy={history?.busy}
           onFork={
-            checkpoint?.available
+            forkCheckpoint?.available
               ? (mode) => {
-                  void history?.request("fork", checkpoint, undefined, mode);
+                  void history?.request("fork", forkCheckpoint, undefined, mode);
                 }
               : undefined
           }

@@ -20,6 +20,22 @@ export class AgentNotFoundError extends AgentRuntimeError {
   }
 }
 
+/** A model can request a stale or invented tool name. This is a tool result,
+ * not evidence that its session (or any durable runtime resource) was lost. */
+export class AgentToolNotFoundError extends AgentRuntimeError {
+  constructor(public readonly toolId: string) {
+    super(
+      `Tool not found: ${toolId}. Use the exact names and argument schemas from the current tool definitions.`,
+      'TOOL_NOT_FOUND',
+      422,
+    );
+  }
+}
+
+export function isToolResolutionError(error: unknown): error is AgentToolNotFoundError | AgentPermissionError {
+  return error instanceof AgentToolNotFoundError || error instanceof AgentPermissionError;
+}
+
 /**
  * The session exists but its UI projection cannot be served right now (a
  * repair or migration is required). This is retryable and must never be

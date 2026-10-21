@@ -37,8 +37,11 @@ pub struct HistoryOps {
 impl HistoryOps {
     pub(crate) fn clear_cache_for_tests(&self) { self.sessions.clear(); }
     pub fn evict_idle(&self) -> usize {
+        self.evict_with_policy(4, std::time::Duration::from_secs(300))
+    }
+    pub(crate) fn evict_with_policy(&self, capacity: usize, idle: std::time::Duration) -> usize {
         let store = self.store.clone();
-        self.sessions.remove_if(|session| {
+        self.sessions.evict(capacity, idle, |session| {
             Arc::strong_count(session) == 1 && store.cached_session_idle(&session.session_id)
         })
     }
@@ -163,7 +166,11 @@ impl HistoryTask {
     }
 
     fn session(&self, session_id: &str) -> Result<Arc<HistorySession>, HistoryError> {
-        self.sessions.get_or_try_init(session_id, || HistorySession::open(self.root(), session_id).map(Arc::new))
+        let session = self.sessions.get_or_try_init(session_id, || HistorySession::open(self.root(), session_id).map(Arc::new))?;
+        self.sessions.evict(4, std::time::Duration::from_secs(300), |cached| {
+            Arc::strong_count(cached) == 1 && self.store.cached_session_idle(&cached.session_id)
+        });
+        Ok(session)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -878,7 +885,8 @@ impl SessionOps<'_> {
     fn fork(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let source_session_id = required_string(value, "sourceSessionId")?.to_owned();
         let source = self.task.session(&source_session_id)?;
-        let source_head = source.read().head.clone();
+        let source_index = source.read();
+        let source_head = source_index.head.clone();
         let object_id = source_head
             .object_id
             .clone()
@@ -892,7 +900,7 @@ impl SessionOps<'_> {
         }
         // The target shares content but its history file records nothing
         // about the source, so every object on the walk is staged here too.
-        let mut objects = source.read().objects.clone();
+        let mut objects = source_index.objects.clone();
         let mut missing = Vec::new();
         let mut stack = vec![object_id.clone()];
         let mut visited = HashSet::new();
@@ -903,8 +911,7 @@ impl SessionOps<'_> {
             let object = match objects.get(&id) {
                 Some(object) => object.clone(),
                 None => {
-                    let object = source
-                        .read()
+                    let object = source_index
                         .objects
                         .get(&id)
                         .cloned()
@@ -1539,8 +1546,9 @@ impl SessionOps<'_> {
             "file_recover" => Some(files.recover(&ctx)?),
             "file_restore_ack" => {
                 files.restore_ack(&ctx, value)?;
-                self.commit()?;
-                return Ok(b"{}".to_vec());
+                // Commit the staged restore-marker removal with its receipt,
+                // just like the other file commands below.
+                Some(empty())
             }
             _ => return Err(HistoryError::InvalidCommand("unknown file operation".into())),
         };
@@ -1596,13 +1604,15 @@ impl SessionOps<'_> {
             .take()
             .unwrap_or_else(|| SessionIndex::clone_index(&self.state.index));
         for record in records {
-            let objects = index.objects.clone();
-            let mut lookup = |id: &str| objects.get(id).cloned();
+            let mut lookup = |_: &str| None;
             index.apply(record, &mut lookup)?;
         }
-        self.state.index = SessionIndex::clone_index(&index);
         self.state.published.store(Arc::new(SessionIndex::clone_index(&index)));
         self.state.index = index;
+        if let Err(error) = super::checkpoint::save(self.state, false) {
+            tracing::warn!(event = "storage.history_checkpoint_failed", error = %error,
+                "History query index remains available; checkpoint will be retried");
+        }
         Ok(())
     }
 }

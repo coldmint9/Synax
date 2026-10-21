@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { ThinkingBlock } from "../ThinkingBlock";
@@ -39,7 +39,7 @@ describe("ThinkingBlock", () => {
     expect(screen.getByRole("button")).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("mounts on keyboard activation and releases the body immediately on closing", async () => {
+  it("mounts on keyboard activation and releases the inert body after closing", async () => {
     const user = userEvent.setup();
     const { container } = render(<ThinkingBlock content="step one reasoning" />);
     await user.tab();
@@ -48,10 +48,10 @@ describe("ThinkingBlock", () => {
     expect(container.querySelector("[data-activity-body]")).toHaveTextContent("step one reasoning");
     fireEvent.click(screen.getByRole("button"));
     expect(container.querySelector(".bui-thinking-reveal")).toHaveAttribute("inert");
-    expect(container.querySelector("[data-activity-body]")).toBeNull();
+    await waitFor(() => expect(container.querySelector("[data-activity-body]")).toBeNull());
   });
 
-  it("expands the preview into one continuous body without rendering the opening twice", () => {
+  it("expands the preview into one continuous body without rendering the opening twice", async () => {
     const opening = "updatedAt comes from header.updatedAt.";
     const content = opening + "\n\nSo on startup, the values are historical.";
     const { container, rerender } = render(<ThinkingBlock content={content} isStreaming />);
@@ -73,7 +73,7 @@ describe("ThinkingBlock", () => {
 
     fireEvent.click(header);
     expect(container.querySelector(".bui-thinking-preview")).toHaveTextContent(opening);
-    expect(container.querySelector("[data-activity-body]")).toBeNull();
+    await waitFor(() => expect(container.querySelector("[data-activity-body]")).toBeNull());
     expect(container.textContent?.split(opening)).toHaveLength(2);
   });
 

@@ -10,6 +10,7 @@
 //! take the published index from an [`ArcSwap`] and never wait for the writer.
 
 mod files;
+mod checkpoint;
 mod json;
 mod metadata;
 mod ops;
@@ -223,6 +224,12 @@ impl SessionIndex {
             .filter(move |(key, _)| self.is_newest(&identity_prefix, key))
     }
 
+    pub fn entity_keys_before(&self, kind: &str, before: Option<&str>) -> impl Iterator<Item = (&String, &Arc<HistoryObject>)> {
+        let prefix = format!("{kind}\0");
+        let upper = before.map(str::to_owned).unwrap_or_else(|| map_end(&prefix));
+        self.order.range(prefix..upper).rev()
+    }
+
     /// Fold one committed record into the index during replay.
     pub fn apply(&mut self, record: Record, lookup: &mut dyn FnMut(&str) -> Option<Arc<HistoryObject>>) -> Result<(), HistoryError> {
         match record {
@@ -230,7 +237,7 @@ impl SessionIndex {
             Record::HistoryHead(head) => self.head = head,
             Record::HistoryEntities(entities) => {
                 for (offset, change) in entities.changes.iter().enumerate() {
-                    if let Some(object) = lookup(&change.object_id) {
+                    if let Some(object) = self.objects.get(&change.object_id).cloned().or_else(|| lookup(&change.object_id)) {
                         self.changes.insert((entities.revision, offset), ChangeEntry {
                             collection: change.collection.clone(),
                             object_id: change.object_id.clone(),
@@ -394,10 +401,10 @@ impl SessionIndex {
     }
 
     /// Whether `key` is the current version of its identity within `scope`.
-    fn is_newest(&self, scope: &str, key: &str) -> bool {
-        self.identity
-            .iter()
-            .any(|(identity, newest)| identity.starts_with(scope) && newest.as_str() == key)
+    fn is_newest(&self, _scope: &str, key: &str) -> bool {
+        // order contains only the newest version; object_inserted removes the
+        // previous key atomically. Never scan every identity for each row.
+        self.order.contains_key(key)
     }
 }
 
@@ -407,32 +414,36 @@ pub struct SessionState {
     failed: bool,
     pub file: AppendFile,
     pub index: SessionIndex,
-    pub published: ArcSwap<SessionIndex>,
+    pub published: Arc<ArcSwap<SessionIndex>>,
+    checkpoint_offset: u64,
 }
 
 pub struct HistorySession {
     session_id: String,
     lock: Mutex<SessionState>,
-    published: ArcSwap<SessionIndex>,
+    published: Arc<ArcSwap<SessionIndex>>,
 }
 
 impl HistorySession {
     pub fn open(root: &Path, session_id: &str) -> Result<Self, HistoryError> {
         let dir = layout::history_dir(&layout::session_dir(root, session_id).map_err(convert_io)?);
-        let mut index = SessionIndex::empty(session_id);
-        replay_into(&dir.join("history.000000"), &mut index, true).map_err(convert_io)?;
+        let restored = checkpoint::read(&dir, session_id);
+        let (mut index, start) = restored.unwrap_or_else(|| (SessionIndex::empty(session_id), 0));
+        if start == 0 { replay_into(&dir.join("history.000000"), &mut index, true, 0).map_err(convert_io)?; }
         let path = dir.join(HISTORY_FILE);
-        let committed = replay_into(&path, &mut index, false).map_err(convert_io)?;
+        let committed = replay_into(&path, &mut index, false, start).map_err(convert_io)?;
         let file = AppendFile::open_committed(&path, committed).map_err(convert_io)?;
+        let published = Arc::new(ArcSwap::from_pointee(index.clone()));
         Ok(Self {
             session_id: session_id.to_owned(),
             lock: Mutex::new(SessionState {
                 failed: false,
+                checkpoint_offset: start,
                 file,
-                index: index.clone(),
-                published: ArcSwap::from_pointee(index.clone()),
+                index,
+                published: published.clone(),
             }),
-            published: ArcSwap::from_pointee(index),
+            published,
         })
     }
 
@@ -445,18 +456,27 @@ impl HistorySession {
     }
 }
 
+impl Drop for HistorySession {
+    fn drop(&mut self) {
+        if let Err(error) = checkpoint::save(self.lock.get_mut(), true) {
+            tracing::warn!(event = "storage.history_checkpoint_failed", error = %error,
+                "History index will be rebuilt from committed logs");
+        }
+    }
+}
+
 /// Read legacy and overlay history one frame at a time. A complete but
 /// unsealed tail is never allowed into a later transaction after reopening.
-fn replay_into(path: &Path, index: &mut SessionIndex, legacy: bool) -> super::JsonlResult<u64> {
+fn replay_into(path: &Path, index: &mut SessionIndex, legacy: bool, start: u64) -> super::JsonlResult<u64> {
     let mut sealed = None;
-    let complete = super::seglog::visit_complete(path, |offset, bytes| {
+    let complete = super::seglog::visit_complete_from(path, start, |offset, bytes| {
         if matches!(serde_json::from_slice::<Record>(bytes)?, Record::HistorySeal { .. }) {
             sealed = Some(offset + bytes.len() as u64 + 4);
         }
         Ok(())
     })?;
-    let end = sealed.unwrap_or(if legacy { complete } else { 0 });
-    super::seglog::visit(path, 0, end, |_, bytes| {
+    let end = sealed.unwrap_or(if legacy { complete } else { start });
+    super::seglog::visit(path, start, end, |_, bytes| {
         let record = serde_json::from_slice(bytes)?;
         if !matches!(record, Record::HistorySeal { .. }) { apply_record(index, record); }
         Ok(())
@@ -465,8 +485,7 @@ fn replay_into(path: &Path, index: &mut SessionIndex, legacy: bool) -> super::Js
 }
 
 fn apply_record(index: &mut SessionIndex, record: Record) {
-    let objects = index.objects.clone();
-    let mut lookup = |id: &str| objects.get(id).cloned();
+    let mut lookup = |_: &str| None;
     let _ = index.apply(record, &mut lookup);
 }
 

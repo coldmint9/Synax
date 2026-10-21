@@ -39,10 +39,14 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
 
   return (
     <div className="agent-conversation-copy leading-[1.75] text-foreground whitespace-pre-wrap">
-      {visible}
-      {isStreaming && (
-        <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
-      )}
+      {visible.split(/\n{2,}/).map((paragraph, index, paragraphs) => (
+        <p key={index} className="session-text-paragraph">
+          {paragraph}
+          {isStreaming && index === paragraphs.length - 1 && (
+            <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
+          )}
+        </p>
+      ))}
     </div>
   );
 });

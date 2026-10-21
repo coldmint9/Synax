@@ -1,6 +1,6 @@
 import { useRuntimeConnectionStore } from "../../shared/state/runtimeConnectionStore";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
-import { memo, useId } from "react";
+import { memo, useEffect, useId } from "react";
 import { ChevronDown, CircleAlert, Gauge } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import type {
@@ -14,7 +14,7 @@ import {
   formatTokenRate,
 } from "../../shared/lib/formatTokens";
 import { useLocale } from "../../shared/hooks/useLocale";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import { observeSessionProfile, useAgentSessionStore } from "./state/agentSessionStore";
 import { SessionInvocationUsagePanel } from "./SessionInvocationUsagePanel";
 import { SessionCacheCard } from "./SessionCacheCard";
 import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
@@ -142,6 +142,20 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
   const zh = useLocale().locale === "zh";
   const providers = useProviderNames();
   const [open, toggle] = useWorkspaceDisclosure(`${sessionId}:runtime`, false);
+  useEffect(() => {
+    if (!open) return;
+    const stopObserving = observeSessionProfile(sessionId);
+    const refresh = () => {
+      const state = useAgentSessionStore.getState();
+      if (state.selectedSessionId !== sessionId || !state.sessions.find((item) => item.id === sessionId)?.sessionMetadata?.historyStorage) return;
+      void state.fetchSessionStats();
+      void state.fetchSessionTodos();
+      void state.fetchSessionInvocationUsage();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { window.clearInterval(timer); stopObserving(); };
+  }, [open, sessionId]);
   const id = useId();
   const { loading, stats, usage, steps, runs, session } = useAgentSessionStore(
     useShallow((s) => {

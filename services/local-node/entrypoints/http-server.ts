@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { businessStore } from "../infrastructure/persistence/business-store.js";
 import {
   recoverRuntimeSession,
+  needsRuntimeRecovery,
 } from "../modules/agent-runtime/runtime-recovery.js";
 import { SessionRecovery, installSessionRecovery, stopSessionRecovery } from '../modules/agent-runtime/session-recovery.js';
 import { runCoordinator } from "../modules/agent-runtime/run-coordinator.js";
@@ -48,7 +49,7 @@ import {
   needsGeneratedSessionTitle,
   registerSessionTitleHooks,
 } from "../modules/agent-runtime/session-title-service.js";
-import { startPermissionTimeoutSweeper } from "../modules/agent-runtime/permission-timeout-sweeper.js";
+import { startPermissionTimeoutSweeper, stopPermissionTimeoutSweeper } from "../modules/agent-runtime/permission-timeout-sweeper.js";
 import { startSessionArchiveRetention } from "../modules/agent-runtime/session-archive-retention.js";
 import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/browser-manager.js";
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
@@ -157,6 +158,7 @@ let shuttingDown = false;
 let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 
 let stopSessionArchiveRetention = () => {};
+let stopInteractionRecovery: () => Promise<void> = async () => {};
 const startupLifetime = new AbortController();
 let sessionRecovery: SessionRecovery;
 async function startupPhase<T>(phase: string, work: () => Promise<T>): Promise<T> {
@@ -178,7 +180,7 @@ function configureSessionRecovery(includeCurrentHost = false): SessionRecovery {
 async function loadSessionsInBackground(recovery: SessionRecovery): Promise<void> {
   await startupPhase('session_index', () => agentRuntimeStore.hydrateSessions(startupLifetime.signal));
   if (shuttingDown || sessionRecovery !== recovery) return;
-  await recovery.warm(agentRuntimeStore.listSessions({ limit: Infinity }).map(session => session.id), (sessionId, error) => {
+  await recovery.warm(agentRuntimeStore.listSessions({ limit: Infinity }).filter(needsRuntimeRecovery).map(session => session.id), (sessionId, error) => {
     pinoLogger.error({ event: 'runtime.session_recovery_failed', sessionId, error }, 'Session recovery failed; other sessions remain available');
   });
   if (shuttingDown || sessionRecovery !== recovery) return;
@@ -217,7 +219,7 @@ async function startRuntime(): Promise<void> {
   void workspaceIndexService.start();
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   startPermissionTimeoutSweeper();
-  startInteractionRecovery();
+  stopInteractionRecovery = startInteractionRecovery();
 }
 
 function startServer(): Promise<void> {
@@ -256,12 +258,14 @@ async function shutdownRuntime(): Promise<void> {
   stopSessionArchiveRetention();
   if (shuttingDown) return;
   shuttingDown = true;
+  const maintenanceStopped = Promise.all([stopPermissionTimeoutSweeper(), stopInteractionRecovery()]);
   startupLifetime.abort();
   closeObservationSockets?.();
   closeTerminalSockets?.();
   httpServer?.closeAllConnections();
   httpServer?.close();
   await stopSessionRecovery();
+  await maintenanceStopped;
   let failed = false;
   for (const id of runCoordinator.activeSessionIds()) {
     try {

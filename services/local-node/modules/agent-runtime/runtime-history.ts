@@ -44,12 +44,13 @@ export async function captureCheckpoint(
  * the settled reply keeps the checkpoint index proportional to the number of
  * conversation rounds instead of the number of steps.
  */
-export async function captureCompletedReply(sessionId: string): Promise<void> {
+export async function captureCompletedReply(sessionId: string, runId?: string): Promise<void> {
   const message = agentRuntimeStore
     .listMessages(sessionId)
     .filter(
       (m) =>
         m.role === "assistant" &&
+        (!runId || m.runId === runId) &&
         !m.metadata.partial &&
         m.metadata.type !== "thinking" &&
         m.metadata.kind !== "thought" &&

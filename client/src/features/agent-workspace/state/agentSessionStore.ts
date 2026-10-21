@@ -328,6 +328,16 @@ const terminalHistoryErrors = new Map<string, string>();
  */
 const PROFILE_REFRESH_MS = 60_000;
 const profileFetchedAt = new Map<string, number>();
+const visibleProfiles = new Map<string, number>();
+
+export function observeSessionProfile(sessionId: string): () => void {
+  visibleProfiles.set(sessionId, (visibleProfiles.get(sessionId) ?? 0) + 1);
+  return () => {
+    const count = (visibleProfiles.get(sessionId) ?? 1) - 1;
+    if (count > 0) visibleProfiles.set(sessionId, count);
+    else visibleProfiles.delete(sessionId);
+  };
+}
 function isPermanentHistoryError(error: unknown): boolean {
   const value = error as { code?: string; statusCode?: number } | null;
   return value?.code === "HISTORY_ENTITY_TOO_LARGE" || value?.code === "HISTORY_PAGE_REQUIRED" ||
@@ -617,7 +627,8 @@ function flushScheduledSessionRefresh(): void {
   pendingRefresh = null;
   if (pending.detail && pending.detail === state.selectedSessionId)
     void state.refreshDetail({ background: true });
-  else if (pending.usage && pending.usage === state.selectedSessionId)
+  else if (pending.usage && pending.usage === state.selectedSessionId &&
+    (visibleProfiles.has(pending.usage) || !state.sessions.find((session) => session.id === pending.usage)?.sessionMetadata?.historyStorage))
     void state.fetchSessionInvocationUsage();
   if (pending.interactions && pending.interactions === state.selectedSessionId)
     void state.refreshInteractions(pending.interactions);
@@ -1646,9 +1657,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Paint the last complete page immediately, including active sessions.
       // Live events and the change cursor reconcile it in the background.
       const cached = existingCache;
-      // A process restart starts with an empty memory tier. Paint the persisted
-      // entry now; the refresh below reconciles it with `since=<syncCursor>`.
-      if (!cached) void get().paintPersistedDetail(sessionId);
+      // refreshDetail restores the persisted window before choosing its sync
+      // cursor, avoiding a simultaneous uncursored history request on restart.
       const needsRefresh =
         forceFresh ||
         !cacheFresh ||
@@ -1701,7 +1711,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         // newly selected (inactive) session's transcript slot.
         releaseSessionLiveSubscription();
       }
-      if (!cached || isActiveSessionStatus(session?.status)) {
+      if (isActiveSessionStatus(session?.status) || session?.status === "queued" || session?.status === "paused") {
         void get().loadInputQueue(sessionId);
       }
 
@@ -2153,6 +2163,20 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               !isRuntimeResourceGone(targetSessionId) &&
               detailRefreshEpoch === epoch &&
               !refresh.again;
+            if (!forceFresh && !get().sessionDetailCache[targetSessionId]?.cachedAt) {
+              await get().paintPersistedDetail(targetSessionId);
+              if (refresh.again) continue;
+              if (!isCurrent()) return;
+            }
+            if (!get().sessions.some((session) => session.id === targetSessionId)) {
+              const { session } = await agentRuntimeApi.getSessionSummary(targetSessionId);
+              if (refresh.again) continue;
+              if (!isCurrent() || session.projectId !== targetProjectId) return;
+              set((state) => ({ sessions: [...state.sessions.filter((item) => item.id !== session.id), session] }));
+              if (isActiveSessionStatus(session.status) || session.status === "queued" || session.status === "paused") {
+                void get().loadInputQueue(targetSessionId);
+              }
+            }
             const cachedEntry =
               forceFresh
                 ? undefined
@@ -2172,43 +2196,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               get().discardRemovedSessions([targetSessionId], targetProjectId);
               return true;
             };
-            // Stats, todos and usage are derived from the entire transcript, and
-            // the poll re-ran them on every tick of a live session. Keep them on
-            // a slower clock: a fresh read still wins, a burst does not.
+            // A versioned transcript opens with one window and its sync cursor.
+            // Aggregate queries are requested by the expanded profile panel.
+            // Legacy sessions retain their existing bounded refresh cadence.
             const profileFresh =
-              !forceFresh &&
+              windowed || (!forceFresh &&
               Date.now() - (profileFetchedAt.get(targetSessionId) ?? 0) <
-                PROFILE_REFRESH_MS;
+                PROFILE_REFRESH_MS);
             // A failed read must retry on the next tick instead of being
             // remembered as a fresh window.
             let profileFailed = false;
             const profileUpdates = [
-              ...(!get().sessions.some(
-                (session) => session.id === targetSessionId,
-              )
-                ? [
-                    agentRuntimeApi
-                      .getSession(targetSessionId)
-                      .then(({ session }) => {
-                        if (
-                          !isCurrent() ||
-                          session.projectId !== targetProjectId
-                        )
-                          return;
-                        set((state) => ({
-                          sessions: state.sessions.some(
-                            (item) => item.id === session.id,
-                          )
-                            ? state.sessions
-                            : [...state.sessions, session],
-                        }));
-                      })
-                      .catch((error) => {
-                        discardIfMissing(error);
-                        /* Other transcript errors provide the retry UI. */
-                      }),
-                  ]
-                : []),
               profileFresh ? Promise.resolve() : agentRuntimeApi
                 .getSessionStats(targetSessionId)
                 .then((stats) => {
@@ -2287,7 +2285,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ].includes(polledStatus ?? "");
             if (options?.background && !forceFresh && sessionActive && cachedEntry?.cachedAt) {
               await Promise.all(profileUpdates);
-              if (!profileFresh && !profileFailed)
+              if (isCurrent() && !profileFresh && !profileFailed)
                 profileFetchedAt.set(targetSessionId, Date.now());
               if (isCurrent()) set({ detailLoading: false, detailRefreshing: false });
               continue;
@@ -2536,12 +2534,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 activeTranscriptRefresh = null;
             });
             await Promise.all(profileUpdates);
-            if (!profileFresh && !profileFailed)
+            if (isCurrent() && !profileFresh && !profileFailed)
               profileFetchedAt.set(targetSessionId, Date.now());
             // The transcript refresh keeps running without holding the poll loop.
             void transcriptTask;
-          } catch {
-            /* silent */
+          } catch (error) {
+            if (get().selectedSessionId === targetSessionId && get().projectId === targetProjectId &&
+              detailRefreshEpoch === epoch && !refresh.again) {
+              if (isMissingSession(error, targetSessionId)) get().discardRemovedSessions([targetSessionId], targetProjectId);
+              else set({ detailLoading: false, detailRefreshing: false, detailError: String(error) });
+            }
           }
         } while (refresh.again && get().selectedSessionId === targetSessionId);
       })();

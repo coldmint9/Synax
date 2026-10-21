@@ -857,6 +857,16 @@ export class RuntimeFacade {
     if (!client) throw new Error("Runtime sidecar client is not configured.");
     return readSessionList(client);
   }
+
+  async sessionSummaryAuthoritative(sessionId: string): Promise<AgentSession> {
+    const client = this.clientFactory();
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    const page = JSON.parse(Buffer.from(await client.sessionSummary(sessionId)).toString("utf8")) as { single?: boolean; items: AgentSession[] };
+    if (!page.single) throw new Error("Runtime sidecar must support session summary queries.");
+    const session = page.items.find((item) => item.id === sessionId);
+    if (!session) throw new RuntimeSidecarError({ type: "error", code: "PROJECTION_MISSING", message: "Session summary is not available." });
+    return session;
+  }
   async importUiProjection(
     sessionId: string,
     snapshot: unknown,
@@ -1429,6 +1439,8 @@ export class RuntimeFacade {
     checkpointId: string;
     revision: number;
     requestId: string;
+    /** Running sessions keep appending durable history while the copy is made. */
+    allowSourceChanges?: boolean;
   }): Promise<{
     revision: number;
     objectCount: number;
@@ -1444,7 +1456,7 @@ export class RuntimeFacade {
         this.listHistoryObjects(input.sourceSessionId, "list_tool_calls"),
         this.listHistoryObjects(input.sourceSessionId, "list_events"),
       ]);
-    if (head.revision !== input.revision)
+    if (!input.allowSourceChanges && head.revision !== input.revision)
       throw new AgentRuntimeError(
         "Conversation changed. Refresh the fork preview.",
         "HISTORY_STALE",

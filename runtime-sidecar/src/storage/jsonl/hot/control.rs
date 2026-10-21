@@ -110,7 +110,7 @@ impl SessionActor {
             if saved.fingerprint != identity {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut result: ControlCommandReceipt = serde_json::from_value(saved.result.clone())
+            let mut result: ControlCommandReceipt = serde_json::from_slice(&saved.result)
                 .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             result.reused = true;
             return Ok(result);
@@ -641,7 +641,7 @@ impl SessionActor {
             if saved.fingerprint != identity {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut result: QueueMutationReceipt = serde_json::from_value(saved.result.clone())
+            let mut result: QueueMutationReceipt = serde_json::from_slice(&saved.result)
                 .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             result.reused = true;
             return Ok(result);

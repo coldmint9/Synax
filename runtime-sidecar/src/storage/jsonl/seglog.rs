@@ -104,13 +104,18 @@ pub fn visit(path: &Path, start: u64, end: u64, mut consume: impl FnMut(u64, &[u
 
 /// Scan a possibly torn append tail; complete records are visited one at a time.
 pub fn visit_complete(path: &Path, mut consume: impl FnMut(u64, &[u8]) -> JsonlResult<()>) -> JsonlResult<u64> {
+    visit_complete_from(path, 0, &mut consume)
+}
+
+pub fn visit_complete_from(path: &Path, start: u64, mut consume: impl FnMut(u64, &[u8]) -> JsonlResult<()>) -> JsonlResult<u64> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => return Err(JsonlError::io(error)),
     };
     let end = file.metadata()?.len();
-    let mut offset = 0;
+    if start > end { return Err(JsonlError::corrupt(path, start, "cursor exceeds log")); }
+    let mut offset = start;
     while let Some((payload, next)) = frame_at(&file, offset, end)? {
         consume(offset, &payload)?;
         offset = next;

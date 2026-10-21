@@ -2,6 +2,8 @@
 //! root-level session-list index.
 
 pub mod list_index;
+mod summary_cache;
+mod summary_replay;
 #[cfg(test)]
 mod tests;
 
@@ -68,13 +70,15 @@ impl JsonlStore {
     /// The handle for `session_id`, loading it on first touch.
     pub fn session(&self, session_id: &str) -> JsonlResult<SessionHandle> {
         super::layout::validate_session_id(session_id)?;
-        self.root.sessions.get_or_try_init(session_id, || {
+        let handle = self.root.sessions.get_or_try_init(session_id, || -> JsonlResult<SessionHandle> {
             let started = std::time::Instant::now();
             let loaded = load::load(&self.root.path, session_id)?;
             tracing::debug!(
                 event = "storage.session_loaded",
                 session_id,
                 duration_ms = started.elapsed().as_millis() as u64,
+                replayed_commits = loaded.replayed_commits,
+                checkpoint_commit = loaded.checkpoint_commit,
                 "Session store loaded"
             );
             let handle = build_handle(&self.root.path, session_id, loaded);
@@ -86,11 +90,13 @@ impl JsonlStore {
                     .upsert(super::session::list_row(&actor));
             }
             Ok(handle)
-        })
+        })?;
+        self.evict_idle();
+        Ok(handle)
     }
 
-    /// Start one bounded background scan; listing callers poll its state rather
-    /// than tying up an IPC request or an async executor for the whole replay.
+    /// Restore summary rows without opening historical session actors. Older
+    /// sessions without a valid cache read their committed header fields once.
     pub fn index_ready(&self) -> Result<bool, String> {
         if self
             .root
@@ -164,7 +170,7 @@ impl JsonlStore {
             .map(|id| {
                 let store = self.clone();
                 async move {
-                    tokio::task::spawn_blocking(move || store.session(&id).map(|_| ()))
+                    tokio::task::spawn_blocking(move || store.load_list_entry(&id))
                         .await
                         .map_err(|e| e.to_string())?
                         .map_err(|e| e.to_string())
@@ -176,11 +182,41 @@ impl JsonlStore {
         let mut failure = None;
         while let Some(result) = loads.next().await {
             if let Err(error) = result { failure.get_or_insert(error); }
-            // Index construction only needs the row; do not leave every cold
-            // session's actor and event window resident after the scan.
-            self.evict_idle();
         }
         failure.map_or(Ok(()), Err)
+    }
+
+    fn load_list_entry(&self, id: &str) -> JsonlResult<bool> {
+        if self.root.sessions.get(id).is_some() { return Ok(false); }
+        if let Some(row) = summary_cache::read(&self.root.path, id) {
+            self.root.list.write().insert_cached(row);
+            return Ok(false);
+        }
+        let row = summary_cache::rebuild(&self.root.path, id)?;
+        self.root.list.write().insert_cached(row);
+        Ok(true)
+    }
+
+    pub fn session_summary(&self, id: &str) -> JsonlResult<Option<serde_json::Value>> {
+        super::layout::validate_session_id(id)?;
+        if let Some(row) = self.root.list.read().get(id) { return Ok(Some(row)); }
+        self.load_list_entry(id)?;
+        Ok(self.root.list.read().get(id))
+    }
+
+    fn cache_summary(&self, actor: &SessionActor) {
+        if let Err(error) = summary_cache::write(&self.root.path, actor) {
+            // Cache failures cannot fail an otherwise durable session write.
+            tracing::warn!(event = "storage.summary_cache_failed", session_id = actor.id,
+                error = %error, "Session summary will be rebuilt on next startup");
+        }
+    }
+
+    fn checkpoint(&self, actor: &mut SessionActor, force: bool) {
+        if let Err(error) = super::session::checkpoint::save(&self.root.path, actor, force) {
+            tracing::warn!(event = "storage.checkpoint_failed", session_id = actor.id, error = %error,
+                "Runtime checkpoint will be retried; committed logs remain authoritative");
+        }
     }
 
     pub async fn wait_for_index_scan(&self) {
@@ -201,7 +237,10 @@ impl JsonlStore {
         let started = std::time::Instant::now();
         let handles = self.root.sessions.values();
         for handle in handles {
-            handle.actor.lock().sync().map_err(JsonlError::from)?;
+            let mut actor = handle.actor.lock();
+            actor.sync()?;
+            self.cache_summary(&actor);
+            self.checkpoint(&mut actor, true);
         }
         tracing::info!(
             event = "storage.flushed",
@@ -213,7 +252,10 @@ impl JsonlStore {
 
     pub fn flush_session(&self, session_id: &str) -> JsonlResult<()> {
         if let Some(handle) = self.root.sessions.get(session_id) {
-            handle.actor.lock().sync().map_err(JsonlError::from)?;
+            let mut actor = handle.actor.lock();
+            actor.sync()?;
+            self.cache_summary(&actor);
+            self.checkpoint(&mut actor, false);
         }
         Ok(())
     }
@@ -221,7 +263,11 @@ impl JsonlStore {
     /// Release completed sessions from the hot cache once no operation still
     /// owns a handle. The durable list index remains available for listings.
     pub fn evict_idle(&self) -> usize {
-        self.root.sessions.remove_if(|handle| {
+        self.evict_with_policy(8, std::time::Duration::from_secs(300))
+    }
+
+    pub(crate) fn evict_with_policy(&self, capacity: usize, idle: std::time::Duration) -> usize {
+        self.root.sessions.evict_prepared(capacity, idle, |handle| {
             // The cache's handle and its cell each own the actor. Any caller
             // clone adds another pair, so exactly two means no in-flight use.
             if Arc::strong_count(&handle.actor) != 2 {
@@ -238,15 +284,21 @@ impl JsonlStore {
             {
                 return false;
             }
-            actor.files.sync().is_ok()
+            true
+        }, |handle| {
+            let mut actor = handle.actor.lock();
+            if actor.sync().is_err() { return false; }
+            self.cache_summary(&actor);
+            self.checkpoint(&mut actor, true);
+            true
         })
     }
 
     pub(crate) fn cached_session_idle(&self, session_id: &str) -> bool {
-        let Some(handle) = self.root.sessions.get(session_id) else {
+        let Some(handle) = self.root.sessions.peek(session_id) else {
             return true;
         };
-        let actor = handle.actor.lock();
+        let Some(actor) = handle.actor.try_lock() else { return false; };
         actor.subscribers.iter().all(|subscriber| subscriber.is_closed())
             && actor.state.active_run_id.is_none()
             && actor.active_runs.is_empty()

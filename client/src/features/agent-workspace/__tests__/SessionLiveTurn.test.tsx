@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunStep } from "../../../adapters/transport/agentRuntime";
 import type { TurnContentBlock } from "../buildInterleavedTurns";
@@ -45,15 +45,10 @@ const props = {
 describe("SessionLiveTurn", () => {
   it("keeps a snapshot until the store confirms its persisted content", () => {
     const { rerender, container } = render(<SessionLiveTurn {...props} />);
-    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
-      1,
-    );
-    expect(
-      screen.getAllByText("Found matches"),
-    ).toHaveLength(1);
+    expect(container.querySelectorAll(".session-activity-group")).toHaveLength(1);
 
     rerender(<SessionLiveTurn {...props} steps={[persisted]} />);
-    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(1);
+    expect(container.querySelectorAll(".session-activity-group")).toHaveLength(1);
     rerender(<SessionLiveTurn {...props} steps={[persisted]} streamingCompletedSteps={[]} />);
     expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
     expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
@@ -61,7 +56,7 @@ describe("SessionLiveTurn", () => {
   });
 
   it("keeps an unsynced step even when its contents match a persisted step", () => {
-    render(
+    const { container } = render(
       <SessionLiveTurn
         {...props}
         steps={[persisted]}
@@ -71,10 +66,7 @@ describe("SessionLiveTurn", () => {
         ]}
       />,
     );
-    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(2);
-    expect(
-      screen.getAllByText("Found matches"),
-    ).toHaveLength(2);
+    expect(container.querySelectorAll(".session-activity-group")).toHaveLength(2);
   });
 
   it("renders nothing when history owns every step and there is no active stream", () => {
@@ -98,14 +90,14 @@ describe("SessionLiveTurn", () => {
       1,
     );
     expect(
-      screen.getAllByText("Found matches"),
+      screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
     ).toHaveLength(1);
     expect(
       container.querySelectorAll('.session-process-window-viewport[data-windowed="true"]'),
     ).toHaveLength(1);
   });
 
-  it("keeps the activity rail live while the final answer starts streaming", () => {
+  it("folds prior activity while keeping the streamed final answer visible", async () => {
     render(
       <SessionLiveTurn
         {...props}
@@ -122,7 +114,9 @@ describe("SessionLiveTurn", () => {
       document.querySelectorAll(
         '.session-process-window-viewport[data-windowed="true"] .bui-tool',
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
+    expect(document.querySelector(".session-process-trigger")).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByText("Final answer")).toBeVisible();
   });
 
   it("retains every thought row of a live step in order", () => {
@@ -152,6 +146,7 @@ describe("SessionLiveTurn", () => {
       />,
     );
 
+    fireEvent.click(document.querySelector(".session-process-trigger")!);
     expect(screen.getByText("First thought")).toBeTruthy();
     expect(screen.getByText("Second thought")).toBeTruthy();
   });

@@ -18,6 +18,7 @@ vi.mock("../../../../adapters/transport/agentRuntime", () => ({
     historyTimeline: vi.fn(),
     historyIndexPage: vi.fn(),
     getSession: vi.fn(),
+    getSessionSummary: vi.fn(),
     getSessionStats: vi.fn(async () => null),
     getSessionTodos: vi.fn(async () => ({ items: [] })),
     getSessionInvocationUsage: vi.fn(async () => null),
@@ -273,7 +274,7 @@ describe("store restore", () => {
     expect(agentRuntimeApi.historyWindow).not.toHaveBeenCalled();
   });
 
-  it("reconciles a copy that was saved mid-run once the session settled", async () => {
+  it("restores the persisted sync cursor before the first history request after restart", async () => {
     schedulePersistDetail("session", "p1", entry(), "active");
     await flushSessionCacheWrites();
 
@@ -283,9 +284,6 @@ describe("store restore", () => {
       selectedSessionId: "session",
       sessions: [session("completed")],
     });
-
-    await store.getState().paintPersistedDetail("session");
-    expect(store.getState().sessionDetailCache.session?.restored).toBe("active");
 
     vi.mocked(agentRuntimeApi.historyWindow).mockResolvedValue({
       messages: [],
@@ -313,9 +311,10 @@ describe("store restore", () => {
         "sync-4",
       ),
     );
+    expect(agentRuntimeApi.historyWindow).toHaveBeenCalledTimes(1);
   });
 
-  it("reads the derived profile once per window instead of on every refresh", async () => {
+  it("keeps derived profile queries out of transcript loading until explicitly requested", async () => {
     store.setState({
       ...store.getInitialState(),
       projectId: "p1",
@@ -348,9 +347,11 @@ describe("store restore", () => {
     } as never);
 
     await store.getState().refreshDetail({ forceFresh: true });
-    expect(agentRuntimeApi.getSessionStats).toHaveBeenCalledTimes(1);
+    expect(agentRuntimeApi.getSessionStats).not.toHaveBeenCalled();
 
     await store.getState().refreshDetail();
+    expect(agentRuntimeApi.getSessionStats).not.toHaveBeenCalled();
+    await store.getState().fetchSessionStats();
     expect(agentRuntimeApi.getSessionStats).toHaveBeenCalledTimes(1);
   });
 });

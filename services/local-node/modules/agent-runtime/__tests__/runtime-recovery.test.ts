@@ -4,13 +4,21 @@ import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { runtimeFacade } from "../sidecar/runtime-facade.js";
 import { runtimeClient } from "../sidecar/runtime-repository.js";
-import { recoverRuntime, recoverRuntimeSession } from "../runtime-recovery.js";
+import { needsRuntimeRecovery, recoverRuntime, recoverRuntimeSession } from "../runtime-recovery.js";
 
 beforeEach(async () => {
   await resetAgentRuntimeFixtures();
 });
 
 describe("recoverRuntime", () => {
+  it("leaves settled indexed sessions cold but still checks live leases and older indexes", () => {
+    const summary = { status: "completed", activeRunId: null, runtimeRecoveryRequired: false } as Parameters<typeof needsRuntimeRecovery>[0];
+    expect(needsRuntimeRecovery(summary)).toBe(false);
+    expect(needsRuntimeRecovery({ ...summary, runtimeRecoveryRequired: true })).toBe(true);
+    expect(needsRuntimeRecovery({ ...summary, runtimeRecoveryRequired: undefined })).toBe(true);
+    expect(needsRuntimeRecovery({ ...summary, status: "running" })).toBe(true);
+    expect(needsRuntimeRecovery({ ...summary, activeRunId: "run" })).toBe(true);
+  });
   it('recovers an idle target without enumerating sessions or reading every transcript collection', async () => {
     const session = agentSessionRuntime.create(plannerSessionInput);
     await agentRuntimeStore.flushSession(session.id);

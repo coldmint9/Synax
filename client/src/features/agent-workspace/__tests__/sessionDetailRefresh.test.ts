@@ -88,6 +88,27 @@ afterEach(() => {
   expect(networkCalls).toEqual([]);
 });
 describe("versioned transcript refresh", () => {
+  it("opens an uncached historical session from its summary and one window only", async () => {
+    store.setState({ projectId: "p", sessions: [] });
+    const execution = vi.spyOn(api, "getSession").mockRejectedValue(new Error("execution must remain cold"));
+    const summary = vi.spyOn(api, "getSessionSummary").mockResolvedValue({ session: {
+      ...session, status: "completed", sessionMetadata: { historyStorage: 3 },
+    } });
+    const history = vi.spyOn(api, "historyWindow").mockResolvedValue({
+      messages: [message("recent")], runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+      historyWindow: { epoch: 1, revision: 100, generation: 1, olderCursor: "older", syncCursor: "latest", hasEarlier: true, latest: true, detailsTruncated: false },
+    });
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages).toHaveLength(1));
+    expect(summary).toHaveBeenCalledWith(session.id);
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(execution).not.toHaveBeenCalled();
+    expect(api.listMessages).not.toHaveBeenCalled();
+    expect(api.listInputQueue).not.toHaveBeenCalled();
+    expect(api.getSessionStats).not.toHaveBeenCalled();
+    expect(api.getSessionTodos).not.toHaveBeenCalled();
+    expect(api.getSessionInvocationUsage).not.toHaveBeenCalled();
+  });
   it("retries a stale latest read without surfacing a transient detail error", async () => {
     const versionedSession = {
       ...session,
@@ -290,6 +311,7 @@ describe("detail refresh freshness", () => {
       }),
     );
     const first = store.getState().refreshDetail();
+    await vi.waitFor(() => expect(api.getSessionStats).toHaveBeenCalledOnce());
     store.getState().patchSession(session.id, { status: "completed" });
     const trailing = store.getState().refreshDetail();
     resolve(stats("running"));
@@ -620,7 +642,7 @@ describe("inactive session page cache", () => {
     await vi.waitFor(() => expect(api.listMessages).toHaveBeenCalled());
   });
 
-  it("retains the selected page plus the four most recently visited inactive pages", async () => {
+  it("retains the selected page plus the eight most recently visited inactive pages", async () => {
     const active = {
       ...session,
       id: "active",
@@ -636,13 +658,17 @@ describe("inactive session page cache", () => {
         recent2: cachedEntry(3),
         recent3: cachedEntry(4),
         recent4: cachedEntry(5),
+        recent5: cachedEntry(6),
+        recent6: cachedEntry(7),
+        recent7: cachedEntry(8),
+        recent8: cachedEntry(9),
       },
     });
 
     await store.getState().fetchSessionStats();
 
     expect(Object.keys(store.getState().sessionDetailCache).sort()).toEqual(
-      ["active", "recent1", "recent2", "recent3", "recent4"].sort(),
+      ["active", "recent1", "recent2", "recent3", "recent4", "recent5", "recent6", "recent7", "recent8"].sort(),
     );
   });
 });
@@ -663,7 +689,7 @@ describe('incremental history pages', () => {
       .mockReturnValueOnce(new Promise(r=>{resolve=r;}));
     await store.getState().refreshDetail();
     await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','first-change']));
-    expect(history.mock.calls.slice(1)).toEqual([[session.id,undefined,'sync-1'],[session.id,undefined,'sync-2']]);
+    await vi.waitFor(() => expect(history.mock.calls.slice(1)).toEqual([[session.id,undefined,'sync-1'],[session.id,undefined,'sync-2']]));
     expect(api.listMessages).not.toHaveBeenCalled();
     resolve({...window([message('second-change')],'sync-3',true),removed:[{collection:'messages',id:'first-change'}]});
     await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','second-change']));
@@ -731,7 +757,7 @@ describe("live transcript history requests", () => {
       await vi.advanceTimersByTimeAsync(1200);
     }
     expect(history).toHaveBeenCalledOnce();
-    expect(api.getSessionStats).toHaveBeenCalledTimes(5);
+    expect(api.getSessionStats).not.toHaveBeenCalled();
     expect(store.getState().messages).toHaveLength(131);
     expect(store.getState().messages[0].id).toBe("old-0");
     expect(store.getState().messages.at(-1)).toEqual({ ...answer, content: answer.content + "4" });

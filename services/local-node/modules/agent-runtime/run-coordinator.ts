@@ -33,6 +33,7 @@ import {
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { captureCompletedReply } from "./runtime-history.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
 import {
   currentRuntimeHostId,
@@ -528,6 +529,14 @@ export class RunCoordinator {
           if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
             // Include any final partial message written after the stream drained.
             await agentRuntimeStore.hydrateSession(sessionId, true);
+            // All backends settle here, including Rust and external sessions
+            // that never enter the legacy loop's checkpoint finalizer.
+            try {
+              await captureCompletedReply(sessionId, run.id);
+            } catch (error) {
+              logger.warn({ sessionId, runId: run.id, error },
+                "[run-coordinator] reply checkpoint could not be saved");
+            }
           }
           // Terminal finish closes the lease in the same Rust transaction.
           // Waiting checkpoints retain the run but release this executor.

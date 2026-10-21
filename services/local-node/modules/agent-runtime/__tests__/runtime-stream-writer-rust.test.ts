@@ -3,7 +3,7 @@ import type { AgentRun, AgentRunStep, AgentRunStreamChunk } from '../contracts.j
 const transport = vi.hoisted(() => ({
   streamFence: vi.fn(async () => ({ epoch: 4, revision: 2 })),
   authoritativeRecordState: vi.fn(async () => ({ status: 'running', activeRunId: 'r', pendingResumeToken: null, blockedReason: null, updatedAt: 'now' })),
-  appendStreamAuthoritative: vi.fn(async (_input: { producerSequence: number }) => 1),
+  appendStreamAuthoritative: vi.fn(async (_input: { producerSequence: number; chunks: AgentRunStreamChunk[] }) => 1),
   persistStreamHistory: vi.fn(async () => {}),
 }));
 vi.mock('../sidecar/runtime-facade.js', () => ({ runtimeFacade: transport }));

@@ -165,7 +165,7 @@ impl SessionActor {
             if saved.fingerprint != body_hash {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut admission: RunAdmission = serde_json::from_value(saved.result.clone())
+            let mut admission: RunAdmission = serde_json::from_slice(&saved.result)
                 .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             admission.reused = true;
             return Ok(admission);
@@ -288,7 +288,8 @@ impl SessionActor {
             if saved.fingerprint != identity {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut receipt: ActivationReceipt = from_value(saved.result.clone())?;
+            let mut receipt: ActivationReceipt = serde_json::from_slice(&saved.result)
+                .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             receipt.reused = true;
             return Ok(receipt);
         }
@@ -358,7 +359,8 @@ impl SessionActor {
             if saved.fingerprint != identity {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut receipt: FinishReceipt = from_value(saved.result.clone())?;
+            let mut receipt: FinishReceipt = serde_json::from_slice(&saved.result)
+                .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             receipt.reused = true;
             return Ok(receipt);
         }
@@ -479,7 +481,8 @@ impl SessionActor {
             if saved.fingerprint != fingerprint {
                 return Err(RuntimeError::RequestConflict);
             }
-            let mut receipt: StreamAppendReceipt = from_value(saved.result.clone())?;
+            let mut receipt: StreamAppendReceipt = serde_json::from_slice(&saved.result)
+                .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
             receipt.reused = true;
             return Ok(receipt);
         }
@@ -552,8 +555,4 @@ pub fn hash(value: &impl serde::Serialize) -> Result<String, RuntimeError> {
 
 fn to_value(value: &impl serde::Serialize) -> Result<Value, RuntimeError> {
     serde_json::to_value(value).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))
-}
-
-fn from_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(value).map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
 }

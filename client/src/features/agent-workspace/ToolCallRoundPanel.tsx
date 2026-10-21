@@ -4,6 +4,7 @@ import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { toolBlocksToBatches } from "./toolCallUtils";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { hasDisplayableReasoning } from "./activityText";
+import { ToolCallSummaryLine } from "./ToolCallSummaryLine";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
 
 export interface ToolRoundRow {
@@ -29,7 +30,8 @@ export function toolRoundRows(
   {
     isStreaming = false,
     rememberKey,
-  }: { isStreaming?: boolean; rememberKey?: string } = {},
+    individual = false,
+  }: { isStreaming?: boolean; rememberKey?: string; individual?: boolean } = {},
 ): ToolRoundRow[] {
   const rows: ToolRoundRow[] = [];
   toolBlocks.forEach((block, index) => {
@@ -50,6 +52,14 @@ export function toolRoundRows(
       return;
     }
     if (block.type !== "tool_call" && block.type !== "tool_call_group") return;
+    if (individual) {
+      const calls = block.type === "tool_call" ? [block.call] : block.calls;
+      for (const call of calls) rows.push({
+        key: `call:${call.id}`,
+        node: <ToolCallSummaryLine key={call.id} call={call} rememberKey={rememberKey} />,
+      });
+      return;
+    }
     toolBlocksToBatches([block]).forEach((batch) => {
       const key = `${batch.toolId}-${batch.calls[0]?.id}`;
       rows.push({

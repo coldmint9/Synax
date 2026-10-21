@@ -6,6 +6,8 @@
 //! `ArcSwap` and never take the lock at all.
 
 pub mod load;
+pub(crate) mod checkpoint;
+mod replay;
 pub mod state;
 pub use state::Tx;
 pub mod sync;
@@ -99,6 +101,8 @@ pub struct SessionActor {
     pub subscribers: Vec<tokio::sync::mpsc::Sender<Arc<StreamEvent>>>,
     pub files: Publisher,
     pub commit: u64,
+    pub checkpoint_commit: u64,
+    pub checkpoint_at: std::time::Instant,
     pub ui_gen: u64,
     pub subscribers_capacity: usize,
     /// Admitted run documents by id, until the run finishes.
@@ -109,10 +113,13 @@ pub struct SessionActor {
     pub terminated_runs: std::collections::HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredReceipt {
     pub fingerprint: String,
-    pub result: serde_json::Value,
+    // JSON byte arrays in control receipts otherwise expand into one full
+    // Value per byte for every retained request. Decode only on a retry.
+    #[serde(with = "super::checkpoint::bytes")]
+    pub result: Vec<u8>,
     pub at: u64,
 }
 
@@ -300,10 +307,23 @@ pub fn index_row(actor: &SessionActor) -> IndexRecord {
 }
 
 pub fn list_row(actor: &SessionActor) -> ListRecord {
+    let mut header = actor.header.clone();
+    if let Some(header) = header.as_object_mut() {
+        let pending = actor.control.permissions.iter().filter(|permission| {
+            permission["action"] == "ask" && permission["resolvedAt"].is_null()
+        }).count();
+        header.insert("pendingPermissionCount".into(), serde_json::json!(pending));
+        header.insert("runtimeRecoveryRequired".into(), serde_json::json!(
+            actor.state.active_run_id.is_some() || actor.header["activeRunId"].is_string()
+            || matches!(actor.header["status"].as_str(), Some("running" | "stopping" | "queued"))
+            || actor.control.runtime_control.is_some() || !actor.control.process_leases.is_empty()
+            || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
+        ));
+    }
     ListRecord {
         s: actor.id.clone(),
         u: updated_at(actor),
-        h: actor.header.clone(),
+        h: header,
         del: false,
     }
 }
@@ -355,6 +375,8 @@ impl SessionActor {
             subscribers: Vec::new(),
             files: loaded.files,
             commit: loaded.commit,
+            checkpoint_commit: loaded.checkpoint_commit,
+            checkpoint_at: std::time::Instant::now(),
             ui_gen: 0,
             subscribers_capacity,
             active_runs: std::collections::HashMap::new(),

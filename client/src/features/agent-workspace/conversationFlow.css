@@ -1,270 +1,141 @@
-/* The transcript keeps one source-ordered lane for thoughts, actions and results. */
+/* A single reading lane: quiet activity summaries alternate with full replies. */
 .session-conversation-flow {
   --flow-muted: hsl(var(--muted-foreground));
-  --flow-line: color-mix(in srgb, var(--border) 75%, transparent);
+  --flow-ink: var(--foreground);
+  --flow-ease: cubic-bezier(.22, 1, .36, 1);
   container: conversation-flow / inline-size;
-  min-width: 0;
   width: 100%;
+  min-width: 0;
+  font-size: var(--agent-chat-font-size, 14px);
+}
+.dark .session-conversation-flow { --flow-muted: #797979; }
+.session-conversation-flow .agent-conversation-copy .session-text-paragraph { margin: 0 0 14px; }
+.session-conversation-flow .agent-conversation-copy .session-text-paragraph:last-child { margin-bottom: 0; }
+.session-flow-content { display: flex; flex-direction: column; gap: 13px; }
+.session-flow-entry, .session-activity-group { min-width: 0; }
+.session-flow-entry.session-answer-region { margin: 0; padding: 0; border: 0; }
+.session-conversation-flow .session-answer-region > .agent-conversation-copy {
+  line-height: 1.65;
+  letter-spacing: 0;
 }
 .session-process-trigger {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  width: 100%;
-  min-height: 28px;
-  margin-bottom: 12px;
-  text-align: left;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 25px;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--flow-muted);
-  font-size: 11px;
+  text-align: left;
+  font: inherit;
+  line-height: 1.65;
+  cursor: pointer;
+  transition: color 160ms ease;
 }
-.session-process-status { margin-left: auto; }
-/* A live row is a readout of the newest thought or call, not a second
-   transcript: one fixed line whose tail follows the stream. */
+.session-process-trigger:hover { color: var(--flow-ink); }
+.session-process-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.session-process-symbol { flex: 0 0 16px; }
+.session-process-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-process-chevron {
+  flex: 0 0 14px;
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease;
+}
+.session-activity-group[data-live] > .session-process-trigger .session-process-chevron,
+.session-process-trigger:is(:hover, :focus-visible) .session-process-chevron { opacity: 1; }
+.session-activity-group[data-expanded="true"] > .session-process-trigger .session-process-chevron { transform: rotate(0); }
+.session-process-status { display: inline-flex; margin-left: 4px; }
 .session-process-line {
   position: relative;
   display: block;
-  flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 .session-process-line[data-overflow="true"] {
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px);
   mask-image: linear-gradient(90deg, transparent, #000 12px);
 }
 .session-process-line-track {
   display: inline-block;
   white-space: nowrap;
-  will-change: transform;
-  transition: transform 160ms linear;
+  transition: transform 180ms linear;
 }
-.session-process-preview {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  margin: -5px 0 8px 25px;
-  color: var(--flow-muted);
-  font-size: 11px;
-  line-height: 1.65;
+/* The narrow highlight crosses the glyphs from left to right, then rests.
+   Only a live group owns the sweep; finished history stays completely still. */
+.session-activity-group[data-live] .session-process-line-track {
+  background-image: linear-gradient(105deg, var(--flow-muted) 42%, var(--flow-ink) 49%, var(--flow-muted) 56%);
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: session-activity-sweep 2.8s ease-in-out infinite;
 }
-.session-process-trigger:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 3px;
-  border-radius: 4px;
+@keyframes session-activity-sweep {
+  0%, 12% { background-position: 100% 0; }
+  72%, 100% { background-position: -65% 0; }
 }
-.session-flow-content { display: flex; flex-direction: column; gap: 12px; }
-.session-flow-entry { position: relative; min-width: 0; }
-.session-flow-entry[hidden] { display: none; }
-.session-flow-entry.session-answer-region { margin-top: 0; }
-.session-flow-entry.session-answer-region[data-process] { padding-left: 25px; }
-.session-flow-comment-icon {
-  position: absolute;
-  left: 0;
-  top: 3px;
-  background: var(--surface);
-  color: var(--flow-muted);
+/* Headless UI retains closing content until the grid/fade transition ends,
+   then unmounts it. Closed bodies are inert throughout the transition. */
+.session-activity-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 160ms ease, transform 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1));
 }
-.session-conversation-flow[data-has-activity] .session-answer-region:not([data-process]) { margin-left: 25px; }
-.session-flow-entry[data-answer-start] { border-top: 1px solid var(--flow-line); padding-top: 16px; margin-top: 4px; }
+.session-activity-reveal[data-closed] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-3px);
+}
+.session-activity-clip { min-height: 0; overflow: hidden; }
+.session-process-window { min-width: 0; }
+.session-process-window .session-activity-clip > .session-process-window-frame { padding-top: 2px; }
+.session-process-window-frame { position: relative; min-width: 0; }
+.session-process-window-viewport { display: block; min-width: 0; }
+.session-process-window-frame[data-animate] .session-process-window-viewport { transition: height 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
+.session-process-window-viewport[data-windowed] {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--flow-muted) 25%, transparent) transparent;
+}
+.session-process-window-row { display: block; min-width: 0; min-height: var(--process-row-h, 25px); }
+.session-process-window-viewport[data-windowed] .session-process-window-row { height: var(--process-row-h, 25px); overflow: hidden; }
+.session-process-window-viewport[data-windowed] .session-activity-reveal { display: none; }
+/* Mask the offscreen edge only; the transcript canvas stays transparent. */
+.session-process-window-frame[data-fade-top] { mask-image: linear-gradient(to bottom, transparent, #000 24px); }
+.session-process-window-frame[data-fade-bottom] { mask-image: linear-gradient(to top, transparent, #000 24px); }
+.session-process-window-frame[data-fade-top][data-fade-bottom] { mask-image: linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 
 .session-conversation-flow .bui-tool-group,
 .session-conversation-flow .bui-tool-list,
-.session-flow-tools.bui-tool-group {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  min-width: 0;
-  gap: 12px;
-  padding: 0;
-}
-.session-flow-tools > .bui-tool,
-.session-flow-tools > .bui-thinking { position: relative; }
-
-/* A live turn grows in place: rows appended while it streams fade in, so new
-   tool rounds and reasoning read as a continuation of the flow. */
-.session-flow-append .session-flow-entry,
-.session-flow-append .session-flow-tools > .bui-tool,
-.session-flow-append .session-flow-tools > .bui-thinking {
-  animation: session-flow-append 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes session-flow-append {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.bui-thinking .bui-thinking-trigger {
-  display: flex;
-  align-items: flex-start;
-  width: 100%;
-  gap: 9px;
-  padding: 3px 0;
-}
-.bui-thinking .bui-thinking-symbol {
-  position: relative;
-  z-index: 1;
-  margin-top: 3px;
-  background: var(--surface);
-}
-.bui-thinking-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
-.bui-thinking-preview {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--bui-muted);
-}
-.bui-thinking[data-variant="reasoning"] .bui-thinking-label,
-.session-conversation-flow .bui-thinking .bui-thinking-label {
-  color: var(--bui-muted);
-  background: none;
-  animation: none;
-  font-size: 12px;
-  line-height: 1.65;
-  font-weight: 400;
-}
-.bui-thinking .bui-thinking-meta { font-size: 10px; margin-top: 3px; }
-.bui-thinking .bui-thinking-chevron { margin: 4px 0 0 auto; }
-.bui-thinking[data-expanded="true"] .bui-thinking-chevron { transform: rotate(90deg); }
-.bui-thinking .bui-thinking-trace { margin: 0 0 0 25px; padding-left: 0; border-left: 0; }
-.bui-thinking .bui-thinking-body { font-size: 12px; line-height: 1.65; }
-
+.session-flow-tools.bui-tool-group { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: 0; padding: 0; }
 .bui-tool .bui-tool-trigger {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 9px;
-  padding: 3px 0;
-}
-.bui-tool .bui-tool-symbol {
-  position: relative;
-  z-index: 1;
-  width: 16px;
-  margin-top: 3px;
-  background: var(--surface);
-}
-.bui-tool-copy { display: flex; flex-direction: column; min-width: 0; gap: 3px; }
-.bui-tool .bui-tool-label {
-  max-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.65;
-  font-weight: 500;
-}
-.bui-tool .bui-tool-target {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: none;
-  font-size: 11px;
-  line-height: 1.65;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.bui-tool .bui-tool-meta { gap: 7px; margin-top: 4px; font-size: 10px; }
-.bui-tool .bui-tool-count,
-.session-conversation-flow .bui-status { font-size: 10px; }
-.bui-tool-result {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  margin: 3px 0 0 25px;
-  color: var(--bui-muted);
-  font-size: 11px;
-  line-height: 1.65;
-}
-.bui-tool-result[data-error="true"] {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-.bui-tool .bui-tool-details,
-.bui-tool .bui-tool-batch-body { margin: 10px 0 0 25px; padding-left: 12px; }
-.bui-tool .bui-tool-details pre { font-size: 11px; }
-.bui-tool .bui-tool-detail-label { font-size: 10px; }
-.bui-tool-batch-body { display: flex; flex-direction: column; gap: 12px; }
-.bui-tool[data-tool-status="running"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--accent); }
-.bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
-.bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
-
-/* A live turn keeps its records in one window: seven one-line rows, a
-   scrollable body, and a fading bottom edge while more records wait below. */
-.session-process-window { min-width: 0; }
-.session-process-window[hidden] { display: none; }
-.session-process-window-frame { position: relative; min-width: 0; }
-/* The bottom edge blurs and fades while records wait below the window. */
-.session-process-window-frame[data-fade]::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 34px;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--surface) 92%, transparent)
-  );
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 70%);
-  mask-image: linear-gradient(to bottom, transparent, #000 70%);
-}
-.session-process-window-viewport {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.session-process-window-viewport[data-windowed] {
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.session-process-window-row { min-width: 0; min-height: 30px; }
-.session-process-window-spacer { flex: 0 0 auto; }
-
-/* One record, one line: the call type and its input share the heading row,
-   and a folded record reports how it ended in that same row. */
-.session-conversation-flow .bui-tool .bui-tool-trigger {
   align-items: center;
-  padding: 3px 0;
+  gap: 6px;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 0;
+  border-radius: 3px;
+  color: var(--flow-muted, var(--bui-muted));
 }
-.session-conversation-flow .bui-tool .bui-tool-copy {
-  flex-direction: row;
-  align-items: baseline;
-  flex: 1;
-  gap: 8px;
-}
-.session-conversation-flow .bui-tool .bui-tool-label {
-  flex-shrink: 0;
-  max-width: 46%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  line-height: 1.6;
-}
-.session-conversation-flow .bui-tool .bui-tool-target,
-.session-conversation-flow .bui-tool .bui-tool-result {
+.session-conversation-flow button.bui-tool-trigger:hover { background: none; color: var(--flow-ink); }
+.bui-tool .bui-tool-symbol { flex: 0 0 16px; width: 16px; color: inherit; }
+.bui-tool-copy { display: flex; align-items: baseline; min-width: 0; gap: 5px; }
+.bui-tool .bui-tool-label { flex: 0 0 auto; max-width: none; font-size: inherit; font-weight: 400; line-height: 1.65; }
+.bui-tool .bui-tool-target,
+.bui-tool .bui-tool-result {
   display: block;
-  flex: 1;
   min-width: 0;
   margin: 0;
   border: 0;
@@ -272,61 +143,65 @@
   background: none;
   padding: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
-  -webkit-line-clamp: unset;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.session-conversation-flow .bui-tool .bui-tool-target { font-family: var(--font-mono); }
-.session-conversation-flow .bui-tool .bui-tool-meta { margin-top: 0; }
-.session-conversation-flow .bui-tool .bui-tool-details,
-.session-conversation-flow .bui-tool .bui-tool-batch-body { margin-top: 6px; }
-
-/* Reasoning folds to the same single line so the window height holds. */
-.session-conversation-flow .bui-thinking .bui-thinking-trigger {
-  align-items: center;
-  padding: 3px 0;
-}
-.session-conversation-flow .bui-thinking .bui-thinking-symbol { margin-top: 0; }
-.session-conversation-flow .bui-thinking-copy {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 8px;
-}
-.session-conversation-flow .bui-thinking .bui-thinking-label {
-  flex-shrink: 0;
   white-space: nowrap;
+  color: inherit;
+  font: inherit;
+  line-height: 1.65;
 }
-.session-conversation-flow .bui-thinking-preview {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  -webkit-line-clamp: unset;
-  font-size: 12px;
-}
-.session-conversation-flow .bui-thinking .bui-thinking-meta { margin-top: 0; }
-.session-conversation-flow .bui-thinking .bui-thinking-chevron { margin: 0 0 0 2px; }
+.bui-tool .bui-tool-target[data-file] { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+.bui-tool-diff { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bui-tool .bui-tool-meta { flex: 0 0 auto; margin: 0; gap: 6px; white-space: nowrap; }
+.bui-tool .bui-chevron { opacity: 0; transform: rotate(-90deg); transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease; }
+.bui-tool[data-expanded="true"] > .bui-tool-trigger .bui-chevron { transform: rotate(0); }
+.bui-tool-trigger:is(:hover, :focus-visible) .bui-chevron { opacity: 1; }
+.bui-tool .bui-tool-result[data-error],
+.bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
+.bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
+.bui-tool .bui-tool-details, .bui-tool .bui-tool-batch-body { margin: 6px 0 10px 24px; padding: 0; border: 0; animation: none; }
+.bui-tool .bui-tool-detail-label { font-size: 11px; }
+.bui-tool .bui-tool-details pre { font-size: 12px; }
+.bui-tool-batch-body { display: flex; flex-direction: column; gap: 0; }
 
+.bui-thinking .bui-thinking-trigger { display: flex; align-items: center; width: 100%; min-height: 25px; gap: 6px; padding: 2px 0; }
+.bui-thinking-copy { display: flex; align-items: baseline; min-width: 0; gap: 6px; }
+.bui-thinking .bui-thinking-label { flex-shrink: 0; color: var(--bui-muted); background: none; animation: none; font-size: inherit; line-height: 1.65; font-weight: 400; }
+.bui-thinking-preview { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bui-muted); font-size: inherit; line-height: 1.65; }
+.bui-thinking .bui-thinking-meta { margin-left: auto; font-size: 10px; }
+.bui-thinking .bui-thinking-chevron { margin: 0; transition: transform 180ms ease; }
+.bui-thinking[data-expanded="true"] .bui-thinking-chevron { transform: rotate(90deg); }
+.bui-thinking .bui-thinking-trace { margin: 6px 0 10px 24px; padding: 0; border: 0; }
+.bui-thinking .bui-thinking-body { font-size: 13px; line-height: 1.65; }
+.bui-thinking .bui-thinking-reveal[aria-hidden="true"] { grid-template-rows: 0fr; opacity: 0; }
+
+.session-flow-append .session-flow-entry,
+.session-process-window-frame[data-animate] .session-process-window-row { animation: session-flow-append 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
+@keyframes session-flow-append {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @container conversation-flow (max-width: 420px) {
-  .bui-tool .bui-tool-trigger { grid-template-columns: 16px minmax(0, 1fr); }
-  .bui-tool .bui-tool-meta { grid-column: 2; margin: 0; flex-wrap: wrap; }
-  .bui-tool .bui-tool-meta > .bui-chevron { margin-left: auto; }
+  .session-flow-content { gap: 13px; }
   .bui-thinking .bui-thinking-meta { display: none; }
+  .bui-tool .bui-tool-label { flex-shrink: 1; max-width: 60%; }
 }
 @media (pointer: coarse) {
-  .session-process-trigger,
-  .bui-thinking .bui-thinking-trigger,
-  .bui-tool .bui-tool-trigger { min-height: 44px; }
+  .session-process-trigger { min-height: 44px; }
+  .bui-tool button.bui-tool-trigger, .bui-thinking button.bui-thinking-trigger { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .bui-thinking .bui-thinking-chevron,
-  .bui-thinking .bui-thinking-reveal { transition: none; }
-  .session-process-line-track { transition: none; }
-  .session-flow-append .session-flow-entry,
-  .session-flow-append .session-flow-tools > .bui-tool,
-  .session-flow-append .session-flow-tools > .bui-thinking { animation: none; }
+  .session-conversation-flow *, .session-activity-reveal, .bui-thinking .bui-thinking-chevron { animation: none !important; transition: none !important; }
+  .session-activity-group[data-live] .session-process-line-track { background: none; color: var(--flow-muted); }
+}
+@media (forced-colors: active) {
+  .session-activity-group[data-live] .session-process-line-track { background: none; color: ButtonText; }
+}
+.session-process-window-frame[data-animate] .session-process-window-row[data-departing] {
+  animation: session-flow-depart 160ms ease-out forwards;
+}
+@keyframes session-flow-depart {
+  to { opacity: 0; transform: translateY(-3px); }
+}
+.session-activity-group[data-live] .session-process-window-frame:not([data-fade-top]):not([data-fade-bottom]) {
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / .45), #000 54px);
 }

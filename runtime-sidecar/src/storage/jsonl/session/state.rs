@@ -201,7 +201,7 @@ impl SessionActor {
                 request_id,
                 StoredReceipt {
                     fingerprint,
-                    result,
+                    result: serde_json::to_vec(&result).map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?,
                     at: super::now_ms(),
                 },
             );

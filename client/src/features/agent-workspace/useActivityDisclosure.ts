@@ -7,8 +7,10 @@ const MAX_REMEMBERED_ROWS = 500;
 
 export function useActivityDisclosure(rememberKey?: string, defaultExpanded = false) {
   const read = () => rememberKey ? expandedRows.get(rememberKey) ?? defaultExpanded : defaultExpanded;
-  const [selection, setSelection] = useState(() => ({ key: rememberKey, expanded: read() }));
-  const expanded = selection.key === rememberKey ? selection.expanded : read();
+  const [selection, setSelection] = useState<{ key: string | undefined; expanded: boolean } | null>(null);
+  // Follow the live/finished default until the reader explicitly chooses.
+  // Their choice still survives both completion and virtualization remounts.
+  const expanded = selection && selection.key === rememberKey ? selection.expanded : read();
 
   const toggle = () => {
     const next = !expanded;

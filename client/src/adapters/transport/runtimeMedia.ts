@@ -33,12 +33,17 @@ export const runtimeMedia = {
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = typeof data?.error === "string" ? data.error : undefined;
-      throw new Error(
+      const failure = Object.assign(
+        new Error(
         detail ??
           (response.status === 404
             ? "附件上传接口未就绪（HTTP 404），请重启 Synax API 后重试。"
             : `附件上传失败（HTTP ${response.status}），请检查 Synax API 后重试。`),
+        ),
+        // Callers back off and retry instead of surfacing a transient refusal.
+        { busy: response.status === 429 },
       );
+      throw failure;
     }
     if (
       typeof data?.asset?.id !== "string" ||

@@ -42,7 +42,7 @@ export function StreamingActivityLine({
   });
 
   return (
-    <span className="session-process-line" ref={viewport} aria-hidden="true">
+    <span className="session-process-line" data-streaming={streaming || undefined} ref={viewport} aria-hidden="true">
       <span className="session-process-line-track" ref={track}>
         {visible}
       </span>

@@ -11,6 +11,8 @@ import {
 import type { ToolCallBatch } from "./toolCallUtils";
 import { activityPreview } from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
+import { ActivityDisclosure } from "./ActivityDisclosure";
+import { useCompactActivityRow } from "./ActivityRowScope";
 
 interface Props {
   batch: ToolCallBatch;
@@ -19,7 +21,11 @@ interface Props {
 
 export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
   const { locale } = useLocale();
-  const [expanded, toggle] = useActivityDisclosure(rememberKey ? `${rememberKey}:batch:${batch.calls[0]?.id}` : undefined);
+  const [open, toggle] = useActivityDisclosure(rememberKey ? `${rememberKey}:batch:${batch.calls[0]?.id}` : undefined);
+  // Inside the live window a batch is one row: the window follows the newest
+  // record, so the per-call breakdown stays closed until the turn settles.
+  const compact = useCompactActivityRow();
+  const expanded = open && !compact;
   const detailsId = useId();
   const { calls } = batch;
   const presentation = useMemo(() => toolCallPresentation(calls[0], locale), [calls, locale]);
@@ -31,30 +37,24 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
 
   if (calls.length === 1) return <ToolCallSummaryLine call={calls[0]} rememberKey={rememberKey} />;
 
-  return (
-    <div className="bui-tool" data-tool-status={status}>
-      <HeadlessButton
-        type="button"
-        onClick={toggle}
-        className="bui-tool-trigger"
-        aria-expanded={expanded}
-        aria-controls={expanded ? detailsId : undefined}
-      >
-        <span className="bui-tool-symbol">
-          <Icon size={16} aria-hidden="true" />
-        </span>
-        <span className="bui-tool-copy">
-          <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
-          {!expanded && failurePreview ? (
-            <span className="bui-tool-result" data-error="true" title={failurePreview}>{failurePreview}</span>
-          ) : targets ? (
-            <span className="bui-tool-target" title={targets}>{targets}</span>
-          ) : null}
-        </span>
-        <span className="bui-tool-meta">
-          <span className="bui-tool-count">{locale === "zh" ? `${calls.length} 次调用` : `${calls.length} calls`}</span>
-          <ActivityStatus status={status} />
-          {expanded ? (
+  const heading = (
+    <>
+      <span className="bui-tool-symbol">
+        <Icon size={16} aria-hidden="true" />
+      </span>
+      <span className="bui-tool-copy">
+        <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
+        {!expanded && failurePreview ? (
+          <span className="bui-tool-result" data-error="true" title={failurePreview}>{failurePreview}</span>
+        ) : targets ? (
+          <span className="bui-tool-target" title={targets}>{targets}</span>
+        ) : null}
+      </span>
+      <span className="bui-tool-meta">
+        <span className="bui-tool-count">{locale === "zh" ? `${calls.length} 次调用` : `${calls.length} calls`}</span>
+        <ActivityStatus status={status} />
+        {!compact &&
+          (expanded ? (
             <ChevronDown size={11} className="bui-chevron" aria-hidden="true" />
           ) : (
             <ChevronRight
@@ -62,16 +62,33 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
               className="bui-chevron"
               aria-hidden="true"
             />
-          )}
-        </span>
-      </HeadlessButton>
-      {expanded && (
-        <div id={detailsId} className="bui-tool-batch-body">
+          ))}
+      </span>
+    </>
+  );
+
+  return (
+    <div className="bui-tool" data-tool-status={status}>
+      {compact ? (
+        <div className="bui-tool-trigger">{heading}</div>
+      ) : (
+        <HeadlessButton
+          type="button"
+          onClick={toggle}
+          className="bui-tool-trigger"
+          aria-expanded={expanded}
+          aria-controls={expanded ? detailsId : undefined}
+        >
+          {heading}
+        </HeadlessButton>
+      )}
+      <ActivityDisclosure open={expanded} id={detailsId}>
+        <div className="bui-tool-batch-body">
           {calls.map((call) => (
             <ToolCallSummaryLine key={call.id} call={call} rememberKey={rememberKey} />
           ))}
         </div>
-      )}
+      </ActivityDisclosure>
     </div>
   );
 }

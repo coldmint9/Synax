@@ -2,6 +2,7 @@
 //! session and lock-free reads from immutable published state.
 
 pub mod assets;
+pub(crate) mod checkpoint;
 pub mod delta;
 pub mod error;
 pub mod file;

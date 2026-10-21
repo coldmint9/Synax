@@ -1,5 +1,4 @@
-//! The root-level session list: one append-only file of row updates and an
-//! in-memory sorted view for paging.
+//! The root-level sorted view of session summaries for paging.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -50,6 +49,12 @@ impl ListIndex {
         self.apply(row);
     }
 
+    /// A background cache read must never replace a row already published by
+    /// an interactive session open or mutation.
+    pub fn insert_cached(&mut self, row: ListRecord) {
+        if !self.by_id.contains_key(&row.s) { self.apply(row); }
+    }
+
     pub fn clear(&mut self) {
         self.rows.clear();
         self.by_id.clear();
@@ -77,6 +82,10 @@ impl ListIndex {
 
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    pub fn get(&self, id: &str) -> Option<Value> {
+        self.by_id.get(id).and_then(|key| self.rows.get(key)).cloned()
     }
 
     /// The cursor encoding the wire uses: JSON of the last returned key.

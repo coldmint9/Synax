@@ -910,6 +910,13 @@ async fn execute_wire_inner(
                             after = event.sequence;
                             let Ok(payload) = serde_json::from_slice::<Value>(&event.payload) else { continue };
                             let chunk = &payload["chunk"];
+                            if matches!(chunk["type"].as_str(), Some("history_restore_started" | "history_restored")) {
+                                // History was reconciled before the restore fence.
+                                // Earlier stream entities may now be intentionally
+                                // absent, including while recovery finishes a restore.
+                                latest.clear();
+                                continue;
+                            }
                             for (field, kind) in [("run", "runtime.run"), ("step", "runtime.step"), ("message", "runtime.message"), ("toolCall", "runtime.tool_call"), ("event", "runtime.event")] {
                                 if let Some(value) = chunk[field].as_object() {
                                     if let Some(id) = value.get("id").and_then(Value::as_str) {
@@ -1018,6 +1025,20 @@ async fn execute_wire_inner(
             let Some(store) = context.hot_store.as_ref() else {
                 return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
             };
+            if !request.id.is_empty() {
+                let store = store.store().clone();
+                return match tokio::task::spawn_blocking(move || store.session_summary(&request.id)).await {
+                    Ok(Ok(row)) => {
+                        let sessions_json = serde_json::to_vec(&serde_json::json!({
+                            "items": row.into_iter().collect::<Vec<_>>(), "single": true, "loading": false,
+                        })).unwrap_or_default();
+                        (WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
+                            body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) }, false)
+                    }
+                    Ok(Err(error)) => (envelope(storage_error_to_wire(error)), false),
+                    Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+                };
+            }
             let ready = match store.store().index_ready() {
                 Ok(ready) => ready,
                 Err(error) => return (envelope(wire_error("STORAGE_UNAVAILABLE", &error)), false),

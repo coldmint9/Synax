@@ -36,6 +36,7 @@ function message(
   return {
     id,
     sessionId: "s",
+    runId: "run-1",
     role,
     content: id,
     stepId: role === "assistant" ? "step-1" : null,
@@ -92,6 +93,17 @@ describe("captureCompletedReply", () => {
     mocks.listMessages.mockReturnValue([message("msg-answer", "assistant")]);
 
     await captureCompletedReply("s");
+
+    expect(mocks.historyCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not pin an earlier run's reply when the current run has no final answer", async () => {
+    mocks.listMessages.mockReturnValue([
+      message("previous-answer", "assistant"),
+      { ...message("partial-answer", "assistant", { partial: true }), runId: "run-2" },
+    ]);
+
+    await captureCompletedReply("s", "run-2");
 
     expect(mocks.historyCommand).not.toHaveBeenCalled();
   });

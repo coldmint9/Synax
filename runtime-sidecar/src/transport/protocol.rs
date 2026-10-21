@@ -222,6 +222,8 @@ pub struct WireHistoryState {
 pub struct WireSessionList {
     #[prost(string, tag = "1")]
     pub after: String,
+    #[prost(string, tag = "2")]
+    pub id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]

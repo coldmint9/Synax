@@ -20,6 +20,31 @@ fn seed(id: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"id": id, "projectId": "p", "status": "queued", "updatedAt": "2026-10-20"})).unwrap()
 }
 
+#[test]
+fn list_summaries_track_pending_permissions_across_reopen() {
+    let (dir, ops) = started("pending-permission-summary");
+    let count = |ops: &HotOps| ops.store().list().read().page(None, 64).0[0]["pendingPermissionCount"].clone();
+    assert_eq!(count(&ops), 0);
+    let fence = ops.snapshot("s").unwrap();
+    let payload = serde_json::to_vec(&json!({"id":"permission", "runId":"r", "action":"ask", "reason":"批准", "createdAt":"2026-01-01"})).unwrap();
+    let receipt = ops.control("s", "ask", fence.epoch, fence.revision, "permission_request", &payload).unwrap();
+    assert_eq!(count(&ops), 1);
+    ops.flush().unwrap();
+    drop(ops);
+    let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
+    ops.snapshot("s").unwrap();
+    assert_eq!(count(&ops), 1);
+    let retry = ops.control("s", "ask", fence.epoch, fence.revision, "permission_request", &payload).unwrap();
+    assert!(retry.reused);
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&retry.state_json).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(&receipt.state_json).unwrap());
+    let fence = ops.snapshot("s").unwrap();
+    ops.control("s", "expire", fence.epoch, fence.revision, "permission_expire", br#"{"id":"permission"}"#).unwrap();
+    assert_eq!(count(&ops), 0);
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn run_document(id: &str, session: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"id": id, "sessionId": session, "status": "queued", "startedAt": "2026-10-20"})).unwrap()
 }
@@ -79,6 +104,39 @@ fn appended_events_survive_reopen_with_identical_projection() {
     assert_eq!(replayed.len(), 12);
     assert_eq!(replayed.last().unwrap().sequence, 12);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn checkpoint_restores_execution_and_replays_only_later_commits_across_rolls() {
+    for roll in [false, true] {
+        let (dir, ops) = started("checkpoint-tail");
+        ops.append_stream("s", "r", "p", 1, 1, Durability::GroupCommit, vec![step("a")]).unwrap();
+        ops.flush().unwrap();
+        let checkpoint_commit = ops.handle("s").unwrap().actor.lock().commit;
+        if roll { ops.handle("s").unwrap().actor.lock().files.extent.frames[2] = super::FRAMES_PER_SEGMENT; }
+        let input = vec![delta("a", "after checkpoint")];
+        let receipt = ops.append_stream("s", "r", "p", 2, 1, Durability::GroupCommit, input.clone()).unwrap();
+        ops.flush_session("s").unwrap();
+        let expected: serde_json::Value = serde_json::from_slice(&ops.ui_snapshot("s", None).unwrap()).unwrap();
+        drop(ops);
+        let restored = super::load::load(&dir, "s").unwrap();
+        assert_eq!(restored.checkpoint_commit, checkpoint_commit);
+        assert_eq!(restored.replayed_commits, 1);
+        assert_eq!(restored.projection.to_json(), expected);
+        drop(restored);
+        let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
+        let retry = ops.append_stream("s", "r", "p", 2, 1, Durability::GroupCommit, input).unwrap();
+        assert!(retry.reused);
+        assert_eq!(retry.last_sequence, receipt.last_sequence);
+        drop(ops);
+        std::fs::write(crate::storage::jsonl::layout::session_dir(&dir, "s").unwrap().join(super::checkpoint::FILE), b"torn").unwrap();
+        let rebuilt = super::load::load(&dir, "s").unwrap();
+        assert_eq!(rebuilt.checkpoint_commit, 0);
+        assert!(rebuilt.replayed_commits > 1);
+        assert_eq!(rebuilt.projection.to_json(), expected);
+        drop(rebuilt);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[test]

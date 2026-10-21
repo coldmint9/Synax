@@ -1,6 +1,8 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { Button as HeadlessButton } from "@headlessui/react";
+import { ActivityDisclosure } from "./ActivityDisclosure";
+import { useCompactActivityRow } from "./ActivityRowScope";
 import "./conversationFlow.css";
 
 // Transcript virtualization unmounts rows. Keep explicit reader choices across remounts.
@@ -44,8 +46,12 @@ export function ThinkingTrace({
   useEffect(() => {
     setManual(rememberKey ? (expandedTraces.get(rememberKey) ?? null) : null);
   }, [rememberKey]);
+  // Inside the live window a thought is one row: the window follows the newest
+  // record, so an open body would keep changing the height budget.
+  const compact = useCompactActivityRow();
   const hasBody = Boolean(children);
-  const expanded = hasBody && (manual ?? false);
+  const expandable = hasBody && !compact;
+  const expanded = expandable && (manual ?? false);
   const bodyId = useId();
 
   const heading = (
@@ -56,7 +62,7 @@ export function ThinkingTrace({
         {!expanded && preview && <span className="bui-thinking-preview">{preview}</span>}
       </span>
       {meta && <span className="bui-thinking-meta">{meta}</span>}
-      {hasBody && (
+      {expandable && (
         <ChevronRight
           size={14}
           className="bui-thinking-chevron"
@@ -73,7 +79,7 @@ export function ThinkingTrace({
       data-expanded={expanded}
       data-variant={variant}
     >
-      {hasBody ? (
+      {expandable ? (
         <HeadlessButton
           type="button"
           className="bui-thinking-trigger"
@@ -93,28 +99,15 @@ export function ThinkingTrace({
           {heading}
         </div>
       )}
-      {hasBody && (
-        <div
-          className="bui-thinking-reveal"
-          id={bodyId}
-          aria-hidden={!expanded}
-          inert={!expanded}
-        >
-          <div className="bui-thinking-clip">
-            {expanded && (
-              <div className="bui-thinking-trace">
-                <div
-                  data-activity-body=""
-                  className="bui-thinking-body session-work-log-body"
-                  style={{ maxHeight }}
-                >
-                  {children}
-                </div>
-                {expanded && footer}
-              </div>
-            )}
+      {expandable && (
+        <ActivityDisclosure open={expanded} id={bodyId} className="bui-thinking-reveal">
+          <div className="bui-thinking-trace">
+            <div data-activity-body="" className="bui-thinking-body session-work-log-body" style={{ maxHeight }}>
+              {children}
+            </div>
+            {footer}
           </div>
-        </div>
+        </ActivityDisclosure>
       )}
     </div>
   );

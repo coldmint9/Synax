@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Clipboard, Paperclip, X, RotateCcw } from "lucide-react";
-import type { MediaDraft } from "./useMediaDraft";
+import { Clipboard, LoaderCircle, Paperclip, X, RotateCcw } from "lucide-react";
+import type { DraftMedia, MediaDraft } from "./useMediaDraft";
 import { MediaParts } from "./MediaParts";
 export function MediaAttachButton({
   media,
@@ -45,6 +45,15 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
         </p>
       )}
       {media.items
+        .filter((item) => item.uploading && !item.error)
+        .map((item) => (
+          <PendingDraftRow
+            key={item.id}
+            item={item}
+            onRemove={() => media.remove(item.id)}
+          />
+        ))}
+      {media.items
         .filter((item) => item.error && item.text === undefined)
         .map((item) => (
           <div
@@ -86,6 +95,51 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
           onRemove={() => media.remove(item.id)}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Attachments show up here the moment they are added, using the local file so
+ * the row never waits for the upload to finish.
+ */
+function PendingDraftRow({
+  item,
+  onRemove,
+}: {
+  item: DraftMedia;
+  onRemove: () => void;
+}) {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    const isImage =
+      item.file.type.startsWith("image/") && item.file.type !== "image/svg+xml";
+    if (!isImage || typeof URL.createObjectURL !== "function") return;
+    const objectUrl = URL.createObjectURL(item.file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [item.file]);
+  return (
+    <div className="my-1 flex items-center gap-2 rounded-lg bg-surface/60 px-2 py-1">
+      {url ? (
+        <img
+          src={url}
+          alt={item.file.name}
+          className="size-8 shrink-0 rounded object-cover"
+        />
+      ) : (
+        <Paperclip size={13} className="shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1 truncate" title={item.file.name}>
+        {item.file.name}
+      </span>
+      <span className="shrink-0 text-muted-foreground">
+        {item.queued ? "排队中 / Queued" : "上传中 / Uploading"}
+      </span>
+      <LoaderCircle size={12} className="shrink-0 animate-spin" />
+      <button type="button" aria-label={`移除 ${item.file.name}`} onClick={onRemove}>
+        <X size={12} />
+      </button>
     </div>
   );
 }

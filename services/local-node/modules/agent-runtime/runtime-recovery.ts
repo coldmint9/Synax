@@ -26,6 +26,12 @@ export function currentRuntimeHostId(): string {
   return process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
 }
 
+/** Completed summaries with no live lease/fence can stay cold at startup. */
+export function needsRuntimeRecovery(session: AgentSession): boolean {
+  return session.runtimeRecoveryRequired !== false || Boolean(session.activeRunId) ||
+    ["running", "stopping", "queued"].includes(session.status);
+}
+
 async function stopLeases(
   records: OwnedProcessRecord[],
 ): Promise<OwnedProcessRecord[]> {

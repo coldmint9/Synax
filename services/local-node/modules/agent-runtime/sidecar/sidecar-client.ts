@@ -258,6 +258,11 @@ export class RuntimeSidecarClient {
     operation: string;
     payload?: unknown;
   }): Promise<Uint8Array> {
+    // History cursors carry their own generation/revision. A read must not
+    // open the execution actor merely to attach an unrelated runtime fence.
+    if (["history_sync", "object_value_chunk", "list_checkpoints"].includes(input.operation)) {
+      return this.historyCommandGlobal(input);
+    }
     const snapshot = await this.snapshot(input.sessionId);
     const envelope = await this.request(
       {
@@ -295,6 +300,11 @@ export class RuntimeSidecarClient {
 
   async sessionList(after?: string): Promise<Uint8Array> {
     const envelope = await this.request({ type: 'session_list', after }, '', 0, 0);
+    return this.expect(envelope, 'session_list_response').sessionsJson;
+  }
+
+  async sessionSummary(id: string): Promise<Uint8Array> {
+    const envelope = await this.request({ type: 'session_list', id }, '', 0, 0);
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 

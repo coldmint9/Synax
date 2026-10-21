@@ -30,21 +30,23 @@ pub struct Loaded {
     pub receipts: HashMap<(String, String), StoredReceipt>,
     pub files: Publisher,
     pub commit: u64,
+    pub checkpoint_commit: u64,
+    pub replayed_commits: usize,
 }
-fn empty_extent() -> Extent {
+pub(crate) fn empty_extent() -> Extent {
     Extent {
         offsets: [0; 3],
         frames: [0; 3],
     }
 }
-fn file(dir: &Path, kind: Kind) -> std::path::PathBuf {
+pub(crate) fn file(dir: &Path, kind: Kind) -> std::path::PathBuf {
     dir.join(match kind {
         Kind::Controls => "ctls.000000",
         Kind::Events => "evts.000000",
         Kind::Seal => "clse.000000",
     })
 }
-fn coverage(g: &[Coverage], segment: u64) -> JsonlResult<Extent> {
+pub(crate) fn coverage(g: &[Coverage], segment: u64) -> JsonlResult<Extent> {
     let mut extent = empty_extent();
     for entry in g {
         if entry.d != segment || entry.k > 1 {
@@ -61,9 +63,13 @@ pub fn load(root: &Path, session_id: &str) -> JsonlResult<Loaded> {
     let v2 = dir.join("events-v2");
     let directories = segment_directories(&v2)?;
     let newest = directories.last().copied().unwrap_or(0);
-    let mut extent = empty_extent();
-    seglog::visit_complete(
+    let snapshot = super::checkpoint::read(&dir, session_id);
+    let resume = snapshot.as_ref().map(|saved| (saved.segment, saved.extent()));
+    let mut extent = resume.as_ref().filter(|(segment, _)| *segment == newest)
+        .map(|(_, extent)| extent.clone()).unwrap_or_else(empty_extent);
+    seglog::visit_complete_from(
         &file(&layout::segment_dir(&v2, newest), Kind::Seal),
+        extent.offsets[2],
         |offset, bytes| {
             let Record::Commit { g, .. } = serde_json::from_slice(bytes)? else {
                 return Err(JsonlError::corrupt(&v2, offset, "expected v2 commit"));
@@ -88,23 +94,29 @@ pub fn load(root: &Path, session_id: &str) -> JsonlResult<Loaded> {
         events: VecDeque::new(),
         receipts: HashMap::new(),
         commit: 0,
+        checkpoint_commit: 0,
+        replayed_commits: 0,
         files: Publisher::open(&dir, newest, extent)?,
     };
-    for segment in segment_directories(&dir)? {
+    if let Some(saved) = snapshot { saved.restore(&mut loaded); }
+    if resume.is_none() { for segment in segment_directories(&dir)? {
         replay_segment(
             root,
             &layout::segment_dir(&dir, segment),
             segment,
             false,
+            empty_extent(),
             &mut loaded,
         )?;
-    }
+    } }
     for segment in directories {
+        if resume.as_ref().is_some_and(|(saved, _)| segment < *saved) { continue; }
         replay_segment(
             root,
             &layout::segment_dir(&v2, segment),
             segment,
             true,
+            resume.as_ref().filter(|(saved, _)| segment == *saved).map(|(_, extent)| extent.clone()).unwrap_or_else(empty_extent),
             &mut loaded,
         )?;
     }
@@ -122,10 +134,10 @@ fn replay_segment(
     dir: &Path,
     segment: u64,
     v2: bool,
+    mut prior: Extent,
     loaded: &mut Loaded,
 ) -> JsonlResult<()> {
-    let mut prior = empty_extent();
-    seglog::visit_complete(&file(dir, Kind::Seal), |offset, bytes| {
+    seglog::visit_complete_from(&file(dir, Kind::Seal), prior.offsets[2], |offset, bytes| {
         let record: Record = serde_json::from_slice(bytes)?;
         let (commit, extent, legacy_state) = match record {
             Record::Commit { c, g } if v2 => (c, coverage(&g, segment)?, None),
@@ -201,18 +213,7 @@ fn replay_segment(
             },
         )?;
         if v2 {
-            let mut document = delta::document(
-                &loaded.state,
-                &loaded.projection,
-                &loaded.control,
-                &loaded.queue,
-            );
-            delta::apply(root, &mut document, &changes)?;
-            loaded.state = serde_json::from_value(document["state"].take())?;
-            loaded.control = serde_json::from_value(document["control"].take())?;
-            loaded.queue = serde_json::from_value(document["queue"].take())?;
-            let projection: UiSnapshot = serde_json::from_value(document["projection"].take())?;
-            loaded.projection = Projection::from_snapshot(&projection);
+            super::replay::apply_changes(root, loaded, &changes)?;
             for event in &mut events {
                 let mut payload: Value = serde_json::from_slice(&event.payload)?;
                 if payload.as_object_mut().and_then(|m| m.remove("controlRef"))
@@ -233,11 +234,17 @@ fn replay_segment(
                 continue;
             }
             let result = if compact {
+                let control = if receipt.r.get("controlChanges").is_some() {
+                    serde_json::to_value(&loaded.control)?
+                } else { Value::Null };
+                let queue = if receipt.r.get("currentQueue").is_some() {
+                    serde_json::to_value(&loaded.queue)?
+                } else { Value::Null };
                 delta::expand_receipt(
                     root,
                     receipt.r,
-                    &serde_json::to_value(&loaded.control)?,
-                    &serde_json::to_value(&loaded.queue)?,
+                    &control,
+                    &queue,
                     &events,
                 )?
             } else {
@@ -247,7 +254,7 @@ fn replay_segment(
                 (receipt.sc, receipt.id),
                 StoredReceipt {
                     fingerprint: receipt.f,
-                    result,
+                    result: serde_json::to_vec(&result)?,
                     at: receipt.at,
                 },
             );
@@ -273,6 +280,7 @@ fn replay_segment(
             }
         }
         loaded.commit = commit;
+        loaded.replayed_commits += 1;
         prior = extent;
         Ok(())
     })?;

@@ -199,14 +199,20 @@ export function AgentComposer({
     return () => { active = false; };
   }, [sessionId, providerId, modelId, mediaMode]);
   const submitMedia = useCallback(async () => {
-    if (mediaSubmitLock.current || mediaMode === 'chat' || !media?.ready) return;
+    if (mediaSubmitLock.current || mediaMode === 'chat' || !media) return;
     mediaSubmitLock.current = true;
     setSubmittingMedia(true);
     setMediaError(null);
     try {
-      const signature = JSON.stringify([providerId, modelId, mediaMode, content, media.parts, mediaParameters]);
+      // Reference images may still be uploading; the composer stays usable
+      // and the job waits for them instead of blocking the drop.
+      const uploaded = media.hasPendingUploads()
+        ? await media.waitForUploads()
+        : { parts: media.parts, itemIds: media.items.map((item) => item.id) };
+      const parts = uploaded.parts;
+      const signature = JSON.stringify([providerId, modelId, mediaMode, content, parts, mediaParameters]);
       const key = mediaSignature.current === signature ? mediaKey.current : null;
-      const input = mediaJobInput(selectedMediaModel, mediaMode, content, media.parts, mediaParameters, key ?? crypto.randomUUID());
+      const input = mediaJobInput(selectedMediaModel, mediaMode, content, parts, mediaParameters, key ?? crypto.randomUUID());
       mediaKey.current = input.idempotencyKey;
       mediaSignature.current = signature;
       const targetSessionId = sessionId ?? await onCreateMediaSession?.(input.prompt);
@@ -224,7 +230,7 @@ export function AgentComposer({
         } catch { /* storage unavailable */ }
       }
       onContentChange('');
-      media.clear();
+      media.clear(uploaded.itemIds);
       onMediaSubmitted?.(targetSessionId);
     } catch (error) {
       setMediaError(error instanceof Error ? error.message : String(error));
@@ -410,7 +416,7 @@ export function AgentComposer({
       if (disabled && !queueWhileGenerating) return;
       if (
         (!content.trim() && !media?.parts.length) ||
-        (media && !media.ready) ||
+        Boolean(media?.blocked) ||
         (mediaMode === "chat" && inputCapability.blocked) ||
         (mediaMode !== "chat" && (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))))
       )
@@ -489,13 +495,15 @@ export function AgentComposer({
   };
 
   const resumeMode = mediaMode === "chat" && !isGenerating && isResumable && Boolean(onResume);
-  const hasInput = Boolean(content.trim() || media?.parts.length);
+  // Pending uploads count as input: the send waits for them rather than
+  // making the button unusable until they land.
+  const hasInput = Boolean(content.trim() || media?.items.length);
   const queueMode = mediaMode === "chat" && isGenerating && queueWhileGenerating && hasInput;
   const stopMode = mediaMode === "chat" && isGenerating && !queueMode;
   const sendDisabled =
     (disabled && !queueWhileGenerating) ||
     !hasInput ||
-    Boolean(media && !media.ready) ||
+    Boolean(media?.blocked) ||
     (mediaMode === "chat" ? inputCapability.blocked :
       (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))));
   const mediaInputProps = {
@@ -599,10 +607,9 @@ export function AgentComposer({
     <>
       <div className="agent-dock-composer-leading contents">
         {media && !commands?.handlesAttachments && (
-          <MediaAttachButton
-            media={media}
-            disabled={disabled && !queueWhileGenerating}
-          />
+          // Attachments stay addable while a run is streaming or a submit is
+          // in flight; only sending is gated.
+          <MediaAttachButton media={media} />
         )}
         {commands?.trigger ?? (
           <ComposerAttachMenu
@@ -665,28 +672,18 @@ export function AgentComposer({
       onDrop={(e) => {
         if (media && e.dataTransfer.files.length) {
           e.preventDefault();
-          if (!disabled || queueWhileGenerating)
-            media.add(Array.from(e.dataTransfer.files));
+          media.add(Array.from(e.dataTransfer.files));
         }
       }}
       onPaste={(e) => {
         const pastedText = e.clipboardData.getData("text/plain");
         const hasFiles = e.clipboardData.files.length > 0;
-        if (
-          media &&
-          pastedText.length > 4000 &&
-          !hasFiles &&
-          (!disabled || queueWhileGenerating)
-        ) {
+        if (media && pastedText.length > 4000 && !hasFiles) {
           e.preventDefault();
           media.addText(pastedText);
           return;
         }
-        if (
-          media &&
-          hasFiles &&
-          (!disabled || queueWhileGenerating)
-        ) {
+        if (media && hasFiles) {
           media.add(Array.from(e.clipboardData.files));
           if (!pastedText) e.preventDefault();
         }

@@ -258,6 +258,8 @@ export interface AgentProfile {
 
 export interface AgentSession {
   id: string;
+  /** Authoritative list hint; absent older indexes must still be checked. */
+  runtimeRecoveryRequired?: boolean;
   projectId: string;
   parentSessionId: string | null;
   childSessionIds: string[];
