@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { readStreamedTokens } from "../../shared/lib/streamThroughput";
+import { readStreamedTokenRate } from "../../shared/lib/streamThroughput";
 
-/** Sampling window for the live throughput readout. */
-export const TOKEN_RATE_SAMPLE_MS = 5_000;
+/** Readout cadence. Event timestamps define the rolling generation window. */
+export const TOKEN_RATE_SAMPLE_MS = 250;
 
 /**
  * Live output-throughput estimate, measured in the renderer from the stream the
@@ -21,16 +21,9 @@ export function useSessionTokenRate(
   useEffect(() => {
     setRate(null);
     if (!sessionId || !working) return;
-    let previous = readStreamedTokens(sessionId);
-    let previousAt = Date.now();
+    setRate(readStreamedTokenRate(sessionId));
     const timer = window.setInterval(() => {
-      const now = Date.now();
-      const total = readStreamedTokens(sessionId);
-      const elapsed = (now - previousAt) / 1000;
-      const delta = total - previous;
-      previous = total;
-      previousAt = now;
-      setRate(elapsed > 0 && delta > 0 ? delta / elapsed : null);
+      setRate(readStreamedTokenRate(sessionId));
     }, TOKEN_RATE_SAMPLE_MS);
     return () => window.clearInterval(timer);
   }, [sessionId, working]);

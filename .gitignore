@@ -111,6 +111,7 @@ reviews/
 *.mdx
 !/README.md
 !/README.zh-CN.md
+!/runtime-sidecar/README.md
 !/AGENTS.md
 !api/skills/**/SKILL.md
 !api/services/skills/__tests__/fixtures/**/SKILL.md

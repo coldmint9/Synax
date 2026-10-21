@@ -1,6 +1,6 @@
 import { logger } from '../../infrastructure/runtime/logger.js';
 import { randomUUID } from 'node:crypto';
-import { makeRuntimeId, nowIso } from './runtime-ids.js';
+import { nowIso } from './runtime-ids.js';
 import type { AgentRunStreamChunk } from './contracts.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
@@ -18,6 +18,7 @@ export class RuntimeStreamWriter {
   private writeFailure?: Error;
   private runStatus?: string;
   private partialContent = '';
+  private partialThought = '';
   private partialStepId?: string;
   private partialPublished = false;
   private sidecarProducerSequence = 0;
@@ -41,11 +42,13 @@ export class RuntimeStreamWriter {
     if (chunk.type === 'step_started') {
       this.partialStepId = chunk.step.id;
       this.partialContent = '';
+      this.partialThought = '';
       this.partialPublished = false;
     }
     if ('stepId' in chunk && chunk.stepId === this.partialStepId) {
       if (chunk.type === 'message_delta') this.partialContent += chunk.delta;
-      if (chunk.type === 'retry_status' && ['waiting', 'group_wait'].includes(chunk.retry.phase)) this.partialContent = '';
+      if (chunk.type === 'thought_delta') this.partialThought += chunk.delta;
+      if (chunk.type === 'retry_status' && ['waiting', 'group_wait'].includes(chunk.retry.phase)) { this.partialContent = ''; this.partialThought = ''; }
     }
     if (chunk.type === 'message' && chunk.message.role === 'assistant' && chunk.message.stepId === this.partialStepId)
       this.partialPublished = true;
@@ -95,8 +98,8 @@ export class RuntimeStreamWriter {
       const state = await runtimeFacade.authoritativeRecordState(this.sessionId);
       const input = { sessionId: this.sessionId, runId, producerId: this.sidecarProducerId,
         producerSequence, ...fence, chunks, state };
-      const receiptThrough = await runtimeFacade.appendStreamAuthoritative(input);
-      await runtimeFacade.persistStreamHistory(this.sessionId, chunks, receiptThrough);
+      const through = await runtimeFacade.appendStreamAuthoritative(input);
+      await runtimeFacade.persistStreamHistory(this.sessionId, chunks, through);
     }).catch(error => {
       this.writeFailure = error instanceof Error ? error : new Error(String(error));
       logger.error({ sessionId: this.sessionId, runId, error: this.writeFailure.message }, '[runtime-sidecar] authoritative stream stopped');
@@ -112,14 +115,14 @@ export class RuntimeStreamWriter {
 
   finish(): void {
     if (!this.isCurrent()) { this.abandon(); return; }
-    if (!this.runId || !this.partialStepId || !this.partialContent || this.partialPublished ||
+    if (!this.runId || !this.partialStepId || (!this.partialContent && !this.partialThought) || this.partialPublished ||
         !['interrupted', 'cancelled', 'failed'].includes(this.runStatus ?? '')) return;
     this.write({
       type: 'message',
       message: {
-        id: makeRuntimeId('msg'), sessionId: this.sessionId, runId: this.runId,
+        id: `msg_partial_${this.runId}_${this.partialStepId}`, sessionId: this.sessionId, runId: this.runId,
         stepId: this.partialStepId, role: 'assistant', content: this.partialContent,
-        createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: this.runId, stepId: this.partialStepId },
+        createdAt: nowIso(), metadata: { source: 'runtime_partial', partial: true, runId: this.runId, stepId: this.partialStepId, thought: this.partialThought },
       },
     });
   }

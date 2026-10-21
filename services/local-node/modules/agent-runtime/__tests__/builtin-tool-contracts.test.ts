@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { asSchema } from '@ai-sdk/provider-utils';
+import { asSchema } from "../../../infrastructure/llm-runtime/tool-schema.js";
 import { describe, expect, it } from 'vitest';
 import { buildLoopToolSet } from '../loop-ai-tools.js';
 import { toolRegistry } from '../tool-registry.js';

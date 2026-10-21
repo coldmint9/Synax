@@ -36,4 +36,32 @@ describe("recoverRuntime", () => {
     const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: { state?: string } };
     expect(control.runtimeControl?.state).toBe("unconfirmed");
   });
+
+  it("migrates a legacy recovery receipt whose absent run was encoded as null", async () => {
+    const sessionId = agentSessionRuntime.create(plannerSessionInput).id;
+    const reason = "The runtime restarted without a confirmed active run. Continue the session explicitly.";
+    const snapshot = await runtimeClient().snapshot(sessionId);
+
+    // Older builds used this id and serialized an absent active run as null.
+    await runtimeClient().controlCommand({
+      sessionId,
+      requestId: `recovery-unconfirmed:${sessionId}`,
+      epoch: snapshot.epoch,
+      revision: snapshot.revision,
+      operation: "stop_unconfirmed",
+      payload: { runId: null, reason },
+    });
+    // Recreate the stale compatibility projection that caused startup to
+    // replay the old request even though its receipt was already durable.
+    await runtimeFacade.sessionPatch(sessionId, "clear-legacy-recovery", {
+      status: "running",
+      activeRunId: null,
+      sessionMetadata: { runtimeControl: null },
+    });
+    await agentRuntimeStore.hydrateSession(sessionId, true);
+
+    await expect(recoverRuntime("legacy-receipt-host")).resolves.toBeDefined();
+    const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: { state?: string } };
+    expect(control.runtimeControl?.state).toBe("unconfirmed");
+  });
 });

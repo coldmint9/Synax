@@ -252,7 +252,7 @@ describe("useSessionDetailPolling", () => {
     expect(api.getSessionStats).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps polling sessions waiting on a permission so replies surface", async () => {
+  it("keeps polling profiles while permission replies arrive through the live stream", async () => {
     primeStore("waiting_permission");
     renderHook(() => useSessionDetailPolling());
     await flush();
@@ -261,7 +261,8 @@ describe("useSessionDetailPolling", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS * 2);
     });
     await flush();
-    expect(api.listPermissions).toHaveBeenCalledTimes(3);
+    expect(api.listPermissions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionStats).toHaveBeenCalledTimes(3);
     expect(api.listSessions).toHaveBeenCalledTimes(3);
   });
 

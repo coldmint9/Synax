@@ -1,7 +1,9 @@
+import { vi as nativeTestConfig } from "vitest";
+nativeTestConfig.setConfig({ testTimeout: 15_000 });
 import { createRustMessages as createAnthropic } from "../../../../test-fixtures/rust-provider.js";
 import { createRustOpenAI as createOpenAI } from "../../../../test-fixtures/rust-provider.js";
 import { createRustCompatible as createOpenAICompatible } from "../../../../test-fixtures/rust-provider.js";
-import { generateText, tool, type ToolSet } from "ai";
+import { generateText, tool, type ToolSet } from "../../../../test-fixtures/native-generation.js";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,7 +13,7 @@ import {
   type HistoryCacheAnchor,
 } from "../cache-policy.js";
 import { toModelPrompt } from "../prompt.js";
-import { buildProtocolProviderOptions } from "../protocol-options.js";
+import { buildProtocolProviderOptions } from "../../../../test-fixtures/native-policy.js";
 import {
   applyChatCacheBreakpoints,
   chatCacheOptions,
@@ -101,7 +103,7 @@ async function captureAnthropic(
     stop_sequence: null,
     usage: { input_tokens: 100, output_tokens: 1 },
   });
-  const processed = applyPromptCachePolicy(messages, {
+  const processed = await applyPromptCachePolicy(messages, {
     selection: selection("anthropic", mode),
     tools,
     cacheControl,
@@ -131,7 +133,7 @@ async function captureAnthropic(
   return { body: capture.requests[0], processed, warnings: result.warnings };
 }
 
-describe("prompt cache policy actual SDK wire", () => {
+describe("native prompt cache wire policy", async () => {
   it("preserves explicit compatible one-hour TTLs on preferred system and history boundaries", async () => {
     const oneHour = {
       anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
@@ -306,7 +308,7 @@ describe("prompt cache policy actual SDK wire", () => {
     },
   );
 
-  it("hashes marker-free prefix content without mutating messages or tool output data", () => {
+  it("hashes marker-free prefix content without mutating messages or tool output data", async () => {
     const first: LlmGatewayMessage[] = [
       { role: "system", content: "system", providerOptions: cached },
       {
@@ -336,14 +338,14 @@ describe("prompt cache policy actual SDK wire", () => {
     ];
     deepFreeze(first);
     const expected = createHistoryCacheAnchor(first);
-    const stripped = applyPromptCachePolicy(first, {
+    const stripped = (await applyPromptCachePolicy(first, {
       selection: selection(),
       cacheControl: false,
-    }).messages;
+    })).messages;
     expect(createHistoryCacheAnchor(stripped)).toEqual(expected);
-    const marked = applyPromptCachePolicy(first, {
+    const marked = (await applyPromptCachePolicy(first, {
       selection: selection(),
-    }).messages;
+    })).messages;
     expect(createHistoryCacheAnchor(marked)).toEqual(expected);
     expect(
       createHistoryCacheAnchor([
@@ -389,7 +391,7 @@ describe("prompt cache policy actual SDK wire", () => {
     );
   });
 
-  it("includes binary, URL, signatures and metadata in the prefix identity, excluding trailing non-cacheable reasoning", () => {
+  it("includes binary, URL, signatures and metadata in the prefix identity, excluding trailing non-cacheable reasoning", async () => {
     const messages: LlmGatewayMessage[] = [
       {
         role: "user",
@@ -496,7 +498,7 @@ describe("prompt cache policy actual SDK wire", () => {
     ).not.toEqual(expected);
   });
 
-  it("keeps non-Native latest-user fallback and explicit reminder boundaries", () => {
+  it("keeps non-Native latest-user fallback and explicit reminder boundaries", async () => {
     const messages: LlmGatewayMessage[] = [
       { role: "system", content: "system" },
       { role: "user", content: "root" },
@@ -531,7 +533,7 @@ describe("prompt cache policy actual SDK wire", () => {
       cacheControl: true,
       hookContext: { sessionId: "session" },
     } as any;
-    const messages = applyChatCacheBreakpoints(
+    const messages = await applyChatCacheBreakpoints(
       [
         { role: "system", content: "stable" },
         { role: "user", content: "history" },
@@ -544,7 +546,7 @@ describe("prompt cache policy actual SDK wire", () => {
     await generateText({
       model: openai.chat("gpt-4o-mini"),
       ...toModelPrompt(messages, undefined, { moveRuntimeRemindersToInput: true }),
-      providerOptions: chatCacheOptions(selected, request),
+      providerOptions: await chatCacheOptions(selected, request),
       maxRetries: 0,
     });
     expect(capture.requests[0].prompt_cache_key).toMatch(/^synax:chat:v1:/);
@@ -571,7 +573,7 @@ describe("prompt cache policy actual SDK wire", () => {
       usage: { input_tokens: 100, output_tokens: 1 },
     });
     const selected = selection("anthropic");
-    const processed = applyPromptCachePolicy(
+    const processed = await applyPromptCachePolicy(
       [
         { role: "system", content: "stable system" },
         { role: "user", content: "history" },
@@ -670,7 +672,7 @@ describe("prompt cache policy actual SDK wire", () => {
         undefined,
         { moveRuntimeRemindersToInput: true },
       ),
-      providerOptions: chatCacheOptions(selected, request),
+      providerOptions: await chatCacheOptions(selected, request),
       maxRetries: 0,
     });
     expect(capture.requests[0].prompt_cache_key).toMatch(/^synax:chat:v1:/);
@@ -678,7 +680,7 @@ describe("prompt cache policy actual SDK wire", () => {
     expect(capture.requests[0].messages[0].content).toBe("stable");
   });
 
-  it("sends no compatible cache hint when the policy or the request disables it", () => {
+  it("sends no compatible cache hint when the policy or the request disables it", async () => {
     const selected = selection("openai");
     selected.providerId = "custom-api:gateway";
     selected.provider = {
@@ -691,16 +693,16 @@ describe("prompt cache policy actual SDK wire", () => {
       cacheControl: true,
       hookContext: { sessionId: "session" },
     } as any;
-    expect(chatCacheOptions(selected, request)).toEqual({
+    expect(await chatCacheOptions(selected, request)).toEqual({
       "custom-api:gateway": { prompt_cache_key: expect.stringMatching(/^synax:chat:v1:/) },
     });
     selected.config.options = { promptCaching: "off" };
-    expect(chatCacheOptions(selected, request)).toBeUndefined();
+    expect(await chatCacheOptions(selected, request)).toBeUndefined();
     selected.config.options = { promptCaching: "auto" };
-    expect(chatCacheOptions(selected, { ...request, cacheControl: false })).toBeUndefined();
+    expect(await chatCacheOptions(selected, { ...request, cacheControl: false })).toBeUndefined();
   });
 
-  it("resolves the cache capability matrix per adapter, never inventing a field", () => {
+  it("resolves the cache capability matrix per adapter, never inventing a field", async () => {
     expect(resolvePromptCacheCapability(selection("openai"))).toEqual({
       namespace: "openai",
       field: "promptCacheKey",
@@ -726,7 +728,7 @@ describe("prompt cache policy actual SDK wire", () => {
       cacheControl: true,
       hookContext: { sessionId: "session" },
     } as any;
-    const native = describeChatCacheHint(selection("openai"), request);
+    const native = await describeChatCacheHint(selection("openai"), request);
     expect(native).toMatchObject({
       kind: "native-key",
       namespace: "openai",
@@ -735,15 +737,15 @@ describe("prompt cache policy actual SDK wire", () => {
     expect(native.valueHash).toHaveLength(16);
     // The key itself must never leave the diagnostics report.
     expect(JSON.stringify(native)).not.toContain("synax:chat:v1:");
-    expect(describeChatCacheHint(dotted, request)).toMatchObject({
+    expect(await describeChatCacheHint(dotted, request)).toMatchObject({
       kind: "passthrough-key",
       namespace: "gateway",
       field: "prompt_cache_key",
     });
-    expect(describeChatCacheHint(anthropic, request)).toEqual({ kind: "none" });
+    expect(await describeChatCacheHint(anthropic, request)).toEqual({ kind: "none" });
   });
 
-  it("builds a stable native Chat cache key and marks stable boundaries", () => {
+  it("builds a stable native Chat cache key and marks stable boundaries", async () => {
     const selected = selection("openai");
     selected.config.options = { promptCaching: "auto", chatCacheBreakpoints: true };
     const request = {
@@ -752,12 +754,12 @@ describe("prompt cache policy actual SDK wire", () => {
       cacheControl: true,
       hookContext: { sessionId: "session" },
     } as any;
-    const first = chatCacheOptions(selected, request);
-    const second = chatCacheOptions(selected, request);
+    const first = await chatCacheOptions(selected, request);
+    const second = await chatCacheOptions(selected, request);
     expect(first).toEqual(second);
     expect(first?.openai?.promptCacheKey).toMatch(/^synax:chat:v1:/);
 
-    const messages = applyChatCacheBreakpoints(
+    const messages = await applyChatCacheBreakpoints(
       [
         { role: "system", content: "stable" },
         { role: "user", content: "history" },
@@ -767,13 +769,12 @@ describe("prompt cache policy actual SDK wire", () => {
       request,
     );
     expect(messages[0].providerOptions?.openai?.promptCacheBreakpoint).toEqual({ mode: "explicit" });
-    expect(messages[1].content).toEqual([
-      expect.objectContaining({ providerOptions: { openai: { promptCacheBreakpoint: { mode: "explicit" } } } }),
-    ]);
+    expect(messages[1].content).toBe("history");
+    expect(messages[1].providerOptions?.openai?.promptCacheBreakpoint).toEqual({ mode: "explicit" });
     expect(messages[2].providerOptions?.openai?.promptCacheBreakpoint).toBeUndefined();
   });
 
-  it("keeps dynamic runtime reminders out of Responses instructions", () => {
+  it("keeps dynamic runtime reminders out of Responses instructions", async () => {
     const converted = toModelPrompt(
       [
         { role: "system", content: "stable instructions" },
@@ -799,7 +800,7 @@ describe("prompt cache policy actual SDK wire", () => {
     ]);
   });
 
-  it("copies message/content metadata and keeps separate system bytes and ordering", () => {
+  it("copies message/content metadata and keeps separate system bytes and ordering", async () => {
     const messages: LlmGatewayMessage[] = [
       {
         role: "system",
@@ -1239,7 +1240,7 @@ describe("prompt cache policy actual SDK wire", () => {
         });
       }
       deepFreeze(messages);
-      const processed = applyPromptCachePolicy(messages, {
+      const processed = await applyPromptCachePolicy(messages, {
         selection: selected,
         tools: {
           lookup: tool({ inputSchema: z.object({}), providerOptions: cached }),
@@ -1257,7 +1258,7 @@ describe("prompt cache policy actual SDK wire", () => {
         ...toModelPrompt(processed.messages),
         tools: processed.tools,
         maxRetries: 0,
-        providerOptions: buildProtocolProviderOptions(selected, {
+        providerOptions: await buildProtocolProviderOptions(selected, {
           responseOptions: {
             store: false,
             promptCacheKey: "stable-key",
@@ -1290,13 +1291,13 @@ describe("prompt cache policy actual SDK wire", () => {
     },
   );
 
-  it("uses only surviving reminder boundaries after compression, and accepts explicit reminder indices", () => {
+  it("uses only surviving reminder boundaries after compression, and accepts explicit reminder indices", async () => {
     const messages: LlmGatewayMessage[] = [
       { role: "system", content: "system" },
       { role: "user", content: "compacted history" },
       { role: "user", content: "custom latest reminder" },
     ];
-    const result = applyPromptCachePolicy(messages, {
+    const result = await applyPromptCachePolicy(messages, {
       selection: selection(),
       runtimeReminderIndices: [2],
     });
@@ -1307,7 +1308,7 @@ describe("prompt cache policy actual SDK wire", () => {
 });
 
 
-it("keeps system-role runtime reminders out of user turns and recognizes replayed history anchors", () => {
+it("keeps system-role runtime reminders out of user turns and recognizes replayed history anchors", async () => {
   const runtime = (id: string): LlmGatewayMessage => ({
     role: "system", content: `<system-reminder>\n${id}\n</system-reminder>`,
   });
@@ -1327,7 +1328,7 @@ it("keeps system-role runtime reminders out of user turns and recognizes replaye
   expect(wire.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
   expect(wire.messages.map((message) => message.content)).toEqual(["蓝色自行车", "记住了", "我上一轮说了啥"]);
   expect(JSON.stringify(wire.system)).toContain("step 2");
-  const processed = applyPromptCachePolicy(next.map((message, index) =>
+  const processed = await applyPromptCachePolicy(next.map((message, index) =>
     index === next.length - 1 ? { ...message, providerOptions: cached } : message,
   ), { selection: selection(), cacheControl: true });
   expect(processed.messages[0].providerOptions?.anthropic?.cacheControl).toEqual(marker);

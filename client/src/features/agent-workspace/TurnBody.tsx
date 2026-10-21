@@ -1,4 +1,5 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useId } from "react";
+import { Button as HeadlessButton } from "@headlessui/react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
@@ -9,7 +10,12 @@ import type { InlineVisualizationReference } from "./visualizationTranscript";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
-import { Zap } from "lucide-react";
+import { ChevronRight, MessageSquare, Zap } from "lucide-react";
+import { useLocale } from "../../shared/hooks/useLocale";
+import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
+import { aggregateToolStatus } from "./toolCallPresentation";
+import { activityPreview, hasDisplayableReasoning } from "./activityText";
+import { useActivityDisclosure } from "./useActivityDisclosure";
 import { MediaParts } from "../media/MediaParts";
 import type {
   InterleavedTurn,
@@ -20,7 +26,8 @@ import { ToolCallRoundPanel } from "./ToolCallRoundPanel";
 import { StreamingTextBlock } from "./StreamingTextBlock";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { buildTurnRenderSegments } from "./toolCallUtils";
+import { buildTurnRenderSegments, flattenToolBlocks } from "./toolCallUtils";
+import "./conversationFlow.css";
 
 function TranscriptVisualization({
   reference,
@@ -65,7 +72,8 @@ function segmentKey(
           ? block.calls.map((call) => call.id)
           : [],
     );
-    return `tool-round:${ids.join(",") || index}`;
+    // Appending a call must not remount the already-open rows in this round.
+    return `tool-round:${ids[0] ?? index}`;
   }
   if (segment.type === "thinking") return `thinking:${index}`;
   if (segment.type === "text") return `text:${index}`;
@@ -73,25 +81,44 @@ function segmentKey(
   return `context-compacted:${index}`;
 }
 
-function renderTurnBlocks(
-  blocks: readonly TurnContentBlock[],
-  onExpandChild?: (sessionId: string) => void,
+export function TurnContent({
+  blocks,
+  onExpandChild,
   rowKeyPrefix = "",
   isStreaming = false,
   isWorking = isStreaming,
-) {
-  const segments = buildTurnRenderSegments(blocks);
-  const toolBlocks = blocks.filter(
-    (block) =>
-      block.type === "thinking" ||
-      block.type === "tool_call" ||
-      block.type === "tool_call_group",
+  defaultExpanded = true,
+  processOnly = false,
+  processMeta,
+  processPreview,
+}: {
+  blocks: readonly TurnContentBlock[];
+  onExpandChild?: (sessionId: string) => void;
+  rowKeyPrefix?: string;
+  isStreaming?: boolean;
+  isWorking?: boolean;
+  defaultExpanded?: boolean;
+  processOnly?: boolean;
+  processMeta?: string;
+  processPreview?: string | null;
+}) {
+  const { locale } = useLocale();
+  const [expanded, toggle] = useActivityDisclosure(rowKeyPrefix ? `process:${rowKeyPrefix}` : undefined, defaultExpanded);
+  const flowId = useId();
+  const segments = buildTurnRenderSegments(blocks).filter(
+    (segment) => segment.type !== "thinking" || hasDisplayableReasoning(segment.content),
   );
-  const answers = segments.filter(
-    (segment) =>
-      segment.type !== "tool_round" &&
-      (toolBlocks.length === 0 || segment.type !== "thinking"),
-  );
+  const calls = flattenToolBlocks(blocks);
+  let lastActivity = -1;
+  segments.forEach((segment, index) => {
+    if (segment.type === "thinking" || segment.type === "tool_round") lastActivity = index;
+  });
+  if (processOnly && segments.length) lastActivity = segments.length - 1;
+  const hasActivity = lastActivity >= 0;
+  const toolStatus = calls.length ? aggregateToolStatus(calls) : "completed";
+  const status = isWorking && toolStatus === "completed" ? "running" : toolStatus;
+  const failure = calls.find((call) => call.status === "failed" || call.status === "denied");
+  const foldedPreview = failure?.outputSummary ? activityPreview(failure.outputSummary, 180) : processPreview;
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "visualization")
@@ -109,11 +136,11 @@ function renderTurnBlocks(
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
           key={key}
           content={segment.content}
-          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
+          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined}
         />
       );
     if (segment.type === "tool_round")
-      return <ToolCallRoundPanel key={key} toolBlocks={segment.toolBlocks} />;
+      return <ToolCallRoundPanel key={key} toolBlocks={segment.toolBlocks} isStreaming={isWorking} rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined} />;
     if (segment.type === "text")
       return (
         <StreamingTextBlock
@@ -165,21 +192,47 @@ function renderTurnBlocks(
     return null;
   };
   return (
-    <>
-      <div className="session-tool-region">
-        {toolBlocks.length > 0 && (
-          <ToolCallRoundPanel
-            toolBlocks={toolBlocks}
-            maxHeight="420px"
-            // Keep the activity rail stable while the final answer streams.
-            // It collapses once the turn stops, instead of toggling open and
-            // closed at the first answer token.
-            isStreaming={isWorking}
-          />
-        )}
+    <div className="session-conversation-flow" data-has-activity={hasActivity || undefined}>
+      {hasActivity && (
+        <HeadlessButton
+          type="button"
+          className="session-process-trigger"
+          aria-expanded={expanded}
+          aria-controls={segments.slice(0, lastActivity + 1).map((_, i) => `${flowId}-${i}`).join(" ")}
+          onClick={toggle}
+        >
+          <span>{locale === "zh" ? "处理过程" : "Process"}</span>
+          {calls.length > 0 && <span>{locale === "zh" ? `${calls.length} 次工具调用` : `${calls.length} tool calls`}</span>}
+          {processMeta && <span>{processMeta}</span>}
+          <span className="session-process-status"><ActivityStatus status={status} /></span>
+          <ChevronRight size={14} className="session-process-chevron" aria-hidden="true" />
+        </HeadlessButton>
+      )}
+      {!expanded && foldedPreview && <div className="session-process-preview" data-error={Boolean(failure) || undefined}>{foldedPreview}</div>}
+      <div className="session-flow-content">
+        {segments.map((segment, index) => {
+          const inProcess = index <= lastActivity;
+          const activity = segment.type === "thinking" || segment.type === "tool_round";
+          return (
+            <div
+              key={segmentKey(segment, index)}
+              id={`${flowId}-${index}`}
+              className={activity ? "session-flow-entry" : "session-flow-entry session-answer-region"}
+              data-process={inProcess || undefined}
+              data-activity={activity || undefined}
+              data-connected={index < lastActivity || undefined}
+              data-answer-start={hasActivity && index === lastActivity + 1 || undefined}
+              hidden={inProcess && !expanded}
+            >
+              {(!inProcess || expanded) && <>
+                {inProcess && !activity && <MessageSquare className="session-flow-comment-icon" size={16} aria-hidden="true" />}
+                {render(segment, index)}
+              </>}
+            </div>
+          );
+        })}
       </div>
-      <div className="session-answer-region">{answers.map(render)}</div>
-    </>
+    </div>
   );
 }
 /** One agent turn. Turn duration separators are intentionally omitted from the transcript. */
@@ -220,13 +273,7 @@ export function TurnBody({
       {isWorking && visibleBlocks.length === 0 ? (
         <ThinkingIndicator />
       ) : (
-        renderTurnBlocks(
-          visibleBlocks,
-          onExpandChild,
-          entryId,
-          isStreaming,
-          isWorking,
-        )
+        <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} isStreaming={isStreaming} isWorking={isWorking} />
       )}
       {hasAnswer && (
         <MessageActionToolbar

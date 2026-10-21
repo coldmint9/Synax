@@ -3,6 +3,7 @@ import { RuntimeSidecarError, type RuntimeSidecarClient } from './sidecar-client
 
 const MAX_HISTORY_READ_RESTARTS = 7;
 const HISTORY_PAGE_MAX_BYTES = 768 * 1024;
+const HISTORY_OBJECT_MAX_BYTES = 4 * 1024 * 1024;
 
 function isRevisionConflict(error: unknown): error is RuntimeSidecarError {
   return error instanceof RuntimeSidecarError && error.code === 'REVISION_CONFLICT';
@@ -34,22 +35,29 @@ export async function hydrateHistoryValues<T>(
       const index = next++;
       const value = values[index] as { $historyObject?: string; bytes?: number } | null;
       if (!value || typeof value.$historyObject !== 'string') continue;
-      if (!Number.isSafeInteger(value.bytes) || value.bytes! < 0 || value.bytes! > 4 * 1024 * 1024)
+      // Older history_sync replies omitted bytes, unlike list_* replies.
+      // Read those references to their terminal chunk with the same hard cap;
+      // a supplied size still has to match the complete UTF-8 JSON exactly.
+      const declaredBytes = value.bytes;
+      if (declaredBytes !== undefined &&
+          (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > HISTORY_OBJECT_MAX_BYTES))
         throw new Error('Invalid history object size.');
+      const maxBytes = declaredBytes ?? HISTORY_OBJECT_MAX_BYTES;
       const chunks: string[] = [];
       let offset = 0;
-      do {
+      while (true) {
         const input = { sessionId, requestId: randomUUID(), operation: 'object_value_chunk', payload: { objectId: value.$historyObject, offset } };
         const bytes = global ? await client.historyCommandGlobal(input) : await client.historyCommand(input);
         const page = JSON.parse(Buffer.from(bytes).toString('utf8')) as { text: string; next?: number | null };
+        if (typeof page?.text !== 'string') throw new Error('History object chunk did not advance.');
         const end = offset + Buffer.byteLength(page.text);
-        if (end > value.bytes! || (page.next != null && (page.next !== end || end <= offset)))
+        if (end > maxBytes || (page.next != null && (page.next !== end || end <= offset || end >= maxBytes)))
           throw new Error('History object chunk did not advance.');
         chunks.push(page.text);
         offset = end;
         if (page.next == null) break;
-      } while (offset < value.bytes!);
-      if (offset !== value.bytes) throw new Error('History object chunk is incomplete.');
+      }
+      if (declaredBytes !== undefined && offset !== declaredBytes) throw new Error('History object chunk is incomplete.');
       result[index] = JSON.parse(chunks.join('')) as T;
     }
   };

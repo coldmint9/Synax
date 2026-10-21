@@ -1,4 +1,4 @@
-import { asSchema } from "@ai-sdk/provider-utils";
+import { asSchema } from "../../infrastructure/llm-runtime/tool-schema.js";
 import type { LlmGatewayMessage } from "../../infrastructure/llm-runtime/types.js";
 import type { LoopToolSet } from "./loop-ai-tools.js";
 import { countTokens } from "./context-tokenizer.js";

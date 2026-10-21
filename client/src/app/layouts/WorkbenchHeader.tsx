@@ -103,7 +103,6 @@ function ProjectSwitcher({
   onCreateProject,
   onRemoveRequest,
   onOpen,
-  subtitle,
 }: {
   hasProject: boolean;
   projectName: string;
@@ -113,16 +112,13 @@ function ProjectSwitcher({
   onCreateProject: () => void;
   onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
-  subtitle: string;
 }) {
   const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
   return <WorkspaceSwitcher
     hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
     projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
     onRemoveRequest={onRemoveRequest}
-    subtitle={subtitle}
     onOpen={() => { onOpen?.(); void refresh(); }}
-    badge={<ProjectSessionBadgeMark badge={badges[currentProjectId]} />}
     renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;
 }
@@ -242,16 +238,6 @@ export function WorkbenchHeader({
   }, [chromeMode, selectedSessionId]);
 
   const terminalLabel = locale === "zh" ? "终端" : "Terminal";
-  const gitViews: Record<string, string> = locale === "zh"
-    ? { requests: "合并请求", branches: "历史树", worktrees: "工作树", presets: "预设" }
-    : { requests: "Merge requests", branches: "History", worktrees: "Worktrees", presets: "Presets" };
-  const subtitle = activePanel === "git"
-    ? `Git · ${location.pathname.includes("/git/mr/")
-      ? (locale === "zh" ? "合并请求" : "Merge request")
-      : gitViews[new URLSearchParams(location.search).get("view") ?? "branches"] ?? gitViews.branches}`
-    : activePanel === "settings" ? t("appSettings")
-    : activePanel === "sessions" ? (locale === "zh" ? "Work · 会话与工作区" : "Work · Conversations & workspace")
-    : locale === "zh" ? "Synax 工作区" : "Synax workspace";
 
   return (
     <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
@@ -266,7 +252,6 @@ export function WorkbenchHeader({
             onCreateProject={onCreateProject}
             onRemoveRequest={handleRemoveClick}
             onOpen={() => setProjectSwitcherUsed(true)}
-            subtitle={subtitle}
           />
           <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
         </div>

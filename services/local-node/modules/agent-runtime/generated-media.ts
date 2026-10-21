@@ -1,6 +1,6 @@
-import type { GeneratedFile } from "ai";
+import type { GeneratedFile } from "../../infrastructure/llm-runtime/contracts.js";
 import { randomUUID } from "node:crypto";
-import type { ProviderOptions } from "@ai-sdk/provider-utils";
+import type { ProviderOptions } from "../../infrastructure/llm-runtime/contracts.js";
 import { bindValidatedAssets, createAsset } from "./media-assets.js";
 import {
   modalityForMime,

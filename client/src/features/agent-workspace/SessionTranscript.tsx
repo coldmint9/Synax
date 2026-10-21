@@ -8,6 +8,7 @@ import {
   usePendingSubmissionStore,
 } from "./state/pendingSubmissionStore";
 import { ThinkingIndicator } from "./ThinkingIndicator";
+import { RetryIndicator } from "./RetryIndicator";
 import { hasDisplayableReasoning } from "./activityText";
 import { hasStreamingText } from "./streamingLiveBlocks";
 import { Skeleton } from "@/shared/ui/ui/Display";
@@ -42,6 +43,7 @@ function useSessionTranscriptStatic() {
         messages: s.messages,
         childSessions: id ? s.childSessions[id] : undefined,
         streamingStepId: s.streamingStepId,
+        streamingRetry: s.streamingRetry,
         streamingLive: s.streamingLive,
         streamingCompletedSteps: s.streamingCompletedSteps,
       };
@@ -71,6 +73,7 @@ export function SessionTranscript({
     messages,
     childSessions,
     streamingStepId,
+    streamingRetry,
     streamingLive,
     streamingCompletedSteps,
   } = useSessionTranscriptStatic();
@@ -193,6 +196,14 @@ export function SessionTranscript({
   // A refresh keeps the cached transcript mounted, but the placeholder should
   // wait until the refreshed snapshot is ready to avoid a false new turn.
   const detailReady = !loading && !refreshing;
+  const retry =
+    active &&
+    streamingStepId &&
+    !runFinished &&
+    (session?.status === "running" || session?.status === "queued") &&
+    streamingRetry?.phase !== "recovered"
+      ? streamingRetry
+      : null;
   const showThinking =
     (Boolean(pending) || detailReady) &&
     session?.status !== "waiting_input" &&
@@ -369,7 +380,9 @@ export function SessionTranscript({
                   submitting={Boolean(pending)}
                   scrollRootRef={scrollRef}
                   liveTurn={
-                    compacting && !hasCompactionRow ? (
+                    retry ? (
+                      <RetryIndicator retry={retry} />
+                    ) : compacting && !hasCompactionRow ? (
                       <ThinkingIndicator
                         label={
                           locale === "zh"

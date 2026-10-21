@@ -1,8 +1,8 @@
-import { jsonSchema, tool, type ToolCallRepairFunction, type ToolSet } from 'ai';
-import { asSchema } from '@ai-sdk/provider-utils';
+import type { ToolSet } from "../../infrastructure/llm-runtime/contracts.js";
+import { jsonSchema } from "../../infrastructure/llm-runtime/tool-schema.js";
+import { asSchema } from "../../infrastructure/llm-runtime/tool-schema.js";
 import { createHash } from 'node:crypto';
 import type { RegisteredTool } from './contracts.js';
-import { INVALID_TOOL_ID } from './tool-invalid.js';
 
 type LoopToolDefinition = Omit<RegisteredTool, 'execute'>;
 
@@ -12,7 +12,6 @@ export interface LoopToolSet {
   resolveToolId: (modelToolName: string) => string | null;
   resolveModelToolName: (toolId: string) => string | null;
   resolveHistoricalModelToolName?: (toolId: string) => string;
-  repairToolCall: ToolCallRepairFunction<ToolSet>;
 }
 
 const genericInputSchema = jsonSchema<Record<string, unknown>>({
@@ -50,7 +49,7 @@ export function buildLoopToolSet(
     modelToRuntime.set(modelName, definition.id);
     modelToRuntime.set(definition.id, definition.id);
     runtimeToModel.set(definition.id, modelName);
-    tools[modelName] = tool({
+    tools[modelName] = {
       title: definition.label,
       description: [definition.description, definition.progressiveDetails].filter(Boolean).join(' '),
       inputSchema: modelInputSchema(definition.inputSchema),
@@ -59,7 +58,7 @@ export function buildLoopToolSet(
         category: definition.category,
         mutability: definition.mutability,
       },
-    });
+    };
   }
 
   const activeToolNames = activeDefinitions
@@ -75,29 +74,7 @@ export function buildLoopToolSet(
     resolveToolId,
     resolveModelToolName,
     resolveHistoricalModelToolName: (id) => toModelToolName(id, options.stableNames === true),
-    repairToolCall: async (failed) => {
-      const direct = resolveModelToolName(resolveToolId(failed.toolCall.toolName) ?? failed.toolCall.toolName);
-      if (direct) return { ...failed.toolCall, toolName: direct };
 
-      let normalized = failed.toolCall.toolName.toLowerCase();
-      if (normalized.startsWith('functions.')) {
-        normalized = normalized.slice('functions.'.length);
-      }
-      const match = [...runtimeToModel.entries()].find(([toolId, modelName]) => {
-        return toolId.toLowerCase() === normalized || modelName.toLowerCase() === normalized;
-      });
-      if (match) return { ...failed.toolCall, toolName: match[1] };
-
-      const invalidModelName = runtimeToModel.get(INVALID_TOOL_ID);
-      if (invalidModelName) {
-        return {
-          ...failed.toolCall,
-          input: JSON.stringify({ tool: failed.toolCall.toolName, error: failed.error.message }),
-          toolName: invalidModelName,
-        };
-      }
-      return null;
-    },
   };
 }
 

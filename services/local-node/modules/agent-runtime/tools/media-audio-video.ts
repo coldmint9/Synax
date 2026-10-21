@@ -1,12 +1,5 @@
 import { z } from "zod/v4";
 import { assertSessionMediaBudget } from "./media-context.js";
-import {
-  generateSpeech,
-  transcribe,
-  experimental_generateVideo,
-  type SpeechModel,
-  type TranscriptionModel,
-} from "ai";
 import type {
   RegisteredTool,
   ToolExecutionInput,
@@ -14,7 +7,7 @@ import type {
 } from "../contracts.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { saveGeneratedMedia } from "../generated-media.js";
-import { instantiateProvider } from "../../../infrastructure/llm-runtime/providers/provider-registry.js";
+import { requestMedia } from "../../../infrastructure/llm-runtime/media-client.js";
 import {
   resolveSessionMediaProvider,
   loadSessionMedia,
@@ -76,22 +69,6 @@ const videoSchema = common
   })
   .strict();
 
-async function modelFor(
-  input: ToolExecutionInput,
-  args: z.infer<typeof common>,
-  selector: string,
-) {
-  const selection = await resolveSessionMediaProvider(input, args.providerId);
-  const client = (await instantiateProvider(
-    selection.provider,
-    selection.config,
-  )) as Record<string, unknown>;
-  if (typeof client[selector] !== "function")
-    throw new Error(
-      `Provider '${selection.provider.id}' does not expose ${selector}. Select a provider with this capability.`,
-    );
-  return (client[selector] as (model: string) => unknown)(args.model);
-}
 async function saveOutput(
   input: ToolExecutionInput,
   files: Array<{ mediaType: string; uint8Array: Uint8Array }>,
@@ -127,15 +104,10 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
     inputSchema: speechSchema,
     async execute(input) {
       const args = speechSchema.parse(input.args);
-      const response = await generateSpeech({
-        ...args,
-        model: (await modelFor(input, args, "speechModel")) as SpeechModel,
-        abortSignal: input.abortSignal,
-        maxRetries: 0,
-      });
+      const response = await requestMedia(await resolveSessionMediaProvider(input, args.providerId), "speech", args, { signal: input.abortSignal });
       return saveOutput(
         input,
-        [response.audio],
+        (response.files ?? []).map(file => ({ mediaType: file.mediaType, uint8Array: Buffer.from(file.data, "base64") })),
         { model: args.model, warnings: response.warnings },
         "Generated speech",
       );
@@ -154,16 +126,8 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
       const audio = await loadSessionMedia(input.sessionId, args.audio);
       if (!audio.asset.mediaType.startsWith("audio/"))
         throw new Error("Transcription requires an audio asset.");
-      const response = await transcribe({
-        model: (await modelFor(
-          input,
-          args,
-          "transcriptionModel",
-        )) as TranscriptionModel,
-        audio: audio.bytes,
-        providerOptions: args.providerOptions,
-        abortSignal: input.abortSignal,
-        maxRetries: 0,
+      const response = await requestMedia(await resolveSessionMediaProvider(input, args.providerId), "transcribe", args, {
+        files: [{ data: audio.bytes.toString("base64"), mediaType: audio.asset.mediaType, filename: audio.asset.filename }], signal: input.abortSignal,
       });
       return {
         result: {
@@ -173,7 +137,7 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
           durationInSeconds: response.durationInSeconds,
           warnings: response.warnings,
         },
-        displaySummary: response.text.slice(0, 1000),
+        displaySummary: (response.text ?? "").slice(0, 1000),
         artifacts: [],
       };
     },
@@ -214,35 +178,14 @@ export const mediaAudioVideoTools: RegisteredTool[] = [
           frameType: frame.frameType,
         })),
       );
-      const response = await experimental_generateVideo({
-        model: (await modelFor(input, args, "videoModel")) as Parameters<
-          typeof experimental_generateVideo
-        >[0]["model"],
-        prompt: image ? { text: args.prompt, image: image.bytes } : args.prompt,
-        inputReferences: refs.map((ref) => ({
-          data: ref.bytes,
-          mediaType: ref.asset.mediaType,
-        })),
-        frameImages: frames,
-        n: args.n,
-        aspectRatio: args.aspectRatio as
-          | `${number}:${number}`
-          | "adaptive"
-          | undefined,
-        resolution: args.resolution as `${number}x${number}` | undefined,
-        duration: args.duration,
-        fps: args.fps,
-        seed: args.seed,
-        generateAudio: args.generateAudio,
-        providerOptions: args.providerOptions,
-        abortSignal: input.abortSignal,
-        maxRetries: 0,
-      });
+      const response = await requestMedia(await resolveSessionMediaProvider(input, args.providerId), "video", {
+        ...args, frameImages: frames.map(frame => ({ ...frame, image: frame.image.toString("base64") })),
+      }, { files: [...(image ? [image] : []), ...refs].map(ref => ({ data: ref.bytes.toString("base64"), mediaType: ref.asset.mediaType, filename: ref.asset.filename })), signal: input.abortSignal });
       return saveOutput(
         input,
-        response.videos,
+        (response.files ?? []).map(file => ({ mediaType: file.mediaType, uint8Array: Buffer.from(file.data, "base64") })),
         { model: args.model, warnings: response.warnings },
-        `Generated ${response.videos.length} video(s)`,
+        `Generated ${(response.files ?? []).length} video(s)`,
       );
     },
   },

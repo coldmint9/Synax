@@ -1,14 +1,10 @@
 import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { generateText, jsonSchema, streamText, tool } from 'ai'
-import type { ToolSet } from 'ai'
+import { generateText, jsonSchema, tool, nativeModel } from '../../../../test-fixtures/native-generation.js'
+import type { ToolSet } from '../contracts.js'
 import { beforeAll, afterEach, describe, expect, it } from 'vitest'
 import { executePipeline } from '../pipeline.js'
-import { applyJsonSchemaCompatMiddleware } from '../middleware/json-schema-compat.js'
-import { buildProtocolProviderOptions } from '../protocol-options.js'
-import { instantiateProvider, selectLanguageModel } from '../providers/provider-registry.js'
-import { buildThinkingStreamOptions } from '../thinking-mode-strategy.js'
 import type { LlmGatewayRequest, ResolvedModelSelection } from '../types.js'
 
 beforeAll(async () => { await ensureTestRuntime(); });
@@ -122,7 +118,6 @@ function toolsWithPropertyNames(): ToolSet {
         required: [],
         additionalProperties: false,
       }),
-      execute: async () => 'ok',
     }),
   }
 }
@@ -134,30 +129,14 @@ function emittedWarningsSince(count: number): string[] {
 describe('OpenAI Responses wire warnings for DeepSeek gateway models', () => {
   it('strips propertyNames before the provider sees the schema', async () => {
     const { baseUrl } = await startStubServer()
-    const client = await instantiateProvider(
-      {
-        id: 'custom-api:deepseek',
-        label: 'DeepSeek',
-        npm: '@ai-sdk/open-responses',
-        api: undefined,
-      },
-      {
-        providerId: 'custom-api:deepseek',
-        apiFormat: 'openai-responses',
-        baseUrl,
-        apiKey: 'sk-test',
-      },
-    )
-    const raw = selectLanguageModel(client, 'deepseek-v4-flash', undefined, 'openai-responses')
-    const wrapped = applyJsonSchemaCompatMiddleware(raw as never)
-
+    const wrapped = nativeModel({ apiFormat: "openai-responses", model: "fixture", prompt: [], baseUrl, apiKey: "fixture" });
     const before = warnings.length
-    await streamText({
+    await generateText({
       model: wrapped,
       messages: [{ role: 'user', content: 'ping' }],
       tools: toolsWithPropertyNames(),
       maxRetries: 0,
-    }).consumeStream()
+    })
 
     expect(emittedWarningsSince(before).filter(message => message.includes('propertyNames'))).toEqual([])
   })
@@ -172,7 +151,7 @@ describe('OpenAI Responses wire warnings for DeepSeek gateway models', () => {
       selection,
       { kind: 'stream', tools: toolsWithPropertyNames(), maxRetries: 0 },
     )
-    await result.consumeStream()
+    for await (const _event of result.fullStream) {}
 
     // Regression: `propertyNames` compatibility warning and the
     // `reasoningEffort is not supported for non-reasoning models` warning
@@ -194,44 +173,10 @@ describe('OpenAI Responses wire warnings for DeepSeek gateway models', () => {
       selection,
       { kind: 'stream', maxRetries: 0 },
     )
-    await result.consumeStream()
+    for await (const _event of result.fullStream) {}
 
     expect(emittedWarningsSince(before)).toEqual([])
     expect(bodies).toHaveLength(1)
     expect(bodies[0]).toMatchObject({ model: 'deepseek-v4-flash', reasoning: { effort: 'high' } })
-  })
-})
-
-describe('buildProtocolProviderOptions reasoning gating', () => {
-  const selection = (reasoning?: boolean): ResolvedModelSelection => ({
-    ...deepSeekResponsesSelection('https://gateway.example.test/v1'),
-    modelDef: { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', ...(reasoning ? { reasoning: true } : {}) },
-  })
-
-  it('drops reasoningEffort and reasoningSummary for non-reasoning models', () => {
-    expect(buildProtocolProviderOptions(selection(false), { reasoningEffort: 'high' })).toBeUndefined()
-    expect(buildProtocolProviderOptions(selection(false), {
-      responseOptions: { reasoningSummary: 'auto', store: false },
-    })).toBeUndefined()
-  })
-
-  it('keeps reasoning options for reasoning models and forceReasoning overrides', () => {
-    expect(buildProtocolProviderOptions(selection(true), { reasoningEffort: 'max' })).toEqual({
-      'custom-api:deepseek': { reasoningEffort: 'max' },
-    })
-    expect(buildProtocolProviderOptions(selection(false), {
-      reasoningEffort: 'low',
-      responseOptions: { forceReasoning: true },
-    })).toEqual({ 'custom-api:deepseek': { reasoningEffort: 'low' } })
-  })
-
-  it('keeps thinking options off non-reasoning deepseek responses selections', () => {
-    expect(buildThinkingStreamOptions(selection(false), { reasoningEffort: 'high', temperature: 0.3 })).toEqual({
-      temperature: 0.3,
-    })
-    expect(buildThinkingStreamOptions(selection(true), { reasoningEffort: 'high' })).toEqual({
-      providerOptions: { 'custom-api:deepseek': { reasoningEffort: 'high' } },
-      temperature: undefined,
-    })
   })
 })

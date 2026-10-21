@@ -149,7 +149,7 @@ export function hasStreamingContent(state: StreamingLiveBuffers): boolean {
   return (
     state.blocks.length > 0 ||
     hasDisplayableReasoning(state.pendingThinking) ||
-    Boolean(state.pendingText) ||
+    Boolean(state.pendingText.trim()) ||
     state.pendingToolCalls.length > 0
   );
 }

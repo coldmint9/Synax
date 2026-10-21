@@ -18,9 +18,13 @@ import type {
   AgentRuntimeMessage,
   ContextCompactionState,
   ToolCallRecord,
+  PermissionDecision,
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | { type: "message"; message: AgentRuntimeMessage }
+  | { type: "event"; event: RuntimeEvent }
+  | { type: "permission_updated"; permission: PermissionDecision }
   | { type: "input_queue_changed"; sessionId: string; queueRevision: number }
   | RuntimeSnapshotEvent
   | { type: "media_job"; jobId: string; status: string; resultAssetIds: string[] }

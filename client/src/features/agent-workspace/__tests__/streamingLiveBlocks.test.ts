@@ -101,4 +101,11 @@ describe("streamingLiveBlocks", () => {
       "text",
     ]);
   });
+
+  it("does not treat whitespace-only text as visible streaming content", () => {
+    const state = applyMessageDelta(EMPTY_STREAMING_BUFFERS, " \n\t");
+    expect(hasStreamingContent(state)).toBe(false);
+    expect(materializeLiveBlocks(state)).toEqual([]);
+    expect(snapshotStreamingBuffers(state)).toEqual([]);
+  });
 });

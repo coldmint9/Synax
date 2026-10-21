@@ -8,10 +8,10 @@ vi.mock('../../../modules/agent-runtime/media-assets.js', () => ({
   readAsset: async () => fixture.bytes,
   validateAssets: vi.fn(),
 }));
-vi.mock('../providers/provider-cache.js', () => ({ getOrCreateClient: async () => createAnthropic({ apiKey:'local-fixture', fetch: async (_url, init) => {
+const nativeFixture = () => createAnthropic({ apiKey: "fixture", fetch: async (_url, init) => {
   fixture.requests.push(JSON.parse(String(init?.body)));
   return new Response(JSON.stringify({ id:'msg_fixture', type:'message', role:'assistant', model:'claude-sonnet-4-5', content:[{type:'text',text:'ok'}], stop_reason:'end_turn', stop_sequence:null, usage:{input_tokens:10,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0} }), {headers:{'Content-Type':'application/json'}});
-} }) }));
+} })("fixture");
 import { executePipeline } from '../pipeline.js';
 const selection: ResolvedModelSelection = {
   providerId:'fixture', model:'fixture/model', modelId:'claude-sonnet-4-5', apiFormat:'anthropic',
@@ -24,7 +24,7 @@ function markedBlocks(body: Record<string, any>) {
   return body.messages.flatMap((m: any) => m.content).filter((block: any) => block.cache_control);
 }
 const base = {purpose:'validate',projectId:'project',cacheControl:true,maxTokens:32};
-beforeEach(() => { fixture.requests.length=0; fixture.bytes=Buffer.from('image-one'); });
+beforeEach(async () => { fixture.requests.length=0; fixture.bytes=Buffer.from('image-one'); selection.config.baseUrl = (await nativeFixture().request()).baseUrl; });
 describe('prepared request anchor representation', () => {
   it('rejects Jev connections before ordinary chat dispatch', async () => {
     await expect(

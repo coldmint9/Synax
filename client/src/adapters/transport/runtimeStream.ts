@@ -1,4 +1,4 @@
-import type { AgentRun, AgentRunStep, AgentSession, ToolCallRecord } from './agentRuntime'
+import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, PermissionDecision, RuntimeEvent, ToolCallRecord } from './agentRuntime'
 import type { LlmRetryState, SessionLiveEvent } from './sessionLive'
 
 export interface RuntimeChunk {
@@ -13,6 +13,9 @@ export interface RuntimeChunk {
   step?: AgentRunStep
   queueRevision?: number
   toolCall?: ToolCallRecord
+  message?: AgentRuntimeMessage
+  permission?: PermissionDecision
+  event?: RuntimeEvent
 }
 export interface RuntimeStreamRecord {
   sequence: number
@@ -52,6 +55,10 @@ const LOCAL_CHUNK_TYPES = new Set([
   'step_started',
   'retry_status',
   'input_queue_changed',
+  'message',
+  'input_injected',
+  'event',
+  'permission_requested',
 ])
 
 /** Cursors order transport; authoritative state in the same record prevents stale chunks reopening old Runs. */
@@ -103,6 +110,17 @@ export class RuntimeStreamProjector {
       this.stateKey = key
     }
     if (reset) this.stepId = null
+    // Full records already travel with the stream. Applying them locally keeps
+    // message completion and permission prompts independent of history polling.
+    // A terminal record may carry the final answer after activeRunId is cleared.
+    if (value.state.activeRunId && value.state.activeRunId !== value.runId) return output
+    const { message, permission, event } = value.chunk
+    if (message?.sessionId === value.sessionId && (!message.runId || message.runId === value.runId))
+      output.push({ type: 'message', message })
+    if (permission?.sessionId === value.sessionId && permission.runId === value.runId)
+      output.push({ type: 'permission_updated', permission })
+    if (value.chunk.type === 'event' && event?.sessionId === value.sessionId)
+      output.push({ type: 'event', event })
     if (terminal || value.state.activeRunId !== value.runId) return output
     return [...output, ...this.live(value.chunk)]
   }

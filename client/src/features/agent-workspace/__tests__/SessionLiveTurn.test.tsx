@@ -141,7 +141,7 @@ describe("SessionLiveTurn", () => {
     ).toHaveLength(1);
   });
 
-  it("mounts only the newest thought row of a live step", () => {
+  it("retains every thought row of a live step in order", () => {
     render(
       <SessionLiveTurn
         {...props}
@@ -168,7 +168,7 @@ describe("SessionLiveTurn", () => {
       />,
     );
 
-    expect(screen.queryByText("First thought")).toBeNull();
+    expect(screen.getByText("First thought")).toBeTruthy();
     expect(screen.getByText("Second thought")).toBeTruthy();
   });
 });

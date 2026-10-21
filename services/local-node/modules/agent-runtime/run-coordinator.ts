@@ -40,8 +40,6 @@ import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
-import { workStore } from "./work-store.js";
-import { usesGoalWorkflow } from "./workflow-mode.js";
 interface Owner {
   context?: RuntimeExecutionContext;
   runId: string;
@@ -223,7 +221,6 @@ export class RunCoordinator {
       {
         const candidate = runtimeTransaction(() => {
           const session = agentRuntimeStore.getSession(sessionId);
-          const work = workStore.current(sessionId);
           const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
           if (
             (!forced && session.status !== "completed") ||
@@ -234,14 +231,6 @@ export class RunCoordinator {
             (!forced &&
               latestRun?.stopReason === "round_yielded" &&
               goalContinuationInput(sessionId, latestRun.id) !== null) ||
-            (!forced &&
-              work &&
-              work.status !== "completed" &&
-              !(
-                work.status === "active" &&
-                latestRun.stopReason === "round_yielded" &&
-                !usesGoalWorkflow(session)
-              )) ||
             (!forced && interactionService.pending(sessionId))
           )
             return null;
@@ -499,7 +488,7 @@ export class RunCoordinator {
       const run = agentRuntimeStore.getRun(owner.runId);
       if (!["completed", "cancelled", "interrupted", "failed", "blocked"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
-          status: owner.controller.signal.aborted ? "interrupted" : "failed",
+          status: owner.controller.signal.aborted || message.includes("RUN_INTERRUPTED") ? "interrupted" : "failed",
           completedAt: nowIso(),
           stopReason: message,
         });
@@ -528,6 +517,15 @@ export class RunCoordinator {
             sessionId,
             run,
           );
+          if (run.status === "interrupted" && run.stopReason?.includes("RUN_INTERRUPTED")) {
+            await runtimeFacade.sessionPatch(sessionId, `interrupted-session:${run.id}`, {
+              status: "paused", activeRunId: null, pendingResumeToken: null, blockedReason: run.stopReason,
+            });
+          }
+          if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
+            // Include any final partial message written after the stream drained.
+            await agentRuntimeStore.hydrateSession(sessionId, true);
+          }
           // Terminal finish closes the lease in the same Rust transaction.
           // Waiting checkpoints retain the run but release this executor.
           if (["waiting_input", "waiting_permission"].includes(run.status)) {
@@ -555,6 +553,7 @@ export class RunCoordinator {
         }
       } else if (
         settledNormally &&
+        agentRuntimeStore.getRun(owner.runId).status !== "interrupted" &&
         ownsLease &&
         !owner.stopping &&
         !owner.controller.signal.aborted &&

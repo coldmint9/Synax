@@ -1,84 +1,20 @@
-import { applyUsageMiddleware } from "./middleware/usage.js";
-import {
-  applyPromptCachePolicy,
-  inspectHistoryCacheAnchor,
-} from "./cache-policy.js";
-import {
-  applyCacheDiagnosticsMiddleware,
-  cacheDiagnosticsEnabled,
-} from "./cache-diagnostics.js";
-import { resolveMediaMessages } from "../../modules/agent-runtime/media-capabilities.js";
-import { generateText, Output, streamText } from "ai";
-import type {
-  GenerateTextResult,
-  ToolSet,
-  ToolChoice,
-  ToolCallRepairFunction,
-} from "ai";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
-import type { ModelMessage, SystemModelMessage } from "@ai-sdk/provider-utils";
 import type { ZodType } from "zod";
+import { z } from "zod";
+import type { ToolSet, ToolChoice, ProviderOptions, ProviderRequest } from "./contracts.js";
 import type { LlmGatewayRequest, ResolvedModelSelection } from "./types.js";
-import { getOrCreateClient } from "./providers/provider-cache.js";
-import { selectLanguageModel } from "./providers/provider-registry.js";
-import { getStrategy } from "./providers/provider-strategy.js";
-import { applyReasoningMiddleware } from "./middleware/reasoning.js";
-import { applyJsonSchemaCompatMiddleware } from "./middleware/json-schema-compat.js";
-import { applyResponsesReasoningMiddleware } from "./middleware/responses-reasoning.js";
-import { buildHookCallbacks } from "./middleware/hook-callbacks.js";
-import {
-  toModelPrompt,
-  ensureJsonObjectResponseFormatInstruction,
-} from "./prompt.js";
-import {
-  buildThinkingDisabledOptions,
-  buildThinkingStreamOptions,
-  type ThinkingStreamOptions,
-} from "./thinking-mode-strategy.js";
-import { buildProtocolProviderOptions } from "./protocol-options.js";
-import { mergeProviderOptions } from "./custom-api-compat.js";
-import { createHash } from "node:crypto";
-import {
-  applyChatCacheBreakpoints,
-  chatCacheOptions,
-  describeChatCacheHint,
-  requiresStrictAlternation,
-} from "./chat-cache.js";
-
-const THINKING_DISABLED_PURPOSES = new Set([
-  "session-title",
-  "input-optimization",
-  "context-signal",
-  "validate",
-]);
-
-function resolveThinkingOptions(
-  request: LlmGatewayRequest,
-  selection: ResolvedModelSelection,
-): ThinkingStreamOptions {
-  if (THINKING_DISABLED_PURPOSES.has(request.purpose)) {
-    // Explicitly disable reasoning instead of merely omitting the thinking
-    // options: otherwise a reasoning model burns the small output budget on
-    // hidden tokens and the utility call returns empty text.
-    return buildThinkingDisabledOptions(selection, request.temperature);
-  }
-  return buildThinkingStreamOptions(selection, request);
-}
-
-export type GatewayStreamResult = ReturnType<typeof streamText>;
-
+import { inspectHistoryCacheAnchor } from "./cache-policy.js";
+import { resolveMediaMessages } from "../../modules/agent-runtime/media-capabilities.js";
+import { ensureJsonObjectResponseFormatInstruction } from "./prompt.js";
+import { mergeProviderOptions } from "./connection-options.js";
+import { streamProvider, prepareProvider } from "./native-client.js";
+import { cacheDiagnosticsEnabled, fingerprintRequest } from "./cache-diagnostics.js";
+import { asSchema } from "./tool-schema.js";
+import { gatewayResult, collectGatewayResult, type GatewayStreamResult } from "./gateway-result.js";
+export type { GatewayStreamResult } from "./gateway-result.js";
 export type ExecutionMode =
-  | {
-      kind: "stream";
-      tools?: ToolSet;
-      toolChoice?: ToolChoice<ToolSet>;
-      activeTools?: string[];
-      repairToolCall?: ToolCallRepairFunction<ToolSet>;
-      maxRetries?: number;
-    }
+  | { kind: "stream"; tools?: ToolSet; toolChoice?: ToolChoice; activeTools?: string[]; maxRetries?: number }
   | { kind: "text" }
   | { kind: "object"; schema: ZodType<unknown> };
-
 const OFFICIAL_API_BASE_URLS = new Set([
   "https://api.anthropic.com/v1",
   "https://api.openai.com/v1",
@@ -149,255 +85,53 @@ export async function executePipeline(
       request.projectId,
     ),
   };
-  if (
-    selection.apiFormat === "openai-responses" &&
-    selection.provider.npm !== "@ai-sdk/open-responses" &&
-    request.hookContext?.sessionId &&
-    !request.responseOptions?.promptCacheKey
-  ) {
-    const identity = [
-      "synax-prompt-cache-v1",
-      selection.providerId,
-      selection.modelId,
-      request.projectId ?? "global",
-      request.hookContext.sessionId,
-    ].join("\0");
-    request = {
-      ...request,
-      responseOptions: {
-        ...request.responseOptions,
-        promptCacheKey: `synax:v1:${createHash("sha256").update(identity).digest("hex").slice(0, 40)}`,
-      },
-    };
-  }
-  // Apply once to the complete request, including tools; all dispatch paths share the same budget.
-  const cached = applyPromptCachePolicy(
-    mode.kind === "object"
-      ? ensureJsonObjectResponseFormatInstruction(request.messages)
-      : request.messages,
-    {
-      selection,
-      cacheControl: request.cacheControl,
-      previousHistoryAnchor: request.previousHistoryAnchor,
-      tools: mode.kind === "stream" ? mode.tools : request.tools,
-    },
-  );
-  request = { ...request, messages: cached.messages, tools: cached.tools };
-  if (mode.kind === "stream") mode = { ...mode, tools: cached.tools };
+  request = { ...request,
+    ...(mode.kind === "stream" ? { tools: mode.tools ?? request.tools, activeTools: mode.activeTools ?? request.activeTools, toolChoice: mode.toolChoice ?? request.toolChoice } : {}),
+    messages: mode.kind === "object" ? ensureJsonObjectResponseFormatInstruction(request.messages) : request.messages,
+  };
   assertApiKey(selection);
 
-  const client = await getOrCreateClient(selection);
-  const strategy = getStrategy(selection.provider.npm);
-  const modelOptions = strategy.modelOptions(mode);
-  let model = selectLanguageModel(
-    client,
-    selection.modelId,
-    modelOptions,
-    selection.apiFormat,
-  ) as LanguageModelV4;
-
-  // DeepSeek gateway models may use the native OpenAI Responses provider,
-  // including when a custom OpenAI-compatible connection is resolved to the
-  // Responses implementation. Normalize unsupported JSON Schema keywords
-  // before @ai-sdk/openai sees the request, otherwise it logs a compatibility
-  // warning for every call.
-  if (
-    selection.apiFormat === "openai-responses" ||
-    selection.provider.npm === "@ai-sdk/openai"
-  ) {
-    model = applyJsonSchemaCompatMiddleware(model);
-  }
-
-  // DeepSeek-shaped Responses endpoints stream chain-of-thought as
-  // `response.reasoning_text.delta`, an event @ai-sdk/openai does not model: it
-  // opens and closes reasoning parts with no text, so thinking never reaches the
-  // agent loop. Recover it from the raw SSE payload the adapter forwards.
-  if (
-    selection.apiFormat === "openai-responses" &&
-    selection.provider.npm !== "@ai-sdk/open-responses"
-  ) {
-    model = applyResponsesReasoningMiddleware(model);
-  }
-
-  if (strategy.needsReasoningMiddleware(selection.modelDef)) {
-    model = applyReasoningMiddleware(model);
-  }
-
-  model = applyUsageMiddleware(model, {
-    source: "sdk",
-    protocol: selection.apiFormat,
-    adapter: selection.provider.npm,
-    providerId: selection.providerId,
-    sessionId: request.hookContext?.sessionId,
-  });
-  if (cacheDiagnosticsEnabled())
-    model = applyCacheDiagnosticsMiddleware(model, {
-      provider: selection.providerId,
-      model: selection.modelId,
-      protocol: selection.apiFormat,
-      source: request.cacheDiagnosticsContext?.source ?? "auxiliary",
-      ...request.cacheDiagnosticsContext,
-      hint: describeChatCacheHint(selection, request),
-    });
-  // Policy has already handled every marker; the legacy system-only flag must not run again.
-  const enableCache = undefined;
-  const callbacks = buildHookCallbacks(request);
-  const thinkingStream = resolveThinkingOptions(request, selection);
   const providerOptions = mergeProviderOptions(
-    selection.config.options?.providerOptions as
-      | import("@ai-sdk/provider-utils").ProviderOptions
-      | undefined,
+    selection.config.options?.providerOptions as ProviderOptions | undefined,
     request.providerOptions,
-    thinkingStream.providerOptions,
-    buildProtocolProviderOptions(selection, request),
-    chatCacheOptions(selection, request),
-    ...(selection.apiFormat === "openai-responses" &&
-    selection.provider.npm !== "@ai-sdk/open-responses"
-      ? [{ openai: { passThroughUnsupportedFiles: true } }]
-      : []),
   );
-
-  const temperature =
-    selection.apiFormat === "openai-responses" &&
-    providerOptions?.openai?.reasoningEffort !== "none" &&
-    (providerOptions?.openai?.forceReasoning ?? selection.modelDef.reasoning)
-      ? undefined
-      : thinkingStream.temperature;
-  const callOptions = { ...thinkingStream, providerOptions, temperature };
-
-  // Native snapshots persist exactly the hydrated/compiled representation verified by policy.
-  const preparedAnchor = inspectHistoryCacheAnchor(
-    request.messages,
-    request.previousHistoryAnchor,
-  );
-  await request.onRequestPrepared?.({
-    messages: request.messages,
-    ...preparedAnchor,
-  });
-  switch (mode.kind) {
-    case "stream":
-      return dispatchStream(
-        model,
-        request,
-        mode,
-        callbacks,
-        enableCache,
-        callOptions,
-        selection.apiFormat === "openai-responses",
-        selection,
-        abortSignal,
-      );
-    case "text":
-      return dispatchText(
-        model,
-        request,
-        callbacks,
-        enableCache,
-        callOptions,
-        selection,
-        abortSignal,
-      );
-    case "object":
-      return dispatchObject(
-        model,
-        request,
-        mode.schema,
-        callbacks,
-        callOptions,
-        selection,
-        abortSignal,
-      );
+  const tools = [];
+  for (const [name, tool] of Object.entries(request.tools ?? {})) {
+    if (request.activeTools && !request.activeTools.includes(name)) continue;
+    tools.push(tool.type === "provider-defined" || tool.type === "provider"
+      ? { type: "provider", name, id: tool.id, args: tool.args }
+      : { type: "function", name, description: tool.description, inputSchema: await asSchema(tool.inputSchema).jsonSchema, providerOptions: tool.providerOptions });
   }
-}
-
-function dispatchStream(
-  model: LanguageModelV4,
-  request: LlmGatewayRequest,
-  mode: Extract<ExecutionMode, { kind: "stream" }>,
-  callbacks: ReturnType<typeof buildHookCallbacks>,
-  enableCache: boolean | undefined,
-  thinkingStream: ThinkingStreamOptions,
-  includeRawChunks: boolean,
-  selection: ResolvedModelSelection,
-  abortSignal?: AbortSignal,
-): GatewayStreamResult {
-  const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
-    moveRuntimeRemindersToInput: true,
-    strictAlternation: requiresStrictAlternation(selection),
-  });
-  return streamText({
-    model,
-    system,
-    messages,
-    tools: mode.tools,
-    toolChoice: mode.toolChoice,
-    activeTools: mode.activeTools,
-    experimental_repairToolCall: mode.repairToolCall,
-    temperature: thinkingStream.temperature,
-    providerOptions: thinkingStream.providerOptions,
-    maxOutputTokens: request.maxTokens,
-    stopSequences: request.stop,
-    maxRetries: mode.maxRetries,
-    includeRawChunks,
-    abortSignal,
-    ...callbacks,
-  });
-}
-
-function dispatchText(
-  model: LanguageModelV4,
-  request: LlmGatewayRequest,
-  callbacks: ReturnType<typeof buildHookCallbacks>,
-  enableCache: boolean | undefined,
-  thinkingStream: ThinkingStreamOptions,
-  selection: ResolvedModelSelection,
-  abortSignal?: AbortSignal,
-) {
-  const { system, messages } = toModelPrompt(applyChatCacheBreakpoints(request.messages, selection, request), enableCache, {
-    moveRuntimeRemindersToInput: true,
-    strictAlternation: requiresStrictAlternation(selection),
-  });
-  return generateText({
-    maxRetries: 0,
-    model,
-    system,
-    messages,
-    temperature: thinkingStream.temperature,
-    providerOptions: thinkingStream.providerOptions,
-    maxOutputTokens: request.maxTokens,
-    stopSequences: request.stop,
-    abortSignal,
-    ...callbacks,
-  });
-}
-
-function dispatchObject(
-  model: LanguageModelV4,
-  request: LlmGatewayRequest,
-  schema: ZodType<unknown>,
-  callbacks: ReturnType<typeof buildHookCallbacks>,
-  thinkingStream: ThinkingStreamOptions,
-  selection: ResolvedModelSelection,
-  abortSignal?: AbortSignal,
-) {
-  const { system, messages } = toModelPrompt(
-    applyChatCacheBreakpoints(ensureJsonObjectResponseFormatInstruction(request.messages), selection, request),
-    undefined,
-    {
-      moveRuntimeRemindersToInput: true,
-      strictAlternation: requiresStrictAlternation(selection),
-    },
-  );
-  return generateText({
-    maxRetries: 0,
-    model,
-    output: Output.object({ schema }),
-    system,
-    messages,
-    temperature: thinkingStream.temperature,
-    providerOptions: thinkingStream.providerOptions,
-    maxOutputTokens: request.maxTokens,
-    abortSignal,
-    ...callbacks,
-  });
+  const choice = request.toolChoice;
+  const headers = selection.config.options?.headers as Record<string, string> | undefined;
+  const wire: ProviderRequest = {
+    providerId: selection.providerId, apiFormat: selection.apiFormat, adapter: selection.provider.npm,
+    baseUrl: selection.config.baseUrl ?? selection.provider.api,
+    apiKey: selection.config.apiKey ?? selection.config.options?.apiKey as string | undefined
+      ?? selection.provider.env.map(name => process.env[name]?.trim()).find(Boolean),
+    headers, model: selection.modelId,
+    prompt: request.messages,
+    cachePolicy: { adapter: selection.provider.npm, enabled: request.cacheControl, mode: selection.config.options?.promptCaching,
+      chatBreakpoints: selection.config.options?.chatCacheBreakpoints, projectId: request.projectId, sessionId: request.hookContext?.sessionId,
+      previousAnchorMatches: !request.previousHistoryAnchor || inspectHistoryCacheAnchor(request.messages, request.previousHistoryAnchor).historyAnchorStatus === "matched" },
+    tools, toolChoice: typeof choice === "string" ? { type: choice } : choice,
+    maxOutputTokens: request.maxTokens, stopSequences: request.stop,
+    temperature: request.temperature, purpose: request.purpose,
+    reasoningEffort: request.reasoningEffort, reasoningCapable: selection.modelDef.reasoning,
+    responseOptions: request.responseOptions as Record<string, unknown> | undefined,
+    providerOptions, maxRetries: mode.kind === "stream" ? mode.maxRetries ?? request.maxRetries : request.maxRetries,
+    ...(mode.kind === "object" ? { responseFormat: { type: "json" as const, schema: z.toJSONSchema(mode.schema, { target: "draft-7", unrepresentable: "any" }) } } : {}),
+  };
+  await request.onRequestPrepared?.({ messages: request.messages, ...inspectHistoryCacheAnchor(request.messages, request.previousHistoryAnchor) });
+  let diagnostics: Record<string, unknown> | undefined;
+  if (cacheDiagnosticsEnabled()) {
+    const prepared = await prepareProvider(wire, abortSignal);
+    diagnostics = { ...request.cacheDiagnosticsContext, provider: selection.providerId, model: selection.modelId,
+      protocol: selection.apiFormat, boundary: "native-bridge", request: fingerprintRequest(prepared.prompt as Array<{ role: string; content: unknown }>, prepared.tools) };
+  }
+  const stream = gatewayResult(streamProvider(wire, abortSignal), request, selection.modelId, selection.providerId, diagnostics);
+  if (mode.kind === "stream") return stream;
+  const result = await collectGatewayResult(stream);
+  if (mode.kind === "object") result.output = mode.schema.parse(result.output);
+  return result;
 }

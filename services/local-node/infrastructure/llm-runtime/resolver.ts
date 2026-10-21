@@ -3,7 +3,7 @@ import type {
   ProviderConnection,
   ProviderDef,
 } from "../runtime/config/config-types.js";
-import { isProviderSupported } from "./providers/provider-registry.js";
+import { isProviderSupported } from "./catalog-capabilities.js";
 import { openAIModelContract } from "./openai-models.js";
 import {
   inferReasoningCapability,
@@ -479,9 +479,8 @@ function resolveConfiguredProviderAdapter(
     };
   }
 
-  // The Responses protocol needs the native OpenAI provider: `@ai-sdk/openai-compatible`
-  // only speaks Chat Completions, while `@ai-sdk/openai` exposes `.responses()` and
-  // still honours baseURL/apiKey/header overrides for proxies and gateways.
+  // Preserve the saved catalog identifier for Responses connections. Rust
+  // selects the actual wire protocol and applies connection overrides.
   if (apiFormat === "openai-responses" || providerId === "openai") {
     return {
       npm: "@ai-sdk/openai",

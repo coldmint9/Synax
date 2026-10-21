@@ -1,10 +1,8 @@
 import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { streamText } from "ai";
+import { generateText, nativeModel } from "../../../../test-fixtures/native-generation.js";
 import { beforeAll, afterEach, describe, expect, it } from "vitest";
-import { instantiateProvider, selectLanguageModel } from "../providers/provider-registry.js";
-import { applyResponsesReasoningMiddleware } from "./responses-reasoning.js";
 
 beforeAll(async () => { await ensureTestRuntime(); });
 
@@ -127,41 +125,12 @@ async function startDeepSeekStub(events: unknown[]): Promise<{
   return { baseUrl: `http://127.0.0.1:${port}/v1`, requests };
 }
 
-/** Concatenated reasoning text, ignoring reasoning-file parts. */
-function reasoningText(parts: Array<{ type: string; text?: string }>): string {
-  return parts
-    .map((part) => (part.type === "reasoning" ? part.text ?? "" : ""))
-    .join("");
-}
-
-async function runStream(baseUrl: string, wrapped: boolean) {
-  const client = await instantiateProvider(
-    {
-      id: "custom-api:deepseek",
-      label: "DeepSeek",
-      npm: "@ai-sdk/openai-compatible",
-      api: undefined,
-    },
-    {
-      providerId: "custom-api:deepseek",
-      apiFormat: "openai-responses",
-      baseUrl,
-      apiKey: "sk-test",
-    },
-  );
-  const raw = selectLanguageModel(client, "deepseek-flash", undefined, "openai-responses");
-  const model = wrapped ? applyResponsesReasoningMiddleware(raw as never) : raw;
-  const result = streamText({
-    model: model as never,
-    messages: [{ role: "user", content: "ping" }],
-    providerOptions: { openai: { forceReasoning: true, reasoningEffort: "high" } },
-    maxRetries: 0,
+async function runStream(baseUrl: string, _wrapped: boolean) {
+  const result = await generateText({
+    model: nativeModel({ providerId: "custom-api:deepseek", apiFormat: "openai-responses", baseUrl, apiKey: "sk-test", model: "deepseek-flash", prompt: [] }),
+    messages: [{ role: "user", content: "ping" }], providerOptions: { openai: { forceReasoning: true, reasoningEffort: "high" } }, maxRetries: 0,
   });
-  await result.consumeStream();
-  return {
-    text: await result.text,
-    reasoning: reasoningText(await result.reasoning),
-  };
+  return { text: result.text, reasoning: result.reasoningText };
 }
 
 describe("DeepSeek Responses reasoning recovery", () => {

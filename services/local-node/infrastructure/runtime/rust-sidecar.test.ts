@@ -4,6 +4,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { afterEach, expect, it } from 'vitest';
 import { RustRuntimeSupervisor } from './rust-sidecar.js';
+import { listApiLogs } from './log-store.js';
 
 const resources: Array<{ root: string; supervisor: RustRuntimeSupervisor }> = [];
 function create(mode = 'ready', options: ConstructorParameters<typeof RustRuntimeSupervisor>[0] = {}) {
@@ -12,7 +13,15 @@ function create(mode = 'ready', options: ConstructorParameters<typeof RustRuntim
   writeFileSync(fixture, `
     process.stdin.resume();
     if (process.env.ENV_DUMP) require('node:fs').writeFileSync(process.env.ENV_DUMP, JSON.stringify(process.env));
-    if (process.env.MODE === 'hang') process.on('SIGINT', () => {});
+    if (process.env.MODE === 'logs') {
+      let stopping = false;
+      const stop = () => {
+        if (stopping) return;
+        stopping = true;
+        process.stderr.write(JSON.stringify({level:'INFO',fields:{message:'native shutdown drained',event:'runtime.stopped'}}), () => process.exit(0));
+      };
+      process.on('SIGINT', stop); process.stdin.on('end', stop);
+    } else if (process.env.MODE === 'hang') process.on('SIGINT', () => {});
     else { process.on('SIGINT', () => process.exit(0)); process.stdin.on('end', () => process.exit(0)); }
     if (process.env.MODE !== 'hang') console.log('SYNAX_RUNTIME_READY:' + JSON.stringify({
       type: 'runtime_ready', protocol: process.env.MODE === 'bad' ? 'invalid' : 'synax.runtime.v2',
@@ -37,6 +46,16 @@ it('kills and reaps a child that never reaches READY', async () => {
   await expect(supervisor.start()).rejects.toThrow('startup timed out');
   expect(supervisor.process.exitCode !== null || supervisor.process.signalCode !== null).toBe(true);
   expect(supervisor.status).toBe('failed');
+});
+it('drains the final native stderr record before stop resolves', async () => {
+  const supervisor = create('logs');
+  await supervisor.start();
+  await supervisor.stop();
+  const rows = await listApiLogs();
+  expect(rows.find(row => row.message === 'native shutdown drained')).toMatchObject({
+    level: 'info', context: { source: 'rust-runtime', sidecarPid: supervisor.process.pid,
+      generation: 1, event: 'runtime.stopped' },
+  });
 });
 it('rejects incompatible READY and cleans up its process', async () => {
   const supervisor = create('bad');
@@ -93,6 +112,7 @@ it('points the sidecar at the jsonl store and passes a per-host stable ticket se
   await supervisor.start();
   const first = JSON.parse(readFileSync(path.join(supervisor.storePath, '..', '..', 'env.json'), 'utf8'));
   expect(first.SYNAX_RUNTIME_STORE_PATH).toBe(supervisor.storePath);
+  expect(first.SYNAX_RUNTIME_LOG_DIR).toBe(path.join(supervisor.storePath, '..', '..', 'logs'));
   expect(existsSync(path.dirname(supervisor.storePath))).toBe(true);
   expect(first.SYNAX_RUNTIME_TICKET_SECRET).toBe(supervisor.ticketSecret);
   expect(supervisor.ticketSecret).toMatch(/^[0-9a-f]{64}$/);

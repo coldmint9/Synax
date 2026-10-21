@@ -1,6 +1,6 @@
 [package]
 name = "synax-runtime-sidecar"
-version = "2.3.0"
+version = "2.4.1"
 edition = "2024"
 publish = false
 
@@ -9,6 +9,8 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 rig-core = { version = "0.44", default-features = false, features = ["reqwest", "rustls"] }
 http = "1"
 bytes = "1"
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "multipart", "stream"] }
 futures-util = "0.3"
 arc-swap = "1"
 async-stream = "0.3"
@@ -25,7 +27,13 @@ tiktoken-rs = "0.12"
 tokio = { version = "1", features = ["macros", "net", "io-util", "io-std", "signal", "sync", "rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 
 
 [lib]

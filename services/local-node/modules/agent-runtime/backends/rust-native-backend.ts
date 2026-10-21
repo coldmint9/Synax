@@ -7,7 +7,7 @@ import type { BackendAdapter } from "./backend-contracts.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { toolRegistry, type ExecuteToolResult } from "../tool-registry.js";
 import { makeRuntimeId, nowIso } from "../runtime-ids.js";
-import { streamRustAgentLoop, sendRustAgentToolResult, cancelRustAgentLoop, sendRustStepContext } from "../rust-agent-loop-client.js";
+import { assertRustAgentLoopAvailable, streamRustAgentLoop, sendRustAgentToolResult, cancelRustAgentLoop, sendRustStepContext } from "../rust-agent-loop-client.js";
 import { interactionService } from "../interaction-service.js";
 import { loopResumeService } from "../loop-resume.js";
 import { profileService } from "../profile-service.js";
@@ -25,9 +25,7 @@ import { memoryManager } from "../../context/memory-manager.js";
 import { skillAgentBridge } from "../../skills/agent-bridge.js";
 import { modelCanUseTool } from "../tool-mount-policy.js";
 import { warmupMcpForSession } from "../../../infrastructure/mcp/mcp-session-tool-provider.js";
-import { buildThinkingStreamOptions, mapThinkingModeToReasoningEffort } from "../../../infrastructure/llm-runtime/thinking-mode-strategy.js";
-import { mergeProviderOptions } from "../../../infrastructure/llm-runtime/custom-api-compat.js";
-import { buildProtocolProviderOptions } from "../../../infrastructure/llm-runtime/protocol-options.js";
+import { mapThinkingModeToReasoningEffort } from "../../../infrastructure/llm-runtime/thinking-mode-strategy.js";
 import type { LlmGatewayRequest } from "../../../infrastructure/llm-runtime/types.js";
 import { modelContentParts } from "../media-assets.js";
 import { resolveMediaMessages } from "../media-capabilities.js";
@@ -40,14 +38,22 @@ function toolSchema(value: unknown): Record<string, unknown> {
 }
 
 /** Translates Rust decisions into host tool execution and public projections.
- * Step progression and model/tool history are owned by the Rust checkpoint. */
+ * Step progression and model/tool context live in the current Rust process. */
 export class RustNativeBackend implements BackendAdapter {
   private readonly activeLoops = new Map<string, string>();
+  private readonly loopSequences = new Map<string, number>();
+  private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[] }>();
 
   async *stream(sessionId: string, mode: string, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
     await store.hydrateSession(sessionId);
     await businessStore.refresh();
     const resumed = mode === "resume";
+    if (resumed) {
+      const activeId = store.getSession(sessionId).activeRunId;
+      const loopId = activeId ? store.getRun(activeId).metadata.rustLoopId : undefined;
+      if (typeof loopId !== "string") throw new Error("RUN_INTERRUPTED: previous execution is unavailable.");
+      await assertRustAgentLoopAvailable(loopId, input.executionContext, signal);
+    }
     const readyInteraction = resumed ? interactionService.list(sessionId).find(item =>
       item.runId === store.getSession(sessionId).activeRunId && ["answered", "cancelled"].includes(item.status) && item.response && !item.consumedAt) : undefined;
     const resolvedInteraction = readyInteraction ? await interactionService.consumeAuthoritative(sessionId) : null;
@@ -87,16 +93,12 @@ export class RustNativeBackend implements BackendAdapter {
     let disposition: import("../rust-agent-loop-client.js").RustAgentLoopEvent["disposition"];
     let assistant: AgentRuntimeMessage | undefined;
     try {
-      if (resumed && typeof run.metadata.rustLoopId !== "string") throw new Error("Run has no Rust loop checkpoint to resume.");
+      if (resumed && typeof run.metadata.rustLoopId !== "string") throw new Error("RUN_INTERRUPTED: the previous execution is no longer available.");
       const selection = await resolveGatewaySelection({ projectId: session.projectId, purpose: input.purpose ?? "analyze", model: input.model });
       const contextLimit = Math.min(selection.modelDef.contextLimit ?? 200_000, selection.modelDef.inputLimit ?? Infinity);
       const outputReserve = input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
       const generationRequest: LlmGatewayRequest = { projectId: session.projectId, purpose: input.purpose ?? "agent", messages: [],
         temperature: input.temperature, reasoningEffort: input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode) };
-      const thinking = buildThinkingStreamOptions(selection, generationRequest);
-      const providerOptions = mergeProviderOptions(
-        selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"],
-        thinking.providerOptions, buildProtocolProviderOptions(selection, generationRequest));
       run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, contextLimit, outputReserve } });
       await warmupMcpForSession(sessionId);
       const prepareContext = (stepIndex: number) => {
@@ -159,16 +161,18 @@ export class RustNativeBackend implements BackendAdapter {
       const events = streamRustAgentLoop({
         requestId: `native-loop:${run.id}`,
         loopId: resumed ? run.metadata.rustLoopId as string : undefined,
-        resumeLoop: resumed, after: resumed ? Number(run.metadata.rustLoopSequence ?? 0) : 0,
+        resumeLoop: resumed, after: resumed ? this.loopSequences.get(run.id) ?? Number(run.metadata.rustLoopSequence ?? 0) : 0,
         runtimeBinding: { sessionId, runId: run.id },
         contextPolicy: { contextLimit, outputReserve },
         executionContext: input.executionContext,
-        apiFormat: selection.apiFormat, baseUrl: selection.config.baseUrl ?? selection.provider.api,
-        providerId: selection.providerId, providerOptions, temperature: thinking.temperature,
+        apiFormat: selection.apiFormat, adapter: selection.provider.npm, baseUrl: selection.config.baseUrl ?? selection.provider.api,
+        providerId: selection.providerId, providerOptions: selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"],
+        purpose: generationRequest.purpose, reasoningEffort: generationRequest.reasoningEffort, reasoningCapable: selection.modelDef.reasoning, temperature: input.temperature,
         apiKey: selection.config.apiKey ?? selection.config.options?.apiKey as string | undefined
           ?? selection.provider.env.map(name => process.env[name]?.trim()).find(Boolean),
         headers: selection.config.options?.headers as Record<string, string> | undefined,
         model: selection.modelId, prompt: promptMessages, tools, maxOutputTokens: outputReserve,
+        cachePolicy: { adapter: selection.provider.npm, mode: selection.config.options?.promptCaching, chatBreakpoints: selection.config.options?.chatCacheBreakpoints, sessionId, projectId: session.projectId },
       }, signal, async loopId => {
         this.activeLoops.set(sessionId, loopId);
         run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopId: loopId } });
@@ -202,10 +206,9 @@ export class RustNativeBackend implements BackendAdapter {
             await sessionHooks.emit({ type: "step:before", sessionId, runId: run.id, stepIndex: step.index });
             step = store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata, rustBeforeHook: true } });
           }
-          const savedContext = step.metadata.rustPreparedContext as { contextId: string; systemPrompt: string; tools: unknown[] } | undefined;
+          const savedContext = this.preparedContexts.get(run.id);
           const context = savedContext?.contextId === event.contextId ? savedContext : prepareContext(event.step);
-          if (context !== savedContext) store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,
-            rustPreparedContext: { contextId: event.contextId, ...context } } });
+          if (context !== savedContext) this.preparedContexts.set(run.id, { contextId: event.contextId, ...context });
           await store.flushSession(sessionId);
           await sendRustStepContext({ loopId: event.loopId, contextId: event.contextId, ...context, executionContext: input.executionContext }, signal);
         } else if (event.type === "context-compaction-started") {
@@ -245,6 +248,9 @@ export class RustNativeBackend implements BackendAdapter {
           run = store.updateRun(run.id, { currentStep: step.index, model: selection.modelId });
           text = ""; thought = ""; assistant = undefined;
           yield { type: "step_started", step };
+        } else if (event.type === "retry_status" && event.retry) {
+          if (!step) throw new Error("Rust retry has no persisted step.");
+          yield { type: "retry_status", runId: run.id, stepId: step.id, retry: event.retry };
         } else if (event.type === "step-restarted") {
           if (!step) throw new Error("Rust restart has no persisted step.");
           text = ""; thought = ""; assistant = undefined;
@@ -296,6 +302,7 @@ export class RustNativeBackend implements BackendAdapter {
           }
           if (exec.interactionId) {
             waiting = true;
+            this.loopSequences.set(run.id, event.sequence ?? 0);
             store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
             yield { type: "tool_call", runId: run.id, stepId: step.id, toolCall: exec.record };
             const requested = store.listEvents(sessionId).find(item => item.type === "interaction_requested" && item.payload?.interactionId === exec.interactionId);
@@ -308,7 +315,8 @@ export class RustNativeBackend implements BackendAdapter {
             store.updateRunStep(step.id, { status: "waiting_permission", finishReason: "permission_required" });
             store.updateSession(sessionId, { status: "waiting_permission", activeRunId: run.id,
               pendingResumeToken: exec.permission.resumeToken, blockedReason: exec.permission.reason, updatedAt: nowIso() });
-            store.updateRun(run.id, { metadata: { ...run.metadata, rustLoopSequence: event.sequence } });
+            this.loopSequences.set(run.id, event.sequence ?? 0);
+            store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
             waiting = true;
             yield { type: "permission_requested", runId: run.id, stepId: step.id, permission: exec.permission, toolCall: exec.record };
             return;
@@ -348,7 +356,8 @@ export class RustNativeBackend implements BackendAdapter {
           terminal = true;
           break;
         }
-        run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopSequence: event.sequence } });
+        this.loopSequences.set(run.id, event.sequence ?? 0);
+        run = store.getRun(run.id);
       }
       if (!terminal) throw new Error("Rust loop ended without a terminal event.");
       if (step) store.updateRunStep(step.id, { status: "completed", completedAt: nowIso(), finishReason: lastFinish,
@@ -370,18 +379,18 @@ export class RustNativeBackend implements BackendAdapter {
       yield { type: "done", sessionId, runId: run.id };
     } catch (error) {
       const loopId = this.activeLoops.get(sessionId);
-      if (loopId && !terminal) await cancelRustAgentLoop(loopId);
+      if (loopId && !terminal) await cancelRustAgentLoop(loopId).catch(() => undefined);
       const message = error instanceof Error ? error.message : String(error);
       if (compacting) emitSessionLive(sessionId, { type: "context_compaction_failed", error: message });
-      const interrupted = signal?.aborted || message === "Rust loop cancelled.";
+      const interrupted = signal?.aborted || message === "Rust loop cancelled." || message.includes("RUN_INTERRUPTED");
       if (step) store.updateRunStep(step.id, { status: interrupted ? "interrupted" : "failed", completedAt: nowIso(), finishReason: message });
       const failed = store.updateRun(run.id, { status: interrupted ? "interrupted" : "failed", completedAt: nowIso(), stopReason: message });
-      store.updateSession(sessionId, { status: interrupted ? "interrupted" : "failed", activeRunId: null, pendingResumeToken: null,
+      store.updateSession(sessionId, { status: interrupted ? "paused" : "failed", activeRunId: null, pendingResumeToken: null,
         blockedReason: interrupted ? null : message, resultSummary: message, updatedAt: nowIso() });
       yield interrupted ? { type: "run_completed", run: failed } : { type: "run_failed", run: failed, error: message };
       yield { type: "done", sessionId, runId: run.id };
     } finally {
-      if (!waiting) this.activeLoops.delete(sessionId);
+      if (!waiting) { this.activeLoops.delete(sessionId); this.preparedContexts.delete(run.id); this.loopSequences.delete(run.id); }
     }
   }
 

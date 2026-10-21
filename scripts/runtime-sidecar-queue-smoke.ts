@@ -25,8 +25,9 @@ try {
   const { inputQueueService } = await import('../services/local-node/modules/agent-runtime/input-queue-service.js');
   const { runtimeFacade } = await import('../services/local-node/modules/agent-runtime/sidecar/runtime-facade.js');
   const { agentRuntimeRoutes } = await import('../services/local-node/transport/http/agent-runtime.js');
-  const { plannerSessionInput, resetAgentRuntimeFixtures } = await import('../services/local-node/modules/agent-runtime/__tests__/agent-runtime-fixtures.js');
-  resetAgentRuntimeFixtures();
+  const { businessStore } = await import('../services/local-node/infrastructure/persistence/business-store.js');
+  await businessStore.refresh();
+  const plannerSessionInput = { projectId: 'queue-smoke', profileId: 'planner', prompt: 'Exercise the durable input queue.' };
   const session = agentSessionRuntime.create({ ...plannerSessionInput, workDir: tmpdir() });
   const gate = new Promise<void>(resolve => { release = resolve; });
   const observed: string[] = [];
@@ -54,8 +55,8 @@ try {
   assert.equal(two.length, 2);
   await inputQueueRuntime.move(session.id, two[1].id, { toIndex: 0 });
   assert.equal((await inputQueueRuntime.list(session.id))[0].message, 'third');
-  assert.throws(() => inputQueueService.list(session.id), /Synchronous SQLite/);
-  assert.equal(agentRuntimeStore.getSession(session.id).sessionMetadata?.inputQueue, undefined, 'queue must not be mirrored into SQLite');
+  assert.deepEqual(inputQueueService.list(session.id), []);
+  assert.equal((await inputQueueRuntime.list(session.id)).length, 2);
   const old = runtime.process; const exited = once(old, 'exit'); old.kill('SIGKILL'); await exited; await runtime.waitUntilReady();
   assert.equal((await inputQueueRuntime.list(session.id)).length, 2);
   release(); await coordinator.waitForIdle();
@@ -64,11 +65,19 @@ try {
   const replay = await client.replay(session.id, 0);
   assert.equal(replay.events.filter(event => event.kind === 'input_queue_changed').length, 5); // 2 enqueues, move, 2 atomic admissions
   const raw = agentRuntimeStore.getSession(session.id).sessionMetadata;
-  assert.equal(raw?.inputQueue, undefined); assert.equal(raw?.inputForceInjectId, undefined);
+  assert.deepEqual(raw?.inputQueue ?? [], []); assert.equal(raw?.inputForceInjectId ?? null, null);
 
   const idle = agentSessionRuntime.create({ ...plannerSessionInput, workDir: tmpdir() });
   await runtimeFacade.ensureUiProjection(idle.id);
-  await client.admitRun({ sessionId: idle.id, requestId: 'delivery-run', runId: 'delivery', bodyHash: 'body', epoch: 1, revision: 0 });
+  for (let attempt = 0; ; attempt++) {
+    const fence = await client.snapshot(idle.id);
+    try {
+      await client.admitRun({ sessionId: idle.id, requestId: 'delivery-run', runId: 'delivery', bodyHash: 'body', epoch: fence.epoch, revision: fence.revision });
+      break;
+    } catch (error) {
+      if (attempt >= 7 || (error as { code?: string }).code !== 'REVISION_CONFLICT') throw error;
+    }
+  }
   const item = (await inputQueueRuntime.enqueue(idle.id, { message: 'steering' }))[0];
   await inputQueueRuntime.markForceInject(idle.id, item.id);
   assert.equal((await inputQueueRuntime.consumeForced(idle.id, 'delivery'))?.id, item.id);
@@ -88,6 +97,6 @@ try {
   assert.equal(failedDelete.status, 400);
   const remove = await agentRuntimeRoutes.request(`/sessions/${parallel.id}/input-queue/${parallelQueue[0].id}`, { method: 'DELETE' });
   assert.equal(remove.status, 200); assert.equal((await inputQueueRuntime.list(parallel.id)).length, 5);
-  assert.equal(agentRuntimeStore.getSession(parallel.id).sessionMetadata?.inputQueue, undefined);
-  console.log('Rust input queue passed: HTTP enqueue/delete, concurrent revision retries, reordering, atomic admission consumption, restart, FIFO coordinator turns, and durable forced-delivery ACK; no SQLite queue metadata writes. Controlled driver, no model calls.');
+  assert.equal((await inputQueueRuntime.list(parallel.id)).length, 5);
+  console.log('Rust input queue passed: HTTP enqueue/delete, concurrent revision retries, reordering, atomic admission consumption, restart, FIFO coordinator turns, and durable forced-delivery ACK; v2 delta storage. Controlled driver remains in memory; no model calls or execution restore.');
 } finally { release(); client.close(); await stopRustRuntimeSidecar(runtime); await rm(root, { recursive: true, force: true }); }

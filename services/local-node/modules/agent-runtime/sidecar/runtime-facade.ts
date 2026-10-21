@@ -97,6 +97,10 @@ export class RuntimeFacade {
     return this.clientFactory() !== null;
   }
 
+  sessionExists(sessionId: string): Promise<boolean> {
+    return Promise.resolve(Boolean(agentRuntimeStore.tryGetSession(sessionId)));
+  }
+
   /** Admission is awaited before starting provider/tool execution. */
   async admitExecution(
     input: RuntimeAdmissionInput,
@@ -205,6 +209,29 @@ export class RuntimeFacade {
     }
     {
       await this.flushHistoryWrites(sessionId);
+      if (["interrupted", "cancelled", "failed"].includes(status)) {
+        const ui = decodeUiSnapshot(await client.uiSnapshot(sessionId), sessionId);
+        let partial = ui.pendingPartialMessage as AgentRuntimeMessage | undefined;
+        if (!partial) {
+          const stepId = ui.liveChunks.find((chunk: AgentRunStreamChunk) => chunk.type === "step_started")?.step?.id as string | undefined;
+          if (stepId) {
+            const content = ui.liveChunks.filter((chunk: { type: string; stepId?: string }) => chunk.type === "message_delta" && chunk.stepId === stepId).map((chunk: { delta: string }) => chunk.delta).join("");
+            const thought = ui.liveChunks.filter((chunk: { type: string; stepId?: string }) => chunk.type === "thought_delta" && chunk.stepId === stepId).map((chunk: { delta: string }) => chunk.delta).join("");
+            if (content || thought) partial = { id: `msg_partial_${run.id}_${stepId}`, sessionId, runId: run.id, stepId,
+              role: "assistant", content, createdAt: run.completedAt ?? new Date().toISOString(),
+              metadata: { source: "runtime_partial", partial: true, thought } };
+          }
+        }
+        if (partial?.runId === run.id) {
+          const messages = await this.listMessageHistory(sessionId) as AgentRuntimeMessage[];
+          if (!messages.some(message => message.role === "assistant" && message.stepId === partial!.stepId)) {
+            if (agentRuntimeStore.tryGetSession(sessionId)) {
+              agentRuntimeStore.appendMessage(partial);
+              await agentRuntimeStore.flushSession(sessionId);
+            } else await this.persistHistoryObject(sessionId, "runtime.message", partial);
+          }
+        }
+      }
       for (let attempt = 0; ; attempt++) {
         const state = await client.snapshot(sessionId);
         try {
@@ -229,10 +256,6 @@ export class RuntimeFacade {
       }
       try {
         await this.persistRunHistory(run);
-        // Finish may add an interrupted assistant message in the same Rust
-        // transaction. Reconcile that outbox before exposing completed history.
-        await this.historyCommand({ sessionId, requestId: `finish-history:${run.id}`,
-          operation: "reconcile_stream", payload: {} });
       } catch (error) {
         logger.warn(
           {
@@ -337,10 +360,11 @@ export class RuntimeFacade {
           revision: snapshot.revision,
         });
         const state = JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
-        if (state.entity) {
-          await client.historyCommand({ sessionId: input.sessionId,
-            requestId: `control-history:${createHash('sha256').update(input.requestId).digest('hex')}`,
-            operation: 'reconcile_stream', payload: {} });
+        if (state.entity && typeof state.entityKind === "string") {
+          await this.appendHistoryEntities(input.sessionId, [{
+            kind: `runtime.${state.entityKind}`,
+            value: state.entity,
+          }]);
         }
         return state;
       } catch (error) {
@@ -663,6 +687,7 @@ export class RuntimeFacade {
       kind: string;
       value: unknown;
     }>,
+    ifAbsent = false,
   ): Promise<void> {
     // Leave room for the protobuf envelope below the 1 MiB control frame limit.
     const budget = 768 * 1024;
@@ -670,7 +695,7 @@ export class RuntimeFacade {
     let bytes = 16;
     const flush = async () => {
       if (!batch.length) return;
-      const payload = { objects: batch };
+      const payload = { objects: batch, ...(ifAbsent ? { ifAbsent: true } : {}) };
       await this.historyCommand({
         sessionId,
         requestId: `history-append:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`,
@@ -725,6 +750,7 @@ export class RuntimeFacade {
         case "run_failed":
         case "run_resumed":
           add("runtime.run", chunk.run);
+          if ("message" in chunk) add("runtime.message", chunk.message);
           break;
         case "step_started":
           add("runtime.step", chunk.step);
@@ -745,32 +771,9 @@ export class RuntimeFacade {
           break;
       }
     }
-    try {
-      await this.appendHistoryEntities(sessionId, objects);
-      if (outboxThrough !== undefined) {
-        await this.historyCommand({
-          sessionId,
-          requestId: `history-outbox-ack:${sessionId}:${outboxThrough}`,
-          operation: "ack_history_outbox",
-          payload: { through: outboxThrough },
-        });
-      }
-    } catch (error) {
-      // HotStore is the durable event source. If the separate history commit
-      // failed, ask the Rust sidecar to rebuild canonical history from its
-      // retained hot stream before surfacing the failure.
-      try {
-        await this.historyCommand({
-          sessionId,
-          requestId: `history-reconcile:${sessionId}:${createHash("sha256").update(JSON.stringify(objects)).digest("hex")}`,
-          operation: "reconcile_stream",
-          payload: {},
-        });
-        return;
-      } catch {
-        throw error;
-      }
-    }
+    // The execution owner persists authoritative versions. Observation only fills
+    // missing entities, so delayed stream frames cannot overwrite newer usage/status.
+    await this.appendHistoryEntities(sessionId, objects, true);
   }
   async persistHistoryObject(
     sessionId: string,

@@ -65,7 +65,7 @@ for (const name of ["consumeAuthoritative", "ready", "pending", "resume"] as con
 }
 for (const name of ["resumePendingRun", "resolvePendingRun"] as const) {
   try {
-    const mod: any = await import("./loop-resume.js");
+    const mod: any = await import("../loop-resume.js");
     const anySvc: any = mod.loopResumeService;
     if (typeof anySvc[name] !== "function") continue;
     const orig = anySvc[name].bind(anySvc);
@@ -128,7 +128,7 @@ beforeEach(async () => {
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>(resolve => provider.listen(0, "127.0.0.1", resolve));
-  globalThis.__synaxPortSnap = { port: (provider.address() as { port: number }).port, env: process.env.SYNAX_RUNTIME_PROVIDER_PORT };
+  (globalThis as typeof globalThis & { __synaxPortSnap?: unknown }).__synaxPortSnap = { port: (provider.address() as { port: number }).port, env: process.env.SYNAX_RUNTIME_PROVIDER_PORT };
   debug("provider listen", JSON.stringify({ port: (provider.address() as { port: number }).port, runtimeProviderPort: process.env.SYNAX_RUNTIME_PROVIDER_PORT, token: Boolean(process.env.SYNAX_RUNTIME_SIDECAR_TOKEN), dataRoot: DATA_ROOT, engine: process.env.SYNAX_AGENT_LOOP_ENGINE }));
   updateGlobalConfig({ defaultApiProviderId: "openai", providerConnections: {
     openai: { providerId: "openai", apiKey: "local", baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`, extra: { kind: "api", apiFormat: "openai", model: "fixture" } },
@@ -230,46 +230,32 @@ it.each(["1", "0"])("suspends on human input and resumes with the saved answer (
   expect(store.getToolCall(sessionId, interaction.toolCallId).status).toBe("completed");
 }, 20_000);
 
-it.each(["paused", "completed"] as const)("restarts from a saved form after shutdown and cache loss (status=%s)", async (status) => {
-  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
-  vi.stubEnv("DATA_ROOT", DATA_ROOT);
-  askHuman = true;
-  store.updateSession(sessionId, { profileId: "synax" });
-  const accepted = await coordinator.submitAsync(sessionId, { message: "Ask which file" }, "restart-form");
+it.each(["permission", "input"] as const)("expires pending %s after a runtime restart without executing tools", async (kind) => {
+  askHuman = kind === "input";
+  if (askHuman) store.updateSession(sessionId, { profileId: "synax" });
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Wait for approval" }, `restart-${kind}`);
   await coordinator.waitForIdle();
-  const interaction = interactionService.pending(sessionId)!;
-  expect(interaction).toBeTruthy();
-
-  await coordinator.interrupt(sessionId, "Application shutting down");
-  const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
-  await runtimeFacade.stopSessionAuthoritative(sessionId, "paused", "Runtime restarted during execution");
-  if (status === "completed") store.updateSession(sessionId, { status });
-  await store.flushSession(sessionId);
-  expect((await runtimeFacade.snapshotAuthoritative(sessionId)).activeRunId).toBeFalsy();
+  expect(store.getRun(accepted.run.id).status).toBe(kind === "input" ? "waiting_input" : "waiting_permission");
+  const oldPid = Number(process.env.SYNAX_RUNTIME_SIDECAR_PID);
+  process.kill(oldPid, "SIGKILL");
+  await vi.waitFor(() => expect(Number(process.env.SYNAX_RUNTIME_SIDECAR_PID)).not.toBe(oldPid), { timeout: 10_000 });
   store.reset();
-  coordinator = new RunCoordinator();
-
-  const reply = { revision: interaction.revision, action: "submit" as const, answers: { file: "README.md" } };
-  const responses = await Promise.all([1, 2].map(() => replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator)));
-  expect(responses.every(item => item.status === "answered" && item.consumedAt)).toBe(true);
-  await coordinator.waitForIdle();
-  const restarted = store.listRuns(sessionId).find(run => run.id !== accepted.run.id)!;
-  expect(restarted).toMatchObject({ status: "completed", metadata: {
-    runtime: { requestId: `interaction-restart:${interaction.id}` },
-  } });
+  const { recoverRuntime } = await import("../runtime-recovery.js");
+  const recovery = await recoverRuntime("restarted-host");
+  expect(recovery.resumable).toEqual([]);
+  await store.hydrateSession(sessionId, true);
   expect(store.getRun(accepted.run.id).status).toBe("interrupted");
-  expect(requests).toHaveLength(2);
-  const history = requests[1].messages as Array<Record<string, unknown>>;
-  expect(history.find(message => message.role === "tool" && message.tool_call_id === "provider-call-0")?.content).toContain("README.md");
-  expect(history.at(-1)?.role).toBe("user");
-  expect(history.at(-1)?.content).toContain("Which file?");
-  expect(history.at(-1)?.content).toContain("README.md");
-  await replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator);
-  await coordinator.waitForIdle();
-  expect(requests).toHaveLength(2);
-  expect(store.listRuns(sessionId)).toHaveLength(2);
-  expect(store.listToolCalls(sessionId)).toHaveLength(1);
+  expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
   expect(interactionService.pending(sessionId)).toBeNull();
+  expect(permissionPolicy.list(sessionId).some(item => item.action === "ask" && !item.resolvedAt)).toBe(false);
+  expect(requests).toHaveLength(1);
+  expect(store.listToolCalls(sessionId).some(call => call.status === "completed")).toBe(false);
+  await expect(recoverRuntime("restarted-host")).resolves.toMatchObject({ resumable: [] });
+  const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, `continue-${kind}`);
+  expect(next.run.id).not.toBe(accepted.run.id);
+  await coordinator.waitForIdle();
+  expect(store.getRun(next.run.id).status).toBe("completed");
+  expect(requests).toHaveLength(2);
 }, 25_000);
 
 it("keeps tool call/result identities in the next user turn", async () => {
@@ -363,14 +349,18 @@ it("refreshes tool availability after plan execution is approved", async () => {
   expect(store.getSession(sessionId).sessionMetadata?.mode).toBe("chat");
 });
 
-it("keeps an acknowledged step context immutable across retries", async () => {
+it("keeps an acknowledged step context in memory and immutable across retries", async () => {
+  const bridge = await import("../rust-agent-loop-client.js");
+  const contextWriter = vi.spyOn(bridge, "sendRustStepContext");
   scenario = "restart";
   const accepted = await coordinator.submitAsync(sessionId, { message: "Wait for context replay" }, "context-replay");
   const runId = accepted.run.id;
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   const run = store.getRun(runId);
   const step = store.listRunSteps(runId)[0];
-  const context = step.metadata.rustPreparedContext as { contextId: string; systemPrompt: string; tools: unknown[] };
+  expect(step.metadata.rustPreparedContext).toBeUndefined();
+  const { loopId: _loopId, executionContext: _executionContext, ...context } = contextWriter.mock.calls[0][0];
+  contextWriter.mockRestore();
   const post = (value: unknown) => fetch(`http://127.0.0.1:${process.env.SYNAX_RUNTIME_PROVIDER_PORT}/agent-loop/context`, {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${process.env.SYNAX_RUNTIME_SIDECAR_TOKEN}` },
     body: JSON.stringify(value),
@@ -412,7 +402,7 @@ it("delivers user images and tool-returned images through the Rust loop", async 
   } finally { selection.mockRestore(); }
 });
 
-it("recovers an active coordinator run after the Rust process is killed", async () => {
+it("interrupts an active run after Rust is killed and starts a new run only on user input", async () => {
   scenario = "restart";
   const accepted = await coordinator.submitAsync(sessionId, { message: "Keep running" }, "runtime-crash");
   const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
@@ -423,9 +413,16 @@ it("recovers an active coordinator run after the Rust process is killed", async 
   const loopId = store.getRun(accepted.run.id).metadata.rustLoopId;
   process.kill(Number(process.env.SYNAX_RUNTIME_SIDECAR_PID), "SIGKILL");
   await coordinator.waitForIdle();
-  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "completed", metadata: { rustLoopId: loopId } });
+  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "interrupted", metadata: { rustLoopId: loopId } });
+  expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
   expect(store.listRunSteps(accepted.run.id)).toHaveLength(1);
-  expect(store.listMessages(sessionId).filter(message => message.role === "assistant").map(message => message.content)).toEqual(["Final response."]);
+  expect(store.listMessages(sessionId).filter(message => message.role === "assistant").map(message => message.content)).toContain("Partial before restart");
+  expect(requests).toHaveLength(1);
+  scenario = "normal";
+  const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, "runtime-after-crash");
+  expect(next.run.id).not.toBe(accepted.run.id);
+  await coordinator.waitForIdle();
+  expect(store.getRun(next.run.id).status).toBe("completed");
   expect(requests).toHaveLength(2);
 }, 15_000);
 

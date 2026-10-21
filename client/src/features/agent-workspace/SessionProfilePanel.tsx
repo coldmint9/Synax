@@ -196,11 +196,11 @@ function RuntimeProfile({ sessionId }: { sessionId: string }) {
   const rateTitle =
     rate === null
       ? zh
-        ? "会话未在生成输出，不做统计"
-        : "Not sampling while the session is idle"
+        ? "等待足够的实时输出样本；暂停生成时不显示速率"
+        : "Waiting for live output samples; no rate while generation is paused"
       : zh
-        ? "最近 5 秒的实时估算：输出与思考 tokens ÷ 用时"
-        : "Live estimate over the last 5s: output and reasoning tokens ÷ elapsed";
+        ? "最近 2 秒的正文与可见思考 token 估算速率；不含首字等待，独立于打字动画，非账单用量"
+        : "Estimated text + visible reasoning tokens/s over the last 2s; excludes first-token wait and reveal animation, not billed usage";
   const tokenLabel = summary.available ? formatTokenCount(summary.total) : "—";
   const percentLabel =
     summary.percent === null ? null : `${Number(summary.percent.toFixed(1))}%`;

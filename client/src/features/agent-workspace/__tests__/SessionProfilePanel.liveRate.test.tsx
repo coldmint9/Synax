@@ -62,6 +62,7 @@ describe("SessionProfilePanel live token rate", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockImplementation(() => Date.now());
     resetStreamedTokensForTests();
     liveHandlers.length = 0;
     useShellStore.setState((s) => ({
@@ -79,6 +80,7 @@ describe("SessionProfilePanel live token rate", () => {
     unsubscribe = null;
     cleanup();
     useAgentSessionStore.setState(useAgentSessionStore.getInitialState());
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -88,9 +90,13 @@ describe("SessionProfilePanel live token rate", () => {
     expect(screen.getByText("—")).toBeInTheDocument();
 
     act(() => {
-      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400), outputTokens: 60 });
-      emit({ type: "thought_delta", stepId: "step-1", delta: "b".repeat(160), thinkingTokens: 40 });
-      vi.advanceTimersByTime(5_000);
+      emit({ type: "message_delta", stepId: "step-1", delta: "first", outputTokens: 1 });
+      for (let index = 1; index <= 4; index++) {
+        vi.advanceTimersByTime(500);
+        emit({ type: "message_delta", stepId: "step-1", delta: "text", outputTokens: 1 + index * 6 });
+        emit({ type: "thought_delta", stepId: "step-1", delta: "thought", thinkingTokens: index * 4 });
+      }
+      vi.advanceTimersByTime(250);
     });
 
     expect(screen.getByText("20.0")).toBeInTheDocument();
@@ -100,9 +106,13 @@ describe("SessionProfilePanel live token rate", () => {
   it("stops counting once the session is no longer running", () => {
     render(<SessionProfilePanel sessionId="profile" />);
     act(() => {
-      emit({ type: "message_delta", stepId: "step-1", delta: "a".repeat(400), outputTokens: 60 });
-      emit({ type: "thought_delta", stepId: "step-1", delta: "b".repeat(160), thinkingTokens: 40 });
-      vi.advanceTimersByTime(5_000);
+      emit({ type: "message_delta", stepId: "step-1", delta: "first", outputTokens: 1 });
+      for (let index = 1; index <= 4; index++) {
+        vi.advanceTimersByTime(500);
+        emit({ type: "message_delta", stepId: "step-1", delta: "text", outputTokens: 1 + index * 6 });
+        emit({ type: "thought_delta", stepId: "step-1", delta: "thought", thinkingTokens: index * 4 });
+      }
+      vi.advanceTimersByTime(250);
     });
     expect(screen.getByText("20.0")).toBeInTheDocument();
 

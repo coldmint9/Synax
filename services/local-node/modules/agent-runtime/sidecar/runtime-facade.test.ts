@@ -104,11 +104,11 @@ it('submits the terminal run document to Rust and propagates persistence failure
   const run = { id: 'r', sessionId: 's', status: 'failed', completedAt: '2026-10-16T12:00:00.123Z', currentStep: 4, stopReason: 'provider error' } as never;
   const finishRun = vi.fn().mockResolvedValue({ epoch: 2, revision: 3, cursor: 10 });
   const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
-  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), finishRun, historyCommand });
+  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), uiSnapshot: vi.fn(async () => encode({ ...snapshot, session: { id: "s", status: "failed" } })), finishRun, historyCommand });
   const facade = new RuntimeFacade(() => client);
   await facade.finishExecution('s', run);
   expect(finishRun).toHaveBeenCalledWith({ sessionId: 's', requestId: 'finish:r', runId: 'r', status: 'failed', epoch: 1, revision: 2, run });
-  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's', operation: 'reconcile_stream' }));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's', operation: 'append_entities' }));
   finishRun.mockRejectedValueOnce(new Error('fsync unavailable'));
   await expect(facade.finishExecution('s', run)).rejects.toThrow('fsync unavailable');
   expect(updateRun).not.toHaveBeenCalled(); expect(updateSession).not.toHaveBeenCalled();

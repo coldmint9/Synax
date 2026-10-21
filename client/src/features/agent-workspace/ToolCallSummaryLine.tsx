@@ -1,17 +1,21 @@
-import { useId, useMemo, useState } from "react";
+import { memo, useId, useMemo } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { Button as HeadlessButton } from "@headlessui/react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
 import type { ToolCallView } from "./buildInterleavedTurns";
 import { toolCallPresentation } from "./toolCallPresentation";
+import { activityPreview, latestActivityPreview } from "./activityText";
+import { useActivityDisclosure } from "./useActivityDisclosure";
 
 interface Props {
   call: ToolCallView;
+  rememberKey?: string;
 }
 
-export function ToolCallSummaryLine({ call }: Props) {
+export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({ call, rememberKey }: Props) {
   const { t, locale } = useLocale();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, toggle] = useActivityDisclosure(rememberKey ? `${rememberKey}:tool:${call.id}` : undefined);
   const detailsId = useId();
   const presentation = useMemo(
     () => toolCallPresentation(call, locale),
@@ -22,21 +26,16 @@ export function ToolCallSummaryLine({ call }: Props) {
   const heading = (
     <>
       <span className="bui-tool-symbol">
-        <Icon size={13} aria-hidden="true" />
+        <Icon size={16} aria-hidden="true" />
       </span>
-      <span className="bui-tool-label" title={presentation.name}>
-        {presentation.name}
+      <span className="bui-tool-copy">
+        <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
+        {presentation.target && <span className="bui-tool-target" title={presentation.target}>{presentation.target}</span>}
       </span>
-      {presentation.target && (
-        <span className="bui-tool-target" title={presentation.target}>
-          {presentation.target}
-        </span>
-      )}
       <span className="bui-tool-meta">
         {call.duration && <span>{call.duration}</span>}
         <ActivityStatus
           status={call.status}
-          compact={call.status === "completed"}
         />
         {hasDetails &&
           (expanded ? (
@@ -55,17 +54,22 @@ export function ToolCallSummaryLine({ call }: Props) {
   return (
     <div className="bui-tool" data-tool-status={call.status}>
       {hasDetails ? (
-        <button
+        <HeadlessButton
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={toggle}
           aria-expanded={expanded}
           aria-controls={expanded ? detailsId : undefined}
           className="bui-tool-trigger"
         >
           {heading}
-        </button>
+        </HeadlessButton>
       ) : (
         <div className="bui-tool-trigger">{heading}</div>
+      )}
+      {!expanded && call.outputSummary && (
+        <div className="bui-tool-result" data-error={call.status === "failed" || call.status === "denied" || undefined}>
+          {(call.status === "failed" || call.status === "denied" ? activityPreview : latestActivityPreview)(call.outputSummary, 180)}
+        </div>
       )}
       {expanded && hasDetails && (
         <div id={detailsId} className="bui-tool-details">
@@ -90,4 +94,4 @@ export function ToolCallSummaryLine({ call }: Props) {
       )}
     </div>
   );
-}
+});

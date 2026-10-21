@@ -390,8 +390,11 @@ export class RuntimeSidecarClient {
     if (this.lifetime.signal.aborted) throw new Error('Runtime sidecar client closed.');
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        // Closing also bounds queued socket bytes; accepted writes can be retried from receipts.
-        this.fail(new RuntimeSidecarTransportError(`Runtime sidecar request timed out: ${requestId}`));
+        // A slow request must not invalidate unrelated in-flight requests on
+        // the same socket. The request id is durable, so the retry path can
+        // safely replay it and receive the original receipt.
+        this.pending.delete(requestId);
+        reject(new RuntimeSidecarTransportError(`Runtime sidecar request timed out: ${requestId}`));
       }, Math.max(1, deadline - Date.now()));
       this.pending.set(requestId, { resolve, reject, timer });
       try { this.write(frame); }

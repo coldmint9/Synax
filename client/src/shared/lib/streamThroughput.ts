@@ -12,15 +12,21 @@
 interface StreamCounter {
   steps: Map<string, number>;
   observed: number;
+  samples: Array<{ at: number; total: number }>;
 }
+
+export const TOKEN_RATE_WINDOW_MS = 2_000;
+export const TOKEN_RATE_IDLE_MS = 1_500;
+const MIN_RATE_INTERVAL_MS = 250;
 
 const counters = new Map<string, StreamCounter>();
 
 function counterFor(sessionId: string): StreamCounter {
   let counter = counters.get(sessionId);
   if (!counter) {
-    counter = { steps: new Map(), observed: 0 };
+    counter = { steps: new Map(), observed: 0, samples: [] };
     counters.set(sessionId, counter);
+    if (counters.size > 128) counters.delete(counters.keys().next().value!);
   }
   return counter;
 }
@@ -39,7 +45,22 @@ function noteStepTelemetry(
   const previous = counter.steps.get(key) ?? 0;
   if (tokens > previous) {
     counter.steps.set(key, tokens);
-    if (observed) counter.observed += tokens - previous;
+    if (counter.steps.size > 256) counter.steps.delete(counter.steps.keys().next().value!);
+    if (observed) {
+      counter.observed += tokens - previous;
+      const now = performance.now();
+      const last = counter.samples[counter.samples.length - 1];
+      // A new generation interval starts after a tool/network pause. The first
+      // packet establishes a baseline; its unknown generation time cannot be
+      // inferred from a renderer timer or a historical cumulative token count.
+      if (last && (now - last.at >= TOKEN_RATE_IDLE_MS || now < last.at)) counter.samples = [];
+      const current = counter.samples[counter.samples.length - 1];
+      if (current?.at === now) current.total = counter.observed;
+      else counter.samples.push({ at: now, total: counter.observed });
+      while (counter.samples.length > 2 && counter.samples[1].at < now - TOKEN_RATE_WINDOW_MS)
+        counter.samples.shift();
+      if (counter.samples.length > 512) counter.samples.splice(1, counter.samples.length - 512);
+    }
   }
 }
 
@@ -53,9 +74,16 @@ export function noteLiveEvent(
     thinkingTokens?: unknown;
     retry?: { phase?: unknown };
     liveChunks?: unknown;
+    patch?: { status?: unknown };
   },
 ): void {
   if (!sessionId) return;
+  if (event.type === "step_started" ||
+      (event.type === "runtime_state" && event.patch?.status && !["running", "queued"].includes(String(event.patch.status)))) {
+    const counter = counters.get(sessionId);
+    if (counter) counter.samples = [];
+    return;
+  }
   if (event.type === "message_delta") {
     noteStepTelemetry(sessionId, event.stepId, event.outputTokens, "output", true);
     return;
@@ -69,6 +97,7 @@ export function noteLiveEvent(
     // A restarted request reuses the step identity but starts its counters at
     // zero. Keep already observed output while accepting the new attempt.
     const counter = counters.get(sessionId);
+    if (counter) counter.samples = [];
     if (typeof event.stepId === "string") {
       counter?.steps.delete(`output:${event.stepId}`);
       counter?.steps.delete(`thinking:${event.stepId}`);
@@ -78,7 +107,9 @@ export function noteLiveEvent(
   if (event.type !== "runtime_snapshot" || !Array.isArray(event.liveChunks)) return;
   // The snapshot is the current attempt's baseline, including a retry that
   // happened while disconnected. Historical output never adds to live speed.
-  counterFor(sessionId).steps.clear();
+  const counter = counterFor(sessionId);
+  counter.steps.clear();
+  counter.samples = [];
   for (const chunk of event.liveChunks) {
     if (!chunk || typeof chunk !== "object") continue;
     const value = chunk as { type?: unknown; stepId?: unknown; outputTokens?: unknown; thinkingTokens?: unknown };
@@ -94,6 +125,26 @@ export function readStreamedTokens(sessionId: string): number {
   const counter = counters.get(sessionId);
   if (!counter) return 0;
   return counter.observed;
+}
+
+/** Rate of arriving output + reasoning, independent of text reveal/React paints. */
+export function readStreamedTokenRate(sessionId: string): number | null {
+  const samples = counters.get(sessionId)?.samples;
+  if (!samples || samples.length < 2) return null;
+  const latest = samples[samples.length - 1];
+  if (performance.now() - latest.at >= TOKEN_RATE_IDLE_MS) return null;
+  const cutoff = latest.at - TOKEN_RATE_WINDOW_MS;
+  let index = 0;
+  while (index + 1 < samples.length && samples[index + 1].at <= cutoff) index++;
+  let first = samples[index];
+  // Interpolate the leading edge so a sparse, older burst does not inflate
+  // the denominator beyond the advertised rolling window.
+  if (first.at < cutoff) {
+    const next = samples[index + 1];
+    first = { at: cutoff, total: first.total + (next.total - first.total) * (cutoff - first.at) / (next.at - first.at) };
+  }
+  const elapsed = latest.at - first.at;
+  return elapsed >= MIN_RATE_INTERVAL_MS ? (latest.total - first.total) * 1000 / elapsed : null;
 }
 
 /** Test helper — the counters are module state, not store state. */

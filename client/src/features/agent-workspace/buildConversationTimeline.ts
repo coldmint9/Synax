@@ -579,6 +579,10 @@ export function buildConversationTimeline(
   childSessions?: AgentSession[],
   options?: {
     excludeStepId?: string | null;
+    /** Steps parked in live snapshots are projected by the caller. */
+    excludeStepIds?: readonly string[];
+    /** Runs parked in live snapshots are projected by the caller. */
+    excludeRunIds?: readonly string[];
     session?: AgentSession;
     foldWorkRuns?: boolean;
     includeInitialPrompt?: boolean;
@@ -588,10 +592,17 @@ export function buildConversationTimeline(
   messages = options?.session
     ? messages.filter((message) => message.sessionId === options.session!.id)
     : messages;
-  const filteredSteps = options?.excludeStepId
-    ? steps.filter((step) => step.id !== options.excludeStepId)
+  const excludedStepIds = new Set(options?.excludeStepIds ?? []);
+  if (options?.excludeStepId) excludedStepIds.add(options.excludeStepId);
+  const excludedRunIds = new Set(options?.excludeRunIds ?? []);
+  const filteredSteps = excludedStepIds.size
+    ? steps.filter((step) => !excludedStepIds.has(step.id))
     : steps;
-
+  // A live step is projected separately by the transcript. Its persisted
+  // assistant message can race the stream and would otherwise be classified
+  // as an orphan because the step was intentionally removed above. Rendering
+  // that message as a second answer creates a one-frame duplicate or makes
+  // the live row jump between positions during handoff.
   const failedRunIds = new Set(
     runs.filter((run) => run.status === "failed").map((run) => run.id),
   );
@@ -639,6 +650,8 @@ export function buildConversationTimeline(
   for (const message of messages) {
     if (
       message.role !== "assistant" ||
+      (message.stepId !== null && excludedStepIds.has(message.stepId)) ||
+      (!message.stepId && message.runId !== null && excludedRunIds.has(message.runId)) ||
       message.metadata?.partial ||
       message.metadata?.type === "thinking" ||
       message.metadata?.kind === "thought" ||

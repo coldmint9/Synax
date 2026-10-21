@@ -4,15 +4,17 @@ import type {
   LlmGatewayRequest,
   ResolvedModelSelection,
 } from "./types.js";
-import { resolvePromptCaching } from "./cache-policy.js";
-import { normalizeProviderOptionsNamespace } from "./custom-api-compat.js";
+import { applyPromptCachePolicy, resolvePromptCaching } from "./cache-policy.js";
+import { prepareProvider } from "./native-client.js";
+import { mergeProviderOptions } from "./connection-options.js";
+import { normalizeProviderOptionsNamespace } from "./connection-options.js";
 
 /** Where a Chat Completions cache hint can physically reach the wire. */
 export interface PromptCacheCapability {
   /** providerOptions namespace the adapter actually reads. */
   namespace: string;
   field: "promptCacheKey" | "prompt_cache_key";
-  /** Native schema-validated field vs. body passthrough on a compatible SDK. */
+  /** Named protocol option vs. a saved compatible-provider body field. */
   native: boolean;
 }
 
@@ -63,17 +65,17 @@ export function requiresStrictAlternation(
  * same call that produces it so the two can never drift. Only a fingerprint of
  * the key leaves this function; prompt bodies never do.
  */
-export function describeChatCacheHint(
+export async function describeChatCacheHint(
   selection: ResolvedModelSelection,
   request: LlmGatewayRequest,
-): {
+): Promise<{
   kind: "native-key" | "passthrough-key" | "none";
   namespace?: string;
   field?: string;
   valueHash?: string;
-} {
+}> {
   const capability = resolvePromptCacheCapability(selection);
-  const options = chatCacheOptions(selection, request) as
+  const options = await chatCacheOptions(selection, request) as
     | Record<string, Record<string, unknown>>
     | undefined;
   if (!capability || !options) return { kind: "none" };
@@ -91,118 +93,21 @@ export function describeChatCacheHint(
 }
 
 /** The key is a routing hint, NOT an authorization or conversation identifier. */
-export function chatCacheOptions(
-  selection: ResolvedModelSelection,
-  request: LlmGatewayRequest,
-): LlmGatewayRequest["providerOptions"] {
-  if (
-    request.cacheControl === false ||
-    resolvePromptCaching(selection.config.options?.promptCaching) === "off"
-  )
-    return undefined;
+export async function chatCacheOptions(selection: ResolvedModelSelection, request: LlmGatewayRequest): Promise<LlmGatewayRequest["providerOptions"]> {
   const capability = resolvePromptCacheCapability(selection);
   if (!capability) return undefined;
-  const { namespace, field } = capability;
-  // User overrides win, including provider-native overrides on the connection.
-  const explicit =
-    request.responseOptions?.promptCacheKey ??
-    request.providerOptions?.[namespace]?.[field] ??
-    (selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"])?.[
-      namespace
-    ]?.[field];
-  if (typeof explicit === "string") return { [namespace]: { [field]: explicit } };
-  const sessionId = request.hookContext?.sessionId;
-  if (!sessionId) return undefined;
-  const key = createHash("sha256")
-    .update(
-      JSON.stringify([
-        "synax-chat-v1",
-        selection.providerId,
-        selection.config.baseUrl ?? selection.provider.api,
-        selection.modelId,
-        request.projectId ?? null,
-        sessionId,
-      ]),
-    )
-    .digest("hex")
-    .slice(0, 40);
-  return { [namespace]: { [field]: `synax:chat:v1:${key}` } };
+  const prepared = await prepareProvider({ apiFormat: selection.apiFormat, providerId: selection.providerId, model: selection.modelId,
+    baseUrl: selection.config.baseUrl ?? selection.provider.api, prompt: [],
+    providerOptions: mergeProviderOptions(selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"], request.providerOptions),
+    responseOptions: request.responseOptions as Record<string, unknown>,
+    cachePolicy: { adapter: selection.provider.npm, enabled: request.cacheControl, mode: resolvePromptCaching(selection.config.options?.promptCaching),
+      sessionId: request.hookContext?.sessionId, projectId: request.projectId } });
+  if (request.cacheControl === false || selection.config.options?.promptCaching === "off") return undefined;
+  const value = prepared.providerOptions?.[capability.namespace]?.[capability.field];
+  return typeof value === "string" ? { [capability.namespace]: { [capability.field]: value } } : undefined;
 }
 
-/** Only a declared endpoint capability enables explicit blocks. An SDK exposing
- * this option does not mean older models or custom endpoints accept the field.
- * Compatible SDKs cannot serialize these per-content markers faithfully. */
-export function applyChatCacheBreakpoints(
-  messages: LlmGatewayMessage[],
-  selection: ResolvedModelSelection,
-  request: Pick<LlmGatewayRequest, "cacheControl">,
-): LlmGatewayMessage[] {
-  if (
-    selection.apiFormat !== "openai" ||
-    selection.provider.npm !== "@ai-sdk/openai" ||
-    selection.config.options?.chatCacheBreakpoints === false ||
-    request.cacheControl === false ||
-    resolvePromptCaching(selection.config.options?.promptCaching) === "off"
-  )
-    return messages;
-  const reminder = (m: LlmGatewayMessage) =>
-    typeof m.content === "string" &&
-    /^\s*<system-reminder>[\s\S]*<\/system-reminder>\s*$/.test(
-      m.content,
-    );
-  const staticSystem = messages.findLastIndex(m => m.role === "system" && !reminder(m));
-  const tail = messages.findLastIndex(reminder);
-  const boundary = tail >= 0 ? tail : messages.findLastIndex(m => m.role === "user");
-  // Never mark the changing reminder, thinking/signatures or partial tool inputs.
-  const mark = (options: LlmGatewayMessage["providerOptions"]) => ({
-    ...options,
-    openai: {
-      ...options?.openai,
-      promptCacheBreakpoint: { mode: "explicit" },
-    },
-  });
-  let markedHistory = false;
-  return messages
-    .toReversed()
-    .map((m, reverseIndex): LlmGatewayMessage => {
-      const index = messages.length - 1 - reverseIndex;
-      if (index === staticSystem)
-        return { ...m, providerOptions: mark(m.providerOptions) };
-      if (
-        markedHistory ||
-        index >= boundary ||
-        m.role === "system" ||
-        reminder(m)
-      )
-        return m;
-      if (typeof m.content === "string") {
-        if (!m.content) return m;
-        markedHistory = true;
-        return {
-          ...m,
-          content: [
-            { type: "text", text: m.content, providerOptions: mark(undefined) },
-          ],
-        } as LlmGatewayMessage;
-      }
-      const end = m.content.findLastIndex(
-        (p) => (p.type === "text" && !!p.text) || p.type === "tool-result",
-      );
-      if (end < 0) return m;
-      markedHistory = true;
-      return {
-        ...m,
-        content: m.content.map((p, i) =>
-          i === end
-            ? {
-                ...p,
-                providerOptions: mark(
-                  "providerOptions" in p ? p.providerOptions : undefined,
-                ),
-              }
-            : p,
-        ),
-      } as LlmGatewayMessage;
-    })
-    .toReversed();
+/** Inspect native cache annotations; all allocation is performed by Rust. */
+export async function applyChatCacheBreakpoints(messages: LlmGatewayMessage[], selection: ResolvedModelSelection, request: Pick<LlmGatewayRequest, "cacheControl">): Promise<LlmGatewayMessage[]> {
+  return (await applyPromptCachePolicy(messages, { selection, cacheControl: request.cacheControl })).messages;
 }

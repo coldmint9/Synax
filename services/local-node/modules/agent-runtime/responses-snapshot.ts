@@ -1,7 +1,7 @@
 /**
  * Bounded diagnostic envelope for OpenAI Responses stream state.
  *
- * AI SDK already maps Responses events to the common LanguageModelV3 stream,
+ * Rust maps Responses events to the common native event stream.
  * Response identity/status and standard usage remain available. Large raw
  * diagnostic copies are explicitly omitted; replay uses the separately stored
  * reasoningParts, messages and tool calls, whose signatures remain untouched.

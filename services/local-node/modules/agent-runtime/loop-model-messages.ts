@@ -7,7 +7,7 @@ import {
 } from "./runtime-request-snapshot.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { modelContentParts } from "./media-assets.js";
-import type { ModelMessage, ToolResultOutput } from "@ai-sdk/provider-utils";
+import type { ModelMessage, ToolResultOutput } from "../../infrastructure/llm-runtime/contracts.js";
 import type {
   AgentRun,
   AgentRunPart,

@@ -603,7 +603,7 @@ function flushScheduledSessionRefresh(): void {
   if (!sessionDetailsVisible) return;
   pendingRefresh = null;
   if (pending.detail && pending.detail === state.selectedSessionId)
-    void state.refreshDetail();
+    void state.refreshDetail({ background: true });
   else if (pending.usage && pending.usage === state.selectedSessionId)
     void state.fetchSessionInvocationUsage();
   if (pending.interactions && pending.interactions === state.selectedSessionId)
@@ -677,13 +677,24 @@ function clearInvocationUsageRefresh(): void {
   }
 }
 
-function upsertById<T extends { id: string }>(items: T[], next: T): T[] {
+function upsertById<T extends { id: string }>(items: T[], next: T, limit = 128): T[] {
   const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return [...items, next].slice(-128);
+  if (index === -1) return [...items, next].slice(-limit);
   if (items[index] === next) return items;
   const replaced = [...items];
   replaced[index] = next;
   return replaced;
+}
+
+/** A slow history response must not overwrite records delivered by the live stream meanwhile. */
+function preserveLiveRecords<T extends { id: string }>(loaded: T[], before: T[], current: T[]): T[] {
+  if (before === current) return loaded;
+  const originals = new Map(before.map((item) => [item.id, item]));
+  const merged = new Map(loaded.map((item) => [item.id, item]));
+  for (const item of current) {
+    if (originals.get(item.id) !== item) merged.set(item.id, item);
+  }
+  return [...merged.values()];
 }
 
 type RuntimeSnapshotEventPayload = Extract<
@@ -753,23 +764,35 @@ let deltaBuffer: Array<{ type: "text" | "thinking"; delta: string }> = [];
 let bufferedDeltaChars = 0;
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function flushStreamingDeltas(): void {
+function takeBufferedDeltas(): Array<{ type: "text" | "thinking"; delta: string }> {
   if (deltaFlushTimer !== null) clearTimeout(deltaFlushTimer);
   deltaFlushTimer = null;
-  if (deltaBuffer.length === 0) return;
   const pending = deltaBuffer;
   deltaBuffer = [];
   bufferedDeltaChars = 0;
-  useAgentSessionStore.setState((state) => {
-    let streamingLive = state.streamingLive;
-    for (const item of pending) {
-      streamingLive =
-        item.type === "thinking"
-          ? applyThoughtDelta(streamingLive, item.delta)
-          : applyMessageDelta(streamingLive, item.delta);
-    }
-    return { streamingLive };
-  });
+  return pending;
+}
+
+function applyBufferedDeltas(
+  streamingLive: StreamingLiveBuffers,
+  pending: readonly { type: "text" | "thinking"; delta: string }[],
+): StreamingLiveBuffers {
+  let next = streamingLive;
+  for (const item of pending) {
+    next =
+      item.type === "thinking"
+        ? applyThoughtDelta(next, item.delta)
+        : applyMessageDelta(next, item.delta);
+  }
+  return next;
+}
+
+function flushStreamingDeltas(): void {
+  const pending = takeBufferedDeltas();
+  if (pending.length === 0) return;
+  useAgentSessionStore.setState((state) => ({
+    streamingLive: applyBufferedDeltas(state.streamingLive, pending),
+  }));
 }
 
 function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
@@ -862,6 +885,8 @@ export interface AgentSessionStoreState {
   refreshDetail: (options?: {
     joinPending?: boolean;
     forceFresh?: boolean;
+    /** Live events own a loaded active transcript; background work only refreshes its profile. */
+    background?: boolean;
   }) => Promise<void>;
   fetchChildSessions: (parentId: string) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
@@ -1997,19 +2022,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
 
       if (activeDetailRefresh?.sessionId === targetSessionId) {
-        if (!options?.joinPending) activeDetailRefresh.again = true;
+        if (!options?.joinPending && (!options?.background || !isActiveSessionStatus(status)))
+          activeDetailRefresh.again = true;
         return activeDetailRefresh.promise;
       }
 
       if (
-        options?.joinPending &&
+        (options?.joinPending || (options?.background && isActiveSessionStatus(status))) &&
         activeTranscriptRefresh?.sessionId === targetSessionId
       )
         return activeTranscriptRefresh.promise;
-      const targetSession = get().sessions.find(
-        (session) => session.id === targetSessionId,
-      );
-      const targetSessionIsLive = isActiveSessionStatus(targetSession?.status);
       const hasReadyCache = Boolean(
         get().sessionDetailCache[targetSessionId]?.cachedAt,
       );
@@ -2042,7 +2064,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               detailRefreshEpoch === epoch &&
               !refresh.again;
             const cachedEntry =
-              targetSessionIsLive || forceFresh
+              forceFresh
                 ? undefined
                 : get().sessionDetailCache[targetSessionId];
             const versioned =
@@ -2160,6 +2182,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               "waiting_permission",
               "waiting_input",
             ].includes(polledStatus ?? "");
+            if (options?.background && !forceFresh && sessionActive && cachedEntry?.cachedAt) {
+              await Promise.all(profileUpdates);
+              if (isCurrent()) set({ detailLoading: false, detailRefreshing: false });
+              continue;
+            }
             const toolCallsSource = windowed
               ? Promise.resolve({ items: [] })
               : sessionActive && cachedEntry?.cachedAt
@@ -2168,6 +2195,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             const transcriptTask = (async () => {
               let moreChanges = false;
               do {
+                const beforeRead = get();
                 const since = forceFresh && !moreChanges ? undefined : get().sessionDetailCache[targetSessionId]?.historyWindow?.syncCursor;
                 const transcriptSource = windowed
                   ? readLatestHistoryWindow(targetSessionId,
@@ -2268,6 +2296,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                                 cacheEntry,
                               )
                             : cacheEntry;
+                        for (const collection of ["messages", "runs", "steps", "toolCalls", "events", "permissions"] as const) {
+                          // Each collection retains its own entity type; the shared
+                          // merge only compares identity and object references.
+                          (merged[collection] as Array<{ id: string }>) = preserveLiveRecords<{ id: string }>(
+                            merged[collection], beforeRead[collection], s[collection],
+                          );
+                        }
                         const incremental = Boolean(cacheEntry.historyWindow?.incremental);
                         const currentStatus = s.sessions.find(
                           (item) => item.id === targetSessionId,
@@ -2645,6 +2680,39 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "message": {
+          if (!streamVisible || event.message.sessionId !== get().selectedSessionId) break;
+          set((state) => {
+            // Never discard browsed history when a new live message arrives.
+            const messages = upsertById(state.messages, event.message, Infinity);
+            return {
+              messages,
+              streamingCompletedSteps: retireSnapshots(
+                state.streamingCompletedSteps, state.steps, messages, state.toolCalls, false,
+              ),
+            };
+          });
+          const cached = get().sessionDetailCache[event.message.sessionId];
+          patchSessionDetailCache(event.message.sessionId, {
+            messages: get().messages,
+            ...(cached?.timelineMessages ? {
+              timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
+            } : {}),
+          });
+          break;
+        }
+        case "event": {
+          if (!streamVisible || event.event.sessionId !== get().selectedSessionId) break;
+          set((state) => ({ events: upsertById(state.events, event.event, 256) }));
+          patchSessionDetailCache(event.event.sessionId, { events: get().events });
+          break;
+        }
+        case "permission_updated": {
+          if (!streamVisible || event.permission.sessionId !== get().selectedSessionId) break;
+          set((state) => ({ permissions: upsertById(state.permissions, event.permission) }));
+          patchSessionDetailCache(event.permission.sessionId, { permissions: get().permissions });
+          break;
+        }
         case "input_queue_changed": {
           void get().loadInputQueue(event.sessionId);
           break;
@@ -2716,14 +2784,22 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           if (event.reset) {
             if (terminal) {
               clearFinalReplyRetry();
-              flushStreamingDeltas();
-              set((state) => ({
-                streamingRetry: null,
-                streamingCompletedSteps: snapshotCurrentStep(state),
-                streamingStepId: null,
-                streamingLive: EMPTY_STREAMING_BUFFERS,
-              }));
-              clearStreamingBuffers();
+              const pending = takeBufferedDeltas();
+              set((state) => {
+                const settled = {
+                  ...state,
+                  streamingLive: applyBufferedDeltas(
+                    state.streamingLive,
+                    pending,
+                  ),
+                };
+                return {
+                  streamingRetry: null,
+                  streamingCompletedSteps: snapshotCurrentStep(settled),
+                  streamingStepId: null,
+                  streamingLive: EMPTY_STREAMING_BUFFERS,
+                };
+              });
             } else {
               clearFinalReplyRetry();
               clearStreamingBuffers();
@@ -2741,16 +2817,27 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         }
         case "step_started": {
           if (!streamVisible) break;
-          flushStreamingDeltas();
-          const s = get();
-          const completedSteps = snapshotCurrentStep(s);
-          clearStreamingBuffers();
-          set({
-            streamingRetry: null,
-            streamingStepId: event.stepId,
-            streamingLive: EMPTY_STREAMING_BUFFERS,
-            streamingCompletedSteps: completedSteps.slice(-8),
-            ...(event.step ? { steps: upsertById(s.steps, event.step) } : {}),
+          const pending = takeBufferedDeltas();
+          set((state) => {
+            const settled = {
+              ...state,
+              streamingLive: applyBufferedDeltas(
+                state.streamingLive,
+                pending,
+              ),
+            };
+            const completedSteps = snapshotCurrentStep(settled);
+            return {
+              streamingRetry: null,
+              streamingStepId: event.stepId,
+              streamingLive: EMPTY_STREAMING_BUFFERS,
+              streamingCompletedSteps: retireSnapshots(
+                completedSteps, state.steps, state.messages, state.toolCalls, false,
+              ).slice(-8),
+              ...(event.step
+                ? { steps: upsertById(state.steps, event.step) }
+                : {}),
+            };
           });
           break;
         }
@@ -2784,22 +2871,34 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           const isNewCall = !get().toolCalls.some(
             (call) => call.id === event.toolCall.id,
           );
-          flushStreamingDeltas();
-          set((s) => ({
-            streamingLive: applyToolCall(s.streamingLive, event.toolCall),
-            toolCalls: upsertById(s.toolCalls, event.toolCall),
-          }));
+          const pending = takeBufferedDeltas();
+          set((s) => {
+            const streamingLive = applyBufferedDeltas(
+              s.streamingLive,
+              pending,
+            );
+            return {
+              streamingLive: applyToolCall(streamingLive, event.toolCall),
+              toolCalls: upsertById(s.toolCalls, event.toolCall),
+            };
+          });
           if (isNewCall) scheduleInvocationUsageRefresh();
           break;
         }
         case "tool_result":
           if (!streamVisible) break;
           if (get().streamingStepId !== event.stepId) break;
-          flushStreamingDeltas();
-          set((s) => ({
-            streamingLive: applyToolResult(s.streamingLive, event.toolCall),
-            toolCalls: upsertById(s.toolCalls, event.toolCall),
-          }));
+          const pending = takeBufferedDeltas();
+          set((s) => {
+            const streamingLive = applyBufferedDeltas(
+              s.streamingLive,
+              pending,
+            );
+            return {
+              streamingLive: applyToolResult(streamingLive, event.toolCall),
+              toolCalls: upsertById(s.toolCalls, event.toolCall),
+            };
+          });
           break;
         case "context_compaction_state": {
           if (

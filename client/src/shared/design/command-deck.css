@@ -38,7 +38,6 @@
   border-radius: 10px;
   text-align: left;
 }
-.wh-project-copy { display: flex; flex-direction: column; min-width: 0; }
 .workbench-header__workspace .wh-project-label {
   max-width: 240px;
   font-size: 14px;
@@ -46,15 +45,6 @@
   font-weight: 650;
   letter-spacing: -.02em;
   white-space: nowrap;
-}
-.wh-project-subtitle {
-  overflow: hidden;
-  color: var(--ui-subtle);
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 400;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .workbench-header__workspace .wh-project-trigger > svg { flex-shrink: 0; color: var(--ui-subtle); }
 .workbench-header__navigation { display: flex; align-items: center; gap: 12px; min-width: 0; }

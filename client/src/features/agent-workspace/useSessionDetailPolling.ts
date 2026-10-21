@@ -75,7 +75,7 @@ export function useSessionDetailPolling() {
       inFlight = true;
       void Promise.allSettled([
         refreshSessions({ joinPending: true }),
-        refreshDetail({ joinPending: true }),
+        refreshDetail({ joinPending: true, background: true }),
       ]).finally(() => {
         inFlight = false;
         schedule();

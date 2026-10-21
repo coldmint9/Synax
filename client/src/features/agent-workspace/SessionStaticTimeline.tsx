@@ -1,12 +1,7 @@
 import {
   memo,
-  useEffect,
   useMemo,
-  useRef,
-  useState,
-  type Dispatch,
   type RefObject,
-  type SetStateAction,
 } from "react";
 import { shallow } from "zustand/shallow";
 import { Skeleton } from "@/shared/ui/ui/Display";
@@ -30,10 +25,9 @@ import {
 import { groupActivityEntries } from "./groupActivityEntries";
 import {
   EMPTY_STREAMING_BUFFERS,
-  isStreamingLiveEmpty,
   materializeLiveBlocks,
-  type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
+import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { useShellStore } from "../../shared/state/shellStore";
 
@@ -55,6 +49,8 @@ type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef"> & {
   entries: ConversationTimelineEntry[];
   sessionId?: string;
   streaming?: boolean;
+  liveId?: string | null;
+  liveSeed?: readonly TurnContentBlock[];
   eager?: boolean;
   /** Version of cached height measurements, independent of React row identity. */
   cacheVersion?: string;
@@ -67,6 +63,65 @@ type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
   isWorking: boolean;
   isStreaming: boolean;
 };
+
+const EMPTY_LIVE_SEED: readonly TurnContentBlock[] = [];
+
+function sameTurn(
+  a: Extract<ConversationTimelineEntry, { kind: "agent" }>["turn"],
+  b: Extract<ConversationTimelineEntry, { kind: "agent" }>["turn"],
+): boolean {
+  return (
+    a.stepId === b.stepId &&
+    a.index === b.index &&
+    a.status === b.status &&
+    a.completedAt === b.completedAt &&
+    a.blocks.length === b.blocks.length &&
+    a.blocks.every((block, index) => shallow(block, b.blocks[index]))
+  );
+}
+
+function sameTimelineEntry(
+  previous: ConversationTimelineEntry,
+  next: ConversationTimelineEntry,
+): boolean {
+  if (previous === next) return true;
+  if (
+    previous.kind !== next.kind ||
+    previous.id !== next.id ||
+    previous.createdAt !== next.createdAt ||
+    previous.label !== next.label
+  )
+    return false;
+  switch (previous.kind) {
+    case "agent":
+      return next.kind === "agent" && sameTurn(previous.turn, next.turn);
+    case "user":
+      return (
+        next.kind === "user" &&
+        previous.content === next.content &&
+        previous.injected === next.injected &&
+        previous.contentParts === next.contentParts
+      );
+    case "work_log":
+      return (
+        next.kind === "work_log" &&
+        previous.stats.stepCount === next.stats.stepCount &&
+        previous.stats.toolCallCount === next.stats.toolCallCount &&
+        previous.stats.thinkingChars === next.stats.thinkingChars &&
+        previous.stats.elapsedMs === next.stats.elapsedMs &&
+        previous.turns.length === next.turns.length &&
+        previous.turns.every((turn, index) => sameTurn(turn, next.turns[index]))
+      );
+    case "interaction":
+      return next.kind === "interaction" && previous.interaction === next.interaction;
+    case "compaction":
+      return next.kind === "compaction" && previous.state === next.state;
+    case "error":
+      return next.kind === "error" && previous.message === next.message && previous.model === next.model;
+    case "model_switch":
+      return next.kind === "model_switch" && previous.fromModel === next.fromModel && previous.toModel === next.toModel;
+  }
+}
 
 const TimelineRow = memo(
   function TimelineRow({
@@ -108,21 +163,7 @@ const TimelineRow = memo(
       previous.cacheVersion !== next.cacheVersion
     )
       return false;
-    if (previous.entry === next.entry) return true;
-    const a = previous.entry;
-    const b = next.entry;
-    if (a.kind !== "agent" || b.kind !== "agent" || a.id !== b.id) return false;
-    // Grouping creates new arrays, but completed blocks retain their references.
-    // Compare the rendered content so token deltas do not rebuild older answers.
-    return (
-      a.turn.stepId === b.turn.stepId &&
-      a.turn.status === b.turn.status &&
-      a.turn.completedAt === b.turn.completedAt &&
-      a.turn.blocks.length === b.turn.blocks.length &&
-      a.turn.blocks.every((block, index) =>
-        shallow(block, b.turn.blocks[index]),
-      )
-    );
+    return sameTimelineEntry(previous.entry, next.entry);
   },
 );
 
@@ -130,6 +171,7 @@ function renderTimelineRows({
   entries,
   sessionId,
   streaming,
+  liveId,
   onExpandChild,
   scrollRootRef,
   eager,
@@ -162,6 +204,25 @@ function renderTimelineRows({
       break;
     }
   }
+  if (liveId) {
+    let liveIndex = -1;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (entry.kind === "agent" && entry.turn.stepId === liveId) {
+        liveIndex = index;
+        if (
+          entry.turn.blocks.some(
+            (block) =>
+              block.type === "thinking" ||
+              block.type === "tool_call" ||
+              block.type === "tool_call_group",
+          )
+        )
+          break;
+      }
+    }
+    if (liveIndex >= 0) latestActivityIndex = liveIndex;
+  }
   return entries.map((entry, index) => {
     let isLiveEntry = false;
     if (liveEntryIds) {
@@ -172,98 +233,35 @@ function renderTimelineRows({
         }
       }
     }
-    const entryCacheVersion = isLiveEntry ? "live" : cacheVersion;
-    return (
-    <TimelineRow
-      key={`${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`}
-      entry={entry}
-      sessionId={sessionId}
-      onExpandChild={onExpandChild}
-      scrollRootRef={scrollRootRef}
-      eager={eager || index >= eagerStart}
-      cacheVersion={entryCacheVersion}
-      isWorking={Boolean(streaming && index === latestActivityIndex)}
-      isStreaming={Boolean(
-        streaming &&
+    const entryCacheVersion =
+      isLiveEntry ||
+      (Boolean(liveId) &&
         entry.kind === "agent" &&
-        entry.turn.status === "running" &&
-        index === entries.length - 1,
-      )}
-    />
+        entry.turn.stepId === liveId)
+        ? "live"
+        : cacheVersion;
+    return (
+      <TimelineRow
+        key={`${sessionId ?? "standalone"}:${entry.kind}-${entry.id}`}
+        entry={entry}
+        sessionId={sessionId}
+        onExpandChild={onExpandChild}
+        scrollRootRef={scrollRootRef}
+        eager={eager || index >= eagerStart}
+        cacheVersion={entryCacheVersion}
+        isWorking={Boolean(streaming && index === latestActivityIndex)}
+        isStreaming={Boolean(
+          streaming &&
+            entry.kind === "agent" &&
+            entry.turn.status === "running" &&
+            (liveId ? entry.turn.stepId === liveId : index === entries.length - 1),
+        )}
+      />
     );
   });
 }
 
-/** Only the tail is rebuilt for tokens; all rows share one stable React parent. */
-/**
- * Buffers the live region last painted.
- *
- * Rendered state legitimately trails the store (tools update the pending list
- * in place; a deferred buffer and a ref-lowered `React.memo` can deliver the
- * old and the new buffer in either order). Deciding "nothing to show" from the
- * store is authoritative for a step that already painted: an empty store buffer
- * then means the step moved into the transcript, never that the running command
- * vanished. Reading the emptiness from props instead made the row blink out for
- * one commit and reappear on the next render.
- */
-const paintedLive: {
-  stepId: string | null;
-  live: StreamingLiveBuffers;
-  set: Dispatch<SetStateAction<StreamingLiveBuffers>> | null;
-} = { stepId: null, live: EMPTY_STREAMING_BUFFERS, set: null };
-
-function paintLiveStep(stepId: string | null): void {
-  if (stepId === paintedLive.stepId) return;
-  paintedLive.stepId = stepId;
-  paintedLive.live = EMPTY_STREAMING_BUFFERS;
-  paintedLive.set?.(EMPTY_STREAMING_BUFFERS);
-}
-
-function TrackedLiveStepView({
-  stepId,
-  live,
-}: {
-  stepId: string;
-  live: StreamingLiveBuffers;
-}) {
-  const [painted, setPainted] = useState(live);
-  useEffect(() => {
-    paintedLive.set = setPainted;
-    paintedLive.live = painted;
-    return () => {
-      if (paintedLive.set === setPainted) paintedLive.set = null;
-    };
-  }, [painted]);
-  if (painted !== live) setPainted(live);
-  const shown = isStreamingLiveEmpty(live) && !isStreamingLiveEmpty(painted)
-    ? painted
-    : live;
-  return (
-    <TimelineRow
-      entry={{
-        id: stepId,
-        kind: "agent",
-        createdAt: "",
-        label: "",
-        turn: {
-          stepId,
-          index: 0,
-          status: "running",
-          duration: null,
-          completedAt: null,
-          blocks: materializeLiveBlocks(shown),
-        },
-      }}
-      sessionId={undefined}
-      isWorking
-      isStreaming
-      eager
-    />
-  );
-}
-
 function TimelineRows({
-  history,
   entries,
   liveId,
   sessionId,
@@ -272,34 +270,10 @@ function TimelineRows({
   scrollRootRef,
   cacheVersion,
   liveEntryIds,
-}: RowsProps & {
-  history: ConversationTimelineEntry[];
-  liveId: string | null;
-}) {
+  liveSeed = EMPTY_LIVE_SEED,
+}: RowsProps) {
   const live = useAgentSessionStore((s) =>
     liveId ? s.streamingLive : EMPTY_STREAMING_BUFFERS,
-  );
-  const historyRows = useMemo(
-    () =>
-      renderTimelineRows({
-        entries: history,
-        sessionId,
-        streaming: streaming && !liveId,
-        onExpandChild,
-        scrollRootRef,
-        cacheVersion,
-        liveEntryIds,
-      }),
-    [
-      history,
-      sessionId,
-      streaming,
-      liveId,
-      onExpandChild,
-      scrollRootRef,
-      cacheVersion,
-      liveEntryIds,
-    ],
   );
   const combined = useMemo(() => {
     if (!liveId) return groupActivityEntries(entries);
@@ -308,6 +282,10 @@ function TimelineRows({
       (entry) =>
         entry.kind === "interaction" && entry.interaction.stepId === liveId,
     );
+    const liveBlocks = [
+      ...liveSeed,
+      ...materializeLiveBlocks(live),
+    ];
     rows.splice(interactionIndex < 0 ? rows.length : interactionIndex, 0, {
       id: liveId,
       kind: "agent",
@@ -319,33 +297,35 @@ function TimelineRows({
         status: "running",
         duration: null,
         completedAt: null,
-        blocks: materializeLiveBlocks(live),
+        blocks: liveBlocks,
       },
     });
     return groupActivityEntries(rows);
-  }, [entries, live, liveId]);
-  // Folding a completed round is a data transition, not a visual transition.
-  // Animating the new work-log row from opacity 0.5 made its thinking trace,
-  // toggle, and tool panel flash together at every round boundary.
-  return (
-    <>
-      {[
-        ...historyRows,
-        ...renderTimelineRows({
-          entries: combined,
-          eager: Boolean(liveId),
-          sessionId,
-          streaming,
-          onExpandChild,
-          scrollRootRef,
-          // Live height measurements use their own namespace. React identity
-          // stays stable when these rows move into persisted history.
-          cacheVersion: liveId ? "live" : cacheVersion,
-          liveEntryIds,
-        }),
-      ]}
-    </>
+  }, [entries, live, liveId, liveSeed]);
+  const rows = useMemo(
+    () =>
+      renderTimelineRows({
+        entries: combined,
+        sessionId,
+        streaming,
+        liveId,
+        onExpandChild,
+        scrollRootRef,
+        cacheVersion,
+        liveEntryIds,
+      }),
+    [
+      combined,
+      sessionId,
+      streaming,
+      liveId,
+      onExpandChild,
+      scrollRootRef,
+      cacheVersion,
+      liveEntryIds,
+    ],
   );
+  return <>{rows}</>;
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({
@@ -383,6 +363,22 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     () => new Set((snapshots ?? []).map((snapshot) => snapshot.stepId)),
     [snapshots],
   );
+  const excludedStepIds = useMemo(
+    () => (snapshots ?? []).map((snapshot) => snapshot.stepId),
+    [snapshots],
+  );
+  const excludedRunIds = useMemo(() => {
+    const runIds = new Set(
+      (snapshots ?? [])
+        .map((snapshot) => snapshot.runId)
+        .filter((runId): runId is string => Boolean(runId)),
+    );
+    if (showLive && liveId) {
+      const liveStep = steps.find((step) => step.id === liveId);
+      if (liveStep?.runId) runIds.add(liveStep.runId);
+    }
+    return [...runIds];
+  }, [snapshots, showLive, liveId, steps]);
   // Runtime writes increment revision too, so it must only invalidate height
   // measurements, never row identity. Remounting visible lazy rows hides their
   // contents until the next IntersectionObserver delivery (a transcript flash).
@@ -397,7 +393,9 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   const timeline = useMemo(() => {
     // A completed step can arrive before its assistant message. The store
     // retires each snapshot only after its persisted content is confirmed.
-    const pendingSnapshots = snapshots ?? [];
+    const pendingSnapshots = (snapshots ?? []).filter(
+      (snapshot) => snapshot.stepId !== liveId,
+    );
     const snapshotIds = new Set(
       pendingSnapshots.map((snapshot) => snapshot.stepId),
     );
@@ -409,6 +407,8 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
       childSessions,
       {
         excludeStepId,
+        excludeStepIds: excludedStepIds,
+        excludeRunIds: excludedRunIds,
         session,
         foldWorkRuns,
         includeInitialPrompt,
@@ -462,25 +462,11 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
     includeInitialPrompt,
     browsingHistory,
     snapshots,
+    liveId,
+    excludedStepIds,
+    excludedRunIds,
     interactions,
   ]);
-  const { history, tail } = useMemo(() => {
-    let boundary = timeline.length;
-    if (showLive)
-      while (boundary > 0) {
-        const entry = timeline[boundary - 1];
-        if (
-          entry.kind !== "agent" &&
-          !(entry.kind === "interaction" && entry.interaction.stepId === liveId)
-        )
-          break;
-        boundary--;
-      }
-    return {
-      history: groupActivityEntries(timeline.slice(0, boundary)),
-      tail: timeline.slice(boundary),
-    };
-  }, [timeline, showLive, liveId]);
 
   if (timeline.length === 0 && !showLive)
     return (
@@ -501,8 +487,7 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   return (
     <div className="flex flex-col gap-5">
       <TimelineRows
-        history={history}
-        entries={tail}
+        entries={timeline}
         liveId={showLive ? liveId : null}
         streaming={isRunning}
         sessionId={session?.id}
@@ -510,6 +495,11 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
         scrollRootRef={scrollRootRef}
         cacheVersion={cacheVersion}
         liveEntryIds={liveEntryIds}
+        liveSeed={
+          showLive
+            ? snapshots?.find((snapshot) => snapshot.stepId === liveId)?.blocks
+            : undefined
+        }
       />
     </div>
   );

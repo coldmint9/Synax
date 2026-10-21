@@ -132,6 +132,26 @@ it("preserves text/thought/tool ordering when events arrive before the next pain
   ]);
 });
 
+it("commits buffered text and the following tool boundary in one visible frame", () => {
+  const frames: ReturnType<typeof materializeLiveBlocks>[] = [];
+  const unsubscribe = store.subscribe((state, previous) => {
+    if (state.streamingLive !== previous.streamingLive)
+      frames.push(materializeLiveBlocks(state.streamingLive));
+  });
+
+  delta("Before the tool");
+  store
+    .getState()
+    .applyLiveEvent({ type: "tool_call", stepId: "first", toolCall });
+
+  expect(frames).toHaveLength(1);
+  expect(frames[0]).toEqual([
+    { type: "text", content: "Before the tool" },
+    expect.objectContaining({ type: "tool_call" }),
+  ]);
+  unsubscribe();
+});
+
 it("keeps the last answer visible while completion waits for the persisted transcript", () => {
   delta("Finished answer");
   store

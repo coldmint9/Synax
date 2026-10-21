@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { stringifyRustRequest } from "../../infrastructure/llm-runtime/providers/rust-language-model.js";
+import { stringifyRustRequest } from "../../infrastructure/llm-runtime/native-client.js";
 import type { RuntimeExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 
 export type RustAgentLoopProviderRequest = {
@@ -9,6 +9,7 @@ export type RustAgentLoopProviderRequest = {
   after?: number;
   resumeLoop?: boolean;
   apiFormat: string;
+  adapter?: string;
   providerId?: string;
   providerOptions?: Record<string, unknown>;
   temperature?: number;
@@ -16,6 +17,10 @@ export type RustAgentLoopProviderRequest = {
   apiKey?: string;
   headers?: Record<string, string>;
   model: string;
+  purpose?: string;
+  reasoningEffort?: string;
+  reasoningCapable?: boolean;
+  cachePolicy?: Record<string, unknown>;
   prompt: unknown[];
   tools?: unknown[];
   toolChoice?: unknown;
@@ -34,6 +39,7 @@ export type RustAgentLoopEvent = {
   step?: number;
   attempt?: number;
   maxRetries?: number;
+  retry?: import("../../infrastructure/llm-runtime/retry-state.js").LlmRetryState;
   contextId?: string;
   requestId?: string;
   startedAt?: string;
@@ -96,11 +102,28 @@ async function bridgeRequest(path: string, options: RequestInit, signal?: AbortS
   }
 }
 
+export class RustRunInterruptedError extends Error {
+  readonly code = "RUN_INTERRUPTED";
+  constructor() { super("RUN_INTERRUPTED: 运行进程已重启，请继续对话以启动新运行。"); }
+}
+async function bridgeError(response: Response, operation: string): Promise<Error> {
+  const detail = await response.text();
+  return detail.includes("RUN_INTERRUPTED") ? new RustRunInterruptedError()
+    : new Error(`${operation} (${response.status}): ${detail}`);
+}
+
+/** Check before consuming a reply or executing an approved tool. */
+export async function assertRustAgentLoopAvailable(loopId: string, executionContext?: RuntimeExecutionContext, signal?: AbortSignal): Promise<void> {
+  const response = await bridgeRequest("/agent-loop/check", { method: "POST", headers: authHeaders(),
+    body: JSON.stringify({ loopId, executionContext }) }, signal);
+  if (!response.ok) throw await bridgeError(response, "Rust execution is unavailable");
+}
+
 async function resumeLoop(request: RustAgentLoopProviderRequest, loopId: string, signal?: AbortSignal) {
   const response = await bridgeRequest("/agent-loop/resume", {
     method: "POST", headers: authHeaders(), body: stringifyRustRequest({ ...request, loopId }),
   }, signal);
-  if (!response.ok) throw new Error(`Rust agent loop resume failed (${response.status}): ${await response.text()}`);
+  if (!response.ok) throw await bridgeError(response, "Rust agent loop resume failed");
 }
 
 export async function* streamRustAgentLoop(
@@ -114,7 +137,7 @@ export async function* streamRustAgentLoop(
     const started = await bridgeRequest("/agent-loop/start", {
       method: "POST", headers: authHeaders(), body: stringifyRustRequest(input),
     }, signal);
-    if (!started.ok) throw new Error(`Rust agent loop start failed (${started.status}): ${await started.text()}`);
+    if (!started.ok) throw await bridgeError(started, "Rust agent loop start failed");
     loopId = ((await started.json()) as { loopId?: string }).loopId;
   }
   if (!loopId) throw new Error("Rust agent loop did not return a loop ID.");
@@ -126,7 +149,7 @@ export async function* streamRustAgentLoop(
     signal?.throwIfAborted();
     if (ownsExecution) await resumeLoop(input, loopId, signal);
     const response = await bridgeRequest(`/agent-loop/events?loopId=${encodeURIComponent(loopId)}&after=${cursor}`, { headers: authHeaders() }, signal);
-    if (!response.ok || !response.body) throw new Error(`Rust agent loop event stream failed (${response.status}).`);
+    if (!response.ok || !response.body) throw await bridgeError(response, "Rust agent loop event stream failed");
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
@@ -183,7 +206,7 @@ export async function sendRustAgentToolResult(input: {
       executionContext: input.executionContext,
     }),
   }, input.signal);
-  if (!response.ok) throw new Error(`Rust agent loop tool result failed (${response.status}).`);
+  if (!response.ok) throw await bridgeError(response, "Rust agent loop tool result failed");
 }
 
 export async function cancelRustAgentLoop(loopId: string, signal?: AbortSignal): Promise<void> {
@@ -207,5 +230,5 @@ export async function sendRustStepContext(input: {
   const response = await bridgeRequest("/agent-loop/context", {
     method: "POST", headers: authHeaders(), body: JSON.stringify(input),
   }, signal);
-  if (!response.ok) throw new Error(`Rust step context rejected (${response.status}): ${await response.text()}`);
+  if (!response.ok) throw await bridgeError(response, "Rust step context rejected");
 }

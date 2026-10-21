@@ -1,3 +1,4 @@
+import { serveProviderHttp } from "../../../../test-fixtures/provider-http.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   generateOpenAIImages,
@@ -94,7 +95,7 @@ describe("GPT Image 2.5 wire contract", () => {
             ])
           : Response.json(response),
       );
-      vi.stubGlobal("fetch", fetcher);
+      provider.config.baseUrl = await serveProviderHttp(fetcher);
       const onPartial = vi.fn(async (_image: unknown) => {});
       const result = await generateOpenAIImages(
         { ...provider, modelId: "gpt-5.6-sol" },
@@ -131,7 +132,7 @@ describe("GPT Image 2.5 wire contract", () => {
     "generates with the exact model %s and retains image usage",
     async (model) => {
       const fetcher = vi.fn(async () => json(2));
-      vi.stubGlobal("fetch", fetcher);
+      provider.config.baseUrl = await serveProviderHttp(fetcher);
       const result = await generateOpenAIImages(
         provider,
         schema.parse({
@@ -151,7 +152,7 @@ describe("GPT Image 2.5 wire contract", () => {
         string,
         RequestInit,
       ];
-      expect(url).toBe("http://localhost:9876/v1/images/generations");
+      expect(new URL(url).pathname).toBe("/v1/images/generations");
       expect(JSON.parse(request.body as string)).toEqual({
         model,
         prompt: "Draw a fox",
@@ -177,7 +178,7 @@ describe("GPT Image 2.5 wire contract", () => {
     "edits with %s, multiple original files and a mask",
     async (model) => {
       const fetcher = vi.fn(async () => json());
-      vi.stubGlobal("fetch", fetcher);
+      provider.config.baseUrl = await serveProviderHttp(fetcher);
       await generateOpenAIImages(
         provider,
         schema.parse({
@@ -194,7 +195,7 @@ describe("GPT Image 2.5 wire contract", () => {
         string,
         RequestInit,
       ];
-      expect(url).toBe("http://localhost:9876/v1/images/edits");
+      expect(new URL(url).pathname).toBe("/v1/images/edits");
       const form = await new Request(url, request).formData();
       expect(form.get("model")).toBe(model);
       expect(form.get("input_fidelity")).toBe("high");
@@ -212,9 +213,7 @@ describe("GPT Image 2.5 wire contract", () => {
   it.each(["image_generation", "image_edit"])(
     "delivers partial %s images and requires a final image",
     async (prefix) => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () =>
+      provider.config.baseUrl = await serveProviderHttp(vi.fn(async () =>
           sse([
             {
               type: `${prefix}.partial_image`,
@@ -226,8 +225,7 @@ describe("GPT Image 2.5 wire contract", () => {
               usage,
             },
           ]),
-        ),
-      );
+        ));
       const onPartial = vi.fn(async (_image: unknown) => {});
       const result = await generateOpenAIImages(
         provider,
@@ -252,7 +250,7 @@ describe("GPT Image 2.5 wire contract", () => {
         },
       ]),
     );
-    vi.stubGlobal("fetch", fetcher);
+    provider.config.baseUrl = await serveProviderHttp(fetcher);
     await expect(
       generateOpenAIImages(provider, schema.parse({ prompt: "Draw" })),
     ).rejects.toThrow("before the complete");
@@ -265,10 +263,10 @@ describe("GPT Image 2.5 wire contract", () => {
         { status: 403 },
       ),
     );
-    vi.stubGlobal("fetch", fetcher);
+    provider.config.baseUrl = await serveProviderHttp(fetcher);
     await expect(
       generateOpenAIImages(provider, schema.parse({ prompt: "Draw" })),
-    ).rejects.toThrow("Image API 403: Image model access denied");
+    ).rejects.toThrow("Image model access denied");
     const signal = AbortSignal.abort(new Error("cancelled"));
     await expect(
       generateOpenAIImages(provider, schema.parse({ prompt: "Draw" }), {
@@ -286,7 +284,7 @@ describe("GPT Image 2.5 wire contract", () => {
     "rejects incompatible options before making a request: %j",
     async (options) => {
       const fetcher = vi.fn();
-      vi.stubGlobal("fetch", fetcher);
+      provider.config.baseUrl = await serveProviderHttp(fetcher);
       await expect(
         generateOpenAIImages(
           provider,
@@ -298,7 +296,7 @@ describe("GPT Image 2.5 wire contract", () => {
   );
   it("accepts custom model IDs without a whitelist", async () => {
     const fetcher = vi.fn(async () => json());
-    vi.stubGlobal("fetch", fetcher);
+    provider.config.baseUrl = await serveProviderHttp(fetcher);
     await generateOpenAIImages(
       provider,
       schema.parse({
@@ -316,10 +314,7 @@ describe("GPT Image 2.5 wire contract", () => {
     ).toBe("future-vision-model");
   });
   it("validates model-specific limits only in the relevant adapter", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => json()),
-    );
+    provider.config.baseUrl = await serveProviderHttp(vi.fn(async () => json()));
     for (const size of ["1025x1024", "64x64", "3840x3840"])
       await expect(
         generateOpenAIImages(

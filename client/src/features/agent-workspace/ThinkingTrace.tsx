@@ -1,22 +1,13 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { ChevronRight, Sparkles } from "lucide-react";
+import { Button as HeadlessButton } from "@headlessui/react";
+import "./conversationFlow.css";
 
 // Transcript virtualization unmounts rows. Keep explicit reader choices across remounts.
 const expandedTraces = new Map<string, boolean>();
-const REVEAL_MS = 400;
 
 export function ThinkingGlyph() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
-    </svg>
-  );
+  return <Sparkles size={16} aria-hidden="true" />;
 }
 
 interface Props {
@@ -28,6 +19,7 @@ interface Props {
   rememberKey?: string;
   title?: string;
   meta?: string | null;
+  preview?: string;
   maxHeight?: string | number;
   variant?: "reasoning" | "steps" | "coding" | "search";
 }
@@ -42,7 +34,8 @@ export function ThinkingTrace({
   rememberKey,
   title,
   meta,
-  maxHeight = 140,
+  preview,
+  maxHeight = 240,
   variant = "reasoning",
 }: Props) {
   const [manual, setManual] = useState<boolean | null>(() =>
@@ -52,39 +45,19 @@ export function ThinkingTrace({
     setManual(rememberKey ? (expandedTraces.get(rememberKey) ?? null) : null);
   }, [rememberKey]);
   const hasBody = Boolean(children);
-  const expanded = hasBody && (manual ?? working);
-  const [retained, setRetained] = useState(expanded);
+  const expanded = hasBody && (manual ?? false);
   const bodyId = useId();
-  const bodyRef = useRef<HTMLDivElement>(null);
-
-  // Keep the bounded body during the closing transition, then release it.
-  useEffect(() => {
-    if (expanded) {
-      setRetained(true);
-      return;
-    }
-    if (!retained) return;
-    const timer = window.setTimeout(() => setRetained(false), REVEAL_MS);
-    return () => window.clearTimeout(timer);
-  }, [expanded, retained]);
-
-  // Reasoning is read newest-first: opening a row lands on the latest record
-  // instead of the oldest one, and a live row keeps following as it grows.
-  useEffect(() => {
-    if (expanded && variant === "reasoning" && bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
-  }, [children, working, expanded, variant]);
 
   const heading = (
     <>
       <span className="bui-thinking-symbol">{icon ?? <ThinkingGlyph />}</span>
-      <span role="status" className="bui-thinking-label">
-        {label}
+      <span className="bui-thinking-copy">
+        <span className="bui-thinking-label">{label}</span>
+        {!expanded && preview && <span className="bui-thinking-preview">{preview}</span>}
       </span>
       {meta && <span className="bui-thinking-meta">{meta}</span>}
       {hasBody && (
-        <ChevronDown
+        <ChevronRight
           size={14}
           className="bui-thinking-chevron"
           aria-hidden="true"
@@ -101,12 +74,12 @@ export function ThinkingTrace({
       data-variant={variant}
     >
       {hasBody ? (
-        <button
+        <HeadlessButton
           type="button"
           className="bui-thinking-trigger"
           aria-expanded={expanded}
           aria-controls={bodyId}
-          title={title}
+          title={expanded ? undefined : title}
           onClick={() => {
             const next = !expanded;
             setManual(next);
@@ -114,7 +87,7 @@ export function ThinkingTrace({
           }}
         >
           {heading}
-        </button>
+        </HeadlessButton>
       ) : (
         <div className="bui-thinking-trigger" title={title}>
           {heading}
@@ -128,10 +101,9 @@ export function ThinkingTrace({
           inert={!expanded}
         >
           <div className="bui-thinking-clip">
-            {(expanded || retained) && (
+            {expanded && (
               <div className="bui-thinking-trace">
                 <div
-                  ref={bodyRef}
                   data-activity-body=""
                   className="bui-thinking-body session-work-log-body"
                   style={{ maxHeight }}

@@ -3,17 +3,20 @@ import {
   clearScheduledSessionRefresh,
   SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
   setSessionDetailsVisible,
+  scheduleSessionRefresh,
   useAgentSessionStore as store,
 } from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
 import {
   agentRuntimeApi as api,
   type AgentRuntimeMessage,
+  type PermissionDecision,
   type AgentSession,
   type HistoryWindowResponse,
   type SessionStats,
   type ToolCallRecord,
 } from "../../../adapters/transport/agentRuntime";
+import { RuntimeStreamProjector } from "../../../adapters/transport/runtimeStream";
 vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
   releaseSessionLiveSubscription: vi.fn(),
@@ -697,5 +700,106 @@ describe('incremental history pages', () => {
     await store.getState().refreshDetail({forceFresh:true});
     await vi.waitFor(()=>expect(store.getState().detailError).toBeNull());
     expect(history).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("live transcript history requests", () => {
+  const page = (messages: AgentRuntimeMessage[] = []): HistoryWindowResponse => ({
+    messages, runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+    historyWindow: { revision: 1, epoch: 1, generation: 1, syncCursor: "sync-1",
+      hasEarlier: false, latest: true, detailsTruncated: false, incremental: false },
+  });
+  const liveSession = { ...session, activeRunId: "run", sessionMetadata: { historyStorage: 3 } } as AgentSession;
+
+  it("applies complete stream messages without history requests from background invalidations", async () => {
+    store.setState({ sessions: [liveSession] });
+    const history = vi.spyOn(api, "historyWindow").mockResolvedValue(page(
+      Array.from({ length: 130 }, (_, index) => message(`old-${index}`)),
+    ));
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().messages).toHaveLength(130));
+    vi.useFakeTimers();
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot({ session: liveSession, run: null, cursor: 0, liveChunks: [], completedStepIds: [] });
+    const answer = { ...message("live-answer"), runId: "run", content: "完整回答".repeat(4000),
+      metadata: { source: "assistant", custom: "preserved" } };
+    for (let sequence = 1; sequence <= 4; sequence++) {
+      for (const event of projector.record({ sequence, sessionId: session.id, runId: "run", state: liveSession,
+        chunk: { type: "message", message: { ...answer, content: answer.content + sequence } } }))
+        store.getState().applyLiveEvent(event, session.id);
+      scheduleSessionRefresh(session.id, "detail");
+      await vi.advanceTimersByTimeAsync(1200);
+    }
+    expect(history).toHaveBeenCalledOnce();
+    expect(api.getSessionStats).toHaveBeenCalledTimes(5);
+    expect(store.getState().messages).toHaveLength(131);
+    expect(store.getState().messages[0].id).toBe("old-0");
+    expect(store.getState().messages.at(-1)).toEqual({ ...answer, content: answer.content + "4" });
+    expect(store.getState().sessionDetailCache[session.id].messages).toEqual(store.getState().messages);
+    expect(store.getState().detailRefreshing).toBe(false);
+  });
+
+  it("loads a cold live session and permits explicit recovery and terminal reconciliation", async () => {
+    store.setState({ sessions: [liveSession] });
+    const history = vi.spyOn(api, "historyWindow").mockResolvedValue(page());
+    await store.getState().refreshDetail({ background: true });
+    await vi.waitFor(() => expect(store.getState().sessionDetailCache[session.id]?.cachedAt).toBeGreaterThan(0));
+    await store.getState().refreshDetail({ background: true, joinPending: true });
+    expect(history).toHaveBeenCalledOnce();
+    await store.getState().refreshDetail({ forceFresh: true, background: true });
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(2));
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(3));
+    store.getState().patchSession(session.id, { status: "completed", activeRunId: null });
+    await store.getState().refreshDetail({ background: true });
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(4));
+  });
+
+  it("keeps live records received while the initial history window is in flight", async () => {
+    store.setState({ sessions: [liveSession] });
+    let resolve!: (value: HistoryWindowResponse) => void;
+    vi.spyOn(api, "historyWindow").mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await store.getState().refreshDetail();
+    const answer = { ...message("live-answer"), runId: "run" };
+    store.getState().applyLiveEvent({ type: "message", message: answer }, session.id);
+    resolve(page([message("older")]));
+    await vi.waitFor(() => expect(store.getState().detailRefreshing).toBe(false));
+    expect(store.getState().messages).toEqual([message("older"), answer]);
+    expect(store.getState().sessionDetailCache[session.id].messages).toEqual([message("older"), answer]);
+  });
+
+  it("joins a slow initial history request instead of restarting it for every live invalidation", async () => {
+    store.setState({ sessions: [liveSession] });
+    let resolve!: (value: HistoryWindowResponse) => void;
+    const history = vi.spyOn(api, "historyWindow").mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await store.getState().refreshDetail();
+    const refreshes = Array.from({ length: 4 }, () => store.getState().refreshDetail({ background: true }));
+    expect(history).toHaveBeenCalledOnce();
+    resolve(page([message("loaded")]));
+    await Promise.all(refreshes);
+    expect(store.getState().messages).toEqual([message("loaded")]);
+    expect(store.getState().detailLoading).toBe(false);
+  });
+
+  it("updates pending and resolved permissions from the stream without a history query", async () => {
+    store.setState({ sessions: [liveSession] });
+    const history = vi.spyOn(api, "historyWindow").mockResolvedValue(page());
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().sessionDetailCache[session.id]?.cachedAt).toBeGreaterThan(0));
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot({ session: liveSession, run: null, cursor: 0, liveChunks: [], completedStepIds: [] });
+    const permission = { id: "permission", sessionId: session.id, runId: "run", action: "ask", resolvedAt: null } as PermissionDecision;
+    for (const event of projector.record({ sequence: 1, sessionId: session.id, runId: "run",
+      state: { ...liveSession, status: "waiting_permission" }, chunk: { type: "permission_requested", permission } }))
+      store.getState().applyLiveEvent(event, session.id);
+    expect(store.getState().permissions).toEqual([permission]);
+    const resolved = { ...permission, resolvedAt: "2026-10-21T00:00:01Z" };
+    for (const event of projector.record({ sequence: 2, sessionId: session.id, runId: "run",
+      state: liveSession, chunk: { type: "permission_resolved", permission: resolved } }))
+      store.getState().applyLiveEvent(event, session.id);
+    await store.getState().refreshDetail({ background: true });
+    expect(store.getState().permissions).toEqual([resolved]);
+    expect(store.getState().sessionDetailCache[session.id].permissions).toEqual([resolved]);
+    expect(history).toHaveBeenCalledOnce();
   });
 });

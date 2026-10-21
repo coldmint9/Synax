@@ -47,10 +47,15 @@ describe("tool call display names", () => {
     const { container, getByRole } = render(<ToolCallSummaryLine call={call} />);
     expect(container).toHaveTextContent("查看数据库连接");
     expect(container.innerHTML).not.toContain(call.toolId);
+    expect(container.querySelector(".bui-tool-result")).toHaveTextContent(call.outputSummary);
     fireEvent.click(getByRole("button"));
+    expect(container.querySelector(".bui-tool-result")).toBeNull();
     expect(Array.from(container.querySelectorAll("pre"), (node) => node.textContent))
       .toEqual([call.inputSummary, call.outputSummary]);
     expect(container.innerHTML).not.toContain(call.toolId);
+    fireEvent.click(getByRole("button"));
+    expect(container.querySelector(".bui-tool-result")).toHaveTextContent(call.outputSummary);
+    expect(container.querySelector(".bui-tool-details")).toBeNull();
   });
 
   it("shows edited files in the collapsed row while preserving the raw patch", () => {
@@ -81,7 +86,7 @@ describe("tool call display names", () => {
     const { container, getByRole } = render(<ToolCallRoundPanel toolBlocks={[{
       type: "tool_call_group", calls: [call, { ...call, id: "call-2" }],
     }]} />);
-    expect(container.querySelector(".bui-thinking-label")).toHaveTextContent("查看数据库连接");
+    expect(container.querySelector(".bui-tool-label")).toHaveTextContent("查看数据库连接");
     fireEvent.click(getByRole("button"));
     expect(container.querySelector(".bui-tool-label")).toHaveTextContent("查看数据库连接");
     expect(container.innerHTML).not.toContain(call.toolId);

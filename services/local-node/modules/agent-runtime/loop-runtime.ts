@@ -2699,7 +2699,7 @@ export class AgentLoopRuntime {
       (input as { contextLimit?: number }).contextLimit ??
       DEFAULT_CONTEXT_LIMIT;
 
-    let conversationMessages: import("@ai-sdk/provider-utils").ModelMessage[] =
+    let conversationMessages: import("../../infrastructure/llm-runtime/contracts.js").ModelMessage[] =
       [];
 
     const relevantMemories = memoryManager.getRelevantMemories(
