@@ -2,8 +2,11 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
-import { createRustLanguageModel } from "../providers/rust-language-model.js";
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { streamProvider } from "../native-client.js";
+import type { ProviderRequest } from "../contracts.js";
+import { streamRustAgentLoop } from "../../../modules/agent-runtime/rust-agent-loop-client.js";
+import { executePipeline } from "../pipeline.js";
+import { z } from "zod";
 
 beforeAll(ensureTestRuntime);
 const servers: http.Server[] = [];
@@ -13,12 +16,19 @@ afterEach(async () => {
   })));
 });
 type Protocol = "openai" | "openai-responses" | "anthropic";
-async function fixture(protocol: Protocol) {
+async function fixture(protocol: Protocol, failures: number[] = [], maxRetries?: number) {
   const requests: Array<{ url: string; headers: http.IncomingHttpHeaders; body: any }> = [];
   const server = http.createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     requests.push({ url: req.url!, headers: req.headers, body: JSON.parse(body) });
+    const failure = failures[requests.length - 1];
+    if (failure === -1) { res.destroy(); return; }
+    if (failure) {
+      res.writeHead(failure, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "fixture upstream failure" } }));
+      return;
+    }
     res.writeHead(200, { "content-type": "text/event-stream" });
     const event = (type: string, value: object) => res.write(`data: ${JSON.stringify({ type, ...value })}\n\n`);
     if (protocol === "openai") {
@@ -43,18 +53,67 @@ async function fixture(protocol: Protocol) {
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const model = createRustLanguageModel({ providerId: "custom-api:parity", apiFormat: protocol,
-    baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, apiKey: "test-key", headers: { "x-fixture": "custom-header" } }, "fixture");
-  return { requests, model };
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const model: ProviderRequest = { providerId: "custom-api:parity", apiFormat: protocol,
+    baseUrl, apiKey: "test-key", headers: { "x-fixture": "custom-header" }, maxRetries, model: "fixture", prompt: [] };
+  return { requests, model, baseUrl };
 }
-async function consume(model: ReturnType<typeof createRustLanguageModel>, options: Partial<LanguageModelV4CallOptions>) {
-  const { stream } = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "Respond in JSON" }] }], ...options });
+async function consume(model: ProviderRequest, options: Partial<ProviderRequest> = {}) {
   const events = [];
-  for await (const event of stream) events.push(event);
-  expect(events.filter(event => event.type === "error")).toEqual([]);
-  expect(events.filter(event => event.type === "text-delta").map(event => event.delta).join("")).toBe('{"ok":true}');
-  expect(events.at(-1)).toMatchObject({ type: "finish", usage: { inputTokens: { total: 7 }, outputTokens: { total: 3 } } });
+  for await (const event of streamProvider({ ...model, prompt: [{ role: "user", content: [{ type: "text", text: "Respond in JSON" }] }], ...options })) events.push(event);
+  expect(events.flatMap(event => event.type === "text-delta" ? [event.delta] : []).join("")).toBe('{"ok":true}');
+  expect(events.find(event => event.type === "usage")).toMatchObject({ usage: { inputTokens: 7, outputTokens: 3 } });
+  expect(events.at(-1)).toMatchObject({ type: "finish" });
 }
+
+it.each<[Protocol, number]>([["openai", 429], ["openai-responses", 599], ["anthropic", 501]])(
+  "%s retries HTTP %s before streaming a successful response", async (protocol, status) => {
+    const { model, requests } = await fixture(protocol, [status]);
+    await consume(model, {});
+    expect(requests).toHaveLength(2);
+    expect(requests[1].body).toEqual(requests[0].body);
+  }, 10_000,
+);
+
+it("recovers from a dropped upstream connection inside Rust", async () => {
+  const { model, requests } = await fixture("openai", [-1]);
+  await consume(model);
+  expect(requests).toHaveLength(2);
+}, 10_000);
+
+it('preserves a disabled retry budget and the HTTP status across the Rust bridge', async () => {
+  const { model, requests } = await fixture('openai', [503], 0);
+  await expect(consume(model))
+    .rejects.toMatchObject({ statusCode: 503 });
+  expect(requests).toHaveLength(1);
+});
+
+it('does not retry authentication failures', async () => {
+  const { model, requests } = await fixture('anthropic', [401]);
+  await expect(consume(model))
+    .rejects.toMatchObject({ statusCode: 401 });
+  expect(requests).toHaveLength(1);
+});
+
+it('prevents Node from retrying again after the Rust budget is exhausted', async () => {
+  const { model, requests } = await fixture('openai', [503, 429], 1);
+  await expect(consume(model))
+    .rejects.toMatchObject({ statusCode: 429, isRetryable: false, message: expect.stringContaining('retried 1 times') });
+  expect(requests).toHaveLength(2);
+}, 10_000);
+
+it('the native Rust loop reports retries and recovers from an upstream failure', async () => {
+  const { baseUrl, requests } = await fixture('openai', [503]);
+  const events = [];
+  for await (const event of streamRustAgentLoop({ apiFormat: 'openai', baseUrl, apiKey: 'fixture', model: 'fixture',
+    prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] })) events.push(event);
+  expect(events.filter(event => event.type === 'error')).toEqual([]);
+  expect(events.filter(event => event.type === 'retry_status').map(event => event.retry?.phase))
+    .toEqual(['waiting', 'retrying', 'recovered']);
+  expect(events.find(event => event.type === 'retry_status')?.retry).toMatchObject({ maxRetries: 10, attempt: 1, reason: 'upstream' });
+  expect(events.at(-1)?.type).toBe('done');
+  expect(requests).toHaveLength(2);
+}, 10_000);
 
 it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s sends sampling, schema, images and custom headers through Rust", async protocol => {
   const { model, requests } = await fixture(protocol);
@@ -117,17 +176,14 @@ it("cancels an idle upstream when the downstream reader is cancelled", async () 
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const model = createRustLanguageModel({ providerId: "test", apiFormat: "openai", apiKey: "never-return-this-key",
-    headers: { "x-private": "never-return-this-header" }, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` }, "fixture");
-  const result = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "wait" }] }] });
-  expect(JSON.stringify(result.request)).not.toContain("never-return");
-  const reader = result.stream.getReader();
-  for (;;) {
-    const next = await reader.read();
-    expect(next.done).toBe(false);
-    if (next.value?.type === "text-delta") break;
+  const model: ProviderRequest = { providerId: "test", apiFormat: "openai", apiKey: "never-return-this-key", model: "fixture",
+    headers: { "x-private": "never-return-this-header" }, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+    prompt: [{ role: "user", content: [{ type: "text", text: "wait" }] }] };
+  const stream = streamProvider(model);
+  for await (const event of stream) {
+    expect(JSON.stringify(event)).not.toContain("never-return");
+    if (event.type === "text-delta") break;
   }
-  await reader.cancel();
   await upstreamClosed;
 }, 5000);
 
@@ -137,4 +193,15 @@ it("supports Messages top-p without a conflicting temperature", async () => {
   expect(requests[0].body.top_p).toBe(0.6);
   expect(requests[0].body).not.toHaveProperty("temperature");
   expect(requests[0].body.max_tokens).toBeGreaterThan(0);
+});
+
+it("parses structured output in Rust and validates the business shape in Node", async () => {
+  const { baseUrl, requests } = await fixture("openai-responses");
+  const result = await executePipeline({ purpose: "fixture", messages: [{ role: "user", content: "Return json" }] }, {
+    model: "fixture/model", modelId: "fixture", providerId: "fixture", apiFormat: "openai-responses",
+    provider: { id: "fixture", label: "Fixture", npm: "@ai-sdk/openai", env: [], supported: true, models: [] },
+    modelDef: { id: "fixture", label: "Fixture" }, config: { providerId: "fixture", baseUrl, apiKey: "fixture" },
+  }, { kind: "object", schema: z.object({ ok: z.boolean() }) });
+  expect(result).toMatchObject({ output: { ok: true } });
+  expect(requests[0].body.text.format.schema.properties).toEqual({ ok: { type: "boolean" } });
 });

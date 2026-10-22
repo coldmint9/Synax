@@ -1,4 +1,4 @@
-import type { ModelMessage, SystemModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage, SystemModelMessage } from "./contracts.js";
 import type { LlmGatewayRequest } from "./types.js";
 
 const RUNTIME_REMINDER_RE = /^\s*<system-reminder>[\s\S]*<\/system-reminder>\s*$/;

@@ -1,4 +1,4 @@
-import type { SystemModelMessage } from "@ai-sdk/provider-utils";
+import type { SystemModelMessage } from "../../infrastructure/llm-runtime/contracts.js";
 import type { HistoryCacheAnchor } from "../../infrastructure/llm-runtime/cache-policy.js";
 import { createHash } from "node:crypto";
 

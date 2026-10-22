@@ -86,6 +86,43 @@ it('awaits the store commit before reading the created projection', async () => 
   expect(client.uiSnapshot).toHaveBeenCalledWith('s');
   expect(client.seedUi).not.toHaveBeenCalled();
 });
+
+it('does not flush or read the UI projection for process lease mirrors', async () => {
+  const client = remote({
+    snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })),
+    controlCommand: vi.fn(async () => ({ stateJson: encode({}) })),
+  });
+  const facade = new RuntimeFacade(() => client);
+  const ensure = vi.spyOn(facade, 'ensureUiProjection');
+  await facade.controlCommand({
+    sessionId: 's',
+    requestId: 'lease:something:lease_open:none',
+    operation: 'lease_open',
+    payload: { leaseId: 'something' },
+  });
+  expect(ensure).not.toHaveBeenCalled();
+  expect(client.snapshot).toHaveBeenCalledOnce();
+  expect(client.controlCommand).toHaveBeenCalledOnce();
+});
+
+it('shares concurrent reads of the same history collection', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const historyCommand = vi.fn(async () => {
+    await gate;
+    return encode({ items: [{ id: 'tool-1', sessionId: 's' }] });
+  });
+  const facade = new RuntimeFacade(() => remote({ historyCommand }));
+  const first = facade.listHistoryObjects('s', 'list_tool_calls');
+  const second = facade.listHistoryObjects('s', 'list_tool_calls');
+  await Promise.resolve();
+  expect(historyCommand).toHaveBeenCalledOnce();
+  release();
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    [{ id: 'tool-1', sessionId: 's' }],
+    [{ id: 'tool-1', sessionId: 's' }],
+  ]);
+});
 it('does not hide failures or attempt SQL fallback when Rust already owns the projection', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });
   const client = remote({ uiSnapshot: vi.fn(async () => { throw new RuntimeSidecarError({ type: 'error', code: 'STORAGE_UNAVAILABLE', message: 'storage unavailable' }); }) });
@@ -104,11 +141,11 @@ it('submits the terminal run document to Rust and propagates persistence failure
   const run = { id: 'r', sessionId: 's', status: 'failed', completedAt: '2026-10-16T12:00:00.123Z', currentStep: 4, stopReason: 'provider error' } as never;
   const finishRun = vi.fn().mockResolvedValue({ epoch: 2, revision: 3, cursor: 10 });
   const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
-  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), finishRun, historyCommand });
+  const client = remote({ snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })), uiSnapshot: vi.fn(async () => encode({ ...snapshot, session: { id: "s", status: "failed" } })), finishRun, historyCommand });
   const facade = new RuntimeFacade(() => client);
   await facade.finishExecution('s', run);
   expect(finishRun).toHaveBeenCalledWith({ sessionId: 's', requestId: 'finish:r', runId: 'r', status: 'failed', epoch: 1, revision: 2, run });
-  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's', operation: 'reconcile_stream' }));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's', operation: 'append_entities' }));
   finishRun.mockRejectedValueOnce(new Error('fsync unavailable'));
   await expect(facade.finishExecution('s', run)).rejects.toThrow('fsync unavailable');
   expect(updateRun).not.toHaveBeenCalled(); expect(updateSession).not.toHaveBeenCalled();
@@ -175,7 +212,7 @@ it('publishes history entities in a single Rust append command without a Node he
   await expect(facade.persistHistoryObject('s', 'runtime.tool_call', record)).rejects.toThrow('disk unavailable');
 });
 
-it('keeps stream history batches within the control frame and refuses oversized entities explicitly', async () => {
+it('keeps history frames bounded and uploads large entities through verified blobs', async () => {
   const historyCommand = vi.fn().mockResolvedValue(encode({ revision: 1 }));
   const facade = new RuntimeFacade(() => remote({ historyCommand }));
   const chunks = Array.from({ length: 300 }, (_, index) => ({ type: 'message', message: { id: `m-${index}`, sessionId: 's', content: 'x'.repeat(4_000) } }));
@@ -184,7 +221,15 @@ it('keeps stream history batches within the control frame and refuses oversized 
   const requests = historyCommand.mock.calls.map(([input]) => input);
   expect(requests.every(input => input.operation === 'append_entities' && input.payload.objects.length <= 256 && Buffer.byteLength(JSON.stringify(input.payload)) < 1024 * 1024)).toBe(true);
   expect(requests.flatMap(input => input.payload.objects).length).toBe(300);
-  await expect(facade.persistHistoryObject('s', 'runtime.message', { id: 'large', sessionId: 's', content: 'x'.repeat(1024 * 1024) })).rejects.toMatchObject({ code: 'HISTORY_ENTITY_TOO_LARGE' });
+  const beforeUpload = requests.length;
+  await facade.persistHistoryObject('s', 'runtime.message', { id: 'large', sessionId: 's', content: 'x'.repeat(800 * 1024) });
+  const uploaded = historyCommand.mock.calls.slice(beforeUpload).map(([input]) => input);
+  expect(uploaded.map(input => input.operation)).toContain('put_blob_chunk');
+  expect(uploaded.map(input => input.operation)).toContain('put_blob_manifest');
+  expect(uploaded.map(input => input.operation)).toContain('append_entities_blob');
+  expect(uploaded.every(input => Buffer.byteLength(JSON.stringify(input.payload)) < 768 * 1024)).toBe(true);
+  await expect(facade.persistHistoryObject('s', 'runtime.message', { id: 'too-large', sessionId: 's', content: 'x'.repeat(5 * 1024 * 1024) })).rejects.toThrow('4 MiB');
+
 });
 
 it('returns one history page and forwards opaque incremental cursors without hydrating all collections', async () => {

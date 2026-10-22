@@ -1,6 +1,15 @@
 /** 日志保留天数（含当天） */
 export const LOG_RETENTION_DAYS = 7;
 
+/** Local RFC 3339 time with an explicit offset; keep log dates and displayed time aligned. */
+export function formatLogTimestamp(date = new Date()): string {
+  const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+  const offset = -date.getTimezoneOffset();
+  const sign = offset < 0 ? '-' : '+';
+  const absolute = Math.abs(offset);
+  return `${formatLocalDay(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
+}
+
 export function formatLocalDay(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');

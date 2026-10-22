@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ToolSet } from "ai";
+import type { ModelMessage } from "./contracts.js";
+import type { ToolSet } from "./contracts.js";
 import type { LlmGatewayMessage, ResolvedModelSelection } from "./types.js";
 
 type ProviderOptions = ModelMessage["providerOptions"];
-type CacheControl = { type: "ephemeral"; ttl?: "5m" | "1h" };
 type ContentPart = Exclude<LlmGatewayMessage["content"], string>[number];
 
 export interface HistoryCacheAnchor {
@@ -36,21 +35,6 @@ export interface PromptCachePolicyResult {
   tools?: ToolSet;
 }
 
-function cacheControl(options: ProviderOptions): CacheControl | undefined {
-  const value =
-    options?.anthropic?.cacheControl ?? options?.anthropic?.cache_control;
-  if (
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    value.type !== "ephemeral"
-  )
-    return undefined;
-  if (value.ttl !== undefined && value.ttl !== "5m" && value.ttl !== "1h")
-    return undefined;
-  return { type: "ephemeral", ...(value.ttl ? { ttl: value.ttl } : {}) };
-}
-
 /** Only remove cache controls, never signatures, citations, or other providers' metadata. */
 function withoutCache(options: ProviderOptions): ProviderOptions {
   if (!options) return options;
@@ -64,16 +48,6 @@ function withoutCache(options: ProviderOptions): ProviderOptions {
       return [provider, copied];
     }),
   );
-}
-
-function mark(
-  target: MetadataCarrier,
-  value: CacheControl = { type: "ephemeral" },
-): void {
-  target.providerOptions = {
-    ...target.providerOptions,
-    anthropic: { ...target.providerOptions?.anthropic, cacheControl: value },
-  };
 }
 
 function isRuntimeReminder(message: LlmGatewayMessage): boolean {
@@ -252,174 +226,31 @@ export function createHistoryCacheAnchor(
   };
 }
 
-/**
- * Pure request-local policy. Feed BOTH returned messages and tools to the SDK, then
- * call toModelPrompt(messages) without its legacy cache flag. No provider IDs,
- * hostnames, global anchor state, or arbitrary prompt bodies are consulted.
- *
- * Replayed reminders identify the same preceding history boundary as the previous
- * request, even when a whole turn adds >20 content blocks. Compression naturally
- * removes absent boundaries; no stale marker is reattached by position across calls.
- */
-export function applyPromptCachePolicy(
-  messages: readonly LlmGatewayMessage[],
-  options: PromptCachePolicyOptions,
-): PromptCachePolicyResult {
-  const mode = resolvePromptCaching(
-    options.selection.config.options?.promptCaching,
-  );
-  const enabled =
-    mode !== "off" &&
-    options.cacheControl !== false &&
-    options.selection.apiFormat === "anthropic" &&
-    options.selection.provider.npm === "@ai-sdk/anthropic";
-  const candidates: Array<{ target: MetadataCarrier; index: number }> = [];
-  const existing: Array<{ target: MetadataCarrier; value: CacheControl }> = [];
-  const systems: MetadataCarrier[] = [];
-  const staticSystems: MetadataCarrier[] = [];
-  const toolTargets: MetadataCarrier[] = [];
-
-  const copied = messages.map((message, index): LlmGatewayMessage => {
-    const result = {
-      ...message,
-      providerOptions: withoutCache(message.providerOptions),
-    };
-    if (message.role === "system") {
-      if (message.content.length > 0) {
-        systems.push(result);
-        if (!isRuntimeReminder(message)) staticSystems.push(result);
-        const value = cacheControl(message.providerOptions);
-        if (value) existing.push({ target: result, value });
-      }
-      return result as LlmGatewayMessage;
-    }
-    if (typeof message.content === "string") {
-      if (message.content.length > 0) {
-        candidates.push({ target: result, index });
-        const value = cacheControl(message.providerOptions);
-        if (value) existing.push({ target: result, value });
-      }
-      return result as LlmGatewayMessage;
-    }
-    const parts = message.content.map((part, partIndex) => {
-      const target = copyPartWithoutCache(part);
-      let outputCache: CacheControl | undefined;
-      if (part.type === "tool-result") {
-        const output = part.output;
-        if ("providerOptions" in output)
-          outputCache = cacheControl(output.providerOptions);
-        if (output.type === "content")
-          outputCache ??= cacheControl(
-            output.value.find((item) => item.providerOptions != null)
-              ?.providerOptions,
-          );
-      }
-      const eligible = isEligiblePart(part, message.role);
-      if (eligible) {
-        candidates.push({ target, index });
-        const value =
-          cacheControl(
-            "providerOptions" in part ? part.providerOptions : undefined,
-          ) ??
-          outputCache ??
-          (partIndex === message.content.length - 1
-            ? cacheControl(message.providerOptions)
-            : undefined);
-        if (value) existing.push({ target, value });
-      }
-      return target;
-    });
-    return { ...result, content: parts } as LlmGatewayMessage;
-  });
-
-  const tools =
-    options.tools &&
-    (Object.fromEntries(
-      Object.entries(options.tools).map(([name, tool]) => {
-        const target = {
-          ...tool,
-          providerOptions: withoutCache(tool.providerOptions),
-        };
-        toolTargets.push(target);
-        const value = cacheControl(tool.providerOptions);
-        if (value && tool.type !== "provider") existing.push({ target, value });
-        return [name, target];
-      }),
-    ) as ToolSet | undefined);
-
-  if (!enabled) return { messages: copied, ...(tools ? { tools } : {}) };
-
-  const reminders = messages.flatMap((message, index) =>
-    isRuntimeReminder(message) ||
-    options.runtimeReminderIndices?.includes(index)
-      ? [index]
-      : [],
-  );
-  // Without a Native reminder, exclude the latest user input (and everything
-  // after it) rather than guessing that a dynamic user tail is stable history.
-  const latest =
-    reminders.at(-1) ??
-    messages.findLastIndex((message) => message.role === "user");
-  const previous = reminders.at(-2);
-  const before = (index: number | undefined) =>
-    index === undefined
-      ? undefined
-      : candidates.findLast((candidate) => candidate.index < index)?.target;
-  // TTL ordering follows actual wire hierarchy, not SDK validation traversal:
-  // tools, then system, then messages. Honor explicit TTL only if compatible with
-  // higher-priority choices. Never upgrade an implicit 5m marker to paid 1h.
-  const wireOrder = new Map(
-    [...toolTargets, ...systems, ...candidates.map((item) => item.target)].map(
-      (target, index) => [target, index],
-    ),
-  );
-  const existingValues = new Map(
-    existing.map((item) => [item.target, item.value]),
-  );
-  const chosen = new Map<MetadataCarrier, CacheControl>();
-  const add = (target: MetadataCarrier | undefined, value?: CacheControl) => {
-    if (!target || chosen.has(target) || chosen.size >= 4) return;
-    const control = value ??
-      existingValues.get(target) ?? { type: "ephemeral" };
-    const position = wireOrder.get(target)!;
-    const long = control.ttl === "1h";
-    for (const [other, otherControl] of chosen) {
-      const otherPosition = wireOrder.get(other)!;
-      if (
-        (long && otherPosition < position && otherControl.ttl !== "1h") ||
-        (!long && otherPosition > position && otherControl.ttl === "1h")
-      )
-        return;
-    }
-    chosen.set(target, control);
-    mark(target, control);
+/** Compatibility entry for callers inspecting prepared prompts. Policy lives in Rust. */
+export async function applyPromptCachePolicy(messages: readonly LlmGatewayMessage[], options: PromptCachePolicyOptions): Promise<PromptCachePolicyResult> {
+  const { prepareProvider } = await import("./native-client.js");
+  const { asSchema } = await import("./tool-schema.js");
+  const tools = await Promise.all(Object.entries(options.tools ?? {}).map(async ([name, tool]) => ({ ...tool, name,
+    inputSchema: await asSchema(tool.inputSchema).jsonSchema })));
+  const previousAnchorMatches = !options.previousHistoryAnchor || inspectHistoryCacheAnchor(messages, options.previousHistoryAnchor).historyAnchorStatus === "matched";
+  const prepared = await prepareProvider({ apiFormat: options.selection.apiFormat, model: options.selection.modelId,
+    prompt: [...messages], tools, cachePolicy: { adapter: options.selection.provider.npm, enabled: options.cacheControl,
+      mode: resolvePromptCaching(options.selection.config.options?.promptCaching), previousAnchorMatches,
+      chatBreakpoints: options.selection.config.options?.chatCacheBreakpoints,
+      runtimeReminderIndices: options.runtimeReminderIndices } });
+  // Native metadata is copied onto original host values so URL/byte references keep their identity.
+  const restore = (original: unknown, native: unknown): unknown => {
+    if (Array.isArray(original) && Array.isArray(native)) return original.map((item, i) => restore(item, native[i]));
+    if (!original || typeof original !== "object" || !native || typeof native !== "object") return original;
+    const source = original as Record<string, unknown>, result = { ...source };
+    const target = native as Record<string, unknown>;
+    if ("providerOptions" in target || "providerOptions" in source) result.providerOptions = target.providerOptions;
+    for (const key of ["content", "output", "value"]) if (key in source) result[key] = restore(source[key], target[key]);
+    return result;
   };
-  const oldTarget = before(previous);
-  const oldAnchorMatches =
-    !options.previousHistoryAnchor ||
-    (previous !== undefined &&
-      options.previousHistoryAnchor.version === 1 &&
-      options.previousHistoryAnchor.fingerprint ===
-        createHistoryCacheAnchor(messages, previous).fingerprint);
-  add(staticSystems.at(-1));
-  if (oldAnchorMatches) add(oldTarget);
-  add(before(latest));
-  for (const item of existing) {
-    if (!oldAnchorMatches && item.target === oldTarget) continue;
-    // Do not retain caller-supplied markers on the latest runtime reminder/tail,
-    // even when the Native reminder is a system block rather than a user block.
-    if (
-      latest >= 0 &&
-      item.target === copied[latest] &&
-      isRuntimeReminder(messages[latest])
-    ) continue;
-    const candidate = candidates.find(
-      (candidate) => candidate.target === item.target,
-    );
-    if (candidate && (latest < 0 || candidate.index >= latest)) continue;
-    add(item.target, item.value);
-  }
-  return { messages: copied, ...(tools ? { tools } : {}) };
+  return { messages: restore(messages, prepared.prompt) as LlmGatewayMessage[],
+    ...(options.tools ? { tools: Object.fromEntries(Object.entries(options.tools).map(([name, tool], index) =>
+      [name, restore(tool, prepared.tools?.[index])])) as ToolSet } : {}) };
 }
 
 /** Run after media hydration/compilation, in the same representation the policy sees. */

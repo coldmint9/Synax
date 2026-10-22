@@ -379,7 +379,7 @@ describe("desktop platform contract", () => {
     try {
       const starting = startSidecar();
       const rejected = expect(starting).rejects.toThrow("startup timed out");
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       await rejected;
       expect(proc.kill).toHaveBeenCalledOnce();
       expect(getSidecarPort()).toBe(0);
@@ -387,6 +387,20 @@ describe("desktop platform contract", () => {
       vi.useRealTimers();
     }
     expect(await startSidecar()).toBe(49152);
+  });
+
+  it("allows existing-data recovery to finish after the former 30-second deadline", async () => {
+    vi.useFakeTimers();
+    const proc = child();
+    spawn.mockImplementationOnce(() => proc);
+    try {
+      const starting = startSidecar();
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(getSidecarPort()).toBe(0);
+      proc.stdout.write("SYNAX_DESKTOP_READY:49152\n");
+      expect(await starting).toBe(49152);
+    } finally { vi.useRealTimers(); }
   });
 
   it("rejects a broken sidecar immediately and cleans it up", async () => {

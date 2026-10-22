@@ -1,5 +1,8 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { matchedRoutes } from 'hono/route';
+import { createConversationGitRoutes } from './conversation-git.js';
+import { createRemotePrRoutes } from './remote-pr.js';
 import { streamSSE } from "hono/streaming";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
@@ -86,7 +89,6 @@ import {
   RUNTIME_PROTOCOL_SCHEMA,
   RUNTIME_PROTOCOL_VERSION,
 } from "../../modules/agent-runtime/runtime-protocol.js";
-import { acknowledgeRuntimeRecovery } from "../../modules/agent-runtime/runtime-recovery.js";
 import {
   deleteSessionBackgroundProcess,
   listSessionBackgroundProcesses,
@@ -99,7 +101,6 @@ import {
 } from "../../modules/agent-runtime/session-commit-message-stream.js";
 import { resolveSessionConfiguredContextLimit } from "../../modules/agent-runtime/session-context-limit.js";
 import {
-  getSessionEnvironment,
   getSessionEnvironmentFile,
   getSessionEnvironmentFileMedia,
   getSessionInputSourceContentFromRecord,
@@ -109,6 +110,13 @@ import {
   saveSessionEnvironmentFile,
   trashSessionEnvironmentFile,
 } from "../../modules/agent-runtime/session-environment.js";
+import {
+  getSessionEnvironmentInputs,
+  getSessionEnvironmentOutputs,
+  getSessionEnvironmentRoots,
+  getSessionEnvironmentSubagents,
+} from "../../modules/agent-runtime/session-environment-cards.js";
+import { getWorkspaceGitChanges } from "../../modules/agent-runtime/workspace-git-changes.js";
 import {
   createSessionGitBranch,
   listSessionGitBranches,
@@ -129,6 +137,7 @@ import {
   projectSessionSummary,
 } from "../../modules/agent-runtime/session-projection.js";
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
+import { projectAnalytics } from "../../modules/agent-runtime/analytics-service.js";
 import { RuntimeSidecarError } from "../../modules/agent-runtime/sidecar/sidecar-client.js";
 import {
   resolveProjectWorkspaceLocation,
@@ -160,20 +169,36 @@ import {
   workspaceRootLocation,
 } from "../../modules/project-workspace.js";
 import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
+import { ensureSessionRecovered } from '../../modules/agent-runtime/session-recovery.js';
+import { subagentTemplateRoutes } from "./subagent-templates.js";
 export const agentRuntimeRoutes = new Hono();
+agentRuntimeRoutes.route("/subagent-templates", subagentTemplateRoutes);
 // Load the execution working set at the HTTP boundary, and acknowledge only
 // after all mutations have reached Rust.
 agentRuntimeRoutes.use('*', async (c, next) => {
-  const id = c.req.param('sessionId') ?? (c.req.path.startsWith('/sessions/') ? c.req.param('id') : undefined);
+  if (!matchedRoutes(c).some(route => route.method !== 'ALL')) return next();
+  // Wildcard middleware runs before Hono binds parameters for the final route.
+  const segment = /\/sessions\/([^/]+)/.exec(c.req.path)?.[1];
+  const id = segment && !['search', 'badges', 'archive-inactive', 'clear-inactive'].includes(segment)
+    ? decodeURIComponent(segment) : undefined;
   try {
     // History queries already read the authoritative Rust index. Hydrating the
     // execution working set here would drain every history page before paging.
-    const historyRead = c.req.method === 'GET' && /\/(history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
-    await agentRuntimeStore.hydrateSessions();
-    if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.hydrateSession(id);
+    if (id && !['search', 'badges'].includes(id)) {
+      await ensureSessionRecovered(id);
+      await agentRuntimeStore.hydrateSessionSummary(id);
+      if (c.req.method !== 'GET' && !c.req.path.endsWith('/runtime-ticket')) await agentRuntimeStore.hydrateSession(id);
+      if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
+    } else if (c.req.method !== 'GET' && /\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
+      // Collection reads use the authoritative summary index directly. Loading
+      // the execution mirror first would walk the same index a second time.
+      await agentRuntimeStore.hydrateSessions();
+    }
     await next();
-    await agentRuntimeStore.flush();
+    if (id && !['search', 'badges'].includes(id)) await agentRuntimeStore.flushSession(id);
+    else if (c.req.method !== 'GET') await agentRuntimeStore.flush();
   } catch (error) { return runtimeError(c, error); }
 });
 
@@ -340,8 +365,10 @@ for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
     if (id) {
       {
         try {
+          const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
           const projected = projectSessionState(
-            (await runtimeFacade.uiSnapshotAuthoritative(id)).session as never,
+            (historyRead ? await runtimeFacade.sessionSummaryAuthoritative(id) :
+              (await runtimeFacade.uiSnapshotAuthoritative(id)).session) as never,
           );
           if (
             projected.sessionMetadata?.archivedAt ||
@@ -515,6 +542,9 @@ agentRuntimeRoutes.get("/media/models", (c) => {
     return runtimeError(c, error);
   }
 });
+agentRuntimeRoutes.route('/sessions/:sessionId/git-tasks', createConversationGitRoutes());
+agentRuntimeRoutes.route('/sessions/:sessionId/git-pr', createRemotePrRoutes());
+
 agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
   try {
     const session = agentSessionRuntime.get(c.req.param("sessionId"));
@@ -698,7 +728,7 @@ agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
 agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
-      kind: z.enum(["skill", "mcp", "file"]),
+      kind: z.enum(["skill", "mcp", "file", "subagent"]),
       q: z.string().max(256).default(""),
       sessionId: z.string().optional(),
     })
@@ -740,6 +770,13 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
   const parsed = createSessionRequestSchema.safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
   try {
+    const ancestors = new Set<string>();
+    for (let parentId = parsed.data.parentSessionId; parentId && !ancestors.has(parentId);) {
+      ancestors.add(parentId);
+      await ensureSessionRecovered(parentId);
+      await agentRuntimeStore.hydrateSession(parentId);
+      parentId = agentRuntimeStore.getSession(parentId).parentSessionId ?? undefined;
+    }
     let projectLocation = resolveProjectWorkspaceLocation(
       parsed.data.projectId,
     );
@@ -907,6 +944,13 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
       return runtimeError(c, error);
     }
   }
+});
+agentRuntimeRoutes.get("/sessions/:sessionId/summary", async (c) => {
+  try {
+    return c.json({ session: projectSessionSummary(projectSessionState(
+      await runtimeFacade.sessionSummaryAuthoritative(c.req.param("sessionId")),
+    )) });
+  } catch (error) { return runtimeError(c, error); }
 });
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
@@ -1527,22 +1571,6 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
     return runtimeError(c, error);
   }
 });
-agentRuntimeRoutes.post("/sessions/:sessionId/recovery", async (c) => {
-  const body = await readJson(c);
-  if (!body.ok) return c.json({ error: body.error }, 400);
-  try {
-    const id = c.req.param("sessionId");
-    await runCoordinator.reconcileFailedStop(id);
-    await acknowledgeRuntimeRecovery(id);
-    return c.json({
-      session: projectSessionState(
-        (await runtimeFacade.uiSnapshotAuthoritative(id)).session,
-      ),
-    });
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
 agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1621,6 +1649,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
             "context_compaction_failed",
             "context_compaction_state",
             "media_job",
+            "conversation_git_messages",
           ].includes(event.type)
         )
           return;
@@ -1855,54 +1884,134 @@ agentRuntimeRoutes.delete(
     }
   },
 );
-agentRuntimeRoutes.get("/sessions/:sessionId/environment", async (c) => {
+/**
+ * Workspace-scoped Git changes.
+ *
+ * Every session on the same checkout reads this one resource, so switching
+ * sessions is a cache hit instead of another `git status`. The client sends the
+ * revision it already holds; a match answers `{ unchanged: true }` with no file
+ * list at all.
+ */
+agentRuntimeRoutes.get("/projects/:projectId/git-changes", async (c) => {
   try {
-    const sessionId = c.req.param("sessionId");
-    {
-      const [snapshot, tools, messages, projections, assets] =
-        await Promise.all([
-          runtimeFacade.uiSnapshotAuthoritative(sessionId),
-          runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
-          runtimeFacade.listMessageHistory(sessionId),
-          runtimeFacade.listSessionProjection(),
-          runtimeFacade.listBoundAssets(sessionId),
-        ]);
-      const session = projectSessionState(
-        snapshot.session as never,
-      ) as AgentSession;
-      const children = projections
-        .map((item) => projectSessionState(item as never) as AgentSession)
-        .filter(
-          (item) =>
-            !item.sessionMetadata?.archivedAt &&
-            !item.sessionMetadata?.deletedAt,
-        )
-        .filter(
-          (item) =>
-            item.parentSessionId === sessionId ||
-            session.childSessionIds.includes(item.id),
-        );
-      return c.json(
-        await getSessionEnvironment(sessionId, {
-          session,
-          toolCalls: tools as ToolCallRecord[],
-          messages: messages as AgentRuntimeMessage[],
-          children,
-          assetNames: new Map(
-            (
-              assets as Array<{
-                id: string;
-                filename: string;
-              }>
-            ).map((asset) => [asset.id, asset.filename]),
-          ),
-        }),
-      );
-    }
+    const changes = await getWorkspaceGitChanges({
+      projectId: c.req.param("projectId"),
+      sessionId: c.req.query("sessionId") || undefined,
+      clientRevision: c.req.query("revision") || undefined,
+    });
+    c.header("Cache-Control", "no-store");
+    return c.json(changes);
   } catch (error) {
     return runtimeError(c, error);
   }
 });
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/roots",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentRoots(sessionId, async () => {
+          const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/subagents",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentSubagents(sessionId, async () => {
+          const [snapshot, projections] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listSessionProjection(),
+          ]);
+          const session = projectSessionState(
+            snapshot.session as never,
+          ) as AgentSession;
+          const children = projections
+            .map((item) => projectSessionState(item as never) as AgentSession)
+            .filter(
+              (item) =>
+                !item.sessionMetadata?.archivedAt &&
+                !item.sessionMetadata?.deletedAt,
+            )
+            .filter(
+              (item) =>
+                item.parentSessionId === sessionId ||
+                session.childSessionIds.includes(item.id),
+            );
+          return { session, children };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/inputs",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentInputs(sessionId, async () => {
+          const [snapshot, tools, messages, assets] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+            runtimeFacade.listMessageHistory(sessionId),
+            runtimeFacade.listBoundAssets(sessionId),
+          ]);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+            toolCalls: tools as ToolCallRecord[],
+            messages: messages as AgentRuntimeMessage[],
+            assetNames: new Map(
+              (
+                assets as Array<{
+                  id: string;
+                  filename: string;
+                }>
+              ).map((asset) => [asset.id, asset.filename]),
+            ),
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/outputs",
+  async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      return c.json(
+        await getSessionEnvironmentOutputs(sessionId, async () => {
+          const [snapshot, tools] = await Promise.all([
+            runtimeFacade.uiSnapshotAuthoritative(sessionId),
+            runtimeFacade.listHistoryObjects(sessionId, "list_tool_calls"),
+          ]);
+          return {
+            session: projectSessionState(snapshot.session as never) as AgentSession,
+            toolCalls: tools as ToolCallRecord[],
+          };
+        }),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/input-source/:toolCallId",
   async (c) => {
@@ -2227,6 +2336,19 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
     return runtimeError(c, error);
   }
 });
+/** Project-wide runtime analytics from incremental, persisted aggregates.
+ * Legacy sessions are mirrored once from authoritative stats, then kept in
+ * sync by the session store's step/run/tool hooks. */
+agentRuntimeRoutes.get("/analytics", async (c) => {
+  const projectId = (c.req.query("projectId") ?? "").trim();
+  if (!projectId || projectId.length > 128)
+    return c.json({ error: "projectId is required." }, 400);
+  try {
+    return c.json(await projectAnalytics(projectId));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 agentRuntimeRoutes.get("/sessions/:sessionId/stats", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
@@ -2330,7 +2452,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/permissions", async (c) => {
     const session = projectSessionState(
       (await runtimeFacade.uiSnapshotAuthoritative(sessionId)).session as never,
     );
-    if (session.sessionMetadata?.runtimeControl)
+    if (runCoordinator.isStopping(sessionId) || session.sessionMetadata?.runtimeControl)
       return c.json(
         { error: "Wait for execution shutdown before changing permissions." },
         409,
@@ -2596,24 +2718,31 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
       patch?: Record<string, unknown>;
     }) => {
       if (lifetime.signal.aborted) return;
-      const current =
+      // `projectId` lets workspace-scoped consumers (Git changes, cards) drop
+      // the right cache without resolving the session first.
+      const current = agentRuntimeStore.tryGetSession(event.sessionId);
+      const needsProjection =
         event.patch &&
         ("status" in event.patch ||
           "activeRunId" in event.patch ||
-          "sessionMetadata" in event.patch)
-          ? agentRuntimeStore.tryGetSession(event.sessionId)
-          : undefined;
-      const projected = current ? projectSessionState(current) : undefined;
-      const wire = projected
-        ? {
-            ...event,
-            patch: {
-              ...event.patch,
-              status: projected.status,
-              activeRunId: projected.activeRunId,
-            },
-          }
-        : event;
+          "sessionMetadata" in event.patch);
+      const projected = current && needsProjection
+        ? projectSessionState(current)
+        : undefined;
+      const projectId = current?.projectId;
+      const wire = {
+        ...(projected
+          ? {
+              ...event,
+              patch: {
+                ...event.patch,
+                status: projected.status,
+                activeRunId: projected.activeRunId,
+              },
+            }
+          : event),
+        ...(projectId ? { projectId } : {}),
+      };
       stream
         .writeSSE({ event: event.type, data: JSON.stringify(wire) })
         .catch(lifetime.stop);
@@ -2654,7 +2783,7 @@ agentRuntimeRoutes.post(
     try {
       const sessionId = c.req.param("sessionId");
       if (
-        agentRuntimeStore.getSession(sessionId).sessionMetadata?.runtimeControl
+        runCoordinator.isStopping(sessionId) || agentRuntimeStore.getSession(sessionId).sessionMetadata?.runtimeControl
       )
         return c.json(
           { error: "Execution is stopping or requires recovery." },
@@ -2997,6 +3126,16 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               checkpointId: input.checkpointId,
               revision: input.revision,
               requestId: input.requestId,
+              // Forking only reads the source. Do not force a running source
+              // through the rollback fence or reject the copy because its
+              // append-only head advanced after the preview.
+              allowSourceChanges: [
+                "stopping",
+                "running",
+                "queued",
+                "waiting_permission",
+                "waiting_input",
+              ].includes(source.status),
             });
             const updated = await runtimeFacade.sessionPatch(
               target.id,

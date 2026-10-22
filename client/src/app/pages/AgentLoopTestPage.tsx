@@ -12,7 +12,6 @@ import { useAgentSessionStore } from "../../features/agent-workspace/state/agent
 import { useShellStore } from "../../shared/state/shellStore";
 import { useSessionLiveStream } from "../../features/agent-workspace/useSessionLiveStream";
 import { AgentConversationView } from "../../features/agent-workspace/AgentConversationView";
-import { SessionLiveTurn } from "../../features/agent-workspace/SessionLiveTurn";
 import {
   isProviderNotConfiguredError,
   LlmProviderRequiredBanner,
@@ -61,8 +60,6 @@ export default function AgentLoopTestPage() {
     messages: storeMessages,
     childSessions,
     streamingStepId,
-    streamingLive,
-    streamingCompletedSteps,
   } = sessionStore;
 
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
@@ -215,18 +212,11 @@ export default function AgentLoopTestPage() {
                   steps={steps}
                   toolCalls={toolCalls}
                   messages={storeMessages}
+                  unifiedLive
                   childSessions={
                     childSessions[sessionIdRef.current ?? ""] ?? []
                   }
                   excludeStepId={streamingStepId}
-                  liveTurn={
-                    <SessionLiveTurn
-                      steps={steps}
-                      streamingStepId={streamingStepId}
-                      streamingLive={streamingLive}
-                      streamingCompletedSteps={streamingCompletedSteps}
-                    />
-                  }
                 />
               </div>
 

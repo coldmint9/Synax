@@ -142,6 +142,69 @@ it("preserves the live reply through snapshot, persistence and the next reasonin
   expect(screen.queryByTestId("first:content:0")).toBe(original);
 });
 
+it("uses a same-step snapshot as the live row seed without duplicating it", () => {
+  store.setState({
+    streamingStepId: "first",
+    streamingLive: EMPTY_STREAMING_BUFFERS,
+    streamingCompletedSteps: [
+      {
+        stepId: "first",
+        stepIndex: 1,
+        blocks: [{ type: "text", content: "Seeded answer" }],
+      },
+    ],
+  });
+  const { rerender } = render(
+    <SessionStaticTimeline {...props} excludeStepId="first" />,
+  );
+  expect(screen.getAllByTestId("first:content:0")).toHaveLength(1);
+  expect(screen.getByText(/Seeded answer/)).toBeTruthy();
+
+  act(() =>
+    store.setState({
+      streamingLive: {
+        ...EMPTY_STREAMING_BUFFERS,
+        pendingText: " continued",
+      },
+    }),
+  );
+  rerender(<SessionStaticTimeline {...props} excludeStepId="first" />);
+  expect(screen.getAllByTestId("first:content:0")).toHaveLength(1);
+  expect(screen.getByText(/continued/)).toBeTruthy();
+});
+
+it("keeps a persisted reply inside the parked snapshot row until retirement", () => {
+  const reply = {
+    ...history,
+    id: "persisted-first",
+    role: "assistant" as const,
+    stepId: "first",
+    runId: "r",
+    content: "Answer",
+    metadata: {},
+  };
+  store.setState({
+    streamingStepId: null,
+    streamingLive: EMPTY_STREAMING_BUFFERS,
+    streamingCompletedSteps: [
+      {
+        stepId: "first",
+        stepIndex: 1,
+        runId: "r",
+        blocks: [{ type: "text", content: "Answer" }],
+      },
+    ],
+  });
+  render(
+    <SessionStaticTimeline
+      {...props}
+      messages={[history, reply]}
+      excludeStepId={null}
+    />,
+  );
+  expect(screen.getAllByText(/Answer/)).toHaveLength(1);
+});
+
 it.each([false, true])("preserves reply nodes when persisted reasoning changes the block offset (live reasoning: %s)", (hadReasoning) => {
   store.setState({
     streamingStepId: "first",

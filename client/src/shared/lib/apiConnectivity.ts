@@ -79,15 +79,12 @@ export const useApiConnectivityStore = create<ApiConnectivityState>((set, get) =
 
 export { createOfflineError, isOfflineError } from './appError'
 
-export function notifyConnectivityFailure(message: string, bump = true): void {
-  useNotificationStore.getState().pushAggregated({
-    id: API_CONNECTIVITY_NOTIFICATION_ID,
-    type: 'warning',
-    message,
-    duration: 0,
-    bump,
-  })
-}
+/**
+ * Connectivity failures are represented by the persistent header indicator.
+ * Keep this export for callers compiled against the previous API, but never
+ * turn a transport outage into a toast.
+ */
+export function notifyConnectivityFailure(_message: string, _bump = true): void {}
 
 let pendingProbe: Promise<boolean> | null = null
 let resumeRequested = false

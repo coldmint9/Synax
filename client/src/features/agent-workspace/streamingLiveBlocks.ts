@@ -109,6 +109,9 @@ export function applyToolCall(
   let next = state;
   next = flushThinking(next);
   if (next.pendingText.trim()) next = flushText(next);
+  if (next.pendingToolCalls.some(call => call.id === toolCall.id)) {
+    return { ...next, pendingToolCalls: next.pendingToolCalls.map(call => call.id === toolCall.id ? toolCall : call) };
+  }
   return {
     ...next,
     pendingToolCalls: [...next.pendingToolCalls.slice(-31), toolCall],
@@ -149,7 +152,7 @@ export function hasStreamingContent(state: StreamingLiveBuffers): boolean {
   return (
     state.blocks.length > 0 ||
     hasDisplayableReasoning(state.pendingThinking) ||
-    Boolean(state.pendingText) ||
+    Boolean(state.pendingText.trim()) ||
     state.pendingToolCalls.length > 0
   );
 }

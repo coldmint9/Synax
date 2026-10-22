@@ -132,6 +132,66 @@ describe("buildConversationTimeline", () => {
     expect(buildConversationTimeline([makeRun()], [makeStep()], [reply], [], [], { excludeStepId: STEP_ID })).toEqual([]);
   });
 
+  it("does not reclassify a persisted live-step reply as an orphan", () => {
+    const reply = makeMessage({
+      id: "live-reply",
+      role: "assistant",
+      stepId: STEP_ID,
+      content: "The answer is still streaming.",
+      metadata: {},
+    });
+    expect(
+      buildConversationTimeline(
+        [makeRun({ status: "running" })],
+        [makeStep({ status: "running", completedAt: null })],
+        [reply],
+        [],
+        [],
+        { excludeStepId: STEP_ID },
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not duplicate replies parked in a completed live snapshot", () => {
+    const reply = makeMessage({
+      id: "parked-reply",
+      role: "assistant",
+      stepId: STEP_ID,
+      content: "Already visible from the live snapshot.",
+      metadata: {},
+    });
+    expect(
+      buildConversationTimeline(
+        [makeRun()],
+        [],
+        [reply],
+        [],
+        [],
+        { excludeStepIds: [STEP_ID] },
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not duplicate a run-level reply while its live run is parked", () => {
+    const reply = makeMessage({
+      id: "parked-run-reply",
+      role: "assistant",
+      stepId: null,
+      content: "Run-level answer already visible.",
+      metadata: {},
+    });
+    expect(
+      buildConversationTimeline(
+        [makeRun()],
+        [],
+        [reply],
+        [],
+        [],
+        { excludeRunIds: [RUN_ID] },
+      ),
+    ).toEqual([]);
+  });
+
   it("places user input before the linked agent turn", () => {
     const timeline = buildConversationTimeline(
       [makeRun()],

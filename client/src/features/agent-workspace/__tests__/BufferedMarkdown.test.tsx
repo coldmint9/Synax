@@ -12,7 +12,7 @@ describe("BufferedMarkdown", () => {
     );
 
     expect(container.querySelector("h1")).not.toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(40));
+    act(() => vi.advanceTimersByTime(200));
     expect(container.querySelector("h1")).toHaveTextContent("Answer");
     // The line without its newline yet stays visible as a plain-text tail.
     expect(container.querySelector(".markdown-stream-tail")).toHaveTextContent(
@@ -28,6 +28,10 @@ describe("BufferedMarkdown", () => {
       <BufferedMarkdown content={paragraph.slice(0, 12)} isStreaming />,
     );
     act(() => vi.advanceTimersByTime(40));
+    const initial = container.textContent ?? "";
+    expect(initial.length).toBeGreaterThan(0);
+    expect(initial.length).toBeLessThan(12);
+    act(() => vi.advanceTimersByTime(160));
     expect(container.querySelector(".markdown-stream-tail")).toHaveTextContent(
       paragraph.slice(0, 12),
     );
@@ -35,13 +39,13 @@ describe("BufferedMarkdown", () => {
     // Tokens keep arriving well within the old idle window: each burst must
     // become visible, not wait for the paragraph's closing newline.
     rerender(<BufferedMarkdown content={paragraph.slice(0, 60)} isStreaming />);
-    act(() => vi.advanceTimersByTime(40));
+    act(() => vi.advanceTimersByTime(200));
     expect(container.querySelector(".markdown-stream-tail")).toHaveTextContent(
       paragraph.slice(0, 60),
     );
 
     rerender(<BufferedMarkdown content={paragraph} isStreaming />);
-    act(() => vi.advanceTimersByTime(40));
+    act(() => vi.advanceTimersByTime(200));
     expect(container).toHaveTextContent(paragraph);
 
     // Once the stream ends the tail is promoted into parsed Markdown.
@@ -51,7 +55,7 @@ describe("BufferedMarkdown", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps one steady heartbeat regardless of how deltas arrive", () => {
+  it("shares a pending animation frame across arriving deltas and stops when caught up", () => {
     vi.useFakeTimers();
     const { container, rerender } = render(
       <BufferedMarkdown content="one" isStreaming />,
@@ -59,12 +63,16 @@ describe("BufferedMarkdown", () => {
     expect(vi.getTimerCount()).toBe(1);
 
     // Deltas arriving mid-tick must not stack extra timers or push the
-    // reveal back: the first tick reveals the latest text.
+    // reveal back: the first frame begins revealing the latest text.
     rerender(<BufferedMarkdown content="one two" isStreaming />);
     rerender(<BufferedMarkdown content="one two three" isStreaming />);
     expect(vi.getTimerCount()).toBe(1);
     act(() => vi.advanceTimersByTime(40));
+    expect(container.textContent!.length).toBeGreaterThan(0);
+    expect(container.textContent!.length).toBeLessThan("one two three".length);
+    act(() => vi.advanceTimersByTime(160));
     expect(container).toHaveTextContent("one two three");
+    expect(vi.getTimerCount()).toBe(0);
 
     // The heartbeat stops with the stream.
     rerender(<BufferedMarkdown content="one two three" isStreaming={false} />);

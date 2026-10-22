@@ -19,4 +19,11 @@ describe('applyPermissionOverrides', () => {
     expect(merged.find(r => r.gate === 'write')?.action).toBe('allow')
     expect(merged.find(r => r.gate === 'shell')?.action).toBe('deny')
   })
+  it('honors explicit restrictions even when the profile grants a wildcard', () => {
+    const merged = applyPermissionOverrides([{ gate: '*', pattern: '*', action: 'allow' }], { write: 'deny', task: 'deny' })
+    expect(merged).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: 'write', pattern: '*', action: 'deny' }),
+      expect.objectContaining({ gate: 'task', pattern: '*', action: 'deny' }),
+    ]))
+  })
 })

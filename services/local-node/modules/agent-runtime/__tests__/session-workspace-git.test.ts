@@ -7,28 +7,38 @@ import type { ProjectWorkspaceRoot } from '../../project-workspace.js'
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
+  tryGetSession: vi.fn(),
   listToolCalls: vi.fn(),
   resolveSessionWorkspaceRoots: vi.fn(),
+  resolveWorkspaceRootsFromSession: vi.fn(),
   generateGatewayTextResult: vi.fn(),
   startAuxUsage: vi.fn(),
   finishAuxUsage: vi.fn(),
 }))
 
 vi.mock('../session-store.js', () => ({
-  agentRuntimeStore: { getSession: mocks.getSession, listMessages: () => [], listToolCalls: mocks.listToolCalls },
+  agentRuntimeStore: {
+    getSession: mocks.getSession,
+    tryGetSession: mocks.tryGetSession,
+    listMessages: () => [],
+    listToolCalls: mocks.listToolCalls,
+  },
 }))
-vi.mock('../tools/workspace.js', () => ({ resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots }))
+vi.mock('../tools/workspace.js', () => ({
+  resolveSessionWorkspaceRoots: mocks.resolveSessionWorkspaceRoots,
+  resolveWorkspaceRootsFromSession: mocks.resolveWorkspaceRootsFromSession,
+}))
 vi.mock('../../../infrastructure/llm-runtime/gateway.js', () => ({ generateGatewayTextResult: mocks.generateGatewayTextResult }))
 vi.mock('../usage-projection.js', () => ({ startAuxUsage: mocks.startAuxUsage, finishAuxUsage: mocks.finishAuxUsage }))
 vi.mock('../../../infrastructure/runtime/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn() } }))
 
 import {
-  getSessionEnvironment,
   getSessionEnvironmentFile,
   getSessionEnvironmentFileMedia,
   saveSessionEnvironmentFile,
   invalidateSessionEnvironment,
 } from '../session-environment.js'
+import { getWorkspaceGitChanges } from '../workspace-git-changes.js'
 import { commitSessionWorkspace } from '../session-git-commit.js'
 
 const sessionId = 'multi-root-workspace-git-test'
@@ -69,6 +79,8 @@ function createRepository(id: string, role: ProjectWorkspaceRoot['role']): Proje
   return root
 }
 
+const readWorkspace = () => getWorkspaceGitChanges({ projectId: primary.id, sessionId })
+
 function repositoryState(root: ProjectWorkspaceRoot) {
   return {
     head: git(root, 'rev-parse', 'HEAD').trim(),
@@ -90,9 +102,11 @@ beforeEach(() => {
   vi.stubEnv('GIT_OPTIONAL_LOCKS', '0')
   primary = createRepository('primary', 'primary')
   reference = createRepository('reference', 'reference')
-  mocks.getSession.mockReturnValue({
+  const sessionRecord = {
     id: sessionId, projectId: primary.id, activeRunId: null, childSessionIds: [],
-  })
+  }
+  mocks.getSession.mockReturnValue(sessionRecord)
+  mocks.tryGetSession.mockReturnValue(sessionRecord)
   mocks.listToolCalls.mockReturnValue([])
   mocks.resolveSessionWorkspaceRoots.mockReturnValue([primary, reference])
 })
@@ -112,7 +126,7 @@ afterEach(() => {
 
 describe('session workspace Git roots', () => {
   it('reports both repositories and resolves the same relative file path within the selected root', async () => {
-    const environment = await getSessionEnvironment(sessionId)
+    const environment = await readWorkspace()
 
     expect(mocks.resolveSessionWorkspaceRoots).toHaveBeenCalledWith(sessionId, primary.id)
     expect(environment.repositories).toHaveLength(2)
@@ -205,8 +219,8 @@ describe('session workspace Git roots', () => {
   })
 
   it('commits the selected root only, then lets the other dirty root commit independently', async () => {
-    // Keep a cached snapshot so each successful commit must also refresh its repository status.
-    await getSessionEnvironment(sessionId)
+    // Keep cached Git facts so each successful commit must also refresh its repository status.
+    await readWorkspace()
 
     // Start with the reference to catch accidental fallback to the primary repository.
     for (const [selected, untouched] of [[reference, primary], [primary, reference]] as const) {
@@ -235,7 +249,7 @@ describe('session workspace Git roots', () => {
       expect(git(selected, 'show', `:${relativePath}`)).toBe(`${selected.id} working\n`)
       expect(repositoryState(untouched)).toEqual(untouchedBefore)
 
-      const environment = await getSessionEnvironment(sessionId)
+      const environment = await readWorkspace()
       expect(environment.repositories.find(repository => repository.rootId === selected.id)).toMatchObject({
         headCommitSha: selectedAfter.head, dirty: false, changedFiles: [],
       })
@@ -272,7 +286,7 @@ describe('session workspace Git roots', () => {
     fs.mkdirSync(nonRepository.path)
     mocks.resolveSessionWorkspaceRoots.mockReturnValue([primary, reference, missing, nonRepository])
 
-    const environment = await getSessionEnvironment(sessionId)
+    const environment = await readWorkspace()
 
     expect(environment.repositories.map(({ rootId, status }) => ({ rootId, status }))).toEqual([
       { rootId: primary.id, status: 'ready' },
@@ -310,9 +324,9 @@ describe('session workspace Git roots', () => {
   it('keeps file views and commits compatible with an omitted selector in a one-root workspace', async () => {
     mocks.resolveSessionWorkspaceRoots.mockReturnValue([primary])
     const before = repositoryState(primary)
-    const environment = await getSessionEnvironment(sessionId)
+    const environment = await readWorkspace()
     expect(environment.repositories).toHaveLength(1)
-    expect(environment).toMatchObject({
+    expect(environment.repositories[0]).toMatchObject({
       workspacePath: primary.path, headCommitSha: before.head, dirty: true,
       changedFiles: [{ path: relativePath, status: 'modified' }],
     })
@@ -329,14 +343,14 @@ describe('session workspace Git roots', () => {
     expect(after.head).not.toBe(before.head)
     expect(after.status).toBe('')
     expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('primary working\n')
-    expect(await getSessionEnvironment(sessionId)).toMatchObject({ headCommitSha: after.head, dirty: false, changedFiles: [] })
+    expect((await readWorkspace()).repositories[0]).toMatchObject({ headCommitSha: after.head, dirty: false, changedFiles: [] })
   })
 })
 
 describe('detached session commit', () => {
   it('requires a branch name before committing, then attaches at HEAD and preserves edits', async () => {
     git(primary, 'switch', '--detach')
-    expect((await getSessionEnvironment(sessionId)).repositories.find(root => root.rootId === primary.id)?.branch).toBe('HEAD')
+    expect((await readWorkspace()).repositories.find(root => root.rootId === primary.id)?.branch).toBe('HEAD')
     const before = git(primary, 'rev-parse', 'HEAD').trim()
     await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'test: detached', push: false }))
       .rejects.toMatchObject({ code: 'VALIDATION_ERROR' })

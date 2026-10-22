@@ -99,21 +99,22 @@ it("renders live reasoning independently of the tool log and restores it after t
   const apply = store.getState().applyLiveEvent;
   act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "实时思考正文" }));
   advance(80);
-  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
-  expect(container.querySelector(".bui-thinking-prose")).toHaveTextContent("实时思考正文");
+  expect(container.querySelector(".bui-thinking-preview")).toHaveTextContent("实时思考正文");
+  expect(container.querySelector(".bui-thinking-prose")).toBeNull();
   act(() => apply({ type: "tool_call", stepId: liveStep.id, toolCall: toolCall("running") }));
   advance(80);
-  const toolToggle = container.querySelector('[data-variant="coding"] > button') as HTMLButtonElement;
+  const toolToggle = container.querySelector('.bui-tool-trigger') as HTMLButtonElement;
   fireEvent.click(toolToggle);
-  expect(toolToggle).toHaveAttribute("aria-expanded", "false");
-  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
+  expect(toolToggle).toHaveAttribute("aria-expanded", "true");
+  expect(container.querySelector(".bui-thinking-preview")).toBeVisible();
   act(() => useShellStore.getState().setSessionShowThinking(false));
   expect(container).not.toHaveTextContent("实时思考正文");
   act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "，继续推理" }));
   advance(80);
   act(() => useShellStore.getState().setSessionShowThinking(true));
-  expect(container.querySelector(".bui-thinking-prose")).toHaveTextContent("继续推理");
-  expect(container.querySelector(".bui-thinking-prose")).toBeVisible();
+  expect(container).toHaveTextContent("继续推理");
+  expect(container.querySelector(".bui-thinking-preview")).toBeVisible();
+  expect(container.querySelector(".bui-thinking-prose")).toBeNull();
 });
 
 /**
@@ -171,8 +172,8 @@ it("streams the final summary progressively while the run is live", () => {
   advance(DELTA_FLUSH_MS + 500);
   expect(container.querySelector("h1")).toHaveTextContent("总结");
 
-  // A long paragraph streams in token bursts without any newline. Every burst
-  // must become visible as it arrives…
+  // A long paragraph streams without a newline. Each burst starts painting
+  // promptly, then catches up within the bounded reveal window.
   const paragraph =
     "本次修复让最后的总结按 Markdown 流式渲染，段落内容随令牌到达逐步显示，不再整段卡住后一次性出现。";
   let fed = "# 总结\n";
@@ -183,6 +184,8 @@ it("streams the final summary progressively while the run is live", () => {
     );
     fed = next;
     advance(DELTA_FLUSH_MS);
+    expect(container.querySelector(".markdown-stream-tail")?.textContent?.length).toBeGreaterThan(0);
+    advance(180);
     // Each burst must be visible as plain-text tail while it has no newline.
     expect(
       container.querySelector(".markdown-stream-tail"),

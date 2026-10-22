@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { agentRuntimeApi, type AgentRuntimeMessage } from "../../../adapters/transport/agentRuntime";
 import HistoricalVisualizationReply from "../HistoricalVisualizationReply";
@@ -44,4 +44,15 @@ it("does not apply an old session response after the selected message changes", 
   await screen.findByText("Other reply");
   resolveOld({ message: saved });
   await waitFor(() => expect(screen.queryByTestId("preview")).not.toBeInTheDocument());
+});
+
+it("names a missing saved snapshot and lets the reader retry", async () => {
+  const load = vi
+    .spyOn(agentRuntimeApi, "messageVisualization")
+    .mockResolvedValue({ message: null });
+  render(<HistoricalVisualizationReply message={projected} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("预览快照不可用");
+  expect(screen.getByText(/Before/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
 });

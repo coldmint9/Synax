@@ -132,6 +132,26 @@ it("preserves text/thought/tool ordering when events arrive before the next pain
   ]);
 });
 
+it("commits buffered text and the following tool boundary in one visible frame", () => {
+  const frames: ReturnType<typeof materializeLiveBlocks>[] = [];
+  const unsubscribe = store.subscribe((state, previous) => {
+    if (state.streamingLive !== previous.streamingLive)
+      frames.push(materializeLiveBlocks(state.streamingLive));
+  });
+
+  delta("Before the tool");
+  store
+    .getState()
+    .applyLiveEvent({ type: "tool_call", stepId: "first", toolCall });
+
+  expect(frames).toHaveLength(1);
+  expect(frames[0]).toEqual([
+    { type: "text", content: "Before the tool" },
+    expect.objectContaining({ type: "tool_call" }),
+  ]);
+  unsubscribe();
+});
+
 it("keeps the last answer visible while completion waits for the persisted transcript", () => {
   delta("Finished answer");
   store
@@ -174,4 +194,22 @@ it("publishes a token burst once and leaves no idle drain timer", () => {
   expect(store.getState().streamingLive.pendingText).toBe("x".repeat(100));
   expect(vi.getTimerCount()).toBe(0);
   unsubscribe();
+});
+
+it("does not park already persisted reasoning again when the terminal event arrives", () => {
+  const step = {
+    id: "first", sessionId: "s", runId: "run", index: 1, status: "completed",
+    startedAt: "2026-01-01T00:00:01Z", completedAt: "2026-01-01T00:00:04Z", metadata: {},
+  } as AgentRunStep;
+  store.setState({ steps: [step], sessions: [{ id: "s", status: "running", activeRunId: "run" } as AgentSession] });
+  delta("Reasoning for the first reply", "thought_delta");
+  store.getState().applyLiveEvent({ type: "message", message: {
+    id: "reply", sessionId: "s", runId: "run", stepId: "first", role: "assistant",
+    content: "Saved answer", metadata: { thought: "Reasoning for the first reply" }, createdAt: "2026-01-01T00:00:04Z",
+  } });
+  store.getState().applyLiveEvent({ type: "runtime_state", sessionId: "s", patch: { status: "completed", activeRunId: null }, reset: true, refresh: false });
+  expect(store.getState().streamingCompletedSteps).toEqual([]);
+  expect(store.getState().messages.map(message => message.content)).toContain("Saved answer");
+  start("second");
+  expect(store.getState().streamingCompletedSteps).toEqual([]);
 });

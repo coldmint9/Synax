@@ -1,6 +1,5 @@
 import { normalizeUsage } from "../../infrastructure/llm-runtime/usage.js";
-import type { streamText } from "ai";
-import { withRetryStream } from "../../infrastructure/llm-runtime/middleware/retry.js";
+import type { GatewayStreamResult } from "../../infrastructure/llm-runtime/gateway-result.js";
 import {
   createGatewayStreamForSelection,
   resolveGatewaySelection,
@@ -25,8 +24,6 @@ import {
 import { saveGeneratedMedia } from "./generated-media.js";
 import type { RuntimeContentPart } from "./content-parts.js";
 import { hasDisplayableReasoning } from "./reasoning-display.js";
-import { agentLlmStreamIdleTimeoutMs } from "../../infrastructure/runtime/env.js";
-import { logger } from "../../infrastructure/runtime/logger.js";
 
 export interface GenerateLoopModelStepInput {
   request: LlmGatewayRequest;
@@ -50,16 +47,7 @@ export async function* streamLoopModelStep(
   input: GenerateLoopModelStepInput,
 ): AsyncGenerator<LoopModelStreamEvent> {
   const routeState = { forceLocal: false };
-  // Tools run only after a complete model step, so retrying cannot replay executed tools.
-  for await (const event of withRetryStream(
-    () => streamLoopModelStepWithNativeFallback(input, routeState),
-    {
-      signal: input.abortSignal,
-      repeatNetworkGroups: true,
-    },
-  )) {
-    yield event.type === "value" ? event.value : event;
-  }
+  yield* streamLoopModelStepWithNativeFallback(input, routeState);
 }
 
 async function* streamLoopModelStepWithNativeFallback(
@@ -105,19 +93,7 @@ async function* streamLoopModelStepOnce(
   }
   const activeTools = routed.tools.activeTools;
   const hasTools = activeTools.length > 0;
-  // Idle watchdog for silently-stalled upstream connections. A provider or
-  // proxy that accepts the request but never sends data (or stops mid-stream
-  // without closing the socket) surfaces as NO error at all — the SDK keeps
-  // awaiting the next chunk forever, freezing the session mid-step. That is
-  // most visible with many concurrent sessions/subagents sharing one upstream.
-  // When the watchdog fires we abort the underlying request and throw a
-  // network-class error so the existing retry middleware can back off and
-  // retry instead of hanging. Disabled when the timeout resolves to 0.
-  const idleTimeoutMs = agentLlmStreamIdleTimeoutMs();
-  const idleWatchdog = new AbortController();
-  const upstreamSignal = input.abortSignal
-    ? AbortSignal.any([input.abortSignal, idleWatchdog.signal])
-    : idleWatchdog.signal;
+  const upstreamSignal = input.abortSignal;
 
   const result = (await createGatewayStreamForSelection(
     {
@@ -125,13 +101,11 @@ async function* streamLoopModelStepOnce(
       tools: hasTools ? routed.tools.tools : undefined,
       activeTools: hasTools ? activeTools : undefined,
       toolChoice: hasTools ? "auto" : "none",
-      repairToolCall: hasTools ? input.tools.repairToolCall : undefined,
-      maxRetries: 0,
       hookContext: input.hookContext,
     },
     selection,
     upstreamSignal,
-  )) as ReturnType<typeof streamText>;
+  )) as GatewayStreamResult;
 
   let text = "";
   const media: RuntimeContentPart[] = [];
@@ -150,23 +124,11 @@ async function* streamLoopModelStepOnce(
   const sources: NonNullable<LoopStepModelResult["step"]["sources"]> = [];
   const protocolSnapshot = new ResponsesSnapshotAccumulator();
 
-  const watchedStream =
-    idleTimeoutMs > 0
-      ? withIdleWatchdog(result.fullStream, idleTimeoutMs, () => {
-          idleWatchdog.abort(
-            new Error(
-              `LLM stream idle timeout: no events for ${idleTimeoutMs}ms; connection timed out`,
-            ),
-          );
-          logger.warn(
-            { idleTimeoutMs, model: input.request.model },
-            "[loop-model-stream] upstream stream stalled without events; aborting so retry middleware takes over",
-          );
-        })
-      : result.fullStream;
-
-  for await (const event of watchedStream) {
+  for await (const event of result.fullStream) {
     switch (event.type) {
+      case "retry_status":
+        yield { type: "retry_status", retry: event.retry };
+        break;
       case "raw":
         protocolSnapshot.ingest((event as { rawValue?: unknown }).rawValue);
         break;
@@ -251,7 +213,7 @@ async function* streamLoopModelStepOnce(
           ? event.providerMetadata
           : providerMetadata;
         usage =
-          normalizeUsage(event.usage, { source: "sdk", providerMetadata }) ??
+          normalizeUsage(event.usage, { source: "native", providerMetadata }) ??
           usage;
         if (usage) yield { type: "usage", usage };
         break;
@@ -259,7 +221,7 @@ async function* streamLoopModelStepOnce(
         finishReason ??= event.finishReason;
         if (!usage) {
           usage = normalizeUsage(event.totalUsage, {
-            source: "sdk",
+            source: "native",
             providerMetadata,
           });
           if (usage) yield { type: "usage", usage };
@@ -360,74 +322,4 @@ function deduplicateToolCalls(
     }
   }
   return result;
-}
-
-/**
- * Await the next stream event, but never indefinitely. An upstream that holds
- * the connection open without sending data produces no SDK error; the timeout
- * converts that silence into a thrown network-class error that the retry
- * middleware can classify and recover from. The stalled pull itself is marked
- * handled so a late settlement (post-abort) cannot become an unhandled
- * rejection.
- */
-async function nextWithIdleTimeout<T>(
-  iterator: AsyncIterator<T>,
-  timeoutMs: number,
-  onStall: () => void,
-): Promise<IteratorResult<T>> {
-  const pending = iterator.next();
-  pending.catch(() => {});
-  return new Promise<IteratorResult<T>>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      onStall();
-      reject(
-        new Error(
-          `LLM stream idle timeout: no events for ${timeoutMs}ms; connection timed out`,
-        ),
-      );
-    }, timeoutMs);
-    pending.then(
-      (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * Wrap an upstream event stream with the idle watchdog. Only time spent
- * waiting on the UPSTREAM counts — the generator is suspended at each yield
- * while downstream consumers persist/relay events, so slow local processing
- * never trips the timer. On stall the underlying iterator is closed
- * fire-and-forget so a wedged socket can never block the abort path.
- */
-async function* withIdleWatchdog<T>(
-  stream: AsyncIterable<T>,
-  timeoutMs: number,
-  onStall: () => void,
-): AsyncGenerator<T> {
-  const iterator = stream[Symbol.asyncIterator]();
-  let stalled = false;
-  const handleStall = () => {
-    stalled = true;
-    onStall();
-  };
-  try {
-    while (true) {
-      const next = await nextWithIdleTimeout(iterator, timeoutMs, handleStall);
-      if (next.done) return;
-      yield next.value;
-    }
-  } finally {
-    if (stalled) {
-      void Promise.resolve(
-        iterator.return?.(undefined as never),
-      ).catch(() => {});
-    }
-  }
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { WorkLogEntry, type WorkLogEntryData } from "../WorkLogEntry";
@@ -59,10 +59,7 @@ describe("WorkLogEntry", () => {
   it("collapses a run into one row and keeps the folded turns unmounted", () => {
     const { container } = render(<WorkLogEntry entry={ENTRY} />);
 
-    expect(container.textContent).toContain("Worked for 1m 30s");
-    expect(container.textContent).toContain("3 steps");
-    expect(container.textContent).toContain("3 calls");
-    expect(container.textContent).toContain("1m 30s");
+    expect(container.textContent).toBe("Ran commands");
     expect(container.querySelector("[data-activity-body]")).toBeNull();
     expect(container.textContent).not.toContain("second reasoning");
   });
@@ -72,40 +69,44 @@ describe("WorkLogEntry", () => {
     const view = render(<WorkLogEntry entry={ENTRY} />);
 
     // A collapsed round keeps the folded turns out of the DOM entirely.
-    expect(view.container.textContent).not.toContain("Run command");
+    expect(view.container.textContent).not.toContain("Ran in 10ms");
 
     await user.click(view.getByRole("button"));
 
-    // One scroll body: the log itself. The records of each folded turn now
-    // mount as rows, still folded, so their reasoning text stays out of the DOM.
+    // The log mounts compact previews, while every full reasoning body stays
+    // unmounted until its own disclosure is explicitly opened.
     expect(
       view.container.querySelectorAll("[data-activity-body]"),
-    ).toHaveLength(1);
-    expect(view.container.textContent).toContain("Run command");
+    ).toHaveLength(0);
+    expect(view.container.textContent).toContain("Ran in 10ms");
     expect(
       view.container.querySelectorAll(".bui-thinking").length,
     ).toBeGreaterThan(0);
-    expect(view.container.textContent).not.toContain("second reasoning");
+    expect(view.container.querySelectorAll(".bui-thinking-preview")).toHaveLength(3);
+    expect(view.container.textContent).toContain("second reasoning");
+    expect(view.container.querySelectorAll(".bui-thinking-prose")).toHaveLength(0);
   });
 
-  it("previews the newest record while collapsed", () => {
+  it("keeps the folded summary to one line without repeating a reasoning preview", () => {
     // A fresh id keeps this case out of the expand state the previous tests left.
     const { container } = render(
       <WorkLogEntry entry={{ ...ENTRY, id: "work-log-step-7" }} />,
     );
 
-    const preview = container.querySelector(".bui-activity-preview");
-    expect(preview?.textContent).toBe("third reasoning");
+    const preview = container.querySelector(".session-process-preview");
+    expect(preview).toBeNull();
+    expect(container.querySelector(".session-process-trigger")).toHaveTextContent("Ran commands");
     expect(container.textContent).not.toContain("first reasoning");
   });
 
   it("hides reasoning previews and restores them when the preference changes", () => {
     const { container } = render(<WorkLogEntry entry={{ ...ENTRY, id: "thinking-visibility" }} />);
+    fireEvent.click(container.querySelector(".session-process-trigger")!);
     expect(container).toHaveTextContent("third reasoning");
     act(() => useShellStore.getState().setSessionShowThinking(false));
     expect(container).not.toHaveTextContent("third reasoning");
     expect(container).not.toHaveTextContent("50 chars");
-    expect(container).toHaveTextContent("3 calls");
+    expect(container).toHaveTextContent("Ran commands");
     act(() => useShellStore.getState().setSessionShowThinking(true));
     expect(container).toHaveTextContent("third reasoning");
   });
@@ -120,7 +121,24 @@ describe("WorkLogEntry", () => {
 
     const second = render(<WorkLogEntry entry={entry} />);
     expect(
-      second.container.querySelector("[data-activity-body]"),
+      second.container.querySelector(".bui-thinking-preview"),
     ).not.toBeNull();
+  });
+
+  it("keeps a failed tool's output out of the folded summary", () => {
+    const failed = turn(9, "Earlier reasoning");
+    const tool = failed.blocks.find((block) => block.type === "tool_call")!;
+    if (tool.type === "tool_call") {
+      tool.call = { ...tool.call, status: "failed", outputSummary: "Permission denied\nExit code: 1" };
+    }
+    const { container } = render(<WorkLogEntry entry={{ ...ENTRY, id: "failed-folded-log", turns: [failed] }} />);
+    // The failure is reported by the call rows only: the folded summary keeps
+    // a neutral label and never replays the error text as a preview.
+    expect(container).not.toHaveTextContent("Permission denied");
+    expect(container.querySelector(".session-process-trigger")).not.toHaveTextContent("Failed");
+    expect(container.querySelector(".bui-status")).toBeNull();
+    expect(container.querySelector(".bui-tool-details")).toBeNull();
+    fireEvent.click(container.querySelector(".session-process-trigger")!);
+    expect(container.querySelector(".bui-tool .bui-status")).toHaveAttribute("data-state", "failed");
   });
 });

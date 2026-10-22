@@ -125,7 +125,7 @@ export async function* streamSessionCommitMessage(
           );
         yield { type: "delta", text: event.text };
       } else if (event.type === "finish") {
-        usage = normalizeUsage(event.totalUsage, { source: "sdk" });
+        usage = normalizeUsage(event.totalUsage, { source: "native" });
         truncated = event.finishReason === "length";
       } else if (event.type === "error") {
         throw event.error;

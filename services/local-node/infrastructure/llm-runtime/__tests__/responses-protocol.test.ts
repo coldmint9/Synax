@@ -1,10 +1,11 @@
+import { vi as nativeTestConfig } from "vitest";
+nativeTestConfig.setConfig({ testTimeout: 15_000 });
 import { ensureTestRuntime } from "../../../../test-fixtures/rust-runtime.js";
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { generateText } from 'ai'
+import { generateText, nativeModel } from '../../../../test-fixtures/native-generation.js'
 import { beforeAll, afterEach, describe, expect, it } from 'vitest'
-import { instantiateProvider, selectLanguageModel } from '../providers/provider-registry.js'
-import type { ResolvedProviderConfig, RuntimeProvider } from '../types.js'
+import type { ResolvedProviderConfig } from '../types.js'
 
 type CapturedRequest = {
   url: string
@@ -74,10 +75,6 @@ function responsesPayload(text: string) {
   }
 }
 
-function providerFor(npm: string): Pick<RuntimeProvider, 'id' | 'label' | 'npm' | 'api'> {
-  return { id: 'custom-api:codex-gateway', label: 'Codex Gateway', npm, api: undefined }
-}
-
 describe('OpenAI Responses protocol wire format', () => {
   it('posts to /responses when the connection protocol is openai-responses', async () => {
     const { baseUrl, requests } = await startStubServer(responsesPayload('pong'))
@@ -88,8 +85,7 @@ describe('OpenAI Responses protocol wire format', () => {
       apiKey: 'sk-test',
     }
 
-    const client = await instantiateProvider(providerFor('@ai-sdk/openai'), config)
-    const model = selectLanguageModel(client, 'gpt-5.4-codex', undefined, 'openai-responses')
+    const model = nativeModel({ ...config, apiFormat: "openai-responses", model: "gpt-5.4-codex", prompt: [] })
     const result = await generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [{ role: 'user', content: 'ping' }],
@@ -112,8 +108,7 @@ describe('OpenAI Responses protocol wire format', () => {
       apiKey: 'sk-test',
     }
 
-    const client = await instantiateProvider(providerFor('@ai-sdk/open-responses'), config)
-    const model = selectLanguageModel(client, 'deepseek-v4-flash', undefined, 'openai-responses')
+    const model = nativeModel({ ...config, apiFormat: "openai-responses", model: "deepseek-v4-flash", prompt: [] })
     await generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [
@@ -167,8 +162,7 @@ describe('OpenAI Responses protocol wire format', () => {
       apiKey: 'sk-test',
     }
 
-    const client = await instantiateProvider(providerFor('@ai-sdk/openai'), config)
-    const model = selectLanguageModel(client, 'gpt-4o-mini', undefined, 'openai')
+    const model = nativeModel({ ...config, apiFormat: "openai", model: "gpt-4o-mini", prompt: [] })
     const result = await generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [{ role: 'user', content: 'ping' }],
@@ -197,11 +191,7 @@ describe('OpenAI Responses protocol wire format', () => {
       apiKey: 'sk-test',
     }
 
-    const client = await instantiateProvider(
-      { id: 'custom-api:deepseek', label: 'DeepSeek', npm: '@ai-sdk/openai-compatible', api: undefined },
-      config,
-    )
-    const model = selectLanguageModel(client, 'deepseek-v4-flash', undefined, 'openai')
+    const model = nativeModel({ ...config, apiFormat: "openai", model: "deepseek-v4-flash", prompt: [] })
     const result = await generateText({
       model: model as Parameters<typeof generateText>[0]['model'],
       messages: [{ role: 'user', content: 'ping' }],

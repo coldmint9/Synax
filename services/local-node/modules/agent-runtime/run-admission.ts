@@ -21,6 +21,9 @@ import { agentRuntimeStore } from "./session-store.js";
 import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import { ensureSessionRecovered } from './session-recovery.js';
+import { logger } from "../../infrastructure/runtime/logger.js";
+import { businessStore } from "../../infrastructure/persistence/business-store.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -70,6 +73,7 @@ export async function acceptRuntimeRunAuthoritative(
     .update(JSON.stringify(stable({ input, mode })))
     .digest("hex");
   await runtimeFacade.ensureUiProjection(sessionId);
+  await ensureSessionRecovered(sessionId);
   await agentRuntimeStore.hydrateSession(sessionId);
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
   const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);
@@ -90,7 +94,7 @@ export async function acceptRuntimeRunAuthoritative(
       409,
     );
 
-  const preparedSession = agentRuntimeStore.getSession(sessionId);
+  let preparedSession = agentRuntimeStore.getSession(sessionId);
   const preparedBinding = resolveSessionBackend(sessionId);
   if (profileService.getForSession(preparedSession).executionHost === "embedded")
     throw new AgentRuntimeError(
@@ -121,13 +125,30 @@ export async function acceptRuntimeRunAuthoritative(
   }
   const permissionChangeRequested =
     input.permissionTier !== undefined || input.permissionOverrides !== undefined;
+  if (input.references?.some(ref => ref.kind === "subagent")) await businessStore.refresh(["subagent-templates"]);
+  const savedSubagents = queueItem?.referenceContext?.subagentProfiles ?? input.referenceContext?.subagentProfiles;
   const preparedReferenceContext = permissionChangeRequested
     ? undefined
-    : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
+    : prepareTurnReferences(sessionId, input.references, preparedWorkDir, savedSubagents);
 
+  if (preparedSession.sessionMetadata?.runtimeControl) {
+    // Heal the fence before rejecting: recovery is automatic, so a stale stop
+    // must not turn the composer into a retry button the user has to press.
+    const { runCoordinator } = await import("./run-coordinator.js");
+    await runCoordinator.reconcileFencedSession(sessionId).catch((error) => {
+      logger.warn(
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Execution recovery retry failed",
+      );
+    });
+    preparedSession = agentRuntimeStore.getSession(sessionId);
+  }
   if (preparedSession.sessionMetadata?.runtimeControl)
     throw new AgentRuntimeError(
-      "Execution shutdown is pending or unconfirmed. Retry stopping recorded processes in this session.",
+      "Execution shutdown is pending. This session resumes automatically once the previous run stops.",
       "RECOVERY_REQUIRED",
       409,
     );
@@ -175,7 +196,7 @@ export async function acceptRuntimeRunAuthoritative(
       referenceContext:
         preparedReferenceContext && preparedWorkDir === workDir
           ? preparedReferenceContext
-          : prepareTurnReferences(sessionId, input.references, workDir),
+          : prepareTurnReferences(sessionId, input.references, workDir, savedSubagents),
       ...(model ? { model } : {}),
     },
     backendId: binding.id,

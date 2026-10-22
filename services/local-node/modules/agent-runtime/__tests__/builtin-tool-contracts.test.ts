@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import { asSchema } from '@ai-sdk/provider-utils';
+import { asSchema } from "../../../infrastructure/llm-runtime/tool-schema.js";
 import { describe, expect, it } from 'vitest';
 import { buildLoopToolSet } from '../loop-ai-tools.js';
 import { toolRegistry } from '../tool-registry.js';
-import { specialistSpecSchema } from '../specialist-profile.js';
+import { subagentProfileSchema } from '../subagent-config.js';
 
 const modelTools = buildLoopToolSet(toolRegistry.list());
 function modelTool(id: string) {
@@ -17,7 +17,7 @@ async function definition(id: string) {
   return { description: tool.description, schema: await asSchema(tool.inputSchema).jsonSchema };
 }
 const specialist = {
-  name: 'Scoped writer', role: 'Implementer', instructions: 'Edit the assigned files.',
+  name: 'Scoped writer', description: 'Implementer', instructions: 'Edit the assigned files.',
   capabilities: ['file.patch'], skillIds: [],
 };
 
@@ -32,33 +32,29 @@ describe('model-visible builtin tool contracts', () => {
     }
   });
 
-  it('exposes safe write scopes through the actual SDK schema conversion', async () => {
+  it('exposes one automatically configured subagent profile with optional safe scopes', async () => {
     const exposed = await definition('subagent.delegate');
-    expect(exposed.description).toContain('Only one specialist writer');
-    expect(exposed.description).toContain('relative to the child working directory');
-    expect(exposed.schema).toMatchObject({ properties: { specialist: { properties: {
-      writeScope: { description: expect.stringContaining('directory includes its descendants'), items: {
-        description: expect.stringContaining('No absolute paths'),
-      } },
-      capabilities: { description: expect.stringContaining('Write capabilities require writeScope') },
-    } } } });
-    expect(specialistSpecSchema.parse({ ...specialist, writeScope: ['client/src/', './services/local-node'] }).writeScope)
+    expect(exposed.description).toContain('general-purpose subagent');
+    expect(exposed.description).toContain('waits for its result');
+    expect(exposed.schema).toMatchObject({ type: 'object', properties: {
+      profile: { type: 'object', properties: { capabilities: { type: 'array' }, writeScope: { type: 'array' } } },
+      templateId: { type: 'string' },
+    } });
+    expect((exposed.schema as { properties: object }).properties).not.toHaveProperty('profileId');
+    expect((exposed.schema as { properties: object }).properties).not.toHaveProperty('specialist');
+    expect(subagentProfileSchema.parse({ ...specialist, writeScope: ['client/src/', './services/local-node'] }).writeScope)
       .toEqual(['client/src', 'services/local-node']);
-    for (const path of ['.', '/', '/tmp/file', '../file', 'client/../file', 'client/**', '*.ts', 'client\\src', '~/file', ' file', 'file ', 'file%20', 'C:/file']) {
-      expect(specialistSpecSchema.safeParse({ ...specialist, writeScope: [path] }).success, path).toBe(false);
-    }
+    for (const path of ['.', '././', '/', '/tmp/file', '../file', 'client/../file', 'client/**', '*.ts', 'client\\src', '~/file', ' file', 'file ', 'file%20', 'C:/file'])
+      expect(subagentProfileSchema.safeParse({ ...specialist, writeScope: [path] }).success, path).toBe(false);
   });
 
-  it('documents the short 2-3 character subagent naming preference', async () => {
-    const delegate = await definition('subagent.delegate');
-    expect(delegate.description).toContain('short 2-3 character name');
-    expect(delegate.schema).toMatchObject({
-      properties: { name: { description: expect.stringContaining('short 2-3 character display name') } },
-    });
-    const lifecycle = await asSchema(toolRegistry.get('subagent.lifecycle').inputSchema!).jsonSchema;
-    expect(lifecycle).toMatchObject({
-      properties: { name: { description: expect.stringContaining('prefer a short 2-3 character name') } },
-    });
+  it('lets the parent choose a name or inherit a selected custom profile', async () => {
+    for (const id of ['subagent.delegate', 'subagent.lifecycle']) {
+      const schema = toolRegistry.get(id).inputSchema!;
+      const start = id === 'subagent.lifecycle' ? { action: 'start' } : {};
+      expect(schema.safeParse({ ...start, prompt: 'Inspect the API' }).success).toBe(true);
+      expect(schema.safeParse({ ...start, prompt: 'Inspect', templateId: 'custom', profile: { thinkingMode: 'deep' } }).success).toBe(true);
+    }
   });
 
   it('documents non-exportable media and browser argument conditions', async () => {
@@ -143,7 +139,7 @@ describe('model-visible builtin tool contracts', () => {
     const schema = toolRegistry.get('subagent.lifecycle').inputSchema!;
     for (const input of [
       { action: 'start', prompt: 'Investigate the failing test' },
-      { action: 'start', prompt: 'Investigate', profileId: 'reviewer', name: 'Scout', thinkingMode: 'deep' },
+      { action: 'start', prompt: 'Investigate', profile: { access: 'read-only', thinkingMode: 'deep' }, name: 'Scout' },
       { action: 'list' },
       { action: 'inspect', childSessionId: 'child' },
       { action: 'wait', childSessionId: 'child', timeoutMs: 1_000 },

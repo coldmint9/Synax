@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RuntimeStreamProjector, type RuntimeSnapshot, type RuntimeStreamRecord } from './runtimeStream'
-import type { AgentSession, AgentRunStep, AgentRun } from './agentRuntime'
+import type { AgentSession, AgentRunStep, AgentRun, AgentRuntimeMessage, PermissionDecision } from './agentRuntime'
 const session = { id: 'session', status: 'running', activeRunId: 'run', pendingResumeToken: null, blockedReason: null, updatedAt: '' } as AgentSession
 const step = { id: 'step', runId: 'run', sessionId: 'session', index: 1, status: 'running' } as AgentRunStep
 const snapshot = { session, run: null, cursor: 10, liveChunks: [{ type: 'step_started', step },
@@ -10,6 +10,29 @@ const record: RuntimeStreamRecord = { sequence: 11, sessionId: 'session', runId:
   chunk: { type: 'message_delta', stepId: 'step', delta: ' rest', outputTokens: 3 } }
 
 describe('runtime stream projection', () => {
+  it('delivers full messages and permission updates directly, including a terminal answer', () => {
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot(snapshot);
+    const message = { id: 'answer', sessionId: 'session', runId: 'run', stepId: 'step', role: 'assistant',
+      content: 'long answer '.repeat(2000), metadata: { source: 'assistant' }, createdAt: '' } as AgentRuntimeMessage;
+    expect(projector.record({ ...record, chunk: { type: 'message', message } }))
+      .toEqual([{ type: 'message', message }]);
+    const permission = { id: 'permission', sessionId: 'session', runId: 'run', resolvedAt: 'now' } as PermissionDecision;
+    expect(projector.record({ ...record, sequence: 12, chunk: { type: 'permission_resolved', permission } }))
+      .toContainEqual({ type: 'permission_updated', permission });
+    expect(projector.record({ ...record, sequence: 13, state: { ...session, status: 'completed', activeRunId: null },
+      chunk: { type: 'run_completed', message } })).toContainEqual({ type: 'message', message });
+  });
+
+  it('does not apply messages from another session or a superseded run', () => {
+    const projector = new RuntimeStreamProjector();
+    projector.snapshot(snapshot);
+    const message = { id: 'answer', sessionId: 'other-session', runId: 'run' } as AgentRuntimeMessage;
+    expect(projector.record({ ...record, chunk: { type: 'message', message } })).toEqual([]);
+    expect(projector.record({ ...record, sequence: 12, state: { ...session, activeRunId: 'new-run' },
+      chunk: { type: 'message', message: { ...message, sessionId: 'session' } } }) )
+      .not.toContainEqual(expect.objectContaining({ type: 'message' }));
+  });
   it('preserves the authoritative run from snapshots and terminal records', () => {
     const projector = new RuntimeStreamProjector();
     const run = { id: 'run', sessionId: 'session', status: 'running', metadata: {} } as AgentRun;

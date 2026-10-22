@@ -1,16 +1,11 @@
-import { useState } from "react";
-import {
-  agentRuntimeApi,
-  type AgentSession,
-} from "../../adapters/transport/agentRuntime";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
 
+/** Recovery is automatic; this only explains a fence the runtime is still
+ * settling. It intentionally offers no action: the next message retries cleanup. */
 export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState<string | null>(null);
   const control = session.sessionMetadata?.runtimeControl as
     | { state?: string; reason?: string }
     | undefined;
@@ -21,50 +16,14 @@ export function RuntimeRecoveryPanel({ session }: { session: AgentSession }) {
       className="mb-3 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs"
     >
       <p className="font-medium">
-        {zh ? "旧执行未能完全停止" : "Previous execution did not stop cleanly"}
+        {zh ? "上次执行已中断" : "Previous execution was interrupted"}
       </p>
       <p className="text-muted-foreground">{control.reason}</p>
       <p className="text-muted-foreground">
         {zh
-          ? "可直接重试停止残留进程；其他会话可以继续使用这个工作区。"
-          : "Retry stopping the recorded process. Other sessions can keep using this workspace."}
+          ? "残留进程正在自动清理，无需操作；发送新消息时会再次尝试。"
+          : "Residual processes are cleaned up automatically; sending a message retries it."}
       </p>
-      {error && (
-        <p role="alert" className="text-danger">
-          {error}
-        </p>
-      )}
-      <button
-        type="button"
-        disabled={busy}
-        className="rounded-md bg-secondary px-3 py-1.5 disabled:opacity-40"
-        onClick={() => {
-          setBusy(true);
-          setError(null);
-          void agentRuntimeApi
-            .acknowledgeRecovery(session.id)
-            .then(({ session: updated }) => {
-              const store = useAgentSessionStore.getState();
-              store.patchSession(session.id, updated);
-              void store.refreshSessions();
-              void store.refreshDetail();
-            })
-            .catch((cause) =>
-              setError(
-                cause instanceof Error ? cause.message : "Recovery failed.",
-              ),
-            )
-            .finally(() => setBusy(false));
-        }}
-      >
-        {busy
-          ? zh
-            ? "正在停止…"
-            : "Stopping…"
-          : zh
-            ? "重试停止残留进程"
-            : "Retry process cleanup"}
-      </button>
     </section>
   );
 }

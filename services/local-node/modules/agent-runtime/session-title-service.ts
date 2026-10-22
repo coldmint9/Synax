@@ -241,6 +241,10 @@ async function applyGeneratedSessionTitle(
       titleSummarized: true,
     },
   });
+  // Title generation runs outside the request/turn lifecycle. Wait for this
+  // session's queued Rust patch so a normal app close cannot discard a title
+  // that was already reported as updated.
+  await agentRuntimeStore.flushSession(session.id);
   logger.info(
     {
       sessionId: session.id,

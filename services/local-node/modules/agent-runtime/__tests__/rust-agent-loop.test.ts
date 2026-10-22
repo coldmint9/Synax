@@ -133,7 +133,7 @@ function end(protocol: Protocol, response: ServerResponse, tools = false) {
   }
 }
 
-it.each(protocols)("%s streams before upstream completion and replays a terminal loop", async protocol => {
+it.each(protocols)("%s streams before upstream completion and replays only unacknowledged output", async protocol => {
   let finish!: () => void;
   respond = (_request, response) => {
     begin(protocol, response);
@@ -157,10 +157,91 @@ it.each(protocols)("%s streams before upstream completion and replays a terminal
   const rest = await collect(observe(id, seen.at(-1)!.sequence));
   expect(rest.at(-1)?.type).toBe("done");
   expect(rest.some(e => e.type === "text-delta")).toBe(false);
-  const all = await collect(observe(id));
-  expect(all).toEqual([...seen, ...rest]);
+  const all = [...seen, ...rest];
   expect(all.map(e => e.sequence)).toEqual(all.map((_, i) => i + 1));
+  // The host owns handled output now; a loop is not a second history store.
+  await expect(collect(observe(id))).rejects.toThrow("event cursor expired");
   expect(requests).toHaveLength(1);
+});
+
+it("drains five concurrent streams without retaining handled token history", async () => {
+  respond = async (request, response) => {
+    begin("openai", response);
+    for (let index = 0; index < 40; index++) {
+      text("openai", response, `${request.body.model}:${index}😀 `);
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    end("openai", response);
+  };
+  const outputs = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
+    const received: RustAgentLoopEvent[] = [];
+    let id = "";
+    for await (const current of streamRustAgentLoop({ ...input("openai"), model: `fixture-${index}` },
+      AbortSignal.timeout(15_000), loop => { id = loop; loops.push(loop); })) received.push(current);
+    expect(received.at(-1)?.type).toBe("done");
+    expect(received.map(event => event.sequence)).toEqual(received.map((_, i) => i + 1));
+    expect(received.filter(event => event.type === "text-delta").map(event => event.delta).join(""))
+      .toBe(Array.from({ length: 40 }, (_, i) => `fixture-${index}:${i}😀 `).join(""));
+    await expect(collect(observe(id))).rejects.toThrow("event cursor expired");
+    return received;
+  }));
+  expect(outputs).toHaveLength(5);
+  expect(requests).toHaveLength(5);
+}, 20_000);
+
+it("recovers unacknowledged text after an event socket disconnect without rerunning the model", async () => {
+  respond = (_request, response) => {
+    begin("openai", response);
+    for (const delta of ["开头😀", "中间内容", "最后一段"]) text("openai", response, delta);
+    end("openai", response);
+  };
+  const originalFetch = globalThis.fetch;
+  const cursors: number[] = [];
+  let severed = false;
+  const patched = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
+    const response = await originalFetch(url, options);
+    if (!String(url).includes("/agent-loop/events?")) return response;
+    cursors.push(Number(new URL(String(url)).searchParams.get("after")));
+    if (severed || !response.body) return response;
+    const reader = response.body.getReader();
+    let buffered = Buffer.alloc(0);
+    let cutoff = false;
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        if (cutoff) { controller.error(new TypeError("fixture socket disconnected")); return; }
+        const next = await reader.read();
+        if (next.done) { controller.close(); return; }
+        buffered = Buffer.concat([buffered, next.value]);
+        let offset = 0;
+        let newline: number;
+        while ((newline = buffered.indexOf(10, offset)) !== -1) {
+          const event = JSON.parse(buffered.subarray(offset, newline).toString());
+          offset = newline + 1;
+          if (event.type === "text-delta") {
+            cutoff = true; severed = true;
+            controller.enqueue(buffered.subarray(0, offset));
+            await reader.cancel();
+            return;
+          }
+        }
+        if (offset) { controller.enqueue(buffered.subarray(0, offset)); buffered = buffered.subarray(offset); }
+      },
+      cancel() { return reader.cancel(); },
+    }));
+  });
+  try {
+    const received: RustAgentLoopEvent[] = [];
+    for await (const current of streamRustAgentLoop(input("openai"), AbortSignal.timeout(10_000), id => { loops.push(id); }))
+      received.push(current);
+    expect(severed).toBe(true);
+    expect(cursors).toHaveLength(2);
+    expect(cursors[1]).toBeGreaterThan(0);
+    expect(received.filter(event => event.type === "text-delta").map(event => event.delta).join(""))
+      .toBe("开头😀中间内容最后一段");
+    expect(received.map(event => event.sequence)).toEqual(received.map((_, i) => i + 1));
+    expect(received.at(-1)?.type).toBe("done");
+    expect(requests).toHaveLength(1);
+  } finally { patched.mockRestore(); }
 });
 
 it.each(protocols)("%s preserves the assistant turn and accepts reordered, idempotent tool results", async protocol => {
@@ -236,9 +317,10 @@ it("cancellation stops upstream and resolves only after the terminal event exist
     response.on("close", () => { disconnected = true; });
   };
   const id = await start("openai");
-  for await (const e of observe(id)) if (e.type === "text-delta") break;
+  let cursor = 0;
+  for await (const e of observe(id)) { cursor = e.sequence!; if (e.type === "text-delta") break; }
   expect((await post("/agent-loop/cancel", { loopId: id })).status).toBe(200);
-  const events = await collect(observe(id));
+  const events = await collect(observe(id, cursor));
   expect(events.at(-1)?.type).toBe("cancelled");
   expect(events.some(e => e.type === "done")).toBe(false);
   await vi.waitFor(() => expect(disconnected).toBe(true));
@@ -323,6 +405,33 @@ it("does not retry unrelated provider failures as invalid arguments", async () =
   expect(requests).toHaveLength(1);
   expect(events.some(e => e.type === "step-restarted")).toBe(false);
 });
+
+it("backs off and retries a model step instead of failing the session", async () => {
+  // The provider spends its budget first; the loop then backs off (2s) and
+  // retries the step instead of ending the session on a transient 503.
+  respond = (_request, response) => {
+    if (requests.length <= 2) {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "upstream unavailable", type: "server_error" } }));
+      return;
+    }
+    begin("openai", response);
+    text("openai", response, "Recovered.");
+    end("openai", response);
+  };
+  const started = await post("/agent-loop/start", { ...input("openai"), maxRetries: 1 });
+  expect(started.status).toBe(200);
+  const { loopId } = await started.json() as { loopId: string };
+  loops.push(loopId);
+  const events = await collect(observe(loopId, 0, 20_000));
+  expect(events.at(-1)?.type).toBe("done");
+  expect(events.some(event => event.type === "error")).toBe(false);
+  expect(requests).toHaveLength(3);
+  expect(events.filter(event => event.type === "step-restarted"))
+    .toMatchObject([{ step: 1, reason: "upstream", maxRetries: 3 }]);
+  expect(events.filter(event => event.type === "retry_status").map(event => event.retry?.phase))
+    .toEqual(["waiting", "retrying", "exhausted", "waiting", "recovered"]);
+}, 30_000);
 
 async function crashAndRestartSidecar() {
   const generation = supervisor.generation;

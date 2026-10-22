@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DATA_ROOT } from "../runtime/env.js";
 import { logger } from "../runtime/logger.js";
-import { isProviderSupported } from "./providers/provider-registry.js";
+import { isProviderSupported } from "./catalog-capabilities.js";
 import { LLM_CATALOG_SNAPSHOT } from "./snapshot.js";
 import { openAIModelContract } from "./openai-models.js";
 import type {

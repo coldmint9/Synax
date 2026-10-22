@@ -13,7 +13,7 @@ import {
   projectApi,
   type ProjectWorkspaceRoot,
 } from "../../adapters/transport/project";
-import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
+import { loadSessionEnvironmentRoots } from "../agent-workspace/useSessionEnvironment";
 import { terminalApi } from "../../adapters/transport/terminal";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useSessionWorkspaceStore } from "../agent-workspace/state/sessionWorkspaceStore";
@@ -50,10 +50,9 @@ function LegacyTerminalView({
   useEffect(() => {
     if (cwd) return;
     let current = true;
-    void agentRuntimeApi
-      .getSessionEnvironment(legacy.sessionId)
-      .then((env) => {
-        if (current) setCwd(env.workspacePath);
+    void loadSessionEnvironmentRoots(legacy.sessionId, 15_000)
+      .then((roots) => {
+        if (current && roots) setCwd(roots.workspacePath);
       })
       .catch((err) => {
         if (current) setError(String(err));
@@ -178,8 +177,8 @@ export function TerminalDrawer({
     setRootId("");
     if (!projectId) return;
     const promise = sessionId
-      ? agentRuntimeApi.getSessionEnvironment(sessionId).then((env) =>
-          (env.repositories ?? []).map((root) => ({
+      ? loadSessionEnvironmentRoots(sessionId, 15_000).then((roots) =>
+          (roots?.repositories ?? []).map((root) => ({
             id: root.rootId,
             name: root.name,
             path: root.workspacePath,

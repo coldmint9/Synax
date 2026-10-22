@@ -1002,6 +1002,7 @@ projectRoutes.post("/:id/git/epics", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid Epic", details: parsed.error.flatten() }, 400);
   try {
     const root = projectGitRoot(project, parsed.data.rootId, true);
+    await agentRuntimeStore.hydrateSessions();
     const sessions = new Set(agentRuntimeStore.listSessions({ projectId: project.id, limit: Number.MAX_SAFE_INTEGER }).map(session => session.id));
     if (parsed.data.sessionIds.some(id => !sessions.has(id))) throw new GitWorkspaceError("Select unarchived sessions in this project.");
     return c.json(await gitEpicStore.save(project.id, root.scope, parsed.data));

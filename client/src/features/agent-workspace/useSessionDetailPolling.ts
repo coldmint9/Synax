@@ -5,7 +5,8 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 
 // Low-frequency safety net only: live stream events drive the fast path
 // (coalesced in agentSessionStore), so this poll just catches anything the
-// stream missed (missed events, server-side drift).
+// stream missed for the session on screen. It reads that row and its detail,
+// never the page: the session list stays owned by live callbacks.
 export const ACTIVE_SESSION_POLL_MS = 30_000;
 const pollers = new Map<string, { users: number; stop: () => void }>();
 
@@ -16,7 +17,7 @@ function isDocumentHidden(): boolean {
 }
 
 /**
- * Poll session list + detail while the selected session is actively running.
+ * Poll the open session's row + detail while it is actively running.
  * A shared poller joins pending profile/transcript requests rather than restarting them.
  */
 export function useSessionDetailPolling() {
@@ -24,7 +25,7 @@ export function useSessionDetailPolling() {
   const projectId = useAgentSessionStore((s) => s.projectId);
   const apiReachable = useApiConnectivityStore((s) => s.apiReachable);
   const refreshDetail = useAgentSessionStore((s) => s.refreshDetail);
-  const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
+  const syncSessionSummary = useAgentSessionStore((s) => s.syncSessionSummary);
   const panelOpen = useAgentSessionStore((s) => s.panelOpen);
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const selectedStatus = useAgentSessionStore((s) => {
@@ -41,7 +42,8 @@ export function useSessionDetailPolling() {
       selectedStatus === "waiting_input";
     if (!isActive) return;
 
-    const key = JSON.stringify([projectId, selectedSessionId, selectedStatus]);
+    const sessionId = selectedSessionId;
+    const key = JSON.stringify([projectId, sessionId, selectedStatus]);
     const existing = pollers.get(key);
     const release = () => {
       const poller = pollers.get(key);
@@ -74,8 +76,9 @@ export function useSessionDetailPolling() {
     function startRefresh() {
       inFlight = true;
       void Promise.allSettled([
-        refreshSessions({ joinPending: true }),
-        refreshDetail({ joinPending: true }),
+        // A single row: the page itself is never re-read here.
+        syncSessionSummary(sessionId),
+        refreshDetail({ joinPending: true, background: true }),
       ]).finally(() => {
         inFlight = false;
         schedule();
@@ -126,6 +129,6 @@ export function useSessionDetailPolling() {
     selectedSessionId,
     selectedStatus,
     refreshDetail,
-    refreshSessions,
+    syncSessionSummary,
   ]);
 }

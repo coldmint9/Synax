@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
-import { wrapLanguageModel } from "ai";
-import { asSchema } from "@ai-sdk/provider-utils";
-import type {
-  LanguageModelV4,
-  LanguageModelV4CallOptions,
-} from "@ai-sdk/provider";
+import { asSchema } from "./tool-schema.js";
+
 import type { LlmGatewayRequest } from "./types.js";
 
 export interface CacheBlockFingerprint {
@@ -140,94 +136,6 @@ export function compareRequests(
     stableTools: sameKind("tools"),
     stableReferences: sameKind("reference"),
   };
-}
-
-/** Provider-adapter boundary, before serialization. Wire correctness is tested separately. */
-export function applyCacheDiagnosticsMiddleware(
-  model: LanguageModelV4,
-  context: {
-    provider: string;
-    model: string;
-    protocol: string;
-    requestId?: string;
-    source?: string;
-    phase?: string;
-    /** Which prefix-cache hint the request carried, if any. */
-    hint?: {
-      kind: string;
-      namespace?: string;
-      field?: string;
-      valueHash?: string;
-    };
-  },
-): LanguageModelV4 {
-  const snapshot = (params: LanguageModelV4CallOptions) =>
-    fingerprintRequest(params.prompt, params.tools);
-  return wrapLanguageModel({
-    model,
-    middleware: {
-      wrapGenerate: async ({ params, doGenerate }) => {
-        const started = performance.now();
-        const request = snapshot(params);
-        const result = await doGenerate();
-        return {
-          ...result,
-          providerMetadata: {
-            ...result.providerMetadata,
-            synax: {
-              ...result.providerMetadata?.synax,
-              cacheDiagnostics: {
-                ...context,
-                boundary: "adapter",
-                request,
-                durationMs: performance.now() - started,
-                firstTokenMs: null,
-              } as never,
-            },
-          },
-        };
-      },
-      wrapStream: async ({ params, doStream }) => {
-        const started = performance.now();
-        const request = snapshot(params);
-        let firstTokenMs: number | null = null;
-        const result = await doStream();
-        return {
-          ...result,
-          stream: result.stream.pipeThrough(
-            new TransformStream({
-              transform(part, controller) {
-                if (
-                  firstTokenMs === null &&
-                  (part.type === "text-delta" ||
-                    part.type === "reasoning-delta") && part.delta.length > 0
-                )
-                  firstTokenMs = performance.now() - started;
-                if (part.type === "finish")
-                  controller.enqueue({
-                    ...part,
-                    providerMetadata: {
-                      ...part.providerMetadata,
-                      synax: {
-                        ...part.providerMetadata?.synax,
-                        cacheDiagnostics: {
-                          ...context,
-                          boundary: "adapter",
-                          request,
-                          durationMs: performance.now() - started,
-                          firstTokenMs,
-                        } as never,
-                      },
-                    },
-                  });
-                else controller.enqueue(part);
-              },
-            }),
-          ),
-        };
-      },
-    },
-  });
 }
 
 export interface CacheMeasurement {

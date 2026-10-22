@@ -1,8 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll } from "vitest";
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { createRustLanguageModel } from "../local-node/infrastructure/llm-runtime/providers/rust-language-model.js";
+import type { NativeTestModel } from "./native-generation.js";
 import { ensureTestRuntime } from "./rust-runtime.js";
 
 beforeAll(ensureTestRuntime);
@@ -59,15 +58,10 @@ function provider(options: Options, defaultProtocol: Protocol) {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
   })();
-  const languageModel = (model: string, protocol = defaultProtocol): LanguageModelV4 => {
-    const resolved = async () => createRustLanguageModel({ apiFormat: protocol, providerId: options.name ?? (protocol === "anthropic" ? "anthropic" : "openai"),
-      apiKey: options.apiKey ?? "fixture", baseUrl: await endpoint() }, model);
-    return {
-      specificationVersion: "v4", modelId: model, provider: `rust-fixture/${protocol}`, supportedUrls: {},
-      doGenerate: async (call: LanguageModelV4CallOptions) => (await resolved()).doGenerate(call),
-      doStream: async (call: LanguageModelV4CallOptions) => (await resolved()).doStream(call),
-    };
-  };
+  const languageModel = (model: string, protocol = defaultProtocol): NativeTestModel => ({
+    request: async () => ({ apiFormat: protocol, providerId: options.name ?? (protocol === "anthropic" ? "anthropic" : "openai"),
+      apiKey: options.apiKey ?? "fixture", baseUrl: await endpoint(), model, prompt: [] }),
+  });
   return Object.assign(languageModel, { languageModel, chatModel: languageModel,
     chat: (model: string) => languageModel(model, "openai"),
     responses: (model: string) => languageModel(model, "openai-responses"),

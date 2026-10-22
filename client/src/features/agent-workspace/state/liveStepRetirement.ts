@@ -15,6 +15,8 @@ export interface CompletedLiveStep {
   stepId: string;
   stepIndex: number;
   runId?: string;
+  /** Preserve the turn's position while its history page is still loading. */
+  startedAt?: string;
   /**
    * The live stream had already painted rows for this step.
    *
@@ -106,9 +108,9 @@ function persistedThinking(
   return messages
     .filter((message) => message.stepId === stepId && isThinkingMessage(message))
     .map((message) =>
-      typeof message.metadata?.thought === "string" && !message.content.trim()
-        ? message.metadata.thought
-        : message.content,
+      message.metadata?.type === "thinking" || message.metadata?.kind === "thought"
+        ? message.content
+        : String(message.metadata?.thought ?? ""),
     )
     .join("\n");
 }

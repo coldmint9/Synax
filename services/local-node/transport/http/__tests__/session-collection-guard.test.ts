@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { agentRuntimeRoutes } from "../agent-runtime.js";
 import { runtimeFacade } from "../../../modules/agent-runtime/sidecar/runtime-facade.js";
+import { agentRuntimeStore } from "../../../modules/agent-runtime/session-store.js";
 import { RuntimeSidecarError } from "../../../modules/agent-runtime/sidecar/sidecar-client.js";
 import { resetAgentRuntimeFixtures } from '../../../modules/agent-runtime/__tests__/agent-runtime-fixtures.js';
 
@@ -9,6 +10,24 @@ beforeEach(async () => {
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+it.each([
+  "/sessions?projectId=p1&limit=20",
+  "/sessions/badges?projectIds=p1",
+  "/sessions/search?projectId=p1&q=hello",
+  "/session-archives?projectId=p1",
+])("reads %s without first loading the execution working set", async (url) => {
+  const hydrate = vi.spyOn(agentRuntimeStore, "hydrateSessions")
+    .mockRejectedValue(new Error("execution index must stay lazy"));
+  const history = vi.spyOn(agentRuntimeStore, "hydrateSession")
+    .mockRejectedValue(new Error("session history must stay lazy"));
+  const list = vi.spyOn(runtimeFacade, "listSessionProjection").mockResolvedValue([]);
+  const response = await agentRuntimeRoutes.request(`http://localhost${url}`);
+  expect(response.status).toBe(200);
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(hydrate).not.toHaveBeenCalled();
+  expect(history).not.toHaveBeenCalled();
+});
 
 const projectionMissing = async (): Promise<never> => {
   throw new RuntimeSidecarError({
@@ -87,6 +106,9 @@ it("reports a lost projection of an existing session as retryable, not missing",
 });
 
 it("keeps guarding session detail reads", async () => {
+  // This guard fixture supplies its summary through the authoritative mock;
+  // there is deliberately no matching session on the real sidecar.
+  vi.spyOn(agentRuntimeStore, "hydrateSessionSummary").mockResolvedValue();
   const archived = {
     id: "ars_archived",
     status: "completed",

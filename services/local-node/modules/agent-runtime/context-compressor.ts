@@ -3,6 +3,7 @@ import { countMessagesTokens, countTokens } from './context-tokenizer.js';
 import type { LlmGatewayMessage } from '../../infrastructure/llm-runtime/types.js';
 import { makeRuntimeId } from './runtime-ids.js';
 import { logger } from '../../infrastructure/runtime/logger.js';
+import { hasContextAttachment } from './context-media.js';
 
 type ModelMessage = { role: string; content: unknown };
 
@@ -70,8 +71,8 @@ export async function compactMessages(
     messages.length - config.preserveRecentMessages,
     1,
   );
-  const compressible = messages.slice(0, splitIndex);
-  const preserved = messages.slice(splitIndex);
+  const { compressible, retained, preserved } = partitionForSummary(messages, splitIndex);
+  if (!compressible.length) return { messages, record: null, didCompact: false };
 
   const originalTokens = countMessagesTokens(
     compressible as unknown as import('../../infrastructure/llm-runtime/types.js').LlmGatewayMessage[],
@@ -109,7 +110,7 @@ export async function compactMessages(
     content: `<context-summary>\n[Previous conversation summary - compressed to save context]\n${summaryText}\n</context-summary>\n\n<system-note>Context was compressed. Before continuing, briefly confirm: (1) what you have accomplished so far, (2) what remains to be done. Then proceed with the next action.</system-note>`,
   };
 
-  const compactedMessages: ModelMessage[] = [summaryMessage, ...preserved];
+  const compactedMessages: ModelMessage[] = [...retained, summaryMessage, ...preserved];
 
   const record: CompactionRecord = {
     id: makeRuntimeId('cmp'),
@@ -137,7 +138,9 @@ export async function compactMessages(
 
 export function serializeMessagesForSummary(messages: ModelMessage[]): string {
   const lines: string[] = [];
-  for (const message of messages) {
+  // Share the same boundary with manual LLM compaction. Do not send attachment
+  // payloads, their surrounding message, or half of a media tool exchange.
+  for (const message of partitionForSummary(messages, messages.length).compressible) {
     const role = message.role.toUpperCase();
     const content = message.content;
 
@@ -149,7 +152,8 @@ export function serializeMessagesForSummary(messages: ModelMessage[]): string {
 
     const parts: string[] = [];
     for (const part of content) {
-      if ('text' in part && typeof part.text === 'string') {
+      if (!part || typeof part !== 'object') continue;
+      if ((part.type === 'text' || part.type === 'reasoning') && typeof part.text === 'string') {
         parts.push(part.text);
       } else if (part.type === 'tool-call') {
         const tc = part as { toolName?: string; input?: unknown };
@@ -165,5 +169,33 @@ export function serializeMessagesForSummary(messages: ModelMessage[]): string {
     }
   }
   return lines.join('\n\n');
+}
+
+function partitionForSummary(messages: ModelMessage[], splitIndex: number) {
+  const compressible: ModelMessage[] = [];
+  const retained: ModelMessage[] = [];
+  const preserved: ModelMessage[] = [];
+  const pending = new Set<string>();
+  let start = 0;
+  for (const [index, message] of messages.entries()) {
+    if (Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (!part || typeof part !== 'object') continue;
+        const id = part.toolCallId ?? part.tool_use_id ?? part.id;
+        if (typeof id !== 'string') continue;
+        if (part.type === 'tool-call' || part.type === 'tool_use') pending.add(id);
+        if (part.type === 'tool-result' || part.type === 'tool_result') pending.delete(id);
+      }
+    }
+    if (pending.size) continue;
+    const exchange = messages.slice(start, index + 1);
+    const target = index >= splitIndex ? preserved
+      : exchange.some(hasContextAttachment) ? retained : compressible;
+    target.push(...exchange);
+    start = index + 1;
+  }
+  // An incomplete call/result exchange is never eligible for summarization.
+  preserved.push(...messages.slice(start));
+  return { compressible, retained, preserved };
 }
 

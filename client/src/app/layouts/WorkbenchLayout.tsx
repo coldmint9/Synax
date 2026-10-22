@@ -17,13 +17,20 @@ import {
 } from "../../features/agent-workspace/state/sessionWorkspaceStore";
 import { sessionPath } from "../../features/agent-workspace/sessionRoutes";
 import { resolveSessionsEntryPath } from "../../features/agent-workspace/sessionLastVisit";
+import {
+  clearLastOpenedWorkspaceId,
+  saveLastOpenedWorkspaceId,
+} from "../../features/workspace/lastOpenedWorkspace";
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
 import { GitToolbarProvider } from "../../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../../features/project-create/ProjectCreateDialog";
 import { ToastContainer } from "../../shared/ui/ToastContainer";
 import { CachedWorkbenchPage, PageLoading } from "./CachedWorkbenchPage";
-import { setSessionDetailsVisible } from "../../features/agent-workspace/state/agentSessionStore";
+import {
+  forgetProjectSessionCache,
+  setSessionDetailsVisible,
+} from "../../features/agent-workspace/state/agentSessionStore";
 const SessionsPage = lazy(() => import("../pages/SessionsPage"));
 import { SessionEnvironmentProvider } from "../../features/agent-workspace/SessionEnvironmentContext";
 
@@ -62,6 +69,12 @@ function WorkbenchLayoutContent() {
       setCurrentProjectId(routeProjectId);
     }
   }, [routeProjectId, currentProjectId, setCurrentProjectId]);
+
+  // Remember the workspace the user is actually in, so the next start can route
+  // back to it regardless of which project happens to have fresh metadata.
+  useEffect(() => {
+    if (effectiveProjectId) saveLastOpenedWorkspaceId(effectiveProjectId);
+  }, [effectiveProjectId]);
 
   const projects = useShellStore((s) => s.projects);
   const projectsLoaded = useShellStore((s) => s.projectsLoaded);
@@ -213,6 +226,10 @@ function WorkbenchLayoutContent() {
       }
       try {
         await projectApi.deleteProject(projectId);
+        clearLastOpenedWorkspaceId(projectId);
+        // Remembered lists and parked transcripts must not survive the
+        // workspace they belong to.
+        forgetProjectSessionCache(projectId);
         removeFromStore(projectId);
         if (isCurrentProject || location.pathname === `/workspaces/${encodeURIComponent(projectId)}/manage`) {
           const remaining = useShellStore.getState().projects;
@@ -246,6 +263,7 @@ function WorkbenchLayoutContent() {
   return (
     <SessionEnvironmentProvider
       sessionId={chromeMode === "global" ? null : selectedSessionId}
+      projectId={effectiveProjectId}
     >
       <div
         className="workbench-shell"

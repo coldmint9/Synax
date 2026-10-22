@@ -33,15 +33,18 @@ import {
 import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
+import { captureCompletedReply } from "./runtime-history.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "./runtime-journal.js";
-import { restoreUnlaunchedInput } from "./runtime-recovery.js";
+import {
+  currentRuntimeHostId,
+  recoverRuntimeSession,
+  restoreUnlaunchedInput,
+} from "./runtime-recovery.js";
 import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
-import { workStore } from "./work-store.js";
-import { usesGoalWorkflow } from "./workflow-mode.js";
 interface Owner {
   context?: RuntimeExecutionContext;
   runId: string;
@@ -223,7 +226,6 @@ export class RunCoordinator {
       {
         const candidate = runtimeTransaction(() => {
           const session = agentRuntimeStore.getSession(sessionId);
-          const work = workStore.current(sessionId);
           const latestRun = agentRuntimeStore.listRuns(sessionId)[0];
           if (
             (!forced && session.status !== "completed") ||
@@ -234,14 +236,6 @@ export class RunCoordinator {
             (!forced &&
               latestRun?.stopReason === "round_yielded" &&
               goalContinuationInput(sessionId, latestRun.id) !== null) ||
-            (!forced &&
-              work &&
-              work.status !== "completed" &&
-              !(
-                work.status === "active" &&
-                latestRun.stopReason === "round_yielded" &&
-                !usesGoalWorkflow(session)
-              )) ||
             (!forced && interactionService.pending(sessionId))
           )
             return null;
@@ -439,7 +433,6 @@ export class RunCoordinator {
       if ("run" in chunk && chunk.run)
         agentRuntimeStore.acceptRunProjection(chunk.run);
       writer.write(chunk);
-      await writer.settled();
     };
     const flush = async () => {
       writer.flush();
@@ -492,14 +485,29 @@ export class RunCoordinator {
         "[run-coordinator] execution ended with an error",
       );
       leaseLost = isExecutionSuperseded(error);
-      if (leaseLost) return;
+      if (leaseLost) {
+        // A superseded owner must not write over its replacement. However an
+        // unsuccessful launch with no current executor must not remain running.
+        // Rust decides atomically whether this is an unowned run or a real
+        // handoff; UI metadata and this process's owner map are not authority.
+        try {
+          await runtimeFacade.controlCommand({ sessionId,
+            requestId: `execution-fail-start:${owner.runId}:${owner.context?.epoch}`,
+            operation: "execution_fail_start",
+            payload: { executionLease: owner.context, reason: message } });
+          await agentRuntimeStore.hydrateSession(sessionId, true);
+        } catch (repairError) {
+          if (!isExecutionSuperseded(repairError)) throw repairError;
+        }
+        return;
+      }
       if (!this.ownsLease(owner)) return;
       await flush();
       await agentRuntimeStore.hydrateSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
       if (!["completed", "cancelled", "interrupted", "failed", "blocked"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
-          status: owner.controller.signal.aborted ? "interrupted" : "failed",
+          status: owner.controller.signal.aborted || message.includes("RUN_INTERRUPTED") ? "interrupted" : "failed",
           completedAt: nowIso(),
           stopReason: message,
         });
@@ -528,6 +536,23 @@ export class RunCoordinator {
             sessionId,
             run,
           );
+          if (run.status === "interrupted" && run.stopReason?.includes("RUN_INTERRUPTED")) {
+            await runtimeFacade.sessionPatch(sessionId, `interrupted-session:${run.id}`, {
+              status: "paused", activeRunId: null, pendingResumeToken: null, blockedReason: run.stopReason,
+            });
+          }
+          if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
+            // Include any final partial message written after the stream drained.
+            await agentRuntimeStore.hydrateSession(sessionId, true);
+            // All backends settle here, including Rust and external sessions
+            // that never enter the legacy loop's checkpoint finalizer.
+            try {
+              await captureCompletedReply(sessionId, run.id);
+            } catch (error) {
+              logger.warn({ sessionId, runId: run.id, error },
+                "[run-coordinator] reply checkpoint could not be saved");
+            }
+          }
           // Terminal finish closes the lease in the same Rust transaction.
           // Waiting checkpoints retain the run but release this executor.
           if (["waiting_input", "waiting_permission"].includes(run.status)) {
@@ -555,6 +580,7 @@ export class RunCoordinator {
         }
       } else if (
         settledNormally &&
+        agentRuntimeStore.getRun(owner.runId).status !== "interrupted" &&
         ownsLease &&
         !owner.stopping &&
         !owner.controller.signal.aborted &&
@@ -795,6 +821,17 @@ export class RunCoordinator {
     owner.stopFailed = false;
     owner.finalizers = [];
     await this.interrupt(sessionId, "Recovery rechecked the owned processes.");
+  }
+  /** Admission heals a stop fence in place instead of asking the user to retry.
+   * A stop that is still in flight is left alone; admission stays fenced. */
+  async reconcileFencedSession(sessionId: string): Promise<void> {
+    const owner = this.owners.get(sessionId);
+    if (owner) {
+      if (!owner.stopping || !owner.stopFailed) return;
+      await this.reconcileFailedStop(sessionId);
+      return;
+    }
+    await recoverRuntimeSession(currentRuntimeHostId(), sessionId, true);
   }
   async waitForIdle(): Promise<void> {
     while (this.owners.size || this.queueDispatches.size) {

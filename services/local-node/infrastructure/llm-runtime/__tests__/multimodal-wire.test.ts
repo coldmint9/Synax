@@ -1,4 +1,4 @@
-import { createOpenAI } from "@ai-sdk/openai";
+import { createRustOpenAI as createOpenAI } from "../../../../test-fixtures/rust-provider.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultGlobalConfig } from "../../runtime/config/config-defaults.js";
 import { resolveLlmSelection } from "../resolver.js";
@@ -24,9 +24,7 @@ vi.mock("../../../modules/agent-runtime/media-assets.js", () => ({
   readAsset: async () => fixture.bytes,
   validateAssets: vi.fn(),
 }));
-vi.mock("../providers/provider-cache.js", () => ({
-  getOrCreateClient: async () =>
-    createOpenAI({
+const nativeFixture = () => createOpenAI({
       apiKey: "fixture",
       fetch: async (_url, init) => {
         fixture.requests.push(JSON.parse(String(init?.body)));
@@ -69,8 +67,8 @@ vi.mock("../providers/provider-cache.js", () => ({
               },
         );
       },
-    }),
-}));
+    });
+let baseUrl: string;
 function selection(
   model = "gpt-5.6-sol",
   modalities?: Array<"text" | "image" | "file">,
@@ -81,6 +79,7 @@ function selection(
   globalConfig.providerConnections.openai = {
     providerId: "openai",
     apiKey: "fixture",
+    baseUrl,
     extra: {
       model,
       apiFormat: fixture.mode === "chat" ? "openai" : "openai-responses",
@@ -105,9 +104,10 @@ const image: LlmGatewayMessage = {
     },
   ],
 };
-beforeEach(() => {
+beforeEach(async () => {
   fixture.requests.length = 0;
   fixture.mode = "responses";
+  baseUrl = (await nativeFixture().responses("fixture").request()).baseUrl!;
 });
 describe("generic multimodal message transport", () => {
   it("recognizes Sol without the remote catalog and sends original image bytes and all reasoning efforts", async () => {
@@ -138,7 +138,7 @@ describe("generic multimodal message transport", () => {
       const body = fixture.requests.at(-1)!;
       expect(body.model).toBe("gpt-5.6-sol");
       expect(body.reasoning.effort).toBe(effort);
-      expect(body.input[0].content[1]).toMatchObject({
+      expect(body.input.flatMap((item: any) => item.content ?? []).find((part: any) => part.type === "input_image")).toMatchObject({
         type: "input_image",
         detail: "original",
         image_url: `data:image/png;base64,${fixture.bytes.toString("base64")}`,
@@ -174,7 +174,7 @@ describe("generic multimodal message transport", () => {
       { kind: "text" },
     );
     expect(fixture.requests[0].model).toBe("future-vision-model");
-    expect(fixture.requests[0].input[0].content[1].type).toBe("input_image");
+    expect(fixture.requests[0].input.flatMap((item: any) => item.content ?? []).find((part: any) => part.type === "input_image")?.type).toBe("input_image");
     expect(fixture.requests[0].metadata).toEqual({ test: "generic" });
   });
   it("preserves tool media as native Responses tool output with image detail", async () => {

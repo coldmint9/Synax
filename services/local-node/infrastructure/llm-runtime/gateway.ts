@@ -1,47 +1,11 @@
-import type { GenerateTextResult, Output } from "ai";
-import { generateText } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ZodType } from "zod";
-import {
-  getGlobalConfigForRuntime,
-  getProjectConfigForRuntime,
-} from "../runtime/config/config-store.js";
+import { getGlobalConfigForRuntime, getProjectConfigForRuntime } from "../runtime/config/config-store.js";
 import { getRuntimeCatalog } from "./catalog.js";
-import {
-  resolveLlmSelection,
-  resolveProviderApiFormat,
-  resolveProviderModelRef,
-  resolveRuntimeProvider,
-} from "./resolver.js";
-import type {
-  LlmGatewayRequest,
-  ResolvedModelSelection,
-  ValidateLlmRequest,
-} from "./types.js";
-import {
-  executePipeline,
-  hasConfiguredApiKey,
-  missingApiKeyMessage,
-} from "./pipeline.js";
-import type { ExecutionMode, GatewayStreamResult } from "./pipeline.js";
-import { withRetry } from "./middleware/retry.js";
-import {
-  withRateLimit,
-  withStreamRateLimit,
-} from "./middleware/rate-limiter.js";
-import {
-  instantiateProvider,
-  selectLanguageModel,
-} from "./providers/provider-registry.js";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyGenerateTextResult = GenerateTextResult<any, any, any>;
-
-export interface GatewayObjectResult<T> {
-  object: T;
-  result: AnyGenerateTextResult;
-}
-
+import { resolveLlmSelection, resolveProviderApiFormat, resolveProviderModelRef, resolveRuntimeProvider } from "./resolver.js";
+import type { LlmGatewayRequest, ResolvedModelSelection, ValidateLlmRequest } from "./types.js";
+import { executePipeline, hasConfiguredApiKey, missingApiKeyMessage } from "./pipeline.js";
+import type { GatewayStreamResult, GatewayTextResult } from "./gateway-result.js";
+export interface GatewayObjectResult<T> { object: T; result: GatewayTextResult }
 export async function resolveGatewaySelection(
   request: Pick<LlmGatewayRequest, "projectId" | "purpose" | "model">,
 ): Promise<ResolvedModelSelection> {
@@ -60,106 +24,23 @@ export async function resolveGatewaySelection(
   });
 }
 
-export async function createGatewayStream(
-  request: LlmGatewayRequest,
-  abortSignal?: AbortSignal,
-): Promise<GatewayStreamResult> {
-  const selection = await resolveGatewaySelection(request);
-  return createGatewayStreamForSelection(request, selection, abortSignal);
+export async function createGatewayStream(request: LlmGatewayRequest, signal?: AbortSignal): Promise<GatewayStreamResult> {
+  return createGatewayStreamForSelection(request, await resolveGatewaySelection(request), signal);
 }
-
-export async function createGatewayStreamForSelection(
-  request: LlmGatewayRequest,
-  selection: ResolvedModelSelection,
-  abortSignal?: AbortSignal,
-): Promise<GatewayStreamResult> {
-  return withRetry(
-    () =>
-      withStreamRateLimit(
-        selection.providerId,
-        selection.modelId,
-        request.maxTokens ?? 4096,
-        () =>
-          executePipeline(
-            request,
-            selection,
-            {
-              kind: "stream",
-              tools: request.tools,
-              toolChoice: request.toolChoice,
-              activeTools: request.activeTools,
-              repairToolCall: request.repairToolCall,
-              maxRetries: request.maxRetries,
-            },
-            abortSignal,
-          ),
-        abortSignal,
-      ),
-    { maxRetries: request.maxRetries ?? 5, signal: abortSignal },
-  );
+export function createGatewayStreamForSelection(request: LlmGatewayRequest, selection: ResolvedModelSelection, signal?: AbortSignal): Promise<GatewayStreamResult> {
+  return executePipeline(request, selection, { kind: "stream", tools: request.tools, toolChoice: request.toolChoice,
+    activeTools: request.activeTools, maxRetries: request.maxRetries }, signal);
 }
-
-export async function generateGatewayTextResult(
-  request: LlmGatewayRequest,
-  abortSignal?: AbortSignal,
-): Promise<AnyGenerateTextResult> {
-  const selection = await resolveGatewaySelection(request);
-  return withRetry(
-    () =>
-      withRateLimit(
-        selection.providerId,
-        selection.modelId,
-        request.maxTokens ?? 4096,
-        () =>
-          executePipeline(request, selection, { kind: "text" }, abortSignal),
-        abortSignal,
-      ),
-    { maxRetries: request.maxRetries ?? 5, signal: abortSignal },
-  ) as Promise<AnyGenerateTextResult>;
+export async function generateGatewayTextResult(request: LlmGatewayRequest, signal?: AbortSignal): Promise<GatewayTextResult> {
+  return executePipeline(request, await resolveGatewaySelection(request), { kind: "text" }, signal) as Promise<GatewayTextResult>;
 }
-
-export async function generateGatewayObjectResult<T>(
-  request: LlmGatewayRequest,
-  schema: ZodType<T>,
-  abortSignal?: AbortSignal,
-): Promise<GatewayObjectResult<T>> {
-  const selection = await resolveGatewaySelection(request);
-  const result = (await withRetry(
-    () =>
-      withRateLimit(
-        selection.providerId,
-        selection.modelId,
-        request.maxTokens ?? 4096,
-        () =>
-          executePipeline(
-            request,
-            selection,
-            { kind: "object", schema },
-            abortSignal,
-          ),
-        abortSignal,
-      ),
-    { signal: abortSignal },
-  )) as AnyGenerateTextResult;
-  return {
-    object: (result as unknown as { output: T }).output,
-    result,
-  };
+export async function generateGatewayObjectResult<T>(request: LlmGatewayRequest, schema: ZodType<T>, signal?: AbortSignal): Promise<GatewayObjectResult<T>> {
+  const result = await executePipeline(request, await resolveGatewaySelection(request), { kind: "object", schema }, signal) as GatewayTextResult;
+  return { object: result.output as T, result };
 }
-
-export async function generateGatewayObject<T>(
-  request: LlmGatewayRequest,
-  schema: ZodType<T>,
-  abortSignal?: AbortSignal,
-): Promise<T> {
-  const result = await generateGatewayObjectResult(
-    request,
-    schema,
-    abortSignal,
-  );
-  return result.object;
+export async function generateGatewayObject<T>(request: LlmGatewayRequest, schema: ZodType<T>, signal?: AbortSignal): Promise<T> {
+  return (await generateGatewayObjectResult(request, schema, signal)).object;
 }
-
 export async function validateGatewayModel(
   input: ValidateLlmRequest,
 ): Promise<{ ok: boolean; message?: string; error?: string }> {
@@ -204,25 +85,10 @@ export async function validateGatewayModel(
         modelId: parsed.modelId,
       });
     config.apiFormat = apiFormat;
-    const client = await instantiateProvider(provider, config);
-    const model = selectLanguageModel(
-      client,
-      parsed.modelId,
-      undefined,
-      apiFormat,
-    );
-    await withRetry(
-      () =>
-        generateText({
-          maxRetries: 0,
-          model: model as Parameters<typeof generateText>[0]["model"],
-          messages: [
-            { role: "user", content: "ping" },
-          ] satisfies ModelMessage[],
-          maxOutputTokens: 1,
-        }),
-      { maxRetries: 2, baseDelayMs: 500, maxDelayMs: 5000 },
-    );
+    await executePipeline({ purpose: "validate", messages: [{ role: "user", content: "ping" }], maxTokens: 1 }, {
+      model: `${parsed.providerId}/${parsed.modelId}`, providerId: parsed.providerId, modelId: parsed.modelId,
+      apiFormat, provider, modelDef: { id: parsed.modelId, label: parsed.modelId }, config,
+    }, { kind: "text" });
     return {
       ok: true,
       message: `${parsed.providerId}/${parsed.modelId} validated`,

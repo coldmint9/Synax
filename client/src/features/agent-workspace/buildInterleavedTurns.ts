@@ -1,4 +1,5 @@
 import { visualizationReplyParts } from "./visualizationTranscript";
+import { gitMergeReplyParts, type GitMergeReplyPart } from "./gitMergeTranscript";
 import type { InlineVisualizationReference } from "./visualizationTranscript";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
@@ -10,6 +11,7 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 
 export interface ToolCallView {
+  execution?: ToolCallRecord["execution"];
   outputRef?: unknown;
   contentParts?: RuntimeContentPart[];
   id: string;
@@ -23,6 +25,7 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
+  | Extract<GitMergeReplyPart, { type: "git_merge" }>
   | {
       type: "visualization";
       reference: InlineVisualizationReference;
@@ -202,7 +205,7 @@ export function buildInterleavedTurns(
       const thought = msg.metadata?.thought;
       if (typeof thought === "string" && hasDisplayableReasoning(thought))
         items.push({ timestamp, block: { type: "thinking", content: thought } });
-      for (const block of visualizationReplyParts(msg))
+      for (const block of gitMergeReplyParts(msg) ?? visualizationReplyParts(msg))
         items.push({ timestamp, block });
       if (msg.content.trim()) {
         const sources = Array.isArray(msg.metadata?.sources)
@@ -255,12 +258,13 @@ export function buildInterleavedTurns(
             contentParts: tc.contentParts,
             ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
             toolId: tc.toolId,
+            execution: tc.execution,
             inputSummary: tc.inputSummary ?? "",
             outputSummary: tc.outputSummary ?? tc.error ?? "",
             status: tc.status,
             category: tc.category,
             duration: tc.endedAt
-              ? computeToolDuration(tc.startedAt, tc.endedAt)
+              ? computeToolDuration(tc.execution?.startedAt ?? tc.startedAt, tc.endedAt)
               : null,
             mutability: tc.mutability,
           },

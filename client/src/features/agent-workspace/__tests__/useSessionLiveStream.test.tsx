@@ -10,10 +10,11 @@ vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
 }));
 afterEach(() => store.setState(store.getInitialState()));
 
-it("does not re-fetch cached session selection but reconciles after a reconnect", () => {
+it("does not re-fetch cached session selection but reconciles the open row after a reconnect", () => {
   const refreshDetail = vi.fn().mockResolvedValue(undefined);
   const refreshSessions = vi.fn().mockResolvedValue(undefined);
-  store.setState({ refreshDetail, refreshSessions });
+  const syncSessionSummary = vi.fn().mockResolvedValue(undefined);
+  store.setState({ refreshDetail, refreshSessions, syncSessionSummary });
   connectivity.setState({ apiReachable: "reachable" });
   const { rerender } = renderHook(({ id }) => useSessionLiveStream(id), {
     initialProps: { id: "a" },
@@ -24,5 +25,7 @@ it("does not re-fetch cached session selection but reconciles after a reconnect"
   act(() => connectivity.setState({ apiReachable: "unreachable" }));
   act(() => connectivity.setState({ apiReachable: "reachable" }));
   expect(refreshDetail).toHaveBeenCalledTimes(1);
-  expect(refreshSessions).toHaveBeenCalledTimes(1);
+  // Only the open session is reconciled; the page is never re-read.
+  expect(syncSessionSummary).toHaveBeenCalledWith("b");
+  expect(refreshSessions).not.toHaveBeenCalled();
 });

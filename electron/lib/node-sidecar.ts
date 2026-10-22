@@ -17,6 +17,8 @@ let generation = 0;
 let failures = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 const RETRY_DELAYS = [1_000, 2_000, 4_000];
+// READY follows store hydration and recovery, which can exceed 30s on existing data.
+const STARTUP_TIMEOUT_MS = 120_000;
 
 function scheduleRecovery(): void {
   if (!wanted || retryTimer || failures >= RETRY_DELAYS.length) return;
@@ -120,8 +122,8 @@ async function launchSidecar(expectedGeneration: number): Promise<number> {
       events.once("error", onError);
       events.once("exit", onExit);
       timer = setTimeout(
-        () => reject(new Error("API sidecar startup timed out")),
-        30_000,
+        () => reject(new Error(`API sidecar startup timed out after ${STARTUP_TIMEOUT_MS / 1000}s`)),
+        STARTUP_TIMEOUT_MS,
       );
       lines.on("line", (line) => {
         const match = /^SYNAX_DESKTOP_READY:(\d+)$/.exec(line);

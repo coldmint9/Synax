@@ -1,18 +1,23 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { InlineVisualization } from "../InlineVisualization";
-import { visualizationDocument, VISUALIZATION_CSP } from "../document";
+import {
+  interactiveDocument,
+  readInteractiveDocumentConfig,
+  INTERACTIVE_CSP,
+  type InteractiveDocumentConfig,
+} from "../../../shared/interactive/document";
 
 const visualization = {
   id: "message:demo",
   html: '<div id="demo"><button class="btn">Hello</button></div>',
 };
 function config(frame: HTMLIFrameElement) {
-  return JSON.parse(
-    frame.srcdoc.match(
-      /id="synax-visualization-config" type="application\/json">([^<]+)</,
-    )![1],
-  );
+  const parsed = readInteractiveDocumentConfig(frame.srcdoc);
+  if (!parsed) throw new Error("missing frame config");
+  return parsed as InteractiveDocumentConfig & {
+    icons: Record<string, string>;
+  };
 }
 function receive(
   frame: HTMLIFrameElement,
@@ -31,7 +36,7 @@ describe("InlineVisualization", () => {
     expect(frame).toHaveAttribute("sandbox", "allow-scripts");
     expect(frame).not.toHaveAttribute("allow");
     expect(frame.loading).toBe("eager");
-    expect(frame).toHaveAttribute("csp", VISUALIZATION_CSP);
+    expect(frame).toHaveAttribute("csp", INTERACTIVE_CSP);
     expect(frame.srcdoc).toContain(visualization.html);
     expect(frame.srcdoc).toContain(".btn-primary");
     expect(config(frame).icons.sparkles).toContain("<svg");
@@ -43,7 +48,7 @@ describe("InlineVisualization", () => {
     const frame = screen.getByTitle("交互预览") as HTMLIFrameElement;
     const c = config(frame);
     const data = {
-      channel: "synax-visualization",
+      channel: "synax-interactive",
       id: c.id,
       token: c.token,
       type: "resize",
@@ -68,7 +73,7 @@ describe("InlineVisualization", () => {
     const second = screen.getByTitle("交互预览") as HTMLIFrameElement;
     expect(config(second).token).not.toBe(oldConfig.token);
     receive(second, {
-      channel: "synax-visualization",
+      channel: "synax-interactive",
       ...config(second),
       type: "error",
     });
@@ -76,6 +81,11 @@ describe("InlineVisualization", () => {
     expect(view.container.querySelector("iframe")).toBeNull();
     view.unmount();
     expect(first.isConnected).toBe(false);
+  });
+  it("explains a missing snapshot instead of spinning forever", () => {
+    render(<InlineVisualization visualization={{ id: "empty" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("预览内容缺失");
+    expect(screen.queryByTitle("交互预览")).toBeNull();
   });
   it("shows stored validation errors without mounting an executable frame", () => {
     render(
@@ -87,7 +97,7 @@ describe("InlineVisualization", () => {
     expect(screen.queryByTitle("交互预览")).toBeNull();
   });
   it("escapes config strings and does not enable eval/network or same-origin access", () => {
-    const html = visualizationDocument("<p>Demo</p>", {
+    const html = interactiveDocument("<p>Demo</p>", {
       id: "</script><img>",
       token: "</script>",
       theme: "dark",

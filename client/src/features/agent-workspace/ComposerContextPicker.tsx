@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Combobox,
   ComboboxInput,
@@ -15,6 +16,7 @@ import {
 import { OverlayStateObserver } from "@/shared/ui/ui/OverlayStateObserver";
 import {
   Check,
+  Bot,
   Paperclip,
   ArrowLeft,
   Minimize2,
@@ -36,6 +38,7 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { sessionCompaction } from "./sessionCompaction";
 
 const contextTypes = [
+  { id: "subagent", zh: "自定义子代理", en: "Custom subagent", Icon: Bot },
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
@@ -365,7 +368,7 @@ function ContextPickerContent({
                     )}
                     {(added || (ref.label && ref.label !== ref.id)) && (
                       <small>
-                        {added ? (zh ? "已添加" : "Added") : ref.id}
+                        {added ? (zh ? "已添加" : "Added") : ref.kind === "subagent" ? ref.description : ref.id}
                       </small>
                     )}
                   </ComboboxOption>
@@ -375,8 +378,12 @@ function ContextPickerContent({
             {loading && <p role="status">{zh ? "正在加载…" : "Loading…"}</p>}
             {!loading && error && <p role="alert">{error}</p>}
             {!loading && !error && !options.length && (
-              <p role="status">{zh ? "没有匹配项" : "No matches"}</p>
+              <p role="status">{kind === "subagent" && !search ? (zh ? "还没有可用的自定义子代理" : "No custom subagents available") : (zh ? "没有匹配项" : "No matches")}</p>
             )}
+            {kind === "subagent" && <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+              <p>{zh ? "未选择时由主代理自动配置，可选择多个。" : "Automatic configuration when none are selected. Multiple selections are supported."}</p>
+              <Link to="/settings?section=subagents" onClick={() => close()} className="mt-2 inline-block text-primary underline underline-offset-4">{zh ? "管理自定义子代理" : "Manage custom subagents"}</Link>
+            </div>}
             {references.length >= 20 && (
               <p role="status">
                 {zh ? "最多添加 20 个上下文" : "Up to 20 references"}
@@ -411,7 +418,7 @@ function ContextPickerContent({
             {contextTypes
               .map(({ id, Icon, ...labels }) => {
                 const unavailable =
-                  backendId !== "native" && (id === "skill" || id === "mcp");
+                  backendId !== "native" && (id === "skill" || id === "mcp" || id === "subagent");
                 return (
                   <button
                     type="button"

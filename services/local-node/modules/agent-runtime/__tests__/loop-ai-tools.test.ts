@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod/v4';
-import { asSchema } from '@ai-sdk/provider-utils';
+import { asSchema } from "../../../infrastructure/llm-runtime/tool-schema.js";
 import { buildLoopToolSet } from '../loop-ai-tools.js';
 
 describe('loop AI tool adapter', () => {

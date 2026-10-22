@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
 import { readHistoryList } from './history-pages.js';
+import { appendHistoryPayload } from './history-upload.js';
 import type { AgentSession } from "../contracts.js";
 
 let connection:
@@ -70,12 +71,7 @@ export async function persistEntity(
   kind: string,
   value: unknown,
 ): Promise<void> {
-  await runtimeClient().historyCommand({
-    sessionId,
-    requestId: randomUUID(),
-    operation: "append_entities",
-    payload: { objects: [{ kind, value }] },
-  });
+  await appendHistoryPayload(runtimeClient(), sessionId, randomUUID(), { objects: [{ kind, value }] });
 }
 export async function listEntities<T>(
   sessionId: string,

@@ -33,6 +33,7 @@ import {
   useAgentSessionStore,
 } from "../state/agentSessionStore";
 import { sessionPath } from "../sessionRoutes";
+import { readSessionContextUsage } from "../contextUsage";
 import { resolveSessionsEntryPath } from "../sessionLastVisit";
 import { InputQueueStrip } from "../InputQueueStrip";
 
@@ -79,6 +80,13 @@ export function AgentDock({ projectId }: Props) {
   const stopSession = useAgentDockStore((s) => s.stopSession);
   const replyPermission = useAgentDockStore((s) => s.replyPermission);
   const session = useAgentDockStore((s) => s.session);
+  const dockSessionId = session.sessionId;
+  const dockContextSession = useAgentSessionStore((s) =>
+    dockSessionId
+      ? s.sessions.find((item) => item.id === dockSessionId) ?? null
+      : null,
+  );
+  const contextUsage = readSessionContextUsage(dockContextSession);
   const loadInputQueue = useAgentSessionStore((s) => s.loadInputQueue);
   const removeQueuedInput = useAgentSessionStore((s) => s.removeQueuedInput);
   const forceQueuedInput = useAgentSessionStore((s) => s.forceQueuedInput);
@@ -287,16 +295,28 @@ export function AgentDock({ projectId }: Props) {
       content={content}
       onContentChange={setContent}
       onSubmit={() => {
-        if (!media.ready) return;
-        void submitSession(projectId).then(() => {
+        if (media.blocked) return;
+        void (async () => {
+          // The dock keeps accepting attachments while uploads run; the send
+          // waits for them so the message carries the real asset ids.
+          const uploaded = media.hasPendingUploads()
+            ? await media.waitForUploads().catch(() => null)
+            : {
+                parts: media.parts,
+                itemIds: media.items.map((item) => item.id),
+              };
+          if (!uploaded) return;
+          useAgentDockStore.setState({ composerContentParts: uploaded.parts });
+          await submitSession(projectId);
           if (!useAgentDockStore.getState().composerContentParts?.length)
-            media.clear();
-        });
+            media.clear(uploaded.itemIds);
+        })().catch(() => {});
       }}
       onStop={stopSession}
       isGenerating={isGenerating}
       providerId={providerId}
       modelId={modelId}
+      contextUsage={contextUsage}
       onModelSelect={(selection) => {
         setProviderId(selection.providerId);
         setModelId(selection.modelId);

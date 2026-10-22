@@ -3,9 +3,11 @@ import type {
   HistoryWindowResponse,
 } from "../../../adapters/transport/agentRuntime";
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
+import { gitMergeReplyParts } from "../gitMergeTranscript";
 
 // Keep only what the rail needs; the transcript retains its own paged details.
 export function previewTimelineMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
+  const task = gitMergeReplyParts(message)?.find((part) => part.type === "git_merge");
   return {
     ...message,
     // Prompt equality and media-only prompts both affect tick identity.
@@ -19,6 +21,7 @@ export function previewTimelineMessage(message: AgentRuntimeMessage): AgentRunti
       kind: message.metadata?.kind,
       partial: message.metadata?.partial,
       forkedFromMessageId: message.metadata?.forkedFromMessageId,
+      ...(task ? { gitMergeTask: task.reference } : {}),
     },
   };
 }
@@ -59,7 +62,7 @@ export function timelineContainsEntry(entry: SessionDetailCacheEntry, entryId: s
     : entryId.startsWith("work-log-")
       ? entryId.slice("work-log-".length)
       : null;
-  return entry.messages.some((message) => message.id === entryId) ||
+  return entry.messages.some((message) => message.id === entryId || `reply-${message.id}` === entryId) ||
     entry.steps.some((step) => step.id === entryId || step.id === stepId) ||
     entry.runs.some((run) => `run-error-${run.id}` === entryId);
 }

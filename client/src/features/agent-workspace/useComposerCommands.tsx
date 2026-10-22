@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   FileText,
+  Bot,
   Plug,
   Sparkles,
   Target,
@@ -21,10 +22,12 @@ import {
   agentRuntimeApi,
   type AgentSessionMode,
   type TurnReference,
+  type TurnReferenceOption,
 } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
 
 const commands = [
+  { id: "subagent", zh: "自定义子代理", en: "Custom subagent", Icon: Bot },
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
@@ -40,7 +43,7 @@ type Query = {
 };
 function findQuery(value: string, cursor: number): Query | null {
   const before = value.slice(0, cursor);
-  const detail = /(?:^|\s)\/(skill|mcp|file)\s+([^\n]*)$/.exec(before);
+  const detail = /(?:^|\s)\/(skill|mcp|file|subagent)\s+([^\n]*)$/.exec(before);
   if (detail)
     return {
       start: detail.index + detail[0].indexOf("/"),
@@ -90,7 +93,7 @@ export function useComposerCommands({
   const listId = useId();
   const [contextOpen, setContextOpen] = useState(false);
   const [query, setQuery] = useState<Query | null>(null);
-  const [options, setOptions] = useState<TurnReference[]>([]);
+  const [options, setOptions] = useState<TurnReferenceOption[]>([]);
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -197,7 +200,7 @@ export function useComposerCommands({
   }, [Boolean(query), references.length, mode]);
 
   const unavailable = (id: CommandId) => {
-    if ((id === "skill" || id === "mcp") && !native)
+    if ((id === "skill" || id === "mcp" || id === "subagent") && !native)
       return zh ? "此后端使用原生配置" : "Managed by this backend";
     if (["plan", "goal"].includes(id) && !modeEnabled)
       return zh
@@ -209,7 +212,7 @@ export function useComposerCommands({
     ? options.map((ref) => ({
         id: `${ref.kind}:${ref.id}`,
         title: ref.label ?? ref.id,
-        detail: ref.label !== ref.id ? ref.id : "",
+        detail: ref.kind === "subagent" ? ref.description ?? "" : ref.label !== ref.id ? ref.id : "",
         command: ref.kind as CommandId,
         ref,
         disabled: references.some(

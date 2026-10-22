@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { currentExecutionContext, runWithExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
+import { runCoordinator } from '../run-coordinator.js';
+import { runtimeFacade } from '../sidecar/runtime-facade.js';
 import {
   getSubagentLiveness,
   SUBAGENT_PROGRESS_TIMEOUT_MS,
@@ -47,6 +50,7 @@ function makeDeps(behaviors: Record<string, {
   let counter = 0;
 
   const store = {
+    hydrateSession: vi.fn(async () => {}),
     listSessionTree: () => [...sessions.values()] as never,
     updateSessionMetadata: (id: string, patch: Record<string, unknown>) => {
       const s = sessions.get(id)!;
@@ -111,6 +115,46 @@ function makeDeps(behaviors: Record<string, {
 const spec = (label: string): SubagentSpec => ({ profileId: 'explorer', prompt: `explore ${label}`, label });
 
 describe('subagent-orchestrator', () => {
+  it.each([true, false])('supervises authoritative child progress and releases the actual executor (progress: %s)', async (progress) => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({});
+      deps.createSession({ profileId: 'explorer' });
+      vi.spyOn(runtimeFacade, 'enabled').mockReturnValue(true);
+      vi.spyOn(runCoordinator, 'submitAsync').mockImplementation(async () => {
+        expect(currentExecutionContext()).toBeUndefined();
+        return { run: { id: 'child-run' }, reused: false } as never;
+      });
+      vi.spyOn(runCoordinator, 'observeRun').mockImplementation(async function* (_id, _runId, _after, signal) {
+        if (!progress) {
+          await new Promise<void>(resolve => signal!.addEventListener('abort', () => resolve(), { once: true }));
+          return;
+        }
+        for (let i = 0; i < 5; i++) {
+          await new Promise(resolve => setTimeout(resolve, 4_000));
+          yield { sequence: i + 1, chunk: { type: 'message_delta' } } as never;
+        }
+        deps.rawStore.updateSession('child-1', { status: 'completed' });
+      });
+      const interrupt = vi.spyOn(runCoordinator, 'interrupt').mockImplementation(async () => {
+        deps.rawStore.updateSession('child-1', { status: 'interrupted' });
+      });
+      const idle = vi.spyOn(runCoordinator, 'waitForSessionIdle').mockResolvedValue();
+      const parentContext = { sessionId: 'parent', runId: 'parent-run', epoch: 'parent-epoch', hostId: 'host' };
+      const pending = runWithExecutionContext(parentContext, () =>
+        runChildToCompletion('child-1', spec('authoritative'), { progressTimeoutMs: 10_000 }, deps));
+      await vi.advanceTimersByTimeAsync(progress ? 20_000 : 10_000);
+      expect(await pending).toMatchObject({ status: progress ? 'completed' : 'timeout' });
+      expect(idle).toHaveBeenCalledWith('child-1');
+      if (progress) expect(interrupt).not.toHaveBeenCalled();
+      else {
+        expect(interrupt).toHaveBeenCalledWith('child-1', expect.stringContaining('no progress'));
+        expect(interrupt.mock.invocationCallOrder[0]).toBeLessThan(idle.mock.invocationCallOrder[0]);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
   it('returns ordered results, one per spec', async () => {
     const deps = makeDeps({
       'child-1': { endStatus: 'completed', resultSummary: 'A' },

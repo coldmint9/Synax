@@ -1,110 +1,11 @@
+import { searchFiles, SEARCH_TIMEOUT_MS, type SearchBudget } from "./search-files.js";
 import { runCommand } from './exec-async.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
-import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
+import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelative, workspaceRoot } from './workspace.js';
 import { resolveRipgrep } from './ripgrep.js';
-
-// ---------------------------------------------------------------------------
-// Node.js glob fallback helpers (used when ripgrep is not available)
-// ---------------------------------------------------------------------------
-
-function segMatch(name: string, segment: string): boolean {
-  const regex = new RegExp(
-    '^' +
-      segment
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*/g, '[^/]*')
-        .replace(/\?/g, '[^/]') +
-      '$',
-  );
-  return regex.test(name);
-}
-
-function globWalk(baseDir: string, pattern: string, limit: number): string[] {
-  const segments = pattern.split('/').filter((s) => s !== '');
-  const hits: Array<{ filePath: string; mtimeMs: number }> = [];
-
-  function walk(currentDir: string, segIdx: number): void {
-    if (hits.length >= limit) return;
-
-    if (segIdx >= segments.length) {
-      try {
-        const st = fs.statSync(currentDir);
-        if (st.isFile()) hits.push({ filePath: currentDir, mtimeMs: st.mtimeMs });
-      } catch {
-        /* skip unreadable */
-      }
-      return;
-    }
-
-    const seg = segments[segIdx];
-    const isLast = segIdx === segments.length - 1;
-
-    if (seg === '**') {
-      // Match zero directories: skip ** and try next segment at this level
-      walk(currentDir, segIdx + 1);
-
-      // Match one or more directories: recurse into subdirectories
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(currentDir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (hits.length >= limit) return;
-        if (!entry.isDirectory()) continue;
-        walk(path.join(currentDir, entry.name), segIdx); // keep ** active
-      }
-      return;
-    }
-
-    // Regular segment -- read directory and match names
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(currentDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    if (isLast) {
-      // Matching files
-      for (const entry of entries) {
-        if (hits.length >= limit) return;
-        if (!entry.isFile()) continue;
-        if (!segMatch(entry.name, seg)) continue;
-        try {
-          const full = path.join(currentDir, entry.name);
-          const st = fs.statSync(full);
-          hits.push({ filePath: full, mtimeMs: st.mtimeMs });
-        } catch {
-          /* skip unreadable */
-        }
-      }
-    } else {
-      // Matching directories
-      for (const entry of entries) {
-        if (hits.length >= limit) return;
-        if (!entry.isDirectory()) continue;
-        if (!segMatch(entry.name, seg)) continue;
-        walk(path.join(currentDir, entry.name), segIdx + 1);
-      }
-    }
-  }
-
-  walk(baseDir, 0);
-
-  return hits
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, limit)
-    .map((e) => e.filePath);
-}
-
-// ---------------------------------------------------------------------------
-// Tool definition
-// ---------------------------------------------------------------------------
 
 export const fileGlobTool: RegisteredTool = {
   id: 'file.glob',
@@ -118,12 +19,14 @@ export const fileGlobTool: RegisteredTool = {
   progressiveDetails:
     'Accepts { pattern: string, path?: string, limit?: number }. Supports patterns like "**/*.ts" or "src/**/*.tsx" and returns matching files sorted by modification time. On systems without ripgrep, a Node.js fallback is used.',
   inputSchema: z.object({
+    timeoutMs: z.number().int().min(100).max(120_000).optional(),
+    includeIgnored: z.boolean().optional(),
     pattern: z.string().min(1).describe('Glob-like pattern, for example **/*.ts.'),
     path: z.string().min(1).optional().describe('Workspace-relative base directory.'),
     limit: z.number().int().positive().max(300).optional().describe('Maximum number of paths to return.'),
   }),
   execute(input) {
-    const args = input.args as { pattern?: string; path?: string; limit?: number };
+    const args = input.args as { pattern?: string; path?: string; limit?: number; timeoutMs?: number; includeIgnored?: boolean };
     const pattern = args?.pattern ?? '**/*';
     const base = resolveWorkspacePath(args?.path ?? '.', input.sessionId);
     const baseStat = fs.statSync(base);
@@ -132,11 +35,13 @@ export const fileGlobTool: RegisteredTool = {
 
     // Matching runs asynchronously so the event loop (and therefore parallel
     // tool calls plus side-channel work) is never blocked by ripgrep.
-    return runGlobSearch({ sessionId: input.sessionId, pattern, base, limit });
+    return runGlobSearch({ sessionId: input.sessionId, pattern, base, limit, includeIgnored: args.includeIgnored, budget: { deadline: Date.now() + (args.timeoutMs ?? SEARCH_TIMEOUT_MS), signal: input.abortSignal, entries: 0, files: 0, bytes: 0, status: "complete" } });
   },
 };
 
 interface GlobSearchInput {
+  budget: SearchBudget;
+  includeIgnored?: boolean;
   sessionId: string;
   pattern: string;
   base: string;
@@ -144,14 +49,21 @@ interface GlobSearchInput {
 }
 
 async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResult> {
-  const { sessionId, pattern, base, limit } = input;
+  const { sessionId, pattern, base, limit, budget } = input;
 
   // -- ripgrep path (absolute path; the desktop GUI PATH is minimal) --
   const rgPath = await resolveRipgrep();
   if (rgPath) {
-    const result = await runCommand(rgPath, ['--files', '--glob', pattern], { cwd: base });
-    if (result.error) throw result.error;
-    if (result.status !== 0 && result.status !== 1) {
+    let count = 0;
+    const result = await runCommand(rgPath, ['--files', '--glob', pattern, ...(input.includeIgnored ? ['--hidden', '--no-ignore'] : [])], {
+      cwd: base, signal: budget.signal, timeoutMs: Math.max(1, budget.deadline - Date.now()), stopOnOutputLimit: true,
+      onStdout(chunk) { count += chunk.split('\n').length - 1; return count < limit; },
+    });
+    if (budget.signal?.aborted) budget.status = 'cancelled';
+    else if (result.timedOut) budget.status = 'timeout';
+    else if (result.stoppedEarly || result.stdoutTruncated) budget.status = 'limit_reached';
+    if (result.error && budget.status === 'complete') throw result.error;
+    if (budget.status === 'complete' && result.status !== 0 && result.status !== 1) {
       throw new Error(result.stderr.trim() || `rg failed with exit code ${result.status ?? 'unknown'}.`);
     }
     const files = result.stdout
@@ -162,28 +74,32 @@ async function runGlobSearch(input: GlobSearchInput): Promise<ToolExecutionResul
       .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath, sessionId))
       .map((relativePath) => ({
         path: relativePath,
-        mtimeMs: fs.statSync(resolveWorkspacePath(relativePath, sessionId)).mtimeMs,
+        mtimeMs: (() => { try { return fs.statSync(resolveWorkspacePath(relativePath, sessionId)).mtimeMs; } catch { return 0; } })(),
       }))
       .sort((left, right) => right.mtimeMs - left.mtimeMs)
       .slice(0, limit)
       .map((entry) => entry.path);
     return {
-      result: { pattern, files },
-      displaySummary: `Matched ${files.length} files for ${pattern}.`,
+      result: { pattern, files, status: budget.status, partial: budget.status !== "complete" },
+      displaySummary: `Matched ${files.length} files for ${pattern}.${budget.status !== "complete" ? ` Partial search: ${budget.status}.` : ""}`,
       artifacts: [],
     };
   }
 
   // -- Node.js fallback ----------------------------------------------
-  const absoluteFiles = globWalk(base, pattern, limit);
+  const absoluteFiles: string[] = [];
+  for await (const file of searchFiles(base, workspaceRoot(sessionId), budget, { filePattern: pattern, includeIgnored: input.includeIgnored })) {
+    absoluteFiles.push(file);
+    if (absoluteFiles.length >= limit) { budget.status = "limit_reached"; break; }
+  }
   const files = absoluteFiles
     .map((absolutePath) => toWorkspaceRelative(absolutePath, sessionId))
     .filter((relativePath) => !isWorkspaceRelativePathBlocked(relativePath, sessionId))
     .slice(0, limit);
 
   return {
-    result: { pattern, files },
-    displaySummary: `Matched ${files.length} files for ${pattern} (Node.js fallback).`,
+    result: { pattern, files, status: budget.status, partial: budget.status !== "complete" },
+    displaySummary: `Matched ${files.length} files for ${pattern} (Node.js fallback).${budget.status !== "complete" ? ` Partial search: ${budget.status}.` : ""}`,
     artifacts: [],
   };
 }

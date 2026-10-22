@@ -4,6 +4,7 @@ import { normalizeAgentSessionStatus } from './session-projection.js';
 import type { AgentRunStreamChunk, AgentSession } from './contracts.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
+import { streamBatchGroups } from './runtime-stream-projection.js';
 
 const durableProducerId = `runtime-journal:${process.pid}:${randomUUID()}`;
 export interface RuntimeStreamRecord {
@@ -48,13 +49,15 @@ class RuntimeJournal {
     if (!chunks.length) return;
     const write = (this.pending.get(sessionId) ?? Promise.resolve()).then(async () => {
       const fence = await runtimeFacade.streamFence(sessionId, runId);
-      const sequence = (this.producerSequences.get(sessionId) ?? 0) + 1;
-      this.producerSequences.set(sessionId, sequence);
-      const through = await runtimeFacade.appendStreamAuthoritative({
+      for (const group of streamBatchGroups(chunks)) {
+        const sequence = (this.producerSequences.get(sessionId) ?? 0) + 1;
+        this.producerSequences.set(sessionId, sequence);
+        const through = await runtimeFacade.appendStreamAuthoritative({
         sessionId, runId, producerId: durableProducerId, producerSequence: sequence,
-        ...fence, chunks, state: await runtimeFacade.authoritativeRecordState(sessionId),
+        ...fence, chunks: group, state: await runtimeFacade.authoritativeRecordState(sessionId),
       });
-      await runtimeFacade.persistStreamHistory(sessionId, chunks, through);
+        await runtimeFacade.persistStreamHistory(sessionId, group, through);
+      }
       this.notifyCommitted(sessionId);
     });
     this.pending.set(sessionId, write);

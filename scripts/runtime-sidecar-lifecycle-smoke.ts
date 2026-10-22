@@ -159,7 +159,7 @@ try {
   assert(runtime.generation >= 2);
 
   // Persist the two host-crash windows: a terminal UI before finish_run, and
-  // a waiting checkpoint before the executor has closed its lease.
+  // an unfinished approval before the executor has closed its lease.
   const { recoverRuntime } = await import('../services/local-node/modules/agent-runtime/runtime-recovery.js');
   const { patchRuntime } = await import('../services/local-node/modules/agent-runtime/sidecar/runtime-repository.js');
   const recoveryCases = [];
@@ -182,20 +182,19 @@ try {
   await recoverRuntime('replacement-host');
   for (const { status, context } of recoveryCases) {
     const ui = JSON.parse(Buffer.from(await client.uiSnapshot(context.sessionId)).toString());
-    assert.equal(ui.run.status, status);
-    assert.equal(ui.run.stopReason, `original-${status}`);
+    assert.equal(ui.run.status, status === 'waiting_permission' ? 'interrupted' : status);
+    if (status !== 'waiting_permission') assert.equal(ui.run.stopReason, `original-${status}`);
+    else assert.equal(ui.session.status, 'paused');
     assert.equal(ui.run.metadata.executionLease.closed, true);
     const fence = await client.snapshot(context.sessionId);
-    assert.equal(fence.activeRunId, status === 'waiting_permission' ? context.runId : undefined);
+    assert.equal(fence.activeRunId, undefined);
     await assert.rejects(client.assertExecutionLease(context), { code: 'EXECUTION_SUPERSEDED' });
     if (status === 'waiting_permission') {
       const resumed = { ...context, hostId: 'replacement-host', epoch: 'fresh-generation' };
-      await patchRuntime(context.sessionId, 'execution_open', resumed);
-      await client.assertExecutionLease(resumed);
-      await patchRuntime(context.sessionId, 'execution_close', resumed);
+      await assert.rejects(patchRuntime(context.sessionId, 'execution_open', resumed), { code: 'EXECUTION_SUPERSEDED' });
     }
   }
-  console.log('Node coordinator → Rust lifecycle passed: activation, complete/blocked/failed cleanup, original errors, automatic queued input, repeated checkpoint resume, real Rust crash/reconnect, startup recovery during terminal/waiting handoff, and stale-owner rejection. Controlled driver; no external LLM.');
+  console.log('Node coordinator → Rust lifecycle passed: activation, complete/blocked/failed cleanup, original errors, automatic queued input, repeated checkpoint resume, real Rust crash/reconnect, terminal-result preservation and interrupted approval after restart, and stale-owner rejection. Controlled driver; no external LLM.');
 } finally {
   client.close();
   await stopRustRuntimeSidecar(runtime);

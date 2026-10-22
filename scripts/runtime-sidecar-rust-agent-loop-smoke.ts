@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -43,6 +43,7 @@ try {
     SYNAX_AGENT_LOOP_ENGINE: "rust",
     SYNAX_AGENT_SESSION_IN_PROCESS: "1",
     SYNAX_RUNTIME_SIDECAR_STREAM: "authoritative",
+    RUST_LOG: "off,synax_runtime_sidecar=info",
   });
   const { RustRuntimeSupervisor } = await import("../services/local-node/infrastructure/runtime/rust-sidecar.js");
   supervisor = new RustRuntimeSupervisor({ dataRoot: root });
@@ -78,7 +79,24 @@ try {
   assert(JSON.stringify(requestBodies[1]).includes('Preparing both echo calls.'));
   assert(messages.some((message) => message.role === "assistant" && message.content.includes("Rust loop completed")));
   toolRegistry.unregister("rust-smoke.echo");
+  await supervisor.stop();
+  const logDir = path.join(root, 'logs');
+  const nativeFiles = (await readdir(logDir)).filter(name => /^runtime\.\d{4}-\d{2}-\d{2}\.jsonl$/.test(name));
+  const nativeText = (await Promise.all(nativeFiles.map(name => readFile(path.join(logDir, name), 'utf8')))).join('');
+  const records = nativeText.trim().split('\n').map(line => JSON.parse(line));
+  const correlated = records.filter(record => record.spans?.some((span: { session_id?: string }) => span.session_id === session.id));
+  assert.equal(correlated.filter(record => record.fields.event === 'provider.completed').length, 2);
+  assert.equal(correlated.filter(record => record.fields.event === 'agent.completed').length, 1);
+  assert.equal(records.filter(record => record.fields.event === 'agent.tool_result').length, 2);
+  assert(records.some(record => record.fields.event === 'runtime.stopped'));
+  assert(!nativeText.includes('Use the echo tool then answer.'));
+  assert(!nativeText.includes('Rust loop completed after the tool.'));
+  const { listApiLogs } = await import('../services/local-node/infrastructure/runtime/log-store.js');
+  const ingested = await listApiLogs({ limit: 500 });
+  assert(ingested.some(record => record.context.source === 'rust-runtime' && record.context.event === 'agent.completed' && record.context.session_id === session.id));
+  assert(ingested.some(record => record.context.source === 'rust-runtime' && record.context.event === 'runtime.stopped'));
   console.log("Rust agent loop smoke passed: Rust multi-step controller → Node tool execution → Rust continuation → terminal run.");
+  console.log('Structured runtime logs passed: correlated provider/tool/agent events → native files → Node log store, including shutdown flush and content exclusion.');
 } finally {
   await supervisor?.stop().catch(() => {});
   await close().catch(() => {});

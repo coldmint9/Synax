@@ -15,6 +15,7 @@ beforeEach(() => {
   vi.spyOn(agentRuntimeStore, 'hydrateSession').mockResolvedValue();
   vi.spyOn(agentRuntimeStore, 'flush').mockResolvedValue();
   vi.spyOn(runtimeFacade, 'uiSnapshotAuthoritative').mockResolvedValue({ session: { id: 's', status: 'running' } } as never);
+  vi.spyOn(runtimeFacade, 'sessionSummaryAuthoritative').mockResolvedValue({ id: 's', status: 'running' } as never);
   vi.spyOn(runtimeFacade, 'historyHeadAuthoritative').mockResolvedValue({ revision: 42 });
   vi.spyOn(runtimeFacade, 'listHistoryCheckpoints').mockResolvedValue(checkpoints);
   vi.spyOn(runtimeFacade, 'listMessageHistory').mockRejectedValue(new Error('must not drain all messages'));
@@ -70,9 +71,7 @@ it('preserves empty and unfiltered query semantics', async () => {
 });
 
 it.each(['archivedAt', 'deletedAt'])('keeps the %s session access guard', async (field) => {
-  vi.mocked(runtimeFacade.uiSnapshotAuthoritative).mockResolvedValue({
-    session: { id: 's', status: 'completed', sessionMetadata: { [field]: 'now' } },
-  } as never);
+  vi.mocked(runtimeFacade.sessionSummaryAuthoritative).mockResolvedValue({ id: 's', status: 'completed', sessionMetadata: { [field]: 'now' } } as never);
   expect((await request()).status).toBe(404);
   expect(runtimeFacade.listHistoryCheckpoints).not.toHaveBeenCalled();
 });

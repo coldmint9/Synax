@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { executorInput, resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
-import { agentRuntimeStore } from "../session-store.js";
+import { AgentRuntimeStore, agentRuntimeStore } from "../session-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { sessionProcessManager } from "../session-process-manager.js";
 
@@ -44,11 +44,12 @@ describe("session worker exit cleanup", () => {
     const oldStarted = new Promise<void>((resolve) => { oldWorker.started = resolve; });
     mocks.fork.mockReturnValueOnce(oldWorker);
     const oldStream = sessionProcessManager.streamSession(parent.id, "turn", { message: "Old run" });
-    const oldRejected = expect(oldStream.next()).rejects.toThrow("Test release");
+    const oldStopped = expect(oldStream.next()).resolves.toMatchObject({ done: true });
     await oldStarted;
     sessionProcessManager.interruptSessions([parent.id], "Test release");
-    await oldRejected;
+    await oldStopped;
     oldWorker.emit("exit", 0, null);
+    await sessionProcessManager.waitForIdleSessions([parent.id, child.id]);
     agentRuntimeStore.updateSession(parent.id, { status: "running" });
     agentRuntimeStore.updateSession(child.id, { status: "running" });
 
@@ -65,6 +66,51 @@ describe("session worker exit cleanup", () => {
     expect(sessionProcessManager.isSessionStreaming(parent.id)).toBe(true);
     replacement.emit("exit", 1, null);
     await newRejected;
+    await sessionProcessManager.waitForIdleSessions([parent.id, child.id]);
+  });
+
+  it.each(["failed", "completed", "queued"] as const)("preserves durable %s state when the exiting worker's host cache is still running", async (status) => {
+    const session = agentSessionRuntime.create(executorInput);
+    const startedAt = new Date().toISOString();
+    const run = agentRuntimeStore.appendRun({
+      id: "worker-durable-run", sessionId: session.id, status: "running", startedAt,
+      completedAt: null, triggerMessageId: null, currentStep: 39, stopReason: null, model: null, metadata: {},
+    });
+    agentRuntimeStore.updateSession(session.id, { status: "running", activeRunId: run.id });
+    await agentRuntimeStore.flushSession(session.id);
+    const worker = new TestWorker();
+    worker.sessionId = session.id;
+    const started = new Promise<void>((resolve) => { worker.started = resolve; });
+    mocks.fork.mockReturnValueOnce(worker);
+    const stream = sessionProcessManager.streamSession(session.id, "turn", { message: "Start" });
+    const rejected = expect(stream.next()).rejects.toThrow("Agent session child process exited");
+    await started;
+
+    // A separate working set reproduces writes made by the worker process.
+    const workerStore = new AgentRuntimeStore();
+    await workerStore.hydrateSession(session.id);
+    const reason = status === "failed" ? "stream_first_token_timeout" : "completed";
+    workerStore.updateRun(run.id, { status, completedAt: startedAt, stopReason: reason });
+    workerStore.updateSession(session.id, { status, activeRunId: null, completedAt: startedAt, resultSummary: reason });
+    await workerStore.flushSession(session.id);
+    const expectedRun = status === "queued"
+      ? workerStore.appendRun({ ...run, id: "next-admitted-run", status: "queued" })
+      : workerStore.getRun(run.id);
+    if (status === "queued") {
+      workerStore.updateSession(session.id, { activeRunId: expectedRun.id });
+      await workerStore.flushSession(session.id);
+    }
+    expect(agentRuntimeStore.getSession(session.id).status).toBe("running");
+
+    worker.emit("exit", 0, null);
+    expect(sessionProcessManager.canSpawnChild(session.id)).toBe(false);
+    await rejected;
+    await sessionProcessManager.waitForIdleSessions([session.id]);
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({ status, resultSummary: reason });
+    expect(agentRuntimeStore.getRun(expectedRun.id)).toEqual(expectedRun);
+    await workerStore.hydrateSession(session.id, true);
+    expect(workerStore.getSession(session.id).status).toBe(status);
+    expect(workerStore.getRun(expectedRun.id).status).toBe(status);
   });
 
   it.each([false, true])("reconciles the dead worker's session tree, runs and steps (released=%s)", async (released) => {
@@ -98,7 +144,9 @@ describe("session worker exit cleanup", () => {
     mocks.fork.mockReturnValue(worker);
     const stream = sessionProcessManager.streamSession(parent.id, "turn", { message: "Start" });
     const next = stream.next();
-    const rejected = expect(next).rejects.toThrow(released ? "Test release" : "Agent session child process exited");
+    const rejected = released
+      ? expect(next).resolves.toMatchObject({ done: true })
+      : expect(next).rejects.toThrow("Agent session child process exited");
     await started;
     if (released) {
       sessionProcessManager.interruptSessions([parent.id], "Test release");
@@ -106,6 +154,7 @@ describe("session worker exit cleanup", () => {
     }
     worker.emit("exit", 1, null);
     await rejected;
+    await sessionProcessManager.waitForIdleSessions([parent.id, child.id, completed.id]);
     expect(agentRuntimeStore.getSession(parent.id).status).toBe("interrupted");
     expect(agentRuntimeStore.getSession(child.id)).toMatchObject({
       status: "interrupted", blockedReason: expect.stringContaining("worker exited"),

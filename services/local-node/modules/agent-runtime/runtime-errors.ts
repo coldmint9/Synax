@@ -1,4 +1,7 @@
-import { RuntimeSidecarError } from "./sidecar/sidecar-client.js";
+import {
+  RuntimeSidecarError,
+  RuntimeSidecarTransportError,
+} from "./sidecar/sidecar-client.js";
 import { VersionStoreError } from "./validation/limits.js";
 export class AgentRuntimeError extends Error {
   constructor(
@@ -15,6 +18,22 @@ export class AgentNotFoundError extends AgentRuntimeError {
   constructor(id: string) {
     super(`Agent runtime resource not found: ${id}`, 'NOT_FOUND', 404);
   }
+}
+
+/** A model can request a stale or invented tool name. This is a tool result,
+ * not evidence that its session (or any durable runtime resource) was lost. */
+export class AgentToolNotFoundError extends AgentRuntimeError {
+  constructor(public readonly toolId: string) {
+    super(
+      `Tool not found: ${toolId}. Use the exact names and argument schemas from the current tool definitions.`,
+      'TOOL_NOT_FOUND',
+      422,
+    );
+  }
+}
+
+export function isToolResolutionError(error: unknown): error is AgentToolNotFoundError | AgentPermissionError {
+  return error instanceof AgentToolNotFoundError || error instanceof AgentPermissionError;
 }
 
 /**
@@ -53,6 +72,12 @@ export class AgentProviderNotConfiguredError extends AgentRuntimeError {
 
 export function toRuntimeError(error: unknown): AgentRuntimeError {
   if (error instanceof AgentRuntimeError) return error;
+  if (error instanceof RuntimeSidecarTransportError)
+    return new AgentRuntimeError(
+      error.message,
+      "RUNTIME_TRANSPORT_UNAVAILABLE",
+      503,
+    );
   if (error instanceof RuntimeSidecarError) {
     if (error.message.includes('entity exceeds history page byte budget'))
       return new AgentRuntimeError(error.message, 'HISTORY_ENTITY_TOO_LARGE', 413);

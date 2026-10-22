@@ -2,6 +2,7 @@ import type { AgentRuntimeStore } from "../session-store.js";
 import type { StructuredToolCall } from "../contracts.js";
 import type { ToolRegistry, ExecuteToolResult } from "../tool-registry.js";
 import { canComposeTool } from "../code-mode/policy.js";
+import { isToolResolutionError } from "../runtime-errors.js";
 
 interface Operation {
   call: StructuredToolCall;
@@ -53,11 +54,20 @@ export class LoopComposition {
     this.save(stepId, program);
     if (program.error) throw new Error(program.error);
 
+    // Missing/disabled tools still need a receipt from registry.execute. They
+    // cannot participate in read batching; never let scheduling kill the run.
+    const resolveTool = (op: Operation) => {
+      try { return this.registry.getForSession(sessionId, op.call.toolId); }
+      catch (error) {
+        if (!isToolResolutionError(error)) throw error;
+        return undefined;
+      }
+    };
     const parallelRead = (op: Operation) => {
       const session = this.store.getSession(sessionId);
-      const tool = this.registry.getForSession(sessionId, op.call.toolId);
+      const tool = resolveTool(op);
       // Permission-sensitive reads are serialized to avoid multiple open approvals.
-      return session.sessionMetadata?.permissionTier === "unrestricted" && tool.mutability === "read" &&
+      return tool && session.sessionMetadata?.permissionTier === "unrestricted" && tool.mutability === "read" &&
         canComposeTool(session, tool);
     };
     for (let index = 0; index < program.operations.length; index++) {
@@ -71,7 +81,10 @@ export class LoopComposition {
           group.push(program.operations[++index]);
       }
       const session = this.store.getSession(sessionId);
-      const compiled = group.every((entry) => canComposeTool(session, this.registry.getForSession(sessionId, entry.call.toolId)));
+      const compiled = group.every((entry) => {
+        const tool = resolveTool(entry);
+        return tool && canComposeTool(session, tool);
+      });
       const execute = async (entry: Operation, abortSignal?: AbortSignal) => {
         entry.state = "running";
         this.save(stepId, program);

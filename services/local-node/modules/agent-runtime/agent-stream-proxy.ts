@@ -12,7 +12,7 @@ import { sessionProcessManager } from './session-process-manager.js';
 import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated } from './session-title-service.js';
 import type { AgentSessionStreamMode } from '../../infrastructure/runtime/ipc/agent-session-protocol.js';
 import { agentRuntimeStore } from './session-store.js';
-import { runtimeFacade } from './sidecar/runtime-facade.js';
+import { recoverAnsweredInteractionsOnce, stopAnsweredInteractionRecovery } from './interaction-recovery.js';
 
 function useInProcessAgentSessions(): boolean {
   return agentSessionsRunInProcess();
@@ -47,7 +47,7 @@ export function assertCanStartAgentSessionProcess(sessionId?: string): void {
       429,
     );
   }
-  sessionProcessManager.assertCanSpawnChild(sessionId);
+  sessionProcessManager.assertCanQueueChild();
 }
 
 async function* withSessionTitleScheduling(
@@ -133,26 +133,12 @@ async function* observeBackgroundRun(
 }
 
 export function recoverAnsweredInteractions():void {
-  void recoverAnsweredInteractionsAuthoritative().catch(error => logger.warn({error}, 'Interaction recovery failed'));
+  void recoverAnsweredInteractionsOnce(resumeAgentSessionInBackground).catch(error => logger.warn({error}, 'Interaction recovery failed'));
 }
 
-async function recoverAnsweredInteractionsAuthoritative(): Promise<void> {
-  const projections = await runtimeFacade.listSessionProjection();
-  for (const raw of projections) {
-    if (!raw || typeof raw !== 'object') continue;
-    const session = raw as { id?: unknown; status?: unknown; activeRunId?: unknown; sessionMetadata?: unknown };
-    if (typeof session.id !== 'string' || session.status !== 'waiting_input' || typeof session.activeRunId !== 'string') continue;
-    const control = await runtimeFacade.controlState(session.id) as { interactions?: unknown[] };
-    const answered = (control.interactions ?? []).some((item) => {
-      if (!item || typeof item !== 'object') return false;
-      const interaction = item as { runId?: unknown; status?: unknown; response?: unknown; consumedAt?: unknown };
-      return interaction.runId === session.activeRunId && interaction.status !== 'pending' && interaction.response != null && !interaction.consumedAt;
-    });
-    if (answered) resumeAgentSessionInBackground(session.id);
-  }
-}
-export function startInteractionRecovery(): () => void {
+export function startInteractionRecovery(): () => Promise<void> {
   const tick=()=>{try{recoverAnsweredInteractions();}catch{/* startup/shutdown DB lifetime; next tick retries durable markers */}};
-  const timer=setInterval(tick,15_000);timer.unref();setImmediate(tick);
-  return ()=>clearInterval(timer);
+  const timer=setInterval(tick,15_000);timer.unref();
+  const initial=setImmediate(tick);
+  return ()=>{clearInterval(timer);clearImmediate(initial);return stopAnsweredInteractionRecovery();};
 }

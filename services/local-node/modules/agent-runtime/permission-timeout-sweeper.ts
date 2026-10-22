@@ -4,12 +4,26 @@ import { runtimeFacade } from './sidecar/runtime-facade.js';
 
 const SWEEP_INTERVAL_MS = 30_000;
 
-export async function sweepExpiredPermissionsAuthoritative(): Promise<number> {
+let pendingSweep: Promise<number> | undefined;
+let generation = 0;
+
+export function sweepExpiredPermissionsAuthoritative(): Promise<number> {
+  // A cold replay can outlast the timer. Share that pass instead of queuing
+  // another scan of every historical session on each tick.
+  return pendingSweep ??= sweepExpiredPermissions().finally(() => { pendingSweep = undefined; });
+}
+
+async function sweepExpiredPermissions(): Promise<number> {
+  const current = generation;
   const cutoff = Date.now() - PERMISSION_TIMEOUT_MS;
   let swept = 0;
   const sessions = await runtimeFacade.listSessionProjection();
   for (const raw of sessions) {
+    if (current !== generation) break;
     if (!raw || typeof raw !== 'object') continue;
+    // The Rust list index computes this from authoritative control state.
+    // Older sidecars omit it, in which case retain the full-scan fallback.
+    if ((raw as { pendingPermissionCount?: unknown }).pendingPermissionCount === 0) continue;
     const sessionId = (raw as { id?: unknown }).id;
     if (typeof sessionId !== 'string') continue;
     let state: { permissions?: unknown[] };
@@ -20,6 +34,7 @@ export async function sweepExpiredPermissionsAuthoritative(): Promise<number> {
       continue;
     }
     for (const rawPermission of state.permissions ?? []) {
+      if (current !== generation) break;
       if (!rawPermission || typeof rawPermission !== 'object') continue;
       const permission = rawPermission as {
         id?: unknown; action?: unknown; resolvedAt?: unknown; createdAt?: unknown;
@@ -53,10 +68,12 @@ export function startPermissionTimeoutSweeper(): void {
       if (count > 0) logger.info({ count }, '[agent-runtime] swept expired permission requests');
     }).catch((err) => logger.error({ err }, '[agent-runtime] permission timeout sweep failed'));
   }, SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
 }
 
-export function stopPermissionTimeoutSweeper(): void {
-  if (!sweepTimer) return;
-  clearInterval(sweepTimer);
+export function stopPermissionTimeoutSweeper(): Promise<void> {
+  generation++;
+  if (sweepTimer) clearInterval(sweepTimer);
   sweepTimer = null;
+  return pendingSweep?.then(() => {}, () => {}) ?? Promise.resolve();
 }

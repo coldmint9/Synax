@@ -42,11 +42,16 @@ function createMedia(remove = vi.fn()): MediaDraft {
     parts: [{ type: "image", assetId: asset.id }],
     error: null,
     ready: true,
+    blocked: false,
+    uploading: false,
     add: vi.fn(),
+    addText: vi.fn(),
     remove,
     retry: vi.fn(),
     clear: vi.fn(),
     restore: vi.fn(),
+    hasPendingUploads: () => false,
+    waitForUploads: vi.fn(async () => ({ parts: [], itemIds: [] })),
   };
 }
 
@@ -80,6 +85,28 @@ describe("MediaDraftPreview", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByRole("img", { name: "image.png" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows a queued attachment immediately from the local file", () => {
+    const media = createMedia();
+    media.items = [
+      {
+        id: "draft-2",
+        file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+        uploading: true,
+        queued: true,
+        controller: new AbortController(),
+      },
+    ];
+    media.parts = [];
+    media.uploading = true;
+
+    render(<MediaDraftPreview media={media} />);
+
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getByText("排队中 / Queued")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "移除 notes.txt" }));
+    expect(media.remove).toHaveBeenCalledWith("draft-2");
   });
 
   it("removes the ready row and deletes from the image card corner", async () => {

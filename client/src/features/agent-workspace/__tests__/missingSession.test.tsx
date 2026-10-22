@@ -34,6 +34,7 @@ beforeEach(() => {
   useApiConnectivityStore.setState({ apiReachable: "reachable" });
   vi.spyOn(api, "listSessions").mockResolvedValue({ items: [], totalCount: 0 });
   vi.spyOn(api, "getSession").mockRejectedValue(missing());
+  vi.spyOn(api, "getSessionSummary").mockRejectedValue(missing());
   vi.spyOn(api, "getSessionStats").mockResolvedValue({} as never);
   vi.spyOn(api, "getSessionTodos").mockResolvedValue({ items: [] });
   vi.spyOn(api, "getSessionInvocationUsage").mockResolvedValue({ items: [], totalCalls: 0 });
@@ -112,7 +113,7 @@ describe("missing session cleanup", () => {
     expect(ensureSessionLiveSubscription).not.toHaveBeenCalled();
   });
 
-  it("handles an authoritative getSession 404 even when transcript endpoints return empty lists", async () => {
+  it("handles an authoritative summary 404 even when transcript endpoints return empty lists", async () => {
     store.setState({ sessions: [] });
     await store.getState().refreshDetail();
     expect(isRuntimeResourceRemoved(session.id)).toBe(true);

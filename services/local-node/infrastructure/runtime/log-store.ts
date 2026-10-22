@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {createInterface} from 'node:readline';
 import {resolveLogDir} from './log-file-store.js';
-import {formatLocalDay,LOG_RETENTION_DAYS,retentionCutoffDay} from './log-retention.js';
+import {formatLocalDay,formatLogTimestamp,LOG_RETENTION_DAYS,retentionCutoffDay} from './log-retention.js';
 export type ApiLogLevel='trace'|'debug'|'info'|'warn'|'error'|'fatal';
 export interface PersistApiLogInput {level:ApiLogLevel;message:string;context:Record<string,unknown>;loggedAt?:string}
 export interface ApiLogEntry {id:number;day:string;loggedAt:string;level:ApiLogLevel;message:string;context:Record<string,unknown>;method:string|null;path:string|null;status:number|null;durationMs:number|null}
@@ -11,7 +11,7 @@ export interface ApiLogDailyStat {day:string;totalCount:number;traceCount:number
 let sequence=0,lastPrune='';
 const file=(day:string)=>path.join(resolveLogDir(),`events-${day}.jsonl`);
 export function persistApiLog(input:PersistApiLogInput):void {
-  const loggedAt=input.loggedAt ?? new Date().toISOString(),day=formatLocalDay(new Date(loggedAt));
+  const loggedAt=input.loggedAt ?? formatLogTimestamp(),day=formatLocalDay(new Date(loggedAt));
   const context=input.context;const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?v:null;
   const row:ApiLogEntry={...input,context,loggedAt,day,id:++sequence,method:typeof context.method==='string'?context.method:null,path:typeof context.path==='string'?context.path:null,status:number(context.status),durationMs:number(context.ms??context.durationMs)};
   try{if(day!==lastPrune){pruneOldApiLogs();lastPrune=day;}fs.appendFileSync(file(day),JSON.stringify(row)+'\n',{mode:0o600});}catch(error){process.stderr.write(`Unable to persist diagnostic log: ${String(error)}\n`);}

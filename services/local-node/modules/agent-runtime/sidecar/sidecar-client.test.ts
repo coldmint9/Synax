@@ -47,6 +47,25 @@ function send(socket: net.Socket, envelope: SidecarEnvelope): void {
 }
 
 describe('RuntimeSidecarClient', () => {
+  it('reads a bounded history window without first fetching an execution snapshot', async () => {
+    const operations: string[] = [];
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello') {
+        send(socket, { requestId: '', sessionId: '', epoch: 0, revision: 0,
+          body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: ['history_command'] } });
+      } else {
+        operations.push(envelope.body.type);
+        send(socket, { ...envelope, body: envelope.body.type === 'history_command'
+          ? { type: 'history_state', stateJson: new TextEncoder().encode('{"messages":[]}') }
+          : { type: 'error', code: 'INVALID_COMMAND', message: 'execution state must remain cold' } });
+      }
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
+    try {
+      await expect(client.historyCommand({ sessionId: 's', requestId: 'page', operation: 'history_sync', payload: {} })).resolves.toBeInstanceOf(Uint8Array);
+      expect(operations).toEqual(['history_command']);
+    } finally { client.close(); }
+  });
   it('correlates a health request after the binary hello handshake', async () => {
     const bound = await startServer((socket, envelope) => {
       if (envelope.body.type === 'hello') {

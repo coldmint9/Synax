@@ -2,6 +2,7 @@ import { useSessionSearch } from "./useSessionSearch";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { peekSessionList } from "./state/sessionListCache";
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import type {
   AgentSession,
@@ -61,22 +62,33 @@ export function useSessionList(
   const storeProjectId = useAgentSessionStore((s) => s.projectId);
   const storeSessions = useAgentSessionStore((s) => s.sessions);
   const storeRefresh = useAgentSessionStore((s) => s.refreshSessions);
+  const storeEnsureLoaded = useAgentSessionStore((s) => s.ensureSessionsLoaded);
   const deleteSession = useAgentSessionStore((s) => s.deleteSession);
-
-  const projectSessions = useMemo(() => {
-    if (!routeProjectId) return [];
-    return storeSessions.filter((s) => s.projectId === routeProjectId);
-  }, [routeProjectId, storeSessions]);
 
   const isProjectReady =
     Boolean(routeProjectId) && storeProjectId === routeProjectId;
+  // The layout binds the route workspace to the store in an effect, which runs
+  // after this render. Until then the store still describes the workspace we
+  // just left, so paint the route workspace's remembered rows instead of an
+  // empty loading list; the bind re-renders with live state moments later.
+  const pendingSnapshot = isProjectReady ? null : peekSessionList(routeProjectId);
+  const sessions = pendingSnapshot ? pendingSnapshot.sessions : storeSessions;
 
-  const total = useAgentSessionStore((s) => s.sessionListTotal);
+  const projectSessions = useMemo(() => {
+    if (!routeProjectId) return [];
+    return sessions.filter((s) => s.projectId === routeProjectId);
+  }, [routeProjectId, sessions]);
+
+  const storeTotal = useAgentSessionStore((s) => s.sessionListTotal);
+  const storeOffset = useAgentSessionStore((s) => s.sessionListOffset);
+  const storeLoading = useAgentSessionStore((s) => s.sessionListLoading);
+  const storeError = useAgentSessionStore((s) => s.sessionListError);
+  const total = pendingSnapshot ? pendingSnapshot.total : storeTotal;
   const totalCount = total ?? projectSessions.length;
-  const offset = useAgentSessionStore((s) => s.sessionListOffset);
+  const offset = pendingSnapshot ? pendingSnapshot.offset : storeOffset;
   const hasMore = total !== null && offset < total;
-  const isRefreshing = useAgentSessionStore((s) => s.sessionListLoading);
-  const error = useAgentSessionStore((s) => s.sessionListError);
+  const isRefreshing = pendingSnapshot ? false : storeLoading;
+  const error = pendingSnapshot ? null : storeError;
   const storeLoadMore = useAgentSessionStore((s) => s.loadMoreSessions);
   const loadingMore = useRef(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -276,6 +288,23 @@ export function useSessionList(
     ],
   );
 
+  /**
+   * Lazy entry point: a workspace that is already remembered paints without a
+   * request, and only a stale snapshot is reconciled in the background. User
+   * actions (retry, archive) still call `refresh` for a real re-read.
+   */
+  const ensureLoaded = useCallback(async () => {
+    if (!routeProjectId || !isProjectReady) return;
+    if (search.enabled) search.refresh();
+    await storeEnsureLoaded();
+  }, [
+    isProjectReady,
+    routeProjectId,
+    storeEnsureLoaded,
+    search.enabled,
+    search.refresh,
+  ]);
+
   const togglePin = useCallback(
     async (id: string) => {
       const current = grouped
@@ -385,11 +414,19 @@ export function useSessionList(
     openNewDraft,
     isDraftOpen,
     refresh,
+    ensureLoaded,
     loadMore: search.enabled ? search.loadMore : loadMore,
     toggleGroup,
     toggleExpand,
     deleteSession,
     isRefreshing: search.enabled ? search.loading : isRefreshing,
+    /**
+     * A painted snapshot is not a load even while the route workspace is still
+     * being bound, so the list keeps its rows instead of flashing a skeleton.
+     */
+    isLoading: search.enabled
+      ? search.loading
+      : isRefreshing || (!isProjectReady && !pendingSnapshot),
     error: search.enabled ? search.error : error,
     isProjectReady,
   };

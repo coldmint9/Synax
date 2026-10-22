@@ -258,6 +258,11 @@ export class RuntimeSidecarClient {
     operation: string;
     payload?: unknown;
   }): Promise<Uint8Array> {
+    // History cursors carry their own generation/revision. A read must not
+    // open the execution actor merely to attach an unrelated runtime fence.
+    if (["history_sync", "object_value_chunk", "list_checkpoints"].includes(input.operation)) {
+      return this.historyCommandGlobal(input);
+    }
     const snapshot = await this.snapshot(input.sessionId);
     const envelope = await this.request(
       {
@@ -295,6 +300,11 @@ export class RuntimeSidecarClient {
 
   async sessionList(after?: string): Promise<Uint8Array> {
     const envelope = await this.request({ type: 'session_list', after }, '', 0, 0);
+    return this.expect(envelope, 'session_list_response').sessionsJson;
+  }
+
+  async sessionSummary(id: string): Promise<Uint8Array> {
+    const envelope = await this.request({ type: 'session_list', id }, '', 0, 0);
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 
@@ -390,8 +400,11 @@ export class RuntimeSidecarClient {
     if (this.lifetime.signal.aborted) throw new Error('Runtime sidecar client closed.');
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        // Closing also bounds queued socket bytes; accepted writes can be retried from receipts.
-        this.fail(new RuntimeSidecarTransportError(`Runtime sidecar request timed out: ${requestId}`));
+        // A slow request must not invalidate unrelated in-flight requests on
+        // the same socket. The request id is durable, so the retry path can
+        // safely replay it and receive the original receipt.
+        this.pending.delete(requestId);
+        reject(new RuntimeSidecarTransportError(`Runtime sidecar request timed out: ${requestId}`));
       }, Math.max(1, deadline - Date.now()));
       this.pending.set(requestId, { resolve, reject, timer });
       try { this.write(frame); }

@@ -17,8 +17,8 @@ import { LoaderCircle, Square, Terminal, Trash2 } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionBackgroundProcess,
-  type SessionEnvironment,
 } from "../../adapters/transport/agentRuntime";
+import type { WorkspaceEnvironmentView } from "./workspaceEnvironmentView";
 import { terminalApi } from "../../adapters/transport/terminal";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -31,7 +31,7 @@ export function SessionBackgroundProcesses({
   environment,
 }: {
   sessionId: string;
-  environment?: SessionEnvironment | null;
+  environment?: WorkspaceEnvironmentView | null;
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";

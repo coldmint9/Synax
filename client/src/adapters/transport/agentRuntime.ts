@@ -1,3 +1,16 @@
+export interface ToolExecutionProgress {
+  phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
+  resource?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  deadline?: string;
+  lastProgressAt?: string;
+  queueWaitMs?: number;
+  files?: number;
+  bytes?: number;
+  matches?: number;
+}
+
 import { SESSION_PAGE_SIZE } from "../../shared/lib/sessionListPaging";
 import type { ContextCompactionState } from "../../../../services/local-node/modules/agent-runtime/context-compaction-types";
 export type { ContextCompactionState };
@@ -158,6 +171,10 @@ export interface AgentSessionMetadata extends Record<string, unknown> {
     | (AgentPlan & { revision: number; status: "draft" | "approved" | "saved" })
     | null;
   goal?: AgentGoalState | null;
+  /** Latest measured request context; persisted once per request by the runtime. */
+  contextUsage?: ContextUsageSnapshot | null;
+  /** Incrementally maintained per-session runtime analytics. */
+  runtimeAnalytics?: SessionAnalytics | null;
 }
 
 export interface AgentInteractionReply {
@@ -209,6 +226,7 @@ export interface AgentSession {
 }
 
 export interface AgentRun {
+  execution?: ToolExecutionProgress;
   id: string;
   sessionId: string;
   status: AgentRunStatus;
@@ -246,6 +264,7 @@ export type ToolCallStatus =
   | "compacted";
 
 export interface ToolCallRecord {
+  execution?: ToolExecutionProgress;
   outputRef?: unknown;
   contentParts?: RuntimeContentPart[];
   id: string;
@@ -547,6 +566,106 @@ export interface SessionStats {
   activeSubAgentCount: number;
 }
 
+/** Persisted, incrementally updated request-context snapshot. */
+export interface ContextUsageSnapshot {
+  version: 1;
+  stepId: string;
+  total: number;
+  limit: number | null;
+  composition: ContextComposition;
+  measuredAt: string;
+}
+
+export interface SessionAnalyticsUsage {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  requests: number;
+  recorded: number;
+  missing: number;
+}
+
+export interface SessionAnalytics {
+  version: 1;
+  updatedAt: string;
+  steps: number;
+  completedRuns: number;
+  completedRunSteps: number;
+  toolCalls: number;
+  toolCounts: Record<string, number>;
+  usage: SessionAnalyticsUsage;
+  models: Record<
+    string,
+    { steps: number; input: number; output: number; total: number }
+  >;
+  lastStepId: string | null;
+  lastCompletedRunId: string | null;
+}
+
+export interface ProjectAnalyticsSession {
+  id: string;
+  parentSessionId: string | null;
+  title: string;
+  status: AgentSessionStatus;
+  updatedAt: string;
+  model: string | null;
+  context: {
+    total: number;
+    limit: number | null;
+    percent: number | null;
+    composition: ContextComposition;
+    measuredAt: string;
+  } | null;
+  analytics: SessionAnalytics | null;
+}
+
+export interface ProjectAnalytics {
+  projectId: string;
+  generatedAt: string;
+  /** Legacy sessions still waiting for their one-time mirror. */
+  pendingBackfill: number;
+  sessions: ProjectAnalyticsSession[];
+  totals: {
+    sessions: number;
+    activeSessions: number;
+    steps: number;
+    completedRuns: number;
+    toolCalls: number;
+    tokens: { input: number; output: number; total: number };
+    cache: {
+      inputTokens: number;
+      cacheReadTokens: number;
+      ratio: number | null;
+    };
+    context: {
+      totalTokens: number;
+      windowTokens: number;
+      percent: number | null;
+      measuredSessions: number;
+    };
+    composition: {
+      messages: number;
+      tools: number;
+      mcp: number;
+      skills: number;
+      system: number;
+      total: number;
+    };
+  };
+  models: Array<{
+    model: string;
+    sessions: number;
+    steps: number;
+    input: number;
+    output: number;
+    total: number;
+  }>;
+  tools: Array<{ toolId: string; calls: number }>;
+}
+
 export interface TodoItem {
   id: string;
   label: string;
@@ -625,27 +744,14 @@ export interface SessionBackgroundProcess {
   ports?: number[];
 }
 
-export interface SessionEnvironment {
-  repositories?: SessionEnvironmentRepository[];
-  sessionId: string;
-  projectId: string;
-  workspacePath: string;
-  branch: string;
-  headCommitSha: string;
-  dirty: boolean;
-  additions: number;
-  deletions: number;
-  changedFiles: SessionEnvironmentFile[];
-  /** Files this session's agent wrote/edited/deleted (still uncommitted). */
-  agentChangedFiles: SessionEnvironmentFile[];
-  /** Optional for historical snapshots; independent of uncommitted Git changes. */
-  outputFiles?: string[];
-  inputSources: SessionEnvironmentInputSource[];
-  subagents: SessionEnvironmentSubagent[];
-  refreshedAt: string;
-}
-
-export interface SessionEnvironmentRepository {
+/**
+ * Workspace-level Git facts for one project member.
+ *
+ * Two conversations opened on the same checkout share this object: it is keyed
+ * by the canonical workspace path on the server and by `projectId` in the
+ * client cache, never by session id.
+ */
+export interface WorkspaceRepositoryGit {
   rootId: string;
   name: string;
   role: "primary" | "reference";
@@ -657,9 +763,61 @@ export interface SessionEnvironmentRepository {
   additions: number;
   deletions: number;
   changedFiles: SessionEnvironmentFile[];
-  agentChangedFiles: SessionEnvironmentFile[];
-  outputFiles?: string[];
-  inputSources: SessionEnvironmentInputSource[];
+  /** Content hash of these facts; unchanged roots keep their object identity. */
+  revision: string;
+}
+
+export interface WorkspaceGitChanges {
+  projectId: string;
+  /** Content hash of every repository revision in this workspace. */
+  revision: string;
+  /** True when the request revision already matched; `repositories` is empty. */
+  unchanged: boolean;
+  repositories: WorkspaceRepositoryGit[];
+  refreshedAt: string;
+}
+
+/** Session-scoped workspace binding; no Git probe, no transcript read. */
+export interface SessionEnvironmentRoot {
+  rootId: string;
+  name: string;
+  role: "primary" | "reference";
+  status: "ready" | "missing";
+  workspacePath: string;
+}
+
+export interface SessionEnvironmentRoots {
+  sessionId: string;
+  projectId: string;
+  workspacePath: string;
+  repositories: SessionEnvironmentRoot[];
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentSubagents {
+  sessionId: string;
+  subagents: SessionEnvironmentSubagent[];
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentInputs {
+  sessionId: string;
+  projectId: string;
+  primaryRootId: string;
+  /** Input sources of this conversation, keyed by workspace root id. */
+  byRoot: Record<string, SessionEnvironmentInputSource[]>;
+  refreshedAt: string;
+}
+
+export interface SessionEnvironmentOutputs {
+  sessionId: string;
+  projectId: string;
+  primaryRootId: string;
+  /** Existing files this conversation wrote, keyed by workspace root id. */
+  byRoot: Record<string, string[]>;
+  /** Every path this conversation's agent wrote, before existence filtering. */
+  editedPathsByRoot: Record<string, string[]>;
+  refreshedAt: string;
 }
 
 export interface SessionEnvironmentFileView {
@@ -733,12 +891,13 @@ export interface SessionCapabilities {
 }
 
 export interface TurnReference {
-  kind: "skill" | "mcp" | "file";
+  kind: "skill" | "mcp" | "file" | "subagent";
   id: string;
   label?: string;
 }
 
 export interface TurnReferenceOption extends TurnReference {
+  description?: string;
   recent?: boolean;
 }
 
@@ -923,6 +1082,8 @@ export const agentRuntimeApi = {
   },
   getSession: (sessionId: string) =>
     request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
+  getSessionSummary: (sessionId: string) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/summary`),
   getSessionPlan: (sessionId: string) =>
     request<{ plan: AgentPlanArtifact | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/plan`,
@@ -1163,9 +1324,35 @@ export const agentRuntimeApi = {
         body: JSON.stringify({ branch, rootId, transferChanges }),
       },
     ),
-  getSessionEnvironment: (sessionId: string) =>
-    request<SessionEnvironment>(
-      `/sessions/${encodeURIComponent(sessionId)}/environment`,
+  /** Workspace-level Git facts shared by every session of one project. */
+  getWorkspaceGitChanges: (
+    projectId: string,
+    options?: { sessionId?: string; revision?: string },
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.sessionId) params.set("sessionId", options.sessionId);
+    if (options?.revision) params.set("revision", options.revision);
+    const query = params.toString();
+    return request<WorkspaceGitChanges>(
+      `/projects/${encodeURIComponent(projectId)}/git-changes${query ? `?${query}` : ""}`,
+      { cache: "no-store" },
+    );
+  },
+  getSessionEnvironmentRoots: (sessionId: string) =>
+    request<SessionEnvironmentRoots>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/roots`,
+    ),
+  getSessionEnvironmentSubagents: (sessionId: string) =>
+    request<SessionEnvironmentSubagents>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/subagents`,
+    ),
+  getSessionEnvironmentInputs: (sessionId: string) =>
+    request<SessionEnvironmentInputs>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/inputs`,
+    ),
+  getSessionEnvironmentOutputs: (sessionId: string) =>
+    request<SessionEnvironmentOutputs>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/outputs`,
     ),
   getSessionEnvironmentFile: (
     sessionId: string,
@@ -1262,6 +1449,11 @@ export const agentRuntimeApi = {
     ),
   getSessionStats: (sessionId: string) =>
     request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`, { silent: true }),
+  getProjectAnalytics: (projectId: string) =>
+    request<ProjectAnalytics>(
+      `/analytics?projectId=${encodeURIComponent(projectId)}`,
+      { silent: true },
+    ),
   getSessionTodos: (sessionId: string) =>
     request<{ items: TodoItem[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/todos`,

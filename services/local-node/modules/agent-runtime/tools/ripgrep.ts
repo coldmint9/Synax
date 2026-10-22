@@ -1,3 +1,4 @@
+import { logger } from "../../../infrastructure/runtime/logger.js";
 import fs from "node:fs";
 import { runCommand } from "./exec-async.js";
 
@@ -66,19 +67,24 @@ export async function resolveRipgrepBinary(
     }
   }
 
+  logger.warn({ overrideConfigured: Boolean(override), packagedResolved: Boolean(packaged), platform: process.platform, arch: process.arch }, "Bundled ripgrep is unavailable; using bounded search fallback");
   return null;
 }
 
 let cachedResolution: Promise<string | null> | null = null;
+let retryAfter = 0;
 
 /** Cached per-process wrapper around {@link resolveRipgrepBinary}. */
 export function resolveRipgrep(): Promise<string | null> {
-  if (!cachedResolution)
-    cachedResolution = resolveRipgrepBinary().catch(() => null);
+  if (!cachedResolution || retryAfter && Date.now() >= retryAfter) {
+    retryAfter = 0;
+    cachedResolution = resolveRipgrepBinary().catch(() => null).then(value => { if (!value) retryAfter = Date.now() + 60_000; return value; });
+  }
   return cachedResolution;
 }
 
 /** Test hook: forget the cached resolution. */
 export function resetRipgrepResolutionForTests(): void {
   cachedResolution = null;
+  retryAfter = 0;
 }

@@ -7,6 +7,7 @@ import {
   writeDailyLogLine,
 } from './log-file-store.js';
 import { persistApiLog, type ApiLogLevel } from './log-store.js';
+import { formatLogTimestamp } from './log-retention.js';
 import {
   buildPinoPrettyOptions,
   createColorizedLogStream,
@@ -35,6 +36,8 @@ function createRawLogger(): pino.Logger {
 }
 
 const rawLogger = createRawLogger();
+// Rust has already applied RUST_LOG / LOG_LEVEL. Preserve that decision on ingress.
+const runtimeLogger = rawLogger.child({}, { level: 'trace' });
 
 export { API_SESSION_LOG_FILE, getApiLogFilePath };
 
@@ -120,8 +123,7 @@ function normalizeLogCall(args: unknown[]): { message: string; context: Record<s
   return { message, context };
 }
 
-function formatSessionLogLine(level: ApiLogLevel, message: string, context: Record<string, unknown>): string {
-  const timestamp = new Date().toISOString();
+function formatSessionLogLine(level: ApiLogLevel, message: string, context: Record<string, unknown>, timestamp = formatLogTimestamp()): string {
   const suffix = Object.keys(context).length > 0
     ? ` ${JSON.stringify(context)}`
     : '';
@@ -143,11 +145,11 @@ try {
   fallbackWrite(`[api-logger] failed to initialize daily log files: ${message}`);
 }
 
-function emit(level: ApiLogLevel, args: unknown[]): void {
-  if (!rawLogger.isLevelEnabled(level)) return;
+function emit(level: ApiLogLevel, args: unknown[], loggedAt?: string, output = rawLogger): void {
+  if (!output.isLevelEnabled(level)) return;
   const entry = normalizeLogCall(args);
   try {
-    writeDailyLogLine(formatSessionLogLine(level, entry.message, entry.context));
+    writeDailyLogLine(formatSessionLogLine(level, entry.message, entry.context, loggedAt));
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     fallbackWrite(`[api-logger] failed to write daily log file: ${message}`);
@@ -158,9 +160,14 @@ function emit(level: ApiLogLevel, args: unknown[]): void {
       level,
       message: entry.message,
       context: entry.context,
+      loggedAt,
     });
   }
-  (rawLogger[level] as (...input: unknown[]) => void).apply(rawLogger, args);
+  (output[level] as (...input: unknown[]) => void).apply(output, args);
+}
+
+export function ingestRuntimeLog(entry: { level: ApiLogLevel; message: string; context: Record<string, unknown>; loggedAt?: string }): void {
+  emit(entry.level, [entry.context, entry.message], entry.loggedAt, runtimeLogger);
 }
 
 /** 应用日志实例 */

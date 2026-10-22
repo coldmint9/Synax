@@ -9,6 +9,7 @@ import { prepareTurnReferences } from './turn-references.js';
 import { AgentValidationError } from './runtime-errors.js';
 import { makeRuntimeId, nowIso } from './runtime-ids.js';
 import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
+import { businessStore } from '../../infrastructure/persistence/business-store.js';
 
 const stateSchema = z.object({ items: z.array(queuedInputSchema).max(20), forceInjectItemId: z.string().nullable(), revision: z.number().int().nonnegative(), consumed: queuedInputSchema.optional(), delivery: z.object({ runId: z.string(), item: queuedInputSchema }).nullable().optional() });
 export type InputQueueState = z.infer<typeof stateSchema>;
@@ -37,6 +38,7 @@ export const inputQueueRuntime = {
     input = normalizeInput(input);
     if (!hasInput(input)) throw new AgentValidationError('Input is empty.');
     await bindAssets(sessionId, inputParts(input));
+    if (input.references?.some(ref => ref.kind === 'subagent')) await businessStore.refresh(['subagent-templates']);
     const item = queuedInputSchema.parse({ id: makeRuntimeId('inq'), enqueuedAt: nowIso(), message: input.message.trim(), contentParts: input.contentParts,
       model: input.model ?? null, reasoningEffort: input.reasoningEffort, references: input.references, referenceContext: prepareTurnReferences(sessionId, input.references) });
     return (await mutate(sessionId, 'enqueue', item)).items;

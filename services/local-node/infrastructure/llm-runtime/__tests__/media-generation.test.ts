@@ -1,106 +1,47 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateProviderImages } from "../media-generation.js";
+import { describe, expect, it, vi } from "vitest";
+import { serveProviderHttp } from "../../../../test-fixtures/provider-http.js";
+import { generateProviderImages, type MediaProviderSelection } from "../media-generation.js";
 import { imageGenerationOptionsSchema } from "../image-generation.js";
-import type { MediaProviderSelection } from "../media-generation.js";
-
-const fixture = vi.hoisted(() => ({
-  calls: [] as any[],
-  models: [] as string[],
-  supportsImage: true,
-}));
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-  "base64",
-);
-vi.mock("../providers/provider-registry.js", () => ({
-  instantiateProvider: async () =>
-    fixture.supportsImage
-      ? {
-          imageModel: (modelId: string) => {
-            fixture.models.push(modelId);
-            return {
-              specificationVersion: "v4",
-              provider: "fixture.image",
-              modelId,
-              maxImagesPerCall: 10,
-              doGenerate: async (args: unknown) => {
-                fixture.calls.push(args);
-                return {
-                  images: [png],
-                  warnings: [],
-                  usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
-                  response: { timestamp: new Date(), modelId },
-                };
-              },
-            };
-          },
-        }
-      : {},
-}));
+const png = Buffer.from("fixture-image");
 const selection: MediaProviderSelection = {
-  provider: {
-    id: "vendor",
-    label: "Vendor",
-    npm: "@ai-sdk/google",
-    env: [],
-    supported: true,
-    models: [],
-  },
-  config: { providerId: "vendor", apiKey: "fixture" },
+  provider: { id: "fixture", label: "Fixture", npm: "@ai-sdk/openai", env: [], supported: true, models: [] },
+  config: { providerId: "fixture", apiKey: "fixture" },
 };
-beforeEach(() => {
-  fixture.calls = [];
-  fixture.models = [];
-  fixture.supportsImage = true;
-});
-describe("model-independent media adapters", () => {
-  it("uses the provider image factory for unknown models and preserves reference bytes and custom options", async () => {
-    const options = imageGenerationOptionsSchema.parse({
-      model: "vendor-future-image-v9",
-      prompt: "Edit",
-      size: "512x512",
-      aspectRatio: "1:1",
-      seed: 4,
-      providerOptions: { google: { customControl: true } },
-      stream: false,
-    });
-    const result = await generateProviderImages(selection, options, {
-      images: [{ bytes: png, mediaType: "image/png", filename: "input.png" }],
-    });
-    expect(fixture.models).toEqual(["vendor-future-image-v9"]);
-    expect(fixture.calls[0]).toMatchObject({
-      prompt: "Edit",
-      size: "512x512",
-      seed: 4,
-      providerOptions: { google: { customControl: true } },
-      files: [{ type: "file", data: png }],
-    });
-    expect(result.images[0]).toMatchObject({
-      mediaType: "image/png",
-      bytes: png,
-    });
-    expect(result.usage?.totalTokens).toBe(3);
+describe("native media adapters", () => {
+  it("retries upstream 503 in Rust before returning the generated image", async () => {
+    const receive = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: { message: "unavailable" } }, { status: 503 }))
+      .mockImplementation(async () => Response.json({ data: [{ b64_json: png.toString("base64") }] }));
+    const baseUrl = await serveProviderHttp(receive);
+    const result = await generateProviderImages({ ...selection, config: { ...selection.config, baseUrl } },
+      imageGenerationOptionsSchema.parse({ model: "fixture", prompt: "Draw", stream: false }));
+    expect(result.images[0].bytes).toEqual(png);
+    expect(receive).toHaveBeenCalledTimes(2);
+  }, 10_000);
+  it("sends custom models, references and provider options through the Rust image adapter", async () => {
+    const receive = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ data: [{ b64_json: png.toString("base64") }], usage: { total_tokens: 3 } }));
+    const baseUrl = await serveProviderHttp(receive);
+    const result = await generateProviderImages({ ...selection, config: { ...selection.config, baseUrl } },
+      imageGenerationOptionsSchema.parse({ model: "future-image", prompt: "Edit", stream: false, api: "native", providerOptions: { openai: { custom_control: true } } }),
+      { images: [{ bytes: png, mediaType: "image/png", filename: "input.png" }] });
+    expect(result.images[0].bytes).toEqual(png);
+    const form = receive.mock.calls[0][1].body as FormData;
+    expect(form.get("model")).toBe("future-image");
+    expect(form.get("custom_control")).toBe("true");
+    expect(Buffer.from(await (form.get("image[]") as File).arrayBuffer())).toEqual(png);
   });
-  it("fails explicitly for unsupported operations instead of using a chat model", async () => {
-    fixture.supportsImage = false;
-    await expect(
-      generateProviderImages(
-        selection,
-        imageGenerationOptionsSchema.parse({ model: "future", prompt: "Draw" }),
-      ),
-    ).rejects.toThrow("no image generation adapter");
-    expect(fixture.models).toHaveLength(0);
+  it("rejects unsupported native media providers before making an upstream request", async () => {
+    const receive = vi.fn(async () => Response.json({}));
+    const baseUrl = await serveProviderHttp(receive);
+    await expect(generateProviderImages({ ...selection, provider: { ...selection.provider, npm: "@ai-sdk/google" }, config: { ...selection.config, baseUrl } },
+      imageGenerationOptionsSchema.parse({ model: "future", prompt: "Draw" }))).rejects.toThrow("no native images adapter");
+    expect(receive).not.toHaveBeenCalled();
   });
-  it("does not silently drop requested SDK streaming", async () => {
-    await expect(
-      generateProviderImages(
-        selection,
-        imageGenerationOptionsSchema.parse({
-          model: "future",
-          prompt: "Draw",
-          stream: true,
-        }),
-      ),
-    ).rejects.toThrow("does not expose partial-image streaming");
+  it("does not silently discard streaming controls on a non-streaming image adapter", async () => {
+    const receive = vi.fn(async () => Response.json({}));
+    const baseUrl = await serveProviderHttp(receive);
+    await expect(generateProviderImages({ ...selection, config: { ...selection.config, baseUrl } }, imageGenerationOptionsSchema.parse({ model: "future", prompt: "Draw", api: "native", stream: true })))
+      .rejects.toThrow("does not expose partial-image streaming");
+    expect(receive).not.toHaveBeenCalled();
   });
 });
