@@ -20,4 +20,5 @@ export const CORE_TOOL_IDS = new Set([
   "task.create", "task.update", "task.get", "task.list",
   "human.ask", "plan.propose", "plan.execute", "mode.switch",
   "goal.finish", "work.checkpoint", "skill.load", "presentation.select", "tools.invalid",
+  "git.pr.read", "git.merge.create", "git.merge.analyze", "git.merge.read", "git.merge.propose",
 ]);

@@ -283,7 +283,10 @@ export async function commitSessionWorkspace(
     }
   }
 
-  await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u"]);
+  await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u", "--", ".", ":(exclude)**/.DS_Store", ":(exclude).DS_Store"]);
+  const staged = (await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])).stdout.split("\0");
+  if (staged.some(file => file.split("/").at(-1) === ".DS_Store"))
+    throw new AgentValidationError(".DS_Store must never be committed. Unstage it before committing.");
 
   const commit = await runGit(workspacePath, ["commit", "-m", message], true);
   if (!commit.ok) {

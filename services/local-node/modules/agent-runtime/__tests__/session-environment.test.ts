@@ -1,4 +1,3 @@
-import * as commands from "../tools/exec-async.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
+  tryGetSession: vi.fn(),
   listToolCalls: vi.fn(),
   listMessages: vi.fn(),
   getToolCall: vi.fn(),
@@ -37,12 +37,15 @@ vi.mock("../media-assets.js", () => ({
 }));
 
 import {
-  getSessionEnvironment,
-  getSessionInputSourceContent,
-  invalidateSessionEnvironment,
-} from "../session-environment.js";
+  getSessionEnvironmentInputs,
+  getSessionEnvironmentOutputs,
+  getSessionEnvironmentRoots,
+  getSessionEnvironmentSubagents,
+  invalidateAllSessionEnvironmentCards,
+} from "../session-environment-cards.js";
+import { invalidateSessionEnvironment } from "../session-environment.js";
 
-const sessionId = "gitignore-environment-test";
+const sessionId = "session-environment-cards-test";
 let workspace: string;
 
 function git(...args: string[]): string {
@@ -55,50 +58,80 @@ function write(file: string, content: string): void {
   fs.writeFileSync(target, content);
 }
 
+function primaryRoot() {
+  return {
+    id: "project",
+    name: "Project",
+    path: workspace,
+    role: "primary" as const,
+    status: "available" as const,
+  };
+}
+
 beforeEach(() => {
-  workspace = fs.mkdtempSync(path.join(os.tmpdir(), "synax-environment-"));
+  vi.clearAllMocks();
+  invalidateAllSessionEnvironmentCards();
+  workspace = fs.mkdtempSync(path.join(os.tmpdir(), "synax-environment-cards-"));
+  workspace = fs.realpathSync(workspace);
   git("init", "--quiet");
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "Test");
   git("config", "commit.gpgsign", "false");
-  write(".gitignore", "generated/*\n!generated/keep.ts\n*.log\n");
   write("src/main.ts", "before\n");
-  write("generated/keep.ts", "before\n");
-  write("generated/build.js", "before\n");
-  write("generated/deleted.js", "before\n");
-  write("generated/缓存.js", "before\n");
-  write("generated/with space.js", "before\n");
-  write("generated/with\nnewline.js", "before\n");
-  git("add", "--force", ".");
+  write("docs/output.md", "# Result\n");
+  git("add", ".");
   git("commit", "--quiet", "-m", "fixture");
   mocks.getSession.mockReturnValue({
     id: sessionId,
     projectId: "project",
     childSessionIds: [],
   });
-  mocks.resolveSessionWorkspaceRoots.mockReturnValue([
-    {
-      id: "project",
-      name: "Project",
-      path: fs.realpathSync(workspace),
-      role: "primary",
-      status: "available",
-    },
-  ]);
+  mocks.tryGetSession.mockReturnValue({
+    id: sessionId,
+    projectId: "project",
+    childSessionIds: [],
+  });
+  mocks.resolveSessionWorkspaceRoots.mockReturnValue([primaryRoot()]);
   mocks.listToolCalls.mockReturnValue([]);
   mocks.listMessages.mockReturnValue([]);
-  invalidateSessionEnvironment(sessionId);
 });
 
 afterEach(() => {
-  invalidateSessionEnvironment(sessionId);
+  invalidateAllSessionEnvironmentCards();
   fs.rmSync(workspace, { recursive: true, force: true });
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
-describe("session environment Git ignore filtering", () => {
-  it("lists only workspace file reads and external web reads as input sources", async () => {
+describe("session roots card", () => {
+  it("resolves the workspace binding without reading the transcript", async () => {
+    const roots = await getSessionEnvironmentRoots(sessionId);
+
+    expect(roots).toMatchObject({
+      sessionId,
+      projectId: "project",
+      workspacePath: workspace,
+      repositories: [
+        { rootId: "project", name: "Project", role: "primary", status: "ready", workspacePath: workspace },
+      ],
+    });
+    expect(mocks.listToolCalls).not.toHaveBeenCalled();
+    expect(mocks.listMessages).not.toHaveBeenCalled();
+  });
+
+  it("caches the card and drops it on invalidation", async () => {
+    await getSessionEnvironmentRoots(sessionId);
+    await getSessionEnvironmentRoots(sessionId);
+    expect(mocks.getSession).toHaveBeenCalledTimes(1);
+
+    invalidateSessionEnvironment(sessionId);
+    await getSessionEnvironmentRoots(sessionId);
+    expect(mocks.getSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("session inputs card", () => {
+  it("lists only workspace file reads, external web reads and user attachments", async () => {
     mocks.listToolCalls.mockReturnValue([
       {
         id: "file-read",
@@ -112,7 +145,6 @@ describe("session environment Git ignore filtering", () => {
         toolId: "list",
         status: "completed",
         mutability: "read",
-        inputSummary: "List src",
         inputRef: { path: "src" },
       },
       {
@@ -120,7 +152,6 @@ describe("session environment Git ignore filtering", () => {
         toolId: "bash",
         status: "completed",
         mutability: "read",
-        inputSummary: '{"command":"grep -n \\"function parseStat"}',
         inputRef: { command: 'grep -n "function parseStat' },
       },
       {
@@ -128,28 +159,14 @@ describe("session environment Git ignore filtering", () => {
         toolId: "web.fetch",
         status: "completed",
         mutability: "read",
-        inputRef: {
-          nativeTool: {
-            url: "https://example.com/docs",
-            prompt: "summarize",
-          },
-        },
+        inputRef: { nativeTool: { url: "https://example.com/docs", prompt: "summarize" } },
       },
       {
         id: "search-read",
         toolId: "webSearch",
         status: "completed",
         mutability: "read",
-        inputSummary: '{"query":"Synax docs"}',
         inputRef: { query: "Synax docs" },
-      },
-      {
-        id: "text-read",
-        toolId: "rg",
-        status: "completed",
-        mutability: "read",
-        inputSummary: '{"query":"SessionEnvironment"}',
-        inputRef: { query: "SessionEnvironment" },
       },
     ]);
     mocks.listMessages.mockReturnValue([
@@ -160,34 +177,22 @@ describe("session environment Git ignore filtering", () => {
         content: "请看截图",
         contentParts: [
           { type: "text", text: "请看截图" },
-          {
-            type: "image",
-            assetId: "asset_" + "a".repeat(32),
-            detail: "auto",
-          },
+          { type: "image", assetId: "asset_" + "a".repeat(32), detail: "auto" },
         ],
       },
-      {
-        id: "msg-2",
-        sessionId,
-        role: "assistant",
-        content: "好的",
-        contentParts: [{ type: "text", text: "好的" }],
-      },
     ]);
-    const env = await getSessionEnvironment(sessionId);
-    expect(env.inputSources).toEqual([
+
+    const inputs = await getSessionEnvironmentInputs(sessionId);
+
+    expect(inputs).toMatchObject({ sessionId, projectId: "project", primaryRootId: "project" });
+    expect(inputs.byRoot.project).toEqual([
       {
         kind: "file",
         label: "src/main.ts",
         path: "src/main.ts",
         toolCallId: "file-read",
       },
-      {
-        kind: "url",
-        label: "https://example.com/docs",
-        toolCallId: "fetch-read",
-      },
+      { kind: "url", label: "https://example.com/docs", toolCallId: "fetch-read" },
       { kind: "url", label: "Synax docs", toolCallId: "search-read" },
       {
         kind: "attachment",
@@ -197,327 +202,174 @@ describe("session environment Git ignore filtering", () => {
     ]);
   });
 
-  it("previews recorded output in the owning session and rejects non-read operations", () => {
-    mocks.getToolCall.mockReturnValue({
-      status: "completed",
-      mutability: "read",
-      outputRef: { matches: ["src/main.ts"] },
-      outputSummary: "one result",
-    });
-    expect(getSessionInputSourceContent(sessionId, "search-read")).toEqual({
-      content: JSON.stringify({ matches: ["src/main.ts"] }, null, 2),
-      truncated: false,
-    });
-    expect(mocks.getToolCall).toHaveBeenCalledWith(sessionId, "search-read");
-    mocks.getToolCall.mockReturnValue({
-      status: "completed",
-      mutability: "read",
-      outputRef: null,
-      outputSummary: "Recorded command output",
-    });
-    expect(
-      getSessionInputSourceContent(sessionId, "command-read").content,
-    ).toBe("Recorded command output");
-    mocks.getToolCall.mockReturnValue({
-      status: "completed",
-      mutability: "read",
-      outputRef: "a".repeat(1024 * 1024 + 10),
-    });
-    const limited = getSessionInputSourceContent(sessionId, "large-read");
-    expect(limited.truncated).toBe(true);
-    expect(limited.content.length).toBe(1024 * 1024);
-    mocks.getToolCall.mockReturnValue({
-      status: "completed",
-      mutability: "write",
-    });
-    expect(() => getSessionInputSourceContent(sessionId, "write")).toThrow(
-      "Only completed input reads",
+  it("builds from runtime records without touching the session store", async () => {
+    const calls = [
+      { id: "reads", toolId: "file.read", status: "completed", mutability: "read", inputRef: { path: "src/main.ts" } },
+    ];
+    for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages]) {
+      method.mockImplementation(() => {
+        throw new Error("SQL disabled");
+      });
+    }
+    mocks.resolveWorkspaceRootsFromSession.mockReturnValue([primaryRoot()]);
+
+    const inputs = await getSessionEnvironmentInputs(sessionId, async () => ({
+      session: { id: sessionId, projectId: "project", childSessionIds: [] } as never,
+      toolCalls: calls as never[],
+      messages: [{ role: "user", contentParts: [{ type: "image", assetId: "rust-asset" }] }] as never[],
+      assetNames: new Map([["rust-asset", "from-rocksdb.png"]]),
+    }));
+
+    expect(inputs.byRoot.project).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "file", path: "src/main.ts", toolCallId: "reads" }),
+        expect.objectContaining({ kind: "attachment", label: "from-rocksdb.png" }),
+      ]),
     );
-  });
-  it("excludes ignored tracked and untracked changes from files, line totals and agent attribution", async () => {
-    write("src/main.ts", "after\nextra\n");
-    write("src/new.ts", "new\n");
-    write("generated/keep.ts", "after\n");
-    write("generated/build.js", "after\nignored\n");
-    write("generated/缓存.js", "after\n");
-    write("generated/with space.js", "after\n");
-    write("generated/with\nnewline.js", "after\n");
-    write("generated/new.js", "ignored\n");
-    write("debug.log", "ignored\n");
-    write("generated/staged.js", "ignored\n");
-    git("add", "--force", "generated/staged.js");
-    git("rm", "--quiet", "generated/deleted.js");
-    mocks.listToolCalls.mockReturnValue([
-      {
-        toolId: "file.patch",
-        status: "completed",
-        inputRef: { patch: "*** Begin Patch\n*** Update File: src/main.ts\n@@\n-after\n+extra\n*** End Patch" },
-      },
-      {
-        toolId: "file.patch",
-        status: "completed",
-        inputRef: { patch: "*** Begin Patch\n*** Update File: generated/build.js\n@@\n-after\n+ignored\n*** End Patch" },
-      },
-    ]);
-
-    const environment = await getSessionEnvironment(sessionId);
-
-    expect(environment.changedFiles.map((file) => file.path).sort()).toEqual([
-      "generated/keep.ts",
-      "src/main.ts",
-      "src/new.ts",
-    ]);
-    expect(environment.additions).toBe(4);
-    expect(environment.deletions).toBe(2);
-    expect(environment.dirty).toBe(true);
-    expect(environment.agentChangedFiles.map((file) => file.path)).toEqual([
-      "src/main.ts",
-    ]);
-  });
-
-  it("reports no changes when only ignored files changed, including nested ignore rules", async () => {
-    write("generated/build.js", "ignored change\n");
-    write("debug.log", "ignored\n");
-    write("src/.gitignore", "cache/\n!keep.log\n");
-    git("add", "src/.gitignore");
-    git("commit", "--quiet", "-m", "nested rules");
-    write("src/cache/tracked.ts", "before\n");
-    git("add", "--force", "src/cache/tracked.ts");
-    git("commit", "--quiet", "-m", "tracked cache");
-    write("src/cache/tracked.ts", "after\n");
-
-    const environment = await getSessionEnvironment(sessionId);
-
-    expect(environment.changedFiles).toEqual([]);
-    expect(environment.agentChangedFiles).toEqual([]);
-    expect(environment.additions).toBe(0);
-    expect(environment.deletions).toBe(0);
-    expect(environment.dirty).toBe(false);
-  });
-
-  it("preserves ordinary changes when no paths match ignore rules", async () => {
-    write("src/main.ts", "after\n");
-    git("add", "src/main.ts");
-    const environment = await getSessionEnvironment(sessionId);
-    expect(environment.changedFiles).toEqual([
-      {
-        path: "src/main.ts",
-        status: "modified",
-        additions: 1,
-        deletions: 1,
-        staged: true,
-        untracked: false,
-      },
-    ]);
-  });
-
-  it("filters renamed files by destination while retaining visible rename paths and line counts", async () => {
-    write("src/main.ts", "one\ntwo\nthree\nfour\nfive\n");
-    git("add", "src/main.ts");
-    git("commit", "--quiet", "-m", "rename fixture");
-    git("mv", "src/main.ts", "src/renamed 文件.ts");
-    write("src/renamed 文件.ts", "one\ntwo\nthree\nfour\nfive\nsix\n");
-    git("mv", "generated/keep.ts", "generated/ignored.ts");
-
-    const environment = await getSessionEnvironment(sessionId);
-
-    expect(environment.changedFiles).toEqual([
-      {
-        path: "src/renamed 文件.ts",
-        status: "renamed",
-        additions: 1,
-        deletions: 0,
-        staged: true,
-        untracked: false,
-      },
-    ]);
-    expect(environment.additions).toBe(1);
-    expect(environment.deletions).toBe(0);
+    for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages])
+      expect(method).not.toHaveBeenCalled();
   });
 });
 
-describe("session output files", () => {
+describe("session outputs card", () => {
   it("keeps same-name outputs scoped to their repository and excludes directories and escaped symlinks", async () => {
-    const reference = fs.mkdtempSync(
-      path.join(os.tmpdir(), "synax-output-reference-"),
-    );
+    const reference = fs.mkdtempSync(path.join(os.tmpdir(), "synax-output-reference-"));
     try {
       write("result.md", "primary");
       fs.writeFileSync(path.join(reference, "result.md"), "reference");
       fs.mkdirSync(path.join(workspace, "directory-output"));
       fs.symlinkSync(reference, path.join(workspace, "outside-directory"));
       mocks.resolveSessionWorkspaceRoots.mockReturnValue([
-        {
-          id: "project",
-          name: "Project",
-          path: fs.realpathSync(workspace),
-          role: "primary",
-          status: "available",
-        },
+        primaryRoot(),
         {
           id: "reference",
           name: "Reference",
           path: fs.realpathSync(reference),
-          role: "reference",
-          status: "available",
+          role: "reference" as const,
+          status: "available" as const,
         },
       ]);
       mocks.listToolCalls.mockReturnValue([
-        {
-          toolId: "file.write",
-          status: "completed",
-          inputRef: { path: "result.md" },
-        },
-        {
-          toolId: "file.write",
-          status: "completed",
-          inputRef: { path: path.join(reference, "result.md") },
-        },
-        {
-          toolId: "file.write",
-          status: "completed",
-          inputRef: { path: "directory-output" },
-        },
-        {
-          toolId: "file.write",
-          status: "completed",
-          inputRef: { path: "outside-directory/result.md" },
-        },
+        { toolId: "file.write", status: "completed", inputRef: { path: "result.md" } },
+        { toolId: "file.write", status: "completed", inputRef: { path: path.join(reference, "result.md") } },
+        { toolId: "file.write", status: "completed", inputRef: { path: "directory-output" } },
+        { toolId: "file.write", status: "completed", inputRef: { path: "outside-directory/result.md" } },
       ]);
-      const environment = await getSessionEnvironment(sessionId);
-      expect(environment.outputFiles).toEqual(["result.md"]);
-      expect(environment.repositories.map((root) => root.outputFiles)).toEqual([
-        ["result.md"],
-        ["result.md"],
-      ]);
-      expect(environment.repositories[1].status).toBe("not_repository");
+
+      const outputs = await getSessionEnvironmentOutputs(sessionId);
+
+      expect(outputs.byRoot.project).toEqual(["result.md"]);
+      expect(outputs.byRoot.reference).toEqual(["result.md"]);
+      expect(outputs.editedPathsByRoot.project).toContain("directory-output");
     } finally {
       fs.rmSync(reference, { recursive: true, force: true });
     }
   });
 
-  it("keeps committed outputs and excludes failed writes, deleted files and other repositories", async () => {
-    write("docs/output.md", "# Result\n");
+  it("attributes committed outputs and ignores failed writes and escaped paths", async () => {
     write("docs/failed.md", "existing content\n");
     git("add", "docs");
     git("commit", "--quiet", "-m", "save output");
     mocks.listToolCalls.mockReturnValue([
-      {
-        toolId: "file.write",
-        status: "completed",
-        inputRef: { path: "docs/output.md" },
-      },
+      { toolId: "file.write", status: "completed", inputRef: { path: "docs/output.md" } },
       {
         toolId: "file.patch",
         status: "completed",
         inputRef: { patch: "*** Begin Patch\n*** Update File: docs/output.md\n@@\n-# Result\n+# Result\n*** End Patch" },
       },
-      {
-        toolId: "file.write",
-        status: "failed",
-        inputRef: { path: "docs/failed.md" },
-      },
-      {
-        toolId: "file.delete",
-        status: "completed",
-        inputRef: { path: "docs/deleted.md" },
-      },
-      {
-        toolId: "file.write",
-        status: "completed",
-        inputRef: { path: "../outside.md" },
-      },
+      { toolId: "file.write", status: "failed", inputRef: { path: "docs/failed.md" } },
+      { toolId: "file.delete", status: "completed", inputRef: { path: "docs/deleted.md" } },
+      { toolId: "file.write", status: "completed", inputRef: { path: "../outside.md" } },
     ]);
-    const environment = await getSessionEnvironment(sessionId);
-    expect(environment.changedFiles).toEqual([]);
-    expect(environment.outputFiles).toEqual(["docs/output.md"]);
-    expect(environment.repositories[0].outputFiles).toEqual(["docs/output.md"]);
+
+    const outputs = await getSessionEnvironmentOutputs(sessionId);
+
+    expect(outputs.byRoot.project).toEqual(["docs/output.md"]);
+    expect(outputs.editedPathsByRoot.project).toEqual(
+      expect.arrayContaining(["docs/output.md", "docs/deleted.md"]),
+    );
+    expect(outputs.editedPathsByRoot.project).not.toContain("../outside.md");
+  });
+
+  it("attributes Codex and Claude file outputs from successful structured tool records", async () => {
+    write("docs/codex.md", "codex output");
+    write("docs/claude.md", "claude output");
+    mocks.listToolCalls.mockReturnValue([
+      {
+        toolId: "codex.fileChange",
+        status: "completed",
+        inputRef: {},
+        outputRef: [{ path: path.join(workspace, "docs/codex.md") }],
+      },
+      {
+        toolId: "file.write",
+        status: "completed",
+        inputRef: {
+          nativeTool: { file_path: path.join(workspace, "docs/claude.md") },
+          approvalRequest: {},
+        },
+      },
+      { toolId: "file.read", status: "completed", inputRef: { file_path: "src/main.ts" } },
+    ]);
+
+    const outputs = await getSessionEnvironmentOutputs(sessionId);
+    expect(outputs.byRoot.project).toEqual(["docs/codex.md"]);
   });
 
   it("lists outputs from a workspace without a Git repository", async () => {
     fs.rmSync(path.join(workspace, ".git"), { recursive: true, force: true });
     write("result.md", "Result\n");
     mocks.listToolCalls.mockReturnValue([
-      {
-        toolId: "file.write",
-        status: "completed",
-        inputRef: { path: "result.md" },
-      },
+      { toolId: "file.write", status: "completed", inputRef: { path: "result.md" } },
     ]);
-    const environment = await getSessionEnvironment(sessionId);
-    expect(environment.repositories[0].status).toBe("not_repository");
-    expect(environment.outputFiles).toEqual(["result.md"]);
+
+    const outputs = await getSessionEnvironmentOutputs(sessionId);
+    expect(outputs.byRoot.project).toEqual(["result.md"]);
   });
 });
 
-it("attributes Codex and Claude file outputs from successful structured tool records", async () => {
-  write("docs/codex.md", "codex output");
-  write("docs/claude.md", "claude output");
-  mocks.listToolCalls.mockReturnValue([
-    {
-      toolId: "codex.fileChange",
-      status: "completed",
-      inputRef: {},
-      outputRef: [{ path: path.join(workspace, "docs/codex.md") }],
-    },
-    {
-      toolId: "file.write",
-      status: "completed",
-      inputRef: {
-        nativeTool: { file_path: path.join(workspace, "docs/claude.md") },
-        approvalRequest: {},
-      },
-    },
-    {
-      toolId: "file.read",
-      status: "completed",
-      inputRef: { file_path: "src/main.ts" },
-    },
-  ]);
-  const environment = await getSessionEnvironment(sessionId);
-  expect(environment.outputFiles).toEqual(["docs/codex.md"]);
-});
+describe("session subagents card", () => {
+  it("projects child sessions and skips archived or deleted ones", async () => {
+    mocks.getSession.mockImplementation((id: string) => {
+      if (id === sessionId)
+        return { id, projectId: "project", childSessionIds: ["child", "archived", "missing"] };
+      if (id === "child")
+        return {
+          id,
+          parentSessionId: sessionId,
+          profileId: "explorer",
+          status: "running",
+          title: "调研",
+          prompt: "look around",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+          resultSummary: null,
+          sessionMetadata: { subagentName: "探路" },
+        };
+      if (id === "archived")
+        return {
+          id,
+          parentSessionId: sessionId,
+          profileId: "explorer",
+          status: "completed",
+          title: null,
+          prompt: "",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+          resultSummary: null,
+          sessionMetadata: { archivedAt: "2026-01-02T00:00:00.000Z" },
+        };
+      throw new Error("not found");
+    });
 
-it("shares Git probes across sessions in one worktree, and invalidates both after a write", async () => {
-  const run = vi.spyOn(commands, "runCommand");
-  mocks.getSession.mockImplementation((id: string) => ({ id, projectId: "project", childSessionIds: [] }));
-  await Promise.all([getSessionEnvironment(sessionId), getSessionEnvironment("same-worktree-other-session")]);
-  const statusCalls = () => run.mock.calls.filter(([command, args]) => command === "git" && args[0] === "status").length;
-  expect(statusCalls()).toBe(1);
-  write("new.txt", "new contents");
-  invalidateSessionEnvironment(sessionId);
-  const next = await getSessionEnvironment("same-worktree-other-session");
-  expect(next.changedFiles.some(file => file.path === "new.txt")).toBe(true);
-  expect(statusCalls()).toBe(2);
-  invalidateSessionEnvironment("same-worktree-other-session");
-});
+    const subagents = await getSessionEnvironmentSubagents(sessionId);
 
-
-it("builds the environment from Rust records when all SQLite reads are disabled", async () => {
-  const session = mocks.getSession();
-  const roots = mocks.resolveSessionWorkspaceRoots();
-  const calls = [
-    { id: "write", toolId: "file.write", status: "completed", mutability: "write", inputRef: { path: "src/main.ts" } },
-    { id: "read", toolId: "file.read", status: "completed", mutability: "read", inputRef: { path: "src/main.ts" } },
-  ];
-  write("src/main.ts", "changed\n");
-  mocks.resolveWorkspaceRootsFromSession.mockReturnValue(roots);
-  for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages, mocks.resolveSessionWorkspaceRoots]) {
-    method.mockClear();
-    method.mockImplementation(() => { throw new Error("SQL disabled"); });
-  }
-  const env = await getSessionEnvironment(sessionId, {
-    session: { ...session, childSessionIds: ["deleted-child", "child"] },
-    toolCalls: calls as never[],
-    messages: [{ role: "user", contentParts: [{ type: "image", assetId: "rust-asset" }] }] as never[],
-    children: [{ id: "child", parentSessionId: sessionId, status: "running", profileId: "explorer" }] as never[],
-    assetNames: new Map([["rust-asset", "from-rocksdb.png"]]),
+    expect(subagents.subagents).toHaveLength(1);
+    expect(subagents.subagents[0]).toMatchObject({
+      id: "child",
+      parentSessionId: sessionId,
+      subagentName: "探路",
+      status: "running",
+    });
   });
-  expect(env.agentChangedFiles.map(file => file.path)).toEqual(["src/main.ts"]);
-  expect(env.inputSources).toEqual(expect.arrayContaining([
-    expect.objectContaining({ kind: "file", path: "src/main.ts", toolCallId: "read" }),
-    expect.objectContaining({ kind: "attachment", label: "from-rocksdb.png" }),
-  ]));
-  expect(env.subagents.map(child => child.id)).toEqual(["child"]);
-  for (const method of [mocks.getSession, mocks.listToolCalls, mocks.listMessages, mocks.resolveSessionWorkspaceRoots]) expect(method).not.toHaveBeenCalled();
 });

@@ -13,6 +13,17 @@ export interface FileLinkRoot {
   workspacePath: string;
 }
 
+/**
+ * Session scope that turns a record's file target into a viewer tab.
+ *
+ * Resolution stays with the caller: a record row shows a link affordance only
+ * when the scope can actually open the path.
+ */
+export interface ToolFileLinks {
+  resolve: (raw: string) => FileLinkTarget | null;
+  open: (target: FileLinkTarget) => void;
+}
+
 /** Any `scheme:` prefix, used to reject http/mailto/vscode style links. */
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const DRIVE_PATH = /^[a-zA-Z]:\//;

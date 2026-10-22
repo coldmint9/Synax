@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render as testingRender, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenuProvider";
-import type { SessionEnvironment } from "../../../adapters/transport/agentRuntime";
+import type { WorkspaceEnvironmentView } from "../workspaceEnvironmentView";
 
 const render: typeof testingRender = (ui, options) => testingRender(ui, {
   wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
@@ -13,7 +13,7 @@ import { registerWorkspaceSaveHandler, useSessionWorkspaceStore } from "../state
 
 const mocks = vi.hoisted(() => ({
   reload: vi.fn(),
-  environment: null as SessionEnvironment | null,
+  environment: null as WorkspaceEnvironmentView | null,
 }));
 
 vi.mock("../SessionEnvironmentContext", () => ({

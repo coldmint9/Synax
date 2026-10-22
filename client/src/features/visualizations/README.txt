@@ -15,11 +15,25 @@ Completed previews stay outside collapsed work logs, including preview-only and
 step-less completion replies. Streaming source is hidden until the final metadata
 arrives; user messages, nested examples and partial replies never mount previews.
 
-Web and Electron share InlineVisualization. The wrapper has no visible toolbar,
-header, border or controls; product chrome belongs to the generated fragment.
-The runtime supplies neutral theme tokens, basic controls, opt-in tabs and a small
-bundled Lucide set. Icons are serialized during the app build, not per reply.
-The accepted demo lives only in __tests__/fixtures, not in product rendering code.
+Web and Electron share InlineVisualization, which is a thin chat shell around the
+shared container in client/src/shared/interactive. That container owns the
+sandbox contract for every interactive surface:
+
+  InteractiveFrame   iframe lifecycle, opaque-origin sandbox, authenticated
+                     handshake, theme propagation, height tracking, resize
+                     back-pressure and host-kept widget state.
+  document.ts        fragment -> srcdoc shell, CSP, runtime and bundled icons.
+  runtime.js/.css    neutral theme tokens, basic controls, opt-in tabs, Lucide.
+  state-store.ts     window.openai.widgetState snapshots keyed by stateKey.
+
+Reuse it for HTML file previews, full-screen previews and embedded prototypes:
+pass id/html/title plus optional maxHeight, timeoutMs, stateKey and callbacks.
+Feature code must not rebuild the shell, CSP or handshake.
+
+The wrapper has no visible toolbar, header, border or controls; product chrome
+belongs to the generated fragment. Icons are serialized during the app build,
+not per reply. The accepted demo lives only in __tests__/fixtures, not in
+product rendering code.
 
 Security boundaries:
 - sandbox="allow-scripts", no same-origin, navigation/download/permission grants.

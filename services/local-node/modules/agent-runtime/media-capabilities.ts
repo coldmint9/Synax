@@ -1,4 +1,4 @@
-import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import type { ToolResultOutput } from "../../infrastructure/llm-runtime/contracts.js";
 import type {
   ResolvedModelSelection,
   LlmGatewayMessage,
@@ -16,7 +16,7 @@ import {
 import { getAsset, readAsset, validateAssets, prepareAssets, modelContentParts } from "./media-assets.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import type { StreamTurnRequest } from "./contracts.js";
-import { resolveMediaProfile } from "../../infrastructure/llm-runtime/providers/media-profile.js";
+import { resolveMediaProfile } from "../../infrastructure/llm-runtime/media-profile.js";
 import { parseAssetInput, resolveFileParts } from "./file-input/index.js";
 import { isNativeVisual, MAX_PARSED_CHARACTERS } from "./file-input/registry.js";
 /**

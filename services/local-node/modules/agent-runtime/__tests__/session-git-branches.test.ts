@@ -10,7 +10,7 @@ import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resetAgentRuntimeFixtures } from './agent-runtime-fixtures.js';
 import { prepareOwnedProcess, releaseOwnedProcess } from '../process-ownership.js';
 import { agentRuntimeRoutes } from '../../../transport/http/agent-runtime.js';
-import { getSessionEnvironment } from '../session-environment.js';
+import { getWorkspaceGitChanges, invalidateAllWorkspaceGit } from '../workspace-git-changes.js';
 
 let dir: string;
 let one: string;
@@ -26,7 +26,7 @@ beforeEach(async () => {
     git(root, 'add', '.'); git(root, 'commit', '-m', 'initial'); git(root, 'branch', 'feature');
   }
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => { invalidateAllWorkspaceGit(); fs.rmSync(dir, { recursive: true, force: true }); });
 function session(root = one, includeReference = true) {
   const created = agentSessionRuntime.create({ projectId: 'branches-test', profileId: 'synax', prompt: 'test' });
   agentRuntimeStore.updateSession(created.id, { status: 'completed' });
@@ -181,24 +181,35 @@ it('does not require a local main branch to create a branch', async () => {
   expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'master'));
 });
 
-it('refreshes the workspace snapshot of sessions sharing the switched checkout', async () => {
+it('refreshes the workspace Git data of sessions sharing the switched checkout', async () => {
   const other = session(one, false);
-  const before = await getSessionEnvironment(other.id);
+  const scope = { projectId: other.projectId, sessionId: other.id };
+  const before = await getWorkspaceGitChanges(scope);
   expect(before.repositories.find(root => root.role === 'primary')?.branch).toBe('main');
   const owner = session(one, false);
   expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
   // The sibling session sees the checkout's new branch instead of a stale one.
-  const after = await getSessionEnvironment(other.id);
+  const after = await getWorkspaceGitChanges({
+    ...scope,
+    clientRevision: before.revision,
+  });
+  expect(after.unchanged).toBe(false);
   expect(after.repositories.find(root => root.role === 'primary')?.branch).toBe('feature');
 });
 
-it('stops invalidating sessions whose checkout did not change', async () => {
+it('keeps the Git facts of checkouts the branch switch did not touch', async () => {
   const elsewhere = session(two, false);
-  const before = await getSessionEnvironment(elsewhere.id);
+  const scope = { projectId: elsewhere.projectId, sessionId: elsewhere.id };
+  const before = await getWorkspaceGitChanges(scope);
   const owner = session(one, false);
   expect((await switchBranch(owner.id, 'primary')).status).toBe(200);
-  // An untouched snapshot is reused byte-for-byte, so the other checkout is
-  // never re-read by the branch switch.
-  expect(await getSessionEnvironment(elsewhere.id)).toBe(before);
+  // The untouched checkout keeps its revision, so a conditional read answers
+  // `unchanged` without listing files again.
+  const after = await getWorkspaceGitChanges({
+    ...scope,
+    clientRevision: before.revision,
+  });
+  expect(after.unchanged).toBe(true);
+  expect(after.repositories).toEqual([]);
   expect(before.repositories.find(root => root.role === 'primary')?.branch).toBe('main');
 });

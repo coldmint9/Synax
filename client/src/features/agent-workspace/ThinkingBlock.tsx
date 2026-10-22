@@ -1,12 +1,13 @@
+import { memo } from "react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useShellStore } from "../../shared/state/shellStore";
 import { ThinkingTrace } from "./ThinkingTrace";
-import { ThinkingBanner } from "./ThinkingBanner";
+import { useStreamingText } from "./useStreamingText";
 import {
   ACTIVITY_BODY_LIMIT,
+  activityPreview,
   formatCharCount,
   hasDisplayableReasoning,
-  latestActivityPreview,
   tailForDisplay,
   thinkingBannerPhrases,
 } from "./activityText";
@@ -17,22 +18,20 @@ interface Props {
   rememberKey?: string;
 }
 
-/**
- * Displays model supplied reasoning as it arrives.
- *
- * The text comes straight from the stream buffers: thought deltas are applied
- * at the rate the backend emits them, so revealing them a second time here
- * would only hold the transcript back from the real token rate.
- */
-export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
+function ThinkingText({ text, streaming }: { text: string; streaming: boolean }) {
+  const visible = useStreamingText(text, streaming, false);
+  return <div className="bui-thinking-prose">{visible}</div>;
+}
+
+/** Collapsed previews update immediately; only the mounted body smooths bursts. */
+export const ThinkingBlock = memo(function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
   const { t } = useLocale();
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   if (!showThinking) return null;
   if (!hasDisplayableReasoning(content)) return null;
   const bannerPhrases = thinkingBannerPhrases(content);
-  if (bannerPhrases)
-    return <ThinkingBanner phrases={bannerPhrases} isStreaming={isStreaming} />;
-  const { text, hidden } = tailForDisplay(content);
+  const displayContent = bannerPhrases ? bannerPhrases.join("\n") : content;
+  const { text, hidden } = tailForDisplay(displayContent);
   return (
     <ThinkingTrace
       label={
@@ -45,12 +44,13 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
               count: formatCharCount(content.length),
             })
       }
-      title={latestActivityPreview(content, 400)}
+      title={activityPreview(displayContent, 400)}
+      preview={activityPreview(displayContent, 180)}
       working={isStreaming}
       rememberKey={rememberKey}
       variant="reasoning"
     >
-      <div className="bui-thinking-prose">{text}</div>
+      <ThinkingText text={text} streaming={Boolean(isStreaming)} />
       {hidden > 0 && (
         <div className="bui-activity-footnote">
           {t("sessionActivityTruncated", {
@@ -61,4 +61,4 @@ export function ThinkingBlock({ content, isStreaming, rememberKey }: Props) {
       )}
     </ThinkingTrace>
   );
-}
+});

@@ -22,7 +22,7 @@ import {
 } from "./context-memory.js";
 import { initialSessionMessageProjection } from "./session-user-request.js";
 import * as z from "zod/v4";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ModelMessage } from "../../infrastructure/llm-runtime/contracts.js";
 import type { RegisteredTool } from "./contracts.js";
 import type { LoopToolSet } from "./loop-ai-tools.js";
 import { agentRuntimeStore as store } from "./session-store.js";

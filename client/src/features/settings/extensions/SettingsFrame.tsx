@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Archive, Compass, KeyRound, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Activity, Archive, Bot, Compass, KeyRound, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useExtensionCopy } from './extension-copy'
 import type { ExtensionKind } from '../../../adapters/transport/extensions'
 import './extensions.css'
-export type SettingsSection = 'general' | 'archive' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse' | 'llmProviders'
+export type SettingsSection = 'general' | 'archive' | 'analytics' | 'subagents' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse' | 'llmProviders'
 export function SettingsFrame({
   section,
   onSelect,
@@ -52,6 +52,21 @@ export function SettingsFrame({
           >
             <Archive size={16} />
             {copy.archive}
+          </button>
+        )}
+        {!projectMode && <button type="button" className={section === 'subagents' ? 'is-selected' : ''}
+          aria-current={section === 'subagents' ? 'page' : undefined} onClick={() => onSelect('subagents')}>
+          <Bot size={16} aria-hidden="true" />{copy.subagents}
+        </button>}
+        {!projectMode && (
+          <button
+            type="button"
+            className={section === 'analytics' ? 'is-selected' : ''}
+            aria-current={section === 'analytics' ? 'page' : undefined}
+            onClick={() => onSelect('analytics')}
+          >
+            <Activity size={16} />
+            {copy.analytics}
           </button>
         )}
         {!projectMode && (

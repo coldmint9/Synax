@@ -1,42 +1,65 @@
-mod actor;
-mod agent_loop;
-mod commit;
-mod completion;
-mod control;
-mod execution;
-mod flow;
-mod history;
-mod input_queue;
-mod loop_policy;
-mod loop_context;
-mod projection;
-mod provider;
-mod provider_adapter;
-mod provider_metadata;
-mod provider_tool_names;
-mod protocol;
-mod storage;
-mod tickets;
-mod transport;
-mod workspace_index;
-
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::actor::SessionShardRouter;
-use crate::storage::HotStore;
+use synax_runtime_sidecar::runtime::actor::SessionShardRouter;
+use synax_runtime_sidecar::storage::jsonl;
+use synax_runtime_sidecar::transport::{control, http, protocol, socket as transport, tickets};
+use synax_runtime_sidecar::workspace::index as workspace_index;
+
+use synax_runtime_sidecar::logging;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
+use tracing::Instrument;
 use transport::{TransportContext, cleanup_socket, serve_websocket, socket_path_from_env};
 
 #[cfg(unix)]
 use tokio::net::UnixListener;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::process::ExitCode {
+    let mut logs = match logging::init() {
+        Ok(logs) => logs,
+        Err(_) => {
+            eprintln!(
+                r#"{{"level":"ERROR","fields":{{"event":"logging.init_failed","message":"Cannot initialize runtime logging"}}}}"#
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    // Correlation spans remain enabled at warn/error-only event levels.
+    let span = tracing::error_span!(
+        "runtime",
+        pid = std::process::id(),
+        version = env!("CARGO_PKG_VERSION"),
+        stage = "initializing"
+    );
+    let result = run_main(&mut logs, span.clone());
+    if let Err(error) = &result {
+        span.in_scope(|| {
+            tracing::error!(
+                event = "runtime.failed",
+                error_kind = logging::error_kind(error.as_ref()),
+                "Runtime failed"
+            )
+        });
+    }
+    logs.report_dropped();
+    // Flush queued diagnostics before returning an exit code, including startup failures.
+    drop(logs);
+    if result.is_ok() {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
+}
+
+fn run_main(
+    logs: &mut logging::LoggingGuard,
+    span: tracing::Span,
+) -> Result<(), Box<dyn std::error::Error>> {
+    span.in_scope(|| tracing::info!(event = "runtime.starting", "Runtime starting"));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let result = runtime.block_on(run());
+    let result = runtime.block_on(run(logs).instrument(span));
     // A managed stdin watch uses a blocking OS read. Never let it keep a stopped
     // runtime alive after an administrative shutdown while the parent is alive.
     runtime.shutdown_timeout(std::time::Duration::from_secs(1));
@@ -67,25 +90,8 @@ async fn terminate_signal() -> std::io::Result<()> {
     }
 }
 
-fn env_duration_ms(name: &str, default_ms: u64) -> Duration {
-    let milliseconds = std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_ms);
-    Duration::from_millis(milliseconds)
-}
-
-fn env_usize(name: &str, default: usize, max: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-        .min(max)
-}
-
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run(logs: &mut logging::LoggingGuard) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::Span::current().record("stage", "listeners");
     let token = std::env::var("SYNAX_RUNTIME_SIDECAR_TOKEN")
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     let port = std::env::var("SYNAX_RUNTIME_SIDECAR_PORT")
@@ -94,22 +100,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(0);
     let websocket_listener = TcpListener::bind(("127.0.0.1", port)).await?;
     let websocket_port = websocket_listener.local_addr()?.port();
-    let provider_port = std::env::var("SYNAX_RUNTIME_PROVIDER_PORT").ok()
-        .and_then(|value| value.parse::<u16>().ok()).unwrap_or(0);
+    let provider_port = std::env::var("SYNAX_RUNTIME_PROVIDER_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(0);
     let provider_listener = TcpListener::bind(("127.0.0.1", provider_port)).await?;
     let provider_port = provider_listener.local_addr()?.port();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let hot_store = std::env::var_os("SYNAX_RUNTIME_HOT_PATH")
-        .map(HotStore::open)
-        .transpose()?;
-    let hot_store = hot_store.map(Arc::new);
-    let history_store = std::env::var_os("SYNAX_RUNTIME_HISTORY_PATH")
-        .map(history::HistoryStore::open)
-        .transpose()?;
-    let router = match hot_store.clone() {
-        Some(store) => SessionShardRouter::with_store(16, 1024, store.clone())?,
-        None => SessionShardRouter::new(16, 1024)?,
-    };
+    tracing::Span::current().record("stage", "storage");
+    let store_root = std::env::var_os("SYNAX_RUNTIME_STORE_PATH")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| {
+            tracing::error!(
+                event = "runtime.config_invalid",
+                variable = "SYNAX_RUNTIME_STORE_PATH",
+                "Required runtime configuration is missing"
+            );
+            "SYNAX_RUNTIME_STORE_PATH is required"
+        })?;
+    let store = Arc::new(jsonl::store::JsonlStore::open(&store_root)?);
+    let hot = Arc::new(jsonl::hot::HotOps::new(store.clone()));
+    let history = Arc::new(jsonl::history::HistoryOps::new(store));
+    let history_for_sweep = history.clone();
+    let hot_for_sweep = hot.clone();
+    let router = SessionShardRouter::with_store(16, 1024, hot.clone())?;
     let context = TransportContext {
         workspace_index: workspace_index::WorkspaceIndex::new(),
         token: Arc::from(token),
@@ -117,9 +131,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tickets: Arc::new(tickets::TicketStore::new()),
         shutdown: shutdown_tx.clone(),
         router: Arc::new(router),
-        hot_store: hot_store.clone(),
-        history: history_store.map(Arc::new),
-        outbox_scan_cursor: Arc::new(std::sync::Mutex::new(None)),
+        hot_store: Some(hot.clone()),
+        history: Some(history),
+        test_reset_gate: (std::env::var("SYNAX_RUNTIME_TEST_MODE").as_deref() == Ok("1"))
+            .then(|| Arc::new(tokio::sync::RwLock::new(()))),
     };
 
     #[cfg(unix)]
@@ -141,78 +156,136 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "capabilities": transport::HANDSHAKE_CAPABILITIES,
         "pid": std::process::id(),
     });
+    tracing::Span::current().record("stage", "running");
     println!("SYNAX_RUNTIME_READY:{ready}");
+    tracing::info!(
+        event = "runtime.ready",
+        websocket_port,
+        provider_port,
+        protocol = protocol::PROTOCOL_VERSION,
+        "Runtime ready"
+    );
 
-    let websocket_task = tokio::spawn(serve_websocket(
-        websocket_listener,
-        context.clone(),
-        shutdown_rx.clone(),
-    ));
-    let provider_task = tokio::spawn(provider::serve_http(
-        provider_listener,
-        context.token.to_string(),
-        shutdown_rx.clone(),
-        hot_store.clone(),
-        context.router.clone(),
-    ));
-
-    let maintenance_task = hot_store.as_ref().map(|_| {
-        tokio::spawn(transport::run_history_outbox_maintenance(
-            context.clone(),
+    let websocket_task = spawn_service(
+        "websocket",
+        serve_websocket(websocket_listener, context.clone(), shutdown_rx.clone()),
+    );
+    let provider_task = spawn_service(
+        "http",
+        http::serve_http(
+            provider_listener,
+            context.token.to_string(),
             shutdown_rx.clone(),
-            env_duration_ms("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_MS", 5_000),
-            env_usize(
-                "SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_SESSIONS",
-                128,
-                4_096,
-            ),
-            env_usize("SYNAX_RUNTIME_HISTORY_OUTBOX_MAINTENANCE_BATCH", 256, 256),
-        ))
-    });
+            Some(hot.clone()),
+            context.router.clone(),
+        ),
+    );
 
     #[cfg(unix)]
     let unix_task = unix_listener.map(|listener| {
-        tokio::spawn(transport::serve_unix(
-            listener,
-            context.clone(),
-            shutdown_rx.clone(),
-        ))
+        spawn_service(
+            "unix",
+            transport::serve_unix(listener, context.clone(), shutdown_rx.clone()),
+        )
     });
 
     #[cfg(windows)]
     let named_pipe_task = socket_path_from_env().map(|path| {
-        tokio::spawn(transport::serve_named_pipe(
-            path,
-            context.clone(),
-            shutdown_rx.clone(),
-        ))
+        spawn_service(
+            "named_pipe",
+            transport::serve_named_pipe(path, context.clone(), shutdown_rx.clone()),
+        )
     });
 
     let mut shutdown_signal = shutdown_rx.clone();
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result?,
-        result = terminate_signal() => result?,
-        _ = parent_closed() => {},
-        result = shutdown_signal.changed() => result?,
-    }
+    let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(5));
+    // Keep signal/watch futures alive across logging ticks.
+    let ctrl_c = tokio::signal::ctrl_c();
+    let terminate = terminate_signal();
+    let parent = parent_closed();
+    tokio::pin!(ctrl_c, terminate, parent);
+    let reason = loop {
+        tokio::select! {
+            result = &mut ctrl_c => { result?; break "sigint"; },
+            result = &mut terminate => { result?; break "sigterm"; },
+            _ = &mut parent => break "parent_closed",
+            result = shutdown_signal.changed() => { result?; break "control"; },
+            _ = health_tick.tick() => {
+                logs.report_dropped();
+                let hot_evicted = hot_for_sweep.store().evict_idle();
+                let history_evicted = history_for_sweep.evict_idle();
+                if hot_evicted != 0 || history_evicted != 0 {
+                    tracing::debug!(event = "storage.idle_evicted", hot = hot_evicted, history = history_evicted, "Released idle session caches");
+                }
+            },
+        }
+    };
+    tracing::Span::current().record("stage", "shutdown");
+    tracing::info!(event = "runtime.stopping", reason, "Runtime stopping");
     context.workspace_index.stop();
     let _ = shutdown_tx.send(true);
-    let _ = websocket_task.await;
-    let _ = provider_task.await;
-    if let Some(task) = maintenance_task {
-        let _ = task.await;
-    }
+    log_task_result("websocket", websocket_task.await);
+    log_task_result("http", provider_task.await);
+    let flush_span = tracing::Span::current();
+    log_task_result(
+        "storage_flush",
+        tokio::task::spawn_blocking(move || flush_span.in_scope(|| hot.flush())).await,
+    );
     #[cfg(unix)]
     if let Some(task) = unix_task {
-        let _ = task.await;
+        log_task_result("unix", task.await);
     }
     #[cfg(windows)]
     if let Some(task) = named_pipe_task {
-        let _ = task.await;
+        log_task_result("named_pipe", task.await);
     }
     #[cfg(unix)]
     if let Some(path) = socket_path_from_env() {
         cleanup_socket(&path);
     }
+    tracing::info!(event = "runtime.stopped", "Runtime stopped");
     Ok(())
+}
+
+fn log_task_result<E: std::error::Error + 'static>(
+    task: &str,
+    result: Result<Result<(), E>, tokio::task::JoinError>,
+) {
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!(
+            event = "runtime.task_failed",
+            task,
+            error_kind = logging::error_kind(&error),
+            "Runtime task failed"
+        ),
+        Err(error) => tracing::error!(
+            event = "runtime.task_failed",
+            task,
+            panicked = error.is_panic(),
+            "Runtime task did not complete"
+        ),
+    }
+}
+
+fn spawn_service<E, F>(service: &'static str, future: F) -> tokio::task::JoinHandle<Result<(), E>>
+where
+    E: std::error::Error + Send + 'static,
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+{
+    tokio::spawn(
+        async move {
+            let result = future.await;
+            if let Err(error) = &result {
+                tracing::error!(
+                    event = "runtime.service_failed",
+                    service,
+                    error_kind = logging::error_kind(error),
+                    "Runtime listener failed"
+                );
+            }
+            result
+        }
+        .in_current_span(),
+    )
 }

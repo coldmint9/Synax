@@ -22,6 +22,7 @@ import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/side
 
 const activeStreams = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
+let yieldWorkerRequested = false;
 
 function pickGenerator(
   mode: AgentSessionStreamMode,
@@ -29,7 +30,7 @@ function pickGenerator(
   input: StreamTurnRequest,
   abortSignal: AbortSignal,
 ) {
-  return rustNativeBackend.stream(sessionId, mode, input, abortSignal);
+  return rustNativeBackend.stream(sessionId, mode, { ...input, shouldYieldWorker: () => yieldWorkerRequested }, abortSignal);
 }
 
 async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
@@ -69,6 +70,10 @@ async function runStream(
     )) {
       await agentRuntimeStore.flush();
       await businessStore.flush();
+      if (chunk.type === "worker_yield") {
+        sendAgentSessionToParent({ type: "stream:parked", sessionId, streamId });
+        return;
+      }
       sendAgentSessionToParent({
         type: "stream:chunk",
         sessionId,
@@ -187,6 +192,7 @@ function main(): void {
       return;
     }
     if (!initialized) return;
+    if (message.type === "stream:yield-request") { yieldWorkerRequested = message.requested; return; }
     if (message.type === "context:compact") {
       const task = runContextCompaction(init.sessionId, message.requestId);
       runningTasks.add(task);

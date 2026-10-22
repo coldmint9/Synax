@@ -1,6 +1,6 @@
 /** Context for standard token usage normalization. */
 export interface UsageContext {
-  source?: "sdk" | "raw" | "acp" | "cli" | "legacy";
+  source?: "native" | "sdk" | "raw" | "acp" | "cli" | "legacy";
   protocol?: string;
   adapter?: string;
   providerMetadata?: unknown;
@@ -205,7 +205,7 @@ export function normalizeUsage(
   const captured = evidence.version === 1;
   const source =
     context.source ??
-    (["acp", "cli", "sdk", "raw"].includes(String(u.source))
+    (["native", "acp", "cli", "sdk", "raw"].includes(String(u.source))
       ? (u.source as UsageContext["source"])
       : ["codex", "claude-code"].includes(String(u.source))
         ? "cli"
@@ -214,9 +214,11 @@ export function normalizeUsage(
           : "legacy")!;
   const protocol =
     context.protocol ??
+    (typeof u.protocol === "string" ? u.protocol : undefined) ??
     (typeof evidence.protocol === "string" ? evidence.protocol : undefined);
   const adapter =
     context.adapter ??
+    (typeof u.adapter === "string" ? u.adapter : undefined) ??
     (typeof evidence.adapter === "string" ? evidence.adapter : undefined);
   // SDK raw may contain synthetic defaults. Captured wire presence is authoritative.
   const raw = captured

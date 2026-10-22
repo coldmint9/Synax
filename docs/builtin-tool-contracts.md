@@ -86,8 +86,8 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 
 | 工具 | 实际约束/行为 | 处理 | 依据 |
 | --- | --- | --- | --- |
-| `subagent.delegate` | builtin profile 限 explorer/reviewer；specialist 优先；prompt 非空；specialist prompt 最多 20000；一层、最多 3 活跃 children；同时最多一个 specialist writer；Plan specialist 不写；权限继承 | 列出 profile、优先级、写入范围和串行 writer 要求；capabilities/writeScope 字段带完整约束及合法例子 | tool-registry.ts、specialist-profile.ts |
-| `subagent.lifecycle` | 单一严格参数对象；start 需 prompt，profileId/name/thinkingMode 仅 start 可用；除 start/list 外必须带 childSessionId；message 需 message 且 childSessionId 来自 start/list；timeoutMs 0–30000 仅影响 wait；pause 可恢复、cancel 终止、close/terminate 硬停；只作用于自己的直接子会话 | 保留各动作前置条件，改由字段 `describe()` 与 `superRefine` 表达；不回到 discriminated union，否则根 schema 无 `type: "object"` | subagent-tools.ts、subagent-orchestrator.ts |
+| `subagent.delegate` | 通用 subagent；主代理按任务配置 profile 或选择 templateId；未提供的配置继承主代理；最多 5 个活跃 children；子代理不可再次委派；工具等待子任务结束后返回结果 | profile 包含角色、指令、工具、只读限制、写入范围和模型；自动继承当前授权；自定义配置限制不可放宽；旧角色仅用于历史会话恢复 | subagent-config.ts、subagent-delegation.ts、subagent-profile.ts |
+| `subagent.lifecycle` | start 与 delegate 使用同一通用 profile/templateId 配置；start 需 prompt；除 start/list 外必须带 childSessionId；message 需 message；timeoutMs 0–30000；只控制自己的直接子会话 | start 异步启动；其余生命周期控制不改变已保存的角色和授权；参数保持根 object schema | subagent-tools.ts、subagent-delegation.ts、subagent-orchestrator.ts |
 | `skill.load` | skillId 在目录中且当前 profile/权限/会话可用；specialist 受 skillIds 授权列表限制 | 补从可用目录取得精确 ID，检查成功结果后再采用内容 | tool-registry.ts、modules/skills/agent-bridge.ts、specialist-profile.ts |
 | `agent.adapt` | 仅 Synax 会话；variantId 为 planner/explorer/reviewer；reason trim 后非空 | 补非空白 reason 说明，保留持续工作使用要求 | synax/synax-adapt-tool.ts |
 | `human.ask` | 1–5 问且 ID 唯一；select 必须有唯一 options；recommended 只用于 select 且来自 options，single_select 最多一个；min≤max；主控会话/单工具步骤 | 在正文和字段补无法由普通 JSON Schema 表达的规则 | control-tools.ts、control-contracts.ts、control-policy.ts |
@@ -97,7 +97,7 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 | `goal.finish` | goal 工作流；完成需实际 criterion evidence，toolCallIds/artifactIds 属于当前 Work/children 且成功；验证须当前版本；blocked 为具体阻塞 | 补证据 ID 来源、验收原文和验证要求 | control-tools.ts、work-runtime.ts、work-evidence.ts |
 | `tools.invalid` | SDK 的未知工具名恢复入口；普通 agent 不应主动调用 | 保留，说明已明确使用当前可用工具名 | tool-invalid.ts、loop-ai-tools.ts |
 
-`writeScope` 及 specialist 的写路径要求：具体相对文件/目录，目录自动包含后代，无需 /**；拒绝绝对路径、根路径（含 .）、.. 路径段、* / ?、反斜杠、冒号、百分号、控制字符、~ 开头、首尾空白及 symlink 路径组件。数组 1–32 项，单路径最多 1024 字符。普通文件工具不使用这套严格路径 schema。
+通用 subagent 的 `writeScope` 可选；省略时继承工作区。提供时为具体相对文件/目录，目录包含后代；拒绝根路径、绝对路径、遍历和通配符。运行时校验实际目标路径（含 patch 移动目标），限制工具集为可约束写入范围的原生文件工具。`access: read-only` 会进一步限制继承权限。旧 specialist 快照仍按原有规则恢复。
 
 ## 设计、任务、Work 与历史
 
@@ -134,7 +134,7 @@ Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止�
 ## 注册范围的排除项
 
 - `file.glob`、`grep.search` 是 rg 使用的内部后端，不是当前全局注册的可调用工具；保留后端实现，不将其重复算作内建入口。
-- 当前工作区已移除 Wiki specialist 能力和 Wiki 委派 profile；静态注册和自带 provider 中没有 Wiki 原生工具。本次描述以当前 explorer/reviewer 和实际 SAFE_CAPABILITIES 常量为准；外部 Wiki/MCP 工具由各自 server 提供描述。
+- 新委派统一使用通用 subagent profile。explorer/reviewer/specialist 只兼容旧会话，不再作为新委派的公开配置。自定义子代理在全局设置保存，通过输入框选择或 /subagent 引用，以快照随当前消息、排队输入传递。
 - MCP server 工具（包括 Direct Cua）、用户自定义工具走动态 provider，按服务端 schema/description 转发，本次不替服务端重写其契约。
 - `goal.finish`、`work.checkpoint`、`verification.run` 和部分控制工具受会话模式及状态挂载，清单包括它们并不表示任意会话均可调用。
 

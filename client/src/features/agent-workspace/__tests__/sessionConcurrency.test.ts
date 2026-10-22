@@ -4,7 +4,10 @@ import {
   type AgentSession,
 } from "../../../adapters/transport/agentRuntime";
 import { ensureSessionLiveSubscription } from "../../../adapters/transport/sessionLiveClient";
-import { useAgentSessionStore } from "../state/agentSessionStore";
+import {
+  resetWorkspaceSessionCache,
+  useAgentSessionStore,
+} from "../state/agentSessionStore";
 
 vi.mock("../../../adapters/transport/agentRuntime", () => ({
   agentRuntimeApi: {
@@ -33,6 +36,7 @@ const page = (items: AgentSession[]) => ({
 });
 beforeEach(() => {
   vi.resetAllMocks();
+  resetWorkspaceSessionCache();
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
     projectId: "one",

@@ -12,6 +12,8 @@ import { resolveSessionPermissionRules } from './permission-tiers.js';
 import { agentRuntimeStore } from './session-store.js';
 import { nowIso } from './runtime-ids.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
+import { subagentRestrictions } from './subagent-profile.js';
+import type { SubagentProfileConfig } from './subagent-config.js';
 
 export const SESSION_PERMISSION_TIER_KEY = 'permissionTier';
 export const SESSION_PERMISSION_OVERRIDES_KEY = 'permissionOverrides';
@@ -66,6 +68,10 @@ export function rebuildSessionPermissionRules(
   if (session.parentSessionId) {
     const parent = agentRuntimeStore.tryGetSession(session.parentSessionId);
     const inheritedRules = parent?.permissionRules ?? [];
+    if (session.profileId === 'subagent') {
+      const snapshot = session.sessionMetadata?.subagentProfile as { profile: SubagentProfileConfig } | undefined;
+      return [...inheritedRules, ...subagentRestrictions(snapshot?.profile ?? {})];
+    }
     return [...inheritedRules, ...tierRules, ...alwaysRules];
   }
 

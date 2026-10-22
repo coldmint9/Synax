@@ -3,6 +3,7 @@ import { describe, expect, it, beforeAll, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { skillRegistry } from "../skill-registry.js";
 import { skillAgentBridge } from "../agent-bridge.js";
+import { skillSourceService } from "../skill-source-service.js";
 import { agentSessionRuntime } from "../../agent-runtime/session-runtime.js";
 import {
   resetAgentRuntimeFixtures,
@@ -126,6 +127,13 @@ describe("matchesProfile — profileIds precedence", () => {
 
   it("still matches everything when appliesTo and profileIds are both empty", () => {
     expect(matchesProfile(summary({}), "planner")).toBe(true);
+  });
+
+  it("lists seeded skill sources with their full record", () => {
+    const sources = skillSourceService.listSources();
+    const remote = sources.find((source) => source.id === "default-remote");
+    expect(remote).toMatchObject({ id: "default-remote", label: "skills.sh", type: "skills-sh", priority: 60 });
+    expect(sources.every((source) => typeof source.label === "string")).toBe(true);
   });
 });
 

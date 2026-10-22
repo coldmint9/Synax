@@ -1,77 +1,16 @@
 import type { LlmRetryState } from "../../adapters/transport/sessionLive";
 import { RetryIndicator } from "./RetryIndicator";
-import { memo, useDeferredValue, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentRunStep } from "../../adapters/transport/agentRuntime";
-import { ThinkingBlock } from "./ThinkingBlock";
-import { StreamingTextBlock } from "./StreamingTextBlock";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { ToolCallRoundPanel } from "./ToolCallRoundPanel";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
-import { buildTurnRenderSegments } from "./toolCallUtils";
+import { TurnContent } from "./TurnBody";
 import {
   materializeLiveBlocks,
   type StreamingLiveBuffers,
 } from "./streamingLiveBlocks";
-import { latestThinkingIndex } from "./activityText";
 import { useShellStore } from "../../shared/state/shellStore";
 
-function renderLiveSegments(
-  blocks: readonly TurnContentBlock[],
-  isStreaming: boolean,
-  rowKeyPrefix = "",
-) {
-  const segments = buildTurnRenderSegments(blocks);
-  const toolBlocks = segments.flatMap((segment) =>
-    segment.type === "tool_round" ? segment.toolBlocks : [],
-  );
-  const answers = segments.filter((segment) => segment.type !== "tool_round");
-  // The answer region mounts only its newest reasoning block: earlier thoughts
-  // are read-only history, so their rows would only cost DOM subtrees.
-  const latestThought = latestThinkingIndex(answers);
-  const render = (segment: (typeof segments)[number], i: number) => {
-    const live = isStreaming && segment === segments[segments.length - 1];
-    if (segment.type === "thinking") {
-      if (i !== latestThought) return null;
-      return (
-        <ThinkingBlock
-          key={i}
-          content={segment.content}
-          isStreaming={live}
-          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
-        />
-      );
-    }
-    if (segment.type === "tool_round")
-      return <ToolCallRoundPanel key={i} toolBlocks={segment.toolBlocks} />;
-    if (segment.type === "text")
-      return (
-        <StreamingTextBlock
-          key={i}
-          text={segment.content}
-          isStreaming={live}
-          markdown={segment.markdown}
-        />
-      );
-    return null;
-  };
-  return (
-    <>
-      <div className="session-tool-region">
-        {toolBlocks.length > 0 && (
-          <ToolCallRoundPanel
-            toolBlocks={toolBlocks}
-            maxHeight="none"
-            // The activity rail stays open for the whole live turn. Closing it
-            // when the first answer token arrives causes a visible collapse /
-            // expand loop when the runtime emits another activity event.
-            isStreaming={isStreaming}
-          />
-        )}
-      </div>
-      <div className="session-answer-region">{answers.map(render)}</div>
-    </>
-  );
-}
 const CompletedStepView = memo(function CompletedStepView({
   blocks,
   stepId,
@@ -85,7 +24,7 @@ const CompletedStepView = memo(function CompletedStepView({
   return (
     <div className="session-completed-step animate-[fade-up_0.3s_ease-out]">
       <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
-        {renderLiveSegments(visibleBlocks, false, stepId)}
+        <TurnContent blocks={visibleBlocks} rowKeyPrefix={stepId} />
       </div>
     </div>
   );
@@ -94,25 +33,26 @@ const CompletedStepView = memo(function CompletedStepView({
 const LiveStepView = memo(function LiveStepView({
   streamingLive,
   retry,
+  stepId,
 }: {
   retry?: LlmRetryState | null;
   streamingLive: StreamingLiveBuffers;
+  stepId: string;
 }) {
-  const deferredLive = useDeferredValue(streamingLive);
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const blocks = useMemo(
     () => {
-      const content = materializeLiveBlocks(deferredLive);
+      const content = materializeLiveBlocks(streamingLive);
       return showThinking ? content : content.filter((block) => block.type !== "thinking");
     },
-    [deferredLive, showThinking],
+    [streamingLive, showThinking],
   );
   const hasContent = blocks.length > 0;
 
   return (
     <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
       {hasContent ? (
-        renderLiveSegments(blocks, true)
+        <TurnContent blocks={blocks} isStreaming rowKeyPrefix={stepId} />
       ) : !retry ? (
         <ThinkingIndicator />
       ) : null}
@@ -168,10 +108,13 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
     return () => el.removeEventListener("scroll", onScroll);
   }, [scrollContainerRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollContainerRef?.current;
     if (isNearBottom.current && el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      // The transcript owns the scroll policy. This legacy adapter only keeps
+      // an already-pinned viewport aligned, without starting a smooth scroll
+      // animation for every token burst.
+      el.scrollTop = el.scrollHeight;
     }
   }, [scrollContainerRef, streamingLive, streamingCompletedSteps.length]);
 
@@ -189,7 +132,7 @@ export const SessionLiveTurn = memo(function SessionLiveTurn({
         />
       ))}
       {showLiveBlock ? (
-        <LiveStepView streamingLive={streamingLive} retry={retry} />
+        <LiveStepView key={streamingStepId} stepId={streamingStepId!} streamingLive={streamingLive} retry={retry} />
       ) : null}
     </>
   );

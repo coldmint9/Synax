@@ -3,8 +3,8 @@ import {
   ADAPTER_MEDIA_PROFILES,
   ENDPOINT_MEDIA_PROFILES,
   resolveMediaProfile,
-} from "../providers/media-profile.js";
-import { registeredAdapterPackages } from "../providers/provider-registry.js";
+} from "../media-profile.js";
+import { supportedCatalogAdapters } from "../catalog-capabilities.js";
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -12,14 +12,14 @@ describe("media profile coverage", () => {
   it("declares media for every adapter the runtime can instantiate", () => {
     // A new adapter without a media declaration used to discard every declared
     // modality at runtime; this guard turns that into a test failure.
-    const missing = registeredAdapterPackages().filter(
+    const missing = supportedCatalogAdapters().filter(
       (npm) => !(npm in ADAPTER_MEDIA_PROFILES),
     );
     expect(missing).toEqual([]);
   });
 
   it("keeps no stale or empty adapter entries", () => {
-    const registered = new Set(registeredAdapterPackages());
+    const registered = new Set(supportedCatalogAdapters());
     for (const [npm, profile] of Object.entries(ADAPTER_MEDIA_PROFILES)) {
       expect(registered.has(npm), `${npm} is not a registered adapter`).toBe(
         true,

@@ -1,3 +1,4 @@
+import { serveProviderHttp } from "../../../../test-fixtures/provider-http.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const videoCalls = vi.hoisted(() => [] as any[]);
 import { agentSessionRuntime } from "../session-runtime.js";
@@ -55,46 +56,15 @@ const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
   "base64",
 );
-vi.mock(
-  "../../../infrastructure/llm-runtime/providers/provider-registry.js",
-  async (original) => {
-    const actual =
-      await original<
-        typeof import("../../../infrastructure/llm-runtime/providers/provider-registry.js")
-      >();
-    return {
-      ...actual,
-      instantiateProvider: async (provider: any, config: any) =>
-        provider.id !== "video"
-          ? actual.instantiateProvider(provider, config)
-          : {
-              videoModel: (modelId: string) => ({
-                specificationVersion: "v4",
-                provider: "fixture.video",
-                modelId,
-                maxVideosPerCall: 1,
-                doGenerate: async (args: unknown) => {
-                  videoCalls.push(args);
-                  const bytes = Buffer.alloc(24);
-                  bytes.write("ftyp", 4);
-                  bytes.write("isom", 8);
-                  return {
-                    videos: [
-                      { type: "binary", data: bytes, mediaType: "video/mp4" },
-                    ],
-                    warnings: [],
-                    response: {
-                      timestamp: new Date(),
-                      modelId,
-                      headers: undefined,
-                    },
-                  };
-                },
-              }),
-            },
-    };
-  },
-);
+vi.mock("../../../infrastructure/llm-runtime/media-client.js", async original => {
+  const actual = await original<typeof import("../../../infrastructure/llm-runtime/media-client.js")>();
+  return { ...actual, requestMedia: async (selection: unknown, operation: string, options: unknown, input: unknown) => {
+    if (operation !== "video") return actual.requestMedia(selection as never, operation as never, options as never, input as never);
+    videoCalls.push(options);
+    const bytes = Buffer.alloc(24); bytes.write("ftyp", 4); bytes.write("isom", 8);
+    return { files: [{ data: bytes.toString("base64"), mediaType: "video/mp4" }], warnings: [] };
+  } };
+});
 beforeEach(async () => { await resetAgentRuntimeFixtures(); });
 afterEach(() => vi.unstubAllGlobals());
 describe("media tool assets survive the runtime boundary", () => {
@@ -103,9 +73,7 @@ describe("media tool assets survive the runtime boundary", () => {
     const wav = Buffer.alloc(44);
     wav.write("RIFF");
     wav.write("WAVE", 8);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url, init) => {
+    selection.config.baseUrl = await serveProviderHttp(vi.fn(async (url, init) => {
         requests.push({ url: String(url), init });
         if (String(url).endsWith("/audio/speech"))
           return new Response(wav, {
@@ -130,8 +98,7 @@ describe("media tool assets survive the runtime boundary", () => {
             },
           ],
         });
-      }),
-    );
+      }));
     const session = agentSessionRuntime.create(executorInput);
     const speech = await toolRegistry.execute(session.id, "media.speak", {
       model: "future-speech-model",
@@ -182,13 +149,10 @@ describe("media tool assets survive the runtime boundary", () => {
   });
   it("generates, persists, rehydrates and edits an image without losing bytes", async () => {
     const requests: RequestInit[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url, init) => {
+    selection.config.baseUrl = await serveProviderHttp(vi.fn(async (_url, init) => {
         requests.push(init);
         return Response.json({ data: [{ b64_json: png.toString("base64") }] });
-      }),
-    );
+      }));
     const session = agentSessionRuntime.create(executorInput);
     const first = await toolRegistry.execute(session.id, "media.generate", {
       model: "arbitrary-image-model",

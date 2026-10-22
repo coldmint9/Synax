@@ -2,6 +2,7 @@ import {
   specialistBaseProfile,
   resolveSpecialistProfile,
 } from "./specialist-profile.js";
+import { subagentBaseProfile, resolveSubagentProfile } from "./subagent-profile.js";
 import type {
   AgentProfile,
   AgentProfileKind,
@@ -28,6 +29,7 @@ const denyWrite = (
 });
 
 export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
+  subagentBaseProfile,
   specialistBaseProfile,
   {
     id: "planner",
@@ -206,12 +208,12 @@ export class ProfileService {
   );
 
   getForSession(session: AgentSession): AgentProfile {
-    return resolveSpecialistProfile(this.get(session.profileId), session);
+    return resolveSubagentProfile(resolveSpecialistProfile(this.get(session.profileId), session), session);
   }
 
   list(): AgentProfile[] {
     return [...this.profiles.values()].filter(
-      (profile) => profile.status === "active",
+      (profile) => profile.status === "active" && !["specialist", "explorer", "reviewer"].includes(profile.id),
     );
   }
 
@@ -236,7 +238,7 @@ export class ProfileService {
     input: { parentSessionId?: string | null } = {},
   ): AgentProfile {
     const profile = this.get(profileId);
-    if (profile.id === "specialist" && !input.parentSessionId)
+    if (["specialist", "subagent"].includes(profile.id) && !input.parentSessionId)
       throw new AgentValidationError(
         "Specialist sessions require a parent and a task snapshot.",
       );

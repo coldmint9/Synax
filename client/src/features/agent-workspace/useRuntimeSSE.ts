@@ -21,12 +21,30 @@ export function isTitleOnlyPatch(
   });
 }
 
+function sessionIdFrom(event: MessageEvent): string | null {
+  try {
+    const data = JSON.parse(event.data) as { sessionId?: unknown };
+    return typeof data.sessionId === "string" && data.sessionId
+      ? data.sessionId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Live callbacks own every list mutation after the first read.
+ *
+ * The session list is read once per workspace and never reconciled on its own:
+ * titles, statuses and summaries are patched into the exact row their event
+ * names, a row that was never loaded is read by id, and a removed row is
+ * dropped locally. Nothing here re-reads the page.
+ */
 export function useRuntimeSSE() {
   const patchSession = useAgentSessionStore((s) => s.patchSession);
 
   useEffect(() => {
     return subscribe({
-      onConnect: () => scheduleSessionRefresh(null, "list"),
       events: {
         session_changed: (e) => {
           const data = JSON.parse(e.data) as {
@@ -36,53 +54,68 @@ export function useRuntimeSSE() {
               historyRevision?: number;
             };
           };
+          const store = useAgentSessionStore.getState();
+          const previous = store.sessions.find(
+            (session) => session.id === data.sessionId,
+          );
           if (!data.patch) {
-            scheduleSessionRefresh(null, "list");
+            // A patch-less change carries no fields to apply; read this one
+            // session so the row matches the runtime.
+            void store.syncSessionSummary(data.sessionId);
             return;
           }
 
           if (data.patch.historyReset)
-            useAgentSessionStore
-              .getState()
-              .resetConversationHistory(data.sessionId);
-          const previous = useAgentSessionStore
-            .getState()
-            .sessions.find((session) => session.id === data.sessionId);
+            store.resetConversationHistory(data.sessionId);
           const titleOnly = isTitleOnlyPatch(data.patch, previous);
           const patched = patchSession(data.sessionId, data.patch);
-          // patchSession already refreshes unknown title targets.
-          if (!titleOnly && (patched || typeof data.patch.title !== "string")) {
-            scheduleSessionRefresh(null, "list");
-          }
+          // A status change for a row outside the loaded page is fetched by
+          // id; the page itself stays as it is. Titles for unknown rows are
+          // handled inside `patchSession`, so this never doubles a read.
+          if (!patched && typeof data.patch.status === "string")
+            void store.syncSessionSummary(data.sessionId);
           const selected = useAgentSessionStore.getState().selectedSessionId;
           if (data.sessionId === selected && !titleOnly) {
-            scheduleSessionRefresh(data.sessionId, "detail", data.patch.historyRevision);
+            scheduleSessionRefresh(
+              data.sessionId,
+              "detail",
+              data.patch.historyRevision,
+            );
           }
         },
         session_step_completed: (e) => {
           const { sessionId } = JSON.parse(e.data) as { sessionId: string };
-          scheduleSessionRefresh(null, "list");
           const selected = useAgentSessionStore.getState().selectedSessionId;
+          // Status and timestamps arrive as a `session_changed` patch; the step
+          // itself only matters for the open transcript.
           if (sessionId === selected) scheduleSessionRefresh(sessionId, "detail");
         },
         session_input_queue_changed: (e) => {
           const { sessionId } = JSON.parse(e.data) as { sessionId: string };
           void useAgentSessionStore.getState().loadInputQueue(sessionId);
         },
-        session_created: () => scheduleSessionRefresh(null, "list"),
-        session_deleted: () => scheduleSessionRefresh(null, "list"),
-        session_archived: (e) => {
-          let data: { sessionId?: unknown };
-          try {
-            data = JSON.parse(e.data);
-          } catch {
-            return;
-          }
-          if (typeof data.sessionId !== "string") return;
+        session_created: (e) => {
+          const sessionId = sessionIdFrom(e);
+          if (!sessionId) return;
+          const store = useAgentSessionStore.getState();
+          // A session this page already shows is done; a subagent child or a
+          // session created in another window is read by id.
+          if (store.sessions.some((session) => session.id === sessionId)) return;
+          void store.syncSessionSummary(sessionId);
+        },
+        session_deleted: (e) => {
+          const sessionId = sessionIdFrom(e);
+          if (!sessionId) return;
           const { projectId, discardRemovedSessions } =
             useAgentSessionStore.getState();
-          discardRemovedSessions([data.sessionId], projectId);
-          scheduleSessionRefresh(null, "list");
+          discardRemovedSessions([sessionId], projectId);
+        },
+        session_archived: (e) => {
+          const sessionId = sessionIdFrom(e);
+          if (!sessionId) return;
+          const { projectId, discardRemovedSessions } =
+            useAgentSessionStore.getState();
+          discardRemovedSessions([sessionId], projectId);
         },
       },
     });

@@ -1,3 +1,4 @@
+import { withToolResource } from "./resource-admission.js";
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { hydrateRuntimeAssets } from "./media-assets.js";
 import { waitForCodeRead } from "./code-mode/cancellation.js";
@@ -15,12 +16,7 @@ import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
 import { mediaAudioVideoTools } from "./tools/media-audio-video.js";
 import { mediaJobsTools } from "./tools/media-jobs.js";
-import {
-  contentPartsSchema,
-  type RuntimeContentPart,
-} from "./content-parts.js";
-import { bindAssets, validateAssets, sessionHasAsset } from "./media-assets.js";
-import { assertRuntimeExecutionCurrent, isExecutionSuperseded } from "../../infrastructure/runtime/execution-context.js";
+import { assertRuntimeExecutionCurrent, isExecutionSuperseded, currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { workTools } from "./tools/work-tools.js";
 import { verificationTool } from "./tools/verification.js";
 import { workRuntime } from "./work-runtime.js";
@@ -29,11 +25,11 @@ import { workspaceFingerprint } from "./work-fingerprint.js";
 import { withCommandSignal } from "./tools/exec-async.js";
 import { resolvePermissionDecision, isProjectToolGrantDenied } from "./permission-policy.js";
 import {
-  specialistSpecSchema,
-  buildSpecialistChildInput,
   assertSpecialistToolAllowed,
 } from "./specialist-profile.js";
 import { controlTools } from "./control-tools.js";
+import { delegateArgsSchema, delegateSubagent } from "./subagent-delegation.js";
+import { assertSubagentToolAllowed } from "./subagent-profile.js";
 import { subagentLifecycleTools } from "./subagent-tools.js";
 import { controlToolError } from "./control-policy.js";
 import { presentationTool } from "./presentation-runtime.js";
@@ -57,16 +53,16 @@ import {
 } from "./permission-policy.js";
 import { profileService, type ProfileService } from "./profile-service.js";
 import {
-  AgentNotFoundError,
+  AgentToolNotFoundError,
   AgentPermissionError,
   AgentValidationError,
+  isToolResolutionError,
 } from "./runtime-errors.js";
 import { sandboxPolicy, withSandboxApproval, withProjectToolApproval } from "./sandbox/index.js";
 import { hasProjectToolGrant } from "./project-tool-grants.js";
 import { workspaceRoot } from "./tools/workspace.js";
 import { invalidateSessionEnvironment } from "./session-environment.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
-import { agentSessionRuntime } from "./session-runtime.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { sessionHooks } from "./session-hooks.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
@@ -84,10 +80,6 @@ import { fileWriteTool } from "./tools/file-write.js";
 import { rgTool } from "./tools/rg.js";
 import { webSearchTool } from "./tools/web-search.js";
 import {
-  buildExplorerSubagentPrompt,
-  shouldWrapExplorerDelegatePrompt,
-} from "./synax/synax-explorer-delegate.js";
-import {
   isToolMountedForSession,
   profileCanUseTool,
 } from "./tool-mount-policy.js";
@@ -99,6 +91,8 @@ import {
 } from "./tools/task-tools.js";
 import { browserTools } from "./tools/browser/browser-tools.js";
 import { designTools } from "./design-tools.js";
+import { conversationGitTools } from "./conversation-git/tools.js";
+import { remotePrTools } from "../remote-pr/tools.js";
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -112,6 +106,7 @@ function summarize(value: unknown): string {
 }
 
 export interface ExecuteToolOptions {
+  onProgress?: (record: ToolCallRecord) => void;
   /** Internal read-only composition: never suspend for approval. */
   codeModeParentId?: string;
   abortSignal?: AbortSignal;
@@ -146,6 +141,8 @@ export class ToolRegistry {
       ...controlTools,
       ...subagentLifecycleTools,
       ...designTools,
+      ...conversationGitTools,
+      ...remotePrTools,
       ...workTools,
       verificationTool,
       bashTool,
@@ -175,272 +172,12 @@ export class ToolRegistry {
     this.registerProvider(jevSessionToolProvider);
     this.registerProvider(customToolProvider);
     this.register({
-      id: "subagent.delegate",
-      label: "Run Subtask",
-      description:
-        "Delegate a focused subtask to a child agent with a clean context. Give the child a short 2-3 character name and pass it in name with the delegation (for example 林墨); short names in any style are welcome and names may repeat. Use this when a task would produce large intermediate noise (reading many files, searching, exploring) but the final useful result is just a short summary. The child runs in isolation — its intermediate steps do NOT enter your context, only the final summary returns. Do NOT delegate if: the task is simple (1-2 tool calls), you need the intermediate details for subsequent reasoning, or the task cannot be described in one focused prompt.",
-      category: "task",
-      internalGate: "task",
-      mutability: "task",
-      resumeBehavior: "auto",
-      progressiveDetails:
-        "Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. specialist takes precedence over profileId. Builtin profiles: explorer, reviewer. One child level; at most 3 active children. Specialists have no shell or further delegation. Write capabilities require writeScope: concrete paths relative to the child working directory, e.g. [\"client/src\"]. A directory includes descendants; do not add /**. No absolute paths, roots (including .), .. segments, globs or symlink components. Only one specialist writer may be active; wait for it to finish before delegating another. Plan specialists cannot write files. Permissions are inherited and cannot be expanded.",
-      inputSchema: z.object({
-        name: z.string().trim().min(1).describe(
-          "Generate a short 2-3 character display name for this child when delegating (for example 林墨 or 阿柚). Short names in any language or style are welcome; names do not need to be unique. This is the child's identity, independent of its profile or specialist role.",
-        ),
-        contentParts: contentPartsSchema.optional(),
-        specialist: specialistSpecSchema.optional(),
-        deliverable: z.string().min(1).max(4000).optional(),
-        acceptanceCriteria: z
-          .array(z.string().min(1).max(1000))
-          .max(20)
-          .optional(),
-        profileId: z
-          .string()
-          .optional()
-          .describe(
-            "Builtin child profile: explorer (default) or reviewer. Ignored when specialist is supplied.",
-          ),
-        prompt: z
-          .string()
-          .min(1)
-          .describe("Non-whitespace prompt for the child agent session; specialist prompts are limited to 20,000 characters after trimming."),
-        nodeId: z
-          .string()
-          .min(1)
-          .nullable()
-          .optional()
-          .describe("Optional graph node context for the child session."),
-        thinkingMode: z
-          .enum(["fast", "standard", "deep"])
-          .optional()
-          .describe("Child session thinking mode."),
-      }),
-      execute: async (input) => {
-        const MAX_CONCURRENT_SUBTASKS = 3;
-
-        const parent = this.store.getSession(input.sessionId);
-
-        if (parent.parentSessionId) {
-          throw new AgentValidationError(
-            "Sub-agents cannot delegate further sub-agents.",
-          );
-        }
-
-        const args = input.args as {
-          name: string;
-          contentParts?: RuntimeContentPart[];
-          profileId?: string;
-          prompt: string;
-          nodeId?: string | null;
-          thinkingMode?: "fast" | "standard" | "deep";
-          specialist?: import("./specialist-profile.js").SpecialistSpec;
-          deliverable?: string;
-          acceptanceCriteria?: string[];
-        };
-        if (args.contentParts) {
-          validateAssets(args.contentParts, parent.projectId);
-          for (const part of args.contentParts)
-            if (
-              part.type !== "text" &&
-              !sessionHasAsset(parent.id, part.assetId)
-            )
-              throw new AgentValidationError(
-                "Only assets attached to the parent may be delegated.",
-              );
-        }
-        if (args.specialist && args.profileId)
-          throw new AgentValidationError(
-            "Choose specialist or profileId, not both.",
-          );
-        const profileId = args.specialist
-          ? "specialist"
-          : (args.profileId ?? "explorer");
-
-        const ALLOWED_SUBTASK_PROFILES = [
-          "explorer",
-          "reviewer",
-        ];
-        if (!args.specialist && !ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
-          throw new AgentValidationError(
-            `Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(", ")}. Got "${profileId}".`,
-          );
-        }
-        if (!args.prompt?.trim())
-          throw new AgentValidationError(
-            "prompt is required for subagent.delegate.",
-          );
-
-        const childPrompt = shouldWrapExplorerDelegatePrompt(profileId)
-          ? buildExplorerSubagentPrompt(args.prompt)
-          : args.prompt.trim();
-
-        // Concurrency check: count active children of the immediate parent
-        const siblings = (parent.childSessionIds ?? [])
-          .map((id) => {
-            try {
-              return this.store.getSession(id);
-            } catch {
-              return null;
-            }
-          })
-          .filter(
-            (s) =>
-              s &&
-              [
-                "queued",
-                "running",
-                "waiting_permission",
-                "waiting_input",
-              ].includes(s.status),
-          );
-        if (siblings.length >= MAX_CONCURRENT_SUBTASKS) {
-          throw new AgentValidationError(
-            `Maximum concurrent subtasks (${MAX_CONCURRENT_SUBTASKS}) reached. Wait for existing subtasks to complete.`,
-          );
-        }
-
-        if (
-          args.specialist?.capabilities.some((c) =>
-            ["file.write", "file.patch", "file.delete"].includes(c),
-          ) &&
-          siblings.some(
-            (s) =>
-              (
-                s!.sessionMetadata?.specialist as
-                  | { writeScope?: string[] }
-                  | undefined
-              )?.writeScope?.length,
-          )
-        )
-          throw new AgentValidationError(
-            "A specialist writer is already active. Delegate writes serially.",
-          );
-        if (args.specialist?.writeScope?.length) {
-          for (const capability of args.specialist.capabilities.filter((c) =>
-            ["file.write", "file.patch", "file.delete"].includes(c),
-          ))
-            for (const scope of args.specialist.writeScope) {
-              const action = resolvePermissionDecision({
-                sessionId: parent.id,
-                category: "write",
-                internalGate: capability === "file.delete" ? "delete" : "write",
-                pattern: scope,
-                rules: parent.permissionRules,
-              }).action;
-              if (action !== "allow")
-                throw new AgentValidationError(
-                  "Writable specialists require parent write permissions already granted for their scope. Ask the user to grant them or delegate read-only and apply changes on the parent.",
-                );
-            }
-          if (
-            this.store
-              .listToolCalls(parent.id)
-              .some(
-                (c) =>
-                  c.status === "running" &&
-                  (c.mutability === "write" ||
-                    c.toolId === "bash" ||
-                    c.category === "mcp"),
-              )
-          )
-            throw new AgentValidationError(
-              "Parent workspace operation is still running. Delegate writer tasks separately.",
-            );
-        }
-        const subagentName = args.name.trim();
-        const child = agentSessionRuntime.create(
-          args.specialist
-            ? buildSpecialistChildInput(
-                parent,
-                {
-                  specialist: args.specialist,
-                  prompt: args.prompt,
-                  deliverable: args.deliverable,
-                  acceptanceCriteria: args.acceptanceCriteria,
-                  thinkingMode: args.thinkingMode,
-                },
-                this.profiles.getForSession(parent),
-              )
-            : {
-                projectId: parent.projectId,
-                sessionMetadata: {
-                  mode: parent.sessionMetadata?.mode ?? "chat",
-                },
-                mcpServerIds: parent.mcpServerIds,
-                skillIds: parent.skillIds,
-                nodeId: args.nodeId ?? parent.nodeId,
-                profileId,
-                parentSessionId: parent.id,
-                prompt: childPrompt,
-                thinkingMode: args.thinkingMode,
-              },
-        );
-        const role = args.specialist
-          ? {
-              roleName: args.specialist.role,
-              roleDescription: args.specialist.instructions,
-            }
-          : {
-              roleName:
-                {
-                  explorer: "探索员",
-                  reviewer: "审查员",
-                }[profileId] ?? "研究员",
-              roleDescription:
-                {
-                  explorer: "读取代码、搜索线索并梳理系统结构。",
-                  reviewer: "检查实现、发现风险并给出可执行的审查意见。",
-                }[profileId] ?? "根据委派任务进行分析和整理。",
-            };
-        const namedChild = this.store.updateSessionMetadata(child.id, {
-          subagentName,
-          ...role,
-        });
-        const delegationContext = [
-          "## Subagent delegation context",
-          `You are ${subagentName}.`,
-          `Your role is ${role.roleName}.`,
-          `Your role capabilities: ${role.roleDescription}`,
-          "Use this role to guide your decisions, tool choices, and final summary.",
-          "",
-          "## Delegated task",
-          childPrompt,
-        ].join("\n");
-        const contextualChild = this.store.updateSession(child.id, {
-          prompt: delegationContext,
-        });
-        if (args.contentParts) {
-          const parts: RuntimeContentPart[] = [
-            { type: "text", text: delegationContext },
-            ...args.contentParts,
-          ];
-          await bindAssets(child.id, parts);
-          this.store.updateSessionMetadata(child.id, {
-            initialContentParts: parts,
-          });
-        }
-        return {
-          result: {
-            taskId: child.id,
-            session: contextualChild,
-            summary: `Child session ${child.id} (${profileId}) created.`,
-          },
-          displaySummary: `Started ${profileId} subtask ${child.id}.`,
-          artifacts: [
-            {
-              kind: "decision",
-              title: "Subtask created",
-              summary: `Started ${profileId} child session ${child.id}.`,
-              risk: "low",
-            },
-          ],
-          followUpHints: [
-            "The parent agent blocks until this subtask completes and returns its summary.",
-          ],
-        };
-      },
+      id: "subagent.delegate", label: "Delegate to Subagent",
+      description: "Delegate a focused task to a general-purpose subagent. Automatically configure its profile or use a user-selected templateId. The tool starts the child and waits for its result before the parent continues.",
+      progressiveDetails: "Configure profile.name, description, instructions, capabilities, access, writeScope, skills, model and thinkingMode as needed. Omitted fields inherit the parent. Delegate automatically within current authorization; never ask the user to configure a role or approve an already-authorized delegation. Explicit parent restrictions still apply. Assign non-overlapping file ownership, preserve other agents' edits, and use subagent.lifecycle start for background work. Up to 5 active children; children cannot delegate.",
+      category: "task", internalGate: "task", mutability: "task", resumeBehavior: "auto",
+      inputSchema: delegateArgsSchema,
+      execute: delegateSubagent,
     });
     this.register(presentationTool);
     this.register({
@@ -544,7 +281,7 @@ export class ToolRegistry {
         (options.includeGated
           ? isToolMountedForSession(session, t)
           : !controlToolError(session, t)) &&
-        (session.profileId !== "specialist" ||
+        (!["specialist", "subagent"].includes(session.profileId) ||
           profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),
     );
@@ -552,7 +289,7 @@ export class ToolRegistry {
 
   get(toolId: string): RegisteredTool {
     const tool = this.tools.get(toolId);
-    if (!tool) throw new AgentNotFoundError(toolId);
+    if (!tool) throw new AgentToolNotFoundError(toolId);
     return tool;
   }
 
@@ -572,6 +309,7 @@ export class ToolRegistry {
     sessionId: string,
     permission: PermissionDecision,
     abortSignal?: AbortSignal,
+    onProgress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
@@ -586,9 +324,15 @@ export class ToolRegistry {
       );
     }
     const record = this.store.getToolCall(sessionId, permission.toolCallId);
-    const tool = this.getForSession(sessionId, record.toolId);
     if (record.status !== "pending") {
       return { record, permission };
+    }
+    let tool: RegisteredTool;
+    try {
+      tool = this.getForSession(sessionId, record.toolId);
+    } catch (error) {
+      if (!isToolResolutionError(error)) throw error;
+      return { ...this.rejectUnresolvedTool(sessionId, record.toolId, record.inputRef, {}, error, record), permission };
     }
     return this.performExecution(
       sessionId,
@@ -597,6 +341,7 @@ export class ToolRegistry {
       record.inputRef,
       permission,
       abortSignal,
+      onProgress,
     );
   }
 
@@ -610,7 +355,13 @@ export class ToolRegistry {
     await hydrateRuntimeAssets([sessionId]);
     const session = this.store.getSession(sessionId);
     const profile = this.profiles.getForSession(session);
-    const tool = this.getForSession(sessionId, toolId);
+    let tool: RegisteredTool;
+    try {
+      tool = this.getForSession(sessionId, toolId);
+    } catch (error) {
+      if (!isToolResolutionError(error)) throw error;
+      return this.rejectUnresolvedTool(sessionId, toolId, args, options, error);
+    }
 
     this.capabilities.noteUse(sessionId, toolId);
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
@@ -756,7 +507,7 @@ export class ToolRegistry {
       } });
       return { record: recordDenied, permission: denied };
     }
-    if (decision.action === "ask" && session.profileId === "specialist") {
+    if (decision.action === "ask" && ["specialist", "subagent"].includes(session.profileId)) {
       const reason =
         "This operation needs user approval. Return the permission blocker to the primary agent; specialists never open their own approval dialog.";
       const denied = this.store.updatePermission(sessionId, decision.id, {
@@ -828,7 +579,52 @@ export class ToolRegistry {
       args,
       decision,
       options.abortSignal,
+      options.onProgress,
     );
+  }
+
+  /** Persist a terminal receipt before replying to the model. In particular,
+   * a resumed approval updates its existing receipt so recovery cannot replay it. */
+  private rejectUnresolvedTool(
+    sessionId: string,
+    toolId: string,
+    args: unknown,
+    options: ExecuteToolOptions,
+    error: AgentToolNotFoundError | AgentPermissionError,
+    existing?: ToolCallRecord,
+  ): ExecuteToolResult {
+    const now = nowIso();
+    const result = { error: true, code: error.code, message: error.message };
+    const patch = {
+      status: error instanceof AgentPermissionError ? "denied" as const : "failed" as const,
+      outputSummary: error.message,
+      outputRef: result,
+      endedAt: now,
+      error: error.message,
+    };
+    const record = existing
+      ? this.store.updateToolCall(sessionId, existing.id, patch)
+      : this.store.appendToolCall({
+          id: makeRuntimeId("tc"), sessionId,
+          runId: options.runId ?? null, stepId: options.stepId ?? null,
+          modelToolCallId: options.modelToolCallId ?? null,
+          toolId, category: "context", mutability: "read",
+          argsHash: this.store.hashArgs(args), inputSummary: summarize(args), inputRef: args ?? null,
+          permissionDecisionId: null, startedAt: now, ...patch,
+        });
+    this.events.append({
+      sessionId, type: "tool_result", summary: error.message,
+      payload: {
+        runId: record.runId, stepId: record.stepId, toolCallId: record.id,
+        toolId, status: record.status, code: error.code, error: error.message,
+        ...(codeParentId(record) ? { parentToolCallId: codeParentId(record) } : {}),
+      },
+    });
+    // Keep identifiers for diagnosis without logging arguments or file contents.
+    logger.warn({ sessionId, runId: record.runId, stepId: record.stepId,
+      toolCallId: record.id, modelToolCallId: record.modelToolCallId, toolId, code: error.code,
+    }, "[agent-runtime] tool resolution rejected; returning error to model");
+    return { record, toolResult: { result, displaySummary: error.message, artifacts: [] } };
   }
 
   private async performExecution(
@@ -838,6 +634,7 @@ export class ToolRegistry {
     args: unknown,
     permission?: PermissionDecision,
     abortSignal?: AbortSignal,
+    onProgress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
@@ -847,6 +644,7 @@ export class ToolRegistry {
       const policyError = controlToolError(freshSession, tool, args);
       if (policyError) throw new AgentValidationError(policyError);
       assertSpecialistToolAllowed(freshSession, tool.id, args);
+      assertSubagentToolAllowed(freshSession, tool, args);
       if (
         freshSession.profileId === "specialist" &&
         freshSession.parentSessionId
@@ -930,7 +728,19 @@ export class ToolRegistry {
               outputSummary: null,
               outputRef: null,
             });
+      let lastProgress = 0;
+      const report = (execution: NonNullable<ToolCallRecord["execution"]>) => {
+        const previous = this.store.getToolCall(sessionId, running.id).execution;
+        const updated = this.store.updateToolCall(sessionId, running.id, { execution: { ...previous, ...execution } });
+        onProgress?.(updated);
+      };
       const input: ToolExecutionInput = {
+        onProgress: progress => {
+          if (Date.now() - lastProgress < 1_000) return;
+          lastProgress = Date.now();
+          const current = this.store.getToolCall(sessionId, running.id).execution;
+          report({ ...current, phase: "executing_tool", ...progress, lastProgressAt: nowIso() });
+        },
         abortSignal,
         sessionId,
         runId: running.runId,
@@ -1033,7 +843,7 @@ export class ToolRegistry {
         const result = inApprovalScope(() => withCommandSignal(abortSignal, () => tool.execute(input)));
         // Only reads may abandon their local wait. A writer retains its claim
         // until the underlying operation settles, even after cancellation.
-        return codeParentId(record) && !checkpointMutation
+        return codeParentId(record) && !checkpointMutation && !currentExecutionContext()
           ? waitForCodeRead(result, abortSignal)
           : result;
       };
@@ -1052,15 +862,13 @@ export class ToolRegistry {
             ...("movePath" in hunk && hunk.movePath ? [hunk.movePath] : []),
           ])
           .map((file) => inApprovalScope(() => resolveUndoPath(file, sessionId)));
-      const result = checkpointMutation
-        ? await withWorkspaceMutation(
-            sessionId,
-            executeTool,
-            false,
-            undoPaths,
-            abortSignal,
-          )
-        : await executeTool();
+      const result = await withToolResource(tool, input, report, async toolSignal => {
+        input.abortSignal = toolSignal;
+        abortSignal = toolSignal;
+        return checkpointMutation
+          ? withWorkspaceMutation(sessionId, executeTool, false, undoPaths, toolSignal)
+          : executeTool();
+      });
       const after = trackChanges
         ? await workspaceFingerprint(sessionId, fingerprintScope).catch(
             () => undefined,

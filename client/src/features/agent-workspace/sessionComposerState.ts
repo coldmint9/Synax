@@ -17,9 +17,9 @@ export function patchAgentSession(
   if (next.status === "stopping") return { ...next, status: "running" };
   // "paused" stays paused: a resting state that still offers one-click resume.
   if (next.status === "paused") return next;
-  // A failed run keeps its own state so the session list can flag it with a red
-  // dot; cancelled/interrupted still fold into the resting state.
-  if (["cancelled", "interrupted"].includes(next.status)) {
+  // Preserve interruptions: they must remain visible and offer resume even
+  // though the composer is no longer locked by an active execution.
+  if (next.status === "cancelled") {
     return { ...next, status: "completed" };
   }
   return next;

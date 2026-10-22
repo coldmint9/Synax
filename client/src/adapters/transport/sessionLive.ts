@@ -18,9 +18,15 @@ import type {
   AgentRuntimeMessage,
   ContextCompactionState,
   ToolCallRecord,
+  PermissionDecision,
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | { type: "conversation_git_messages"; messages: AgentRuntimeMessage[] }
+  | { type: "execution_status"; sessionId: string; runId: string; execution: import("./agentRuntime").ToolExecutionProgress }
+  | { type: "message"; message: AgentRuntimeMessage }
+  | { type: "event"; event: RuntimeEvent }
+  | { type: "permission_updated"; permission: PermissionDecision }
   | { type: "input_queue_changed"; sessionId: string; queueRevision: number }
   | RuntimeSnapshotEvent
   | { type: "media_job"; jobId: string; status: string; resultAssetIds: string[] }
@@ -95,7 +101,7 @@ export function sessionLiveStream(
       // These events belong to non-agent domains until their own storage migration.
       if (!auxiliary) {
         auxiliary = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream?auxiliary=1`);
-        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job']) {
+        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job', 'conversation_git_messages']) {
           auxiliary.addEventListener(type, event => {
             try { onEvent(JSON.parse(event.data) as SessionLiveEvent); }
             catch (error) { console.error(`Invalid ${type} event`, error); }
@@ -159,6 +165,7 @@ function nodeSessionLiveStream(
     "context_compaction_failed",
     "context_compaction_state",
     "media_job",
+    "conversation_git_messages",
   ] as const) {
     es.addEventListener(type, (event: MessageEvent) => {
       try {

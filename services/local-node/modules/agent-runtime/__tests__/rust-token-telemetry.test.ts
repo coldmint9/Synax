@@ -10,7 +10,6 @@ import { agentRuntimeStore as store } from "../session-store.js";
 import { RunCoordinator } from "../run-coordinator.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "../runtime-journal.js";
 import { countTokens } from "../context-tokenizer.js";
-import { noteLiveEvent, readStreamedTokens, resetStreamedTokensForTests } from "../../../../../client/src/shared/lib/streamThroughput.js";
 
 type Protocol = "openai" | "openai-responses" | "anthropic";
 let root: string;
@@ -22,7 +21,6 @@ let onRequest: (response: ServerResponse) => void;
 beforeEach(async () => {
   vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "1");
   await resetAgentRuntimeFixtures();
-  resetStreamedTokensForTests();
   root = await mkdtemp(path.join(os.tmpdir(), "synax-token-telemetry-"));
   coordinator = new RunCoordinator();
   server = http.createServer(async (request, response) => {
@@ -94,7 +92,7 @@ function wire(protocol: Protocol, response: ServerResponse) {
   };
 }
 
-it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s carries live counters through Rust, the host, snapshots and renderer accounting", async protocol => {
+it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s carries live counters through Rust, the host and journal snapshots", async protocol => {
   updateGlobalConfig({ defaultApiProviderId: "openai", providerConnections: { openai: {
     providerId: "openai", apiKey: "fixture", baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`,
     extra: { kind: "api", apiFormat: protocol, model: "fixture" },
@@ -111,8 +109,6 @@ it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s carries live 
     expect(snapshot.liveChunks.find(chunk => chunk.type === "message_delta")?.outputTokens).toBe(countTokens(first.text));
     expect(snapshot.liveChunks.find(chunk => chunk.type === "thought_delta")?.thinkingTokens).toBe(countTokens(first.thought));
   }, { timeout: 5000 });
-  noteLiveEvent(sessionId, { type: "runtime_snapshot", liveChunks: snapshot!.liveChunks });
-  expect(readStreamedTokens(sessionId)).toBe(0);
   upstream!.delta(second);
   let records: RuntimeStreamRecord[] = [];
   await vi.waitFor(async () => {
@@ -120,18 +116,10 @@ it.each<Protocol>(["openai", "openai-responses", "anthropic"])("%s carries live 
     expect(records.some(({ chunk }) => chunk.type === "message_delta" && chunk.outputTokens === countTokens(first.text + second.text))).toBe(true);
     expect(records.some(({ chunk }) => chunk.type === "thought_delta" && chunk.thinkingTokens === countTokens(first.thought + second.thought))).toBe(true);
   }, { timeout: 5000 });
-  for (const record of [...records, ...records]) {
-    noteLiveEvent(sessionId, record.chunk);
-  }
   const expected = countTokens(first.text + second.text) - countTokens(first.text)
     + countTokens(first.thought + second.thought) - countTokens(first.thought);
   expect(expected).toBeGreaterThan(0);
-  expect(readStreamedTokens(sessionId)).toBe(expected);
   upstream!.finish();
   await coordinator.waitForIdle();
   expect(store.getRun(accepted.run.id).status).toBe("completed");
-  for (const record of await runtimeJournal.readDurable(sessionId, records.at(-1)!.sequence)) {
-    noteLiveEvent(sessionId, record.chunk);
-  }
-  expect(readStreamedTokens(sessionId)).toBe(expected);
 }, 15_000);

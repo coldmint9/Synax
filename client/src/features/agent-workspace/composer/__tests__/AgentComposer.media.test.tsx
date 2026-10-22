@@ -36,6 +36,7 @@ const base: ComponentProps<typeof AgentComposer> = {
 
 const inputMedia = (parts: Array<{ type: 'image'; assetId: string }> = []) => ({
   parts, ready: true, clear: vi.fn(), items: [],
+  hasPendingUploads: () => false,
 }) as unknown as MediaDraft;
 
 beforeEach(() => {

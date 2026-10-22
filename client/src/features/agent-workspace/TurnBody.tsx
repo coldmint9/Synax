@@ -1,26 +1,49 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
+const RemotePrCard = lazy(() => import("./git-actions/RemotePrCard"));
+const ConversationGitCard = lazy(() => import("./git-merge/ConversationGitCard"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
     default: module.InlineVisualization,
   })),
 );
 import type { InlineVisualizationReference } from "./visualizationTranscript";
+import type { ConversationGitReference } from "./gitMergeTranscript";
+import { useTranscriptSession } from "./SessionTranscriptContext";
+import { useAgentSessionStore } from "./state/agentSessionStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
 import { Zap } from "lucide-react";
+import { useLocale } from "../../shared/hooks/useLocale";
+import { hasDisplayableReasoning } from "./activityText";
+import { ConversationActivityGroup } from "./ConversationActivityGroup";
 import { MediaParts } from "../media/MediaParts";
 import type {
   InterleavedTurn,
   TurnContentBlock,
 } from "./buildInterleavedTurns";
-import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCallRoundPanel } from "./ToolCallRoundPanel";
 import { StreamingTextBlock } from "./StreamingTextBlock";
 import { SubSessionCard } from "./SubSessionCard";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { buildTurnRenderSegments } from "./toolCallUtils";
+import {
+  buildTurnRenderSegments,
+} from "./toolCallUtils";
+import "./conversationFlow.css";
+
+function TranscriptGitMerge({ reference }: { reference: ConversationGitReference }) {
+  const { sessionId } = useTranscriptSession();
+  const historical = useAgentSessionStore((state) =>
+    state.sessionDetailCache[reference.sessionId]?.historyWindow?.latest === false,
+  );
+  // A child transcript must never operate on the surrounding parent's task.
+  if (sessionId && sessionId !== reference.sessionId) return null;
+  return (
+    <Suspense fallback={<div className="text-[11px] text-muted-foreground" role="status">正在加载合并任务…</div>}>
+      {reference.schema === "synax.git-pr" ? <RemotePrCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} readOnly={historical || !sessionId} />}
+    </Suspense>
+  );
+}
 
 function TranscriptVisualization({
   reference,
@@ -30,7 +53,7 @@ function TranscriptVisualization({
   return (
     <Suspense
       fallback={
-        <div className="text-xs text-muted-foreground" role="status">
+        <div className="text-[11px] text-muted-foreground" role="status">
           正在加载预览…
         </div>
       }
@@ -53,6 +76,7 @@ function segmentKey(
   segment: (ReturnType<typeof buildTurnRenderSegments>)[number],
   index: number,
 ): string {
+  if (segment.type === "git_merge") return `git-merge:${segment.reference.objectId}`;
   if (segment.type === "visualization") return `visualization:${segment.reference.id}`;
   if (segment.type === "media") return `media:${segment.messageId ?? index}`;
   if (segment.type === "sources")
@@ -65,7 +89,8 @@ function segmentKey(
           ? block.calls.map((call) => call.id)
           : [],
     );
-    return `tool-round:${ids.join(",") || index}`;
+    // Appending a call must not remount the already-open rows in this round.
+    return `tool-round:${ids[0] ?? index}`;
   }
   if (segment.type === "thinking") return `thinking:${index}`;
   if (segment.type === "text") return `text:${index}`;
@@ -73,27 +98,29 @@ function segmentKey(
   return `context-compacted:${index}`;
 }
 
-function renderTurnBlocks(
-  blocks: readonly TurnContentBlock[],
-  onExpandChild?: (sessionId: string) => void,
+export function TurnContent({
+  blocks,
+  onExpandChild,
   rowKeyPrefix = "",
   isStreaming = false,
   isWorking = isStreaming,
-) {
-  const segments = buildTurnRenderSegments(blocks);
-  const toolBlocks = blocks.filter(
-    (block) =>
-      block.type === "thinking" ||
-      block.type === "tool_call" ||
-      block.type === "tool_call_group",
-  );
-  const answers = segments.filter(
-    (segment) =>
-      segment.type !== "tool_round" &&
-      (toolBlocks.length === 0 || segment.type !== "thinking"),
+  defaultExpanded,
+}: {
+  blocks: readonly TurnContentBlock[];
+  onExpandChild?: (sessionId: string) => void;
+  rowKeyPrefix?: string;
+  isStreaming?: boolean;
+  isWorking?: boolean;
+  defaultExpanded?: boolean;
+}) {
+  const [appendReveal] = useState(isStreaming);
+  const segments = buildTurnRenderSegments(blocks).filter(
+    (segment) => segment.type !== "thinking" || hasDisplayableReasoning(segment.content),
   );
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
+    if (segment.type === "git_merge")
+      return <TranscriptGitMerge key={key} reference={segment.reference} />;
     if (segment.type === "visualization")
       return (
         <TranscriptVisualization
@@ -103,17 +130,6 @@ function renderTurnBlocks(
       );
     if (segment.type === "media")
       return <MediaParts key={key} parts={segment.parts} />;
-    if (segment.type === "thinking")
-      return (
-        <ThinkingBlock
-          isStreaming={isStreaming && segment === segments[segments.length - 1]}
-          key={key}
-          content={segment.content}
-          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${i}` : undefined}
-        />
-      );
-    if (segment.type === "tool_round")
-      return <ToolCallRoundPanel key={key} toolBlocks={segment.toolBlocks} />;
     if (segment.type === "text")
       return (
         <StreamingTextBlock
@@ -132,7 +148,7 @@ function renderTurnBlocks(
               href={source.url}
               target="_blank"
               rel="noreferrer"
-              className="max-w-full truncate rounded-md border border-default-200 px-2 py-1 text-[11px] text-primary hover:bg-default-100"
+              className="max-w-full truncate rounded-md border border-default-200 px-2 py-1 text-[10px] text-primary hover:bg-default-100"
               title={source.title || source.url}
             >
               {index + 1}. {source.title || sourceLabel(source.url)}
@@ -152,7 +168,7 @@ function renderTurnBlocks(
       return (
         <div
           key={key}
-          className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[11px] text-warning"
+          className="flex items-center gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-1.5 text-[10px] text-warning"
         >
           <Zap size={12} />
           <span>
@@ -164,22 +180,45 @@ function renderTurnBlocks(
       );
     return null;
   };
+  // Commentary stays in the reading lane. Only adjacent thoughts and tools
+  // share a disclosure, so folding an action never hides the text around it.
+  const content = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const key = segmentKey(segment, index);
+    if (segment.type === "thinking" || segment.type === "tool_round") {
+      const activityBlocks: TurnContentBlock[] = [];
+      while (index < segments.length) {
+        const activity = segments[index];
+        if (activity.type === "thinking") activityBlocks.push(activity);
+        else if (activity.type === "tool_round") activityBlocks.push(...activity.toolBlocks);
+        else break;
+        index += 1;
+      }
+      const working = isWorking && index === segments.length;
+      content.push(
+        <ConversationActivityGroup
+          key={key}
+          blocks={activityBlocks}
+          rememberKey={rowKeyPrefix ? `${rowKeyPrefix}:${key}` : undefined}
+          working={working}
+          streaming={isStreaming && working}
+          defaultExpanded={defaultExpanded}
+        />,
+      );
+      index -= 1;
+      continue;
+    }
+    content.push(
+      <div key={key} className="session-flow-entry session-answer-region">
+        {render(segment, index)}
+      </div>,
+    );
+  }
   return (
-    <>
-      <div className="session-tool-region">
-        {toolBlocks.length > 0 && (
-          <ToolCallRoundPanel
-            toolBlocks={toolBlocks}
-            maxHeight="420px"
-            // Keep the activity rail stable while the final answer streams.
-            // It collapses once the turn stops, instead of toggling open and
-            // closed at the first answer token.
-            isStreaming={isWorking}
-          />
-        )}
-      </div>
-      <div className="session-answer-region">{answers.map(render)}</div>
-    </>
+    <div className={appendReveal ? "session-conversation-flow session-flow-append" : "session-conversation-flow"}>
+      <div className="session-flow-content">{content}</div>
+    </div>
   );
 }
 /** One agent turn. Turn duration separators are intentionally omitted from the transcript. */
@@ -189,14 +228,22 @@ export function TurnBody({
   onExpandChild,
   isStreaming = false,
   isWorking = isStreaming,
+  showActions = true,
 }: {
   turn: InterleavedTurn;
   entryId: string;
   onExpandChild?: (sessionId: string) => void;
   isStreaming?: boolean;
   isWorking?: boolean;
+  /**
+   * Whether this row is the round's final reply. Process rows leave the
+   * copy / fork / rollback toolbar to that row instead of mounting an idle
+   * placeholder under every step.
+   */
+  showActions?: boolean;
 }) {
   const history = useSessionHistory();
+  const { locale } = useLocale();
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const visibleBlocks = showThinking
     ? turn.blocks
@@ -205,14 +252,32 @@ export function TurnBody({
   const messageId =
     textBlocks[textBlocks.length - 1]?.messageId ??
     turn.blocks.find(
-      (block) => block.type === "media" || block.type === "visualization",
+      (block) => block.type === "media" || block.type === "visualization" || block.type === "git_merge",
     )?.messageId;
   const checkpoint = history?.checkpoint(messageId, turn.stepId);
+  // The provider may still be loading persisted checkpoints while a response
+  // is streaming. Keep the fork affordance available and let the request
+  // resolve the stored checkpoint by message/step id after the user chooses a
+  // workspace mode.
+  const forkCheckpoint =
+    checkpoint ??
+    (history?.running && !isStreaming && (messageId || turn.stepId)
+      ? {
+          id: `message:${messageId ?? turn.stepId}`,
+          kind: "reply" as const,
+          messageId: messageId ?? "",
+          stepId: turn.stepId ?? null,
+          available: true,
+          reason: null,
+          hasLaterHistory: true,
+          initialInput: false,
+        }
+      : undefined);
   const text = textBlocks.map((block) => block.content).join("\n\n");
   const hasAnswer = Boolean(
     text ||
     turn.blocks.some(
-      (block) => block.type === "media" || block.type === "visualization",
+      (block) => block.type === "media" || block.type === "visualization" || block.type === "git_merge",
     ),
   );
   return (
@@ -220,15 +285,9 @@ export function TurnBody({
       {isWorking && visibleBlocks.length === 0 ? (
         <ThinkingIndicator />
       ) : (
-        renderTurnBlocks(
-          visibleBlocks,
-          onExpandChild,
-          entryId,
-          isStreaming,
-          isWorking,
-        )
+        <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} isStreaming={isStreaming} isWorking={isWorking} />
       )}
-      {hasAnswer && (
+      {hasAnswer && showActions && (
         <MessageActionToolbar
           role="assistant"
           text={text}
@@ -243,14 +302,16 @@ export function TurnBody({
           }
           rollbackDisabledReason={
             checkpoint?.canRollback === false
-              ? "分叉会话不支持回滚 / Forked conversations are append-only"
+              ? history?.reason || checkpoint.reason || (locale === "zh"
+                ? "此消息没有可用的回滚检查点"
+                : "No rollback checkpoint for this message")
               : undefined
           }
           busy={history?.busy}
           onFork={
-            checkpoint?.available
+            forkCheckpoint?.available
               ? (mode) => {
-                  void history?.request("fork", checkpoint, undefined, mode);
+                  void history?.request("fork", forkCheckpoint, undefined, mode);
                 }
               : undefined
           }

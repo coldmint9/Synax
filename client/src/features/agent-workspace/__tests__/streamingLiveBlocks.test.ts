@@ -27,6 +27,15 @@ const toolCall = (id: string): ToolCallRecord => ({
 });
 
 describe("streamingLiveBlocks", () => {
+  it("updates tool progress in place without duplicating the tool row", () => {
+    let state = applyToolCall(EMPTY_STREAMING_BUFFERS, toolCall("progress"));
+    for (let files = 1; files <= 100; files++) state = applyToolCall(state, {
+      ...toolCall("progress"), execution: { phase: "executing_tool", files },
+    });
+    expect(state.pendingToolCalls).toHaveLength(1);
+    expect(state.pendingToolCalls[0].execution?.files).toBe(100);
+    expect(materializeLiveBlocks(state)).toHaveLength(1);
+  });
   it("does not flash a reasoning row for split placeholder deltas", () => {
     let state = EMPTY_STREAMING_BUFFERS;
     for (const delta of [".", ".", "."]) {
@@ -100,5 +109,12 @@ describe("streamingLiveBlocks", () => {
       "tool_call",
       "text",
     ]);
+  });
+
+  it("does not treat whitespace-only text as visible streaming content", () => {
+    const state = applyMessageDelta(EMPTY_STREAMING_BUFFERS, " \n\t");
+    expect(hasStreamingContent(state)).toBe(false);
+    expect(materializeLiveBlocks(state)).toEqual([]);
+    expect(snapshotStreamingBuffers(state)).toEqual([]);
   });
 });

@@ -140,3 +140,15 @@ describe("liveStepRetirement", () => {
     ).toBe(false);
   });
 });
+
+it("retires reasoning stored alongside a nonempty assistant answer", () => {
+  const thinking: CompletedLiveStep = {
+    stepId: "step", stepIndex: 1, runId: "run",
+    blocks: [{ type: "thinking", content: "First turn reasoning" }],
+  };
+  const messages = [answer("reply", "First turn answer", { metadata: { thought: "First turn reasoning" } })];
+  expect(isLiveStepPersisted(thinking, [step("step", "run")], messages, [])).toBe(true);
+  expect(isLiveStepPersisted(thinking, [step("step", "run")], [
+    answer("reply", "First turn reasoning", { metadata: { thought: "Different reasoning" } }),
+  ], [])).toBe(false);
+});

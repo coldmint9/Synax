@@ -4,11 +4,9 @@
   min-width: 0;
   margin: 12px 0;
 }
-.inline-visualization__frame {
+.inline-visualization__frame-host {
   display: block;
   width: 100%;
-  border: 0;
-  background: transparent;
 }
 .inline-visualization__surface {
   position: relative;

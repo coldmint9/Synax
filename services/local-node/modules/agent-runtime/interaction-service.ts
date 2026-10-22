@@ -37,28 +37,20 @@ function holdsForm(session: ReturnType<typeof store.getSession>): boolean {
   );
 }
 
+const LIVE_RUN_STATUSES = ["waiting_input", "waiting_permission", "running"];
+
+/** A different live run owns the session's input, so an old form must not
+ * answer for it. A parked run (or a session finished or restarted into
+ * `paused`) leaves the unanswered form queued for the next turn. An unknown
+ * active run counts as live, keeping stale forms rejected. */
 function runCanAnswer(
   session: ReturnType<typeof store.getSession>,
   runId: string,
 ): boolean {
-  if (
-    ["completed", "cancelled", "failed", "interrupted", "paused"].includes(
-      session.status,
-    )
-  )
-    return false;
-  let active: string | null = session.activeRunId ?? null;
-  if (!active) {
-    active =
-      store
-        .listRuns(session.id)
-        .find((run) =>
-          ["waiting_input", "waiting_permission", "running"].includes(
-            run.status,
-          ),
-        )?.id ?? null;
-  }
-  return active === runId;
+  const activeRunId = session.activeRunId;
+  if (!activeRunId || activeRunId === runId) return true;
+  const activeRun = store.listRuns(session.id).find((run) => run.id === activeRunId);
+  return Boolean(activeRun && !LIVE_RUN_STATUSES.includes(activeRun.status));
 }
 
 type InteractionRequestInput = {
@@ -221,12 +213,10 @@ export const interactionService = {
       const session = store.getSession(sessionId);
       if (reply.revision !== i.revision)
         conflict("The form is stale. Reload it before submitting.");
-      if (i.status !== "pending") {
-        if (
-          isDeepStrictEqual(i.response, reply) &&
-          session.status !== "cancelled"
-        )
-          return i;
+      // Retried replies are idempotent once the original answer was saved,
+      // including answers to a form whose run ended before the session did.
+      if (i.status!== "pending") {
+        if (isDeepStrictEqual(i.response, reply)) return i;
         conflict("The interaction was already resolved or cancelled.");
       }
       if (!runCanAnswer(session, i.runId))
@@ -298,14 +288,23 @@ export const interactionService = {
           ? "cancelled"
           : "answered";
       const resolvedAt = nowIso();
-      store.saveRecord('interaction', { ...i, status, response, resolvedAt });
+      // The answered form outlived its run: mark the stable continuation
+      // identity so the HTTP layer admits one fresh turn instead of resuming.
+      const restartRequestId =
+        status === "answered" && session.activeRunId !== i.runId
+          ? `interaction-restart:${i.id}`
+          : undefined;
+      const resolved = { ...i, status, response, resolvedAt,
+        ...(restartRequestId ? { restartRequestId } : {}),
+      };
+      store.saveRecord('interaction', resolved);
       events.append({
         sessionId,
         type: "interaction_resolved",
         summary: `${i.request.title}: ${reply.action}`,
         payload: { interactionId: id, runId: i.runId, action: reply.action },
       });
-      return { ...i, status, response, resolvedAt };
+      return resolved;
     });
     store.enqueueControl(sessionId, `interaction-reply:${id}:${reply.revision}:${reply.action}`, 'interaction_reply',
       { id, revision: reply.revision, reply: interaction.response });
@@ -409,6 +408,26 @@ export const interactionService = {
     const value = this.consume(sessionId);
     await store.flushSession(sessionId);
     return value ? store.getRecord<AgentInteraction>('interaction', value.id)! : null;
+  },
+  /** A form answered after its run ended is replayed into a fresh admitted
+   * turn with a stable request id, so HTTP retries and restarts converge on
+   * one continuation. Plan execution is not replayed: without the original
+   * run checkpoint the next turn reads the saved plan instead. */
+  async consumeForRestart(sessionId: string, id: string): Promise<AgentInteraction> {
+    await store.hydrateSession(sessionId, true);
+    const value = store.transaction(() => {
+      const i = store.getRecord<AgentInteraction>('interaction', id);
+      if (!i || i.sessionId !== sessionId) throw new AgentRuntimeError("Interaction not found.", "NOT_FOUND", 404);
+      if (!i.response) conflict("The form has not been answered.");
+      const restartRequestId = i.restartRequestId ?? `interaction-restart:${i.id}`;
+      if (i.consumedAt) return { ...i, restartRequestId };
+      const consumedAt = nowIso();
+      store.saveRecord('interaction', { ...i, restartRequestId, consumedAt });
+      store.enqueueControl(sessionId, `interaction-restart-consume:${i.id}`, 'interaction_consume', { id: i.id });
+      return { ...i, restartRequestId, consumedAt };
+    });
+    await store.flushSession(sessionId);
+    return value;
   },
   cancel(sessionId: string): void {
     store.transaction(() => {

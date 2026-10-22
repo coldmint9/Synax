@@ -26,6 +26,7 @@ import { agentRuntimeStore,type AgentRuntimeStore } from "./session-store.js";
 import { resolveInitialSessionTitle } from "./session-title-service.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { resolveWorkspaceRoot } from "./tools/workspace.js";
+import { markSessionCreated } from './session-recovery.js';
 
 export class AgentSessionRuntime {
   constructor(
@@ -245,6 +246,8 @@ export class AgentSessionRuntime {
       },
       "[agent-session] session created",
     );
+    // This session was created by the current host; it has no stranded run to recover.
+    markSessionCreated(created.id);
     return created;
   }
 

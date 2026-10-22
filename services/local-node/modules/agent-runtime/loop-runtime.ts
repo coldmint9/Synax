@@ -31,6 +31,7 @@ import {
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
+import { contextUsageSnapshot } from "./analytics-projection.js";
 import {
   normalizeInput,
   hasInput,
@@ -122,10 +123,7 @@ import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
-import {
-  runChildToCompletion,
-  waitForChildSessions,
-} from "./subagent-orchestrator.js";
+import { waitForChildSessions } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
@@ -187,8 +185,7 @@ export class AgentLoopRuntime {
         yield { type: "permission_requested", runId, stepId, permission: exec.permission, toolCall: exec.record, event };
         return true;
       }
-      const record = call.toolId === "subagent.delegate" && exec.record.status === "completed"
-        ? await this.awaitTaskResult(exec.record, exec.toolResult?.result, signal) : exec.record;
+      const record = exec.record;
       this.appendToolResultPart({ sessionId, runId, stepId, record });
       yield { type: "tool_result", runId, stepId, toolCall: record };
       emitSessionLive(sessionId, { type: "tool_result", stepId, toolCall: record });
@@ -993,6 +990,17 @@ export class AgentLoopRuntime {
                   contextComposition: event.composition,
                 },
               });
+              // Persist the latest measured request context once per request so
+              // the composer ring and analytics never rescan session history.
+              const usageSnapshot = contextUsageSnapshot(
+                event.composition,
+                step.id,
+                runContextLimit,
+              );
+              if (usageSnapshot)
+                this.store.updateSessionMetadata(sessionId, {
+                  contextUsage: usageSnapshot,
+                });
               const contextEvent = this.events.append({
                 sessionId,
                 type: "progress_updated",
@@ -1146,7 +1154,6 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1273,7 +1280,6 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1326,7 +1332,6 @@ export class AgentLoopRuntime {
                 completedAt: nowIso(),
                 finishReason: "input_injected",
               });
-              await captureCompletedReply(sessionId, step.id);
               void sessionHooks.emit({
                 type: "step:after",
                 sessionId,
@@ -1347,7 +1352,6 @@ export class AgentLoopRuntime {
               this.store.updateRunStep(step.id, {
                 status: "completed", completedAt: nowIso(), finishReason: "presentation_repair",
               });
-              await captureCompletedReply(sessionId, step.id);
               void sessionHooks.emit({ type: "step:after", sessionId, runId: run.id, stepIndex: step.index });
               currentPrompt = presentationCheck.retry;
               continue;
@@ -1408,7 +1412,6 @@ export class AgentLoopRuntime {
                   completedAt: nowIso(),
                   finishReason: "round_yielded",
                 });
-                await captureCompletedReply(sessionId, step.id);
                 void sessionHooks.emit({
                   type: "step:after",
                   sessionId,
@@ -1496,7 +1499,6 @@ export class AgentLoopRuntime {
                 usage: modelResult.step.usage,
               },
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1546,7 +1548,6 @@ export class AgentLoopRuntime {
               completedAt: nowIso(),
               finishReason: "input_force_inject",
             });
-            await captureCompletedReply(sessionId, step.id);
             void sessionHooks.emit({
               type: "step:after",
               sessionId,
@@ -1678,14 +1679,7 @@ export class AgentLoopRuntime {
             // Emit tool_result for tools that completed BEFORE the ask-point (model order)
             for (let i = 0; i < askIndex; i++) {
               const { call, exec } = executions[i];
-              const completedRecord =
-                call.toolId === "subagent.delegate" && exec.toolResult?.result
-                  ? await this.awaitTaskResult(
-                      exec.record,
-                      exec.toolResult.result,
-                      runAbortSignal,
-                    )
-                  : exec.record;
+              const completedRecord = exec.record;
               this.appendToolResultPart({
                 runId: run.id,
                 stepId: step.id,
@@ -1733,19 +1727,8 @@ export class AgentLoopRuntime {
               });
             }
           } else {
-            // No permission issues — resolve subagent delegation results in parallel,
-            // then emit tool_result events in model-dictated order.
-            const resolved = await Promise.all(
-              executions.map(({ call, exec }) =>
-                call.toolId === "subagent.delegate" && exec.toolResult?.result
-                  ? this.awaitTaskResult(
-                      exec.record,
-                      exec.toolResult.result,
-                      runAbortSignal,
-                    )
-                  : Promise.resolve(exec.record),
-              ),
-            );
+            // Tools already settled their work; emit receipts in model order.
+            const resolved = executions.map(({ exec }) => exec.record);
 
             for (let i = 0; i < resolved.length; i++) {
               const completedRecord = resolved[i];
@@ -1810,7 +1793,6 @@ export class AgentLoopRuntime {
               usage: modelResult.step.usage,
             },
           });
-          await captureCompletedReply(sessionId, step.id);
           void sessionHooks.emit({
             type: "step:after",
             sessionId,
@@ -2112,8 +2094,14 @@ export class AgentLoopRuntime {
               });
           }
           try {
-            await captureCompletedReply(sessionId);
             const finalRun = this.store.getRun(run.id);
+            // A paused Run has no final reply yet; it pins one when it settles.
+            if (
+              !["queued", "running", "waiting_permission", "waiting_input"].includes(
+                finalRun.status,
+              )
+            )
+              await captureCompletedReply(sessionId);
             void sessionHooks.emit({
               type: "run:completed",
               sessionId,
@@ -2699,7 +2687,7 @@ export class AgentLoopRuntime {
       (input as { contextLimit?: number }).contextLimit ??
       DEFAULT_CONTEXT_LIMIT;
 
-    let conversationMessages: import("@ai-sdk/provider-utils").ModelMessage[] =
+    let conversationMessages: import("../../infrastructure/llm-runtime/contracts.js").ModelMessage[] =
       [];
 
     const relevantMemories = memoryManager.getRelevantMemories(
@@ -3446,38 +3434,6 @@ export class AgentLoopRuntime {
       toolCallId: input.record.id,
       metadata: { status: input.record.status },
       createdAt: nowIso(),
-    });
-  }
-
-  private async awaitTaskResult(
-    record: ToolCallRecord,
-    result: unknown,
-    abortSignal?: AbortSignal,
-  ): Promise<ToolCallRecord> {
-    if (!result || typeof result !== "object") return record;
-    const taskResult = result as { taskId?: unknown; session?: { id?: unknown } };
-    const childSessionId =
-      typeof taskResult.taskId === "string"
-        ? taskResult.taskId
-        : typeof taskResult.session?.id === "string"
-          ? taskResult.session.id
-          : null;
-    if (!childSessionId) return record;
-
-    void runChildToCompletion(
-      childSessionId,
-      { profileId: "subagent", prompt: "" },
-      { abortSignal },
-    ).catch((err) => {
-      logger.warn({ childSessionId, err }, "[agent-runtime] background subagent failed");
-    });
-
-    return this.store.updateToolCall(record.sessionId, record.id, {
-      status: "completed",
-      outputSummary: `Subtask ${childSessionId} accepted and running in background.`,
-      outputRef: { ...(result as Record<string, unknown>), childSessionId, childStatus: "running" },
-      endedAt: nowIso(),
-      error: null,
     });
   }
 

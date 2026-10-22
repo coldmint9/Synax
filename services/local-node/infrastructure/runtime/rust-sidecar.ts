@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { DATA_ROOT } from './env.js';
 import { logger } from './logger.js';
+import { createRustLogBridge } from './rust-log-bridge.js';
 import { RuntimeSidecarClient } from '../../modules/agent-runtime/sidecar/sidecar-client.js';
 
 const READY_PREFIX = 'SYNAX_RUNTIME_READY:';
@@ -36,6 +37,7 @@ interface SupervisorOptions {
   stopTimeoutMs?: number;
   restartDelaysMs?: number[];
   probe?: (socketPath: string, token: string) => Promise<void>;
+  onRestart?: () => Promise<void>;
 }
 
 export function resolveRustRuntimeSidecarBinary(): string {
@@ -57,8 +59,9 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   readonly binaryPath: string;
   readonly socketPath: string;
   readonly token = randomBytes(32).toString('hex');
-  readonly hotPath: string;
-  readonly historyPath: string;
+  readonly storePath: string;
+  /** Stable for this host so a restarted sidecar keeps accepting still-valid browser tickets. */
+  readonly ticketSecret = randomBytes(32).toString('hex');
   process!: ChildProcess;
   port = 0;
   providerPort = 0;
@@ -75,6 +78,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   private stopping?: Promise<void>;
   private failure?: Error;
   private readonly lifetime = new AbortController();
+  private readonly logDrains = new WeakMap<ChildProcess, Promise<void>>();
   private readonly waiters = new Set<{ resolve: () => void; reject: (error: Error) => void }>();
   private readonly startTimeout: number;
   private readonly stopTimeout: number;
@@ -87,12 +91,11 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
     this.socketPath = process.platform === 'win32'
       ? `\\\\.\\pipe\\synax-runtime-${key}-${process.pid}`
       : path.join(os.tmpdir(), `synax-runtime-${key}-${process.pid}.sock`);
-    this.hotPath = path.join(root, 'runtime-sidecar', 'runtime-hot');
-    this.historyPath = path.join(root, 'runtime-sidecar', 'runtime-history');
+    this.storePath = path.join(root, 'runtime-sidecar', 'jsonl');
     this.startTimeout = options.startTimeoutMs ?? 30_000;
     this.stopTimeout = options.stopTimeoutMs ?? 5_000;
     this.delays = options.restartDelaysMs ?? [100, 500, 1500];
-    mkdirSync(path.dirname(this.hotPath), { recursive: true });
+    mkdirSync(path.dirname(this.storePath), { recursive: true });
   }
 
   start(): Promise<void> {
@@ -118,20 +121,24 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       cwd: process.cwd(),
       env: { ...process.env, ...this.options.env,
         SYNAX_RUNTIME_SIDECAR_PORT: '0', SYNAX_RUNTIME_PROVIDER_PORT: String(this.providerListenPort), SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath,
-        SYNAX_RUNTIME_SIDECAR_TOKEN: this.token, SYNAX_RUNTIME_HOT_PATH: this.hotPath,
-        SYNAX_RUNTIME_HISTORY_PATH: this.historyPath,
+        SYNAX_RUNTIME_SIDECAR_TOKEN: this.token, SYNAX_RUNTIME_STORE_PATH: this.storePath,
+        SYNAX_RUNTIME_TICKET_SECRET: this.ticketSecret,
         SYNAX_RUNTIME_PARENT_WATCH: '1',
+        SYNAX_RUNTIME_LOG_DIR: this.options.env?.SYNAX_RUNTIME_LOG_DIR ?? process.env.SYNAX_RUNTIME_LOG_DIR ?? path.join(path.dirname(path.dirname(this.storePath)), 'logs'),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.process = child;
     child.stdin?.on('error', () => {}); // Peer exit may race a graceful stdin.end().
-    child.on('error', error => logger.debug({ error }, '[runtime-sidecar] process error'));
+    child.on('error', error => logger.error({ error, sidecarPid: child.pid }, '[runtime-sidecar] process error'));
+    const logBridge = createRustLogBridge({ sidecarPid: child.pid, generation: this.generation + 1 });
     let stderr = '';
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-8192);
-      logger.debug({ output: chunk.toString().trim() }, '[runtime-sidecar] stderr');
+      logBridge.write(chunk);
     });
+    child.stderr?.once('end', () => logBridge.end());
+    this.logDrains.set(child, new Promise(resolve => child.once('close', () => { logBridge.end(); resolve(); })));
     child.once('exit', (code, signal) => {
       if (this.wanted && attempt === this.attempt && this.status === 'ready') {
         if (Date.now() - this.readyAt >= 60_000) this.failures = 0;
@@ -182,8 +189,9 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       this.port = ready.port; this.providerPort = ready.providerPort; this.providerListenPort = ready.providerPort; this.generation++; this.status = 'ready'; this.readyAt = Date.now();
       Object.assign(process.env, { SYNAX_RUNTIME_SIDECAR_SOCKET: this.socketPath, SYNAX_RUNTIME_SIDECAR_TOKEN: this.token,
         SYNAX_RUNTIME_SIDECAR_PID: String(child.pid),
-        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_PROVIDER_PORT: String(this.providerPort), SYNAX_RUNTIME_HOT_PATH: this.hotPath,
-        SYNAX_RUNTIME_HISTORY_PATH: this.historyPath });
+        SYNAX_RUNTIME_SIDECAR_PORT: String(this.port), SYNAX_RUNTIME_PROVIDER_PORT: String(this.providerPort), SYNAX_RUNTIME_STORE_PATH: this.storePath,
+        SYNAX_RUNTIME_TICKET_SECRET: this.ticketSecret });
+      if (this.generation > 1) await this.options.onRestart?.();
       for (const waiter of this.waiters) waiter.resolve(); this.waiters.clear();
       logger.info({ binaryPath: this.binaryPath, socketPath: this.socketPath, port: this.port, sidecarPid: child.pid, generation: this.generation, protocol: ready.protocol }, '[runtime-sidecar] started');
     } catch (error) {
@@ -208,6 +216,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   }
 
   private fail(error: Error): void {
+    if (this.status !== 'stopped') logger.error({ error: error.message, generation: this.generation }, '[runtime-sidecar] failed');
     this.failure = error; this.wanted = false; this.lifetime.abort();
     if (this.status !== 'stopped') this.status = 'failed';
     clearTimeout(this.retryTimer); this.retryTimer = undefined;
@@ -215,8 +224,8 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   }
 
   private terminate(child: ChildProcess): Promise<void> {
-    if (exited(child)) return Promise.resolve();
-    return new Promise((resolve, reject) => {
+    if (exited(child)) return this.logDrains.get(child) ?? Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
       let confirmation: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => { clearTimeout(force); clearTimeout(confirmation); child.off('exit', done); };
       const done = () => { cleanup(); resolve(); };
@@ -228,7 +237,7 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       }, this.stopTimeout);
       child.stdin?.end();
       child.kill('SIGINT');
-    });
+    }).then(() => this.logDrains.get(child));
   }
 
   stop(): Promise<void> {
@@ -241,8 +250,8 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
       await this.pending?.catch(() => {});
       if (process.env.SYNAX_RUNTIME_SIDECAR_TOKEN === this.token) {
         delete process.env.SYNAX_RUNTIME_SIDECAR_TOKEN; delete process.env.SYNAX_RUNTIME_SIDECAR_SOCKET;
-        delete process.env.SYNAX_RUNTIME_SIDECAR_PORT; delete process.env.SYNAX_RUNTIME_PROVIDER_PORT; delete process.env.SYNAX_RUNTIME_HOT_PATH;
-        delete process.env.SYNAX_RUNTIME_HISTORY_PATH;
+        delete process.env.SYNAX_RUNTIME_SIDECAR_PORT; delete process.env.SYNAX_RUNTIME_PROVIDER_PORT; delete process.env.SYNAX_RUNTIME_STORE_PATH;
+        delete process.env.SYNAX_RUNTIME_TICKET_SECRET;
         delete process.env.SYNAX_RUNTIME_SIDECAR_PID;
       }
       if (this.socketIdentity) {
@@ -256,8 +265,8 @@ export class RustRuntimeSupervisor implements RustRuntimeSidecarHandle {
   }
 }
 
-export async function startRustRuntimeSidecar(): Promise<RustRuntimeSidecarHandle> {
-  const supervisor = new RustRuntimeSupervisor();
+export async function startRustRuntimeSidecar(onRestart?: () => Promise<void>): Promise<RustRuntimeSidecarHandle> {
+  const supervisor = new RustRuntimeSupervisor({ onRestart });
   try { await supervisor.start(); return supervisor; }
   catch (error) { await supervisor.stop(); throw error; }
 }

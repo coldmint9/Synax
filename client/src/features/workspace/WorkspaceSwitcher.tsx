@@ -33,8 +33,6 @@ interface Props {
   onRemoveRequest: (event: MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
   iconOnly?: boolean;
-  subtitle?: string;
-  badge?: ReactNode;
   renderBadge: (id: string) => ReactNode;
 }
 
@@ -48,8 +46,6 @@ export function WorkspaceSwitcher({
   onRemoveRequest,
   onOpen,
   iconOnly,
-  subtitle,
-  badge,
   renderBadge,
 }: Props) {
   const c = useWorkspaceCopy();
@@ -93,17 +89,11 @@ export function WorkspaceSwitcher({
               <PopoverButton
                 className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`}
                 aria-label={t("appSwitchProject")}
-                aria-description={subtitle}
-                data-titlebar={Boolean(subtitle) || undefined}
               >
                 <Folder size={15} aria-hidden="true" />
                 {!iconOnly && (
-                  <span className="wh-project-copy">
-                    <span className="wh-project-label">{displayName}</span>
-                    {subtitle && <span className="wh-project-subtitle">{subtitle}</span>}
-                  </span>
+                  <span className="wh-project-label">{displayName}</span>
                 )}
-                {badge}
                 {!iconOnly && <ChevronDown size={12} aria-hidden="true" />}
               </PopoverButton>
             </Tooltip>

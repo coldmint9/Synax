@@ -1,6 +1,6 @@
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
-import { Terminal as TerminalIcon } from "lucide-react";
+import { Terminal as TerminalIcon, WifiOff } from "lucide-react";
 import { ThemeToggle } from "../../shared/ui/ThemeToggle";
 import { useTerminalStore } from "../../features/terminal/terminalStore";
 import { useState, useCallback, useEffect } from "react";
@@ -29,6 +29,7 @@ import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPane
 import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
+import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 
 export type ChromeMode =
   | "global"
@@ -103,7 +104,6 @@ function ProjectSwitcher({
   onCreateProject,
   onRemoveRequest,
   onOpen,
-  subtitle,
 }: {
   hasProject: boolean;
   projectName: string;
@@ -113,16 +113,13 @@ function ProjectSwitcher({
   onCreateProject: () => void;
   onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
-  subtitle: string;
 }) {
   const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
   return <WorkspaceSwitcher
     hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
     projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
     onRemoveRequest={onRemoveRequest}
-    subtitle={subtitle}
     onOpen={() => { onOpen?.(); void refresh(); }}
-    badge={<ProjectSessionBadgeMark badge={badges[currentProjectId]} />}
     renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;
 }
@@ -189,6 +186,29 @@ function GoalToolbar({ sessionId }: { sessionId: string | null }) {
   );
 }
 
+function BackendConnectionStatus() {
+  const { locale } = useLocale();
+  const browserOnline = useApiConnectivityStore((state) => state.browserOnline);
+  const apiReachable = useApiConnectivityStore((state) => state.apiReachable);
+  const disconnected = !browserOnline || apiReachable === "unreachable";
+
+  if (!disconnected) return null;
+
+  const label = locale === "zh" ? "后端服务已断联" : "Backend disconnected";
+  return (
+    <Tooltip content={label}>
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        className="workbench-header__connection-status text-danger"
+      >
+        <WifiOff size={14} aria-hidden="true" />
+      </span>
+    </Tooltip>
+  );
+}
+
 export function WorkbenchHeader({
   chromeMode,
   activePanel,
@@ -242,16 +262,6 @@ export function WorkbenchHeader({
   }, [chromeMode, selectedSessionId]);
 
   const terminalLabel = locale === "zh" ? "终端" : "Terminal";
-  const gitViews: Record<string, string> = locale === "zh"
-    ? { requests: "合并请求", branches: "历史树", worktrees: "工作树", presets: "预设" }
-    : { requests: "Merge requests", branches: "History", worktrees: "Worktrees", presets: "Presets" };
-  const subtitle = activePanel === "git"
-    ? `Git · ${location.pathname.includes("/git/mr/")
-      ? (locale === "zh" ? "合并请求" : "Merge request")
-      : gitViews[new URLSearchParams(location.search).get("view") ?? "branches"] ?? gitViews.branches}`
-    : activePanel === "settings" ? t("appSettings")
-    : activePanel === "sessions" ? (locale === "zh" ? "Work · 会话与工作区" : "Work · Conversations & workspace")
-    : locale === "zh" ? "Synax 工作区" : "Synax workspace";
 
   return (
     <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
@@ -266,7 +276,6 @@ export function WorkbenchHeader({
             onCreateProject={onCreateProject}
             onRemoveRequest={handleRemoveClick}
             onOpen={() => setProjectSwitcherUsed(true)}
-            subtitle={subtitle}
           />
           <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
         </div>
@@ -275,6 +284,7 @@ export function WorkbenchHeader({
           {gitToolbarVisible && <div className="workbench-header__git-tools"><GitToolbarTarget /></div>}
         </div>
         <div className="wh-actions workbench-header__actions">
+          <BackendConnectionStatus />
           {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
             <SubagentIsland sessionId={selectedSessionId} />
           ) : null}

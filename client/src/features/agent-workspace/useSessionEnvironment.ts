@@ -1,189 +1,364 @@
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useWorkbenchPageActive } from "../../app/layouts/CachedWorkbenchPage";
-import { useWorkspaceRefresh } from "./workspaceRefresh";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import {
   agentRuntimeApi,
-  type SessionEnvironment,
+  type SessionEnvironmentInputs,
+  type SessionEnvironmentOutputs,
+  type SessionEnvironmentRoots,
+  type SessionEnvironmentSubagents,
 } from "../../adapters/transport/agentRuntime";
 
-// External editors do not publish runtime events. Keep a slow safety net,
-// while event bursts share one refresh. A running agent fires many events per
-// step; matching the server's git-safe cache window keeps those bursts from
-// turning into a request every few seconds.
-const REFRESH_MS = 120_000;
-const EVENT_REFRESH_MS = 15_000;
-const EVENT_BATCH_MS = 250;
-const RESUME_STALE_MS = 30_000;
-const cache = new Map<string, { value: SessionEnvironment; checkedAt: number }>();
-const pending = new Map<string, Promise<SessionEnvironment>>();
+/**
+ * Session-scoped environment cards.
+ *
+ * Each card (`roots`, `subagents`, `inputs`, `outputs`) has its own cache,
+ * in-flight request, refresh cadence and event relevance, so opening the
+ * workspace panel never pages the transcript for a card nobody displays.
+ * Git changes are *not* here: they live in `workspaceGitStore.ts` and are
+ * shared by every session of a workspace.
+ */
 
-async function fetchEnvironment(id: string): Promise<SessionEnvironment> {
-  const existing = pending.get(id);
-  if (existing) return existing;
-  const request = agentRuntimeApi.getSessionEnvironment(id).then((next) => {
-    const previous = cache.get(id)?.value;
-    // A server check timestamp is not a change to the displayed workspace.
-    const { refreshedAt: _nextTime, ...nextContent } = next;
-    const { refreshedAt: _previousTime, ...previousContent } = previous ?? {};
-    const value = previous && JSON.stringify(previousContent) === JSON.stringify(nextContent)
-      ? previous
-      : next;
-    cache.delete(id);
-    cache.set(id, { value, checkedAt: Date.now() });
-    if (cache.size > 16) cache.delete(cache.keys().next().value!);
-    return value;
-  }).finally(() => pending.delete(id));
-  pending.set(id, request);
+const EVENT_BATCH_MS = 250;
+const RESUMED_STALE_MS = 30_000;
+const CARD_LIMIT = 24;
+
+interface CardEntry<T> {
+  value: T;
+  checkedAt: number;
+}
+
+type RuntimePayload = {
+  sessionId?: string;
+  projectId?: string;
+  patch?: Record<string, unknown>;
+};
+
+type RuntimeEventType =
+  | "session_changed"
+  | "session_created"
+  | "session_deleted"
+  | "session_archived"
+  | "session_step_completed";
+
+interface CardDefinition<T> {
+  kind: string;
+  load: (sessionId: string) => Promise<T>;
+  ttlMs: number;
+  slowRefreshMs: number;
+  events: RuntimeEventType[];
+  /** Which events can actually change this card's payload. */
+  matches: (sessionId: string, payload: RuntimePayload, current: T | null) => boolean;
+}
+
+interface SessionCard<T> extends CardDefinition<T> {
+  entries: Map<string, CardEntry<T>>;
+  pending: Map<string, Promise<T>>;
+  listeners: Set<() => void>;
+}
+
+function readPayload(event: MessageEvent): RuntimePayload | null {
+  try {
+    const payload = JSON.parse(event.data) as RuntimePayload;
+    return payload && typeof payload === "object" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasPatchField(payload: RuntimePayload, keys: string[]): boolean {
+  const patch = payload.patch;
+  if (!patch || typeof patch !== "object") return true;
+  return keys.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+}
+
+function createSessionCard<T>(
+  definition: CardDefinition<T>,
+): SessionCard<T> {
+  return {
+    ...definition,
+    entries: new Map(),
+    pending: new Map(),
+    listeners: new Set(),
+  };
+}
+
+function cardSnapshot<T>(card: SessionCard<T>, sessionId: string | null): T | null {
+  if (!sessionId) return null;
+  return card.entries.get(sessionId)?.value ?? null;
+}
+
+function emitCard<T>(card: SessionCard<T>) {
+  for (const listener of card.listeners) listener();
+}
+
+function subscribeCard<T>(card: SessionCard<T>, listener: () => void): () => void {
+  card.listeners.add(listener);
+  return () => {
+    card.listeners.delete(listener);
+  };
+}
+
+function loadCard<T>(
+  card: SessionCard<T>,
+  sessionId: string | null,
+  maxAgeMs = 0,
+): Promise<T | null> {
+  if (!sessionId) return Promise.resolve(null);
+  const cached = card.entries.get(sessionId);
+  if (cached && Date.now() - cached.checkedAt < maxAgeMs)
+    return Promise.resolve(cached.value);
+  const pending = card.pending.get(sessionId);
+  if (pending) return pending;
+  const request = card
+    .load(sessionId)
+    .then((value) => {
+      card.entries.delete(sessionId);
+      card.entries.set(sessionId, { value, checkedAt: Date.now() });
+      while (card.entries.size > CARD_LIMIT)
+        card.entries.delete(card.entries.keys().next().value!);
+      emitCard(card);
+      return value;
+    })
+    .finally(() => {
+      if (card.pending.get(sessionId) === request) card.pending.delete(sessionId);
+    });
+  card.pending.set(sessionId, request);
   return request;
 }
 
-const SESSION_FIELDS = ["projectId", "childSessionIds", "status", "historyReset", "historyRevision"];
-const CHILD_FIELDS = ["parentSessionId", "title", "prompt", "profileId", "status", "completedAt", "resultSummary"];
+function invalidateCard<T>(card: SessionCard<T>, sessionId?: string | null): void {
+  if (!sessionId) {
+    card.entries.clear();
+    card.pending.clear();
+    emitCard(card);
+    return;
+  }
+  card.entries.delete(sessionId);
+  card.pending.delete(sessionId);
+  emitCard(card);
+}
 
-type RefreshController = {
-  reload: () => Promise<void>;
-  invalidate: () => void;
-};
+const rootsCard = createSessionCard<SessionEnvironmentRoots>({
+  kind: "roots",
+  load: (sessionId) => agentRuntimeApi.getSessionEnvironmentRoots(sessionId),
+  // Root metadata only changes with project membership or the session binding.
+  ttlMs: 120_000,
+  slowRefreshMs: 120_000,
+  events: ["session_changed", "session_deleted", "session_archived"],
+  matches: (sessionId, payload) =>
+    payload.sessionId === sessionId &&
+    hasPatchField(payload, ["sessionMetadata", "projectId"]),
+});
 
-/** Shared requests and snapshots; automatic refreshes are quiet and coalesced. */
-export function useSessionEnvironment(sessionId: string | null) {
-  const active = useWorkbenchPageActive();
-  const [snapshot, setSnapshot] = useState<{ id: string; value: SessionEnvironment } | null>(null);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
-  const controller = useRef<RefreshController | null>(null);
-  const reload = useCallback(() => controller.current?.reload() ?? Promise.resolve(), []);
-  const invalidate = useCallback(() => controller.current?.invalidate(), []);
-  useWorkspaceRefresh(sessionId, invalidate);
+const subagentsCard = createSessionCard<SessionEnvironmentSubagents>({
+  kind: "subagents",
+  load: (sessionId) => agentRuntimeApi.getSessionEnvironmentSubagents(sessionId),
+  ttlMs: 15_000,
+  slowRefreshMs: 30_000,
+  events: [
+    "session_changed",
+    "session_created",
+    "session_step_completed",
+    "session_deleted",
+    "session_archived",
+  ],
+  matches: (sessionId, payload, current) => {
+    if (!payload.sessionId) return true;
+    if (payload.sessionId === sessionId) return true;
+    // A subagent is its own session: its events move this card too.
+    return Boolean(current?.subagents.some((child) => child.id === payload.sessionId));
+  },
+});
+
+const inputsCard = createSessionCard<SessionEnvironmentInputs>({
+  kind: "inputs",
+  load: (sessionId) => agentRuntimeApi.getSessionEnvironmentInputs(sessionId),
+  ttlMs: 30_000,
+  slowRefreshMs: 60_000,
+  events: ["session_step_completed", "session_deleted", "session_archived"],
+  matches: (sessionId, payload) => payload.sessionId === sessionId,
+});
+
+const outputsCard = createSessionCard<SessionEnvironmentOutputs>({
+  kind: "outputs",
+  load: (sessionId) => agentRuntimeApi.getSessionEnvironmentOutputs(sessionId),
+  ttlMs: 30_000,
+  slowRefreshMs: 60_000,
+  events: ["session_step_completed", "session_deleted", "session_archived"],
+  matches: (sessionId, payload) => payload.sessionId === sessionId,
+});
+
+const CARDS: Array<SessionCard<unknown>> = [
+  rootsCard,
+  subagentsCard,
+  inputsCard,
+  outputsCard,
+] as unknown as Array<SessionCard<unknown>>;
+
+/** Drop every session card of one session (or all of them). */
+export function invalidateSessionEnvironmentCards(sessionId?: string | null): void {
+  for (const card of CARDS) invalidateCard(card, sessionId);
+}
+
+export function loadSessionEnvironmentRoots(
+  sessionId: string | null,
+  maxAgeMs = 0,
+): Promise<SessionEnvironmentRoots | null> {
+  return loadCard(rootsCard, sessionId, maxAgeMs);
+}
+
+export function loadSessionEnvironmentSubagents(
+  sessionId: string | null,
+  maxAgeMs = 0,
+): Promise<SessionEnvironmentSubagents | null> {
+  return loadCard(subagentsCard, sessionId, maxAgeMs);
+}
+
+export function loadSessionEnvironmentInputs(
+  sessionId: string | null,
+  maxAgeMs = 0,
+): Promise<SessionEnvironmentInputs | null> {
+  return loadCard(inputsCard, sessionId, maxAgeMs);
+}
+
+export function loadSessionEnvironmentOutputs(
+  sessionId: string | null,
+  maxAgeMs = 0,
+): Promise<SessionEnvironmentOutputs | null> {
+  return loadCard(outputsCard, sessionId, maxAgeMs);
+}
+
+/**
+ * One card, one request stream: a card only reloads for events that can change
+ * it, is gated by visibility and the workbench page, and falls back to a slow
+ * refresh for changes nobody publishes.
+ */
+function useSessionCard<T>(
+  card: SessionCard<T>,
+  sessionId: string | null,
+  options?: { enabled?: boolean },
+) {
+  const pageActive = useWorkbenchPageActive();
+  const enabled = (options?.enabled ?? true) && pageActive;
+  const value = useSyncExternalStore(
+    useCallback((listener: () => void) => subscribeCard(card, listener), [card]),
+    useCallback(() => cardSnapshot(card, sessionId), [card, sessionId]),
+    () => null,
+  );
+  const [loading, setLoading] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!sessionId) return;
+    invalidateCard(card, sessionId);
+    try {
+      await loadCard(card, sessionId);
+    } catch {
+      // Keep the last usable card; the bounded cadence retries.
+    }
+  }, [card, sessionId]);
 
   useEffect(() => {
-    setLoadingId(null);
-    if (!sessionId || !active) return;
-    const id = sessionId;
+    if (!sessionId || !enabled) return;
     let cancelled = false;
-    let dirty = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let inFlight: Promise<void> | undefined;
-    let settledAt = cache.get(id)?.checkedAt;
-    // Metadata patches contain the entire object. Compare only workspace/role
-    // fields, so prompt previews, token accounting and compaction do not read Git.
-    const metadataKeys = new Map<string, string>();
+    let inFlight: Promise<unknown> | undefined;
 
-    const schedule = () => {
+    const run = (): Promise<void> => {
+      if (cancelled || document.hidden) return Promise.resolve();
+      if (inFlight) return inFlight.then(() => undefined);
       clearTimeout(timer);
-      if (cancelled || document.hidden || inFlight) return;
-      const delay = dirty
-        ? Math.max(EVENT_BATCH_MS, (settledAt ?? 0) + EVENT_REFRESH_MS - Date.now())
-        : Math.max(0, (settledAt ?? Date.now()) + REFRESH_MS - Date.now());
-      timer = setTimeout(() => void run(true), delay);
+      const warm = card.entries.has(sessionId);
+      if (!warm) setLoading(true);
+      inFlight = loadCard(card, sessionId)
+        .catch(() => null)
+        .finally(() => {
+          inFlight = undefined;
+          if (cancelled) return;
+          setLoading(false);
+          scheduleSlow();
+        });
+      return inFlight.then(() => undefined);
     };
 
-    const run = (silent: boolean): Promise<void> => {
-      if (cancelled || document.hidden) return Promise.resolve();
-      if (inFlight) return inFlight;
+    const scheduleSlow = () => {
       clearTimeout(timer);
-      dirty = false;
-      if (!silent || !cache.has(id)) setLoadingId(id);
-      inFlight = (async () => {
-        try {
-          const value = await fetchEnvironment(id);
-          if (!cancelled) setSnapshot((previous) =>
-            previous?.id === id && previous.value === value ? previous : { id, value },
-          );
-        } catch {
-          // Keep the last usable snapshot and retry at the bounded cadence.
-        } finally {
-          settledAt = Date.now();
-          inFlight = undefined;
-          if (!cancelled) {
-            setLoadingId(null);
-            schedule();
-          }
-        }
-      })();
-      return inFlight;
+      if (cancelled || document.hidden) return;
+      timer = setTimeout(() => void run(), card.slowRefreshMs);
     };
 
     const markDirty = () => {
       if (cancelled) return;
-      const alreadyDirty = dirty;
-      dirty = true;
-      // Do not reset a pending batch on every event (continuous streams must
-      // not starve updates). Events during a request leave one trailing refresh.
-      if (!alreadyDirty) schedule();
+      clearTimeout(timer);
+      if (document.hidden) return;
+      timer = setTimeout(() => void run(), EVENT_BATCH_MS);
     };
 
-    const refreshFromRuntimeEvent = (event: MessageEvent, kind: "changed" | "step" | "removed") => {
-      let payload: { sessionId?: string; patch?: Record<string, unknown> } | null;
-      try { payload = JSON.parse(event.data); } catch { return; }
-      if (!payload || typeof payload !== "object") return;
-      const changedId = payload.sessionId;
-      const child = cache.get(id)?.value.subagents?.find((item) => item.id === changedId);
-      if (changedId !== id && !child) return;
-      if (kind === "changed" && payload.patch && typeof payload.patch === "object") {
-        const patch = payload.patch;
-        const fields = child ? CHILD_FIELDS : SESSION_FIELDS;
-        let relevant = fields.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
-        const metadata = patch.sessionMetadata;
-        if (metadata && typeof metadata === "object") {
-          const data = metadata as Record<string, unknown>;
-          const backend = data.backend as Record<string, unknown> | undefined;
-          const projection = child
-            ? [data.subagentName, data.roleName, data.roleDescription]
-            : [backend?.workDir, backend?.workspaceLocation, backend?.workspaceRoots];
-          const key = JSON.stringify(projection);
-          if (projection.some((value) => value !== undefined) || metadataKeys.has(changedId!)) {
-            relevant ||= metadataKeys.get(changedId!) !== key;
-            metadataKeys.set(changedId!, key);
-          }
-        }
-        if (!relevant) return;
-      }
-      markDirty();
-    };
+    const handlers: Partial<Record<RuntimeEventType, (event: MessageEvent) => void>> = {};
+    for (const type of card.events)
+      handlers[type] = (event) => {
+        const payload = readPayload(event);
+        if (!payload) return;
+        if (!card.matches(sessionId, payload, card.entries.get(sessionId)?.value ?? null))
+          return;
+        markDirty();
+      };
 
-    const current: RefreshController = {
-      reload: async () => {
-        // A user action may follow a mutation. Never reuse a pre-mutation read.
-        if (inFlight) await inFlight;
-        // Drop the shared cache entry so this read reflects the mutation
-        // instead of the snapshot taken before it.
-        cache.delete(id);
-        await run(false);
-      },
-      invalidate: markDirty,
-    };
-    controller.current = current;
     const unsubscribe = subscribe({
-      events: {
-        session_changed: (event) => refreshFromRuntimeEvent(event, "changed"),
-        // Input sources and outputs are also part of this snapshot.
-        session_step_completed: (event) => refreshFromRuntimeEvent(event, "step"),
-        session_deleted: (event) => refreshFromRuntimeEvent(event, "removed"),
-        session_archived: (event) => refreshFromRuntimeEvent(event, "removed"),
+      events: handlers,
+      onConnect: () => {
+        if (card.entries.has(sessionId)) markDirty();
       },
-      onConnect: () => { if (settledAt !== undefined) markDirty(); },
     });
     const onVisibility = () => {
       clearTimeout(timer);
       timer = undefined;
       if (document.hidden) return;
-      if (dirty || settledAt === undefined || Date.now() - settledAt >= RESUME_STALE_MS) void run(true);
-      else schedule();
+      const checked = card.entries.get(sessionId)?.checkedAt;
+      if (checked === undefined || Date.now() - checked >= RESUMED_STALE_MS) void run();
+      else scheduleSlow();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    void run(true);
+
+    const cached = card.entries.get(sessionId);
+    if (cached && Date.now() - cached.checkedAt < card.ttlMs) scheduleSlow();
+    else void run();
+
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      if (controller.current === current) controller.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
       unsubscribe();
     };
-  }, [sessionId, active]);
+  }, [card, sessionId, enabled]);
 
-  const environment = sessionId
-    ? snapshot?.id === sessionId ? snapshot.value : (cache.get(sessionId)?.value ?? null)
-    : null;
-  return { sessionId, environment, loading: sessionId !== null && loadingId === sessionId, reload };
+  return { sessionId, value, loading: sessionId !== null && loading, reload };
+}
+
+export function useSessionEnvironmentRoots(
+  sessionId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useSessionCard(rootsCard, sessionId, options);
+}
+
+export function useSessionEnvironmentSubagents(
+  sessionId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useSessionCard(subagentsCard, sessionId, options);
+}
+
+export function useSessionEnvironmentInputs(
+  sessionId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useSessionCard(inputsCard, sessionId, options);
+}
+
+export function useSessionEnvironmentOutputs(
+  sessionId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useSessionCard(outputsCard, sessionId, options);
 }

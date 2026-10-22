@@ -3,6 +3,7 @@ import { memo } from "react";
 import { BufferedMarkdown } from "./BufferedMarkdown";
 import { hasVisualization } from "../../../../services/local-node/modules/agent-runtime/visualization-protocol";
 import { VisualizationLoading } from "../visualizations/VisualizationLoading";
+import { useStreamingText } from "./useStreamingText";
 
 interface Props {
   text: string;
@@ -19,6 +20,7 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
 }: Props) {
   const containsVisualization = isStreaming && hasVisualization(text);
   text = hideVisualizationSource(text, isStreaming);
+  const visible = useStreamingText(text, isStreaming && !markdown);
   if (!text && !isStreaming) return null;
 
   if (markdown) {
@@ -37,10 +39,14 @@ export const StreamingTextBlock = memo(function StreamingTextBlock({
 
   return (
     <div className="agent-conversation-copy leading-[1.75] text-foreground whitespace-pre-wrap">
-      {text}
-      {isStreaming && (
-        <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
-      )}
+      {visible.split(/\n{2,}/).map((paragraph, index, paragraphs) => (
+        <p key={index} className="session-text-paragraph">
+          {paragraph}
+          {isStreaming && index === paragraphs.length - 1 && (
+            <span className="inline-block w-0.5 h-[1em] bg-foreground/60 animate-pulse ml-0.5 align-text-bottom" />
+          )}
+        </p>
+      ))}
     </div>
   );
 });

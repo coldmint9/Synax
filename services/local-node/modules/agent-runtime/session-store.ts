@@ -32,6 +32,13 @@ import {
   projectSessionUsage,
   type SessionUsageProjection,
 } from "./usage-projection.js";
+import {
+  readSessionAnalytics,
+  withCompletedRunAnalytics,
+  withStepAnalytics,
+  withToolCallAnalytics,
+  type SessionAnalytics,
+} from "./analytics-projection.js";
 import type { WorkRecord } from "./work-store.js";
 
 type Entity = { id: string; sessionId?: string | null };
@@ -68,6 +75,15 @@ const collections = {
 } as const;
 const copy = <T,>(value: T): T => structuredClone(value);
 
+/** A failed page must not release the session's loading slot while sibling
+ * reads are still opening files or publishing caches. */
+async function readAll<T extends readonly unknown[]>(reads: { [K in keyof T]: Promise<T[K]> }): Promise<T> {
+  const results = await Promise.allSettled(reads);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return results.map(result => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
+}
+
 /** Execution working set. Rust is the sole durable repository. Callers load before
  * executing and await flush before acknowledging commands or yielding worker IPC. */
 export class AgentRuntimeStore {
@@ -77,7 +93,18 @@ export class AgentRuntimeStore {
   private failures = new Map<string, unknown>();
   private loaded = new Set<string>();
   private loading = new Map<string, Promise<void>>();
+  private listing?: Promise<void>;
   private staged?: { writes: Array<() => void>; undo: Array<() => void> };
+  /**
+   * One session panel open fans out into ~10 read requests, and each of them
+   * used to re-read the same authoritative summary. A short lease collapses the
+   * burst into one snapshot; mutations invalidate it immediately.
+   */
+  private readonly summaryLeases = new Map<
+    string,
+    { at: number; task: Promise<void> }
+  >();
+  private static readonly SUMMARY_LEASE_MS = 250;
   transaction<T>(action: () => T): T {
     const outer = !this.staged;
     const batch = (this.staged ??= { writes: [], undo: [] });
@@ -108,6 +135,8 @@ export class AgentRuntimeStore {
   }
 
   private queue(sessionId: string, action: () => Promise<void>): void {
+    // The summary is about to change; the next reader must not reuse the lease.
+    this.summaryLeases.delete(sessionId);
     if (this.staged) {
       this.staged.writes.push(() => this.queue(sessionId, action));
       return;
@@ -159,13 +188,23 @@ export class AgentRuntimeStore {
       }
     });
   }
-  async hydrateSessions(): Promise<void> {
-    await this.flush();
-    for await (const items of sessionPages<AgentSession>(runtimeClient())) {
-      for (const session of items) this.sessions.set(session.id, copy(session));
-    }
+  async hydrateSessions(signal?: AbortSignal): Promise<void> {
+    if (this.listing) return this.listing;
+    const previous = new Map(this.sessions);
+    this.listing = (async () => {
+      for await (const items of sessionPages<AgentSession>(runtimeClient(), signal)) {
+        for (const session of items) {
+          if (!session || typeof session.id !== 'string') continue;
+          // Background list pages must not overwrite a newly admitted run or
+          // local edits made while the index was still replaying old sessions.
+          if (this.sessions.get(session.id) === previous.get(session.id)) this.sessions.set(session.id, copy(session));
+        }
+      }
+    })().finally(() => { this.listing = undefined; });
+    return this.listing;
   }
   async hydrateSession(sessionId: string, refresh = false): Promise<void> {
+    this.summaryLeases.delete(sessionId);
     if (this.loaded.has(sessionId) && !refresh) {
       await this.flushSession(sessionId);
       return;
@@ -180,9 +219,9 @@ export class AgentRuntimeStore {
       const previous = new Map(Object.keys(collections).map(kind => [kind,
         new Map([...this.collection(kind)].filter(([, record]) => record.sessionId === sessionId)),
       ]));
-      const [snapshotBytes, entries, control] = await Promise.all([
+      const [snapshotBytes, entries, control] = await readAll([
         runtimeClient().uiSnapshot(sessionId),
-        Promise.all(Object.entries(collections).map(async ([kind, operation]) =>
+        readAll(Object.entries(collections).map(async ([kind, operation]) =>
           [kind, await readHistoryList<Entity>(runtimeClient(), sessionId, operation)] as const)),
         patchRuntime(sessionId, "read", {}),
       ]);
@@ -218,6 +257,29 @@ export class AgentRuntimeStore {
       this.loading.delete(sessionId);
     }
   }
+  /** Refresh the small projection at request boundaries without loading history. */
+  async hydrateSessionSummary(sessionId: string): Promise<void> {
+    const lease = this.summaryLeases.get(sessionId);
+    if (lease && Date.now() - lease.at < AgentRuntimeStore.SUMMARY_LEASE_MS)
+      return lease.task;
+    const task = this.readSessionSummary(sessionId);
+    this.summaryLeases.set(sessionId, { at: Date.now(), task });
+    if (this.summaryLeases.size > 128)
+      this.summaryLeases.delete(this.summaryLeases.keys().next().value!);
+    try {
+      await task;
+    } catch (error) {
+      if (this.summaryLeases.get(sessionId)?.task === task)
+        this.summaryLeases.delete(sessionId);
+      throw error;
+    }
+  }
+  private async readSessionSummary(sessionId: string): Promise<void> {
+    await this.flushSession(sessionId);
+    const previous = this.sessions.get(sessionId);
+    const snapshot = decode<{ session: AgentSession }>(await runtimeClient().uiSnapshot(sessionId));
+    if (this.sessions.get(sessionId) === previous) this.sessions.set(sessionId, snapshot.session);
+  }
   private collection(kind: string): Map<string, Entity> {
     let map = this.entities.get(kind);
     if (!map) {
@@ -244,6 +306,7 @@ export class AgentRuntimeStore {
     const snapshot = copy(value);
     this.set(this.collection(kind), value.id, snapshot);
     const scope = value.sessionId ?? `context:${value.id}`;
+    this.summaryLeases.delete(scope);
     this.queue(scope, () =>
       persistEntity(scope, `runtime.${kind}`, {
         ...snapshot,
@@ -306,6 +369,55 @@ export class AgentRuntimeStore {
     return this.updateSession(id, {
       sessionMetadata: { ...current.sessionMetadata, ...patch },
     });
+  }
+  /** Incremental runtime stats persisted on the session projection.
+   * Step/run/tool hooks fold one record at a time; readers never rescan. */
+  private sessionAnalytics(sessionId: string): SessionAnalytics | null {
+    const session = this.sessions.get(sessionId);
+    return session
+      ? readSessionAnalytics(session.sessionMetadata?.runtimeAnalytics)
+      : null;
+  }
+  private writeSessionAnalytics(
+    sessionId: string,
+    next: SessionAnalytics | null,
+  ): void {
+    if (!next) return;
+    const session = this.sessions.get(sessionId);
+    if (
+      !session ||
+      session.sessionMetadata?.archivedAt ||
+      session.sessionMetadata?.deletedAt
+    )
+      return;
+    const current = readSessionAnalytics(
+      session.sessionMetadata?.runtimeAnalytics,
+    );
+    if (current && JSON.stringify(current) === JSON.stringify(next)) return;
+    this.updateSessionMetadata(sessionId, { runtimeAnalytics: next });
+  }
+  private recordStepAnalytics(step: AgentRunStep): void {
+    const next = withStepAnalytics(
+      this.sessionAnalytics(step.sessionId),
+      step,
+    );
+    if (next) this.writeSessionAnalytics(step.sessionId, next);
+  }
+  private recordRunAnalytics(run: AgentRun): void {
+    const next = withCompletedRunAnalytics(
+      this.sessionAnalytics(run.sessionId),
+      run,
+      this.listRunSteps(run.id).length,
+    );
+    if (next) this.writeSessionAnalytics(run.sessionId, next);
+  }
+  private recordToolCallAnalytics(call: ToolCallRecord): void {
+    const current = this.sessionAnalytics(call.sessionId);
+    if (!current && !this.sessions.has(call.sessionId)) return;
+    this.writeSessionAnalytics(
+      call.sessionId,
+      withToolCallAnalytics(current, call.toolId),
+    );
   }
   listSessionBadges(projectIds: string[]) {
     return this.listSessions({ limit: Infinity })
@@ -618,11 +730,13 @@ export class AgentRuntimeStore {
   }
   updateRun(id: string, patch: Partial<AgentRun>): AgentRun {
     const current = this.getRun(id);
-    return this.appendRun({
+    const next = this.appendRun({
       ...current,
       ...patch,
       metadata: { ...current.metadata, ...patch.metadata },
     });
+    this.recordRunAnalytics(next);
+    return next;
   }
   listRuns(id: string) {
     return this.listRecords<AgentRun>("run", id).sort((a, b) =>
@@ -630,7 +744,9 @@ export class AgentRuntimeStore {
     );
   }
   appendRunStep(step: AgentRunStep) {
-    return this.saveRecord("step", step);
+    const saved = this.saveRecord("step", step);
+    this.recordStepAnalytics(saved);
+    return saved;
   }
   getRunStep(id: string) {
     return this.requireRecord<AgentRunStep>("step", id);
@@ -662,7 +778,10 @@ export class AgentRuntimeStore {
     return Math.max(0, ...this.listRunParts(id).map((p) => p.sequence)) + 1;
   }
   appendToolCall(call: ToolCallRecord) {
-    return this.saveRecord("tool_call", call);
+    const existed = this.collection("tool_call").has(call.id);
+    const saved = this.saveRecord("tool_call", call);
+    if (!existed) this.recordToolCallAnalytics(saved);
+    return saved;
   }
   updateToolCall(
     sessionId: string,

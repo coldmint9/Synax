@@ -34,27 +34,32 @@ export async function captureCheckpoint(
     },
   });
 }
-export async function captureCompletedReply(
-  sessionId: string,
-  stepId?: string,
-): Promise<void> {
+/**
+ * Pin a Run's reply boundary once the Run settles.
+ *
+ * Reply checkpoints back copy / fork / rollback on a transcript row, and the
+ * transcript only offers those actions on the final reply of a round. Pinning
+ * every completed step wrote one pin (with its metadata snapshot) per model
+ * step even though none of the intermediate rows could act on it. Capturing only
+ * the settled reply keeps the checkpoint index proportional to the number of
+ * conversation rounds instead of the number of steps.
+ */
+export async function captureCompletedReply(sessionId: string, runId?: string): Promise<void> {
   const message = agentRuntimeStore
     .listMessages(sessionId)
     .filter(
       (m) =>
         m.role === "assistant" &&
+        (!runId || m.runId === runId) &&
         !m.metadata.partial &&
-        (!stepId || m.stepId === stepId),
+        m.metadata.type !== "thinking" &&
+        m.metadata.kind !== "thought" &&
+        !["artifact_publisher", "artifact_request", "artifact_job"].includes(
+          String(m.metadata.source),
+        ),
     )
     .at(-1);
   if (!message) return;
-  if (
-    message.stepId &&
-    !["completed", "blocked"].includes(
-      agentRuntimeStore.getRunStep(message.stepId).status,
-    )
-  )
-    return;
   await captureCheckpoint(sessionId, "reply", message.id, message.stepId);
 }
 export function assertHistoryUnlocked(sessionId: string): void {

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as z from "zod/v4";
-import { asSchema } from "ai";
+import { asSchema } from "../../../infrastructure/llm-runtime/tool-schema.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";

@@ -1,17 +1,18 @@
 import fs from "node:fs";
+import { SEARCH_TIMEOUT_MS, SEARCH_MAX_FILE_BYTES, searchCanContinue, searchFiles, matchesSearchGlob, type SearchBudget } from "./search-files.js";
 import path from "node:path";
 import { runCommand } from "./exec-async.js";
 import { resolveRipgrep, RIPGREP_MISSING_HELP } from "./ripgrep.js";
 import * as z from "zod/v4";
 import type { RegisteredTool, ToolExecutionResult } from "../contracts.js";
 import { recordSessionFileDiscovery } from "../read-tracker.js";
-import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
+import { resolveWorkspacePath, toWorkspaceRelative, workspaceRoot } from "./workspace.js";
 
 export const grepSearchTool: RegisteredTool = {
   id: "grep.search",
   label: "Search Text",
   description:
-    "Fast workspace text search backed by bundled ripgrep, with grep as a compatibility fallback. Fixed-string by default (regex=true for regex patterns); supports glob filters, context lines, word boundary, and multiline matching.",
+    "Fast workspace text search backed by bundled ripgrep, with bounded, ignore-aware grep as a compatibility fallback. Fixed-string by default (regex=true for regex patterns); supports glob filters, context lines, word boundary, and multiline matching.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
@@ -19,6 +20,8 @@ export const grepSearchTool: RegisteredTool = {
   progressiveDetails:
     'Accepts { query: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Returns matching lines with file path, line number, preview text, and optional context lines. Examples: { "query": "needle", "filePattern": "*.ts", "contextLines": 1 }; { "query": "resolve(Workspace)?Path", "regex": true }. Pitfalls: query is a fixed string unless regex=true, so ( ) | [ ] . * ? + are literal and a regex-style query reports no hits; put file filters in filePattern/excludePattern and the search base in path instead of encoding them in the query.',
   inputSchema: z.object({
+    timeoutMs: z.number().int().min(100).max(120_000).optional().describe("Search deadline in milliseconds (default 30000, maximum 120000)."),
+    includeIgnored: z.boolean().optional().describe("Explicitly search hidden/ignored files (default false)."),
     query: z
       .string()
       .min(1)
@@ -73,6 +76,8 @@ export const grepSearchTool: RegisteredTool = {
   }),
   execute(input) {
     const args = input.args as {
+      timeoutMs?: number;
+      includeIgnored?: boolean;
       query?: string;
       path?: string;
       limit?: number;
@@ -97,11 +102,13 @@ export const grepSearchTool: RegisteredTool = {
 
     const rgArgs = [
       "--json",
+      "--max-filesize", String(SEARCH_MAX_FILE_BYTES),
       "--line-number",
       "--with-filename",
       "--color",
       "never",
     ];
+    if (args.includeIgnored) rgArgs.push("--hidden", "--no-ignore");
     if (!args.regex) rgArgs.push("--fixed-strings");
     if (!args.caseSensitive) rgArgs.push("--ignore-case");
     if (args.wordBoundary) rgArgs.push("--word-regexp");
@@ -117,6 +124,9 @@ export const grepSearchTool: RegisteredTool = {
     // ripgrep runs asynchronously so parallel tool calls and side-channel
     // work (profile panels, title generation) keep running while it searches.
     return runGrepSearch({
+      budget: { deadline: Date.now() + Math.min(120_000, Math.max(100, args.timeoutMs ?? SEARCH_TIMEOUT_MS)), signal: input.abortSignal, entries: 0, files: 0, bytes: 0, status: "complete" },
+      includeIgnored: args.includeIgnored,
+      onProgress: input.onProgress,
       sessionId: input.sessionId,
       query: args.query,
       rgArgs,
@@ -135,6 +145,9 @@ export const grepSearchTool: RegisteredTool = {
 };
 
 interface GrepSearchInput {
+  budget: SearchBudget;
+  includeIgnored?: boolean;
+  onProgress?: (progress: { files?: number; bytes?: number; matches?: number }) => void;
   sessionId: string;
   query: string;
   rgArgs: string[];
@@ -161,16 +174,35 @@ async function runGrepSearch(
     limit,
     contextLines,
   } = prepared;
+  const { budget } = prepared;
+  if (!searchCanContinue(budget)) return searchResult(prepared, [], false);
   const rgPath = await resolveRipgrep();
   if (!rgPath) {
     return runGrepFallback(prepared);
   }
+  let lineBuffer = ""; let matchCount = 0;
   const result = await runCommand(rgPath, rgArgs, {
-    cwd,
-    maxBufferBytes: 8 * 1024 * 1024,
+    cwd, signal: budget.signal, timeoutMs: Math.max(1, budget.deadline - Date.now()),
+    maxBufferBytes: 1024 * 1024, stopOnOutputLimit: true,
+    onStdout(chunk) {
+      lineBuffer += chunk;
+      const lines = lineBuffer.split("\n"); lineBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "match") matchCount++;
+          if (event.type === "end") { budget.files++; budget.bytes += event.data?.stats?.bytes_searched ?? 0; }
+        } catch { /* an incomplete output line is ignored */ }
+      }
+      prepared.onProgress?.({ files: budget.files, bytes: budget.bytes, matches: matchCount });
+      return matchCount < limit;
+    },
   });
-  if (result.error) return runGrepFallback(prepared);
-  if (result.status !== 0 && result.status !== 1) {
+  if (budget.signal?.aborted) budget.status = "cancelled";
+  else if (result.timedOut) budget.status = "timeout";
+  else if (result.stoppedEarly || result.stdoutTruncated) budget.status = "limit_reached";
+  if (result.error && budget.status === "complete") return runGrepFallback(prepared);
+  if (budget.status === "complete" && result.status !== 0 && result.status !== 1) {
     const stderrInfo = result.stderr?.trim()
       ? ` stderr: ${result.stderr.trim()}`
       : "";
@@ -267,18 +299,7 @@ async function runGrepSearch(
     currentMatch.contextAfter = [...contextAfter];
   }
 
-  return {
-    result: { query: queryText, hits },
-    displaySummary: `Found ${hits.length} matches for "${queryText}".`,
-    artifacts: [
-      {
-        kind: "evidence",
-        title: "Search results",
-        summary: `Found ${hits.length} matches for "${queryText}".`,
-        risk: "low",
-      },
-    ],
-  };
+  return searchResult(prepared, hits, false);
 }
 
 /**
@@ -310,33 +331,40 @@ async function runGrepFallback(
     );
   }
 
-  const grepArgs = ["-n", "-H", "-I"];
-  if (grepTarget === ".") grepArgs.push("-R");
-  if (!regex) grepArgs.push("-F");
+  const { budget } = prepared;
+  const grepArgs = ["-n", "-H", "-I", regex ? "-E" : "-F"];
   if (!caseSensitive) grepArgs.push("-i");
   if (wordBoundary) grepArgs.push("-w");
   if (contextLines > 0) grepArgs.push("-C", String(contextLines));
-  // BSD grep (the system grep on macOS) does not support GNU's --include and
-  // --exclude flags. Filter those globs after parsing so the fallback remains
-  // portable across macOS, Linux, and Windows environments with grep.
-  grepArgs.push("--", queryText, grepTarget);
-
-  const result = await runCommand("grep", grepArgs, {
-    cwd,
-    maxBufferBytes: 8 * 1024 * 1024,
-  });
-  if (result.error) {
-    throw new Error(
-      `${RIPGREP_MISSING_HELP} Traditional grep is also unavailable.`,
-    );
-  }
-  if (result.status !== 0 && result.status !== 1) {
-    const stderrInfo = result.stderr?.trim()
-      ? ` stderr: ${result.stderr.trim()}`
-      : "";
-    throw new Error(
-      `grep failed with exit code ${result.status ?? "unknown"}.${stderrInfo}`,
-    );
+  let stdout = ""; let matched = 0;
+  const batch: string[] = [];
+  const searchBatch = async () => {
+    if (!batch.length || !searchCanContinue(budget)) return;
+    let pending = "";
+    const result = await runCommand("grep", [...grepArgs, "--", queryText, ...batch.splice(0)], {
+      cwd, signal: budget.signal, timeoutMs: Math.max(1, budget.deadline - Date.now()),
+      maxBufferBytes: Math.max(1, 1024 * 1024 - Buffer.byteLength(stdout)), stopOnOutputLimit: true,
+      onStdout(chunk) {
+        pending += chunk;
+        const lines = pending.split("\n"); pending = lines.pop() ?? "";
+        matched += lines.filter(line => /^.*:\d+:/.test(line)).length;
+        return matched < limit;
+      },
+    });
+    stdout += result.stdout;
+    if (budget.signal?.aborted) budget.status = "cancelled";
+    else if (result.timedOut) budget.status = "timeout";
+    else if (result.stoppedEarly || result.stdoutTruncated || matched >= limit) budget.status = "limit_reached";
+    else if (result.error || result.status !== 0 && result.status !== 1) throw new Error(result.stderr.trim() || `${RIPGREP_MISSING_HELP} grep failed.`);
+    prepared.onProgress?.({ files: budget.files, bytes: budget.bytes, matches: matched });
+  };
+  if (grepTarget !== ".") { batch.push(grepTarget); budget.files++; await searchBatch(); }
+  else {
+    for await (const file of searchFiles(cwd, workspaceRoot(sessionId), budget, prepared)) {
+      batch.push(file);
+      if (batch.length >= 32) await searchBatch();
+    }
+    await searchBatch();
   }
 
   const hits: Array<{
@@ -348,28 +376,15 @@ async function runGrepFallback(
   }> = [];
   let current: (typeof hits)[number] | null = null;
   let before: string[] = [];
-  const globMatches = (candidate: string, pattern: string): boolean => {
-    const normalized = candidate.replaceAll(path.sep, "/");
-    const escaped = pattern
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replaceAll("**/", "(?:.*/)?")
-      .replaceAll("**", ".*")
-      .replaceAll("*", "[^/]*")
-      .replaceAll("?", "[^/]");
-    return (
-      new RegExp(`^${escaped}$`).test(normalized) ||
-      new RegExp(`(?:^|/)${escaped}$`).test(normalized)
-    );
-  };
   const allowed = (relativePath: string): boolean =>
-    (!filePattern || globMatches(relativePath, filePattern)) &&
-    (!excludePattern || !globMatches(relativePath, excludePattern));
+    (!filePattern || matchesSearchGlob(relativePath, filePattern)) &&
+    (!excludePattern || !matchesSearchGlob(relativePath, excludePattern));
   const finish = (): void => {
     current = null;
     before = [];
   };
 
-  for (const outputLine of result.stdout.split(/\r?\n/)) {
+  for (const outputLine of stdout.split(/\r?\n/)) {
     if (!outputLine || outputLine === "--") {
       finish();
       continue;
@@ -380,7 +395,7 @@ async function runGrepFallback(
     const absolutePath = path.resolve(cwd, rawPath);
     if (
       !fs.existsSync(absolutePath) ||
-      !allowed(toWorkspaceRelative(absolutePath, sessionId))
+      !allowed(path.relative(cwd, absolutePath))
     )
       continue;
     if (separator === "-") {
@@ -405,16 +420,14 @@ async function runGrepFallback(
     if (hits.length >= limit) break;
   }
 
-  return {
-    result: { query: queryText, hits },
-    displaySummary: `Found ${hits.length} matches for "${queryText}" (grep fallback).`,
-    artifacts: [
-      {
-        kind: "evidence",
-        title: "Search results",
-        summary: `Found ${hits.length} matches for "${queryText}".`,
-        risk: "low",
-      },
-    ],
-  };
+  for (const hit of hits) recordSessionFileDiscovery(sessionId, hit.path);
+  return searchResult(prepared, hits, true);
+}
+
+function searchResult(prepared: GrepSearchInput, hits: unknown[], fallback: boolean): ToolExecutionResult {
+  const { status, files, bytes } = prepared.budget;
+  const partial = status !== "complete";
+  const summary = `Found ${hits.length} matches for "${prepared.query}"${fallback ? " (grep fallback)" : ""}.${partial ? ` Partial search: ${status}.` : ""}`;
+  return { result: { query: prepared.query, hits, status, partial, scannedFiles: files, scannedBytes: bytes },
+    displaySummary: summary, artifacts: [{ kind: "evidence", title: "Search results", summary, risk: "low" }] };
 }

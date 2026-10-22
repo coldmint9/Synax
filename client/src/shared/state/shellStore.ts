@@ -151,7 +151,9 @@ export const useShellStore = create<ShellState>((set, get) => ({
     // Deprecated compatibility projection. Theme ownership lives in themeStore.
     theme: useThemeStore.getState().mode,
     accentColor: useThemeStore.getState().activeTheme.colors.light.accent,
-    defaultHome: "global-home",
+    // Resume where the user left off; the workspace picker stays one click away
+    // and is still selectable through the "默认进入页面" setting.
+    defaultHome: "last-project",
     notifications: true,
     locale: "zh",
     editor: "system",

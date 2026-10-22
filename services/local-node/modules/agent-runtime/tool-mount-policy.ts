@@ -15,6 +15,7 @@ import { readSessionPermissionConfig } from './session-permissions.js';
  * progressive disclosure.
  */
 export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): boolean {
+  if (profile.id === 'subagent') return profile.allowedCapabilities.includes(tool.id);
   if (tool.id === 'presentation.select') return profile.id !== 'git-manager' && profile.allowedCapabilities.includes('skill.load');
   if (NATIVE_PROTOCOL_IDS.has(tool.id) && profile.id !== 'git-manager') return true;
   if (profile.allowedCapabilities.includes(tool.id)) return true;
@@ -24,6 +25,7 @@ export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): 
 
 /** Shared model/discovery eligibility; does not replace execution checks. */
 export function modelCanUseTool(profile: AgentProfile, tool: { id: string; category: string }): boolean {
+  if (profile.id === 'subagent') return profileCanUseTool(profile, tool);
   return profileCanUseTool(profile, tool) ||
     ["work.checkpoint", "context.read", "tools.invalid"].includes(tool.id) ||
     (tool.id === "verification.run" && profileCanUseTool(profile, { id: "bash" })) ||
@@ -45,6 +47,7 @@ const PLAN_TOOLS = new Set([
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
   'design.read', 'design.write', 'design.preview', 'design.transition', 'design.implement',
+  'git.merge.read', 'git.pr.read',
 ]);
 export function isPlanningReadTool(toolId: string): boolean {
   return PLAN_TOOLS.has(toolId);
@@ -55,7 +58,7 @@ export function isToolMountedForSession(session: AgentSession, tool: { id: strin
   // out of the session tool set prevents the model from spending a turn on a
   // delegation that the user has explicitly disabled.
   if (
-    tool.id === 'subagent.delegate' &&
+    tool.id.startsWith('subagent.') &&
     readSessionPermissionConfig(session.sessionMetadata).permissionOverrides?.task === 'deny'
   ) {
     return false;

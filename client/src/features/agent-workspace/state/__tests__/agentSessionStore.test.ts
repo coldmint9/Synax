@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentRuntimeApi } from "../../../../adapters/transport/agentRuntime";
-import { useAgentSessionStore } from "../agentSessionStore";
+import {
+  resetWorkspaceSessionCache,
+  useAgentSessionStore,
+} from "../agentSessionStore";
 
 vi.mock("../../../../adapters/transport/agentRuntime", () => ({
   agentRuntimeApi: {
@@ -37,12 +40,14 @@ vi.mock("../../../../adapters/transport/agentRuntime", () => ({
 }));
 
 afterEach(() => {
+  resetWorkspaceSessionCache();
   useAgentSessionStore.setState({
     projectId: null,
     draftMode: "chat",
     sessions: [],
     sessionListTotal: null,
     sessionListOffset: 0,
+    sessionListLoadedAt: 0,
     sessionListLoading: false,
     sessionListError: null,
     selectedSessionId: null,

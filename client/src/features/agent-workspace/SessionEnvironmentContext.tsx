@@ -1,20 +1,96 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { useSessionEnvironment } from "./useSessionEnvironment";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from "react";
+import { useShellStore } from "../../shared/state/shellStore";
+import {
+  useSessionEnvironmentInputs,
+  useSessionEnvironmentOutputs,
+  useSessionEnvironmentRoots,
+  useSessionEnvironmentSubagents,
+} from "./useSessionEnvironment";
+import { useWorkspaceGit } from "./workspaceGitStore";
+import {
+  buildWorkspaceEnvironmentView,
+  type WorkspaceEnvironmentView,
+} from "./workspaceEnvironmentView";
 
-type SessionEnvironmentValue = ReturnType<typeof useSessionEnvironment>;
+export interface SessionWorkspaceEnvironmentValue {
+  sessionId: string | null;
+  projectId: string | null;
+  environment: WorkspaceEnvironmentView | null;
+  loading: boolean;
+  /** Revalidate both layers: workspace Git and every session card. */
+  reload: () => Promise<void>;
+}
 
-const SessionEnvironmentContext = createContext<SessionEnvironmentValue | null>(
-  null,
-);
+const SessionEnvironmentContext =
+  createContext<SessionWorkspaceEnvironmentValue | null>(null);
+
+/**
+ * Compose the two environment layers for one session: workspace-level Git
+ * facts (shared by every session of the project) and the session's own cards.
+ */
+export function useWorkspaceEnvironment(
+  sessionId: string | null,
+  projectId?: string | null,
+): SessionWorkspaceEnvironmentValue {
+  const shellProjectId = useShellStore((state) => state.currentProjectId);
+  const gitScope = projectId ?? shellProjectId ?? null;
+  const git = useWorkspaceGit(sessionId ? gitScope : null);
+  const roots = useSessionEnvironmentRoots(sessionId);
+  const subagents = useSessionEnvironmentSubagents(sessionId);
+  const inputs = useSessionEnvironmentInputs(sessionId);
+  const outputs = useSessionEnvironmentOutputs(sessionId);
+
+  const environment = useMemo(
+    () =>
+      sessionId
+        ? buildWorkspaceEnvironmentView({
+            sessionId,
+            roots: roots.value,
+            git: git.snapshot,
+            inputs: inputs.value,
+            outputs: outputs.value,
+            subagents: subagents.value,
+          })
+        : null,
+    [sessionId, roots.value, git.snapshot, inputs.value, outputs.value, subagents.value],
+  );
+
+  const reload = useCallback(async () => {
+    await Promise.all([
+      git.reload(),
+      roots.reload(),
+      subagents.reload(),
+      inputs.reload(),
+      outputs.reload(),
+    ]);
+  }, [git.reload, roots.reload, subagents.reload, inputs.reload, outputs.reload]);
+
+  return {
+    sessionId,
+    projectId: environment?.projectId ?? gitScope,
+    environment,
+    loading:
+      roots.loading || subagents.loading || inputs.loading || outputs.loading,
+    reload,
+  };
+}
 
 export function SessionEnvironmentProvider({
   sessionId,
+  projectId,
   children,
 }: {
   sessionId: string | null;
+  projectId?: string | null;
   children: ReactNode;
 }) {
-  const value = useSessionEnvironment(sessionId);
+  const value = useWorkspaceEnvironment(sessionId, projectId);
   return (
     <SessionEnvironmentContext.Provider value={value}>
       {children}
@@ -23,13 +99,13 @@ export function SessionEnvironmentProvider({
 }
 
 /**
- * Use the shared workspace poller when a provider exists, while keeping the
+ * Use the shared workspace provider when one exists, while keeping the
  * standalone hook available for focused component tests and isolated renders.
  */
 export function useSessionWorkspaceEnvironment(
   sessionId: string | null,
-): SessionEnvironmentValue {
+): SessionWorkspaceEnvironmentValue {
   const provided = useContext(SessionEnvironmentContext);
-  const owned = useSessionEnvironment(provided ? null : sessionId);
+  const owned = useWorkspaceEnvironment(provided ? null : sessionId);
   return provided ?? owned;
 }

@@ -1,0 +1,47 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { SubagentSettings } from "./SubagentSettings";
+import { subagentsApi, type CustomSubagent } from "../../../adapters/transport/subagents";
+
+const saved: CustomSubagent = { id: "custom-review", name: "审查助手", description: "检查并发问题", instructions: "给出具体的代码证据。", access: "inherit", enabled: true, createdAt: "now", updatedAt: "now" };
+beforeEach(() => { vi.spyOn(subagentsApi, "list").mockResolvedValue({ items: [] }); });
+afterEach(() => vi.restoreAllMocks());
+it("creates, edits and deletes a reusable subagent with visible feedback", async () => {
+  const create = vi.spyOn(subagentsApi, "create").mockResolvedValue({ item: saved });
+  const update = vi.spyOn(subagentsApi, "update").mockResolvedValue({ item: { ...saved, name: "并发审查" } });
+  const remove = vi.spyOn(subagentsApi, "remove").mockResolvedValue({ ok: true });
+  render(<SubagentSettings />);
+  await screen.findByText("还没有自定义子代理");
+  await userEvent.click(screen.getByRole("button", { name: "新建子代理" }));
+  let dialog = within(screen.getByRole("dialog"));
+  fireEvent.change(dialog.getByLabelText("名称"), { target: { value: saved.name } });
+  fireEvent.change(dialog.getByLabelText("用途"), { target: { value: saved.description } });
+  fireEvent.change(dialog.getByLabelText("工作指令"), { target: { value: saved.instructions } });
+  await userEvent.click(dialog.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: saved.name, instructions: saved.instructions, access: "inherit" })));
+  await screen.findByRole("heading", { name: saved.name });
+  await userEvent.click(screen.getByRole("button", { name: "编辑 审查助手" }));
+  dialog = within(screen.getByRole("dialog"));
+  fireEvent.change(dialog.getByLabelText("名称"), { target: { value: "并发审查" } });
+  await userEvent.click(dialog.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ name: "并发审查" })));
+  await userEvent.click(await screen.findByRole("button", { name: "删除 并发审查" }));
+  await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "删除" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith(saved.id));
+  await screen.findByText("还没有自定义子代理");
+}, 20_000);
+it("keeps unsaved fields and reports server validation errors", async () => {
+  vi.spyOn(subagentsApi, "create").mockRejectedValue(new Error("Invalid write scope"));
+  render(<SubagentSettings />);
+  await userEvent.click(screen.getByRole("button", { name: "新建子代理" }));
+  const dialog = within(screen.getByRole("dialog"));
+  await userEvent.click(dialog.getByRole("button", { name: "保存" }));
+  expect(await dialog.findByText("请填写名称、用途和指令。")).toHaveAttribute("role", "alert");
+  fireEvent.change(dialog.getByLabelText("名称"), { target: { value: saved.name } });
+  fireEvent.change(dialog.getByLabelText("用途"), { target: { value: saved.description } });
+  fireEvent.change(dialog.getByLabelText("工作指令"), { target: { value: saved.instructions } });
+  await userEvent.click(dialog.getByRole("button", { name: "保存" }));
+  await dialog.findByText("Invalid write scope");
+  expect(dialog.getByLabelText("工作指令")).toHaveValue(saved.instructions);
+}, 20_000);

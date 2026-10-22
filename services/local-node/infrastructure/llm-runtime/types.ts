@@ -1,6 +1,6 @@
 import type { InputModality } from "../../modules/agent-runtime/content-parts.js";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ToolCallRepairFunction, ToolChoice, ToolSet } from "ai";
+import type { ModelMessage } from "./contracts.js";
+import type { ToolChoice, ToolSet } from "./contracts.js";
 import type {
   ApiFormat,
   GlobalConfig,
@@ -77,7 +77,7 @@ export type LlmGatewayMessage =
   | Extract<ModelMessage, { role: "user" | "assistant" | "tool" }>;
 
 export interface LlmGatewayRequest {
-  providerOptions?: import("@ai-sdk/provider-utils").ProviderOptions;
+  providerOptions?: import("./contracts.js").ProviderOptions;
   projectId?: string;
   purpose: LlmPurpose | string;
   model?: string;
@@ -93,7 +93,6 @@ export interface LlmGatewayRequest {
   toolChoice?: ToolChoice<ToolSet>;
   activeTools?: string[];
   maxRetries?: number;
-  repairToolCall?: ToolCallRepairFunction<ToolSet>;
   cacheControl?: boolean;
   /** Saved marker-free prefix identity for the previous runtime reminder. */
   previousHistoryAnchor?: { version: 1; fingerprint: string };
@@ -114,7 +113,7 @@ export interface LlmGatewayRequest {
 
 /**
  * OpenAI Responses controls that must survive the generic gateway boundary.
- * The AI SDK's OpenAI provider consumes these as providerOptions.openai.
+ * Rust maps these controls to the selected provider protocol.
  */
 export interface LlmResponseOptions {
   conversation?: string;

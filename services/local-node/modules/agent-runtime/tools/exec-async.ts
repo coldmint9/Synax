@@ -17,6 +17,9 @@ import { stopWslOwnedProcess } from "../../../infrastructure/wsl/wsl.js";
  */
 
 export interface AsyncCommandOptions {
+  /** Return false to stop a bounded streaming consumer once it has enough data. */
+  onStdout?: (chunk: string) => boolean | void;
+  stopOnOutputLimit?: boolean;
   signal?: AbortSignal;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -33,6 +36,7 @@ export interface AsyncCommandOptions {
 }
 
 export interface AsyncCommandResult {
+  stoppedEarly?: boolean;
   status: number | null;
   stdout: string;
   stderr: string;
@@ -137,6 +141,8 @@ export function runCommand(
     let timedOut = false;
     let settled = false;
     let aborted = false;
+    let stoppedEarly = false;
+    const decoder = new TextDecoder();
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const child = spawnOwnedProcess(command, args, {
@@ -165,7 +171,11 @@ export function runCommand(
       }
       try {
         if (useProcessGroup) process.kill(-child.pid, signal);
-        else child.kill(signal);
+        else {
+          // Killing cmd.exe alone leaves its children holding stdout open.
+          const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+          killer.on("error", () => { try { child.kill(signal); } catch { /* already gone */ } });
+        }
       } catch {
         try {
           child.kill(signal);
@@ -203,9 +213,14 @@ export function runCommand(
       child.once("close", () => clearTimeout(timeout));
     }
 
-    child.stdout?.on("data", (chunk: Buffer) =>
-      captureChunk(stdout, chunk, maxBufferBytes),
-    );
+    child.stdout?.on("data", (chunk: Buffer) => {
+      captureChunk(stdout, chunk, maxBufferBytes);
+      if (!stoppedEarly && (options.onStdout?.(decoder.decode(chunk, { stream: true })) === false ||
+          options.stopOnOutputLimit && stdout.truncated)) {
+        stoppedEarly = true;
+        killTree("SIGKILL");
+      }
+    });
     child.stderr?.on("data", (chunk: Buffer) =>
       captureChunk(stderr, chunk, maxBufferBytes),
     );
@@ -221,6 +236,8 @@ export function runCommand(
     child.on("error", (error: NodeJS.ErrnoException) => {
       spawnError = error;
       if (child.pid === undefined) cleanup();
+      // A spawned process still owns its slot until its stdio/tree has closed.
+      if (child.pid !== undefined) return;
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
@@ -238,6 +255,7 @@ export function runCommand(
     });
 
     child.on("close", (code, signal) => {
+      if (timedOut || aborted || stoppedEarly) killTree("SIGKILL");
       cleanup();
       if (settled) return;
       settled = true;
@@ -248,6 +266,7 @@ export function runCommand(
         stderr: captureText(stderr),
         error: aborted ? abortError() : spawnError,
         timedOut,
+        stoppedEarly,
         stdoutTruncated: stdout.truncated,
         stderrTruncated: stderr.truncated,
         stdoutBytes: stdout.total,

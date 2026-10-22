@@ -234,9 +234,9 @@ export class PermissionPolicy {
     };
   }
 
-  evaluateShellCommand(
+  resolveShellCommand(
     input: Omit<PermissionRequestInput, "pattern"> & { command: string },
-  ): PermissionDecision {
+  ) {
     const invocations = parseBashInvocations(input.command);
     const evaluated = (
       invocations.length > 0
@@ -270,6 +270,13 @@ export class PermissionPolicy {
       baseAction === "deny"
         ? matched.reason
         : (review?.reason ?? matched.reason);
+    return { action, reason, review, granted, invocations };
+  }
+
+  evaluateShellCommand(
+    input: Omit<PermissionRequestInput, "pattern"> & { command: string },
+  ): PermissionDecision {
+    const { action, reason, review, granted, invocations } = this.resolveShellCommand(input);
     const patterns = invocations.map((invocation) => invocation.pattern);
     const now = nowIso();
 

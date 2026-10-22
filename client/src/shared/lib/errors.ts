@@ -3,7 +3,6 @@ import {
   type NotificationType,
 } from "../state/notificationStore";
 import {
-  notifyConnectivityFailure,
   useApiConnectivityStore,
 } from "./apiConnectivity";
 import {
@@ -118,7 +117,6 @@ function isNetworkAppError(err: AppError): boolean {
 
 function routeConnectivityError(message: string): void {
   console.error("[connectivity]", message);
-  notifyConnectivityFailure(message);
 }
 
 const LLM_CONFIG_ERROR_CODES = new Set([

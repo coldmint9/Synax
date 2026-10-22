@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createOpenAI } from '@ai-sdk/openai';
-import { streamText } from 'ai';
-import { applyUsageMiddleware } from '../middleware/usage.js';
+import { createRustOpenAI as createOpenAI } from '../../../../test-fixtures/rust-provider.js';
+import { generateText } from '../../../../test-fixtures/native-generation.js';
 import { cacheUsageSample } from '../../../modules/agent-runtime/cache-usage.js';
 
 describe('Responses HTTP SSE to cache statistics', () => {
@@ -17,12 +16,11 @@ describe('Responses HTTP SSE to cache statistics', () => {
         output: [], incomplete_details: null, usage,
       } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } },
     ) });
-    const result = streamText({ model: applyUsageMiddleware(provider.responses('gpt-5.6-sol'), { protocol: 'openai-responses' }), prompt: 'fixture', maxRetries: 0 });
-    await result.consumeStream();
-    const sample = cacheUsageSample({ stepId: 'test', measuredAt: '', model: 'gpt-5.6-sol', unit: 'request' }, await result.usage, { source: 'sdk', providerMetadata: await result.providerMetadata });
+    const result = await generateText({ model: provider.responses('fixture'), prompt: 'fixture', maxRetries: 0 });
+    const sample = cacheUsageSample({ stepId: 'test', measuredAt: '', model: 'gpt-5.6-sol', unit: 'request' }, await result.usage, { source: 'native', providerMetadata: await result.providerMetadata });
     expect(sample.inputTokens).toBe(88169);
     expect(sample.cacheReadTokens).toBe(cached ?? null);
     expect(sample.ratio).toBe(cached === undefined ? null : cached / 88169);
-    expect(sample.cacheSource).toBe(cached === undefined ? 'sdk:inputTokenDetails.cacheReadTokens' : 'raw:input_tokens_details.cached_tokens');
+    expect(sample.cacheSource).toBe(cached === undefined ? 'native:cachedInputTokens' : 'raw:input_tokens_details.cached_tokens');
   });
 });

@@ -67,6 +67,7 @@ export interface MergeRequest {
   updatedAt: string;
   checks: MergeCheckConfig[];
   checkResults: MergeCheckResult[];
+  skippedChecks?: { tree: string; at: string };
   autoFinalize: boolean;
   allowCheckedOutTarget: boolean;
   error?: string;

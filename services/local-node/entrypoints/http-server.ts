@@ -4,15 +4,16 @@ import { attachTerminalSockets } from "../infrastructure/terminals/terminal-sock
 import { terminalRoutes } from "../transport/http/terminals.js";
 import { terminalManager } from "../infrastructure/terminals/terminal-manager.js";
 import { runtimeAssetRoutes } from "../transport/http/runtime-assets.js";
-import { sweepAssets, hydrateRuntimeAssets } from "../modules/agent-runtime/media-assets.js";
+import { sweepAssets } from "../modules/agent-runtime/media-assets.js";
 import type { Server } from "node:http";
 import { stopHostProcesses } from "../modules/agent-runtime/process-ownership.js";
 import { randomUUID } from "node:crypto";
 import { businessStore } from "../infrastructure/persistence/business-store.js";
 import {
-  isDurableRuntimeCheckpoint,
-  recoverRuntime,
+  recoverRuntimeSession,
+  needsRuntimeRecovery,
 } from "../modules/agent-runtime/runtime-recovery.js";
+import { SessionRecovery, installSessionRecovery, stopSessionRecovery } from '../modules/agent-runtime/session-recovery.js';
 import { runCoordinator } from "../modules/agent-runtime/run-coordinator.js";
 import path from "node:path";
 import { installRuntimeAccess } from "../transport/http/middleware/runtime-access.js";
@@ -43,8 +44,12 @@ import {
   ensureSynaxAgentRegistered,
   ensureLegacyGoalProfileRegistered,
 } from "../modules/agent-runtime/synax/index.js";
-import { registerSessionTitleHooks } from "../modules/agent-runtime/session-title-service.js";
-import { startPermissionTimeoutSweeper } from "../modules/agent-runtime/permission-timeout-sweeper.js";
+import {
+  ensureSessionTitleGenerated,
+  needsGeneratedSessionTitle,
+  registerSessionTitleHooks,
+} from "../modules/agent-runtime/session-title-service.js";
+import { startPermissionTimeoutSweeper, stopPermissionTimeoutSweeper } from "../modules/agent-runtime/permission-timeout-sweeper.js";
 import { startSessionArchiveRetention } from "../modules/agent-runtime/session-archive-retention.js";
 import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/browser-manager.js";
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
@@ -76,7 +81,10 @@ installRuntimeAccess(app, {
 
 // Refresh cross-process metadata before requests and commit before returning.
 app.use('/api/*', async (c, next) => {
-  await Promise.all([businessStore.refresh(),hydrateRuntimeAssets(),agentRuntimeStore.hydrateSessions()]);
+  // Health/logs remain responsive while history is loading. Other routes only
+  // refresh the small policy/configuration cache, never all sessions/assets.
+  if (c.req.path === '/api/health' || c.req.path.startsWith('/api/logs')) return next();
+  await businessStore.refresh();
   await next();
   await businessStore.flush();
 });
@@ -150,35 +158,72 @@ let shuttingDown = false;
 let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 
 let stopSessionArchiveRetention = () => {};
+let stopInteractionRecovery: () => Promise<void> = async () => {};
+const startupLifetime = new AbortController();
+let sessionRecovery: SessionRecovery;
+async function startupPhase<T>(phase: string, work: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  pinoLogger.info({ event: 'runtime.startup_phase', phase, state: 'starting' }, 'Runtime startup phase');
+  const result = await work();
+  pinoLogger.info({ event: 'runtime.startup_phase', phase, state: 'completed', durationMs: Math.round(performance.now() - started) }, 'Runtime startup phase');
+  return result;
+}
+function configureSessionRecovery(includeCurrentHost = false): SessionRecovery {
+  const recovery = new SessionRecovery(async sessionId => {
+    await recoverRuntimeSession(runtimeHost.hostId, sessionId, includeCurrentHost);
+  });
+  sessionRecovery = recovery;
+  installSessionRecovery(recovery);
+  return recovery;
+}
+
+async function loadSessionsInBackground(recovery: SessionRecovery): Promise<void> {
+  await startupPhase('session_index', () => agentRuntimeStore.hydrateSessions(startupLifetime.signal));
+  if (shuttingDown || sessionRecovery !== recovery) return;
+  await recovery.warm(agentRuntimeStore.listSessions({ limit: Infinity }).filter(needsRuntimeRecovery).map(session => session.id), (sessionId, error) => {
+    pinoLogger.error({ event: 'runtime.session_recovery_failed', sessionId, error }, 'Session recovery failed; other sessions remain available');
+  });
+  if (shuttingDown || sessionRecovery !== recovery) return;
+  for (const session of agentRuntimeStore.listSessions({ limit: Infinity })) {
+    if (needsGeneratedSessionTitle(session)) ensureSessionTitleGenerated(session.id);
+  }
+  stopSessionArchiveRetention = startSessionArchiveRetention();
+}
+
+function backgroundSessions(recovery: SessionRecovery): void {
+  void loadSessionsInBackground(recovery).catch(error => {
+    if (!shuttingDown) pinoLogger.error({ error }, 'Background session loading failed');
+  });
+}
 async function startRuntime(): Promise<void> {
   process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
   if (process.env.NODE_ENV !== 'test') process.env.SYNAX_AGENT_LOOP_ENGINE ??= 'rust';
-  rustRuntimeSidecar = await startRustRuntimeSidecar();
-  await businessStore.refresh();
-  await agentRuntimeStore.hydrateSessions();
-  await hydrateRuntimeAssets();
+  const recovery = configureSessionRecovery();
+  rustRuntimeSidecar = await startupPhase('rust_runtime', () => startRustRuntimeSidecar(async () => {
+    await stopSessionRecovery();
+    if (!shuttingDown) backgroundSessions(configureSessionRecovery(true));
+  }));
+  if (shuttingDown) { await stopRustRuntimeSidecar(rustRuntimeSidecar); return; }
+  await startupPhase('business_store', () => businessStore.refresh());
+  if (shuttingDown) return;
+  // Small metadata is ready for synchronous policy checks. Historical session
+  // replay and recovery do not participate in the API readiness barrier.
+  const mediaJobs = recoverMediaJobs();
+  if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
+  await startServer();
+  backgroundSessions(recovery);
   // Index existing workspace roots after the runtime is ready. The scan is
   // intentionally fire-and-forget so app startup and the first HTTP response
   // never wait for a large repository.
   void workspaceIndexService.start();
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
-  const recovery = await recoverRuntime(runtimeHost.hostId);
-  const mediaJobs = recoverMediaJobs();
-  if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
-  if (recovery.reviewed)
-    pinoLogger.warn(
-      { count: recovery.reviewed },
-      "interrupted executions reconciled or isolated to their original sessions",
-    );
   startPermissionTimeoutSweeper();
-  stopSessionArchiveRetention = startSessionArchiveRetention();
-  startInteractionRecovery();
-
-  if (!shuttingDown) startServer(recovery.resumable);
+  stopInteractionRecovery = startInteractionRecovery();
 }
 
-function startServer(resumable: string[]): void {
+function startServer(): Promise<void> {
+  return new Promise((resolve, reject) => {
   httpServer = serve(
     {
       fetch: app.fetch,
@@ -187,8 +232,6 @@ function startServer(resumable: string[]): void {
     },
     (address) => {
       process.env.SYNAX_TERMINAL_HOST_ORIGIN = `http://127.0.0.1:${address.port}`;
-      // Recovered tools must see the actual bound origin, never port zero.
-      for (const sessionId of resumable) runCoordinator.resume(sessionId);
       pinoLogger.info(
         { logFile: API_SESSION_LOG_FILE },
         `Server listening on http://localhost:${address.port}`,
@@ -196,8 +239,10 @@ function startServer(resumable: string[]): void {
       if (process.env.SYNAX_DESKTOP_SIDECAR === "1") {
         process.stdout.write(`SYNAX_DESKTOP_READY:${address.port}\n`);
       }
+      resolve();
     },
   ) as Server;
+  httpServer.once('error', reject);
   closeTerminalSockets = attachTerminalSockets(httpServer);
   closeObservationSockets = observations.attach(httpServer);
   httpServer.on("upgrade", (request, socket) => {
@@ -206,20 +251,23 @@ function startServer(resumable: string[]): void {
       if (pathname !== OBSERVATION_SOCKET_PATH && pathname !== "/api/terminals/socket") socket.destroy();
     } catch { socket.destroy(); }
   });
+  });
 }
 
 async function shutdownRuntime(): Promise<void> {
   stopSessionArchiveRetention();
   if (shuttingDown) return;
   shuttingDown = true;
+  const maintenanceStopped = Promise.all([stopPermissionTimeoutSweeper(), stopInteractionRecovery()]);
+  startupLifetime.abort();
   closeObservationSockets?.();
   closeTerminalSockets?.();
   httpServer?.closeAllConnections();
   httpServer?.close();
+  await stopSessionRecovery();
+  await maintenanceStopped;
   let failed = false;
   for (const id of runCoordinator.activeSessionIds()) {
-    const session = agentRuntimeStore.tryGetSession(id);
-    if (session && isDurableRuntimeCheckpoint(session.status)) continue;
     try {
       await runCoordinator.interrupt(id, "Runtime host is shutting down.");
     } catch (error) {
@@ -243,6 +291,10 @@ async function shutdownRuntime(): Promise<void> {
   }
   await closeAllBrowserSessions("Runtime host is shutting down.");
   mcpClientManager.closeAll();
+  // Deferred title and session patches may be queued outside an HTTP request.
+  // Drain them before stopping the sidecar, otherwise the next launch restores
+  // the pre-update placeholder values.
+  await agentRuntimeStore.flush();
   await businessStore.flush();
   await stopRustRuntimeSidecar(rustRuntimeSidecar);
   rustRuntimeSidecar = null;

@@ -91,7 +91,7 @@ const visualizationIcons = Object.fromEntries(
 writeFileSync(
   fileURLToPath(
     new URL(
-      "../client/src/features/visualizations/icons.json",
+      "../client/src/shared/interactive/icons.json",
       import.meta.url,
     ),
   ),
@@ -100,7 +100,7 @@ writeFileSync(
 
 writeFileSync(
   new URL(
-    "../client/src/features/visualizations/icons.LICENSE",
+    "../client/src/shared/interactive/icons.LICENSE",
     import.meta.url,
   ),
   readFileSync(

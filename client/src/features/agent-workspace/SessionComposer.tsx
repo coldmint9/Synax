@@ -1,4 +1,5 @@
 import "./composerModes.css";
+import ComposerGitActions from "./git-actions/ComposerGitActions";
 import { Target } from "lucide-react";
 import { NewSessionScene } from "./NewSessionScene";
 import { welcomePlaceholderDelay } from "./welcomeTyping";
@@ -38,6 +39,7 @@ import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
+import { readSessionContextUsage } from "./contextUsage";
 import {
   readLastPermissionTier,
   rememberPermissionTier,
@@ -206,7 +208,10 @@ export function SessionComposer({
   // hydration pass never resurrects a just-removed attachment.
   const contextPartsKey = JSON.stringify(media.parts);
   useEffect(() => {
-    if (!isDraft || submitting || !draftMediaHydrated) return;
+    // Hold the snapshot while uploads run so the cache never records a
+    // half-attached draft.
+    if (!isDraft || submitting || !draftMediaHydrated || media.uploading)
+      return;
     saveDraftComposerContext(projectId, {
       parts: JSON.parse(contextPartsKey) as RuntimeContentPart[],
       references,
@@ -216,6 +221,7 @@ export function SessionComposer({
     projectId,
     submitting,
     draftMediaHydrated,
+    media.uploading,
     contextPartsKey,
     references,
   ]);
@@ -429,8 +435,8 @@ export function SessionComposer({
     if (capability !== "chat") return;
     const message = content.trim();
     if (
-      (!message && !media.parts.length) ||
-      !media.ready ||
+      (!message && !media.items.length) ||
+      media.blocked ||
       readSubmitting() ||
       editingQueue ||
       submitLock.current === viewScope.current ||
@@ -451,19 +457,27 @@ export function SessionComposer({
       backendId === "native"
         ? formatModelReference(providerId, modelId)
         : cliModel !== "default" ? cliModel : undefined;
-    const body = {
-      message,
-      contentParts: media.parts.length
-        ? [
-            ...(message ? [{ type: "text" as const, text: message }] : []),
-            ...media.parts,
-          ]
-        : undefined,
-      model,
-      reasoningEffort,
-      references,
-    };
     try {
+      // Attachments upload in the background; the send waits for whichever
+      // ones are still in flight instead of disabling the composer.
+      const uploaded = media.hasPendingUploads()
+        ? await media.waitForUploads()
+        : {
+            parts: media.parts,
+            itemIds: media.items.map((item) => item.id),
+          };
+      const body = {
+        message,
+        contentParts: uploaded.parts.length
+          ? [
+              ...(message ? [{ type: "text" as const, text: message }] : []),
+              ...uploaded.parts,
+            ]
+          : undefined,
+        model,
+        reasoningEffort,
+        references,
+      };
       if (isDraft) {
         const created =
           createdDraftRef.current ??
@@ -500,7 +514,8 @@ export function SessionComposer({
       }
       if (!isDraft || isCurrent()) {
         setContent("");
-        media.clear();
+        // Attachments added while this send waited stay in the composer.
+        media.clear(uploaded.itemIds);
         setReferences([]);
       }
     } catch (error) {
@@ -783,6 +798,7 @@ export function SessionComposer({
       defaultExpanded={isCentered}
       providerId={providerId}
       modelId={modelId}
+      contextUsage={readSessionContextUsage(session)}
       capability={capability}
       onModelSelect={(selection) => {
         if (backendId !== "native") {
@@ -825,6 +841,27 @@ export function SessionComposer({
   );
 
   const goalMode = backendId === "native" && mode === "goal";
+
+  const gitActions = <ComposerGitActions
+    session={session}
+    projectId={projectId}
+    disabled={readingHistory || submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
+    ensureSession={async () => {
+      if (session) return session;
+      if (createdDraftRef.current) return createdDraftRef.current;
+      const created = await submitSessionDraft(projectId, {
+        message: "处理本地 Git 与远程 PR", prompt: "处理本地 Git 与远程 PR", backendId,
+        permissionTier: cliBackend ? undefined : permissionTier,
+        mode: "chat", gitWorkspace,
+      });
+      createdDraftRef.current = created;
+      return created;
+    }}
+    onOpenConversation={(id) => {
+      void refreshSessions();
+      navigate(sessionPath(projectId, id));
+    }}
+  />;
 
   const composerShell = (
     <div
@@ -943,11 +980,12 @@ export function SessionComposer({
         <NewSessionScene key={viewKey}>
           <NewSessionWelcome finish={Boolean(content)} />
           <div className="w-full min-w-0">
-            <div data-welcome-enter="">{composerShell}</div>
+            <div data-welcome-enter="">{gitActions}{composerShell}</div>
           </div>
         </NewSessionScene>
       ) : (
         <div className="relative mx-auto w-full min-w-0 max-w-3xl">
+          {gitActions}
           {statusSlot}
           {composerShell}
         </div>

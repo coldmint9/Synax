@@ -55,8 +55,8 @@ const ACTIVE_STATUSES = new Set<AgentSession["status"]>([
   "waiting_permission",
   "waiting_input",
 ]);
-// 只有会话停在这些边界上时才可能新增 checkpoint：运行中的 delta、工具调用和
-// 步骤推进都不会改变可回滚的消息边界，因此不值得再请求一次。
+// 检查点只在稳定边界预取，避免流式响应期间重复读取。运行中的分叉由
+// TurnBody 提供消息/步骤定位，用户选择工作区后再按需读取一次摘要。
 const SETTLED_STATUSES = new Set<AgentSession["status"]>([
   "completed",
   "failed",
@@ -98,23 +98,8 @@ function findCheckpoint(
       ? c.messageId === messageId
       : stepId && c.kind === "reply" && c.stepId === stepId,
   );
-  if (!found && summary.rollbackEnabled === false) {
-    const reply = messages.find((message) =>
-      messageId ? message.id === messageId : message.stepId === stepId,
-    );
-    if (reply?.role === "assistant" && !reply.metadata?.partial)
-      return {
-        id: `message:${reply.id}`,
-        kind: "reply",
-        messageId: reply.id,
-        stepId: reply.stepId,
-        available: true,
-        reason: null,
-        canRollback: false,
-        hasLaterHistory: false,
-        initialInput: false,
-      };
-  }
+  // An empty checkpoint list says nothing about whether this is a fork.
+  // Only stored checkpoints can be previewed/applied by the history API.
   const projected = messages.find(
     (message) => message.id === found?.messageId,
   )?.historyProjection;
@@ -472,13 +457,20 @@ export function SessionHistoryProvider({
           ? summary.stopRequired && session && ACTIVE_STATUSES.has(session.status)
             ? null
             : summary.reason
-          : notLoaded,
+          : session && ACTIVE_STATUSES.has(session.status)
+            ? null
+            : notLoaded,
+      // A running source can be forked from any checkpoint already persisted.
+      // Keep the action usable while the lightweight checkpoint query is in
+      // flight; request() resolves the exact checkpoint before applying.
       forkReason:
         summary && summary.sessionId === sessionId
           ? summary.forkReason !== undefined
             ? summary.forkReason
             : summary.reason
-          : notLoaded,
+          : session && ACTIVE_STATUSES.has(session.status)
+            ? null
+            : notLoaded,
       running: Boolean(session && ACTIVE_STATUSES.has(session.status)),
       busy: Boolean(pending) || executing,
       error,

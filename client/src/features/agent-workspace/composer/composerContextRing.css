@@ -1,0 +1,171 @@
+.composer-context-ring {
+  --profile-messages: light-dark(#5c8f78, #91c3a8);
+  --profile-tools: light-dark(#6f89a8, #9bb5d5);
+  --profile-mcp: light-dark(#8d78a6, #bba6d3);
+  --profile-skills: light-dark(#a98a61, #d0b486);
+  --profile-system: light-dark(#7d8580, #a8b0ab);
+}
+
+.composer-context-ring__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+
+.composer-context-ring__trigger:hover,
+.composer-context-ring__trigger:focus-visible {
+  background: hsl(var(--foreground) / 0.06);
+}
+
+.composer-context-ring__trigger:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+.composer-context-ring__track {
+  stroke: hsl(var(--foreground) / 0.16);
+}
+
+.composer-context-ring__value {
+  stroke: hsl(var(--accent-hsl));
+  transition: stroke-dashoffset 220ms ease;
+}
+
+.composer-context-ring__value[data-tone="warning"] {
+  stroke: var(--warning);
+}
+
+.composer-context-ring__value[data-tone="danger"] {
+  stroke: var(--danger);
+}
+
+.composer-context-ring__panel {
+  z-index: 1500;
+  width: 17rem;
+  max-width: calc(100vw - 16px);
+  padding: 0.75rem 0.8rem 0.7rem;
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 0.75rem;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow: 0 8px 24px rgb(var(--theme-shadow-rgb) / 0.18);
+  font-family: inherit;
+}
+
+.composer-context-ring__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: hsl(var(--foreground) / 0.85);
+}
+
+.composer-context-ring__head-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--accent-hsl));
+}
+
+.composer-context-ring__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.15rem;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted-foreground));
+}
+
+.composer-context-ring__time {
+  font-size: 9px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+.composer-context-ring__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.65rem 0 0;
+  padding: 0.6rem 0 0;
+  border-top: 1px solid hsl(var(--border-hsl) / 0.4);
+  list-style: none;
+}
+
+.composer-context-ring__rows li {
+  display: grid;
+  grid-template-columns: 0.45rem minmax(0, 1fr) auto 2.4rem;
+  grid-template-areas:
+    "dot label count share"
+    "bar bar bar bar";
+  align-items: center;
+  gap: 0.1rem 0.4rem;
+  font-size: 10px;
+  color: hsl(var(--foreground) / 0.78);
+}
+
+.composer-context-ring__dot {
+  grid-area: dot;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+}
+
+.composer-context-ring__label {
+  grid-area: label;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-context-ring__count {
+  grid-area: count;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.composer-context-ring__share {
+  grid-area: share;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted-foreground));
+}
+
+.composer-context-ring__bar {
+  grid-area: bar;
+  height: 2px;
+  margin: 0.1rem 0 0.2rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: hsl(var(--foreground) / 0.07);
+}
+
+.composer-context-ring__bar>span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.composer-context-ring__note {
+  margin: 0.5rem 0 0;
+  font-size: 9px;
+  line-height: 1.35;
+  color: hsl(var(--muted-foreground) / 0.65);
+}
+
+.dark .composer-context-ring__trigger {
+  color: hsl(var(--muted-foreground));
+}

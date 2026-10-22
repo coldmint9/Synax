@@ -1042,7 +1042,11 @@ export async function createAndSwitchGitBranch(
     if (await branchExists(context, branch))
       throw new GitWorkspaceError(`Branch "${branch}" already exists.`, 409);
     await assertCheckoutSafe(context);
-    await git(context.location, context.root, ["switch", "-c", branch]);
+    const base = /^(feature(?:\/|$)|codex\/)/.test(branch)
+      ? await branchExists(context, "master") ? "master" : await branchExists(context, "main") ? "main" : null
+      : undefined;
+    if (base === null) throw new GitWorkspaceError("Feature branches require a local master or main production baseline.", 409);
+    await git(context.location, context.root, ["switch", "-c", branch, ...(base ? [base] : [])]);
     return (
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();

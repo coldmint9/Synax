@@ -277,87 +277,26 @@ describe("provider protocol preservation", () => {
       usage: expect.objectContaining({
         inputTokens: 100,
         outputTokens: 20,
-        normalization: expect.objectContaining({ version: 1, source: "sdk" }),
+        normalization: expect.objectContaining({ version: 1, source: "native" }),
       }),
     });
   });
 });
 
-describe("idle watchdog for silently stalled upstream streams", () => {
-  const previousTimeout = process.env.AGENT_LLM_STREAM_IDLE_TIMEOUT_MS;
-  const delay = (ms: number) =>
-    new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-  beforeEach(() => {
-    process.env.AGENT_LLM_STREAM_IDLE_TIMEOUT_MS = "25";
-  });
-
-  afterEach(() => {
-    if (previousTimeout === undefined)
-      delete process.env.AGENT_LLM_STREAM_IDLE_TIMEOUT_MS;
-    else process.env.AGENT_LLM_STREAM_IDLE_TIMEOUT_MS = previousTimeout;
-  });
-
-  it(
-    "aborts and retries a stalled stream instead of hanging the session forever",
-    { timeout: 20_000 },
-    async () => {
-      const callsBefore =
-        gateway.createGatewayStreamForSelection.mock.calls.length;
-      gateway.createGatewayStreamForSelection
-        .mockImplementationOnce(async () => ({
-          fullStream: (async function* () {
-            yield { type: "text-delta", id: "t", text: "partial" };
-            // Simulate an upstream that keeps the socket open but never sends
-            // another byte — no error, no close, no finish event.
-            await new Promise<never>(() => {});
-          })(),
-        }))
-        .mockImplementationOnce(async () => ({
-          fullStream: (async function* () {
-            yield { type: "text-delta", id: "t", text: "Recovered" };
-            yield { type: "finish-step", finishReason: "stop", usage: {} };
-            yield { type: "finish", finishReason: "stop", totalUsage: {} };
-          })(),
-        }));
-
-      const events: LoopModelStreamEvent[] = [];
-      for await (const event of streamLoopModelStep(input)) events.push(event);
-
-      expect(gateway.createGatewayStreamForSelection.mock.calls.length).toBe(
-        callsBefore + 2,
-      );
-      expect(events.some((event) => event.type === "retry_status")).toBe(true);
-      expect(events).toContainEqual({ type: "text_delta", delta: "Recovered" });
-      const completed = events.find((event) => event.type === "step_complete");
-      expect(completed?.type === "step_complete" && completed.step.message).toBe(
-        "Recovered",
-      );
-    },
-  );
-
-  it("keeps streaming when gaps between events stay below the idle threshold", async () => {
-    process.env.AGENT_LLM_STREAM_IDLE_TIMEOUT_MS = "5000";
-    const callsBefore =
-      gateway.createGatewayStreamForSelection.mock.calls.length;
+describe("native retry ownership", () => {
+  it("forwards retry state without opening another host request", async () => {
+    const callsBefore = gateway.createGatewayStreamForSelection.mock.calls.length;
+    const retry = { reason: "upstream" as const, phase: "waiting" as const, group: 1, attempt: 1, maxRetries: 10, nextRetryAt: Date.now() + 2000, error: "503" };
     gateway.createGatewayStreamForSelection.mockImplementationOnce(async () => ({
       fullStream: (async function* () {
-        yield { type: "text-delta", id: "t", text: "a" };
-        await delay(30);
-        yield { type: "text-delta", id: "t", text: "b" };
-        await delay(30);
-        yield { type: "finish-step", finishReason: "stop", usage: {} };
-        yield { type: "finish", finishReason: "stop" };
+        yield { type: "retry_status", retry };
+        yield { type: "text-delta", id: "t", text: "Recovered" };
+        yield { type: "finish", finishReason: "stop", totalUsage: {} };
       })(),
     }));
-
     const events: LoopModelStreamEvent[] = [];
     for await (const event of streamLoopModelStep(input)) events.push(event);
-
-    expect(gateway.createGatewayStreamForSelection.mock.calls.length).toBe(
-      callsBefore + 1,
-    );
-    expect(events.some((event) => event.type === "retry_status")).toBe(false);
-    expect(events).toContainEqual({ type: "text_delta", delta: "b" });
+    expect(events).toContainEqual({ type: "retry_status", retry });
+    expect(gateway.createGatewayStreamForSelection.mock.calls.length).toBe(callsBefore + 1);
   });
 });

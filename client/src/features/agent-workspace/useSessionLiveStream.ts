@@ -29,10 +29,10 @@ export function useSessionLiveStream(sessionId: string | null) {
 
     // openPanel owns initial loading and cache freshness. Revalidating on every
     // selection defeats the cache and queues a duplicate transcript request.
+    // After a reconnect only the open session is reconciled: its callbacks may
+    // have been missed, while the page itself is never re-read.
     if (reconnecting) {
-      void useAgentSessionStore
-        .getState()
-        .refreshSessions({ joinPending: true });
+      void useAgentSessionStore.getState().syncSessionSummary(sessionId);
       void useAgentSessionStore.getState().refreshDetail();
     }
 

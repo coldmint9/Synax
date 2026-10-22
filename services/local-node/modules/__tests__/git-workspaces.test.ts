@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import {
   switchGitBranch,
+  createAndSwitchGitBranch,
   createGitWorktree,
   attachDetachedGitBranch,
   listGitWorkspaces,
@@ -54,6 +55,16 @@ afterEach(() => {
 });
 
 describe("git workspace maintenance", () => {
+  it("creates feature branches from production even when test is checked out", async () => {
+    const production = git(["rev-parse", "main"]);
+    git(["switch", "-c", "test"]);
+    fs.writeFileSync(path.join(repository, "test-only.txt"), "test branch only");
+    git(["add", "test-only.txt"]); git(["commit", "-m", "test-only"]);
+    await createAndSwitchGitBranch(repository, "feature/from-production");
+    expect(git(["rev-parse", "HEAD"])).toBe(production);
+    expect(fs.existsSync(path.join(repository, "test-only.txt"))).toBe(false);
+  }, gitTestTimeoutMs);
+
   it.each([false, true])("preserves the backup and reports partial switching when restore fails (staged: %s)", async (staged) => {
     git(["switch", "-c", "feature/conflict"]);
     fs.writeFileSync(path.join(repository, "README.md"), "target branch\n");

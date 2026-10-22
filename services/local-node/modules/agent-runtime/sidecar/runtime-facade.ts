@@ -1,3 +1,5 @@
+import { appendHistoryPayload } from "./history-upload.js";
+import { boundedStreamChunk } from "../runtime-stream-projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   decodeUiSnapshot,
@@ -65,6 +67,18 @@ function makeClient(): RuntimeSidecarClient | null {
   }
   return connection.client;
 }
+// Control traffic has its own socket as well as reserved server execution/byte budgets.
+let controlConnection: { socketPath: string; token: string; client: RuntimeSidecarClient } | undefined;
+function makeControlClient(): RuntimeSidecarClient | null {
+  const socketPath = process.env.SYNAX_RUNTIME_SIDECAR_SOCKET;
+  const token = process.env.SYNAX_RUNTIME_SIDECAR_TOKEN;
+  if (!socketPath || !token) { controlConnection?.client.close(); controlConnection = undefined; return null; }
+  if (!controlConnection || controlConnection.socketPath !== socketPath || controlConnection.token !== token) {
+    controlConnection?.client.close();
+    controlConnection = { socketPath, token, client: new RuntimeSidecarClient({ socketPath, token }) };
+  }
+  return controlConnection.client;
+}
 export interface RuntimeAdmissionInput {
   sessionId: string;
   run: AgentRun;
@@ -82,6 +96,7 @@ export interface RuntimeStreamInput {
 }
 export class RuntimeFacade {
   private readonly pendingHistoryWrites = new Map<string, Set<Promise<void>>>();
+  private readonly inFlightHistoryReads = new Map<string, Promise<unknown[]>>();
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
   ) {}
@@ -95,6 +110,10 @@ export class RuntimeFacade {
   }
   enabled(): boolean {
     return this.clientFactory() !== null;
+  }
+
+  sessionExists(sessionId: string): Promise<boolean> {
+    return Promise.resolve(Boolean(agentRuntimeStore.tryGetSession(sessionId)));
   }
 
   /** Admission is awaited before starting provider/tool execution. */
@@ -205,6 +224,29 @@ export class RuntimeFacade {
     }
     {
       await this.flushHistoryWrites(sessionId);
+      if (["interrupted", "cancelled", "failed"].includes(status)) {
+        const ui = decodeUiSnapshot(await client.uiSnapshot(sessionId), sessionId);
+        let partial = ui.pendingPartialMessage as AgentRuntimeMessage | undefined;
+        if (!partial) {
+          const stepId = ui.liveChunks.find((chunk: AgentRunStreamChunk) => chunk.type === "step_started")?.step?.id as string | undefined;
+          if (stepId) {
+            const content = ui.liveChunks.filter((chunk: { type: string; stepId?: string }) => chunk.type === "message_delta" && chunk.stepId === stepId).map((chunk: { delta: string }) => chunk.delta).join("");
+            const thought = ui.liveChunks.filter((chunk: { type: string; stepId?: string }) => chunk.type === "thought_delta" && chunk.stepId === stepId).map((chunk: { delta: string }) => chunk.delta).join("");
+            if (content || thought) partial = { id: `msg_partial_${run.id}_${stepId}`, sessionId, runId: run.id, stepId,
+              role: "assistant", content, createdAt: run.completedAt ?? new Date().toISOString(),
+              metadata: { source: "runtime_partial", partial: true, thought } };
+          }
+        }
+        if (partial?.runId === run.id) {
+          const messages = await this.listMessageHistory(sessionId) as AgentRuntimeMessage[];
+          if (!messages.some(message => message.role === "assistant" && message.stepId === partial!.stepId)) {
+            if (agentRuntimeStore.tryGetSession(sessionId)) {
+              agentRuntimeStore.appendMessage(partial);
+              await agentRuntimeStore.flushSession(sessionId);
+            } else await this.persistHistoryObject(sessionId, "runtime.message", partial);
+          }
+        }
+      }
       for (let attempt = 0; ; attempt++) {
         const state = await client.snapshot(sessionId);
         try {
@@ -229,10 +271,6 @@ export class RuntimeFacade {
       }
       try {
         await this.persistRunHistory(run);
-        // Finish may add an interrupted assistant message in the same Rust
-        // transaction. Reconcile that outbox before exposing completed history.
-        await this.historyCommand({ sessionId, requestId: `finish-history:${run.id}`,
-          operation: "reconcile_stream", payload: {} });
       } catch (error) {
         logger.warn(
           {
@@ -325,9 +363,9 @@ export class RuntimeFacade {
     operation: string;
     payload?: unknown;
   }): Promise<unknown> {
-    const client = this.clientFactory();
+    const client = this.clientFactory === makeClient ? makeControlClient() : this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    await this.ensureUiProjection(input.sessionId);
+    if (!["execution_check", "execution_close", "stop_begin", "stop_unconfirmed", "resume", "lease_open", "lease_close"].includes(input.operation)) await this.ensureUiProjection(input.sessionId);
     for (let attempt = 0; ; attempt++) {
       const snapshot = await client.snapshot(input.sessionId);
       try {
@@ -337,10 +375,11 @@ export class RuntimeFacade {
           revision: snapshot.revision,
         });
         const state = JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
-        if (state.entity) {
-          await client.historyCommand({ sessionId: input.sessionId,
-            requestId: `control-history:${createHash('sha256').update(input.requestId).digest('hex')}`,
-            operation: 'reconcile_stream', payload: {} });
+        if (state.entity && typeof state.entityKind === "string") {
+          await this.appendHistoryEntities(input.sessionId, [{
+            kind: `runtime.${state.entityKind}`,
+            value: state.entity,
+          }]);
         }
         return state;
       } catch (error) {
@@ -663,6 +702,7 @@ export class RuntimeFacade {
       kind: string;
       value: unknown;
     }>,
+    ifAbsent = false,
   ): Promise<void> {
     // Leave room for the protobuf envelope below the 1 MiB control frame limit.
     const budget = 768 * 1024;
@@ -670,7 +710,7 @@ export class RuntimeFacade {
     let bytes = 16;
     const flush = async () => {
       if (!batch.length) return;
-      const payload = { objects: batch };
+      const payload = { objects: batch, ...(ifAbsent ? { ifAbsent: true } : {}) };
       await this.historyCommand({
         sessionId,
         requestId: `history-append:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`,
@@ -682,12 +722,14 @@ export class RuntimeFacade {
     };
     for (const object of objects) {
       const size = Buffer.byteLength(JSON.stringify(object)) + 1;
-      if (size > budget)
-        throw new AgentRuntimeError(
-          "History entity exceeds the control frame budget; blob storage is required.",
-          "HISTORY_ENTITY_TOO_LARGE",
-          413,
-        );
+      if (size > budget) {
+        await flush();
+        const client = this.clientFactory();
+        if (!client) throw new Error("Runtime sidecar client is not configured.");
+        const payload = { objects: [object], ...(ifAbsent ? { ifAbsent: true } : {}) };
+        await appendHistoryPayload(client, sessionId, `history-append:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`, payload);
+        continue;
+      }
       if (batch.length >= 256 || bytes + size > budget) await flush();
       batch.push(object);
       bytes += size;
@@ -725,6 +767,7 @@ export class RuntimeFacade {
         case "run_failed":
         case "run_resumed":
           add("runtime.run", chunk.run);
+          if ("message" in chunk) add("runtime.message", chunk.message);
           break;
         case "step_started":
           add("runtime.step", chunk.step);
@@ -745,32 +788,9 @@ export class RuntimeFacade {
           break;
       }
     }
-    try {
-      await this.appendHistoryEntities(sessionId, objects);
-      if (outboxThrough !== undefined) {
-        await this.historyCommand({
-          sessionId,
-          requestId: `history-outbox-ack:${sessionId}:${outboxThrough}`,
-          operation: "ack_history_outbox",
-          payload: { through: outboxThrough },
-        });
-      }
-    } catch (error) {
-      // HotStore is the durable event source. If the separate history commit
-      // failed, ask the Rust sidecar to rebuild canonical history from its
-      // retained hot stream before surfacing the failure.
-      try {
-        await this.historyCommand({
-          sessionId,
-          requestId: `history-reconcile:${sessionId}:${createHash("sha256").update(JSON.stringify(objects)).digest("hex")}`,
-          operation: "reconcile_stream",
-          payload: {},
-        });
-        return;
-      } catch {
-        throw error;
-      }
-    }
+    // The execution owner persists authoritative versions. Observation only fills
+    // missing entities, so delayed stream frames cannot overwrite newer usage/status.
+    await this.appendHistoryEntities(sessionId, objects, true);
   }
   async persistHistoryObject(
     sessionId: string,
@@ -837,6 +857,16 @@ export class RuntimeFacade {
     if (!client) throw new Error("Runtime sidecar client is not configured.");
     return readSessionList(client);
   }
+
+  async sessionSummaryAuthoritative(sessionId: string): Promise<AgentSession> {
+    const client = this.clientFactory();
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    const page = JSON.parse(Buffer.from(await client.sessionSummary(sessionId)).toString("utf8")) as { single?: boolean; items: AgentSession[] };
+    if (!page.single) throw new Error("Runtime sidecar must support session summary queries.");
+    const session = page.items.find((item) => item.id === sessionId);
+    if (!session) throw new RuntimeSidecarError({ type: "error", code: "PROJECTION_MISSING", message: "Session summary is not available." });
+    return session;
+  }
   async importUiProjection(
     sessionId: string,
     snapshot: unknown,
@@ -868,7 +898,16 @@ export class RuntimeFacade {
   ): Promise<unknown[]> {
     const client = this.clientFactory();
     if (!client) throw new Error('Runtime sidecar client is not configured.');
-    return readHistoryList(client, sessionId, operation);
+    const key = `${sessionId}:${operation}`;
+    const existing = this.inFlightHistoryReads.get(key);
+    if (existing) return existing;
+    const read = readHistoryList(client, sessionId, operation).finally(() => {
+      if (this.inFlightHistoryReads.get(key) === read) {
+        this.inFlightHistoryReads.delete(key);
+      }
+    });
+    this.inFlightHistoryReads.set(key, read);
+    return read;
   }
   async persistTerminalInfo(
     projectId: string,
@@ -996,6 +1035,10 @@ export class RuntimeFacade {
     const cacheSamples = new CacheUsageAccumulator();
     let pendingCacheSamples = 0;
     let contextComposition: ContextComposition | null = null;
+    const modelBreakdown: Record<
+      string,
+      { steps: number; input: number; output: number; total: number }
+    > = {};
     const addUsage = (
       target: ReturnType<typeof zeroTotals>,
       targetCoverage: ReturnType<typeof zeroCoverage>,
@@ -1048,6 +1091,25 @@ export class RuntimeFacade {
       for (const group of groups) {
         addUsage(usage[group], coverage[group], normalized);
         addUsage(usage.steps[group], coverage.steps[group], normalized);
+      }
+      // Only this session's own steps feed its incremental analytics mirror;
+      // project totals aggregate every session projection instead.
+      if (isSelf) {
+        const model = step.model?.trim() || "unknown";
+        const entry = (modelBreakdown[model] ??= {
+          steps: 0,
+          input: 0,
+          output: 0,
+          total: 0,
+        });
+        entry.steps += 1;
+        if (normalized?.normalization.input.status === "known") {
+          const input = normalized.normalization.input.value ?? 0;
+          const output = normalized.normalization.output.value ?? 0;
+          entry.input += input;
+          entry.output += output;
+          entry.total += input + output;
+        }
       }
       if (isSelf && contextUsage?.normalization.input.status === "known") {
         contextInput = contextUsage.normalization.input.value ?? null;
@@ -1138,6 +1200,23 @@ export class RuntimeFacade {
         String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
       )[0];
     const completedRuns = root.runs.filter((run) => run.status === "completed");
+    const lastTerminalStep = [...root.steps]
+      .filter((step) =>
+        ["completed", "failed", "cancelled", "interrupted"].includes(
+          step.status,
+        ),
+      )
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+      .at(-1);
+    const lastCompletedRun = [...completedRuns]
+      .sort((a, b) =>
+        String(a.completedAt ?? "").localeCompare(String(b.completedAt ?? "")),
+      )
+      .at(-1);
+    const completedRunSteps = completedRuns.reduce(
+      (sum, run) => sum + root.steps.filter((step) => step.runId === run.id).length,
+      0,
+    );
     const averageSteps = completedRuns.length
       ? completedRuns.reduce(
           (sum, run) =>
@@ -1145,6 +1224,11 @@ export class RuntimeFacade {
           0,
         ) / completedRuns.length
       : null;
+    const toolBreakdown: Record<string, number> = {};
+    for (const tool of root.tools)
+      if (typeof tool.toolId === "string" && tool.toolId.trim())
+        toolBreakdown[tool.toolId] =
+          (toolBreakdown[tool.toolId] ?? 0) + 1;
     const input = contextInput ?? 0;
     const contextLimit =
       typeof configuredContextLimit === "number" && configuredContextLimit > 0
@@ -1166,8 +1250,14 @@ export class RuntimeFacade {
             }
           : null,
       roundCount: root.steps.length,
+      completedRunCount: completedRuns.length,
+      completedRunSteps,
+      lastStepId: lastTerminalStep?.id ?? null,
+      lastCompletedRunId: lastCompletedRun?.id ?? null,
       averageStepsPerCompletedRun: averageSteps,
       contextComposition,
+      modelBreakdown,
+      toolBreakdown,
       context: {
         inputTokens: contextInput,
         source: contextInput === null ? null : "provider",
@@ -1400,6 +1490,8 @@ export class RuntimeFacade {
     checkpointId: string;
     revision: number;
     requestId: string;
+    /** Running sessions keep appending durable history while the copy is made. */
+    allowSourceChanges?: boolean;
   }): Promise<{
     revision: number;
     objectCount: number;
@@ -1415,7 +1507,7 @@ export class RuntimeFacade {
         this.listHistoryObjects(input.sourceSessionId, "list_tool_calls"),
         this.listHistoryObjects(input.sourceSessionId, "list_events"),
       ]);
-    if (head.revision !== input.revision)
+    if (!input.allowSourceChanges && head.revision !== input.revision)
       throw new AgentRuntimeError(
         "Conversation changed. Refresh the fork preview.",
         "HISTORY_STALE",
@@ -1900,6 +1992,11 @@ export class RuntimeFacade {
   async appendStreamAuthoritative(input: RuntimeStreamInput): Promise<number> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
+    const originals = input.chunks as AgentRunStreamChunk[];
+    const chunks = originals.map(boundedStreamChunk);
+    const externalized = originals.filter((chunk, index) => chunk !== chunks[index]);
+    // Make the referenced full records durable before publishing their previews.
+    if (externalized.length) await this.persistStreamHistory(input.sessionId, externalized);
     const ack = await client.appendStream({
       sessionId: input.sessionId,
       runId: input.runId,
@@ -1908,7 +2005,7 @@ export class RuntimeFacade {
       epoch: input.epoch,
       revision: input.revision,
       durability: "group_commit",
-      events: input.chunks.map((chunk) => ({
+      events: chunks.map((chunk) => ({
         kind:
           typeof chunk === "object" && chunk && "type" in chunk
             ? String(

@@ -1,0 +1,237 @@
+/* A single reading lane: quiet activity summaries alternate with full replies. */
+.session-conversation-flow {
+  --flow-muted: hsl(var(--muted-foreground));
+  --flow-ink: var(--foreground);
+  --flow-ease: cubic-bezier(.22, 1, .36, 1);
+  container: conversation-flow / inline-size;
+  width: 100%;
+  min-width: 0;
+  font-size: var(--agent-chat-font-size, 14px);
+}
+.dark .session-conversation-flow { --flow-muted: #797979; }
+.session-conversation-flow .agent-conversation-copy .session-text-paragraph { margin: 0 0 14px; }
+.session-conversation-flow .agent-conversation-copy .session-text-paragraph:last-child { margin-bottom: 0; }
+.session-flow-content { display: flex; flex-direction: column; gap: 13px; }
+.session-flow-entry, .session-activity-group { min-width: 0; }
+.session-flow-entry.session-answer-region { margin: 0; padding: 0; border: 0; }
+.session-conversation-flow .session-answer-region > .agent-conversation-copy {
+  color: var(--message-ink);
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+.session-process-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 25px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--flow-muted);
+  text-align: left;
+  font: inherit;
+  line-height: 1.65;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+.session-process-trigger:hover { color: var(--flow-ink); }
+.session-process-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.session-process-symbol { flex: 0 0 16px; }
+.session-process-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-process-chevron {
+  flex: 0 0 14px;
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease;
+}
+.session-activity-group[data-live] > .session-process-trigger .session-process-chevron,
+.session-process-trigger:is(:hover, :focus-visible) .session-process-chevron { opacity: 1; }
+.session-activity-group[data-expanded="true"] > .session-process-trigger .session-process-chevron { transform: rotate(0); }
+.session-process-line {
+  position: relative;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.session-process-line[data-overflow="true"] {
+  mask-image: linear-gradient(90deg, transparent, #000 12px);
+}
+.session-process-line-track {
+  display: inline-block;
+  white-space: nowrap;
+  transition: transform 180ms linear;
+}
+/* The narrow highlight crosses the glyphs from left to right, then rests.
+   Only a live group owns the sweep; finished history stays completely still. */
+.session-activity-group[data-live] .session-process-line-track {
+  background-image: linear-gradient(105deg, var(--flow-muted) 42%, var(--flow-ink) 49%, var(--flow-muted) 56%);
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: session-activity-sweep 2.8s ease-in-out infinite;
+}
+@keyframes session-activity-sweep {
+  0%, 12% { background-position: 100% 0; }
+  72%, 100% { background-position: -65% 0; }
+}
+/* Headless UI retains closing content until the grid/fade transition ends,
+   then unmounts it. Closed bodies are inert throughout the transition. */
+.session-activity-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 160ms ease, transform 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1));
+}
+.session-activity-reveal[data-closed] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-3px);
+}
+.session-activity-clip { min-height: 0; overflow: hidden; }
+.session-process-window { min-width: 0; }
+.session-process-window .session-activity-clip > .session-process-window-frame { padding-top: 2px; }
+.session-process-window-frame { position: relative; min-width: 0; }
+.session-process-window-viewport { display: block; min-width: 0; }
+.session-process-window-frame[data-animate] .session-process-window-viewport { transition: height 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
+.session-process-window-viewport[data-windowed] {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--flow-muted) 25%, transparent) transparent;
+}
+.session-process-window-row { display: block; min-width: 0; min-height: var(--process-row-h, 25px); }
+.session-process-window-viewport[data-windowed] .session-process-window-row { height: var(--process-row-h, 25px); overflow: hidden; }
+.session-process-window-viewport[data-windowed] .session-activity-reveal { display: none; }
+/* Mask the offscreen edge only; the transcript canvas stays transparent. */
+.session-process-window-frame[data-fade-top] { mask-image: linear-gradient(to bottom, transparent, #000 24px); }
+.session-process-window-frame[data-fade-bottom] { mask-image: linear-gradient(to top, transparent, #000 24px); }
+.session-process-window-frame[data-fade-top][data-fade-bottom] { mask-image: linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
+
+.session-conversation-flow .bui-tool-group,
+.session-conversation-flow .bui-tool-list,
+.session-flow-tools.bui-tool-group { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: 0; padding: 0; }
+.bui-tool .bui-tool-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 0;
+  border-radius: 3px;
+  color: var(--flow-muted, var(--bui-muted));
+}
+.session-conversation-flow button.bui-tool-trigger:hover { background: none; color: var(--flow-ink); }
+.bui-tool .bui-tool-symbol { flex: 0 0 16px; width: 16px; color: inherit; }
+.bui-tool-copy { display: flex; align-items: baseline; min-width: 0; gap: 5px; }
+.bui-tool .bui-tool-label { flex: 0 0 auto; max-width: none; font-size: inherit; font-weight: 400; line-height: 1.65; }
+.bui-tool .bui-tool-target,
+.bui-tool .bui-tool-result {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font: inherit;
+  line-height: 1.65;
+}
+.bui-tool .bui-tool-target[data-file] { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+/* A record whose call names one file carries two actions: the row opens its
+   details, the path opens that file. They stay sibling controls, so the row is
+   never a button inside a button. */
+.bui-tool .bui-tool-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.65;
+  text-align: left;
+}
+button.bui-tool-disclosure { cursor: pointer; }
+.session-conversation-flow button.bui-tool-disclosure:hover { background: none; color: var(--flow-ink); }
+.bui-tool-trigger--split .bui-tool-target[data-file] {
+  flex: 0 1 auto;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+.bui-tool-trigger--split .bui-tool-target[data-file]:is(:hover, :focus-visible) { color: var(--flow-ink); }
+.bui-tool-trigger--split .bui-tool-target[data-file]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.bui-tool-trigger:has(.bui-tool-disclosure:focus-visible) .bui-chevron { opacity: 1; }
+.bui-tool-diff { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bui-tool .bui-tool-meta { flex: 0 0 auto; margin: 0; gap: 6px; white-space: nowrap; }
+.bui-tool .bui-chevron { opacity: 0; transform: rotate(-90deg); transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease; }
+.bui-tool[data-expanded="true"] > .bui-tool-trigger .bui-chevron { transform: rotate(0); }
+.bui-tool-trigger:is(:hover, :focus-visible) .bui-chevron { opacity: 1; }
+.bui-tool .bui-tool-result[data-error],
+.bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
+.bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
+.bui-tool .bui-tool-details, .bui-tool .bui-tool-batch-body { margin: 6px 0 10px 24px; padding: 0; border: 0; animation: none; }
+.bui-tool .bui-tool-detail-label { font-size: 11px; }
+.bui-tool .bui-tool-details pre { font-size: 12px; }
+.bui-tool-batch-body { display: flex; flex-direction: column; gap: 0; }
+
+.bui-thinking .bui-thinking-trigger { display: flex; align-items: center; width: 100%; min-height: 25px; gap: 6px; padding: 2px 0; }
+.bui-thinking-copy { display: flex; align-items: baseline; min-width: 0; gap: 6px; }
+.bui-thinking .bui-thinking-label { flex-shrink: 0; color: var(--bui-muted); background: none; animation: none; font-size: inherit; line-height: 1.65; font-weight: 400; }
+.bui-thinking-preview { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bui-muted); font-size: inherit; line-height: 1.65; }
+.bui-thinking .bui-thinking-meta { margin-left: auto; font-size: 10px; }
+.bui-thinking .bui-thinking-chevron { margin: 0; transition: transform 180ms ease; }
+.bui-thinking[data-expanded="true"] .bui-thinking-chevron { transform: rotate(90deg); }
+.bui-thinking .bui-thinking-trace { margin: 6px 0 10px 24px; padding: 0; border: 0; }
+.bui-thinking .bui-thinking-body { font-size: 13px; line-height: 1.65; }
+.bui-thinking .bui-thinking-reveal[aria-hidden="true"] { grid-template-rows: 0fr; opacity: 0; }
+
+.session-flow-append .session-flow-entry,
+.session-process-window-frame[data-animate] .session-process-window-row { animation: session-flow-append 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
+@keyframes session-flow-append {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@container conversation-flow (max-width: 420px) {
+  .session-flow-content { gap: 13px; }
+  .bui-thinking .bui-thinking-meta { display: none; }
+  .bui-tool .bui-tool-label { flex-shrink: 1; max-width: 60%; }
+}
+@media (pointer: coarse) {
+  .session-process-trigger { min-height: 44px; }
+  .bui-tool button.bui-tool-trigger, .bui-thinking button.bui-thinking-trigger { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-conversation-flow *, .session-activity-reveal, .bui-thinking .bui-thinking-chevron { animation: none !important; transition: none !important; }
+  .session-activity-group[data-live] .session-process-line-track { background: none; color: var(--flow-muted); }
+}
+@media (forced-colors: active) {
+  .session-activity-group[data-live] .session-process-line-track { background: none; color: ButtonText; }
+}
+.session-process-window-frame[data-animate] .session-process-window-row[data-departing] {
+  animation: session-flow-depart 160ms ease-out forwards;
+}
+@keyframes session-flow-depart {
+  to { opacity: 0; transform: translateY(-3px); }
+}
+.session-activity-group[data-live] .session-process-window-frame:not([data-fade-top]):not([data-fade-bottom]) {
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / .45), #000 54px);
+}

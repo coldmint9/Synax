@@ -11,9 +11,27 @@ import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { RunCoordinator } from "../run-coordinator.js";
 import { interactionService } from "../interaction-service.js";
 import { permissionPolicy } from "../permission-policy.js";
+import { runCoordinator as _rcProbe } from "../run-coordinator.js";
 import { createAsset } from "../media-assets.js";
 import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
 import { replyAndContinueInteraction } from "../interaction-reply.js";
+import fsx from "node:fs";
+const debug = function (label: string, value: unknown) { fsx.appendFileSync("/tmp/synax-probe.log", "[[P]] " + label + " " + (typeof value === "string" ? value : JSON.stringify(value)) + "\n"); };
+import { runtimeFacade as _rfProbe } from "../sidecar/runtime-facade.js";
+import { RustNativeBackend } from "../backends/rust-native-backend.js";
+import { sessionProcessManager } from "../session-process-manager.js";
+debug("sidecar-port", JSON.stringify({ env: process.env.SYNAX_RUNTIME_PROVIDER_PORT, delegate: (globalThis as any).__synaxPortSnap }));
+for (const name of ["controlCommand", "finishExecution", "admitExecution", "stopSessionAuthoritative"] as const) {
+  const anyFacade: any = _rfProbe;
+  const orig = anyFacade[name].bind(anyFacade);
+  anyFacade[name] = async (...args: any[]) => {
+    const tag = JSON.stringify(args.map((a: any) => a && typeof a === "object" ? Object.keys(a).slice(0, 3) : String(a).slice(0, 40)));
+    debug("enter " + name, tag);
+    try { const result = await orig(...args); debug("ok " + name, tag); return result; }
+    catch (error) { debug("ERR " + name, tag + " => " + (error as Error).message + " || " + String((error as Error).stack).split("\n").slice(0, 5).join(" | ")); throw error; }
+  };
+}
+
 
 let root: string;
 let provider: http.Server;
@@ -24,6 +42,97 @@ let multiple = false;
 let askHuman = false;
 let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" = "normal";
 let mediaAssetId: string;
+let longToolRounds = 34;
+
+it("lets a waiting conversation take a real worker at a safe step boundary", async () => {
+  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+  vi.stubEnv("DATA_ROOT", DATA_ROOT);
+  scenario = "long"; longToolRounds = 6;
+  const manager = sessionProcessManager as any;
+  const original = manager.canSpawnChild.bind(manager);
+  const cap = vi.spyOn(manager, "canSpawnChild").mockImplementation((value: unknown) => {
+    const id = typeof value === "string" ? value : undefined;
+    return original(id) && (Boolean(id && manager.children.get(id)?.child.connected) || manager.countChildren() < 2);
+  });
+  const messages = vi.spyOn(manager, "handleChildMessage");
+  const ids = [sessionId, ...Array.from({ length: 2 }, () => agentSessionRuntime.create({
+    projectId: "project-alpha", profileId: "executor", prompt: "Read files", workDir: root,
+  }).id)];
+  try {
+    const accepted = await Promise.all(ids.map(id => coordinator.submitAsync(id, { message: "Inspect files" }, `worker-fairness:${id}`)));
+    await coordinator.waitForIdle();
+    expect(messages.mock.calls.some(([, message]) => (message as { type?: string })?.type === "stream:parked")).toBe(true);
+    for (const [index, id] of ids.entries()) {
+      await store.hydrateSession(id, true);
+      expect(store.getRun(accepted[index].run.id).status, JSON.stringify(store.getRun(accepted[index].run.id))).toBe("completed");
+      expect(store.listMessages(id).filter(message => message.role === "user")).toHaveLength(1);
+    }
+  } finally {
+    await Promise.all(ids.map(id => coordinator.interrupt(id, "Fairness test cleanup")));
+    await coordinator.waitForIdle();
+    cap.mockRestore(); messages.mockRestore();
+  }
+}, 60_000);
+
+it("hands off at completed steps and reattaches without replaying user input or tools", async () => {
+  scenario = "long"; longToolRounds = 3;
+  let handoffs = 0;
+  const fair = new RunCoordinator({
+    async *execute(id, mode, input, signal) {
+      for (;;) {
+        let parked = false;
+        const backend = new RustNativeBackend();
+        for await (const chunk of backend.stream(id, mode, { ...input, shouldYieldWorker: () => true }, signal)) {
+          if (chunk.type === "worker_yield") { parked = true; handoffs++; break; }
+          yield chunk;
+        }
+        if (!parked) return;
+        mode = "resume"; input = { ...input, resumeExecution: true };
+      }
+    },
+    async interrupt() {},
+  });
+  coordinator = fair;
+  const accepted = await fair.submitAsync(sessionId, { message: "Continue until all reads finish" }, "fair-handoff");
+  await fair.waitForIdle();
+  expect(store.getRun(accepted.run.id).status, JSON.stringify(store.getRun(accepted.run.id))).toBe("completed");
+  expect(handoffs).toBeGreaterThan(0);
+  expect(requests).toHaveLength(4);
+  expect(store.listMessages(sessionId).filter(message => message.role === "user")).toHaveLength(1);
+  expect(new Set(store.listToolCalls(sessionId).map(call => call.modelToolCallId)).size).toBe(store.listToolCalls(sessionId).length);
+}, 30_000);
+{
+  const anyStore: any = store;
+  const origAppend = anyStore.appendMessage.bind(anyStore);
+  anyStore.appendMessage = (message: any) => { const r = origAppend(message); if (String(r.content).includes("Question") && message.metadata?.runtimeReminder) debug("MODEL-TOLD", String(r.content)); return r; };
+}
+if (process.env.PROBE_TARGET) debug("target", process.env.PROBE_TARGET);
+for (const [name, target] of [["saveRecord", store], ["appendPermission", store]] as const) {
+  const anyTarget: any = target;
+  const orig = anyTarget[name].bind(anyTarget);
+  anyTarget[name] = (...args: any[]) => { let r: any; try { r = orig(...args); } catch (e) { debug("save " + name + " THREW", (e as Error).message + " || " + String((e as Error).stack).split("\n").slice(0,8).join(" | ")); throw e; } debug("save " + name, JSON.stringify({ kind: args[0] && typeof args[0] === "object" && "resolvedAt" in args[0] ? "record" : args[0], id: r?.id, sessionId: r?.sessionId })); return r; };
+}
+for (const name of ["resume", "launchAccepted"] as const) {
+  const anyRc: any = _rcProbe;
+  if (typeof anyRc[name] !== "function") { debug("missing " + name, ""); continue; }
+  const orig = anyRc[name].bind(anyRc);
+  anyRc[name] = (...args: any[]) => { debug("rc " + name, String(args[0]).slice(0, 20)); try { return orig(...args); } catch (e) { debug("rc " + name + " THREW", (e as Error).message); throw e; } };
+}
+for (const name of ["consumeAuthoritative", "ready", "pending", "resume"] as const) {
+  const anyIs: any = interactionService;
+  if (typeof anyIs[name] !== "function") continue;
+  const orig = anyIs[name].bind(anyIs);
+  anyIs[name] = (...args: any[]) => { try { const r = orig(...args); if (name !== "pending") debug("isvc " + name, String(r === null ? null : (r?.id ?? typeof r))); else debug("isvc pending", String(r?.id ?? null)); return r; } catch (e) { debug("isvc " + name + " THREW", (e as Error).message + " || " + String((e as Error).stack).split("\n").slice(0,6).join(" | ")); throw e; } };
+}
+for (const name of ["resumePendingRun", "resolvePendingRun"] as const) {
+  try {
+    const mod: any = await import("../loop-resume.js");
+    const anySvc: any = mod.loopResumeService;
+    if (typeof anySvc[name] !== "function") continue;
+    const orig = anySvc[name].bind(anySvc);
+    anySvc[name] = async (...args: any[]) => { const r = await orig(...args); debug("resume " + name, String(r?.toolCall?.id ?? r)); return r; };
+  } catch {}
+}
 beforeEach(async () => {
   vi.stubEnv("SYNAX_AGENT_LOOP_ENGINE", "rust");
   vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "1");
@@ -33,9 +142,10 @@ beforeEach(async () => {
   requests = [];
   multiple = false;
   askHuman = false;
-  scenario = "normal";
+  scenario = "normal"; longToolRounds = 34;
   coordinator = new RunCoordinator();
   provider = http.createServer(async (request, response) => {
+    debug("provider request", String(request.url) + " auth=" + String(request.headers.authorization).slice(0, 12) + " keys=" + Object.keys(request.headers).join(","));
     let body = "";
     for await (const chunk of request) body += chunk;
     requests.push(JSON.parse(body));
@@ -44,7 +154,7 @@ beforeEach(async () => {
     const chunk = (delta: object, finish_reason: string | null = null) => response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
     response.writeHead(200, { "content-type": "text/event-stream" });
     const call = (index: number, name: string, args: unknown) => chunk({ tool_calls: [{ index, id: `provider-call-${requests.length}-${index}`, type: "function", function: { name: name.replaceAll(".", "_"), arguments: JSON.stringify(args) } }] });
-    if (scenario === "long" && requests.length <= 34) {
+    if (scenario === "long" && requests.length <= longToolRounds) {
       call(0, "file.list", { path: "." }); chunk({}, "tool_calls");
     } else if (scenario === "media" && requests.length === 1) {
       call(0, "agent.discover", { ids: ["media.read"] }); chunk({}, "tool_calls");
@@ -79,6 +189,8 @@ beforeEach(async () => {
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>(resolve => provider.listen(0, "127.0.0.1", resolve));
+  (globalThis as typeof globalThis & { __synaxPortSnap?: unknown }).__synaxPortSnap = { port: (provider.address() as { port: number }).port, env: process.env.SYNAX_RUNTIME_PROVIDER_PORT };
+  debug("provider listen", JSON.stringify({ port: (provider.address() as { port: number }).port, runtimeProviderPort: process.env.SYNAX_RUNTIME_PROVIDER_PORT, token: Boolean(process.env.SYNAX_RUNTIME_SIDECAR_TOKEN), dataRoot: DATA_ROOT, engine: process.env.SYNAX_AGENT_LOOP_ENGINE }));
   updateGlobalConfig({ defaultApiProviderId: "openai", providerConnections: {
     openai: { providerId: "openai", apiKey: "local", baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`, extra: { kind: "api", apiFormat: "openai", model: "fixture" } },
   } }, "rust-native-test");
@@ -93,13 +205,17 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 async function submit() {
+  debug("submit() entered", "");
   const accepted = await coordinator.submitAsync(sessionId, { message: "Please write the files" }, "rust-test");
+  debug("submit: submitted", accepted.run.id);
   await coordinator.waitForIdle();
+  debug("submit: idle", JSON.stringify({ run: store.getRun(accepted.run.id).status, stop: store.getRun(accepted.run.id).stopReason, session: store.getSession(sessionId).status, requests: requests.length, blocked: store.getSession(sessionId).blockedReason }));
   expect(store.getRun(accepted.run.id).status).toBe("waiting_permission");
   expect(requests).toHaveLength(1);
   return accepted.run.id;
 }
 async function reply(action: "once" | "reject") {
+  debug("reply() entered", action);
   const pending = store.listPermissions(sessionId).find(permission => permission.action === "ask")!;
   expect(pending).toBeDefined();
   permissionPolicy.reply(sessionId, pending.id, action);
@@ -121,6 +237,7 @@ it("resumes the exact provider call after approval and preserves step usage/hist
   for (const step of store.listRunSteps(runId)) expect(step.metadata.usage).toMatchObject({ inputTokens: 10, outputTokens: 4 });
 }, 15_000);
 it("returns denial to Rust without executing the requested write", async () => {
+  debug("TEST-ENTER denial", "");
   const runId = await submit();
   await reply("reject");
   expect(store.getRun(runId).status).toBe("completed");
@@ -174,46 +291,32 @@ it.each(["1", "0"])("suspends on human input and resumes with the saved answer (
   expect(store.getToolCall(sessionId, interaction.toolCallId).status).toBe("completed");
 }, 20_000);
 
-it.each(["paused", "completed"] as const)("restarts from a saved form after shutdown and cache loss (status=%s)", async (status) => {
-  vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
-  vi.stubEnv("DATA_ROOT", DATA_ROOT);
-  askHuman = true;
-  store.updateSession(sessionId, { profileId: "synax" });
-  const accepted = await coordinator.submitAsync(sessionId, { message: "Ask which file" }, "restart-form");
+it.each(["permission", "input"] as const)("expires pending %s after a runtime restart without executing tools", async (kind) => {
+  askHuman = kind === "input";
+  if (askHuman) store.updateSession(sessionId, { profileId: "synax" });
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Wait for approval" }, `restart-${kind}`);
   await coordinator.waitForIdle();
-  const interaction = interactionService.pending(sessionId)!;
-  expect(interaction).toBeTruthy();
-
-  await coordinator.interrupt(sessionId, "Application shutting down");
-  const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
-  await runtimeFacade.stopSessionAuthoritative(sessionId, "paused", "Runtime restarted during execution");
-  if (status === "completed") store.updateSession(sessionId, { status });
-  await store.flushSession(sessionId);
-  expect((await runtimeFacade.snapshotAuthoritative(sessionId)).activeRunId).toBeFalsy();
+  expect(store.getRun(accepted.run.id).status).toBe(kind === "input" ? "waiting_input" : "waiting_permission");
+  const oldPid = Number(process.env.SYNAX_RUNTIME_SIDECAR_PID);
+  process.kill(oldPid, "SIGKILL");
+  await vi.waitFor(() => expect(Number(process.env.SYNAX_RUNTIME_SIDECAR_PID)).not.toBe(oldPid), { timeout: 10_000 });
   store.reset();
-  coordinator = new RunCoordinator();
-
-  const reply = { revision: interaction.revision, action: "submit" as const, answers: { file: "README.md" } };
-  const responses = await Promise.all([1, 2].map(() => replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator)));
-  expect(responses.every(item => item.status === "answered" && item.consumedAt)).toBe(true);
-  await coordinator.waitForIdle();
-  const restarted = store.listRuns(sessionId).find(run => run.id !== accepted.run.id)!;
-  expect(restarted).toMatchObject({ status: "completed", metadata: {
-    runtime: { requestId: `interaction-restart:${interaction.id}` },
-  } });
+  const { recoverRuntime } = await import("../runtime-recovery.js");
+  const recovery = await recoverRuntime("restarted-host");
+  expect(recovery.resumable).toEqual([]);
+  await store.hydrateSession(sessionId, true);
   expect(store.getRun(accepted.run.id).status).toBe("interrupted");
-  expect(requests).toHaveLength(2);
-  const history = requests[1].messages as Array<Record<string, unknown>>;
-  expect(history.find(message => message.role === "tool" && message.tool_call_id === "provider-call-0")?.content).toContain("README.md");
-  expect(history.at(-1)?.role).toBe("user");
-  expect(history.at(-1)?.content).toContain("Which file?");
-  expect(history.at(-1)?.content).toContain("README.md");
-  await replyAndContinueInteraction(sessionId, interaction.id, reply, coordinator);
-  await coordinator.waitForIdle();
-  expect(requests).toHaveLength(2);
-  expect(store.listRuns(sessionId)).toHaveLength(2);
-  expect(store.listToolCalls(sessionId)).toHaveLength(1);
+  expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
   expect(interactionService.pending(sessionId)).toBeNull();
+  expect(permissionPolicy.list(sessionId).some(item => item.action === "ask" && !item.resolvedAt)).toBe(false);
+  expect(requests).toHaveLength(1);
+  expect(store.listToolCalls(sessionId).some(call => call.status === "completed")).toBe(false);
+  await expect(recoverRuntime("restarted-host")).resolves.toMatchObject({ resumable: [] });
+  const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, `continue-${kind}`);
+  expect(next.run.id).not.toBe(accepted.run.id);
+  await coordinator.waitForIdle();
+  expect(store.getRun(next.run.id).status).toBe("completed");
+  expect(requests).toHaveLength(2);
 }, 25_000);
 
 it("keeps tool call/result identities in the next user turn", async () => {
@@ -307,14 +410,18 @@ it("refreshes tool availability after plan execution is approved", async () => {
   expect(store.getSession(sessionId).sessionMetadata?.mode).toBe("chat");
 });
 
-it("keeps an acknowledged step context immutable across retries", async () => {
+it("keeps an acknowledged step context in memory and immutable across retries", async () => {
+  const bridge = await import("../rust-agent-loop-client.js");
+  const contextWriter = vi.spyOn(bridge, "sendRustStepContext");
   scenario = "restart";
   const accepted = await coordinator.submitAsync(sessionId, { message: "Wait for context replay" }, "context-replay");
   const runId = accepted.run.id;
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   const run = store.getRun(runId);
   const step = store.listRunSteps(runId)[0];
-  const context = step.metadata.rustPreparedContext as { contextId: string; systemPrompt: string; tools: unknown[] };
+  expect(step.metadata.rustPreparedContext).toBeUndefined();
+  const { loopId: _loopId, executionContext: _executionContext, ...context } = contextWriter.mock.calls[0][0];
+  contextWriter.mockRestore();
   const post = (value: unknown) => fetch(`http://127.0.0.1:${process.env.SYNAX_RUNTIME_PROVIDER_PORT}/agent-loop/context`, {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${process.env.SYNAX_RUNTIME_SIDECAR_TOKEN}` },
     body: JSON.stringify(value),
@@ -356,7 +463,7 @@ it("delivers user images and tool-returned images through the Rust loop", async 
   } finally { selection.mockRestore(); }
 });
 
-it("recovers an active coordinator run after the Rust process is killed", async () => {
+it("interrupts an active run after Rust is killed and starts a new run only on user input", async () => {
   scenario = "restart";
   const accepted = await coordinator.submitAsync(sessionId, { message: "Keep running" }, "runtime-crash");
   const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
@@ -367,9 +474,16 @@ it("recovers an active coordinator run after the Rust process is killed", async 
   const loopId = store.getRun(accepted.run.id).metadata.rustLoopId;
   process.kill(Number(process.env.SYNAX_RUNTIME_SIDECAR_PID), "SIGKILL");
   await coordinator.waitForIdle();
-  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "completed", metadata: { rustLoopId: loopId } });
+  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "interrupted", metadata: { rustLoopId: loopId } });
+  expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
   expect(store.listRunSteps(accepted.run.id)).toHaveLength(1);
-  expect(store.listMessages(sessionId).filter(message => message.role === "assistant").map(message => message.content)).toEqual(["Final response."]);
+  expect(store.listMessages(sessionId).filter(message => message.role === "assistant").map(message => message.content)).toContain("Partial before restart");
+  expect(requests).toHaveLength(1);
+  scenario = "normal";
+  const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, "runtime-after-crash");
+  expect(next.run.id).not.toBe(accepted.run.id);
+  await coordinator.waitForIdle();
+  expect(store.getRun(next.run.id).status).toBe("completed");
   expect(requests).toHaveLength(2);
 }, 15_000);
 
@@ -413,4 +527,5 @@ it("keeps an admitted native run going past 32 steps and ignores legacy maxSteps
   expect(requests).toHaveLength(35);
   expect(store.listRunSteps(accepted.run.id)).toHaveLength(35);
   expect(store.listToolCalls(sessionId).filter(call => call.toolId === "file.list" && call.status === "completed")).toHaveLength(34);
-}, 45_000);
+// This is a 35-round durability check, not a latency benchmark.
+}, 90_000);

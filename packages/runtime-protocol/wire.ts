@@ -11,7 +11,7 @@ export type SidecarBody =
   | { type: 'control_state'; stateJson: Uint8Array }
   | { type: 'history_command'; operation: string; payload: Uint8Array }
   | { type: 'history_state'; stateJson: Uint8Array }
-  | { type: 'session_list'; after?: string }
+  | { type: 'session_list'; after?: string; id?: string }
   | { type: 'session_list_response'; sessionsJson: Uint8Array }
   | { type: 'import_projection'; snapshotJson: Uint8Array }
   | { type: 'import_projection_response'; snapshotJson: Uint8Array }
@@ -167,7 +167,7 @@ function bodyPayload(body: SidecarBody): Uint8Array {
     case 'control_state': return fieldBytes(1, body.stateJson);
     case 'history_command': return concat(fieldString(1, body.operation), fieldBytes(2, body.payload));
     case 'history_state': return fieldBytes(1, body.stateJson);
-    case 'session_list': return body.after ? fieldString(1, body.after) : new Uint8Array();
+    case 'session_list': return concat(body.after ? fieldString(1, body.after) : new Uint8Array(), body.id ? fieldString(2, body.id) : new Uint8Array());
     case 'session_list_response': return fieldBytes(1, body.sessionsJson);
     case 'import_projection': return fieldBytes(1, body.snapshotJson);
     case 'import_projection_response': return fieldBytes(1, body.snapshotJson);
@@ -344,7 +344,7 @@ function decodeBody(field: number, bytes: Uint8Array): SidecarBody {
     case 39: return { type: 'control_state', stateJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 40: return { type: 'history_command', operation: firstString(bytes, 1) ?? '', payload: firstBytes(bytes, 2) ?? new Uint8Array() };
     case 41: return { type: 'history_state', stateJson: firstBytes(bytes, 1) ?? new Uint8Array() };
-    case 42: return { type: 'session_list', ...(firstString(bytes, 1) ? { after: firstString(bytes, 1) } : {}) };
+    case 42: return { type: 'session_list', ...(firstString(bytes, 1) ? { after: firstString(bytes, 1) } : {}), ...(firstString(bytes, 2) ? { id: firstString(bytes, 2) } : {}) };
     case 43: return { type: 'session_list_response', sessionsJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 44: return { type: 'import_projection', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };
     case 45: return { type: 'import_projection_response', snapshotJson: firstBytes(bytes, 1) ?? new Uint8Array() };

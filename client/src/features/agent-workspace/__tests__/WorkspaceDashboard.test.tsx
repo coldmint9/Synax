@@ -15,7 +15,8 @@ const render: typeof testingRender = (ui, options) => testingRender(ui, {
   wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
   ...options,
 });
-import { agentRuntimeApi, type SessionEnvironment } from "../../../adapters/transport/agentRuntime";
+import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
+import type { WorkspaceEnvironmentView } from "../workspaceEnvironmentView";
 import { configApi } from "../../../adapters/transport/config";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { WorkspaceDashboard } from "../WorkspaceDashboard";
@@ -26,9 +27,15 @@ vi.mock("../SessionBackgroundProcesses", () => ({
   SessionBackgroundProcesses: () => null,
 }));
 
-const environment: SessionEnvironment = {
+const environment: WorkspaceEnvironmentView = {
   sessionId: "session-1",
   projectId: "proj-1",
+  rootId: "proj-1",
+  name: "Project",
+  role: "primary",
+  status: "ready",
+  repositories: [],
+  outputFiles: [],
   workspacePath: "/Users/mint/IdeaProjects/jbolt-ai-vue/.worktrees/feature",
   branch: "feature/dynamic-workflow-refactor",
   headCommitSha: "5e5727b0abcdef0123456789",
@@ -102,7 +109,7 @@ const environment: SessionEnvironment = {
   refreshedAt: "2026-09-10T00:30:00.000Z",
 };
 
-function renderDashboard(overrides: Partial<SessionEnvironment> = {}) {
+function renderDashboard(overrides: Partial<WorkspaceEnvironmentView> = {}) {
   return render(
     <WorkspaceDashboard
       sessionId="session-1"
@@ -678,7 +685,7 @@ describe("WorkspaceDashboard", () => {
   });
 
   it("remembers project folds after the workspace is reopened", () => {
-    const snapshot: SessionEnvironment = {
+    const snapshot: WorkspaceEnvironmentView = {
       ...environment,
       repositories: [
         {

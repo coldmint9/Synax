@@ -1,4 +1,5 @@
 import { visualizationReplyParts } from "./visualizationTranscript";
+import { gitMergeReplyParts } from "./gitMergeTranscript";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import type {
@@ -64,6 +65,11 @@ export type ConversationTimelineEntry =
       createdAt: string;
       label: string;
       turn: InterleavedTurn;
+      /**
+       * The round's final reply row. Copy / fork / rollback only belong there:
+       * a Run writes one row per step, and process rows have no reply to act on.
+       */
+      finalReply?: boolean;
     }
   | {
       id: string;
@@ -207,6 +213,10 @@ function agentEntry(
 ): ConversationTimelineEntry {
   let label = `Step ${turn.index}`;
   for (const block of turn.blocks) {
+    if (block.type === "git_merge") {
+      label = truncate(block.reference.title);
+      break;
+    }
     if (block.type === "text" && block.content.trim()) {
       label = truncate(block.content);
       break;
@@ -382,7 +392,7 @@ function splitTurnAnswer(turn: InterleavedTurn): {
   answer: readonly TurnContentBlock[];
 } {
   const visualIndex = turn.blocks.findIndex(
-    (block) => block.type === "visualization",
+    (block) => block.type === "visualization" || block.type === "git_merge",
   );
   if (visualIndex >= 0) {
     let start = visualIndex;
@@ -451,7 +461,7 @@ function foldRound(
 ): TimelineItem[] {
   // Each visual reply stays visible, even if a goal continues afterwards.
   const visualTurn = round.findIndex((item) =>
-    item.entry.turn.blocks.some((block) => block.type === "visualization"),
+    item.entry.turn.blocks.some((block) => block.type === "visualization" || block.type === "git_merge"),
   );
   if (visualTurn >= 0 && visualTurn < round.length - 1)
     return [
@@ -464,6 +474,7 @@ function foldRound(
       round[i].entry.turn.blocks.some(
         (block) =>
           block.type === "visualization" ||
+          block.type === "git_merge" ||
           (block.type === "text" && block.content.trim() !== ""),
       )
     ) {
@@ -506,13 +517,14 @@ function foldRound(
       ...answerItem.entry,
       // A distinct anchor: the same step id also names the folded process row.
       id: `${answerItem.entry.id}-answer`,
+      finalReply: true,
       label:
         truncate(
           answer
             .filter((block) => block.type === "text")
             .map((block) => block.content)
             .join(" "),
-        ) || "交互预览",
+        ) || answer.find((block) => block.type === "git_merge")?.reference.title || "交互预览",
       turn: turnWithBlocks(answerItem.entry.turn, answer),
     },
   });
@@ -571,6 +583,73 @@ function foldCompletedRounds(
   return folded;
 }
 
+/**
+ * Give each Run exactly one actionable reply row.
+ *
+ * A live or unfolded Run keeps one row per step, and every row that carries
+ * commentary would otherwise render copy / fork / rollback. Only the row that
+ * closes the Run is a reply the reader can act on; the earlier rows are process
+ * output. A finished Run has already been folded, so its answer row is marked
+ * while folding and this pass leaves it alone.
+ */
+function markFinalReplyRows(
+  items: TimelineItem[],
+  stepById: Map<string, AgentRunStep>,
+  runStatusByStepId: Map<string, AgentRun["status"] | undefined>,
+): TimelineItem[] {
+  const rows = items.slice();
+  const rowsByRun = new Map<
+    string,
+    { status?: AgentRun["status"]; indexes: number[] }
+  >();
+  rows.forEach((item, index) => {
+    if (item.entry.kind !== "agent") return;
+    const stepId = item.entry.turn.stepId;
+    const step = stepById.get(stepId);
+    // Standalone replies have no step; each is its own final reply.
+    const key = step ? `run:${step.runId}` : `entry:${item.entry.id}`;
+    const bucket = rowsByRun.get(key);
+    if (bucket) bucket.indexes.push(index);
+    else
+      rowsByRun.set(key, {
+        status: runStatusByStepId.get(stepId),
+        indexes: [index],
+      });
+  });
+  for (const { status, indexes } of rowsByRun.values()) {
+    const marked = indexes.some((index) => {
+      const entry = rows[index].entry;
+      return entry.kind === "agent" && entry.finalReply;
+    });
+    if (marked) continue;
+    // A Run still producing steps has no final reply yet; marking a provisional
+    // row would move three idle buttons down the transcript on every step.
+    if (!isRunComplete(status)) continue;
+    // An unfolded Run ends with steps that only log tool calls; the reply the
+    // reader sees is its newest row that actually carries an answer.
+    let last: number | undefined;
+    for (const index of indexes) {
+      const entry = rows[index].entry;
+      if (
+        entry.kind === "agent" &&
+        entry.turn.blocks.some(
+          (block) =>
+            block.type === "media" ||
+            block.type === "visualization" ||
+            block.type === "git_merge" ||
+            (block.type === "text" && block.content.trim() !== ""),
+        )
+      )
+        last = index;
+    }
+    if (last === undefined) continue;
+    const entry = rows[last].entry;
+    if (entry.kind !== "agent") continue;
+    rows[last] = { ...rows[last], entry: { ...entry, finalReply: true } };
+  }
+  return rows;
+}
+
 export function buildConversationTimeline(
   runs: AgentRun[],
   steps: AgentRunStep[],
@@ -579,6 +658,10 @@ export function buildConversationTimeline(
   childSessions?: AgentSession[],
   options?: {
     excludeStepId?: string | null;
+    /** Steps parked in live snapshots are projected by the caller. */
+    excludeStepIds?: readonly string[];
+    /** Runs parked in live snapshots are projected by the caller. */
+    excludeRunIds?: readonly string[];
     session?: AgentSession;
     foldWorkRuns?: boolean;
     includeInitialPrompt?: boolean;
@@ -588,10 +671,20 @@ export function buildConversationTimeline(
   messages = options?.session
     ? messages.filter((message) => message.sessionId === options.session!.id)
     : messages;
-  const filteredSteps = options?.excludeStepId
-    ? steps.filter((step) => step.id !== options.excludeStepId)
+  // Live upserts can overlap a history page. Keep the latest payload at the
+  // original position, including task anchors that have no surviving step.
+  messages = [...new Map(messages.map((message) => [message.id, message])).values()];
+  const excludedStepIds = new Set(options?.excludeStepIds ?? []);
+  if (options?.excludeStepId) excludedStepIds.add(options.excludeStepId);
+  const excludedRunIds = new Set(options?.excludeRunIds ?? []);
+  const filteredSteps = excludedStepIds.size
+    ? steps.filter((step) => !excludedStepIds.has(step.id))
     : steps;
-
+  // A live step is projected separately by the transcript. Its persisted
+  // assistant message can race the stream and would otherwise be classified
+  // as an orphan because the step was intentionally removed above. Rendering
+  // that message as a second answer creates a one-frame duplicate or makes
+  // the live row jump between positions during handoff.
   const failedRunIds = new Set(
     runs.filter((run) => run.status === "failed").map((run) => run.id),
   );
@@ -639,6 +732,8 @@ export function buildConversationTimeline(
   for (const message of messages) {
     if (
       message.role !== "assistant" ||
+      (message.stepId !== null && excludedStepIds.has(message.stepId)) ||
+      (!message.stepId && message.runId !== null && excludedRunIds.has(message.runId)) ||
       message.metadata?.partial ||
       message.metadata?.type === "thinking" ||
       message.metadata?.kind === "thought" ||
@@ -654,7 +749,7 @@ export function buildConversationTimeline(
       continue;
     const isForkReply =
       typeof message.metadata?.forkedFromMessageId === "string";
-    const blocks: TurnContentBlock[] = visualizationReplyParts(message);
+    const blocks: TurnContentBlock[] = gitMergeReplyParts(message) ?? visualizationReplyParts(message);
     // A bounded history window can carry an assistant reply while omitting the
     // step (or the whole run) it was persisted with. The reply is still real
     // conversation, so keep it as its own answer row instead of dropping it —
@@ -668,7 +763,7 @@ export function buildConversationTimeline(
       });
     if (
       !isForkReply &&
-      !blocks.some((block) => block.type === "visualization") &&
+      !blocks.some((block) => block.type === "visualization" || block.type === "git_merge") &&
       !message.content.trim() &&
       !message.contentParts?.length
     )
@@ -695,6 +790,7 @@ export function buildConversationTimeline(
         kind: "agent",
         createdAt: message.createdAt,
         label:
+          blocks.find((block) => block.type === "git_merge")?.reference.title ||
           truncate(message.content) || (isForkReply ? "助手回复" : "交互预览"),
         turn: {
           stepId: `reply-${message.id}`,
@@ -759,20 +855,24 @@ export function buildConversationTimeline(
       items.splice(next < 0 ? items.length : next, 0, row);
     }
   }
-  if (options?.foldWorkRuns === false) return items.map((item) => item.entry);
-
   const stepById = new Map(filteredSteps.map((step) => [step.id, step]));
   const runStatusById = new Map(runs.map((run) => [run.id, run.status]));
   const runStatusByStepId = new Map(
     filteredSteps.map((step) => [step.id, runStatusById.get(step.runId)]),
   );
 
-  return foldCompletedRounds(
-    items,
-    stepById,
-    runStatusByStepId,
-    standaloneReplyIds,
-  ).map((item) => item.entry);
+  const rows =
+    options?.foldWorkRuns === false
+      ? items
+      : foldCompletedRounds(
+          items,
+          stepById,
+          runStatusByStepId,
+          standaloneReplyIds,
+        );
+  return markFinalReplyRows(rows, stepById, runStatusByStepId).map(
+    (item) => item.entry,
+  );
 }
 
 export function sessionEntryDomId(entryId: string): string {
