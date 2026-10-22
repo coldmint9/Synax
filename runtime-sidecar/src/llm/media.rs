@@ -96,7 +96,10 @@ pub(crate) fn events(input: MediaRequest) -> BoxStream<'static, Result<Value, Er
         .max_retries
         .unwrap_or(super::retry::MAX_RETRIES)
         .min(super::retry::MAX_RETRIES);
-    crate::logging::observe_stream(super::retry::with_retry(move || events_once(input.clone()), retries), span)
+    crate::logging::observe_stream(
+        super::retry::with_retry(move || events_once(input.clone()), retries),
+        span,
+    )
 }
 
 async fn send(request: RequestBuilder) -> Result<Response, Error> {

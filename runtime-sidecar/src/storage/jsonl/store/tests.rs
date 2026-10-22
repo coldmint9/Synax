@@ -77,17 +77,25 @@ async fn index_scan_reuses_loaded_handles_and_publishes_complete_pages_after_reo
 }
 
 fn seed_summary(hot: &HotOps, id: &str) {
-    hot.ui_snapshot(id, Some(&serde_json::to_vec(&json!({
-        "id": id, "projectId": "p", "status": "completed", "title": "Saved title",
-        "updatedAt": "2026-10-22", "sessionMetadata": {
-            "latestSystemPrompt": "x".repeat(32_000), "pinned": true,
-        },
-    })).unwrap())).unwrap();
+    hot.ui_snapshot(
+        id,
+        Some(
+            &serde_json::to_vec(&json!({
+                "id": id, "projectId": "p", "status": "completed", "title": "Saved title",
+                "updatedAt": "2026-10-22", "sessionMetadata": {
+                    "latestSystemPrompt": "x".repeat(32_000), "pinned": true,
+                },
+            }))
+            .unwrap(),
+        ),
+    )
+    .unwrap();
 }
 
 #[test]
 fn a_targeted_summary_does_not_start_the_global_scan_or_open_an_execution_actor() {
-    let path = std::env::temp_dir().join(format!("synax-targeted-summary-{}", uuid::Uuid::new_v4()));
+    let path =
+        std::env::temp_dir().join(format!("synax-targeted-summary-{}", uuid::Uuid::new_v4()));
     {
         let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
         seed_summary(&hot, "s");
@@ -95,7 +103,9 @@ fn a_targeted_summary_does_not_start_the_global_scan_or_open_an_execution_actor(
     // Even a missing query cache repairs just the session's header. Debug
     // system-prompt assets are not needed to render a list row.
     let assets = path.join(layout::ASSETS_DIR);
-    if assets.exists() { std::fs::remove_dir_all(assets).unwrap(); }
+    if assets.exists() {
+        std::fs::remove_dir_all(assets).unwrap();
+    }
     let store = JsonlStore::open(&path).unwrap();
     let row = store.session_summary("s").unwrap().unwrap();
     assert_eq!(row["title"], "Saved title");
@@ -112,11 +122,15 @@ async fn restart_restores_list_rows_without_replaying_session_history() {
     let path = std::env::temp_dir().join(format!("synax-summary-restart-{}", uuid::Uuid::new_v4()));
     {
         let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
-        for id in ["a", "b", "c"] { seed_summary(&hot, id); }
+        for id in ["a", "b", "c"] {
+            seed_summary(&hot, id);
+        }
         hot.flush().unwrap();
     }
     let store = JsonlStore::open(&path).unwrap();
-    for id in ["a", "b", "c"] { assert!(!store.load_list_entry(id).unwrap()); }
+    for id in ["a", "b", "c"] {
+        assert!(!store.load_list_entry(id).unwrap());
+    }
     // load_list_entry does not evict: an accidental replay would leave actors.
     assert!(store.root.sessions.values().is_empty());
     assert!(!store.index_ready().unwrap());
@@ -126,7 +140,11 @@ async fn restart_restores_list_rows_without_replaying_session_history() {
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0]["title"], "Saved title");
     assert_eq!(rows[0]["sessionMetadata"]["pinned"], true);
-    assert!(rows[0]["sessionMetadata"].get("latestSystemPrompt").is_none());
+    assert!(
+        rows[0]["sessionMetadata"]
+            .get("latestSystemPrompt")
+            .is_none()
+    );
     assert!(store.root.sessions.values().is_empty());
     drop(store);
     std::fs::remove_dir_all(path).unwrap();
@@ -134,7 +152,8 @@ async fn restart_restores_list_rows_without_replaying_session_history() {
 
 #[test]
 fn missing_summaries_are_repaired_without_actors_and_idle_eviction_saves_new_rows() {
-    let path = std::env::temp_dir().join(format!("synax-summary-backfill-{}", uuid::Uuid::new_v4()));
+    let path =
+        std::env::temp_dir().join(format!("synax-summary-backfill-{}", uuid::Uuid::new_v4()));
     {
         let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
         seed_summary(&hot, "old");
@@ -151,7 +170,9 @@ fn missing_summaries_are_repaired_without_actors_and_idle_eviction_saves_new_row
         assert!(summary_cache::read(&path, "new").is_some());
     }
     let store = JsonlStore::open(&path).unwrap();
-    for id in ["old", "new"] { store.load_list_entry(id).unwrap(); }
+    for id in ["old", "new"] {
+        store.load_list_entry(id).unwrap();
+    }
     assert!(store.root.sessions.values().is_empty());
     drop(store);
     std::fs::remove_dir_all(path).unwrap();
@@ -160,16 +181,20 @@ fn missing_summaries_are_repaired_without_actors_and_idle_eviction_saves_new_row
 #[test]
 fn commits_after_the_cached_summary_are_replayed_including_segment_rolls() {
     for roll in [false, true] {
-        let path = std::env::temp_dir().join(format!("synax-summary-stale-{}", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("synax-summary-stale-{}", uuid::Uuid::new_v4()));
         {
             let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
             seed_summary(&hot, "s");
             hot.flush().unwrap();
             assert!(summary_cache::read(&path, "s").is_some());
-            let summary_path = layout::session_dir(&path, "s").unwrap().join("list-summary.json");
+            let summary_path = layout::session_dir(&path, "s")
+                .unwrap()
+                .join("list-summary.json");
             let old_summary = std::fs::read(&summary_path).unwrap();
             if roll {
-                hot.handle("s").unwrap().actor.lock().files.extent.frames[2] = super::super::session::FRAMES_PER_SEGMENT;
+                hot.handle("s").unwrap().actor.lock().files.extent.frames[2] =
+                    super::super::session::FRAMES_PER_SEGMENT;
             }
             hot.control("s", "rename", 1, 0, "session_patch", &serde_json::to_vec(&json!({
                 "patch": { "title": "Newest title", "sessionMetadata": { "archivedAt": "2026-10-22" } }
@@ -193,21 +218,36 @@ fn commits_after_the_cached_summary_are_replayed_including_segment_rolls() {
 
 #[test]
 fn corrupt_or_unwritable_summary_caches_do_not_hide_durable_sessions() {
-    for broken in ["invalid-json", "wrong-schema", "wrong-session", "unwritable"] {
-        let path = std::env::temp_dir().join(format!("synax-summary-invalid-{}", uuid::Uuid::new_v4()));
+    for broken in [
+        "invalid-json",
+        "wrong-schema",
+        "wrong-session",
+        "unwritable",
+    ] {
+        let path =
+            std::env::temp_dir().join(format!("synax-summary-invalid-{}", uuid::Uuid::new_v4()));
         {
             let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
             seed_summary(&hot, "s");
             hot.flush().unwrap();
         }
-        let summary = layout::session_dir(&path, "s").unwrap().join("list-summary.json");
-        let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
+        let summary = layout::session_dir(&path, "s")
+            .unwrap()
+            .join("list-summary.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&summary).unwrap()).unwrap();
         match broken {
             "invalid-json" => std::fs::write(&summary, b"{").unwrap(),
-            "unwritable" => { std::fs::remove_file(&summary).unwrap(); std::fs::create_dir(&summary).unwrap(); }
+            "unwritable" => {
+                std::fs::remove_file(&summary).unwrap();
+                std::fs::create_dir(&summary).unwrap();
+            }
             _ => {
-                if broken == "wrong-schema" { saved["schema"] = json!(0); }
-                else { saved["row"]["s"] = json!("other"); }
+                if broken == "wrong-schema" {
+                    saved["schema"] = json!(0);
+                } else {
+                    saved["row"]["s"] = json!("other");
+                }
                 std::fs::write(&summary, serde_json::to_vec(&saved).unwrap()).unwrap();
             }
         }
@@ -225,7 +265,9 @@ fn corrupt_or_unwritable_summary_caches_do_not_hide_durable_sessions() {
 fn background_summary_cannot_overwrite_a_live_title_or_status() {
     let mut index = ListIndex::default();
     let row = |title: &str, updated: &str| ListRecord {
-        s: "s".into(), u: updated.into(), del: false,
+        s: "s".into(),
+        u: updated.into(),
+        del: false,
         h: json!({"id": "s", "title": title, "updatedAt": updated}),
     };
     index.upsert(row("Live title", "2026-10-22"));
@@ -236,7 +278,8 @@ fn background_summary_cannot_overwrite_a_live_title_or_status() {
 #[test]
 #[ignore = "manual session-list startup benchmark"]
 fn benchmark_session_list_restart() {
-    let path = std::env::temp_dir().join(format!("synax-summary-benchmark-{}", uuid::Uuid::new_v4()));
+    let path =
+        std::env::temp_dir().join(format!("synax-summary-benchmark-{}", uuid::Uuid::new_v4()));
     let ids: Vec<_> = (0..20).map(|i| format!("session-{i}")).collect();
     {
         let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
@@ -254,20 +297,32 @@ fn benchmark_session_list_restart() {
     }
     let cold = {
         for id in &ids {
-            std::fs::remove_file(layout::session_dir(&path, id).unwrap().join("list-summary.json")).unwrap();
+            std::fs::remove_file(
+                layout::session_dir(&path, id)
+                    .unwrap()
+                    .join("list-summary.json"),
+            )
+            .unwrap();
         }
         let store = JsonlStore::open(&path).unwrap();
         let start = std::time::Instant::now();
-        for id in &ids { assert!(store.load_list_entry(id).unwrap()); }
+        for id in &ids {
+            assert!(store.load_list_entry(id).unwrap());
+        }
         start.elapsed()
     };
     let store = JsonlStore::open(&path).unwrap();
     let start = std::time::Instant::now();
-    for id in &ids { assert!(!store.load_list_entry(id).unwrap()); }
+    for id in &ids {
+        assert!(!store.load_list_entry(id).unwrap());
+    }
     let cached = start.elapsed();
     assert_eq!(store.list().read().len(), ids.len());
     assert!(store.root.sessions.values().is_empty());
-    eprintln!("Session list: {} sessions, 50 updates each; header-index rebuild {cold:?}, summary restore {cached:?}", ids.len());
+    eprintln!(
+        "Session list: {} sessions, 50 updates each; header-index rebuild {cold:?}, summary restore {cached:?}",
+        ids.len()
+    );
     drop(store);
     std::fs::remove_dir_all(path).unwrap();
 }

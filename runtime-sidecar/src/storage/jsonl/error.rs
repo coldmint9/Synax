@@ -44,16 +44,21 @@ impl JsonlError {
                 format!("store {} is already open", path.display()),
             ),
             JsonlError::BadId(_) => ("INVALID_COMMAND", self.to_string()),
-            JsonlError::Runtime(_) | JsonlError::Io(_) | JsonlError::Corrupt { .. } | JsonlError::Serialization(_) => {
-                ("STORAGE_UNAVAILABLE", self.to_string())
-            }
+            JsonlError::Runtime(_)
+            | JsonlError::Io(_)
+            | JsonlError::Corrupt { .. }
+            | JsonlError::Serialization(_) => ("STORAGE_UNAVAILABLE", self.to_string()),
         }
     }
 
     /// Classify an I/O error at the point it happened.
     pub fn io(error: io::Error) -> Self {
-        tracing::error!(event = "storage.io_failed", error_kind = crate::logging::error_kind(&error),
-            os_code = error.raw_os_error(), "Storage I/O failed");
+        tracing::error!(
+            event = "storage.io_failed",
+            error_kind = crate::logging::error_kind(&error),
+            os_code = error.raw_os_error(),
+            "Storage I/O failed"
+        );
         if error.kind() == io::ErrorKind::StorageFull || error.raw_os_error() == Some(28) {
             JsonlError::DiskFull
         } else {

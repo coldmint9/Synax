@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::json::{array, boolean, convert_value, number, object, text};
 use super::wire::HistoryError;
-use super::{indexed_kind, SessionIndex};
+use super::{SessionIndex, indexed_kind};
 
 const SYNC_BYTES: usize = 512 * 1024;
 const INLINE_BYTES: usize = 32 * 1024;
@@ -66,7 +66,9 @@ fn foreign_session(cursor_session: &str, session: &str) -> bool {
 }
 
 fn wire_value(value: &serde_json::Value, id: &str, limit: usize) -> serde_json::Value {
-    let size = serde_json::to_vec(value).map(|bytes| bytes.len()).unwrap_or(0);
+    let size = serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or(0);
     if size <= limit {
         return value.clone();
     }
@@ -112,7 +114,10 @@ fn window_page(
             after.insert(kind.into(), None);
             continue;
         }
-        if start.as_ref().is_some_and(|key| !key.starts_with(&format!("{kind}\0"))) {
+        if start
+            .as_ref()
+            .is_some_and(|key| !key.starts_with(&format!("{kind}\0")))
+        {
             return Err(invalid("history window cursor collection mismatch"));
         }
         let candidates = index.entity_keys_before(kind, start.as_deref());
@@ -127,17 +132,17 @@ fn window_page(
                 break;
             }
             let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES);
-            let size = serde_json::to_vec(&item).map(|bytes| bytes.len()).unwrap_or(0) + 1;
+            let size = serde_json::to_vec(&item)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0)
+                + 1;
             // Budget the reference sent on the wire, not its hydrated body.
             // Give each collection space so a long prompt cannot hide runs/tools.
             if collection_bytes + size > WINDOW_COLLECTION_BYTES {
                 more = true;
                 break;
             }
-            result[name]
-                .as_array_mut()
-                .expect("arrays")
-                .push(item);
+            result[name].as_array_mut().expect("arrays").push(item);
             *used += size;
             collection_bytes += size;
             last = Some(key.clone());
@@ -204,13 +209,26 @@ fn change_page(
     let mut last = cursor.after.clone();
     let mut count = 0usize;
     let mut more = false;
-    let position = cursor.after.strip_prefix(&changes_prefix(session))
+    let position = cursor
+        .after
+        .strip_prefix(&changes_prefix(session))
         .and_then(|value| value.split_once('/'))
-        .and_then(|(revision, offset)| Some((revision.parse::<u64>().ok()?,
-            if offset == "~" { usize::MAX } else { offset.parse::<usize>().ok()? })))
+        .and_then(|(revision, offset)| {
+            Some((
+                revision.parse::<u64>().ok()?,
+                if offset == "~" {
+                    usize::MAX
+                } else {
+                    offset.parse::<usize>().ok()?
+                },
+            ))
+        })
         .ok_or_else(|| invalid("history change cursor position is invalid"))?;
     use std::ops::Bound::{Excluded, Included};
-    for ((revision, offset), change) in index.changes.range((Excluded(position), Included((until, usize::MAX)))) {
+    for ((revision, offset), change) in index
+        .changes
+        .range((Excluded(position), Included((until, usize::MAX))))
+    {
         let key = change_key(session, *revision, *offset);
         let Some(entity) = index.objects.get(&change.object_id) else {
             continue;
@@ -224,23 +242,28 @@ fn change_page(
         } else {
             wire_value(&entity.value, &entity.object_id, INLINE_BYTES)
         };
-        let size = serde_json::to_vec(&item).map(|bytes| bytes.len()).unwrap_or(0) + 1;
+        let size = serde_json::to_vec(&item)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0)
+            + 1;
         if count == limit || (*used > 0 && *used + size > SYNC_BYTES) {
             more = true;
             break;
         }
         // Changes advance in commit order. Within this page retain the last
         // update/delete/recreate for an identity; later pages then win naturally.
-        result[name].as_array_mut().expect("arrays").retain(|item| item["id"] != id);
-        result["removed"].as_array_mut().expect("arrays")
+        result[name]
+            .as_array_mut()
+            .expect("arrays")
+            .retain(|item| item["id"] != id);
+        result["removed"]
+            .as_array_mut()
+            .expect("arrays")
             .retain(|item| item["collection"] != name || item["id"] != id);
         if entity.kind == "runtime.tombstone" {
             result["removed"].as_array_mut().expect("arrays").push(item);
         } else {
-            result[name]
-                .as_array_mut()
-                .expect("arrays")
-                .push(item);
+            result[name].as_array_mut().expect("arrays").push(item);
         }
         *used += size;
         count += 1;
@@ -279,7 +302,9 @@ pub fn history_sync(
     }
     let head = index.head.clone();
     if head.object_id.is_some() && index.index_root != head.object_id {
-        return Err(invalid("current history index is missing; rebuild_index required"));
+        return Err(invalid(
+            "current history index is missing; rebuild_index required",
+        ));
     }
     let generation = index.index_generation;
     let active_revision = index.current_head_revision;

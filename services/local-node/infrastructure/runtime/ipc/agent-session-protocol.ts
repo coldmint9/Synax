@@ -135,7 +135,7 @@ export function emitSessionLive(
 ): void {
   if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
     // Stream chunks already carry completion events; forward only the start marker.
-    if (event.type === "context_compaction_started")
+    if (event.type === "context_compaction_started" || event.type === "conversation_git_messages")
       sendToParent({ type: "session:live", sessionId, event });
     return;
   }

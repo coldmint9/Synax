@@ -14,7 +14,8 @@ src/
     policy.rs          思考参数、结构化输出兼容
     cache.rs           缓存键、标记预算与 TTL 顺序
     metadata.rs        明确的内容元数据透传
-    retry.rs           429/5xx 指数退避与重试状态
+    retry.rs           可重试判定、指数退避与重试状态
+
     deadline.rs        上游流式空闲超时
     media.rs           图片、语音、转录的远端传输
     tool_names.rs      工具名称校验和映射
@@ -37,6 +38,10 @@ src/
 - `/agent-loop/*`：Rust 循环的开始、恢复、上下文、工具结果、取消和事件订阅。
 
 桥接客户端只连接本机，不根据 429/5xx 在 Node 再发起一轮请求。默认重试 10 次，等待从 2 秒翻倍，单次上限 300 秒；开始交付内容后不自动重放已交付内容。取消连接或原生循环会丢弃请求和等待。调用者显式指定的 `maxRetries` 仍由 Rust 执行。
+
+可重试的判定以状态为准：408、425、429 和 5xx 重试，其余状态不重试。没有状态码的失败交给 `ProviderError::is_retryable` 分类，因此 `HttpError:` 传输故障和被上游截断的 `ResponseError` 也会重试，而不是直接把会话置为失败。
+
+供应商重试预算耗尽、或失败发生在未纳入供应商重试的位置时，循环仍有一次机会：`agent/runner.rs` 在**尚未向宿主交付任何正文/思考增量**时按 2 秒、4 秒、8 秒退避重试该 step（最多 3 次），并发出 `retry_status` 与 `step-restarted`，宿主据此显示重试状态并在成功后清空。已交付的部分内容不会重放；调用者显式 `maxRetries: 0` 时任何层级都不重试；预算耗尽后仍失败才结束 run 并把会话置为失败。
 
 配置和模型目录中的 `@ai-sdk/*` 字符串仅作为已保存配置的兼容标识，不能用于动态加载 Node 包。新供应商协议或媒体能力应添加在 `llm` 中；不支持的能力明确返回错误。
 
@@ -70,7 +75,7 @@ RUST_LOG='off,synax_runtime_sidecar=info,synax_runtime_sidecar::llm=debug,synax_
 
 ```sh
 tail -F "$HOME/.synax/v2/logs/runtime.$(date +%F).jsonl"
-rg 'provider.failed|provider.retry_scheduled|agent.failed' "$HOME/.synax/v2/logs"/runtime.*.jsonl
+rg 'provider.failed|provider.retry_scheduled|agent.model_retry_scheduled|agent.failed' "$HOME/.synax/v2/logs"/runtime.*.jsonl
 ```
 
 ### 覆盖与关联
@@ -80,7 +85,7 @@ rg 'provider.failed|provider.retry_scheduled|agent.failed' "$HOME/.synax/v2/logs
 | 进程 | `runtime.starting/ready/stopping/stopped/failed/panic/service_failed/task_failed`；PID、版本、启动阶段、退出原因、监听端口。 |
 | HTTP / socket | `http.received/completed/rejected/failed`、`transport.failed/auth_rejected/backpressure`、`runtime.command_completed/command_failed`；请求 ID、连接 ID、已知路由、状态码、操作名、会话 ID、耗时。正常请求细节为 debug。 |
 | LLM / 媒体 | `provider.started/usage/completed/failed/cancelled`；供应商、模型、协议/操作、请求 ID、耗时、token 用量、错误类别和 HTTP 状态。 |
-| 重试 | `provider.retry_scheduled/retrying/recovered/retries_exhausted/retry_skipped`；次数、预算、等待时间、是否已交付内容。 |
+| 重试 | `provider.retry_scheduled/retrying/recovered/retries_exhausted/retry_skipped`、`agent.model_retry_scheduled`；次数、预算、等待时间、是否已交付内容。 |
 | Agent | `agent.started/resumed/phase/tools_waiting/tools_ready/tool_result/completed/cancel_requested/cancelled/failed/terminal_commit_failed`；loop/session/run ID、步骤、阶段、工具调用 ID、等待耗时、结果状态。 |
 | 存储 | `storage.opened/session_loaded/flushed/tail_recovered/io_failed/append_failed/sync_failed/corrupt/checkpoint_failed`；耗时、恢复偏移、错误类别、OS 错误码。 |
 

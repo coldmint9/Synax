@@ -14,11 +14,11 @@ use super::metadata::MetadataStore;
 use super::sync::history_sync;
 use super::wire::HistoryError;
 use super::{
-    change_collection, decode_hex, encode_hex, history_path, indexed_kind, map_end, now_iso,
-    required_string, required_u64, validate_object_id, AuxRecord, ChangeEntry, EntityCursor,
-    HistoryEntities, HistoryHead, HistoryObject, HistoryReceipt, HistorySession, SessionIndex,
-    SessionState, ENTITY_PAGE_BYTES, MAX_BLOB_CHUNK_BYTES, MAX_BLOB_CHUNKS, MAX_COMMAND_BYTES,
-    MAX_OBJECT_BYTES, PAGE_CURSOR_MAX_ITEMS, PAGE_LIMIT,
+    AuxRecord, ChangeEntry, ENTITY_PAGE_BYTES, EntityCursor, HistoryEntities, HistoryHead,
+    HistoryObject, HistoryReceipt, HistorySession, MAX_BLOB_CHUNK_BYTES, MAX_BLOB_CHUNKS,
+    MAX_COMMAND_BYTES, MAX_OBJECT_BYTES, PAGE_CURSOR_MAX_ITEMS, PAGE_LIMIT, SessionIndex,
+    SessionState, change_collection, decode_hex, encode_hex, history_path, indexed_kind, map_end,
+    now_iso, required_string, required_u64, validate_object_id,
 };
 use crate::storage::jsonl::layout;
 use crate::storage::jsonl::record::Record;
@@ -35,7 +35,9 @@ pub struct HistoryOps {
 }
 
 impl HistoryOps {
-    pub(crate) fn clear_cache_for_tests(&self) { self.sessions.clear(); }
+    pub(crate) fn clear_cache_for_tests(&self) {
+        self.sessions.clear();
+    }
     pub fn evict_idle(&self) -> usize {
         self.evict_with_policy(4, std::time::Duration::from_secs(300))
     }
@@ -166,10 +168,13 @@ impl HistoryTask {
     }
 
     fn session(&self, session_id: &str) -> Result<Arc<HistorySession>, HistoryError> {
-        let session = self.sessions.get_or_try_init(session_id, || HistorySession::open(self.root(), session_id).map(Arc::new))?;
-        self.sessions.evict(4, std::time::Duration::from_secs(300), |cached| {
-            Arc::strong_count(cached) == 1 && self.store.cached_session_idle(&cached.session_id)
-        });
+        let session = self.sessions.get_or_try_init(session_id, || {
+            HistorySession::open(self.root(), session_id).map(Arc::new)
+        })?;
+        self.sessions
+            .evict(4, std::time::Duration::from_secs(300), |cached| {
+                Arc::strong_count(cached) == 1 && self.store.cached_session_idle(&cached.session_id)
+            });
         Ok(session)
     }
 
@@ -196,9 +201,8 @@ impl HistoryTask {
         let value: Value = if payload.is_empty() {
             Value::Null
         } else {
-            serde_json::from_slice(payload).map_err(|error| {
-                HistoryError::InvalidCommand(format!("serialization: {error}"))
-            })?
+            serde_json::from_slice(payload)
+                .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?
         };
         let readonly = readonly_operation(operation);
         let key = receipt_key(session_id, request_id);
@@ -288,17 +292,11 @@ impl HistoryTask {
             "list_permissions" => ops.list_indexed("permission", &value)?,
             "list_interactions" => ops.list_indexed("interaction", &value)?,
             "list_file_changes" => ops.list_indexed("file_change", &value)?,
-            "file_begin"
-            | "file_finish"
-            | "file_abandon"
-            | "file_import"
-            | "file_cursor"
-            | "file_checkpoint"
-            | "file_pending"
-            | "file_preview"
-            | "restore_checkpoint"
-            | "file_recover"
-            | "file_restore_ack" => ops.file_command(request_id, operation, &value)?,
+            "file_begin" | "file_finish" | "file_abandon" | "file_import" | "file_cursor"
+            | "file_checkpoint" | "file_pending" | "file_preview" | "restore_checkpoint"
+            | "file_recover" | "file_restore_ack" => {
+                ops.file_command(request_id, operation, &value)?
+            }
             "verify" => ops.verify()?,
             "rebuild_index" => ops.rebuild_index()?,
             "gc" => ops.gc(&value)?,
@@ -366,8 +364,7 @@ impl SessionOps<'_> {
     /// Stage an object: later reads in this command see it immediately.
     fn stage_object(&mut self, object: HistoryObject) -> Arc<HistoryObject> {
         let object = Arc::new(object);
-        self.staged
-            .push(Record::HistoryObject((*object).clone()));
+        self.staged.push(Record::HistoryObject((*object).clone()));
         self.work()
             .objects
             .insert(object.object_id.clone(), object.clone());
@@ -558,8 +555,10 @@ impl SessionOps<'_> {
     // ------------------------------------------------------ ordered maps
 
     fn set_aux(&mut self, key: String, value: Option<Value>) {
-        self.staged
-            .push(Record::HistoryAux(AuxRecord::Set(key.clone(), value.clone())));
+        self.staged.push(Record::HistoryAux(AuxRecord::Set(
+            key.clone(),
+            value.clone(),
+        )));
         self.work().aux.insert(key, value);
     }
 
@@ -623,10 +622,7 @@ impl SessionOps<'_> {
             }
             items.push(asset.clone());
             if items.len() == 64 {
-                return serialized(&object(&[
-                    ("items", array(items)),
-                    ("next", text(id)),
-                ]));
+                return serialized(&object(&[("items", array(items)), ("next", text(id))]));
             }
         }
         serialized(&object(&[("items", array(items)), ("next", Value::Null)]))
@@ -688,7 +684,7 @@ impl SessionOps<'_> {
         let mut seen = HashSet::new();
         for (key, _) in self.index().aux_entries(&prefix) {
             let asset_id = key.trim_start_matches(&prefix);
-            if asset_id.is_empty() ||!seen.insert(asset_id.to_owned()) {
+            if asset_id.is_empty() || !seen.insert(asset_id.to_owned()) {
                 continue;
             }
             if let Some(asset) = self.index().aux_value(&format!("asset\0{asset_id}")) {
@@ -790,7 +786,6 @@ impl SessionOps<'_> {
         Ok(head)
     }
 
-
     /// Advance the idempotency/liveness generation (pins, files, metadata).
     fn bump_generation(&mut self) -> u64 {
         let generation = self.index().generation.saturating_add(1);
@@ -812,7 +807,7 @@ impl SessionOps<'_> {
 
     fn list_checkpoints(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let after = value["cursor"]["after"].as_str().unwrap_or("").to_owned();
-        if!after.is_empty() && value["cursor"]["sessionId"].as_str()!= Some(self.session_id) {
+        if !after.is_empty() && value["cursor"]["sessionId"].as_str() != Some(self.session_id) {
             return Err(HistoryError::InvalidCommand(
                 "checkpoint cursor scope mismatch".into(),
             ));
@@ -823,7 +818,7 @@ impl SessionOps<'_> {
         let mut more = false;
         for (key, saved) in self.index().aux_entries("pin\0") {
             let id = key.trim_start_matches("pin\0").to_owned();
-            if!after.is_empty() && id.as_str() <= after.as_str() {
+            if !after.is_empty() && id.as_str() <= after.as_str() {
                 continue;
             }
             let item = object(&[
@@ -831,7 +826,10 @@ impl SessionOps<'_> {
                 ("objectId", saved["objectId"].clone()),
                 ("metadata", saved["metadata"].clone()),
             ]);
-            let cost = serde_json::to_vec(&item).map(|bytes| bytes.len()).unwrap_or(0) + 1;
+            let cost = serde_json::to_vec(&item)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0)
+                + 1;
             if items.len() == 64 || bytes + cost > 900 * 1024 {
                 more = true;
                 break;
@@ -892,7 +890,7 @@ impl SessionOps<'_> {
             .clone()
             .ok_or_else(|| HistoryError::InvalidCommand("source history has no head".into()))?;
         let target = self.index().head.clone();
-        if target.revision!= 0 {
+        if target.revision != 0 {
             return Err(HistoryError::RevisionConflict {
                 expected: 0,
                 actual: target.revision,
@@ -905,7 +903,7 @@ impl SessionOps<'_> {
         let mut stack = vec![object_id.clone()];
         let mut visited = HashSet::new();
         while let Some(id) = stack.pop() {
-            if!visited.insert(id.clone()) {
+            if !visited.insert(id.clone()) {
                 continue;
             }
             let object = match objects.get(&id) {
@@ -921,7 +919,7 @@ impl SessionOps<'_> {
                 }
             };
             stack.extend(object.refs.iter().cloned());
-            if!self.index().objects.contains_key(&id) {
+            if !self.index().objects.contains_key(&id) {
                 missing.push((*object).clone());
             }
         }
@@ -968,12 +966,12 @@ impl SessionOps<'_> {
                 })? as usize,
         };
         let (mut queue, mut seen) = if let Some(cursor) = value.get("cursor") {
-            if!cursor.is_object() {
+            if !cursor.is_object() {
                 return Err(HistoryError::InvalidCommand(
                     "history page cursor must be an object".into(),
                 ));
             }
-            if cursor.get("version").and_then(|item| item.as_u64())!= Some(1) {
+            if cursor.get("version").and_then(|item| item.as_u64()) != Some(1) {
                 return Err(HistoryError::InvalidCommand(
                     "history page cursor version is invalid".into(),
                 ));
@@ -1014,13 +1012,16 @@ impl SessionOps<'_> {
             }
             let mut unique_seen = HashSet::with_capacity(seen.len());
             for object_id in &seen {
-                if!unique_seen.insert(object_id) {
+                if !unique_seen.insert(object_id) {
                     return Err(HistoryError::InvalidCommand(
                         "history page cursor seen contains duplicates".into(),
                     ));
                 }
             }
-            (VecDeque::from(queue), seen.into_iter().collect::<HashSet<_>>())
+            (
+                VecDeque::from(queue),
+                seen.into_iter().collect::<HashSet<_>>(),
+            )
         } else {
             if value.get("objectId").is_none() {
                 return Err(HistoryError::InvalidCommand(
@@ -1036,7 +1037,7 @@ impl SessionOps<'_> {
             let Some(current) = queue.pop_front() else {
                 break;
             };
-            if!seen.insert(current.clone()) {
+            if !seen.insert(current.clone()) {
                 continue;
             }
             let object = self.read_object(&current)?;
@@ -1056,10 +1057,7 @@ impl SessionOps<'_> {
             object(&[
                 ("version", number(1)),
                 ("queue", array(queue.iter().map(|id| text(id)).collect())),
-                (
-                    "seen",
-                    array(seen.iter().map(|id| text(id)).collect()),
-                ),
+                ("seen", array(seen.iter().map(|id| text(id)).collect())),
             ])
         };
         let next = cursor["queue"]
@@ -1077,7 +1075,7 @@ impl SessionOps<'_> {
     #[allow(clippy::too_many_lines)]
     fn list_indexed(&mut self, kind: &str, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let head = self.index().head.clone();
-        if head.object_id.is_some() && self.index().index_root!= head.object_id {
+        if head.object_id.is_some() && self.index().index_root != head.object_id {
             return Err(HistoryError::InvalidCommand(
                 "current history index is missing; rebuild_index required".into(),
             ));
@@ -1095,7 +1093,7 @@ impl SessionOps<'_> {
             .clamp(8192, ENTITY_PAGE_BYTES as u64) as usize;
         let cursor: Option<EntityCursor> = value
             .get("cursor")
-            .filter(|v|!v.is_null())
+            .filter(|v| !v.is_null())
             .map(|v| {
                 serde_json::from_value(v.clone()).map_err(|error| {
                     HistoryError::InvalidCommand(format!("serialization: {error}"))
@@ -1104,26 +1102,29 @@ impl SessionOps<'_> {
             .transpose()?;
         let prefix = format!("{kind}\0");
         if let Some(cursor) = &cursor {
-            if cursor.session_id!= self.session_id
-                || cursor.kind!= kind
-                || cursor.reverse!= reverse
-                ||!cursor.after.starts_with(&prefix)
+            if cursor.session_id != self.session_id
+                || cursor.kind != kind
+                || cursor.reverse != reverse
+                || !cursor.after.starts_with(&prefix)
             {
                 return Err(HistoryError::InvalidCommand(
                     "history entity cursor scope mismatch".into(),
                 ));
             }
-            if cursor.revision!= head.revision {
+            if cursor.revision != head.revision {
                 return Err(HistoryError::RevisionConflict {
                     expected: cursor.revision,
                     actual: head.revision,
                 });
             }
         }
-        let start = cursor
-            .as_ref()
-            .map(|c| c.after.clone())
-            .unwrap_or_else(|| if reverse { format!("{kind}\0~") } else { prefix.clone() });
+        let start = cursor.as_ref().map(|c| c.after.clone()).unwrap_or_else(|| {
+            if reverse {
+                format!("{kind}\0~")
+            } else {
+                prefix.clone()
+            }
+        });
         let matching: Box<dyn Iterator<Item = (&String, &Arc<HistoryObject>)>> = if reverse {
             Box::new(
                 self.index()
@@ -1148,7 +1149,10 @@ impl SessionOps<'_> {
             } else if key.as_str() < start.as_str() {
                 continue;
             }
-            if cursor.as_ref().is_some_and(|c| c.after.as_str() == key.as_str()) {
+            if cursor
+                .as_ref()
+                .is_some_and(|c| c.after.as_str() == key.as_str())
+            {
                 continue;
             }
             if items.len() == limit {
@@ -1160,7 +1164,10 @@ impl SessionOps<'_> {
             } else {
                 object.value.clone()
             };
-            let size = serde_json::to_vec(&item).map(|bytes| bytes.len()).unwrap_or(0) + 1;
+            let size = serde_json::to_vec(&item)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0)
+                + 1;
             if used + size > max_bytes {
                 if items.is_empty() {
                     return Err(HistoryError::InvalidCommand(
@@ -1216,13 +1223,13 @@ impl SessionOps<'_> {
         let text_value = serde_json::to_string(&entity.value)
             .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?;
         let offset = value["offset"].as_u64().unwrap_or(0) as usize;
-        if offset > text_value.len() ||!text_value.is_char_boundary(offset) {
+        if offset > text_value.len() || !text_value.is_char_boundary(offset) {
             return Err(HistoryError::InvalidCommand(
                 "invalid object chunk offset".into(),
             ));
         }
         let mut end = (offset + 64 * 1024).min(text_value.len());
-        while!text_value.is_char_boundary(end) {
+        while !text_value.is_char_boundary(end) {
             end -= 1;
         }
         let next = if end < text_value.len() {
@@ -1231,7 +1238,10 @@ impl SessionOps<'_> {
             Value::Null
         };
         serialized(&object(&[
-            ("text", text(text_value.get(offset..end).unwrap_or_default())),
+            (
+                "text",
+                text(text_value.get(offset..end).unwrap_or_default()),
+            ),
             ("next", next),
         ]))
     }
@@ -1241,16 +1251,29 @@ impl SessionOps<'_> {
     fn append_entities(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let expected = value.get("expectedRevision").and_then(|v| v.as_u64());
         if value["ifAbsent"] == true {
-            let objects = value["objects"].as_array().ok_or_else(|| HistoryError::InvalidCommand("objects required".into()))?;
+            let objects = value["objects"]
+                .as_array()
+                .ok_or_else(|| HistoryError::InvalidCommand("objects required".into()))?;
             let mut missing = Vec::new();
             for object in objects {
                 let kind = required_string(object, "kind")?;
-                let collection = indexed_kind(kind, &object["value"]).ok_or_else(|| HistoryError::InvalidCommand("invalid entity kind".into()))?;
+                let collection = indexed_kind(kind, &object["value"])
+                    .ok_or_else(|| HistoryError::InvalidCommand("invalid entity kind".into()))?;
                 let id = required_string(&object["value"], "id")?;
-                if object["value"]["sessionId"] != self.session_id { return Err(HistoryError::InvalidCommand("entity scope mismatch".into())); }
-                if !self.index().identity.contains_key(&super::identity_key(collection, self.session_id, id)) { missing.push(object.clone()); }
+                if object["value"]["sessionId"] != self.session_id {
+                    return Err(HistoryError::InvalidCommand("entity scope mismatch".into()));
+                }
+                if !self.index().identity.contains_key(&super::identity_key(
+                    collection,
+                    self.session_id,
+                    id,
+                )) {
+                    missing.push(object.clone());
+                }
             }
-            if !missing.is_empty() { self.stage_append(&serde_json::json!({"objects":missing}), expected)?; }
+            if !missing.is_empty() {
+                self.stage_append(&serde_json::json!({"objects":missing}), expected)?;
+            }
         } else {
             self.stage_append(value, expected)?;
         }
@@ -1259,24 +1282,41 @@ impl SessionOps<'_> {
 
     fn append_entities_blob(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let blob_id = required_string(value, "blobId")?;
-        let manifest = self.blob_manifest(blob_id)?.ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
+        let manifest = self
+            .blob_manifest(blob_id)?
+            .ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
         let size = required_u64(&manifest, "size")?;
         let total = required_u64(&manifest, "total")?;
         if size > MAX_COMMAND_BYTES as u64 || total == 0 || total > MAX_BLOB_CHUNKS {
-            return Err(HistoryError::InvalidCommand("history upload exceeds bounds".into()));
+            return Err(HistoryError::InvalidCommand(
+                "history upload exceeds bounds".into(),
+            ));
         }
         let expected = required_string(value, "sha256")?;
-        if manifest["sha256"].as_str() != Some(expected) { return Err(HistoryError::InvalidCommand("history upload digest mismatch".into())); }
+        if manifest["sha256"].as_str() != Some(expected) {
+            return Err(HistoryError::InvalidCommand(
+                "history upload digest mismatch".into(),
+            ));
+        }
         let mut bytes = Vec::with_capacity(size as usize);
         for index in 0..total {
-            let chunk = self.blob_chunk(blob_id, index)?.ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
-            if bytes.len() + chunk.len() > MAX_COMMAND_BYTES { return Err(HistoryError::InvalidCommand("history upload exceeds bounds".into())); }
+            let chunk = self
+                .blob_chunk(blob_id, index)?
+                .ok_or_else(|| HistoryError::ObjectMissing(blob_id.into()))?;
+            if bytes.len() + chunk.len() > MAX_COMMAND_BYTES {
+                return Err(HistoryError::InvalidCommand(
+                    "history upload exceeds bounds".into(),
+                ));
+            }
             bytes.extend(chunk);
         }
         if bytes.len() as u64 != size || layout::sha256_hex(&bytes) != expected {
-            return Err(HistoryError::InvalidCommand("history upload digest mismatch".into()));
+            return Err(HistoryError::InvalidCommand(
+                "history upload digest mismatch".into(),
+            ));
         }
-        let payload: Value = serde_json::from_slice(&bytes).map_err(|_| HistoryError::InvalidCommand("invalid history upload JSON".into()))?;
+        let payload: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| HistoryError::InvalidCommand("invalid history upload JSON".into()))?;
         self.append_entities(&payload)
     }
 
@@ -1381,7 +1421,6 @@ impl SessionOps<'_> {
         Ok(revision)
     }
 
-
     fn verify(&mut self) -> Result<Vec<u8>, HistoryError> {
         let mut objects = 0u64;
         let mut invalid = Vec::new();
@@ -1389,11 +1428,11 @@ impl SessionOps<'_> {
             objects += 1;
             let identity = serialized(&(&object.kind, &object.value, &object.refs))?;
             let digest_id = format!("{OBJECT_DIGEST}:{:x}", Sha256::digest(&identity));
-            if &object.object_id!= object_id || object.object_id!= digest_id {
+            if &object.object_id != object_id || object.object_id != digest_id {
                 invalid.push(format!("{object_id}:content-hash"));
             }
             for reference in &object.refs {
-                if!self.state.index.objects.contains_key(reference) {
+                if !self.state.index.objects.contains_key(reference) {
                     invalid.push(format!("{object_id}:missing-ref:{reference}"));
                 }
             }
@@ -1406,7 +1445,7 @@ impl SessionOps<'_> {
                 continue;
             };
             let object_id = stored["objectId"].as_str().unwrap_or_default();
-            if!self.state.index.objects.contains_key(object_id) {
+            if !self.state.index.objects.contains_key(object_id) {
                 invalid.push(format!(
                     "{session}/{pin}:missing-pin:{object_id}",
                     session = self.session_id
@@ -1479,7 +1518,8 @@ impl SessionOps<'_> {
             .cloned()
             .collect();
         if !deleted.is_empty() {
-            self.staged.push(Record::HistoryAux(AuxRecord::Gc(deleted.clone())));
+            self.staged
+                .push(Record::HistoryAux(AuxRecord::Gc(deleted.clone())));
             for object_id in &deleted {
                 self.work().objects.remove(object_id);
             }
@@ -1550,7 +1590,11 @@ impl SessionOps<'_> {
                 // just like the other file commands below.
                 Some(empty())
             }
-            _ => return Err(HistoryError::InvalidCommand("unknown file operation".into())),
+            _ => {
+                return Err(HistoryError::InvalidCommand(
+                    "unknown file operation".into(),
+                ));
+            }
         };
         let checkpointed = operation == "file_checkpoint";
         for (key, value) in files.take_staged() {
@@ -1565,7 +1609,7 @@ impl SessionOps<'_> {
         }
         if let Some(appended) = files.take_appended() {
             self.stage_append(&appended, None)?;
-        } else if!imported.is_empty() {
+        } else if !imported.is_empty() {
             self.stage_append(&object(&[("objects", array(imported))]), None)?;
         }
         match result {
@@ -1580,16 +1624,32 @@ impl SessionOps<'_> {
         if self.staged.is_empty() {
             return Ok(());
         }
-        if self.state.failed { return Err(HistoryError::InvalidCommand("history writer requires reopen after failed rollback".into())); }
+        if self.state.failed {
+            return Err(HistoryError::InvalidCommand(
+                "history writer requires reopen after failed rollback".into(),
+            ));
+        }
         let records = std::mem::take(&mut self.staged);
         let mut frames: Vec<Vec<u8>> = records.iter().map(Record::encode).collect();
-        frames.push(Record::HistorySeal { c: self.state.index.current_head_revision.saturating_add(1) }.encode());
-        if frames.iter().any(|frame| frame.len() > crate::storage::jsonl::seglog::MAX_FRAME) {
-            return Err(HistoryError::InvalidCommand("history record exceeds frame budget".into()));
+        frames.push(
+            Record::HistorySeal {
+                c: self.state.index.current_head_revision.saturating_add(1),
+            }
+            .encode(),
+        );
+        if frames
+            .iter()
+            .any(|frame| frame.len() > crate::storage::jsonl::seglog::MAX_FRAME)
+        {
+            return Err(HistoryError::InvalidCommand(
+                "history record exceeds frame budget".into(),
+            ));
         }
         let before = self.state.file.len();
         let written = (|| {
-            for frame in &frames { self.state.file.append(frame)?; }
+            for frame in &frames {
+                self.state.file.append(frame)?;
+            }
             self.state.file.sync()
         })();
         if let Err(error) = written {
@@ -1607,7 +1667,9 @@ impl SessionOps<'_> {
             let mut lookup = |_: &str| None;
             index.apply(record, &mut lookup)?;
         }
-        self.state.published.store(Arc::new(SessionIndex::clone_index(&index)));
+        self.state
+            .published
+            .store(Arc::new(SessionIndex::clone_index(&index)));
         self.state.index = index;
         if let Err(error) = super::checkpoint::save(self.state, false) {
             tracing::warn!(event = "storage.history_checkpoint_failed", error = %error,
@@ -1655,7 +1717,7 @@ fn read_optional(path: &std::path::Path) -> Result<Option<Vec<u8>>, HistoryError
 /// image for the same id is a conflict.
 fn write_once(path: &std::path::Path, bytes: &[u8]) -> Result<(), HistoryError> {
     match read_optional(path)? {
-        Some(previous) if previous!= bytes => Err(HistoryError::RequestConflict),
+        Some(previous) if previous != bytes => Err(HistoryError::RequestConflict),
         Some(_) => Ok(()),
         None => write_replace(path, bytes),
     }

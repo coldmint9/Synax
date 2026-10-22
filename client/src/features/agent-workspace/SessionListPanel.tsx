@@ -34,13 +34,15 @@ export function SessionListPanel({
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const list = useSessionList(locale, listView, projectId);
-  const { refresh } = list;
+  const { ensureLoaded } = list;
   const pendingArchives = useRef(new Set<string>());
   const [archiving, setArchiving] = useState(false);
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return;
-    void refresh({ joinPending: true });
-  }, [projectId, listView, list.isProjectReady, refresh]);
+    // Loading a workspace is lazy and cached: switching back to one paints its
+    // remembered rows, and only a stale snapshot is re-read in the background.
+    void ensureLoaded();
+  }, [projectId, list.isProjectReady, ensureLoaded]);
 
   const handleArchive = async (id: string) => {
     if (pendingArchives.current.has(id)) return;
@@ -105,7 +107,7 @@ export function SessionListPanel({
             <SessionTimeGroups
               key={`${projectId}:${listView}:${list.searchQuery}`}
               groups={list.groups}
-              isLoading={list.isRefreshing || !list.isProjectReady}
+              isLoading={list.isLoading}
               error={list.error}
               onRetry={() => void list.refresh()}
               selectedId={list.selectedId}

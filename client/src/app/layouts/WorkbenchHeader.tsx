@@ -1,6 +1,6 @@
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
-import { Terminal as TerminalIcon } from "lucide-react";
+import { Terminal as TerminalIcon, WifiOff } from "lucide-react";
 import { ThemeToggle } from "../../shared/ui/ThemeToggle";
 import { useTerminalStore } from "../../features/terminal/terminalStore";
 import { useState, useCallback, useEffect } from "react";
@@ -29,6 +29,7 @@ import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPane
 import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
+import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 
 export type ChromeMode =
   | "global"
@@ -185,6 +186,29 @@ function GoalToolbar({ sessionId }: { sessionId: string | null }) {
   );
 }
 
+function BackendConnectionStatus() {
+  const { locale } = useLocale();
+  const browserOnline = useApiConnectivityStore((state) => state.browserOnline);
+  const apiReachable = useApiConnectivityStore((state) => state.apiReachable);
+  const disconnected = !browserOnline || apiReachable === "unreachable";
+
+  if (!disconnected) return null;
+
+  const label = locale === "zh" ? "后端服务已断联" : "Backend disconnected";
+  return (
+    <Tooltip content={label}>
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        className="workbench-header__connection-status text-danger"
+      >
+        <WifiOff size={14} aria-hidden="true" />
+      </span>
+    </Tooltip>
+  );
+}
+
 export function WorkbenchHeader({
   chromeMode,
   activePanel,
@@ -260,6 +284,7 @@ export function WorkbenchHeader({
           {gitToolbarVisible && <div className="workbench-header__git-tools"><GitToolbarTarget /></div>}
         </div>
         <div className="wh-actions workbench-header__actions">
+          <BackendConnectionStatus />
           {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
             <SubagentIsland sessionId={selectedSessionId} />
           ) : null}

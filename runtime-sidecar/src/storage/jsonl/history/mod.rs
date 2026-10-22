@@ -9,8 +9,8 @@
 //! framed [`Record`]s, syncs once, then publishes a new in-memory index. Reads
 //! take the published index from an [`ArcSwap`] and never wait for the writer.
 
-mod files;
 mod checkpoint;
+mod files;
 mod json;
 mod metadata;
 mod ops;
@@ -214,7 +214,10 @@ impl SessionIndex {
     }
 
     /// The same set as [`Self::entity_keys`], newest first.
-    pub fn entity_keys_rev(&self, kind: &str) -> impl Iterator<Item = (&String, &Arc<HistoryObject>)> {
+    pub fn entity_keys_rev(
+        &self,
+        kind: &str,
+    ) -> impl Iterator<Item = (&String, &Arc<HistoryObject>)> {
         let prefix = format!("{kind}\0");
         let identity_prefix = prefix.clone();
         self.order
@@ -224,28 +227,50 @@ impl SessionIndex {
             .filter(move |(key, _)| self.is_newest(&identity_prefix, key))
     }
 
-    pub fn entity_keys_before(&self, kind: &str, before: Option<&str>) -> impl Iterator<Item = (&String, &Arc<HistoryObject>)> {
+    pub fn entity_keys_before(
+        &self,
+        kind: &str,
+        before: Option<&str>,
+    ) -> impl Iterator<Item = (&String, &Arc<HistoryObject>)> {
         let prefix = format!("{kind}\0");
-        let upper = before.map(str::to_owned).unwrap_or_else(|| map_end(&prefix));
+        let upper = before
+            .map(str::to_owned)
+            .unwrap_or_else(|| map_end(&prefix));
         self.order.range(prefix..upper).rev()
     }
 
     /// Fold one committed record into the index during replay.
-    pub fn apply(&mut self, record: Record, lookup: &mut dyn FnMut(&str) -> Option<Arc<HistoryObject>>) -> Result<(), HistoryError> {
+    pub fn apply(
+        &mut self,
+        record: Record,
+        lookup: &mut dyn FnMut(&str) -> Option<Arc<HistoryObject>>,
+    ) -> Result<(), HistoryError> {
         match record {
             Record::HistoryObject(object) => self.object_inserted(Arc::new(object)),
             Record::HistoryHead(head) => self.head = head,
             Record::HistoryEntities(entities) => {
                 for (offset, change) in entities.changes.iter().enumerate() {
-                    if let Some(object) = self.objects.get(&change.object_id).cloned().or_else(|| lookup(&change.object_id)) {
-                        self.changes.insert((entities.revision, offset), ChangeEntry {
-                            collection: change.collection.clone(),
-                            object_id: change.object_id.clone(),
-                        });
+                    if let Some(object) = self
+                        .objects
+                        .get(&change.object_id)
+                        .cloned()
+                        .or_else(|| lookup(&change.object_id))
+                    {
+                        self.changes.insert(
+                            (entities.revision, offset),
+                            ChangeEntry {
+                                collection: change.collection.clone(),
+                                object_id: change.object_id.clone(),
+                            },
+                        );
                         // The append record carries this revision's deleted
                         // ids; re-applying every change makes an older object
                         // win over a newer one.
-                        let identity = identity_key(&change.collection, &entities.session_id, object.value["id"].as_str().unwrap_or_default());
+                        let identity = identity_key(
+                            &change.collection,
+                            &entities.session_id,
+                            object.value["id"].as_str().unwrap_or_default(),
+                        );
                         if !self.identity.contains_key(&identity) {
                             self.object_inserted(object);
                         }
@@ -274,7 +299,8 @@ impl SessionIndex {
                     for object_id in object_ids {
                         self.objects.remove(&object_id);
                     }
-                    self.order.retain(|_, object| self.objects.contains_key(&object.object_id));
+                    self.order
+                        .retain(|_, object| self.objects.contains_key(&object.object_id));
                     self.identity.retain(|_, key| self.order.contains_key(key));
                 }
                 AuxRecord::Unknown => {}
@@ -316,7 +342,8 @@ impl SessionIndex {
 
     /// Index one object as the newest version of its identity.
     pub fn object_inserted(&mut self, object: Arc<HistoryObject>) {
-        self.objects.insert(object.object_id.clone(), object.clone());
+        self.objects
+            .insert(object.object_id.clone(), object.clone());
         let Some(kind) = indexed_kind(&object.kind, &object.value) else {
             return;
         };
@@ -340,7 +367,11 @@ impl SessionIndex {
 
     /// Rebuild the visible index by walking refs from `root`, newest first.
     /// The caller has already bumped the editability generation.
-    pub fn rebuild(&mut self, root: &str, lookup: &mut dyn FnMut(&str) -> Option<Arc<HistoryObject>>) -> Result<(), HistoryError> {
+    pub fn rebuild(
+        &mut self,
+        root: &str,
+        lookup: &mut dyn FnMut(&str) -> Option<Arc<HistoryObject>>,
+    ) -> Result<(), HistoryError> {
         self.order.clear();
         self.identity.clear();
         let mut visited = HashSet::new();
@@ -429,7 +460,9 @@ impl HistorySession {
         let dir = layout::history_dir(&layout::session_dir(root, session_id).map_err(convert_io)?);
         let restored = checkpoint::read(&dir, session_id);
         let (mut index, start) = restored.unwrap_or_else(|| (SessionIndex::empty(session_id), 0));
-        if start == 0 { replay_into(&dir.join("history.000000"), &mut index, true, 0).map_err(convert_io)?; }
+        if start == 0 {
+            replay_into(&dir.join("history.000000"), &mut index, true, 0).map_err(convert_io)?;
+        }
         let path = dir.join(HISTORY_FILE);
         let committed = replay_into(&path, &mut index, false, start).map_err(convert_io)?;
         let file = AppendFile::open_committed(&path, committed).map_err(convert_io)?;
@@ -467,10 +500,18 @@ impl Drop for HistorySession {
 
 /// Read legacy and overlay history one frame at a time. A complete but
 /// unsealed tail is never allowed into a later transaction after reopening.
-fn replay_into(path: &Path, index: &mut SessionIndex, legacy: bool, start: u64) -> super::JsonlResult<u64> {
+fn replay_into(
+    path: &Path,
+    index: &mut SessionIndex,
+    legacy: bool,
+    start: u64,
+) -> super::JsonlResult<u64> {
     let mut sealed = None;
     let complete = super::seglog::visit_complete_from(path, start, |offset, bytes| {
-        if matches!(serde_json::from_slice::<Record>(bytes)?, Record::HistorySeal { .. }) {
+        if matches!(
+            serde_json::from_slice::<Record>(bytes)?,
+            Record::HistorySeal { .. }
+        ) {
             sealed = Some(offset + bytes.len() as u64 + 4);
         }
         Ok(())
@@ -478,7 +519,9 @@ fn replay_into(path: &Path, index: &mut SessionIndex, legacy: bool, start: u64) 
     let end = sealed.unwrap_or(if legacy { complete } else { start });
     super::seglog::visit(path, start, end, |_, bytes| {
         let record = serde_json::from_slice(bytes)?;
-        if !matches!(record, Record::HistorySeal { .. }) { apply_record(index, record); }
+        if !matches!(record, Record::HistorySeal { .. }) {
+            apply_record(index, record);
+        }
         Ok(())
     })?;
     Ok(end)

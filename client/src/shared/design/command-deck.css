@@ -73,6 +73,22 @@
 .workbench-header__actions { justify-self: end; justify-content: flex-end; gap: 2px; }
 .workbench-header__bar :is(button, a, input, select, nav, [role="button"], .workbench-header__actions) { -webkit-app-region: no-drag; }
 .workbench-header .wh-btn { flex: 0 0 32px; width: 32px; height: 30px; border-radius: 999px; }
+.workbench-header__connection-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 30px;
+  flex: 0 0 24px;
+}
+.workbench-header__connection-status svg { animation: connection-status-pulse 2.2s ease-in-out infinite; }
+@keyframes connection-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .58; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbench-header__connection-status svg { animation: none; }
+}
 .workbench-header .wh-btn:is(:hover, .active),
 .workbench-header .wh-project-trigger:hover { background: var(--toolbar-hover); color: var(--ui-text); box-shadow: none; }
 .workbench-header .wh-tab[aria-pressed="true"] { background: var(--toolbar-selection); color: var(--ui-text); box-shadow: none; }

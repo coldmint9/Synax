@@ -18,7 +18,7 @@ pub enum HistoryError {
     RevisionConflict { expected: u64, actual: u64 },
     #[error("history command is invalid: {0}")]
     InvalidCommand(String),
-    }
+}
 
 impl HistoryError {
     /// The `(code, message)` pair the wire answers with.

@@ -1,4 +1,5 @@
 import { visualizationReplyParts } from "./visualizationTranscript";
+import { gitMergeReplyParts, type GitMergeReplyPart } from "./gitMergeTranscript";
 import type { InlineVisualizationReference } from "./visualizationTranscript";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
@@ -24,6 +25,7 @@ export interface ToolCallView {
 }
 
 export type TurnContentBlock =
+  | Extract<GitMergeReplyPart, { type: "git_merge" }>
   | {
       type: "visualization";
       reference: InlineVisualizationReference;
@@ -203,7 +205,7 @@ export function buildInterleavedTurns(
       const thought = msg.metadata?.thought;
       if (typeof thought === "string" && hasDisplayableReasoning(thought))
         items.push({ timestamp, block: { type: "thinking", content: thought } });
-      for (const block of visualizationReplyParts(msg))
+      for (const block of gitMergeReplyParts(msg) ?? visualizationReplyParts(msg))
         items.push({ timestamp, block });
       if (msg.content.trim()) {
         const sources = Array.isArray(msg.metadata?.sources)

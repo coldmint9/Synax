@@ -1,7 +1,7 @@
 pub mod actor;
 pub mod completion;
 pub mod execution;
-pub mod resources;
 pub mod input_queue;
 pub mod projection;
+pub mod resources;
 pub mod session_types;

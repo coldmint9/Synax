@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -46,14 +47,22 @@ const EDGE_SLOP = 2;
  * offsets are `index * rowHeight` and only the rows near the window mount.
  * Nothing measures the DOM, so a record can never be squeezed into a
  * neighbouring one.
+ *
+ * The fixed geometry is a reading aid, not a lock: a row that the reader opens
+ * takes the window over, and the list then lays its records out in place.
  */
 export function VirtualActivityWindow({
   rows,
-  windowed = false,
+  windowed: liveWindow = false,
   animate = false,
   visibleRows = 7,
   rowHeight = 30,
 }: Props) {
+  // The reader can take the window: opening a record stops the fixed row budget
+  // so the body gets its natural height instead of dropping the disclosure.
+  const [readerOwned, setReaderOwned] = useState(false);
+  const takeOver = useCallback(() => setReaderOwned(true), []);
+  const windowed = liveWindow && !readerOwned;
   const viewport = useRef<HTMLDivElement | null>(null);
   const previousRows = useRef(rows);
   const [knownKeys, setKnownKeys] = useState(() => rows.map((row) => row.key));
@@ -161,7 +170,7 @@ export function VirtualActivityWindow({
         )}
         {renderedRows.slice(start, end).map((row) => (
           <div key={row.key} data-row-key={row.key} data-departing={row.departing || undefined} aria-hidden={row.departing || undefined} inert={row.departing || undefined} className="session-process-window-row">
-            <ActivityRowScope compact={windowed}>{row.node}</ActivityRowScope>
+            <ActivityRowScope compact={windowed} onTakeOver={takeOver}>{row.node}</ActivityRowScope>
           </div>
         ))}
         {end < renderedRows.length && (

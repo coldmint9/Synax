@@ -70,27 +70,30 @@ impl JsonlStore {
     /// The handle for `session_id`, loading it on first touch.
     pub fn session(&self, session_id: &str) -> JsonlResult<SessionHandle> {
         super::layout::validate_session_id(session_id)?;
-        let handle = self.root.sessions.get_or_try_init(session_id, || -> JsonlResult<SessionHandle> {
-            let started = std::time::Instant::now();
-            let loaded = load::load(&self.root.path, session_id)?;
-            tracing::debug!(
-                event = "storage.session_loaded",
-                session_id,
-                duration_ms = started.elapsed().as_millis() as u64,
-                replayed_commits = loaded.replayed_commits,
-                checkpoint_commit = loaded.checkpoint_commit,
-                "Session store loaded"
-            );
-            let handle = build_handle(&self.root.path, session_id, loaded);
-            if handle.read().header.is_object() {
-                let actor = handle.actor.lock();
-                self.root
-                    .list
-                    .write()
-                    .upsert(super::session::list_row(&actor));
-            }
-            Ok(handle)
-        })?;
+        let handle =
+            self.root
+                .sessions
+                .get_or_try_init(session_id, || -> JsonlResult<SessionHandle> {
+                    let started = std::time::Instant::now();
+                    let loaded = load::load(&self.root.path, session_id)?;
+                    tracing::debug!(
+                        event = "storage.session_loaded",
+                        session_id,
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        replayed_commits = loaded.replayed_commits,
+                        checkpoint_commit = loaded.checkpoint_commit,
+                        "Session store loaded"
+                    );
+                    let handle = build_handle(&self.root.path, session_id, loaded);
+                    if handle.read().header.is_object() {
+                        let actor = handle.actor.lock();
+                        self.root
+                            .list
+                            .write()
+                            .upsert(super::session::list_row(&actor));
+                    }
+                    Ok(handle)
+                })?;
         self.evict_idle();
         Ok(handle)
     }
@@ -181,13 +184,17 @@ impl JsonlStore {
         // after a failure before publishing completion or allowing a test reset.
         let mut failure = None;
         while let Some(result) = loads.next().await {
-            if let Err(error) = result { failure.get_or_insert(error); }
+            if let Err(error) = result {
+                failure.get_or_insert(error);
+            }
         }
         failure.map_or(Ok(()), Err)
     }
 
     fn load_list_entry(&self, id: &str) -> JsonlResult<bool> {
-        if self.root.sessions.get(id).is_some() { return Ok(false); }
+        if self.root.sessions.get(id).is_some() {
+            return Ok(false);
+        }
         if let Some(row) = summary_cache::read(&self.root.path, id) {
             self.root.list.write().insert_cached(row);
             return Ok(false);
@@ -199,7 +206,9 @@ impl JsonlStore {
 
     pub fn session_summary(&self, id: &str) -> JsonlResult<Option<serde_json::Value>> {
         super::layout::validate_session_id(id)?;
-        if let Some(row) = self.root.list.read().get(id) { return Ok(Some(row)); }
+        if let Some(row) = self.root.list.read().get(id) {
+            return Ok(Some(row));
+        }
         self.load_list_entry(id)?;
         Ok(self.root.list.read().get(id))
     }
@@ -267,44 +276,66 @@ impl JsonlStore {
     }
 
     pub(crate) fn evict_with_policy(&self, capacity: usize, idle: std::time::Duration) -> usize {
-        self.root.sessions.evict_prepared(capacity, idle, |handle| {
-            // The cache's handle and its cell each own the actor. Any caller
-            // clone adds another pair, so exactly two means no in-flight use.
-            if Arc::strong_count(&handle.actor) != 2 {
-                return false;
-            }
-            let mut actor = handle.actor.lock();
-            actor.subscribers.retain(|subscriber| !subscriber.is_closed());
-            if !actor.subscribers.is_empty()
-                || actor.state.active_run_id.is_some()
-                || !actor.active_runs.is_empty()
-                || !actor.activated_runs.is_empty()
-                || actor.control.runtime_control.is_some()
-                || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
-            {
-                return false;
-            }
-            true
-        }, |handle| {
-            let mut actor = handle.actor.lock();
-            if actor.sync().is_err() { return false; }
-            self.cache_summary(&actor);
-            self.checkpoint(&mut actor, true);
-            true
-        })
+        self.root.sessions.evict_prepared(
+            capacity,
+            idle,
+            |handle| {
+                // The cache's handle and its cell each own the actor. Any caller
+                // clone adds another pair, so exactly two means no in-flight use.
+                if Arc::strong_count(&handle.actor) != 2 {
+                    return false;
+                }
+                let mut actor = handle.actor.lock();
+                actor
+                    .subscribers
+                    .retain(|subscriber| !subscriber.is_closed());
+                if !actor.subscribers.is_empty()
+                    || actor.state.active_run_id.is_some()
+                    || !actor.active_runs.is_empty()
+                    || !actor.activated_runs.is_empty()
+                    || actor.control.runtime_control.is_some()
+                    || actor
+                        .control
+                        .execution_lease
+                        .as_ref()
+                        .is_some_and(|lease| !lease.closed)
+                {
+                    return false;
+                }
+                true
+            },
+            |handle| {
+                let mut actor = handle.actor.lock();
+                if actor.sync().is_err() {
+                    return false;
+                }
+                self.cache_summary(&actor);
+                self.checkpoint(&mut actor, true);
+                true
+            },
+        )
     }
 
     pub(crate) fn cached_session_idle(&self, session_id: &str) -> bool {
         let Some(handle) = self.root.sessions.peek(session_id) else {
             return true;
         };
-        let Some(actor) = handle.actor.try_lock() else { return false; };
-        actor.subscribers.iter().all(|subscriber| subscriber.is_closed())
+        let Some(actor) = handle.actor.try_lock() else {
+            return false;
+        };
+        actor
+            .subscribers
+            .iter()
+            .all(|subscriber| subscriber.is_closed())
             && actor.state.active_run_id.is_none()
             && actor.active_runs.is_empty()
             && actor.activated_runs.is_empty()
             && actor.control.runtime_control.is_none()
-            && actor.control.execution_lease.as_ref().is_none_or(|lease| lease.closed)
+            && actor
+                .control
+                .execution_lease
+                .as_ref()
+                .is_none_or(|lease| lease.closed)
     }
 
     pub fn update_list(&self, row: ListRecord) -> JsonlResult<()> {

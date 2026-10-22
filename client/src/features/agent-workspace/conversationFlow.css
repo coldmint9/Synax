@@ -52,7 +52,6 @@
 .session-activity-group[data-live] > .session-process-trigger .session-process-chevron,
 .session-process-trigger:is(:hover, :focus-visible) .session-process-chevron { opacity: 1; }
 .session-activity-group[data-expanded="true"] > .session-process-trigger .session-process-chevron { transform: rotate(0); }
-.session-process-status { display: inline-flex; margin-left: 4px; }
 .session-process-line {
   position: relative;
   display: block;
@@ -150,6 +149,36 @@
   line-height: 1.65;
 }
 .bui-tool .bui-tool-target[data-file] { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+/* A record whose call names one file carries two actions: the row opens its
+   details, the path opens that file. They stay sibling controls, so the row is
+   never a button inside a button. */
+.bui-tool .bui-tool-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.65;
+  text-align: left;
+}
+button.bui-tool-disclosure { cursor: pointer; }
+.session-conversation-flow button.bui-tool-disclosure:hover { background: none; color: var(--flow-ink); }
+.bui-tool-trigger--split .bui-tool-target[data-file] {
+  flex: 0 1 auto;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+.bui-tool-trigger--split .bui-tool-target[data-file]:is(:hover, :focus-visible) { color: var(--flow-ink); }
+.bui-tool-trigger--split .bui-tool-target[data-file]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.bui-tool-trigger:has(.bui-tool-disclosure:focus-visible) .bui-chevron { opacity: 1; }
 .bui-tool-diff { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bui-tool .bui-tool-meta { flex: 0 0 auto; margin: 0; gap: 6px; white-space: nowrap; }
 .bui-tool .bui-chevron { opacity: 0; transform: rotate(-90deg); transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease; }

@@ -18,6 +18,7 @@ import type {
 import { toModelToolName, type LoopToolSet } from "./loop-ai-tools.js";
 import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
+import { conversationGitContextMessage } from "./conversation-git/context.js";
 
 const MAX_TOOL_OUTPUT_TEXT = 4_000;
 const MAX_TOOL_OUTPUT_JSON = 4_000;
@@ -189,6 +190,16 @@ export function buildLoopModelMessages(
     );
   }
 
+  // Native interactive task actions happen outside a model run. Their durable
+  // anchors/receipts must remain available on the next turn and after compaction.
+  const gitContext = conversationGitContextMessage(history.listMessages(), sessionId);
+  if (gitContext) {
+    messages.push(systemMessage(
+      gitContext,
+      options.systemMessageContents,
+    ));
+  }
+
   const injected = new Set(
     userMessages
       .filter((m) => m.metadata?.source === "input_queue" && m.runId)
@@ -324,6 +335,7 @@ function isProtectedToolCall(call: ToolCallRecord): boolean {
   return (
     call.toolId === "skill.load" ||
     call.toolId.startsWith("task.") ||
+    call.toolId === "git.merge.create" ||
     call.status === "failed" ||
     call.status === "denied" ||
     call.status === "cancelled" ||

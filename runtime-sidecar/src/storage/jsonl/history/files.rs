@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use super::json::{array, convert_value, number, object, text};
 use super::wire::HistoryError;
-use super::{encode_hex, now_iso, required_string, required_u64, HistoryObject, SessionIndex};
+use super::{HistoryObject, SessionIndex, encode_hex, now_iso, required_string, required_u64};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -206,11 +206,7 @@ impl FileStore {
         self.appended.take()
     }
 
-    fn set(
-        &mut self,
-        key: String,
-        value: Option<serde_json::Value>,
-    ) -> Result<(), HistoryError> {
+    fn set(&mut self, key: String, value: Option<serde_json::Value>) -> Result<(), HistoryError> {
         self.staged.push((key, value));
         Ok(())
     }
@@ -220,12 +216,15 @@ impl FileStore {
     fn blob_dir(&self, blob_id: &str) -> PathBuf {
         self.history_root
             .join("blobs")
-            .join(crate::storage::jsonl::layout::sha256_hex(blob_id.as_bytes()))
+            .join(crate::storage::jsonl::layout::sha256_hex(
+                blob_id.as_bytes(),
+            ))
     }
 
     fn blob_chunk(&self, blob_id: &str, index: u64) -> Result<Vec<u8>, HistoryError> {
-        fs::read(self.blob_dir(blob_id).join(format!("{index:08}.chunk")))
-            .map_err(|error| HistoryError::ObjectMissing(format!("blob {blob_id}/{index}: {error}")))
+        fs::read(self.blob_dir(blob_id).join(format!("{index:08}.chunk"))).map_err(|error| {
+            HistoryError::ObjectMissing(format!("blob {blob_id}/{index}: {error}"))
+        })
     }
 
     fn write_chunk(&self, blob_id: &str, index: u64, bytes: &[u8]) -> Result<(), HistoryError> {
@@ -236,9 +235,16 @@ impl FileStore {
         fs::write(&path, bytes).map_err(io)
     }
 
-    fn write_manifest(&self, blob_id: &str, manifest: &serde_json::Value) -> Result<(), HistoryError> {
-        fs::write(self.blob_dir(blob_id).join("manifest.json"), serialized(manifest)?)
-            .map_err(io)
+    fn write_manifest(
+        &self,
+        blob_id: &str,
+        manifest: &serde_json::Value,
+    ) -> Result<(), HistoryError> {
+        fs::write(
+            self.blob_dir(blob_id).join("manifest.json"),
+            serialized(manifest)?,
+        )
+        .map_err(io)
     }
 
     fn blob_manifest(&self, blob_id: &str) -> Result<Option<serde_json::Value>, HistoryError> {
@@ -329,7 +335,12 @@ impl FileStore {
         if persist {
             self.write_manifest(
                 &blob_id,
-                &object(&[("blobId", text(&blob_id)), ("total", number(chunks)), ("size", number(size)), ("sha256", text(&hash))]),
+                &object(&[
+                    ("blobId", text(&blob_id)),
+                    ("total", number(chunks)),
+                    ("size", number(size)),
+                    ("sha256", text(&hash)),
+                ]),
             )?;
         }
         Ok(Some(FileVersion {
@@ -502,12 +513,26 @@ impl FileStore {
                 continue;
             }
             if item.untracked {
-                warnings.push(item.warning.clone().unwrap_or_else(|| format!("Untracked effects from operation {} are preserved.", item.id)).into());
+                warnings.push(
+                    item.warning
+                        .clone()
+                        .unwrap_or_else(|| {
+                            format!(
+                                "Untracked effects from operation {} are preserved.",
+                                item.id
+                            )
+                        })
+                        .into(),
+                );
                 for change in &item.changes {
                     let key = format!("{}\0{}", change.root, change.path);
                     blocked.insert(key.clone());
                     if !files.contains_key(&key) {
-                        preserved.push(object(&[("root", text(&change.root)), ("path", text(&change.path)), ("reason", text("Manual or untracked changes are preserved."))]));
+                        preserved.push(object(&[
+                            ("root", text(&change.root)),
+                            ("path", text(&change.path)),
+                            ("reason", text("Manual or untracked changes are preserved.")),
+                        ]));
                     }
                 }
                 continue;
@@ -541,7 +566,11 @@ impl FileStore {
 
     // ---------------------------------------------------------- commands
 
-    pub fn preview(&mut self, ctx: &FileContext, value: &serde_json::Value) -> Result<serde_json::Value, HistoryError> {
+    pub fn preview(
+        &mut self,
+        ctx: &FileContext,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, HistoryError> {
         let checkpoint = self.checkpoint_data(ctx, required_string(value, "checkpointId")?)?;
         let cursor = required_u64(&checkpoint["metadata"], "fileCursor")?;
         let (files, preserved, warnings) = self.restore_plan(ctx, cursor)?;
@@ -551,25 +580,56 @@ impl FileStore {
                 .and_then(|file| self.file_snapshot(&file, false));
             match actual {
                 Ok(version) if same(&version, &change.after) => {}
-                Ok(_) => conflicts.push(object(&[("root", text(&change.root)), ("path", text(&change.path)), ("reason", text("File has independent changes."))])),
-                Err(error) => conflicts.push(object(&[("root", text(&change.root)), ("path", text(&change.path)), ("reason", serde_json::Value::String(error.to_string()))])),
+                Ok(_) => conflicts.push(object(&[
+                    ("root", text(&change.root)),
+                    ("path", text(&change.path)),
+                    ("reason", text("File has independent changes.")),
+                ])),
+                Err(error) => conflicts.push(object(&[
+                    ("root", text(&change.root)),
+                    ("path", text(&change.path)),
+                    ("reason", serde_json::Value::String(error.to_string())),
+                ])),
             }
         }
-        Ok(object(&[("files", convert_value(files)?), ("conflicts", array(conflicts)), ("preservedFiles", array(preserved)), ("warnings", array(warnings.into_iter().map(|item| text(&item)).collect()))]))
+        Ok(object(&[
+            ("files", convert_value(files)?),
+            ("conflicts", array(conflicts)),
+            ("preservedFiles", array(preserved)),
+            (
+                "warnings",
+                array(warnings.into_iter().map(|item| text(&item)).collect()),
+            ),
+        ]))
     }
 
     pub fn pending_view(&self, ctx: &FileContext) -> Result<serde_json::Value, HistoryError> {
         let items: Vec<_> = self
             .pending(ctx)?
             .into_iter()
-            .map(|mutation| object(&[("id", text(&mutation.id)), ("sessionId", text(&mutation.session_id)), ("ownerPid", number(u64::from(mutation.owner_pid)))]))
+            .map(|mutation| {
+                object(&[
+                    ("id", text(&mutation.id)),
+                    ("sessionId", text(&mutation.session_id)),
+                    ("ownerPid", number(u64::from(mutation.owner_pid))),
+                ])
+            })
             .collect();
         let restores: Vec<_> = self
             .pending_restores(ctx)
             .into_iter()
-            .map(|restore| object(&[("sessionId", text(&restore.session_id)), ("requestId", text(&restore.request_id)), ("state", text(&restore.state))]))
+            .map(|restore| {
+                object(&[
+                    ("sessionId", text(&restore.session_id)),
+                    ("requestId", text(&restore.request_id)),
+                    ("state", text(&restore.state)),
+                ])
+            })
             .collect();
-        Ok(object(&[("items", array(items)), ("restores", array(restores))]))
+        Ok(object(&[
+            ("items", array(items)),
+            ("restores", array(restores)),
+        ]))
     }
 
     pub fn cursor_view(&self, ctx: &FileContext) -> Result<serde_json::Value, HistoryError> {
@@ -602,19 +662,30 @@ impl FileStore {
                 .ok_or_else(|| invalid("checkpoint requires a history head"))?;
             let mut metadata = value["metadata"].clone();
             if !metadata.is_object() {
-            metadata = serde_json::Value::Object(serde_json::Map::new());
+                metadata = serde_json::Value::Object(serde_json::Map::new());
             }
-        metadata["fileCursor"] = number(self.counter(ctx));
+            metadata["fileCursor"] = number(self.counter(ctx));
             self.set(
                 format!("pin\0{pin}"),
-            Some(object(&[("objectId", text(&root)), ("metadata", metadata.clone())])),
+                Some(object(&[
+                    ("objectId", text(&root)),
+                    ("metadata", metadata.clone()),
+                ])),
             )?;
-        Ok(object(&[("pinId", text(pin)), ("objectId", text(&root)), ("metadata", metadata)]))
+            Ok(object(&[
+                ("pinId", text(pin)),
+                ("objectId", text(&root)),
+                ("metadata", metadata),
+            ]))
         })()
         .ok()
     }
 
-    pub fn begin(&mut self, ctx: &FileContext, value: &serde_json::Value) -> Result<serde_json::Value, HistoryError> {
+    pub fn begin(
+        &mut self,
+        ctx: &FileContext,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, HistoryError> {
         let targets = value["targets"]
             .as_array()
             .ok_or_else(|| invalid("file targets are required"))?;
@@ -625,7 +696,12 @@ impl FileStore {
             .map_err(|error| invalid(&format!("serialization: {error}")))?;
         let paths = targets
             .iter()
-            .map(|entry| target(required_string(entry, "root")?, required_string(entry, "path")?))
+            .map(|entry| {
+                target(
+                    required_string(entry, "root")?,
+                    required_string(entry, "path")?,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         for file in &paths {
             if ctx.index.aux_value(&claim_key(file)).is_some() {
@@ -668,7 +744,7 @@ impl FileStore {
             for other in &mut others {
                 if overlaps(other) && !other.untracked {
                     other.untracked = true;
-        self.set(mutation_key(&other.id), Some(convert_value(other)?))?;
+                    self.set(mutation_key(&other.id), Some(convert_value(other)?))?;
                 }
             }
         }
@@ -705,7 +781,10 @@ impl FileStore {
         }
         self.set(counter_key(ctx.session_id), Some(number(sequence)))?;
         self.set(mutation_key(&item.id), Some(convert_value(&item)?))?;
-        Ok(object(&[("id", text(&item.id)), ("sequence", number(sequence))]))
+        Ok(object(&[
+            ("id", text(&item.id)),
+            ("sequence", number(sequence)),
+        ]))
     }
 
     pub fn finish(
@@ -722,13 +801,12 @@ impl FileStore {
             return Err(invalid("file mutation belongs to another session"));
         }
         if item.state != "open" {
-        return Ok(convert_value(&item)?);
+            return Ok(convert_value(&item)?);
         }
         item.untracked |= operation == "file_abandon";
         if !item.untracked {
             for change in &mut item.changes {
-                change.after =
-                    self.file_snapshot(&target(&change.root, &change.path)?, true)?;
+                change.after = self.file_snapshot(&target(&change.root, &change.path)?, true)?;
             }
         }
         for change in &item.changes {
@@ -751,7 +829,11 @@ impl FileStore {
 
     /// Register closed mutations (whose images already exist as blobs) and
     /// advance the cursor floor. The caller appends the file_change entities.
-    pub fn import(&mut self, ctx: &FileContext, value: &serde_json::Value) -> Result<serde_json::Value, HistoryError> {
+    pub fn import(
+        &mut self,
+        ctx: &FileContext,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, HistoryError> {
         let records: Vec<Mutation> = serde_json::from_value(value["records"].clone())
             .map_err(|error| invalid(&format!("serialization: {error}")))?;
         if records.len() > 256 {
@@ -777,16 +859,23 @@ impl FileStore {
             }
         }
         for item in &records {
-        self.set(mutation_key(&item.id), Some(convert_value(item)?))?;
+            self.set(mutation_key(&item.id), Some(convert_value(item)?))?;
         }
         let floor = floor.max(self.counter(ctx)).saturating_add(1);
         self.set(counter_key(ctx.session_id), Some(number(floor)))?;
-        Ok(object(&[("imported", number(records.len() as u64)), ("cursor", number(floor))]))
+        Ok(object(&[
+            ("imported", number(records.len() as u64)),
+            ("cursor", number(floor)),
+        ]))
     }
 
     /// Apply the saved plan, then move the head. The plan is persisted before
     /// any file is touched so a retry resumes a partially applied restore.
-    fn resume_restore(&mut self, ctx: &FileContext, restore: &mut Restore) -> Result<(), HistoryError> {
+    fn resume_restore(
+        &mut self,
+        ctx: &FileContext,
+        restore: &mut Restore,
+    ) -> Result<(), HistoryError> {
         if restore.state == "head_committed" {
             return Ok(());
         }
@@ -844,7 +933,8 @@ impl FileStore {
             }
             let include = value["includeFiles"].as_bool().unwrap_or(true);
             let mut files = if include {
-                self.restore_plan(ctx, required_u64(&checkpoint["metadata"], "fileCursor")?)?.0
+                self.restore_plan(ctx, required_u64(&checkpoint["metadata"], "fileCursor")?)?
+                    .0
             } else {
                 Vec::new()
             };
@@ -854,7 +944,8 @@ impl FileStore {
                 .transpose()
                 .map_err(|error| invalid(&format!("serialization: {error}")))?
                 .unwrap_or_default();
-            files.retain(|change| !preserved.contains(&format!("{}\0{}", change.root, change.path)));
+            files
+                .retain(|change| !preserved.contains(&format!("{}\0{}", change.root, change.path)));
             if self.pending(ctx)?.iter().any(|mutation| {
                 mutation.roots.iter().any(|root| {
                     files.iter().any(|change| {
@@ -884,11 +975,15 @@ impl FileStore {
                 metadata: checkpoint["metadata"].clone(),
                 state: "prepared".into(),
             };
-        self.set(restore_key(ctx.session_id), Some(convert_value(&restore)?))?;
+            self.set(restore_key(ctx.session_id), Some(convert_value(&restore)?))?;
             restore
         };
         self.resume_restore(ctx, &mut restore)?;
-        Ok(object(&[("revision", number(restore.expected_revision + 1)), ("metadata", restore.metadata), ("requestId", text(&restore.request_id))]))
+        Ok(object(&[
+            ("revision", number(restore.expected_revision + 1)),
+            ("metadata", restore.metadata),
+            ("requestId", text(&restore.request_id)),
+        ]))
     }
 
     pub fn recover(&mut self, ctx: &FileContext) -> Result<serde_json::Value, HistoryError> {
@@ -896,10 +991,19 @@ impl FileStore {
             return Ok(object(&[("recovered", serde_json::Value::Bool(false))]));
         };
         self.resume_restore(ctx, &mut restore)?;
-        Ok(object(&[("recovered", serde_json::Value::Bool(true)), ("revision", number(restore.expected_revision + 1)), ("metadata", restore.metadata), ("requestId", text(&restore.request_id))]))
+        Ok(object(&[
+            ("recovered", serde_json::Value::Bool(true)),
+            ("revision", number(restore.expected_revision + 1)),
+            ("metadata", restore.metadata),
+            ("requestId", text(&restore.request_id)),
+        ]))
     }
 
-    pub fn restore_ack(&mut self, ctx: &FileContext, value: &serde_json::Value) -> Result<(), HistoryError> {
+    pub fn restore_ack(
+        &mut self,
+        ctx: &FileContext,
+        value: &serde_json::Value,
+    ) -> Result<(), HistoryError> {
         if let Some(restore) = self.saved_restore(ctx) {
             if restore.request_id != required_string(value, "requestId")?
                 || restore.state != "head_committed"

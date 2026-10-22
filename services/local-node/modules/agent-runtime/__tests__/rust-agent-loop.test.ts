@@ -406,6 +406,33 @@ it("does not retry unrelated provider failures as invalid arguments", async () =
   expect(events.some(e => e.type === "step-restarted")).toBe(false);
 });
 
+it("backs off and retries a model step instead of failing the session", async () => {
+  // The provider spends its budget first; the loop then backs off (2s) and
+  // retries the step instead of ending the session on a transient 503.
+  respond = (_request, response) => {
+    if (requests.length <= 2) {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "upstream unavailable", type: "server_error" } }));
+      return;
+    }
+    begin("openai", response);
+    text("openai", response, "Recovered.");
+    end("openai", response);
+  };
+  const started = await post("/agent-loop/start", { ...input("openai"), maxRetries: 1 });
+  expect(started.status).toBe(200);
+  const { loopId } = await started.json() as { loopId: string };
+  loops.push(loopId);
+  const events = await collect(observe(loopId, 0, 20_000));
+  expect(events.at(-1)?.type).toBe("done");
+  expect(events.some(event => event.type === "error")).toBe(false);
+  expect(requests).toHaveLength(3);
+  expect(events.filter(event => event.type === "step-restarted"))
+    .toMatchObject([{ step: 1, reason: "upstream", maxRetries: 3 }]);
+  expect(events.filter(event => event.type === "retry_status").map(event => event.retry?.phase))
+    .toEqual(["waiting", "retrying", "exhausted", "waiting", "recovered"]);
+}, 30_000);
+
 async function crashAndRestartSidecar() {
   const generation = supervisor.generation;
   supervisor.process.kill("SIGKILL");

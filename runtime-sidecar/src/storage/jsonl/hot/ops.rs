@@ -5,22 +5,20 @@
 //! state and fills a [`Tx`]; the second is `SessionActor::commit`. Validation
 //! never touches the disk, and a failed validation leaves nothing behind.
 
-
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::actor::{
-    ControlCommandReceipt, PendingEvent, RunAdmission, RuntimeError, SessionSnapshot, StreamAppendReceipt,
-    StreamEvent,
+    ControlCommandReceipt, PendingEvent, RunAdmission, RuntimeError, SessionSnapshot,
+    StreamAppendReceipt, StreamEvent,
 };
 use crate::runtime::input_queue::QueueState;
-use crate::storage::jsonl::segment::{PValue, Projection};
 use crate::runtime::session_types::{ActivationReceipt, FinishReceipt};
-
+use crate::storage::jsonl::segment::{PValue, Projection};
 
 use super::super::session::state::Tx;
-use crate::storage::jsonl::session::{SessionActor, SessionHandle};
 use crate::runtime::session_types::append_fingerprint;
+use crate::storage::jsonl::session::{SessionActor, SessionHandle};
 
 /// Control operations that answer from live state and own no receipt.
 const RECEIPT_FREE: [&str; 2] = ["read", "execution_check"];
@@ -36,10 +34,14 @@ pub fn parse_json(bytes: &[u8]) -> Result<Value, RuntimeError> {
     if bytes.is_empty() {
         return Ok(Value::Null);
     }
-    serde_json::from_slice(bytes).map_err(|_| RuntimeError::InvalidCommand("invalid JSON body".into()))
+    serde_json::from_slice(bytes)
+        .map_err(|_| RuntimeError::InvalidCommand("invalid JSON body".into()))
 }
 
-pub fn snapshot_of(state: &crate::storage::jsonl::record::SnapshotCond, session_id: &str) -> SessionSnapshot {
+pub fn snapshot_of(
+    state: &crate::storage::jsonl::record::SnapshotCond,
+    session_id: &str,
+) -> SessionSnapshot {
     SessionSnapshot {
         session_id: session_id.to_owned(),
         epoch: state.epoch,
@@ -50,19 +52,31 @@ pub fn snapshot_of(state: &crate::storage::jsonl::record::SnapshotCond, session_
     }
 }
 
-pub fn ensure_epoch(state: &crate::storage::jsonl::record::SnapshotCond, epoch: u64) -> Result<(), RuntimeError> {
+pub fn ensure_epoch(
+    state: &crate::storage::jsonl::record::SnapshotCond,
+    epoch: u64,
+) -> Result<(), RuntimeError> {
     if epoch == state.epoch {
         Ok(())
     } else {
-        Err(RuntimeError::StaleEpoch { expected: state.epoch, actual: epoch })
+        Err(RuntimeError::StaleEpoch {
+            expected: state.epoch,
+            actual: epoch,
+        })
     }
 }
 
-pub fn ensure_revision(state: &crate::storage::jsonl::record::SnapshotCond, revision: u64) -> Result<(), RuntimeError> {
+pub fn ensure_revision(
+    state: &crate::storage::jsonl::record::SnapshotCond,
+    revision: u64,
+) -> Result<(), RuntimeError> {
     if revision == state.revision {
         Ok(())
     } else {
-        Err(RuntimeError::RevisionConflict { expected: revision, actual: state.revision })
+        Err(RuntimeError::RevisionConflict {
+            expected: revision,
+            actual: state.revision,
+        })
     }
 }
 
@@ -81,21 +95,29 @@ pub fn set_projection_state(
     blocked_reason: Option<&str>,
     updated_at: &str,
 ) {
-    projection.session.set("status", PValue::String(status.to_owned()));
-    projection.session.set("activeRunId", active_run_id.map_or(PValue::Null, |id| PValue::String(id.to_owned())));
     projection
         .session
-        .set("pendingResumeToken", pending_resume_token.map_or(PValue::Null, |token| PValue::String(token.to_owned())));
+        .set("status", PValue::String(status.to_owned()));
+    projection.session.set(
+        "activeRunId",
+        active_run_id.map_or(PValue::Null, |id| PValue::String(id.to_owned())),
+    );
+    projection.session.set(
+        "pendingResumeToken",
+        pending_resume_token.map_or(PValue::Null, |token| PValue::String(token.to_owned())),
+    );
+    projection.session.set(
+        "blockedReason",
+        blocked_reason.map_or(PValue::Null, |reason| PValue::String(reason.to_owned())),
+    );
     projection
         .session
-        .set("blockedReason", blocked_reason.map_or(PValue::Null, |reason| PValue::String(reason.to_owned())));
-    projection.session.set("updatedAt", PValue::String(updated_at.to_owned()));
+        .set("updatedAt", PValue::String(updated_at.to_owned()));
 }
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
-
 
 impl SessionHandle {
     /// Read the published projection, encoding it when its generation moved.
@@ -115,15 +137,22 @@ impl SessionHandle {
     pub fn seed(&self, session: &[u8]) -> Result<Vec<u8>, RuntimeError> {
         let seed = crate::runtime::projection::UiSnapshot::seed(&self.id, session)?;
         let mut actor = self.actor.lock();
-        if actor.state.cursor != 0 || actor.state.revision != 0 || actor.state.active_run_id.is_some() {
+        if actor.state.cursor != 0
+            || actor.state.revision != 0
+            || actor.state.active_run_id.is_some()
+        {
             return Err(RuntimeError::ProjectionMigrationRequired);
         }
         let projection = Projection::from_snapshot(&seed);
         let bytes = projection.encode()?;
         let queue = projection.queue();
         let tx = Tx {
-            epoch: actor.state.epoch, revision: actor.state.revision, cursor: actor.state.cursor,
-            header: Some(projection.session.clone()), queue: Some(queue), projection,
+            epoch: actor.state.epoch,
+            revision: actor.state.revision,
+            cursor: actor.state.cursor,
+            header: Some(projection.session.clone()),
+            queue: Some(queue),
+            projection,
             ..Default::default()
         };
         actor.write(self, tx)?;
@@ -145,7 +174,11 @@ impl SessionActor {
         queue_item: &[u8],
         run_json: &[u8],
     ) -> Result<RunAdmission, RuntimeError> {
-        let queue_item = if queue_item.is_empty() { None } else { Some(parse_json(queue_item)?) };
+        let queue_item = if queue_item.is_empty() {
+            None
+        } else {
+            Some(parse_json(queue_item)?)
+        };
         let run_document = if run_json.is_empty() {
             None
         } else {
@@ -172,10 +205,67 @@ impl SessionActor {
         }
         ensure_epoch(&self.state, epoch)?;
         ensure_revision(&self.state, expected_revision)?;
-        if self.state.active_run_id.is_some() || self.control.runtime_control.is_some() {
+        if self.control.runtime_control.is_some() {
             return Err(RuntimeError::SessionBusy);
         }
-        let projection = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
+        let projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
+        // A settled session can still carry a run pointer: completion is
+        // published by a session patch while the clearing `finish` batch may
+        // never commit. Reclaim that pointer instead of rejecting every later
+        // message for the rest of the session's life.
+        let mut epoch = self.state.epoch;
+        let mut control = None;
+        let mut reclaimed = None;
+        if self.state.active_run_id.is_some() {
+            // A terminal UI projection is not proof that its executor has
+            // drained. Never admit another run over an open current lease.
+            if self.control.execution_lease.as_ref().is_some_and(|lease| {
+                !lease.closed && self.state.active_run_id.as_deref() == Some(lease.run_id.as_str())
+            }) {
+                return Err(RuntimeError::SessionBusy);
+            }
+            let abandoned =
+                reclaimable_run(&self.state, &projection).ok_or(RuntimeError::SessionBusy)?;
+            epoch = epoch
+                .checked_add(1)
+                .ok_or_else(|| RuntimeError::InvalidCommand("epoch overflow".into()))?;
+            let mut settled = self.control.clone();
+            if let Some(lease) = settled
+                .execution_lease
+                .as_mut()
+                .filter(|lease| lease.run_id == abandoned)
+            {
+                lease.closed = true;
+            }
+            settled
+                .permissions
+                .retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
+            settled.interactions.retain(|item| {
+                item["consumedAt"].is_null()
+                    && (item["status"] == "pending" || !item["response"].is_null())
+            });
+            control = Some(settled);
+            reclaimed = Some(abandoned);
+        } else if self
+            .control
+            .execution_lease
+            .as_ref()
+            .is_some_and(|lease| !lease.closed)
+        {
+            // Older builds cleared the pointer before closing the lease. No
+            // executor can pass its fence without that pointer. Retire the
+            // orphan in the admission transaction, including an epoch bump so
+            // delayed streams cannot acquire the next run's generation.
+            let mut settled = self.control.clone();
+            settled.execution_lease.as_mut().unwrap().closed = true;
+            control = Some(settled);
+            epoch = epoch
+                .checked_add(1)
+                .ok_or_else(|| RuntimeError::InvalidCommand("epoch overflow".into()))?;
+        }
         if projection.pending_queue_input.is_some() {
             return Err(RuntimeError::InvalidCommand(
                 "previous input delivery requires recovery before admission".into(),
@@ -184,8 +274,9 @@ impl SessionActor {
         let mut tx = Tx {
             cursor: self.state.cursor,
             revision: self.state.revision + 1,
-            epoch: self.state.epoch,
+            epoch,
             projection,
+            control,
             ..Default::default()
         };
         let mut queue_event = None;
@@ -196,7 +287,9 @@ impl SessionActor {
                 .items
                 .iter()
                 .find(|entry| entry["id"].as_str() == Some(id))
-                .ok_or_else(|| RuntimeError::InvalidCommand("queued input no longer exists".into()))?;
+                .ok_or_else(|| {
+                    RuntimeError::InvalidCommand("queued input no longer exists".into())
+                })?;
             if persisted != item {
                 return Err(RuntimeError::RequestConflict);
             }
@@ -212,7 +305,10 @@ impl SessionActor {
             tx.projection.apply(
                 tx.cursor,
                 run_id,
-                &PendingEvent { kind: "input_queue_changed".into(), payload: value_to_bytes(&payload)? },
+                &PendingEvent {
+                    kind: "input_queue_changed".into(),
+                    payload: value_to_bytes(&payload)?,
+                },
             )?;
             queue_event = Some(StreamEvent {
                 sequence: tx.cursor,
@@ -228,11 +324,11 @@ impl SessionActor {
         }
         tx.active_run_id = Some(Some(run_id.to_owned()));
         tx.revision = tx.revision.max(self.state.revision + 1);
-        tx.epoch = self.state.epoch;
+        tx.epoch = epoch;
         let admission = RunAdmission {
             session_id: self.id.clone(),
             run_id: run_id.to_owned(),
-            epoch: self.state.epoch,
+            epoch,
             revision: tx.revision,
             reused: false,
             queue_event: queue_event.clone(),
@@ -244,9 +340,21 @@ impl SessionActor {
             "admit".into(),
             request_id.to_owned(),
             body_hash.to_owned(),
-            to_value(&admission).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
+            to_value(&admission)
+                .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
         ));
         self.write(handle, tx)?;
+        if let Some(abandoned) = reclaimed {
+            self.activated_runs.remove(&abandoned);
+            self.active_runs.remove(&abandoned);
+            self.terminated_runs.insert(abandoned.clone());
+            tracing::warn!(
+                event = "runtime.stale_run_reclaimed",
+                session_id = %self.id,
+                run_id = %abandoned,
+                "Reclaimed a settled run whose finish batch never committed"
+            );
+        }
         if let Some(document) = run_document {
             self.active_runs.insert(run_id.to_owned(), document);
         } else {
@@ -254,6 +362,43 @@ impl SessionActor {
         }
         Ok(admission)
     }
+}
+
+/// Statuses that settle a session for good: no executor resumes from them.
+pub(crate) fn settled_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled")
+}
+
+/// The run a settled session may keep pointing at because its `finish` batch
+/// never committed. Both the session and the projected run must already be
+/// settled, no control fence may be active, and no resume may be pending, so a
+/// live executor (which keeps its session `running`) is never preempted.
+fn reclaimable_run(
+    state: &crate::storage::jsonl::record::SnapshotCond,
+    projection: &Projection,
+) -> Option<String> {
+    let run_id = state.active_run_id.as_ref()?;
+    let session_status = projection.session.get("status").and_then(PValue::as_str)?;
+    if !settled_status(session_status) {
+        return None;
+    }
+    if projection
+        .session
+        .get("pendingResumeToken")
+        .is_some_and(|token| !token.is_null())
+    {
+        return None;
+    }
+    if projection.run_id() == Some(run_id.as_str())
+        && !projection
+            .run
+            .get("status")
+            .and_then(PValue::as_str)
+            .is_some_and(settled_status)
+    {
+        return None;
+    }
+    Some(run_id.clone())
 }
 
 impl SessionActor {
@@ -267,7 +412,9 @@ impl SessionActor {
         revision: u64,
     ) -> Result<ActivationReceipt, RuntimeError> {
         if request_id.is_empty() || request_id.len() > 256 || run_json.len() > MAX_REQUEST_BYTES {
-            return Err(RuntimeError::InvalidCommand("activation request exceeds its bounds".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "activation request exceeds its bounds".into(),
+            ));
         }
         let mut document = parse_json(run_json)?;
         let run_id = document["id"]
@@ -299,22 +446,44 @@ impl SessionActor {
             return Err(RuntimeError::InvalidCommand("run is not admitted".into()));
         }
         if self.activated_runs.contains(&run_id) || self.terminated_runs.contains(&run_id) {
-            return Err(RuntimeError::InvalidCommand("run was already activated or finalized".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "run was already activated or finalized".into(),
+            ));
         }
-        let mut active = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
+        if self.control.runtime_control.is_some() {
+            return Err(RuntimeError::SessionBusy);
+        }
+        let mut control = self.control.clone();
+        if let Some(identity) = document.pointer("/metadata/executionLease") {
+            let lease = crate::runtime::execution::ExecutionLease::decode(&self.id, identity)?;
+            if lease.run_id != run_id {
+                return Err(lease.superseded("activation run identity mismatch"));
+            }
+            lease.assert_openable(control.execution_lease.as_ref())?;
+            document["metadata"]["executionLease"] = to_value(&lease)?;
+            control.execution_lease = Some(lease);
+        }
+        let mut active = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
         document["status"] = json!("running");
         document["completedAt"] = Value::Null;
         let payload = json!({"schema":1,
             "chunk":{"type":"run_activated", "run":document},
             "state":{"status":"running", "activeRunId":run_id, "pendingResumeToken":null, "blockedReason":null, "updatedAt":document["startedAt"]}
         });
-        let pending = PendingEvent { kind: "run_activated".into(), payload: value_to_bytes(&payload)? };
+        let pending = PendingEvent {
+            kind: "run_activated".into(),
+            payload: value_to_bytes(&payload)?,
+        };
         active.apply(self.state.cursor + 1, &run_id, &pending)?;
         let mut tx = Tx {
             cursor: self.state.cursor + 1,
             revision: self.state.revision + 1,
             epoch: self.state.epoch,
             projection: active,
+            control: Some(control),
             ..Default::default()
         };
         let event = StreamEvent {
@@ -326,14 +495,23 @@ impl SessionActor {
         };
         let snapshot = snapshot_of(&self.state, &self.id);
         let receipt = ActivationReceipt {
-            snapshot: SessionSnapshot { cursor: tx.cursor, revision: tx.revision, ..snapshot },
+            snapshot: SessionSnapshot {
+                cursor: tx.cursor,
+                revision: tx.revision,
+                ..snapshot
+            },
             event: event.clone(),
             reused: false,
         };
         tx.events.push(event.clone());
         tx.fan_out.push(event);
         tx.header = Some(tx.projection.session.clone());
-        tx.receipt = Some(("activate".into(), request_id.to_owned(), identity, to_value(&receipt)?));
+        tx.receipt = Some((
+            "activate".into(),
+            request_id.to_owned(),
+            identity,
+            to_value(&receipt)?,
+        ));
         self.write(handle, tx)?;
         Ok(receipt)
     }
@@ -350,9 +528,12 @@ impl SessionActor {
         run_json: &[u8],
     ) -> Result<FinishReceipt, RuntimeError> {
         if request_id.is_empty() || request_id.len() > 256 {
-            return Err(RuntimeError::InvalidCommand("invalid completion request id".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "invalid completion request id".into(),
+            ));
         }
-        let supplied = crate::runtime::completion::decode_run_document(&self.id, run_id, status, run_json)?;
+        let supplied =
+            crate::runtime::completion::decode_run_document(&self.id, run_id, status, run_json)?;
         let identity = serde_json::to_string(&(run_id, status, &supplied))
             .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
         if let Some(saved) = self.receipt("finish", request_id) {
@@ -367,37 +548,65 @@ impl SessionActor {
         ensure_epoch(&self.state, epoch)?;
         ensure_revision(&self.state, revision)?;
         if self.state.active_run_id.as_deref() != Some(run_id) {
-            return Err(RuntimeError::InvalidCommand("run is not active".into()));
+            return self.finish_settled_run(
+                handle,
+                request_id,
+                run_id,
+                identity,
+                supplied.as_ref(),
+            );
         }
         let mut control = self.control.clone();
-        if let Some(lease) = control.execution_lease.as_mut().filter(|lease| lease.run_id == run_id) {
-            if let Some(identity) = supplied.as_ref().and_then(|run| run.pointer("/metadata/executionLease")) {
-                let expected = crate::runtime::execution::ExecutionLease::decode(&self.id, identity)?;
+        if let Some(lease) = control
+            .execution_lease
+            .as_mut()
+            .filter(|lease| lease.run_id == run_id)
+        {
+            if let Some(identity) = supplied
+                .as_ref()
+                .and_then(|run| run.pointer("/metadata/executionLease"))
+            {
+                let expected =
+                    crate::runtime::execution::ExecutionLease::decode(&self.id, identity)?;
                 if !lease.same_owner(&expected) {
                     return Err(expected.superseded("owner changed before finish"));
                 }
             }
             lease.closed = true;
         }
-        let mut projection = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
+        let mut projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
         let projected_document = projection
             .run_id()
             .filter(|id| *id == run_id)
             .map(|_| projection.run.to_json());
-        let previous_reason = projection.session.get("blockedReason").map(PValue::to_json).unwrap_or(Value::Null);
-        let mut document = supplied
-            .or(projected_document)
-            .or_else(|| self.active_runs.get(run_id).and_then(|run| run.get("document").cloned()).filter(Value::is_object));
+        let previous_reason = projection
+            .session
+            .get("blockedReason")
+            .map(PValue::to_json)
+            .unwrap_or(Value::Null);
+        let mut document = supplied.or(projected_document).or_else(|| {
+            self.active_runs
+                .get(run_id)
+                .and_then(|run| run.get("document").cloned())
+                .filter(Value::is_object)
+        });
         if let (Some(document), Some(lease)) = (
             document.as_mut(),
-            control.execution_lease.as_ref().filter(|lease| lease.run_id == run_id),
+            control
+                .execution_lease
+                .as_ref()
+                .filter(|lease| lease.run_id == run_id),
         ) {
             if !document["metadata"].is_object() {
                 document["metadata"] = json!({});
             }
             document["metadata"]["executionLease"] = to_value(lease)?;
         }
-        let mut completion = crate::runtime::completion::complete(run_id, status, document, previous_reason)?;
+        let mut completion =
+            crate::runtime::completion::complete(run_id, status, document, previous_reason)?;
         if matches!(status, "interrupted" | "cancelled" | "failed")
             && let Some(message) = projection.take_partial_message(run_id, &completion.completed_at)
         {
@@ -405,11 +614,19 @@ impl SessionActor {
             payload["chunk"]["message"] = message;
             completion.event.payload = value_to_bytes(&payload)?;
         }
-        control.permissions.retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
-        control.interactions.retain(|item| item["consumedAt"].is_null() && (item["status"] == "pending" || !item["response"].is_null()));
+        control
+            .permissions
+            .retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
+        control.interactions.retain(|item| {
+            item["consumedAt"].is_null()
+                && (item["status"] == "pending" || !item["response"].is_null())
+        });
         let cursor = self.state.cursor + 1;
         projection.apply(cursor, run_id, &completion.event)?;
-        projection.session.set("completedAt", PValue::String(completion.completed_at.clone()));
+        projection.session.set(
+            "completedAt",
+            PValue::String(completion.completed_at.clone()),
+        );
         let event = StreamEvent {
             sequence: cursor,
             run_id: run_id.to_owned(),
@@ -424,7 +641,8 @@ impl SessionActor {
                 revision: self.state.revision + 1,
                 active_run_id: None,
                 cursor,
-                retained_from: cursor.saturating_sub(crate::storage::jsonl::session::EVENT_WINDOW) + 1,
+                retained_from: cursor.saturating_sub(crate::storage::jsonl::session::EVENT_WINDOW)
+                    + 1,
             },
             event: Some(event.clone()),
             reused: false,
@@ -442,11 +660,115 @@ impl SessionActor {
         tx.fan_out.push(event);
         tx.producer_sequences = Some(Default::default());
         tx.header = Some(tx.projection.session.clone());
-        tx.receipt = Some(("finish".into(), request_id.to_owned(), identity, to_value(&receipt)?));
+        tx.receipt = Some((
+            "finish".into(),
+            request_id.to_owned(),
+            identity,
+            to_value(&receipt)?,
+        ));
         self.write(handle, tx)?;
         self.activated_runs.remove(run_id);
         self.terminated_runs.insert(run_id.to_owned());
         self.active_runs.remove(run_id);
+        self.state.producer_sequences.clear();
+        Ok(receipt)
+    }
+
+    /// Finish a run whose pointer a session patch already cleared. Completion
+    /// was published by that patch, so this only has to persist the fence and
+    /// the receipt. A replaced run keeps the original rejection: a late finish
+    /// must never fence the executor that took over.
+    fn finish_settled_run(
+        &mut self,
+        handle: &SessionHandle,
+        request_id: &str,
+        run_id: &str,
+        identity: String,
+        supplied: Option<&Value>,
+    ) -> Result<FinishReceipt, RuntimeError> {
+        if self.state.active_run_id.is_some() {
+            return Err(RuntimeError::InvalidCommand("run is not active".into()));
+        }
+        let projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
+        // The projection must still describe this run. A run the session has
+        // already replaced keeps the original rejection: a late finish may
+        // never fence the executor that took over.
+        if projection.run_id() != Some(run_id) {
+            return Err(RuntimeError::InvalidCommand("run is not active".into()));
+        }
+        if !projection
+            .run
+            .get("status")
+            .and_then(PValue::as_str)
+            .is_some_and(|status| {
+                matches!(
+                    status,
+                    "completed" | "failed" | "cancelled" | "interrupted" | "blocked"
+                )
+            })
+        {
+            return Err(RuntimeError::InvalidCommand("run has not settled".into()));
+        }
+        let mut control = self.control.clone();
+        if let Some(lease) = control
+            .execution_lease
+            .as_mut()
+            .filter(|lease| lease.run_id == run_id)
+        {
+            if let Some(identity) = supplied.and_then(|run| run.pointer("/metadata/executionLease"))
+            {
+                let expected =
+                    crate::runtime::execution::ExecutionLease::decode(&self.id, identity)?;
+                if !lease.same_owner(&expected) {
+                    return Err(expected.superseded("owner changed before finish"));
+                }
+            }
+            lease.closed = true;
+        }
+        control
+            .permissions
+            .retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
+        control.interactions.retain(|item| {
+            item["consumedAt"].is_null()
+                && (item["status"] == "pending" || !item["response"].is_null())
+        });
+        let cursor = self.state.cursor;
+        let receipt = FinishReceipt {
+            snapshot: SessionSnapshot {
+                session_id: self.id.clone(),
+                epoch: self.state.epoch + 1,
+                revision: self.state.revision + 1,
+                active_run_id: None,
+                cursor,
+                retained_from: cursor.saturating_sub(crate::storage::jsonl::session::EVENT_WINDOW)
+                    + 1,
+            },
+            event: None,
+            reused: false,
+        };
+        let mut tx = Tx {
+            cursor,
+            revision: self.state.revision + 1,
+            epoch: self.state.epoch + 1,
+            projection,
+            control: Some(control),
+            producer_sequences: Some(Default::default()),
+            ..Default::default()
+        };
+        tx.header = Some(tx.projection.session.clone());
+        tx.receipt = Some((
+            "finish".into(),
+            request_id.to_owned(),
+            identity,
+            to_value(&receipt).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
+        ));
+        self.write(handle, tx)?;
+        self.activated_runs.remove(run_id);
+        self.active_runs.remove(run_id);
+        self.terminated_runs.insert(run_id.to_owned());
         self.state.producer_sequences.clear();
         Ok(receipt)
     }
@@ -463,19 +785,33 @@ impl SessionActor {
         events: Vec<PendingEvent>,
     ) -> Result<StreamAppendReceipt, RuntimeError> {
         if events.is_empty() {
-            return Err(RuntimeError::InvalidCommand("stream batch cannot be empty".to_owned()));
+            return Err(RuntimeError::InvalidCommand(
+                "stream batch cannot be empty".to_owned(),
+            ));
         }
         if events.len() > 256
-            || events.iter().any(|event| event.payload.len() + event.kind.len() + run_id.len() > MAX_EVENT_BYTES)
+            || events.iter().any(|event| {
+                event.payload.len() + event.kind.len() + run_id.len() > MAX_EVENT_BYTES
+            })
         {
-            return Err(RuntimeError::InvalidCommand("stream batch exceeds event or frame budget".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "stream batch exceeds event or frame budget".into(),
+            ));
         }
         if durability == crate::runtime::actor::Durability::Ephemeral {
             return Err(RuntimeError::InvalidCommand(
                 "ephemeral events are published live and never persisted".into(),
             ));
         }
-        let fingerprint = append_fingerprint(&self.id, run_id, producer_id, producer_sequence, epoch, durability, &events);
+        let fingerprint = append_fingerprint(
+            &self.id,
+            run_id,
+            producer_id,
+            producer_sequence,
+            epoch,
+            durability,
+            &events,
+        );
         let key = append_key(producer_id, producer_sequence);
         if let Some(saved) = self.receipt("stream", &key) {
             if saved.fingerprint != fingerprint {
@@ -493,14 +829,29 @@ impl SessionActor {
         if self.state.active_run_id.as_deref() != Some(run_id) {
             return Err(RuntimeError::InvalidCommand("run is not active".into()));
         }
-        let expected = self.state.producer_sequences.get(producer_id).copied().unwrap_or(0) + 1;
+        let expected = self
+            .state
+            .producer_sequences
+            .get(producer_id)
+            .copied()
+            .unwrap_or(0)
+            + 1;
         if producer_sequence < expected {
-            return Err(RuntimeError::ProducerSequenceReplay { expected, actual: producer_sequence });
+            return Err(RuntimeError::ProducerSequenceReplay {
+                expected,
+                actual: producer_sequence,
+            });
         }
         if producer_sequence > expected {
-            return Err(RuntimeError::ProducerSequenceGap { expected, actual: producer_sequence });
+            return Err(RuntimeError::ProducerSequenceGap {
+                expected,
+                actual: producer_sequence,
+            });
         }
-        let mut projection = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
+        let mut projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
         let first = self.state.cursor + 1;
         let mut tx = Tx {
             cursor: self.state.cursor,
@@ -549,7 +900,8 @@ fn append_key(producer_id: &str, producer_sequence: u64) -> String {
 }
 
 pub fn hash(value: &impl serde::Serialize) -> Result<String, RuntimeError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 

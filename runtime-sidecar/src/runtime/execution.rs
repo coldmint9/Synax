@@ -37,6 +37,22 @@ impl ExecutionLease {
             && self.host_id == other.host_id
     }
 
+    /// Call only after proving that this run is the admitted/active run. A
+    /// lease for another run is already fenced by that pointer and cannot
+    /// prevent the admitted run from starting. A competing generation of the
+    /// same run must still be rejected.
+    pub fn assert_openable(&self, current: Option<&Self>) -> Result<(), RuntimeError> {
+        if let Some(current) = current {
+            if !current.closed && current.run_id == self.run_id && !current.same_owner(self) {
+                return Err(self.superseded("another executor owns the run"));
+            }
+            if current.closed && current.same_owner(self) {
+                return Err(self.superseded("closed generation cannot be reopened"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn superseded(&self, reason: &str) -> RuntimeError {
         RuntimeError::ExecutionSuperseded(format!(
             "Execution lease is no longer current ({reason}; session={}, run={}, epoch={}).",

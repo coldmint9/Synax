@@ -1,0 +1,14 @@
+.interactive-frame__frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+[data-interactive-frame] {
+  width: 100%;
+  min-width: 0;
+}
+/* Content taller than maxHeight scrolls inside the frame instead of being cut. */
+[data-interactive-overflow="true"] .interactive-frame__frame {
+  overflow-y: auto;
+}

@@ -80,6 +80,9 @@ export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
   let height = 28; // turn chrome + divider
   for (const block of entry.turn.blocks) {
     switch (block.type) {
+      case "git_merge":
+        height += 480;
+        break;
       case "media":
         height += 180;
         break;

@@ -66,7 +66,10 @@ impl MetadataStore {
                 if let Some(revision) = record.get("meta").and_then(Value::as_u64) {
                     committed = Some(revision);
                     for record in pending.drain(..) {
-                        self.records.insert(record["key"].as_str().unwrap_or_default().to_owned(), record);
+                        self.records.insert(
+                            record["key"].as_str().unwrap_or_default().to_owned(),
+                            record,
+                        );
                     }
                     continue;
                 }
@@ -116,7 +119,9 @@ impl MetadataStore {
             if !after.is_empty() && key.as_str() <= after {
                 continue;
             }
-            let bytes = serde_json::to_vec(record).map(|bytes| bytes.len()).unwrap_or(0);
+            let bytes = serde_json::to_vec(record)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0);
             if items.len() == limit || size + bytes > MAX_PAGE_BYTES {
                 more = true;
                 break;
@@ -177,7 +182,8 @@ impl MetadataStore {
         // whose marker is missing.
         records.push(serialized(&json!({"meta":revision}))?);
         let segment = revision / SEGMENT_RECORDS;
-        append_frames(&self.dir.join(segment_name(segment)), &records)?;        let mut items = Vec::new();
+        append_frames(&self.dir.join(segment_name(segment)), &records)?;
+        let mut items = Vec::new();
         let committed = records.len() - 1;
         for bytes in records.iter().take(committed) {
             if let Ok(record) = serde_json::from_slice::<Value>(bytes) {
@@ -279,8 +285,10 @@ fn append_frames(path: &Path, records: &[Vec<u8>]) -> Result<(), HistoryError> {
         .append(true)
         .open(path)
         .map_err(|error| HistoryError::FileIo(error.to_string()))?;
-    file.write_all(&frame_all(records)).map_err(|error| HistoryError::FileIo(error.to_string()))?;
-    file.sync_data().map_err(|error| HistoryError::FileIo(error.to_string()))?;
+    file.write_all(&frame_all(records))
+        .map_err(|error| HistoryError::FileIo(error.to_string()))?;
+    file.sync_data()
+        .map_err(|error| HistoryError::FileIo(error.to_string()))?;
     Ok(())
 }
 
@@ -317,8 +325,7 @@ mod tests {
         let mut reopened = MetadataStore::open(&dir, "metadata:memories", 0).unwrap();
         assert_eq!(reopened.revision, 0);
         assert_eq!(
-            serde_json::from_slice::<Value>(&reopened.get(&json!({"key":"m"})).unwrap())
-                .unwrap()["value"],
+            serde_json::from_slice::<Value>(&reopened.get(&json!({"key":"m"})).unwrap()).unwrap()["value"],
             Value::Null
         );
         std::fs::remove_dir_all(dir).unwrap();
@@ -332,8 +339,7 @@ mod tests {
             .unwrap();
         let mut other = MetadataStore::open(&dir, "metadata:tool-grants", 0).unwrap();
         assert_eq!(
-            serde_json::from_slice::<Value>(&other.get(&json!({"key":"m"})).unwrap()).unwrap()
-                ["value"],
+            serde_json::from_slice::<Value>(&other.get(&json!({"key":"m"})).unwrap()).unwrap()["value"],
             Value::Null
         );
         let mut reopened = MetadataStore::open(&dir, "metadata:memories", 1).unwrap();

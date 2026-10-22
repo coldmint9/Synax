@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { Button as HeadlessButton } from "@headlessui/react";
 import { ActivityDisclosure } from "./ActivityDisclosure";
-import { useCompactActivityRow } from "./ActivityRowScope";
+import { useActivityWindowTakeOver, useCompactActivityRow } from "./ActivityRowScope";
 import "./conversationFlow.css";
 
 // Transcript virtualization unmounts rows. Keep explicit reader choices across remounts.
@@ -46,11 +46,13 @@ export function ThinkingTrace({
   useEffect(() => {
     setManual(rememberKey ? (expandedTraces.get(rememberKey) ?? null) : null);
   }, [rememberKey]);
-  // Inside the live window a thought is one row: the window follows the newest
-  // record, so an open body would keep changing the height budget.
+  // Inside the live window a thought is one row while the window follows the
+  // newest record. Opening it hands the window to the reader, so the body can
+  // take its natural height instead of staying unreachable.
   const compact = useCompactActivityRow();
+  const takeOverWindow = useActivityWindowTakeOver();
   const hasBody = Boolean(children);
-  const expandable = hasBody && !compact;
+  const expandable = hasBody;
   const expanded = expandable && (manual ?? false);
   const bodyId = useId();
 
@@ -87,6 +89,7 @@ export function ThinkingTrace({
           aria-controls={bodyId}
           title={expanded ? undefined : title}
           onClick={() => {
+            if (compact) takeOverWindow?.();
             const next = !expanded;
             setManual(next);
             if (rememberKey) expandedTraces.set(rememberKey, next);

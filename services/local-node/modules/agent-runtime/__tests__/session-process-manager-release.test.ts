@@ -26,6 +26,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../session-store.js", () => ({
   agentRuntimeStore: {
     hydrateSession: hydrateSessionMock,
+    flushSession: vi.fn(async () => {}),
     getSession: getSessionMock,
     tryGetSession: tryGetSessionMock,
     listSessionTree: listSessionTreeMock,
@@ -52,6 +53,7 @@ vi.mock("../runtime-bus.js", () => ({
 
 vi.mock("../tools/workspace.js", () => ({
   resolveSessionWorkDir: () => "/tmp/synax-test-workdir",
+  resolveSessionWorkspaceRoots: () => [],
 }));
 
 vi.mock("../../../infrastructure/runtime/env.js", async (importOriginal) => {

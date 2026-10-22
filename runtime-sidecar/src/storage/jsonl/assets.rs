@@ -28,7 +28,9 @@ pub fn put(root: &Path, bytes: &[u8]) -> JsonlResult<String> {
     drop(file);
     fs::rename(&temp, &path).map_err(super::error::JsonlError::io)?;
     #[cfg(unix)]
-    fs::File::open(path.parent().unwrap())?.sync_all().map_err(super::error::JsonlError::io)?;
+    fs::File::open(path.parent().unwrap())?
+        .sync_all()
+        .map_err(super::error::JsonlError::io)?;
     Ok(digest)
 }
 

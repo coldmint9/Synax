@@ -135,7 +135,7 @@ describe("sessionComposerState", () => {
   it.each([
     ["waiting_permission", "waiting_permission"],
     ["failed", "failed"],
-    ["interrupted", "completed"],
+    ["interrupted", "interrupted"],
   ] as const)("projects Synax %s patches as %s", (status, expected) => {
     expect(patchAgentSession(makeSession(), { status }).status).toBe(expected);
   });
@@ -145,6 +145,17 @@ describe("sessionComposerState", () => {
     expect(isSessionResumable(makeSession({ status: "paused" }))).toBe(true);
     expect(isSessionResumable(makeSession({ status: "failed" }))).toBe(false);
     expect(isSessionResumable(makeSession({ status: "completed" }))).toBe(false);
+  });
+
+  it("keeps a worker interruption visible and resumable after a live patch", () => {
+    const reason = "Agent session worker exited (code 0, signal null).";
+    const session = patchAgentSession(
+      makeSession({ status: "running", activeRunId: "run-1" }),
+      { status: "interrupted", activeRunId: null, blockedReason: reason },
+    );
+    expect(session).toMatchObject({ status: "interrupted", blockedReason: reason });
+    expect(isSessionComposerLocked(session)).toBe(false);
+    expect(isSessionResumable(session)).toBe(true);
   });
 
   it("normalizes the retired legacy blocked patch for every profile", () => {

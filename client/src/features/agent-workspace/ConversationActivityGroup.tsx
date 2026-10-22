@@ -1,24 +1,49 @@
-import { useId } from "react";
+import { useCallback, useId, useMemo } from "react";
 import { Button } from "@headlessui/react";
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
-import { ActivityStatus } from "../../shared/ui/beautiful-ui/ActivityStatus";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
 import { activityPreview, thinkingBannerPhrase } from "./activityText";
 import { conversationActivitySummary, conversationToolPresentation } from "./conversationActivity";
 import { flattenToolBlocks } from "./toolCallUtils";
-import { aggregateToolStatus } from "./toolCallPresentation";
+import { parseFileLink, type FileLinkTarget, type ToolFileLinks } from "./fileLink";
+import { useTranscriptSession } from "./SessionTranscriptContext";
+import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
 import { toolRoundRows } from "./ToolCallRoundPanel";
 import { useActivityDisclosure } from "./useActivityDisclosure";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { StreamingActivityLine } from "./StreamingActivityLine";
 import { VirtualActivityWindow } from "./VirtualActivityWindow";
 
-function ActivityRows({ blocks, working, streaming, rememberKey }: {
+/**
+ * Records own the file links their calls point at: the transcript scope answers
+ * both "can this path be opened" and "open it", so a row never guesses.
+ */
+function useToolFileLinks(): ToolFileLinks | undefined {
+  const { sessionId, workspacePath, roots } = useTranscriptSession();
+  const resolve = useCallback(
+    (raw: string) => parseFileLink(raw, undefined, workspacePath, roots),
+    [workspacePath, roots],
+  );
+  const open = useCallback(
+    (target: FileLinkTarget) => {
+      if (!sessionId) return;
+      openWorkspaceFile(sessionId, target.path, target.line, target.rootId, target.rootName);
+    },
+    [sessionId],
+  );
+  return useMemo(
+    () => (sessionId ? { resolve, open } : undefined),
+    [open, resolve, sessionId],
+  );
+}
+
+function ActivityRows({ blocks, working, streaming, rememberKey, fileLinks }: {
   blocks: TurnContentBlock[];
   working: boolean;
   streaming: boolean;
   rememberKey?: string;
+  fileLinks?: ToolFileLinks;
 }) {
   const calls = flattenToolBlocks(blocks);
   const thought = [...blocks].reverse().find((block) => block.type === "thinking");
@@ -26,6 +51,7 @@ function ActivityRows({ blocks, working, streaming, rememberKey }: {
     isStreaming: streaming,
     rememberKey,
     individual: true,
+    fileLinks,
   }).map((row) => ({
     key: row.key,
     node: <div className="session-flow-entry" data-process data-activity>{row.node}</div>,
@@ -42,6 +68,7 @@ export function ConversationActivityGroup({ blocks, rememberKey, working, stream
 }) {
   const { locale } = useLocale();
   const calls = flattenToolBlocks(blocks);
+  const fileLinks = useToolFileLinks();
   const [expanded, toggle] = useActivityDisclosure(rememberKey ? `process:${rememberKey}` : undefined, defaultExpanded ?? (working && calls.length > 0));
   const id = useId();
   const summary = conversationActivitySummary(calls, locale);
@@ -54,19 +81,18 @@ export function ConversationActivityGroup({ blocks, rememberKey, working, stream
   const label = working
     ? thoughtText ?? (latest ? `${latest.label} ${latest.displayTarget}` : locale === "zh" ? "正在思考" : "Thinking")
     : summary.text || thoughtText || (locale === "zh" ? "思考过程" : "Thought process");
-  const status = aggregateToolStatus(calls);
-  const exceptional = !["completed", "running"].includes(status);
   const Icon = summary.icon;
   return (
     <section className="session-activity-group" data-live={working || undefined} data-expanded={expanded}>
-      <Button type="button" className="session-process-trigger" onClick={toggle} aria-expanded={expanded} aria-controls={id} aria-label={working ? `${label}${exceptional ? ` · ${status}` : ""}` : undefined}>
+      {/* The summary states what happened, never how it ended: outcomes stay on
+          the individual call rows inside the disclosure. */}
+      <Button type="button" className="session-process-trigger" onClick={toggle} aria-expanded={expanded} aria-controls={id} aria-label={working ? label : undefined}>
         {!working && calls.length > 0 && <Icon size={16} strokeWidth={1.7} className="session-process-symbol" aria-hidden="true" />}
         {working ? <StreamingActivityLine text={label} streaming={streaming} /> : <span className="session-process-summary">{label}</span>}
         <ChevronDown size={14} className="session-process-chevron" aria-hidden="true" />
-        {exceptional && <span className="session-process-status"><ActivityStatus status={status} /></span>}
       </Button>
       <ActivityDisclosure open={expanded} id={id} className="session-process-window">
-        <ActivityRows blocks={blocks} working={working} streaming={streaming} rememberKey={rememberKey} />
+        <ActivityRows blocks={blocks} working={working} streaming={streaming} rememberKey={rememberKey} fileLinks={fileLinks} />
       </ActivityDisclosure>
     </section>
   );

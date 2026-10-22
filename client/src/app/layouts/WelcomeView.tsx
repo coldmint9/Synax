@@ -5,6 +5,7 @@ import { IconSurface } from "../../shared/ui/IconSurface";
 import { useShellStore } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { resolveSessionsEntryPath } from "../../features/agent-workspace/sessionLastVisit";
+import { resolveStartupWorkspaceId } from "../../features/workspace/lastOpenedWorkspace";
 
 interface WorkbenchContext {
   onCreateProject: () => void;
@@ -26,19 +27,12 @@ export function WelcomeView() {
   useEffect(() => {
     if (!projectsLoaded) return;
     if (defaultHome === "global-home") return;
-    if (projects.length === 0) return;
-    const sorted = [...projects].sort((a, b) => {
-      const ta =
-        a.updatedAt === "just now"
-          ? Date.now()
-          : new Date(a.updatedAt).getTime();
-      const tb =
-        b.updatedAt === "just now"
-          ? Date.now()
-          : new Date(b.updatedAt).getTime();
-      return tb - ta;
-    });
-    navigate(resolveSessionsEntryPath(sorted[0].id), { replace: true });
+    // Restore the workspace that was open when the app closed. Project
+    // `updatedAt` cannot answer that question: a session run elsewhere bumps it
+    // while the workspace the user actually left is unchanged.
+    const workspaceId = resolveStartupWorkspaceId(projects);
+    if (!workspaceId) return;
+    navigate(resolveSessionsEntryPath(workspaceId), { replace: true });
   }, [projectsLoaded, projects, defaultHome, navigate]);
 
   if (!projectsLoaded) return null;

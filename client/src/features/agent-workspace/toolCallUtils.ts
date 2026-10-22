@@ -83,6 +83,7 @@ export function isFinalTextBlock(
 }
 
 export type TurnRenderSegment =
+  | Extract<TurnContentBlock, { type: "git_merge" }>
   | Extract<TurnContentBlock, { type: "visualization" }>
   | Extract<TurnContentBlock, { type: "media" }>
   | Extract<TurnContentBlock, { type: "sources" }>
@@ -109,7 +110,7 @@ export function buildTurnRenderSegments(
   while (i < blocks.length) {
     const block = blocks[i];
 
-    if (block.type === "media" || block.type === "visualization") {
+    if (block.type === "media" || block.type === "visualization" || block.type === "git_merge") {
       segments.push(block);
       i++;
       continue;

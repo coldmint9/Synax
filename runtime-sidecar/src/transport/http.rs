@@ -75,15 +75,38 @@ async fn handle_connection(
     let request = read_request(&mut stream).await?;
     // Only log known routes, never a query string (which may carry credentials).
     let route = match request.path.split('?').next().unwrap_or("") {
-        value @ ("/agent-loop/start" | "/agent-loop/resume" | "/agent-loop/check" | "/agent-loop/context" |
-            "/agent-loop/tool-result" | "/agent-loop/cancel" | "/agent-loop/events" | "/agent-loop/ack" |
-            "/provider/prepare" | "/provider/stream" | "/media/stream") => value,
-        value @ ("/resources/request" | "/resources/release" | "/resources/release-owner" | "/resources/overdue" | "/resources/owner") => value,
+        value @ ("/agent-loop/start"
+        | "/agent-loop/resume"
+        | "/agent-loop/check"
+        | "/agent-loop/context"
+        | "/agent-loop/tool-result"
+        | "/agent-loop/cancel"
+        | "/agent-loop/events"
+        | "/agent-loop/ack"
+        | "/provider/prepare"
+        | "/provider/stream"
+        | "/media/stream") => value,
+        value @ ("/resources/request"
+        | "/resources/release"
+        | "/resources/release-owner"
+        | "/resources/overdue"
+        | "/resources/owner") => value,
         _ => "unknown",
     };
-    tracing::Span::current().record("method", match request.method.as_str() { "GET" => "GET", "POST" => "POST", _ => "other" });
+    tracing::Span::current().record(
+        "method",
+        match request.method.as_str() {
+            "GET" => "GET",
+            "POST" => "POST",
+            _ => "other",
+        },
+    );
     tracing::Span::current().record("route", route);
-    tracing::debug!(event = "http.received", body_bytes = request.content_length, "HTTP request received");
+    tracing::debug!(
+        event = "http.received",
+        body_bytes = request.content_length,
+        "HTTP request received"
+    );
     if request.authorization.as_deref() != Some(&format!("Bearer {token}")) {
         write_json_error(&mut stream, 401, "provider bridge authentication failed").await?;
         return Ok(());
@@ -97,22 +120,41 @@ async fn handle_connection(
         let scheduler = crate::runtime::resources::shared();
         let result: Result<Value, String> = match request.path.as_str() {
             "/resources/request" => {
-                let resource: Result<crate::runtime::resources::ResourceRequest, _> = serde_json::from_value(input["request"].clone());
-                let context: Result<crate::runtime::execution::ExecutionLease, _> = serde_json::from_value(input["executionContext"].clone());
+                let resource: Result<crate::runtime::resources::ResourceRequest, _> =
+                    serde_json::from_value(input["request"].clone());
+                let context: Result<crate::runtime::execution::ExecutionLease, _> =
+                    serde_json::from_value(input["executionContext"].clone());
                 match (resource, context) {
-                    (Ok(mut resource), Ok(context)) if context.session_id == resource.session_id && context.run_id == resource.run_id && context.epoch == resource.epoch => {
+                    (Ok(mut resource), Ok(context))
+                        if context.session_id == resource.session_id
+                            && context.run_id == resource.run_id
+                            && context.epoch == resource.epoch =>
+                    {
                         match loops.check_resource(&context).await {
-                            Ok(root) => { resource.root_session_id = root; scheduler.request(resource).map(|s| json!(s)) },
+                            Ok(root) => {
+                                resource.root_session_id = root;
+                                scheduler.request(resource).map(|s| json!(s))
+                            }
                             Err(error) => Err(error.to_string()),
                         }
-                    },
+                    }
                     _ => Err("resource request requires a matching execution lease".into()),
                 }
-            },
-            "/resources/release" => scheduler.release(input["id"].as_str().unwrap_or(""), input["ownerId"].as_str().unwrap_or("")).map(|_| json!({"ok":true})),
-            "/resources/release-owner" => { scheduler.release_owner(input["ownerId"].as_str().unwrap_or("")); Ok(json!({"ok":true})) },
+            }
+            "/resources/release" => scheduler
+                .release(
+                    input["id"].as_str().unwrap_or(""),
+                    input["ownerId"].as_str().unwrap_or(""),
+                )
+                .map(|_| json!({"ok":true})),
+            "/resources/release-owner" => {
+                scheduler.release_owner(input["ownerId"].as_str().unwrap_or(""));
+                Ok(json!({"ok":true}))
+            }
             "/resources/overdue" => Ok(json!({"requests":scheduler.overdue()})),
-            "/resources/owner" => Ok(json!({"active":scheduler.has_owner(input["ownerId"].as_str().unwrap_or(""))})),
+            "/resources/owner" => {
+                Ok(json!({"active":scheduler.has_owner(input["ownerId"].as_str().unwrap_or(""))}))
+            }
             _ => Err("unknown resource operation".into()),
         };
         match result {
@@ -130,7 +172,14 @@ async fn handle_connection(
             execution_context: Option<crate::runtime::execution::ExecutionLease>,
         }
         let input: Ack = serde_json::from_slice(&request.body)?;
-        match loops.acknowledge_events(&input.loop_id, input.through, input.execution_context.as_ref()).await {
+        match loops
+            .acknowledge_events(
+                &input.loop_id,
+                input.through,
+                input.execution_context.as_ref(),
+            )
+            .await
+        {
             Ok(()) => write_json(&mut stream, 200, &json!({"ok":true})).await?,
             Err(error) => write_json_error(&mut stream, 409, &error.to_string()).await?,
         }
@@ -139,7 +188,8 @@ async fn handle_connection(
     if request.method == "POST" && request.path == "/agent-loop/check" {
         let input: Value = serde_json::from_slice(&request.body)?;
         let id = input["loopId"].as_str().ok_or("loopId required")?;
-        let context: Option<crate::runtime::execution::ExecutionLease> = serde_json::from_value(input["executionContext"].clone())?;
+        let context: Option<crate::runtime::execution::ExecutionLease> =
+            serde_json::from_value(input["executionContext"].clone())?;
         match loops.check(id, context.as_ref()).await {
             Ok(()) => write_json(&mut stream, 200, &json!({"ok":true})).await?,
             Err(error) => write_json_error(&mut stream, 409, &error.to_string()).await?,
@@ -150,7 +200,18 @@ async fn handle_connection(
         let input: AgentLoopRequest = serde_json::from_slice(&request.body)?;
         match loops.start(input).await {
             Ok(loop_id) => write_json(&mut stream, 200, &json!({"loopId":loop_id})).await?,
-            Err(error) => write_json_error(&mut stream, if error.to_string().starts_with("RUN_INTERRUPTED:") { 409 } else { 400 }, &error.to_string()).await?,
+            Err(error) => {
+                write_json_error(
+                    &mut stream,
+                    if error.to_string().starts_with("RUN_INTERRUPTED:") {
+                        409
+                    } else {
+                        400
+                    },
+                    &error.to_string(),
+                )
+                .await?
+            }
         }
         return Ok(());
     }
@@ -226,7 +287,9 @@ async fn handle_connection(
                 _ = stream.read(&mut disconnected) => return Ok(()),
                 event = events.next() => event?,
             };
-            let Some(event) = event else { break; };
+            let Some(event) = event else {
+                break;
+            };
             write_chunk_bytes(&mut stream, &event).await?;
         }
         stream.write_all(b"0\r\n\r\n").await?;
@@ -237,11 +300,17 @@ async fn handle_connection(
         let input: ProviderRequest = serde_json::from_slice(&request.body)?;
         record_status(200);
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await?;
-        write_chunk(&mut stream, &json!({"type":"prepared","request":crate::llm::prepare(input)})).await?;
+        write_chunk(
+            &mut stream,
+            &json!({"type":"prepared","request":crate::llm::prepare(input)}),
+        )
+        .await?;
         stream.write_all(b"0\r\n\r\n").await?;
         return Ok(());
     }
-    if request.method != "POST" || !matches!(request.path.as_str(), "/provider/stream" | "/media/stream") {
+    if request.method != "POST"
+        || !matches!(request.path.as_str(), "/provider/stream" | "/media/stream")
+    {
         write_json_error(&mut stream, 404, "provider endpoint not found").await?;
         return Ok(());
     }
@@ -252,12 +321,24 @@ async fn handle_connection(
     let events = if request.path == "/media/stream" {
         match serde_json::from_slice::<crate::llm::media::MediaRequest>(&request.body) {
             Ok(input) => crate::llm::media::events(input),
-            Err(error) => { write_json_error(&mut stream, 400, &format!("invalid media request: {error}")).await?; return Ok(()); }
+            Err(error) => {
+                write_json_error(&mut stream, 400, &format!("invalid media request: {error}"))
+                    .await?;
+                return Ok(());
+            }
         }
     } else {
         match serde_json::from_slice::<ProviderRequest>(&request.body) {
             Ok(input) => provider_events(input),
-            Err(error) => { write_json_error(&mut stream, 400, &format!("invalid provider request: {error}")).await?; return Ok(()); }
+            Err(error) => {
+                write_json_error(
+                    &mut stream,
+                    400,
+                    &format!("invalid provider request: {error}"),
+                )
+                .await?;
+                return Ok(());
+            }
         }
     };
     record_status(200);
@@ -335,8 +416,12 @@ async fn write_json_error(
     message: &str,
 ) -> Result<(), std::io::Error> {
     record_status(status);
-    let body = serde_json::to_vec(&if message.starts_with("RUN_INTERRUPTED:") { json!({"code":"RUN_INTERRUPTED","error":message}) } else { json!({"error":message}) })
-        .unwrap_or_else(|_| b"{\"error\":\"provider error\"}".to_vec());
+    let body = serde_json::to_vec(&if message.starts_with("RUN_INTERRUPTED:") {
+        json!({"code":"RUN_INTERRUPTED","error":message})
+    } else {
+        json!({"error":message})
+    })
+    .unwrap_or_else(|_| b"{\"error\":\"provider error\"}".to_vec());
     let header = format!(
         "HTTP/1.1 {status} Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()

@@ -3,10 +3,10 @@
 
 use crate::agent::context::{self as loop_context, Compaction, ContextAction, ContextPolicy};
 use crate::agent::policy::{self as loop_policy, Decision, Disposition, RuntimeBinding};
-use crate::llm::{contract::ProviderRequest, completion::provider_events};
 use crate::llm::errors::InvalidToolArguments;
-use crate::storage::jsonl::hot::HotOps as HotStore;
+use crate::llm::{completion::provider_events, contract::ProviderRequest};
 use crate::runtime::{actor::SessionShardRouter, execution::ExecutionLease};
+use crate::storage::jsonl::hot::HotOps as HotStore;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -15,13 +15,17 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, watch};
-use uuid::Uuid;
 use tracing::Instrument;
+use uuid::Uuid;
 
 const MAX_PENDING_EVENT_BYTES: usize = 32 * 1024 * 1024;
 const TERMINAL_RETENTION_MS: u64 = 15 * 60 * 1000;
 const MAX_ACTIVE_LOOPS: usize = 128;
 const MAX_TOOL_ARGUMENT_RETRIES: u32 = 2;
+/// Retries of one model step whose failure delivered no content to the host.
+/// The provider layer already retries an unstarted reply; this is the outer
+/// bound for a runtime fault that escaped it. Waits are 2s, 4s and 8s.
+const MAX_MODEL_RETRIES: u32 = 3;
 type LoopError = Box<dyn std::error::Error + Send + Sync>;
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -123,6 +127,13 @@ struct ToolArgumentRetry {
     error: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct ModelRetry {
+    attempt: u32,
+    reason: String,
+    error: String,
+}
+
 #[derive(Clone)]
 struct ExecutionState {
     version: u32,
@@ -135,6 +146,7 @@ struct ExecutionState {
     step_context: Option<StepContextRequest>,
     compacted_step: Option<u32>,
     tool_argument_retry: Option<ToolArgumentRetry>,
+    model_retry: Option<ModelRetry>,
     sequence: u64,
     terminal_at: Option<u64>,
     cancel_requested: bool,
@@ -164,7 +176,10 @@ impl LoopEvent {
         object.insert("sequence".into(), json!(sequence));
         let mut bytes = serde_json::to_vec(&value)?;
         bytes.push(b'\n');
-        Ok(Self { sequence, bytes: bytes.into() })
+        Ok(Self {
+            sequence,
+            bytes: bytes.into(),
+        })
     }
 }
 
@@ -180,9 +195,15 @@ impl LoopState {
     }
 
     fn acknowledge(&mut self, through: u64) -> Result<(), LoopError> {
-        if through <= self.acknowledged { return Ok(()); }
+        if through <= self.acknowledged {
+            return Ok(());
+        }
         self.check_cursor(through)?;
-        while self.events.front().is_some_and(|event| event.sequence <= through) {
+        while self
+            .events
+            .front()
+            .is_some_and(|event| event.sequence <= through)
+        {
             self.pending_bytes -= self.events.pop_front().unwrap().bytes.len();
         }
         self.acknowledged = through;
@@ -238,7 +259,9 @@ impl LoopHandle {
         if state.execution.terminal_at.is_some() {
             return Err("agent loop is already terminal".into());
         }
-        if let Some(error) = &state.failure { return Err(error.clone().into()); }
+        if let Some(error) = &state.failure {
+            return Err(error.clone().into());
+        }
         // Stream events are emitted for every provider delta. Do not route
         // this through `commit`: cloning `ExecutionState` also clones the
         // complete provider prompt, tool definitions and accumulated tool
@@ -296,16 +319,35 @@ pub(crate) struct AgentLoopManager {
     router: Option<Arc<SessionShardRouter>>,
 }
 impl AgentLoopManager {
-    pub(crate) async fn check_resource(&self, context: &ExecutionLease) -> Result<String, LoopError> {
-        let router = self.router.as_ref().ok_or("execution authority is unavailable")?;
-        router.control_command(context.session_id.clone(), Uuid::new_v4().to_string(), 0, 0,
-            "execution_check".into(), serde_json::to_vec(context)?).await?;
+    pub(crate) async fn check_resource(
+        &self,
+        context: &ExecutionLease,
+    ) -> Result<String, LoopError> {
+        let router = self
+            .router
+            .as_ref()
+            .ok_or("execution authority is unavailable")?;
+        router
+            .control_command(
+                context.session_id.clone(),
+                Uuid::new_v4().to_string(),
+                0,
+                0,
+                "execution_check".into(),
+                serde_json::to_vec(context)?,
+            )
+            .await?;
         let mut root = context.session_id.clone();
         let mut seen = HashSet::new();
         loop {
-            if !seen.insert(root.clone()) || seen.len() > 64 { return Err("invalid session ancestry".into()); }
-            let snapshot: Value = serde_json::from_slice(&router.ui_snapshot(root.clone(), None).await?)?;
-            let Some(parent) = snapshot["session"]["parentSessionId"].as_str() else { return Ok(root) };
+            if !seen.insert(root.clone()) || seen.len() > 64 {
+                return Err("invalid session ancestry".into());
+            }
+            let snapshot: Value =
+                serde_json::from_slice(&router.ui_snapshot(root.clone(), None).await?)?;
+            let Some(parent) = snapshot["session"]["parentSessionId"].as_str() else {
+                return Ok(root);
+            };
             root = parent.to_owned();
         }
     }
@@ -329,59 +371,82 @@ impl AgentLoopManager {
         let span = tracing::error_span!("agent_loop", loop_id = %handle.id,
             session_id = tracing::field::Empty, run_id = tracing::field::Empty,
             step = tracing::field::Empty, phase = tracing::field::Empty);
-        tokio::spawn(async move {
-            let started = std::time::Instant::now();
-            {
-                let state = handle.state.lock().await;
-                if let Some(binding) = &state.execution.request.runtime_binding {
-                    tracing::Span::current().record("session_id", &binding.session_id);
-                    tracing::Span::current().record("run_id", &binding.run_id);
+        tokio::spawn(
+            async move {
+                let started = std::time::Instant::now();
+                {
+                    let state = handle.state.lock().await;
+                    if let Some(binding) = &state.execution.request.runtime_binding {
+                        tracing::Span::current().record("session_id", &binding.session_id);
+                        tracing::Span::current().record("run_id", &binding.run_id);
+                    }
                 }
-            }
-            tracing::info!(event = "agent.started", "Agent loop executor started");
-            let outcome = match run_loop(&handle).await {
-                Ok(LoopFinish::Done(steps, disposition)) => {
-                    tracing::info!(event = "agent.completed", steps, status = disposition.as_ref().map(|d| d.status.as_str()),
-                        reason = disposition.as_ref().map(|d| d.reason.as_str()), duration_ms = started.elapsed().as_millis() as u64,
-                        "Agent loop completed");
-                    json!({"type":"done","steps":steps,"disposition":disposition})
+                tracing::info!(event = "agent.started", "Agent loop executor started");
+                let outcome = match run_loop(&handle).await {
+                    Ok(LoopFinish::Done(steps, disposition)) => {
+                        tracing::info!(
+                            event = "agent.completed",
+                            steps,
+                            status = disposition.as_ref().map(|d| d.status.as_str()),
+                            reason = disposition.as_ref().map(|d| d.reason.as_str()),
+                            duration_ms = started.elapsed().as_millis() as u64,
+                            "Agent loop completed"
+                        );
+                        json!({"type":"done","steps":steps,"disposition":disposition})
+                    }
+                    Ok(LoopFinish::Cancelled) => {
+                        tracing::info!(
+                            event = "agent.cancelled",
+                            duration_ms = started.elapsed().as_millis() as u64,
+                            "Agent loop cancelled"
+                        );
+                        json!({"type":"cancelled"})
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            event = "agent.failed",
+                            error_kind = crate::logging::error_kind(error.as_ref()),
+                            duration_ms = started.elapsed().as_millis() as u64,
+                            "Agent loop failed"
+                        );
+                        json!({"type":"error","error":error.to_string()})
+                    }
+                };
+                if let Err(error) = handle.emit(outcome, true).await {
+                    tracing::error!(
+                        event = "agent.terminal_commit_failed",
+                        error_kind = crate::logging::error_kind(error.as_ref()),
+                        "Could not persist terminal agent state"
+                    );
                 }
-                Ok(LoopFinish::Cancelled) => {
-                    tracing::info!(event = "agent.cancelled", duration_ms = started.elapsed().as_millis() as u64, "Agent loop cancelled");
-                    json!({"type":"cancelled"})
-                },
-                Err(error) => {
-                    tracing::error!(event = "agent.failed", error_kind = crate::logging::error_kind(error.as_ref()),
-                        duration_ms = started.elapsed().as_millis() as u64, "Agent loop failed");
-                    json!({"type":"error","error":error.to_string()})
-                },
-            };
-            if let Err(error) = handle.emit(outcome, true).await {
-                tracing::error!(event = "agent.terminal_commit_failed", error_kind = crate::logging::error_kind(error.as_ref()),
-                    "Could not persist terminal agent state");
+                let mut state = handle.state.lock().await;
+                state.running = false;
+                // A terminal loop is retained briefly for idempotent replay, but
+                // it no longer needs the full prompt, tool schema or tool-result
+                // map. Keeping those roots for the retention window makes finished
+                // sessions look like active sessions in the heap profile.
+                state.execution.request.provider.prompt.clear();
+                state.execution.request.provider.tools.clear();
+                state.execution.request.provider.provider_options = Value::Null;
+                state.execution.request.provider.response_options = Value::Null;
+                state.execution.request.provider.cache_policy = Value::Null;
+                state.execution.request.provider.headers.clear();
+                state.execution.request.provider.api_key = None;
+                state.execution.step_context = None;
+                state.execution.pending.clear();
+                state.terminal_results = state
+                    .execution
+                    .results
+                    .iter()
+                    .map(|(id, result)| (id.clone(), result.fingerprint()))
+                    .collect();
+                state.execution.results.clear();
+                state.execution.call_tools.clear();
+                state.execution.tool_argument_retry = None;
+                handle.changed.send_modify(|revision| *revision += 1);
             }
-            let mut state = handle.state.lock().await;
-            state.running = false;
-            // A terminal loop is retained briefly for idempotent replay, but
-            // it no longer needs the full prompt, tool schema or tool-result
-            // map. Keeping those roots for the retention window makes finished
-            // sessions look like active sessions in the heap profile.
-            state.execution.request.provider.prompt.clear();
-            state.execution.request.provider.tools.clear();
-            state.execution.request.provider.provider_options = Value::Null;
-            state.execution.request.provider.response_options = Value::Null;
-            state.execution.request.provider.cache_policy = Value::Null;
-            state.execution.request.provider.headers.clear();
-            state.execution.request.provider.api_key = None;
-            state.execution.step_context = None;
-            state.execution.pending.clear();
-            state.terminal_results = state.execution.results.iter()
-                .map(|(id, result)| (id.clone(), result.fingerprint())).collect();
-            state.execution.results.clear();
-            state.execution.call_tools.clear();
-            state.execution.tool_argument_retry = None;
-            handle.changed.send_modify(|revision| *revision += 1);
-        }.instrument(span));
+            .instrument(span),
+        );
     }
 
     pub(crate) async fn start(&self, request: AgentLoopRequest) -> Result<String, LoopError> {
@@ -441,8 +506,19 @@ impl AgentLoopManager {
             return Err("agent loop capacity reached".into());
         }
         if let Some(store) = &self.store {
-            if !store.claim_agent_loop(&id, &initial_hash, request.request_id.as_deref(), request.runtime_binding.as_ref().map(|binding| binding.run_id.as_str()))? {
-                return Err("RUN_INTERRUPTED: this request was already accepted by a previous execution".into());
+            if !store.claim_agent_loop(
+                &id,
+                &initial_hash,
+                request.request_id.as_deref(),
+                request
+                    .runtime_binding
+                    .as_ref()
+                    .map(|binding| binding.run_id.as_str()),
+            )? {
+                return Err(
+                    "RUN_INTERRUPTED: this request was already accepted by a previous execution"
+                        .into(),
+                );
             }
         }
         let (changed, _) = watch::channel(0);
@@ -466,6 +542,7 @@ impl AgentLoopManager {
                     step_context: None,
                     compacted_step: None,
                     tool_argument_retry: None,
+                    model_retry: None,
                     sequence: 0,
                     terminal_at: None,
                     cancel_requested: false,
@@ -486,7 +563,11 @@ impl AgentLoopManager {
 
     /// Restart execution only on explicit host resumption. Credentials are
     /// reattached here and are never serialized into the loop execution.
-    pub(crate) async fn check(&self, id: &str, context: Option<&ExecutionLease>) -> Result<(), LoopError> {
+    pub(crate) async fn check(
+        &self,
+        id: &str,
+        context: Option<&ExecutionLease>,
+    ) -> Result<(), LoopError> {
         let handle = self.get(id).await?;
         check_execution(&handle, context).await?;
         if handle.state.lock().await.execution.terminal_at.is_some() {
@@ -545,7 +626,10 @@ impl AgentLoopManager {
     }
 
     pub(crate) async fn acknowledge_events(
-        &self, id: &str, through: u64, context: Option<&ExecutionLease>,
+        &self,
+        id: &str,
+        through: u64,
+        context: Option<&ExecutionLease>,
     ) -> Result<(), LoopError> {
         let handle = self.get(id).await?;
         let mut state = handle.state.lock().await;
@@ -567,8 +651,11 @@ impl AgentLoopManager {
         check_execution(&handle, request.execution_context.as_ref()).await?;
         let mut state = handle.state.lock().await;
         if let Some(saved) = state.terminal_results.get(&request.tool_call_id) {
-            return if saved == &request.fingerprint() { Ok(()) }
-                else { Err("conflicting tool result".into()) };
+            return if saved == &request.fingerprint() {
+                Ok(())
+            } else {
+                Err("conflicting tool result".into())
+            };
         }
         let mut next = state.execution.clone();
         let tool_call_id = request.tool_call_id.clone();
@@ -618,7 +705,11 @@ impl AgentLoopManager {
     }
 
     pub(crate) async fn cancel(&self, id: &str) -> Result<(), LoopError> {
-        tracing::info!(event = "agent.cancel_requested", loop_id = id, "Agent loop cancellation requested");
+        tracing::info!(
+            event = "agent.cancel_requested",
+            loop_id = id,
+            "Agent loop cancellation requested"
+        );
         let handle = self.get(id).await?;
         let mut changed = handle.changed.subscribe();
         {
@@ -732,7 +823,9 @@ async fn runtime_facts(
         .as_ref()
         .ok_or("native loop requires durable runtime storage")?;
     let snapshot: Value = serde_json::from_slice(
-        &store.ui_snapshot(&binding.session_id, None).map_err(|error| error.to_string())?,
+        &store
+            .ui_snapshot(&binding.session_id, None)
+            .map_err(|error| error.to_string())?,
     )?;
     let session = snapshot["session"].clone();
     let run = snapshot["run"].clone();
@@ -745,8 +838,7 @@ async fn runtime_facts(
         if !visited.insert(parent.clone()) || visited.len() > 64 {
             return Err("invalid runtime parent chain".into());
         }
-        let snapshot: Value =
-            serde_json::from_slice(&store.ui_snapshot(&parent, None)?)?;
+        let snapshot: Value = serde_json::from_slice(&store.ui_snapshot(&parent, None)?)?;
         root = snapshot["session"].clone();
     }
     Ok(Some((session, root, run)))
@@ -1000,6 +1092,11 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         event["error"] = json!(retry.error);
                         event["attempt"] = json!(retry.attempt);
                         event["maxRetries"] = json!(MAX_TOOL_ARGUMENT_RETRIES);
+                    } else if let Some(retry) = &next.model_retry {
+                        event["reason"] = json!(retry.reason);
+                        event["error"] = json!(retry.error);
+                        event["attempt"] = json!(retry.attempt);
+                        event["maxRetries"] = json!(MAX_MODEL_RETRIES);
                     }
                     handle.commit(&mut state, next, vec![event], false).await?;
                 }
@@ -1010,6 +1107,10 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 let mut assistant = None;
                 let mut final_events = Vec::new();
                 let mut argument_error = None;
+                let mut failure = None;
+                // Any event the host already received makes this attempt
+                // unrepeatable: replaying it would duplicate visible output.
+                let mut delivered = false;
                 loop {
                     let event = tokio::select! {
                         biased;
@@ -1030,7 +1131,10 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                             argument_error = Some(error);
                             break;
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            failure = Some(error);
+                            break;
+                        }
                     };
                     event["step"] = json!(step);
                     match event["type"].as_str() {
@@ -1048,22 +1152,113 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                             final_events.push(event);
                         }
                         Some("finish") => final_events.push(event),
+                        // Only conversation deltas are unrepeatable. Telemetry
+                        // (usage, raw protocol frames) and the buffered final
+                        // events of a failed attempt are dropped with it.
+                        Some("text-delta" | "reasoning-delta") => {
+                            delivered = true;
+                            handle.emit(event, false).await?
+                        }
                         _ => handle.emit(event, false).await?,
                     }
                 }
+                if let Some(error) = failure {
+                    drop(events);
+                    let retries = execution
+                        .model_retry
+                        .as_ref()
+                        .map_or(0, |retry| retry.attempt);
+                    // A retry is only honest while nothing reached the host: a
+                    // delivered partial answer would be duplicated, and a
+                    // caller that asked for `maxRetries: 0` wants no retries
+                    // at any layer. Everything else transient is backed off
+                    // before the session is allowed to fail.
+                    let retries_disabled = execution.request.provider.max_retries == Some(0);
+                    if delivered
+                        || retries_disabled
+                        || retries >= MAX_MODEL_RETRIES
+                        || !crate::llm::retry::retryable_failure(error.as_ref())
+                    {
+                        return Err(error);
+                    }
+                    let delay = crate::llm::retry::retry_delay(retries as usize);
+                    let reason = crate::llm::retry::failure_reason(error.as_ref());
+                    let error_text = error.to_string();
+                    tracing::warn!(
+                        event = "agent.model_retry_scheduled",
+                        step,
+                        attempt = retries + 1,
+                        max_retries = MAX_MODEL_RETRIES,
+                        reason,
+                        delay_ms = delay.as_millis() as u64,
+                        error_kind = crate::logging::error_kind(error.as_ref()),
+                        "Model step failed before delivering content; backing off"
+                    );
+                    {
+                        let mut state = handle.state.lock().await;
+                        let mut next = state.execution.clone();
+                        next.model_retry = Some(ModelRetry {
+                            attempt: retries + 1,
+                            reason: reason.to_owned(),
+                            error: error_text.chars().take(1000).collect(),
+                        });
+                        next.phase = Phase::Model {
+                            step,
+                            attempt: attempt + 1,
+                        };
+                        let retry = json!({"reason":reason,"phase":"waiting","group":1,
+                            "attempt":retries + 1,"maxRetries":MAX_MODEL_RETRIES,
+                            "nextRetryAt":chrono::Utc::now().timestamp_millis() + delay.as_millis() as i64,
+                            "error":error_text.chars().take(1000).collect::<String>()});
+                        handle
+                            .commit(
+                                &mut state,
+                                next,
+                                vec![json!({"type":"retry_status","step":step,"retry":retry})],
+                                false,
+                            )
+                            .await?;
+                    }
+                    // Dropping the failed stream released its body; the sleep
+                    // is cancelled with the loop, never left behind.
+                    tokio::select! {
+                        biased;
+                        _ = async { cancel.wait_for(|requested| *requested).await.map(|_| ()) } => return Ok(LoopFinish::Cancelled),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                    continue;
+                }
                 if let Some(error) = argument_error {
-                    let retries = execution.tool_argument_retry.as_ref().map_or(0, |retry| retry.attempt);
+                    let retries = execution
+                        .tool_argument_retry
+                        .as_ref()
+                        .map_or(0, |retry| retry.attempt);
                     if retries >= MAX_TOOL_ARGUMENT_RETRIES {
                         return Err(error);
                     }
-                    let reason = format!("{error}. No tools from this response were executed. Retry the intended tool calls using a complete JSON object matching each tool's schema, with properly escaped strings and no Markdown fences. If the response was truncated, use smaller calls.");
+                    let reason = format!(
+                        "{error}. No tools from this response were executed. Retry the intended tool calls using a complete JSON object matching each tool's schema, with properly escaped strings and no Markdown fences. If the response was truncated, use smaller calls."
+                    );
                     let mut state = handle.state.lock().await;
                     let mut next = state.execution.clone();
-                    next.tool_argument_retry = Some(ToolArgumentRetry { attempt: retries + 1, error: error.to_string() });
+                    next.tool_argument_retry = Some(ToolArgumentRetry {
+                        attempt: retries + 1,
+                        error: error.to_string(),
+                    });
                     // Persist the correction and retry budget together. The
                     // rejected assistant/tool batch is never added to history.
-                    next.request.provider.prompt.push(json!({"role":"user","content":[{"type":"text","text":reason}]}));
-                    handle.commit(&mut state, next, vec![json!({"type":"policy-correction","step":step,"reason":reason})], false).await?;
+                    next.request
+                        .provider
+                        .prompt
+                        .push(json!({"role":"user","content":[{"type":"text","text":reason}]}));
+                    handle
+                        .commit(
+                            &mut state,
+                            next,
+                            vec![json!({"type":"policy-correction","step":step,"reason":reason})],
+                            false,
+                        )
+                        .await?;
                     continue;
                 }
                 let assistant =
@@ -1096,6 +1291,12 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 let mut state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 next.tool_argument_retry = None;
+                if let Some(retry) = next.model_retry.take() {
+                    final_events.push(json!({"type":"retry_status","step":step,"retry":{
+                        "reason":retry.reason,"phase":"recovered","group":1,
+                        "attempt":retry.attempt,"maxRetries":MAX_MODEL_RETRIES,
+                        "nextRetryAt":Value::Null,"error":""}}));
+                }
                 next.request.provider.prompt.push(assistant);
                 for call in final_events
                     .iter()
@@ -1156,7 +1357,12 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
             }
             Phase::Tools { step, calls } => {
                 let waiting = std::time::Instant::now();
-                tracing::info!(event = "agent.tools_waiting", step, tool_count = calls.len(), "Waiting for tool results");
+                tracing::info!(
+                    event = "agent.tools_waiting",
+                    step,
+                    tool_count = calls.len(),
+                    "Waiting for tool results"
+                );
                 let mut changed = handle.changed.subscribe();
                 let results = loop {
                     let ready = {
@@ -1178,8 +1384,13 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     changed.changed().await?;
                 };
                 let mut parts = Vec::new();
-                tracing::info!(event = "agent.tools_ready", step, tool_count = results.len(),
-                    duration_ms = waiting.elapsed().as_millis() as u64, "Tool results ready");
+                tracing::info!(
+                    event = "agent.tools_ready",
+                    step,
+                    tool_count = results.len(),
+                    duration_ms = waiting.elapsed().as_millis() as u64,
+                    "Tool results ready"
+                );
                 let mut events = Vec::new();
                 let mut disposition = None;
                 for result in results {
@@ -1222,18 +1433,37 @@ mod tests {
         let (changed, _) = watch::channel(0);
         let (cancel, _) = watch::channel(false);
         Arc::new(LoopHandle {
-            id: id.into(), store: None, router: None, changed, cancel,
+            id: id.into(),
+            store: None,
+            router: None,
+            changed,
+            cancel,
             state: Mutex::new(LoopState {
                 execution: ExecutionState {
-                    version: 1, initial_hash: String::new(), request: request(),
-                    phase: Phase::Model { step: 1, attempt: 1 }, pending: HashSet::new(),
-                    results: HashMap::new(), call_tools: HashMap::new(), step_context: None,
-                    compacted_step: None, tool_argument_retry: None, sequence: 0,
-                    terminal_at: None, cancel_requested: false,
+                    version: 1,
+                    initial_hash: String::new(),
+                    request: request(),
+                    phase: Phase::Model {
+                        step: 1,
+                        attempt: 1,
+                    },
+                    pending: HashSet::new(),
+                    results: HashMap::new(),
+                    call_tools: HashMap::new(),
+                    step_context: None,
+                    compacted_step: None,
+                    tool_argument_retry: None,
+                    model_retry: None,
+                    sequence: 0,
+                    terminal_at: None,
+                    cancel_requested: false,
                 },
-                events: VecDeque::new(), acknowledged: 0, pending_bytes: 0,
+                events: VecDeque::new(),
+                acknowledged: 0,
+                pending_bytes: 0,
                 terminal_results: HashMap::new(),
-                running: true, failure: None,
+                running: true,
+                failure: None,
             }),
         })
     }
@@ -1242,20 +1472,35 @@ mod tests {
     async fn acknowledgements_free_payloads_without_losing_pending_deliveries() {
         let loops = AgentLoopManager::default();
         let handle = pending_loop("pending");
-        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
-        handle.emit(json!({"type":"text-delta","delta":"已处理"}), false).await.unwrap();
-        handle.emit(json!({"type":"tool-call","toolCallId":"permission"}), false).await.unwrap();
-        handle.emit(json!({"type":"tool-call","toolCallId":"next-tool"}), false).await.unwrap();
+        loops
+            .loops
+            .lock()
+            .await
+            .insert(handle.id.clone(), handle.clone());
+        handle
+            .emit(json!({"type":"text-delta","delta":"已处理"}), false)
+            .await
+            .unwrap();
+        handle
+            .emit(json!({"type":"tool-call","toolCallId":"permission"}), false)
+            .await
+            .unwrap();
+        handle
+            .emit(json!({"type":"tool-call","toolCallId":"next-tool"}), false)
+            .await
+            .unwrap();
         let released = Arc::downgrade(&handle.state.lock().await.events[0].bytes);
         let mut observer = loops.subscribe_events(&handle.id, 0).await.unwrap();
-        let first: Value = serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
+        let first: Value =
+            serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
         assert_eq!(first["sequence"], 1);
         loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
         loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
         assert!(released.upgrade().is_none());
         assert!(loops.acknowledge_events(&handle.id, 4, None).await.is_err());
         assert!(loops.subscribe_events(&handle.id, 0).await.is_err());
-        let boundary: Value = serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
+        let boundary: Value =
+            serde_json::from_slice(&observer.next().await.unwrap().unwrap()).unwrap();
         assert_eq!(boundary["toolCallId"], "permission");
         drop(observer);
         // Permission handling can close the stream before its generator ACKs.
@@ -1266,7 +1511,10 @@ mod tests {
         assert_eq!(next["toolCallId"], "next-tool");
         handle.emit(json!({"type":"done"}), true).await.unwrap();
         let final_event = resumed.next().await.unwrap().unwrap();
-        assert_eq!(serde_json::from_slice::<Value>(&final_event).unwrap()["sequence"], 4);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&final_event).unwrap()["sequence"],
+            4
+        );
         assert!(resumed.next().await.unwrap().is_none());
         loops.acknowledge_events(&handle.id, 4, None).await.unwrap();
         let state = handle.state.lock().await;
@@ -1280,7 +1528,11 @@ mod tests {
         let mut handles = Vec::new();
         for index in 0..5 {
             let handle = pending_loop(&format!("memory-{index}"));
-            loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+            loops
+                .loops
+                .lock()
+                .await
+                .insert(handle.id.clone(), handle.clone());
             handles.push(handle);
         }
         // More than the former 32 MiB lifetime limit per loop, with five active
@@ -1288,13 +1540,19 @@ mod tests {
         let delta = "x".repeat(32 * 1024);
         for sequence in 1..=1040 {
             for handle in &handles {
-                handle.emit(json!({"type":"text-delta","delta":delta}), false).await.unwrap();
+                handle
+                    .emit(json!({"type":"text-delta","delta":delta}), false)
+                    .await
+                    .unwrap();
                 let state = handle.state.lock().await;
                 assert!(state.events.len() <= 8);
                 assert!(state.pending_bytes < 264 * 1024);
                 drop(state);
                 if sequence % 8 == 0 {
-                    loops.acknowledge_events(&handle.id, sequence, None).await.unwrap();
+                    loops
+                        .acknowledge_events(&handle.id, sequence, None)
+                        .await
+                        .unwrap();
                 }
             }
         }
@@ -1310,15 +1568,28 @@ mod tests {
     async fn pending_capacity_failure_does_not_publish_a_sequence_gap() {
         let handle = pending_loop("capacity");
         handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES;
-        assert!(handle.emit(json!({"type":"text-delta","delta":"full"}), false).await.is_err());
+        assert!(
+            handle
+                .emit(json!({"type":"text-delta","delta":"full"}), false)
+                .await
+                .is_err()
+        );
         {
             let mut state = handle.state.lock().await;
             let next = state.execution.clone();
-            assert!(handle.commit(&mut state, next, vec![json!({"type":"tool-call"})], false).await.is_err());
+            assert!(
+                handle
+                    .commit(&mut state, next, vec![json!({"type":"tool-call"})], false)
+                    .await
+                    .is_err()
+            );
             assert_eq!(state.execution.sequence, 0);
             assert!(state.events.is_empty());
         }
-        handle.emit(json!({"type":"error","error":"delivery stalled"}), true).await.unwrap();
+        handle
+            .emit(json!({"type":"error","error":"delivery stalled"}), true)
+            .await
+            .unwrap();
         assert_eq!(handle.state.lock().await.execution.sequence, 1);
     }
 
@@ -1326,14 +1597,41 @@ mod tests {
     async fn completed_run_ack_still_requires_its_execution_owner() {
         let loops = AgentLoopManager::default();
         let handle = pending_loop("owner");
-        let lease = ExecutionLease { session_id: "session".into(), run_id: "run".into(), epoch: "epoch".into(), host_id: "host".into(), closed: false };
-        handle.state.lock().await.execution.request.execution_context = Some(lease.clone());
-        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+        let lease = ExecutionLease {
+            session_id: "session".into(),
+            run_id: "run".into(),
+            epoch: "epoch".into(),
+            host_id: "host".into(),
+            closed: false,
+        };
+        handle
+            .state
+            .lock()
+            .await
+            .execution
+            .request
+            .execution_context = Some(lease.clone());
+        loops
+            .loops
+            .lock()
+            .await
+            .insert(handle.id.clone(), handle.clone());
         handle.emit(json!({"type":"done"}), true).await.unwrap();
         assert!(loops.acknowledge_events(&handle.id, 1, None).await.is_err());
-        let other = ExecutionLease { epoch: "other".into(), ..lease.clone() };
-        assert!(loops.acknowledge_events(&handle.id, 1, Some(&other)).await.is_err());
-        loops.acknowledge_events(&handle.id, 1, Some(&lease)).await.unwrap();
+        let other = ExecutionLease {
+            epoch: "other".into(),
+            ..lease.clone()
+        };
+        assert!(
+            loops
+                .acknowledge_events(&handle.id, 1, Some(&other))
+                .await
+                .is_err()
+        );
+        loops
+            .acknowledge_events(&handle.id, 1, Some(&lease))
+            .await
+            .unwrap();
         assert_eq!(handle.state.lock().await.pending_bytes, 0);
     }
 
@@ -1356,7 +1654,12 @@ mod tests {
             assert_eq!(&serde_json::from_slice::<Value>(&bytes).unwrap(), event);
         }
         assert!(replay.next().await.unwrap().is_none());
-        assert!(loops.subscribe_events(&id, seen.len() as u64 + 1).await.is_err());
+        assert!(
+            loops
+                .subscribe_events(&id, seen.len() as u64 + 1)
+                .await
+                .is_err()
+        );
         loops.cancel(&id).await.unwrap();
     }
 

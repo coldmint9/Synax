@@ -144,11 +144,12 @@ export class SessionProcessManager {
   private readonly streamControllers = new Map<string, AbortController>();
   private readonly parkedChildren = new WeakSet<ChildProcess>();
   private readonly pendingStarts: string[] = [];
+  private readonly exitReconciliations = new Set<string>();
   assertCanQueueChild(): void {
     if (this.pendingStarts.length >= 128) throw new AgentRuntimeError("Session worker queue is full.", "SESSION_LIMIT", 429);
   }
   private pendingStartEligible(id: string): boolean {
-    return ![...this.resourceCleanup.values()].some(ids => ids.includes(id)) && ![...this.terminatingChildren.values()].includes(id);
+    return !this.exitReconciliations.has(id) && ![...this.resourceCleanup.values()].some(ids => ids.includes(id)) && ![...this.terminatingChildren.values()].includes(id);
   }
   private resourceWatch?: ReturnType<typeof setInterval>;
   private checkingResources = false;
@@ -206,6 +207,7 @@ export class SessionProcessManager {
   }
 
   canSpawnChild(sessionId?: string): boolean {
+    if (sessionId && this.exitReconciliations.has(sessionId)) return false;
     if (sessionId && [...this.resourceCleanup.values()].some(ids => ids.includes(sessionId))) return false;
     if (sessionId && [...this.terminatingChildren.values()].includes(sessionId))
       return false;
@@ -578,6 +580,7 @@ export class SessionProcessManager {
       ids.some(
         (sessionId) =>
           this.activeMainStreams.has(sessionId) ||
+          this.exitReconciliations.has(sessionId) ||
           this.children.has(sessionId) ||
           [...this.terminatingChildren.values()].includes(sessionId),
       )
@@ -785,28 +788,44 @@ export class SessionProcessManager {
       if (!this.parkedChildren.has(child) && (current?.child === child || (released && !current))) {
         // Descendants execute in this worker too. Its exit confirms they can
         // no longer update their own sessions, runs or steps.
-        try {
-          if (agentRuntimeStore.tryGetSession(sessionId)) {
-            const reason = `Agent session worker exited (code ${code}, signal ${signal}).`;
-            const ids = agentRuntimeStore
-              .listSessionTree(sessionId)
-              // Waiting runs are durable continuations, not abandoned work.
-              // Reclaim their idle worker without invalidating pending input.
-              .filter(
-                (session) =>
-                  !this.idleChildren.has(child) ||
-                  (session.status !== "waiting_input" &&
-                    session.status !== "waiting_permission"),
-              )
-              .map((session) => session.id);
-            finalizeStoppedSessions(ids, reason);
-          }
-        } catch (error) {
+        const exitingSessions = agentRuntimeStore.tryGetSession(sessionId)
+          ? agentRuntimeStore.listSessionTree(sessionId)
+          : [];
+        const priorRuns = new Map(exitingSessions.map((session) => [session.id, session.activeRunId]));
+        const ids = exitingSessions.map((session) => session.id);
+        for (const id of ids) this.exitReconciliations.add(id);
+        void outsideExecutionContext(async () => {
+          // The worker persisted its result in another process. Refresh before
+          // cleanup so a stale running cache cannot overwrite a failed run.
+          // Keep replacements waiting until these writes have also settled.
+          const refreshed = await Promise.allSettled(
+            ids.map((id) => agentRuntimeStore.hydrateSession(id, true)),
+          );
+          const failure = refreshed.find((result) => result.status === "rejected");
+          if (failure?.status === "rejected") throw failure.reason;
+          const stopped = ids.filter((id) => {
+            const session = agentRuntimeStore.tryGetSession(id);
+            // Admission can queue the next turn while its worker waits for
+            // this cleanup; that turn does not belong to the exited process.
+            if (session?.activeRunId && session.activeRunId !== priorRuns.get(id)) return false;
+            // Idle waiting runs are durable continuations.
+            return session && (!this.idleChildren.has(child) ||
+              (session.status !== "waiting_input" && session.status !== "waiting_permission"));
+          });
+          finalizeStoppedSessions(stopped, `Agent session worker exited (code ${code}, signal ${signal}).`);
+          const flushed = await Promise.allSettled(
+            stopped.map((id) => agentRuntimeStore.flushSession(id)),
+          );
+          const writeFailure = flushed.find((result) => result.status === "rejected");
+          if (writeFailure?.status === "rejected") throw writeFailure.reason;
+        }).catch((error) => {
           logger.error(
             { sessionId, err: error },
             "[agent-session] failed to reconcile exited worker",
           );
-        }
+        }).finally(() => {
+          for (const id of ids) this.exitReconciliations.delete(id);
+        });
       }
       if (current?.child === child) {
         for (const compaction of current.compactions.values()) {

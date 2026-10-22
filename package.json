@@ -2,7 +2,7 @@
   "name": "synax",
   "productName": "Synax",
   "private": false,
-  "version": "2.6.0",
+  "version": "2.7.2",
   "license": "Apache-2.0",
   "author": "Synax",
   "description": "Synax AI coding workspace",
@@ -91,7 +91,8 @@
     "runtime-sidecar:physical-enospc-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-physical-enospc-smoke.ts",
     "runtime-sidecar:cutover-smoke": "tsx scripts/runtime-sidecar-cutover-smoke.ts",
     "runtime:e2e": "npm run runtime-sidecar:build && tsx scripts/runtime-v2-main-path-e2e.ts",
-    "runtime:repository-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-repository-smoke.ts"
+    "runtime:repository-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-repository-smoke.ts",
+    "test:conversation-git": "tsx scripts/conversation-git-smoke.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

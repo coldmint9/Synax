@@ -101,6 +101,7 @@ import {
 } from "./tools/task-tools.js";
 import { browserTools } from "./tools/browser/browser-tools.js";
 import { designTools } from "./design-tools.js";
+import { conversationGitTools } from "./conversation-git/tools.js";
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -149,6 +150,7 @@ export class ToolRegistry {
       ...controlTools,
       ...subagentLifecycleTools,
       ...designTools,
+      ...conversationGitTools,
       ...workTools,
       verificationTool,
       bashTool,

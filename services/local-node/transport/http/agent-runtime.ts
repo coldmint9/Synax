@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { matchedRoutes } from 'hono/route';
+import { createConversationGitRoutes } from './conversation-git.js';
 import { streamSSE } from "hono/streaming";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
@@ -537,6 +538,8 @@ agentRuntimeRoutes.get("/media/models", (c) => {
     return runtimeError(c, error);
   }
 });
+agentRuntimeRoutes.route('/sessions/:sessionId/git-tasks', createConversationGitRoutes());
+
 agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
   try {
     const session = agentSessionRuntime.get(c.req.param("sessionId"));
@@ -1641,6 +1644,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
             "context_compaction_failed",
             "context_compaction_state",
             "media_job",
+            "conversation_git_messages",
           ].includes(event.type)
         )
           return;

@@ -180,13 +180,21 @@ impl UiSnapshot {
     }
     fn partial_message(&self, run_id: &str, created_at: &str) -> Option<Value> {
         let step_id = self.current_step()?;
-        let content: String = self.live_chunks.iter()
+        let content: String = self
+            .live_chunks
+            .iter()
             .filter(|chunk| chunk["type"] == "message_delta" && chunk["stepId"] == step_id)
-            .filter_map(|chunk| chunk["delta"].as_str()).collect();
-        let thought: String = self.live_chunks.iter()
+            .filter_map(|chunk| chunk["delta"].as_str())
+            .collect();
+        let thought: String = self
+            .live_chunks
+            .iter()
             .filter(|chunk| chunk["type"] == "thought_delta" && chunk["stepId"] == step_id)
-            .filter_map(|chunk| chunk["delta"].as_str()).collect();
-        if content.is_empty() && thought.is_empty() { return None; }
+            .filter_map(|chunk| chunk["delta"].as_str())
+            .collect();
+        if content.is_empty() && thought.is_empty() {
+            return None;
+        }
         Some(json!({
             "id":format!("msg_partial_{run_id}_{step_id}"), "sessionId":self.session["id"],
             "runId":run_id, "stepId":step_id, "role":"assistant", "content":content,
@@ -195,7 +203,9 @@ impl UiSnapshot {
         }))
     }
     pub(crate) fn take_partial_message(&mut self, run_id: &str, created_at: &str) -> Option<Value> {
-        self.pending_partial_message.take().or_else(|| self.partial_message(run_id, created_at))
+        self.pending_partial_message
+            .take()
+            .or_else(|| self.partial_message(run_id, created_at))
     }
     fn complete_current(&mut self) {
         if let Some(id) = self.current_step() {
@@ -314,24 +324,38 @@ impl UiSnapshot {
                 }
             }
             "tool_call" | "tool_result" if matching_step => {
-                if let Some(index) = self.live_chunks.iter().position(|existing| existing["type"] == chunk["type"] && existing["toolCall"]["id"] == chunk["toolCall"]["id"]) {
+                if let Some(index) = self.live_chunks.iter().position(|existing| {
+                    existing["type"] == chunk["type"]
+                        && existing["toolCall"]["id"] == chunk["toolCall"]["id"]
+                }) {
                     self.live_chunks[index] = chunk.clone();
-                } else { self.live_chunks.push(chunk.clone()); }
+                } else {
+                    self.live_chunks.push(chunk.clone());
+                }
             }
             "message"
                 if chunk["message"]["role"] == "assistant"
                     && (self.current_step().as_deref() == chunk["message"]["stepId"].as_str()
-                        || self.pending_partial_message.as_ref().is_some_and(|message|
-                            message["stepId"] == chunk["message"]["stepId"])) =>
+                        || self
+                            .pending_partial_message
+                            .as_ref()
+                            .is_some_and(|message| {
+                                message["stepId"] == chunk["message"]["stepId"]
+                            })) =>
             {
                 self.pending_partial_message = None;
                 self.complete_current();
             }
             _ => {}
         }
-        if matches!(state["status"].as_str(), Some("interrupted" | "cancelled" | "failed" | "paused"))
-            && kind != "run_finished" && self.pending_partial_message.is_none() {
-            self.pending_partial_message = self.partial_message(run_id, state["updatedAt"].as_str().unwrap_or_default());
+        if matches!(
+            state["status"].as_str(),
+            Some("interrupted" | "cancelled" | "failed" | "paused")
+        ) && kind != "run_finished"
+            && self.pending_partial_message.is_none()
+        {
+            self.pending_partial_message =
+                self.partial_message(run_id, state["updatedAt"].as_str().unwrap_or_default());
         }
         // Stop requests retain live output until shutdown has been confirmed.
         if !matches!(
@@ -365,9 +389,26 @@ mod tests {
     #[test]
     fn published_assistant_message_is_not_duplicated_as_partial() {
         let mut snapshot = snapshot();
-        snapshot.apply(1, "r", &pending(step("a"), "running")).unwrap();
-        snapshot.apply(2, "r", &pending(json!({"type":"message_delta","stepId":"a","delta":"visible"}), "running")).unwrap();
-        snapshot.apply(3, "r", &pending(json!({"type":"stop_acknowledged"}), "interrupted")).unwrap();
+        snapshot
+            .apply(1, "r", &pending(step("a"), "running"))
+            .unwrap();
+        snapshot
+            .apply(
+                2,
+                "r",
+                &pending(
+                    json!({"type":"message_delta","stepId":"a","delta":"visible"}),
+                    "running",
+                ),
+            )
+            .unwrap();
+        snapshot
+            .apply(
+                3,
+                "r",
+                &pending(json!({"type":"stop_acknowledged"}), "interrupted"),
+            )
+            .unwrap();
         assert!(snapshot.pending_partial_message.is_some());
         snapshot.apply(4, "r", &pending(json!({"type":"message","message":{"role":"assistant","stepId":"a","content":"visible"}}), "interrupted")).unwrap();
         assert!(snapshot.take_partial_message("r", "2026-10-19").is_none());
@@ -375,7 +416,9 @@ mod tests {
     #[test]
     fn coalesced_deltas_keep_latest_text_and_reasoning_token_counts() {
         let mut snapshot = snapshot();
-        snapshot.apply(1, "r", &pending(step("a"), "running")).unwrap();
+        snapshot
+            .apply(1, "r", &pending(step("a"), "running"))
+            .unwrap();
         for (sequence, kind, field, delta, tokens) in [
             (2, "thought_delta", "thinkingTokens", "think", 5),
             (3, "thought_delta", "thinkingTokens", " more", 12),
@@ -384,7 +427,9 @@ mod tests {
         ] {
             let mut chunk = json!({"type":kind,"stepId":"a","delta":delta});
             chunk[field] = json!(tokens);
-            snapshot.apply(sequence, "r", &pending(chunk, "running")).unwrap();
+            snapshot
+                .apply(sequence, "r", &pending(chunk, "running"))
+                .unwrap();
         }
         assert_eq!(snapshot.live_chunks.len(), 3);
         assert_eq!(snapshot.live_chunks[1]["delta"], "think more");

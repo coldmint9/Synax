@@ -1,6 +1,11 @@
 // Runs only inside an opaque-origin frame. No host API is forwarded into this world.
 (() => {
-  const node = document.getElementById("synax-visualization-config");
+  // Accept both the shared container document and previews authored before the
+  // container was extracted, so saved replies keep running.
+  const node =
+    document.getElementById("synax-interactive-config") ??
+    document.getElementById("synax-visualization-config");
+  if (!node) return;
   const config = JSON.parse(node.textContent);
   node.remove();
   const parentWindow = window.parent;
@@ -8,10 +13,12 @@
   const parse = JSON.parse;
   const stringify = JSON.stringify;
   const root = document.documentElement;
+  const channel = "synax-interactive";
+  const legacyChannel = "synax-visualization";
   const post = (type, extra = {}) =>
     send(
       {
-        channel: "synax-visualization",
+        channel,
         id: config.id,
         token: config.token,
         type,
@@ -36,8 +43,9 @@
   window.openai = {
     theme: config.theme,
     visualizationTheme: config.theme,
-    widgetState: null,
-    statePersistence: "none",
+    locale: config.locale,
+    widgetState: config.state ?? null,
+    statePersistence: config.state === undefined ? "none" : "host",
     async setWidgetState(value) {
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new TypeError("State must be a JSON object");
@@ -49,6 +57,9 @@
         throw new RangeError("State exceeds 16 KiB");
       window.openai.widgetState = parse(json);
       stateEvent();
+      // The host keeps the snapshot; the frame's own storage is unavailable in
+      // an opaque origin, so persistence must travel through this message.
+      post("state", { state: window.openai.widgetState });
     },
   };
   applyTheme(config.theme);
@@ -56,7 +67,7 @@
     const data = event.data;
     if (
       event.source === parentWindow &&
-      data?.channel === "synax-visualization" &&
+      (data?.channel === channel || data?.channel === legacyChannel) &&
       data.id === config.id &&
       data.token === config.token &&
       data.type === "theme"
@@ -121,6 +132,8 @@
     post("error");
   });
   window.addEventListener("unhandledrejection", () => post("error"));
+  // Coalesce sizes inside one animation frame: animation-heavy apps resize far
+  // faster than the host can apply, and the last frame is the only useful one.
   let scheduled = false;
   let previousHeight = 0;
   const reportHeight = () => {

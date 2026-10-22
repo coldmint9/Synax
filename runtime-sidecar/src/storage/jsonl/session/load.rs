@@ -64,9 +64,14 @@ pub fn load(root: &Path, session_id: &str) -> JsonlResult<Loaded> {
     let directories = segment_directories(&v2)?;
     let newest = directories.last().copied().unwrap_or(0);
     let snapshot = super::checkpoint::read(&dir, session_id);
-    let resume = snapshot.as_ref().map(|saved| (saved.segment, saved.extent()));
-    let mut extent = resume.as_ref().filter(|(segment, _)| *segment == newest)
-        .map(|(_, extent)| extent.clone()).unwrap_or_else(empty_extent);
+    let resume = snapshot
+        .as_ref()
+        .map(|saved| (saved.segment, saved.extent()));
+    let mut extent = resume
+        .as_ref()
+        .filter(|(segment, _)| *segment == newest)
+        .map(|(_, extent)| extent.clone())
+        .unwrap_or_else(empty_extent);
     seglog::visit_complete_from(
         &file(&layout::segment_dir(&v2, newest), Kind::Seal),
         extent.offsets[2],
@@ -98,25 +103,35 @@ pub fn load(root: &Path, session_id: &str) -> JsonlResult<Loaded> {
         replayed_commits: 0,
         files: Publisher::open(&dir, newest, extent)?,
     };
-    if let Some(saved) = snapshot { saved.restore(&mut loaded); }
-    if resume.is_none() { for segment in segment_directories(&dir)? {
-        replay_segment(
-            root,
-            &layout::segment_dir(&dir, segment),
-            segment,
-            false,
-            empty_extent(),
-            &mut loaded,
-        )?;
-    } }
+    if let Some(saved) = snapshot {
+        saved.restore(&mut loaded);
+    }
+    if resume.is_none() {
+        for segment in segment_directories(&dir)? {
+            replay_segment(
+                root,
+                &layout::segment_dir(&dir, segment),
+                segment,
+                false,
+                empty_extent(),
+                &mut loaded,
+            )?;
+        }
+    }
     for segment in directories {
-        if resume.as_ref().is_some_and(|(saved, _)| segment < *saved) { continue; }
+        if resume.as_ref().is_some_and(|(saved, _)| segment < *saved) {
+            continue;
+        }
         replay_segment(
             root,
             &layout::segment_dir(&v2, segment),
             segment,
             true,
-            resume.as_ref().filter(|(saved, _)| segment == *saved).map(|(_, extent)| extent.clone()).unwrap_or_else(empty_extent),
+            resume
+                .as_ref()
+                .filter(|(saved, _)| segment == *saved)
+                .map(|(_, extent)| extent.clone())
+                .unwrap_or_else(empty_extent),
             &mut loaded,
         )?;
     }
@@ -236,17 +251,15 @@ fn replay_segment(
             let result = if compact {
                 let control = if receipt.r.get("controlChanges").is_some() {
                     serde_json::to_value(&loaded.control)?
-                } else { Value::Null };
+                } else {
+                    Value::Null
+                };
                 let queue = if receipt.r.get("currentQueue").is_some() {
                     serde_json::to_value(&loaded.queue)?
-                } else { Value::Null };
-                delta::expand_receipt(
-                    root,
-                    receipt.r,
-                    &control,
-                    &queue,
-                    &events,
-                )?
+                } else {
+                    Value::Null
+                };
+                delta::expand_receipt(root, receipt.r, &control, &queue, &events)?
             } else {
                 receipt.r
             };

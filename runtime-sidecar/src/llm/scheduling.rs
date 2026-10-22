@@ -1,4 +1,4 @@
-use super::{contract::ProviderRequest, Error};
+use super::{Error, contract::ProviderRequest};
 use crate::runtime::resources::{self, ResourceGuard, ResourceRequest};
 use futures_util::{StreamExt, stream::BoxStream};
 use serde_json::{Value, json};
@@ -6,7 +6,8 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 /// The permit covers one provider attempt, not retries, tool work, or user input.
-pub(super) fn schedule(input: ProviderRequest,
+pub(super) fn schedule(
+    input: ProviderRequest,
     create: impl FnOnce(ProviderRequest) -> BoxStream<'static, Result<Value, Error>> + Send + 'static,
 ) -> BoxStream<'static, Result<Value, Error>> {
     Box::pin(async_stream::try_stream! {

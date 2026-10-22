@@ -23,9 +23,14 @@ pub struct ListIndex {
 impl ListIndex {
     /// Rebuild from the index file; the last row per session wins.
     pub fn open(path: &Path) -> JsonlResult<Self> {
-        let mut index = Self { rows: BTreeMap::new(), by_id: HashMap::new() };
+        let mut index = Self {
+            rows: BTreeMap::new(),
+            by_id: HashMap::new(),
+        };
         crate::storage::jsonl::seglog::visit_complete(path, |_, payload| {
-            if let Ok(Record::List(row)) = serde_json::from_slice::<Record>(payload) { index.apply(row); }
+            if let Ok(Record::List(row)) = serde_json::from_slice::<Record>(payload) {
+                index.apply(row);
+            }
             Ok(())
         })?;
         Ok(index)
@@ -33,8 +38,16 @@ impl ListIndex {
 
     fn apply(&mut self, mut row: ListRecord) {
         // Control probes can open an unseeded session. It has no list row yet.
-        if !row.del && !row.h.is_object() { return; }
-        if let Some(metadata) = row.h.get_mut("sessionMetadata").and_then(Value::as_object_mut) { metadata.remove("latestSystemPrompt"); }
+        if !row.del && !row.h.is_object() {
+            return;
+        }
+        if let Some(metadata) = row
+            .h
+            .get_mut("sessionMetadata")
+            .and_then(Value::as_object_mut)
+        {
+            metadata.remove("latestSystemPrompt");
+        }
         if let Some(previous) = self.by_id.remove(&row.s) {
             self.rows.remove(&previous);
         }
@@ -52,7 +65,9 @@ impl ListIndex {
     /// A background cache read must never replace a row already published by
     /// an interactive session open or mutation.
     pub fn insert_cached(&mut self, row: ListRecord) {
-        if !self.by_id.contains_key(&row.s) { self.apply(row); }
+        if !self.by_id.contains_key(&row.s) {
+            self.apply(row);
+        }
     }
 
     pub fn clear(&mut self) {
@@ -68,7 +83,10 @@ impl ListIndex {
         let mut next = None;
         let start = after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
         for (key, row) in self.rows.range((start, std::ops::Bound::Unbounded)) {
-            let cost = serde_json::to_vec(row).map(|bytes| bytes.len()).unwrap_or(0) + 1;
+            let cost = serde_json::to_vec(row)
+                .map(|bytes| bytes.len())
+                .unwrap_or(0)
+                + 1;
             if items.len() == limit || bytes + cost > PAGE_BYTES {
                 return (items, next);
             }
@@ -76,7 +94,11 @@ impl ListIndex {
             next = Some(key.clone());
             items.push(row.clone());
         }
-        let more = self.rows.keys().next_back().is_some_and(|last| next.as_ref().is_some_and(|next| next != last));
+        let more = self
+            .rows
+            .keys()
+            .next_back()
+            .is_some_and(|last| next.as_ref().is_some_and(|next| next != last));
         (items, if more { next } else { None })
     }
 
@@ -85,7 +107,10 @@ impl ListIndex {
     }
 
     pub fn get(&self, id: &str) -> Option<Value> {
-        self.by_id.get(id).and_then(|key| self.rows.get(key)).cloned()
+        self.by_id
+            .get(id)
+            .and_then(|key| self.rows.get(key))
+            .cloned()
     }
 
     /// The cursor encoding the wire uses: JSON of the last returned key.

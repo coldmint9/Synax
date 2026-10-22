@@ -1,4 +1,5 @@
 import { visualizationReplyParts } from "./visualizationTranscript";
+import { gitMergeReplyParts } from "./gitMergeTranscript";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import type {
@@ -212,6 +213,10 @@ function agentEntry(
 ): ConversationTimelineEntry {
   let label = `Step ${turn.index}`;
   for (const block of turn.blocks) {
+    if (block.type === "git_merge") {
+      label = truncate(block.reference.title);
+      break;
+    }
     if (block.type === "text" && block.content.trim()) {
       label = truncate(block.content);
       break;
@@ -387,7 +392,7 @@ function splitTurnAnswer(turn: InterleavedTurn): {
   answer: readonly TurnContentBlock[];
 } {
   const visualIndex = turn.blocks.findIndex(
-    (block) => block.type === "visualization",
+    (block) => block.type === "visualization" || block.type === "git_merge",
   );
   if (visualIndex >= 0) {
     let start = visualIndex;
@@ -456,7 +461,7 @@ function foldRound(
 ): TimelineItem[] {
   // Each visual reply stays visible, even if a goal continues afterwards.
   const visualTurn = round.findIndex((item) =>
-    item.entry.turn.blocks.some((block) => block.type === "visualization"),
+    item.entry.turn.blocks.some((block) => block.type === "visualization" || block.type === "git_merge"),
   );
   if (visualTurn >= 0 && visualTurn < round.length - 1)
     return [
@@ -469,6 +474,7 @@ function foldRound(
       round[i].entry.turn.blocks.some(
         (block) =>
           block.type === "visualization" ||
+          block.type === "git_merge" ||
           (block.type === "text" && block.content.trim() !== ""),
       )
     ) {
@@ -518,7 +524,7 @@ function foldRound(
             .filter((block) => block.type === "text")
             .map((block) => block.content)
             .join(" "),
-        ) || "交互预览",
+        ) || answer.find((block) => block.type === "git_merge")?.reference.title || "交互预览",
       turn: turnWithBlocks(answerItem.entry.turn, answer),
     },
   });
@@ -630,6 +636,7 @@ function markFinalReplyRows(
           (block) =>
             block.type === "media" ||
             block.type === "visualization" ||
+            block.type === "git_merge" ||
             (block.type === "text" && block.content.trim() !== ""),
         )
       )
@@ -664,6 +671,9 @@ export function buildConversationTimeline(
   messages = options?.session
     ? messages.filter((message) => message.sessionId === options.session!.id)
     : messages;
+  // Live upserts can overlap a history page. Keep the latest payload at the
+  // original position, including task anchors that have no surviving step.
+  messages = [...new Map(messages.map((message) => [message.id, message])).values()];
   const excludedStepIds = new Set(options?.excludeStepIds ?? []);
   if (options?.excludeStepId) excludedStepIds.add(options.excludeStepId);
   const excludedRunIds = new Set(options?.excludeRunIds ?? []);
@@ -739,7 +749,7 @@ export function buildConversationTimeline(
       continue;
     const isForkReply =
       typeof message.metadata?.forkedFromMessageId === "string";
-    const blocks: TurnContentBlock[] = visualizationReplyParts(message);
+    const blocks: TurnContentBlock[] = gitMergeReplyParts(message) ?? visualizationReplyParts(message);
     // A bounded history window can carry an assistant reply while omitting the
     // step (or the whole run) it was persisted with. The reply is still real
     // conversation, so keep it as its own answer row instead of dropping it —
@@ -753,7 +763,7 @@ export function buildConversationTimeline(
       });
     if (
       !isForkReply &&
-      !blocks.some((block) => block.type === "visualization") &&
+      !blocks.some((block) => block.type === "visualization" || block.type === "git_merge") &&
       !message.content.trim() &&
       !message.contentParts?.length
     )
@@ -780,6 +790,7 @@ export function buildConversationTimeline(
         kind: "agent",
         createdAt: message.createdAt,
         label:
+          blocks.find((block) => block.type === "git_merge")?.reference.title ||
           truncate(message.content) || (isForkReply ? "助手回复" : "交互预览"),
         turn: {
           stepId: `reply-${message.id}`,

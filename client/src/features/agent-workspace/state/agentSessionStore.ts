@@ -16,6 +16,15 @@ import {
   schedulePersistDetail,
 } from "./sessionCache";
 import {
+  forgetSessionList,
+  forgetSessionsFromLists,
+  isSessionListFresh,
+  recallSessionList,
+  rememberSessionList,
+  resetSessionListCache,
+  updateSessionListRows,
+} from "./sessionListCache";
+import {
   extendTimelineIndex,
   previewTimelineMessage,
   seedTimelineIndex,
@@ -415,6 +424,95 @@ function trimSessionDetailCache(
     remaining -= size;
   }
   return next;
+}
+
+/**
+ * Transcript snapshots parked for workspaces the user switched away from.
+ *
+ * Coming back to a workspace should paint the conversation it left, not an
+ * empty panel that waits for `history-window`. Only the most recently read
+ * entries travel with a workspace: the live tier already bounds itself, and
+ * this tier multiplies its budget by the number of remembered workspaces.
+ */
+const inactiveProjectDetails = new Map<
+  string,
+  Record<string, SessionDetailCacheEntry>
+>();
+const REMEMBERED_PROJECT_DETAILS = 4;
+const REMEMBERED_PROJECT_DETAIL_ENTRIES = 2;
+const REMEMBERED_PROJECT_DETAIL_BYTES = 6 * 1024 * 1024;
+
+function rememberInactiveProjectDetails(
+  projectId: string,
+  cache: Record<string, SessionDetailCacheEntry>,
+): void {
+  const recent = Object.entries(cache)
+    .sort(
+      ([, a], [, b]) =>
+        (b.lastVisitedAt ?? b.cachedAt) - (a.lastVisitedAt ?? a.cachedAt),
+    )
+    .slice(0, REMEMBERED_PROJECT_DETAIL_ENTRIES);
+  const retained: Record<string, SessionDetailCacheEntry> = {};
+  let remaining = REMEMBERED_PROJECT_DETAIL_BYTES;
+  for (const [sessionId, entry] of recent) {
+    const size = detailEntryBytes(entry, remaining);
+    if (size > remaining) continue;
+    retained[sessionId] = entry;
+    remaining -= size;
+  }
+  // Re-insert so iteration order stays least-recently-left first.
+  inactiveProjectDetails.delete(projectId);
+  if (Object.keys(retained).length > 0)
+    inactiveProjectDetails.set(projectId, retained);
+  while (inactiveProjectDetails.size > REMEMBERED_PROJECT_DETAILS) {
+    const oldest = inactiveProjectDetails.keys().next().value;
+    if (oldest === undefined) break;
+    inactiveProjectDetails.delete(oldest);
+  }
+}
+
+function recallInactiveProjectDetails(
+  projectId: string,
+): Record<string, SessionDetailCacheEntry> {
+  const cache = inactiveProjectDetails.get(projectId);
+  if (!cache) return {};
+  inactiveProjectDetails.delete(projectId);
+  return cache;
+}
+
+function forgetInactiveProjectDetails(
+  projectId: string,
+  sessionIds?: readonly string[],
+): void {
+  if (!sessionIds) {
+    inactiveProjectDetails.delete(projectId);
+    return;
+  }
+  const removed = new Set(sessionIds);
+  const cache = inactiveProjectDetails.get(projectId);
+  if (!cache) return;
+  const retained = Object.fromEntries(
+    Object.entries(cache).filter(([id]) => !removed.has(id)),
+  );
+  if (Object.keys(retained).length === 0) inactiveProjectDetails.delete(projectId);
+  else inactiveProjectDetails.set(projectId, retained);
+}
+
+function forgetSessionsFromInactiveDetails(sessionIds: readonly string[]): void {
+  for (const projectId of [...inactiveProjectDetails.keys()])
+    forgetInactiveProjectDetails(projectId, sessionIds);
+}
+
+/** Copy the live list of `projectId` into the remembered snapshot tier. */
+function rememberCurrentSessionList(projectId: string): void {
+  const state = useAgentSessionStore.getState();
+  if (state.projectId !== projectId) return;
+  rememberSessionList(projectId, {
+    sessions: state.sessions,
+    total: state.sessionListTotal,
+    offset: state.sessionListOffset,
+    loadedAt: state.sessionListLoadedAt,
+  });
 }
 
 function emptyDetailPayload(): Pick<
@@ -846,6 +944,11 @@ export interface AgentSessionStoreState {
   sessions: AgentSession[];
   sessionListTotal: number | null;
   sessionListOffset: number;
+  /**
+   * When the current workspace's list was last confirmed by the runtime.
+   * `0` means this workspace has never loaded, so a switch stays lazy.
+   */
+  sessionListLoadedAt: number;
   sessionListLoading: boolean;
   sessionListError: string | null;
   detailLoading: boolean;
@@ -888,7 +991,17 @@ export interface AgentSessionStoreState {
     sessionId: string,
     mode: AgentSessionMode,
   ) => Promise<void>;
-  refreshSessions: (options?: { joinPending?: boolean }) => Promise<void>;
+  /**
+   * Paint a workspace's list: fetch on a first visit, reuse the remembered
+   * snapshot inside its freshness window, and reconcile it silently after.
+   * Explicit re-reads keep calling `refreshSessions`.
+   */
+  ensureSessionsLoaded: () => Promise<void>;
+  refreshSessions: (options?: {
+    joinPending?: boolean;
+    /** Reconcile a restored snapshot without showing the list as loading. */
+    background?: boolean;
+  }) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   resetSessionDetailForDraft: () => void;
   resetConversationHistory: (sessionId: string) => void;
@@ -952,6 +1065,8 @@ export interface AgentSessionStoreState {
   forceQueuedInput: (sessionId: string, itemId: string) => Promise<void>;
   setInputQueue: (sessionId: string, items: QueuedInput[]) => void;
   cancelSessionRun: (sessionId: string) => Promise<void>;
+  /** Upsert server-persisted native task anchors/receipts into their owner's cache. */
+  ingestConversationMessages: (sessionId: string, messages: AgentRuntimeMessage[]) => void;
   applyLiveEvent: (event: SessionLiveEvent, streamSessionId?: string) => void;
   patchSession: (sessionId: string, patch: Partial<AgentSession>) => boolean;
   markSessionRead: (sessionId: string) => void;
@@ -1063,6 +1178,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     sessions: [],
     sessionListTotal: null,
     sessionListOffset: 0,
+    sessionListLoadedAt: 0,
     sessionListLoading: false,
     sessionListError: null,
     detailLoading: false,
@@ -1201,6 +1317,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     setProjectId: (projectId) => {
       if (projectId === get().projectId) return;
+      const previous = get();
+      // Park the workspace being left so a return visit paints its list and its
+      // last conversation instead of paying for the same reads again.
+      if (previous.projectId) {
+        rememberSessionList(previous.projectId, {
+          sessions: previous.sessions,
+          total: previous.sessionListTotal,
+          offset: previous.sessionListOffset,
+          loadedAt: previous.sessionListLoadedAt,
+        });
+        rememberInactiveProjectDetails(
+          previous.projectId,
+          previous.sessionDetailCache,
+        );
+      }
       clearFinalReplyRetry();
       clearScheduledSessionRefresh();
       activeSessionsRefresh = null;
@@ -1211,21 +1342,35 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       ++detailRefreshEpoch;
       releaseSessionLiveSubscription();
       clearStreamingBuffers();
+      const cached = recallSessionList(projectId);
       set({
         projectId,
         draftMode: "chat",
-        sessions: [],
-        sessionListTotal: null,
-        sessionListOffset: 0,
+        sessions: cached?.sessions ?? [],
+        sessionListTotal: cached?.total ?? null,
+        sessionListOffset: cached?.offset ?? 0,
+        sessionListLoadedAt: cached?.loadedAt ?? 0,
         sessionListLoading: false,
         sessionListError: null,
         detailLoading: false,
         detailError: null,
         readSessionMarkers: loadReadMarkers(projectId),
-        sessionDetailCache: {},
+        sessionDetailCache: projectId
+          ? trimSessionDetailCache(recallInactiveProjectDetails(projectId))
+          : {},
         ...emptySessionDetailState(),
       });
-      void get().refreshSessions();
+      // A first visit loads right away; a remembered workspace paints and only
+      // reconciles once its snapshot is stale, so switching back never blocks.
+      void get().ensureSessionsLoaded();
+    },
+
+    ensureSessionsLoaded: async () => {
+      const { projectId, sessionListLoadedAt } = get();
+      if (!projectId) return;
+      const loaded = sessionListLoadedAt > 0;
+      if (loaded && isSessionListFresh(sessionListLoadedAt)) return;
+      await get().refreshSessions({ joinPending: true, background: loaded });
     },
 
     refreshSessions: async (options) => {
@@ -1237,7 +1382,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
       const refresh = { projectId, again: false, promise: Promise.resolve() };
       activeSessionsRefresh = refresh;
-      set({ sessionListLoading: true, sessionListError: null });
+      // A restored snapshot stays on screen while it reconciles: only a real
+      // load may show the list as loading.
+      set(
+        options?.background
+          ? { sessionListError: null }
+          : { sessionListLoading: true, sessionListError: null },
+      );
       refresh.promise = (async () => {
         try {
           do {
@@ -1294,6 +1445,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               const sessions = [...rows, ...added];
               return {
                 sessionListTotal: totalCount,
+                sessionListLoadedAt: Date.now(),
                 sessionListOffset:
                   items.length < SESSION_PAGE_SIZE ||
                   state.sessionListOffset === 0
@@ -1307,6 +1459,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                     : sessions,
               };
             });
+            // Keep the remembered copy of this workspace current, so leaving it
+            // now does not require a read on the way back.
+            rememberCurrentSessionList(projectId);
           } while (refresh.again);
         } catch (error) {
           if (activeSessionsRefresh === refresh)
@@ -1362,6 +1517,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               sessionListOffset: state.sessionListOffset + items.length,
             };
           });
+          rememberCurrentSessionList(projectId);
         } catch (error) {
           if (activeSessionsPage === page)
             set({ sessionListError: String(error) });
@@ -1516,6 +1672,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       markRuntimeResourcesRemoved(deletedSessionIds);
       // A deleted or archived row must not repaint from disk on the next start.
       scheduleDeletePersistedDetail(deletedSessionIds);
+      // Workspaces the user is not inside keep their own snapshot; drop the
+      // removed rows there too so a return visit cannot show them again.
+      forgetSessionsFromLists(deletedSessionIds);
+      forgetSessionsFromInactiveDetails(deletedSessionIds);
       const deleted = new Set(deletedSessionIds);
       for (const id of deleted) profileFetchedAt.delete(id);
       useSessionWorkspaceStore.getState().removeSessions(deleted);
@@ -2799,6 +2959,29 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
     },
 
+    ingestConversationMessages: (sessionId, incoming) => {
+      const accepted = incoming.filter(message => message.sessionId === sessionId &&
+        message.role === 'assistant' && ['git_merge_task', 'git_merge_receipt'].includes(String(message.metadata?.source)));
+      if (!accepted.length) return;
+      set(state => {
+        const visible = state.selectedSessionId === sessionId;
+        const cached = state.sessionDetailCache[sessionId];
+        // A child response must never seed its cache with another transcript's rows.
+        const base: SessionDetailCacheEntry = cached ?? {
+          runs: [], steps: [], events: [], messages: [], toolCalls: [], permissions: [],
+          sessionStats: null, sessionTodos: [], sessionInvocationUsage: null, cachedAt: 0,
+        };
+        const messages = accepted.reduce((items, message) => upsertById(items, message, Infinity), visible ? state.messages : base.messages);
+        const entry = { ...base, messages,
+          ...(base.timelineMessages ? { timelineMessages: accepted.reduce((items, message) => upsertById(items, previewTimelineMessage(message), Infinity), base.timelineMessages) } : {}),
+        };
+        return {
+          ...(visible ? { messages, streamingCompletedSteps: retireSnapshots(state.streamingCompletedSteps, state.steps, messages, state.toolCalls, false) } : {}),
+          sessionDetailCache: trimSessionDetailCache({ ...state.sessionDetailCache, [sessionId]: entry }, state.selectedSessionId),
+        };
+      });
+    },
+
     applyLiveEvent: (event, streamSessionId) => {
       // Deltas, steps, retries and tool records carry no session id of their
       // own: they belong to the session whose live stream delivered them. The
@@ -2809,6 +2992,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         streamSessionId === undefined ||
         streamSessionId === get().selectedSessionId;
       switch (event.type) {
+        case "conversation_git_messages": {
+          if (streamSessionId) get().ingestConversationMessages(streamSessionId, event.messages);
+          break;
+        }
         case "execution_status": {
           if (!streamVisible || event.sessionId !== get().selectedSessionId) break;
           set(state => ({ runs: state.runs.map(run => run.id === event.runId && run.sessionId === event.sessionId
@@ -3108,6 +3295,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessions[index] = patchAgentSession(sessions[index], patch);
         return { sessions };
       });
+      // A live patch can target a workspace the user is not inside. Keep its
+      // remembered row current so a return visit shows the real status instead
+      // of a stale one until the next reconcile.
+      if (!patched)
+        updateSessionListRows((session) =>
+          session.id === sessionId
+            ? patchAgentSession(session, patch)
+            : session,
+        );
       const terminal =
         patch.status === "completed" ||
         patch.status === "failed" ||
@@ -3143,6 +3339,22 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
   }),
 );
+
+/**
+ * Drop every remembered trace of a workspace: its session list and the
+ * transcripts parked while the user was elsewhere. Called when the workspace
+ * itself is removed, so a re-used id cannot resurrect the old rows.
+ */
+export function forgetProjectSessionCache(projectId: string): void {
+  forgetSessionList(projectId);
+  forgetInactiveProjectDetails(projectId);
+}
+
+/** Test seam: drop every remembered workspace list and parked transcript. */
+export function resetWorkspaceSessionCache(): void {
+  resetSessionListCache();
+  inactiveProjectDetails.clear();
+}
 
 // Live chunks mutate the cache entry outside any refresh transaction, so the
 // moment the reader leaves a session is the cheapest point to make its

@@ -23,6 +23,20 @@ const verbs = {
   en: { edit: ["Edited", "Editing"], read: ["Read", "Reading"], run: ["Ran", "Running"], search: ["Searched", "Searching"], load: ["Loaded", "Loading"], tool: ["Used", "Using"] },
 } as const;
 
+/**
+ * One path, as opposed to prose, a patch body or a glob.
+ *
+ * A read/edit record can only offer "open this file" when its input names
+ * exactly one workspace file: a multi-file patch joins its targets with `, `,
+ * and a raw patch or shell command is prose the viewer cannot open.
+ */
+const SINGLE_PATH = /^[^\s*?"'`|<>()[\]]+$/;
+
+function singleFilePath(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed && SINGLE_PATH.test(trimmed) ? trimmed : null;
+}
+
 export function conversationToolPresentation(call: ToolCallView, locale: Locale) {
   const presentation = toolCallPresentation(call, locale);
   const action = actionFor(call);
@@ -61,6 +75,8 @@ export function conversationToolPresentation(call: ToolCallView, locale: Locale)
     target,
     displayTarget: file && !target.includes(", ") ? target.split(/[\\/]/).pop() || target : target,
     file,
+    /** The single file this record points at, when the viewer can open it. */
+    filePath: file ? singleFilePath(target) : null,
     additions,
     deletions,
   };

@@ -106,12 +106,13 @@ pub fn append_fingerprint(
     format!("{:x}", digest.finalize())
 }
 
-
 impl From<StorageError> for RuntimeError {
     fn from(error: StorageError) -> Self {
         match error {
             StorageError::Runtime(error) => error,
-            StorageError::Serialization(error) => RuntimeError::StorageUnavailable(error.to_string()),
+            StorageError::Serialization(error) => {
+                RuntimeError::StorageUnavailable(error.to_string())
+            }
             StorageError::DiskFull => RuntimeError::DiskFull,
         }
     }

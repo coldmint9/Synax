@@ -26,7 +26,12 @@ pub(crate) fn provider_events(input: ProviderRequest) -> BoxStream<'static, Resu
         .unwrap_or(crate::llm::retry::MAX_RETRIES)
         .min(crate::llm::retry::MAX_RETRIES);
     crate::logging::observe_stream(
-        crate::llm::retry::with_retry(move || super::scheduling::schedule(input.clone(), provider_events_once), max_retries), span)
+        crate::llm::retry::with_retry(
+            move || super::scheduling::schedule(input.clone(), provider_events_once),
+            max_retries,
+        ),
+        span,
+    )
 }
 
 fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Value, Error>> {
@@ -190,7 +195,10 @@ mod tests {
 
     #[test]
     fn keeps_a_cut_short_answer_instead_of_failing_the_turn() {
-        assert_eq!(truncation_reason(Some("Response incomplete: length"), true), Some("length"));
+        assert_eq!(
+            truncation_reason(Some("Response incomplete: length"), true),
+            Some("length")
+        );
         assert_eq!(
             truncation_reason(Some("Response incomplete: max_output_tokens"), true),
             Some("max_output_tokens")
@@ -207,16 +215,37 @@ mod tests {
 
     #[test]
     fn keeps_reported_failures_fatal() {
-        assert_eq!(truncation_reason(Some("Response failed: server_error: upstream refused"), true), None);
-        assert_eq!(truncation_reason(Some("Response cancelled: client closed the request"), true), None);
-        assert_eq!(truncation_reason(Some("Response ended while in_progress"), true), None);
-        assert_eq!(truncation_reason(Some("error decoding response body"), true), None);
+        assert_eq!(
+            truncation_reason(
+                Some("Response failed: server_error: upstream refused"),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            truncation_reason(Some("Response cancelled: client closed the request"), true),
+            None
+        );
+        assert_eq!(
+            truncation_reason(Some("Response ended while in_progress"), true),
+            None
+        );
+        assert_eq!(
+            truncation_reason(Some("error decoding response body"), true),
+            None
+        );
         assert_eq!(truncation_reason(None, true), None);
     }
 
     #[test]
     fn keeps_a_turn_without_an_answer_fatal() {
-        assert_eq!(truncation_reason(Some("Response incomplete: length"), false), None);
-        assert_eq!(incomplete_reason("Response incomplete: length"), Some("length"));
+        assert_eq!(
+            truncation_reason(Some("Response incomplete: length"), false),
+            None
+        );
+        assert_eq!(
+            incomplete_reason("Response incomplete: length"),
+            Some("length")
+        );
     }
 }

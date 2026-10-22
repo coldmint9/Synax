@@ -2,29 +2,30 @@ use crate::runtime::actor::{Durability, PendingEvent, RuntimeError, SessionShard
 use crate::transport::flow::CreditWindow;
 use crate::transport::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState, WireImportProjectionResponse, WireImportStreamResponse, WirePong, WireQueueState, WireSessionListResponse,
-    WireReady, WireRunAdmission, WireSnapshotResponse, WireStreamEvent, WireTicket,
-    WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
-    wire_envelope,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse,
+    WireHistoryState, WireImportProjectionResponse, WireImportStreamResponse, WirePong,
+    WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse, WireSnapshotResponse,
+    WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message, decode_wire,
+    encode_server_message, encode_wire, wire_envelope,
 };
 use crate::transport::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
+use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio::time::timeout;
-use tracing::Instrument;
 use tokio_tungstenite::{
     WebSocketStream, accept_hdr_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
 };
+use tracing::Instrument;
 
 pub(crate) const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
@@ -57,7 +58,6 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
 ];
 
 type WebSocket = WebSocketStream<TcpStream>;
-
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -229,9 +229,9 @@ async fn handle_websocket(
                         "ui_projection",
                         "queue_read",
                         "control_state",
-    "history_command",
-    "history_state",
-    "session_list",
+                        "history_command",
+                        "history_state",
+                        "session_list",
                     ]
                     .iter()
                     .map(|value| (*value).into())
@@ -584,16 +584,27 @@ fn wire_operation(body: Option<&wire_envelope::Body>) -> &'static str {
     use wire_envelope::Body;
     match body {
         Some(Body::WorkspaceIndexCommand(_)) => "workspace_index",
-        Some(Body::QueueRead(_)) => "queue_read", Some(Body::QueueMutation(_)) => "queue_mutation",
-        Some(Body::ControlCommand(_)) => "control", Some(Body::HistoryCommand(_)) => "history",
-        Some(Body::SessionList(_)) => "session_list", Some(Body::ImportProjection(_)) => "import_projection",
-        Some(Body::ImportStream(_)) => "import_stream", Some(Body::ActivateRun(_)) => "activate_run",
-        Some(Body::SeedUi(_)) => "seed_ui", Some(Body::UiSnapshot(_)) => "ui_snapshot",
-        Some(Body::IssueTicket(_)) => "issue_ticket", Some(Body::FinishRun(_)) => "finish_run",
-        Some(Body::Health(_)) => "health", Some(Body::Shutdown(_)) => "shutdown",
-        Some(Body::Ping(_)) => "ping", Some(Body::AdmitRun(_)) => "admit_run",
-        Some(Body::AppendStream(_)) => "append_stream", Some(Body::Snapshot(_)) => "snapshot",
-        Some(Body::Replay(_)) => "replay", Some(Body::Subscribe(_)) => "subscribe", _ => "other",
+        Some(Body::QueueRead(_)) => "queue_read",
+        Some(Body::QueueMutation(_)) => "queue_mutation",
+        Some(Body::ControlCommand(_)) => "control",
+        Some(Body::HistoryCommand(_)) => "history",
+        Some(Body::SessionList(_)) => "session_list",
+        Some(Body::ImportProjection(_)) => "import_projection",
+        Some(Body::ImportStream(_)) => "import_stream",
+        Some(Body::ActivateRun(_)) => "activate_run",
+        Some(Body::SeedUi(_)) => "seed_ui",
+        Some(Body::UiSnapshot(_)) => "ui_snapshot",
+        Some(Body::IssueTicket(_)) => "issue_ticket",
+        Some(Body::FinishRun(_)) => "finish_run",
+        Some(Body::Health(_)) => "health",
+        Some(Body::Shutdown(_)) => "shutdown",
+        Some(Body::Ping(_)) => "ping",
+        Some(Body::AdmitRun(_)) => "admit_run",
+        Some(Body::AppendStream(_)) => "append_stream",
+        Some(Body::Snapshot(_)) => "snapshot",
+        Some(Body::Replay(_)) => "replay",
+        Some(Body::Subscribe(_)) => "subscribe",
+        _ => "other",
     }
 }
 
@@ -615,15 +626,38 @@ async fn execute_wire_inner(
     match request.body {
         Some(wire_envelope::Body::WorkspaceIndexCommand(command)) => {
             if !local_control {
-                return (envelope(wire_error("FORBIDDEN", "workspace indexing requires private control transport")), false);
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "workspace indexing requires private control transport",
+                    )),
+                    false,
+                );
             }
-            match context.workspace_index.command(command.operation, command.payload).await {
-                Ok(state_json) => (envelope(wire_envelope::Body::WorkspaceIndexState(crate::transport::protocol::WireWorkspaceIndexState { state_json })), false),
-                Err(error) => (envelope(wire_error(error.code(), &error.to_string())), false),
+            match context
+                .workspace_index
+                .command(command.operation, command.payload)
+                .await
+            {
+                Ok(state_json) => (
+                    envelope(wire_envelope::Body::WorkspaceIndexState(
+                        crate::transport::protocol::WireWorkspaceIndexState { state_json },
+                    )),
+                    false,
+                ),
+                Err(error) => (
+                    envelope(wire_error(error.code(), &error.to_string())),
+                    false,
+                ),
             }
         }
-        Some(wire_envelope::Body::WorkspaceIndexState(_)) =>
-            (envelope(wire_error("INVALID_COMMAND", "workspace_index_state is a response-only message")), false),
+        Some(wire_envelope::Body::WorkspaceIndexState(_)) => (
+            envelope(wire_error(
+                "INVALID_COMMAND",
+                "workspace_index_state is a response-only message",
+            )),
+            false,
+        ),
         Some(wire_envelope::Body::SeedUi(seed)) => {
             if !local_control {
                 return (
@@ -846,21 +880,44 @@ async fn execute_wire_inner(
                 .await
             {
                 Ok(receipt) => {
-                    if let (Some(history), Some(event)) = (context.history.clone(), receipt.event.as_ref()) {
-                        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&event.payload) {
+                    if let (Some(history), Some(event)) =
+                        (context.history.clone(), receipt.event.as_ref())
+                    {
+                        if let Ok(payload) =
+                            serde_json::from_slice::<serde_json::Value>(&event.payload)
+                        {
                             let mut objects = Vec::new();
-                            for (field, kind) in [("permission", "runtime.permission"), ("interaction", "runtime.interaction")] {
+                            for (field, kind) in [
+                                ("permission", "runtime.permission"),
+                                ("interaction", "runtime.interaction"),
+                            ] {
                                 if let Some(value) = payload["chunk"][field].as_object() {
-                                    if value.get("id").and_then(serde_json::Value::as_str).is_some() {
-                                        objects.push(serde_json::json!({"kind": kind, "value": value}));
+                                    if value
+                                        .get("id")
+                                        .and_then(serde_json::Value::as_str)
+                                        .is_some()
+                                    {
+                                        objects.push(
+                                            serde_json::json!({"kind": kind, "value": value}),
+                                        );
                                     }
                                 }
                             }
                             if !objects.is_empty() {
-                                let body = serde_json::to_vec(&serde_json::json!({"objects": objects})).unwrap_or_default();
-                                if let Err(error) = history.command_async(
-                                    session_id.clone(), format!("control-history:{request_id}"), "append_entities".to_owned(), body,
-                                ).await { return (envelope(history_error_to_wire(error)), false); }
+                                let body =
+                                    serde_json::to_vec(&serde_json::json!({"objects": objects}))
+                                        .unwrap_or_default();
+                                if let Err(error) = history
+                                    .command_async(
+                                        session_id.clone(),
+                                        format!("control-history:{request_id}"),
+                                        "append_entities".to_owned(),
+                                        body,
+                                    )
+                                    .await
+                                {
+                                    return (envelope(history_error_to_wire(error)), false);
+                                }
                             }
                         }
                     }
@@ -876,7 +933,7 @@ async fn execute_wire_inner(
                         },
                         false,
                     )
-                },
+                }
                 Err(error) => (envelope(error_to_wire(error)), false),
             }
         }
@@ -891,7 +948,9 @@ async fn execute_wire_inner(
                 );
             }
             if command.operation == "reconcile_stream" {
-                if let (Some(_), Some(history)) = (context.hot_store.as_ref(), context.history.clone()) {
+                if let (Some(_), Some(history)) =
+                    (context.hot_store.as_ref(), context.history.clone())
+                {
                     // Reconciliation fills gaps; it must never overwrite newer
                     // authoritative entities with old lifecycle events.
                     let mut latest = std::collections::BTreeMap::new();
@@ -905,22 +964,42 @@ async fn execute_wire_inner(
                             Ok(events) => events,
                             Err(error) => return (envelope(error_to_wire(error)), false),
                         };
-                        if events.is_empty() { break; }
-                        for event in events.into_iter().take_while(|event| event.sequence <= through) {
+                        if events.is_empty() {
+                            break;
+                        }
+                        for event in events
+                            .into_iter()
+                            .take_while(|event| event.sequence <= through)
+                        {
                             after = event.sequence;
-                            let Ok(payload) = serde_json::from_slice::<Value>(&event.payload) else { continue };
+                            let Ok(payload) = serde_json::from_slice::<Value>(&event.payload)
+                            else {
+                                continue;
+                            };
                             let chunk = &payload["chunk"];
-                            if matches!(chunk["type"].as_str(), Some("history_restore_started" | "history_restored")) {
+                            if matches!(
+                                chunk["type"].as_str(),
+                                Some("history_restore_started" | "history_restored")
+                            ) {
                                 // History was reconciled before the restore fence.
                                 // Earlier stream entities may now be intentionally
                                 // absent, including while recovery finishes a restore.
                                 latest.clear();
                                 continue;
                             }
-                            for (field, kind) in [("run", "runtime.run"), ("step", "runtime.step"), ("message", "runtime.message"), ("toolCall", "runtime.tool_call"), ("event", "runtime.event")] {
+                            for (field, kind) in [
+                                ("run", "runtime.run"),
+                                ("step", "runtime.step"),
+                                ("message", "runtime.message"),
+                                ("toolCall", "runtime.tool_call"),
+                                ("event", "runtime.event"),
+                            ] {
                                 if let Some(value) = chunk[field].as_object() {
                                     if let Some(id) = value.get("id").and_then(Value::as_str) {
-                                        latest.insert((kind, id.to_owned()), serde_json::json!({"kind":kind,"value":value}));
+                                        latest.insert(
+                                            (kind, id.to_owned()),
+                                            serde_json::json!({"kind":kind,"value":value}),
+                                        );
                                     }
                                 }
                             }
@@ -932,14 +1011,29 @@ async fn execute_wire_inner(
                     for object in latest.into_values() {
                         let size = serde_json::to_vec(&object).unwrap().len() + 1;
                         if !batch.is_empty() && (batch.len() == 256 || bytes + size > 768 * 1024) {
-                            batches.push(std::mem::take(&mut batch)); bytes = 32;
+                            batches.push(std::mem::take(&mut batch));
+                            bytes = 32;
                         }
-                        bytes += size; batch.push(object);
+                        bytes += size;
+                        batch.push(object);
                     }
-                    if !batch.is_empty() { batches.push(batch); }
+                    if !batch.is_empty() {
+                        batches.push(batch);
+                    }
                     for (index, objects) in batches.into_iter().enumerate() {
-                        let body = serde_json::to_vec(&serde_json::json!({"objects":objects,"ifAbsent":true})).unwrap();
-                        if let Err(error) = history.command_async(session_id.clone(), format!("reconcile-append:{request_id}:{index}"), "append_entities".to_owned(), body).await {
+                        let body = serde_json::to_vec(
+                            &serde_json::json!({"objects":objects,"ifAbsent":true}),
+                        )
+                        .unwrap();
+                        if let Err(error) = history
+                            .command_async(
+                                session_id.clone(),
+                                format!("reconcile-append:{request_id}:{index}"),
+                                "append_entities".to_owned(),
+                                body,
+                            )
+                            .await
+                        {
                             return (envelope(history_error_to_wire(error)), false);
                         }
                     }
@@ -958,13 +1052,18 @@ async fn execute_wire_inner(
                     false,
                 );
             }
-            if matches!(command.operation.as_str(), "history_outbox_status" | "maintain_history_outbox" | "ack_history_outbox") {
+            if matches!(
+                command.operation.as_str(),
+                "history_outbox_status" | "maintain_history_outbox" | "ack_history_outbox"
+            ) {
                 let through = serde_json::from_slice::<Value>(&command.payload)
                     .ok()
                     .and_then(|value| value.get("through").and_then(Value::as_u64));
                 let state = match command.operation.as_str() {
                     "history_outbox_status" => serde_json::json!({"pending": 0}),
-                    "maintain_history_outbox" => serde_json::json!({"ackedThrough": Value::Null, "removed": 0, "hasMoreAcked": false}),
+                    "maintain_history_outbox" => {
+                        serde_json::json!({"ackedThrough": Value::Null, "removed": 0, "hasMoreAcked": false})
+                    }
                     "ack_history_outbox" => serde_json::json!({"ackedThrough": through}),
                     _ => serde_json::json!({"reconciled": 0}),
                 };
@@ -983,60 +1082,121 @@ async fn execute_wire_inner(
             }
             if command.operation == "test_reset_runtime" {
                 if std::env::var("SYNAX_RUNTIME_TEST_MODE") != Ok("1".to_owned()) {
-                    return (envelope(wire_error("FORBIDDEN", "test reset is only available in test mode")), false);
+                    return (
+                        envelope(wire_error(
+                            "FORBIDDEN",
+                            "test reset is only available in test mode",
+                        )),
+                        false,
+                    );
                 }
                 let Some(hot) = context.hot_store.clone() else {
-                    return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+                    return (
+                        envelope(wire_error(
+                            "STORAGE_UNAVAILABLE",
+                            "runtime hot store is not configured",
+                        )),
+                        false,
+                    );
                 };
                 hot.store().wait_for_index_scan().await;
-                if let Some(history) = &context.history { history.clear_cache_for_tests(); }
+                if let Some(history) = &context.history {
+                    history.clear_cache_for_tests();
+                }
                 return match tokio::task::spawn_blocking(move || hot.reset_for_tests()).await {
-                    Ok(Ok(())) => (envelope(wire_envelope::Body::HistoryState(WireHistoryState { state_json: serde_json::to_vec(&serde_json::json!({"ok": true})).unwrap_or_default() })), false),
+                    Ok(Ok(())) => (
+                        envelope(wire_envelope::Body::HistoryState(WireHistoryState {
+                            state_json: serde_json::to_vec(&serde_json::json!({"ok": true}))
+                                .unwrap_or_default(),
+                        })),
+                        false,
+                    ),
                     Ok(Err(error)) => (envelope(storage_error_to_wire(error)), false),
-                    Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+                    Err(error) => (
+                        envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())),
+                        false,
+                    ),
                 };
             }
             let Some(history) = context.history.clone() else {
                 return (
-                    envelope(wire_error("HISTORY_UNAVAILABLE", "runtime history is not configured")),
+                    envelope(wire_error(
+                        "HISTORY_UNAVAILABLE",
+                        "runtime history is not configured",
+                    )),
                     false,
                 );
             };
-            let reply = history.command_async(session_id.clone(), request_id.clone(), command.operation, command.payload).await;
+            let reply = history
+                .command_async(
+                    session_id.clone(),
+                    request_id.clone(),
+                    command.operation,
+                    command.payload,
+                )
+                .await;
             return match reply {
-            
-                    Ok(state_json) => (
-                        WireEnvelope {
-                            request_id,
-                            session_id,
-                            epoch: request.epoch,
-                            revision: request.revision,
-                            body: Some(wire_envelope::Body::HistoryState(WireHistoryState { state_json })),
-                        },
-                        false,
-                    ),
-                    Err(error) => (envelope(history_error_to_wire(error)), false),
+                Ok(state_json) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: request.epoch,
+                        revision: request.revision,
+                        body: Some(wire_envelope::Body::HistoryState(WireHistoryState {
+                            state_json,
+                        })),
+                    },
+                    false,
+                ),
+                Err(error) => (envelope(history_error_to_wire(error)), false),
             };
         }
         Some(wire_envelope::Body::SessionList(request)) => {
             if !local_control {
-                return (envelope(wire_error("FORBIDDEN", "session listing requires private control transport")), false);
+                return (
+                    envelope(wire_error(
+                        "FORBIDDEN",
+                        "session listing requires private control transport",
+                    )),
+                    false,
+                );
             }
             let Some(store) = context.hot_store.as_ref() else {
-                return (envelope(wire_error("STORAGE_UNAVAILABLE", "runtime hot store is not configured")), false);
+                return (
+                    envelope(wire_error(
+                        "STORAGE_UNAVAILABLE",
+                        "runtime hot store is not configured",
+                    )),
+                    false,
+                );
             };
             if !request.id.is_empty() {
                 let store = store.store().clone();
-                return match tokio::task::spawn_blocking(move || store.session_summary(&request.id)).await {
+                return match tokio::task::spawn_blocking(move || store.session_summary(&request.id))
+                    .await
+                {
                     Ok(Ok(row)) => {
                         let sessions_json = serde_json::to_vec(&serde_json::json!({
                             "items": row.into_iter().collect::<Vec<_>>(), "single": true, "loading": false,
                         })).unwrap_or_default();
-                        (WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
-                            body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) }, false)
+                        (
+                            WireEnvelope {
+                                request_id,
+                                session_id,
+                                epoch: 0,
+                                revision: 0,
+                                body: Some(wire_envelope::Body::SessionListResponse(
+                                    WireSessionListResponse { sessions_json },
+                                )),
+                            },
+                            false,
+                        )
                     }
                     Ok(Err(error)) => (envelope(storage_error_to_wire(error)), false),
-                    Err(error) => (envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())), false),
+                    Err(error) => (
+                        envelope(wire_error("STORAGE_UNAVAILABLE", &error.to_string())),
+                        false,
+                    ),
                 };
             }
             let ready = match store.store().index_ready() {
@@ -1045,22 +1205,34 @@ async fn execute_wire_inner(
             };
             let cursor = crate::storage::jsonl::store::ListIndex::decode_cursor(&request.after);
             // Do not expose a partial list as a completed empty result.
-            let (items, next) = if ready { store.store().list().read().page(cursor.as_ref(), 64) } else { (Vec::new(), None) };
+            let (items, next) = if ready {
+                store.store().list().read().page(cursor.as_ref(), 64)
+            } else {
+                (Vec::new(), None)
+            };
             let sessions_json = serde_json::to_vec(&serde_json::json!({
                 "items": items,
                 "next": next.map(|key| crate::storage::jsonl::store::ListIndex::encode_cursor(&key)),
                 "loading": !ready,
             })).unwrap_or_default();
             (
-                WireEnvelope { request_id, session_id, epoch: 0, revision: 0,
-                    body: Some(wire_envelope::Body::SessionListResponse(WireSessionListResponse { sessions_json })) },
+                WireEnvelope {
+                    request_id,
+                    session_id,
+                    epoch: 0,
+                    revision: 0,
+                    body: Some(wire_envelope::Body::SessionListResponse(
+                        WireSessionListResponse { sessions_json },
+                    )),
+                },
                 false,
             )
         }
         // Legacy migration commands. Sessions now seed through `seed_ui`, so
         // there is no separate import step; answer explicitly instead of
         // silently dropping the frame.
-        Some(wire_envelope::Body::ImportProjection(_)) | Some(wire_envelope::Body::ImportStream(_)) => (
+        Some(wire_envelope::Body::ImportProjection(_))
+        | Some(wire_envelope::Body::ImportStream(_)) => (
             envelope(wire_error(
                 "INVALID_COMMAND",
                 "projection import is not supported; sessions seed through seed_ui",
@@ -1110,41 +1282,41 @@ async fn execute_wire_inner(
             durability,
         })) => {
             match context
-            .router
-            .append_stream_with_durability(
-                session_id.clone(),
-                run_id,
-                producer_id,
-                producer_sequence,
-                request.epoch,
-                decode_durability(durability),
-                events
-                    .into_iter()
-                    .map(|event| PendingEvent {
-                        kind: event.kind,
-                        payload: event.payload,
-                    })
-                    .collect(),
-            )
-            .await
-        {
-            Ok(receipt) => (
-                WireEnvelope {
-                    request_id,
-                    session_id,
-                    epoch: receipt.epoch,
-                    revision: request.revision,
-                    body: Some(wire_envelope::Body::Ack(WireAck {
-                        request: format!(
-                            "stream:{}-{}",
-                            receipt.first_sequence, receipt.last_sequence
-                        ),
-                    })),
-                },
-                false,
-            ),
-            Err(error) => (envelope(error_to_wire(error)), false),
-        }
+                .router
+                .append_stream_with_durability(
+                    session_id.clone(),
+                    run_id,
+                    producer_id,
+                    producer_sequence,
+                    request.epoch,
+                    decode_durability(durability),
+                    events
+                        .into_iter()
+                        .map(|event| PendingEvent {
+                            kind: event.kind,
+                            payload: event.payload,
+                        })
+                        .collect(),
+                )
+                .await
+            {
+                Ok(receipt) => (
+                    WireEnvelope {
+                        request_id,
+                        session_id,
+                        epoch: receipt.epoch,
+                        revision: request.revision,
+                        body: Some(wire_envelope::Body::Ack(WireAck {
+                            request: format!(
+                                "stream:{}-{}",
+                                receipt.first_sequence, receipt.last_sequence
+                            ),
+                        })),
+                    },
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
         }
         Some(wire_envelope::Body::Snapshot(_)) => {
             match context.router.snapshot(session_id.clone()).await {
@@ -1260,12 +1432,17 @@ fn decode_durability(value: u32) -> Durability {
     }
 }
 
-fn history_error_to_wire(error: crate::storage::jsonl::history::HistoryError) -> wire_envelope::Body {
+fn history_error_to_wire(
+    error: crate::storage::jsonl::history::HistoryError,
+) -> wire_envelope::Body {
     use crate::storage::jsonl::history::HistoryError;
     match error {
-        HistoryError::StaleCursor => wire_error("HISTORY_STALE", "Conversation changed. Refresh history."),
-        HistoryError::RevisionConflict { expected, actual } =>
-            error_to_wire(RuntimeError::RevisionConflict { expected, actual }),
+        HistoryError::StaleCursor => {
+            wire_error("HISTORY_STALE", "Conversation changed. Refresh history.")
+        }
+        HistoryError::RevisionConflict { expected, actual } => {
+            error_to_wire(RuntimeError::RevisionConflict { expected, actual })
+        }
         HistoryError::RequestConflict => error_to_wire(RuntimeError::RequestConflict),
         HistoryError::FileBusy(message) => wire_error("FILE_WRITE_BUSY", &message),
         HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
@@ -1278,7 +1455,9 @@ fn history_error_to_wire(error: crate::storage::jsonl::history::HistoryError) ->
 fn storage_error_to_wire(error: crate::storage::jsonl::hot::StorageError) -> wire_envelope::Body {
     match error {
         crate::storage::jsonl::hot::StorageError::Runtime(error) => error_to_wire(error),
-        crate::storage::jsonl::hot::StorageError::DiskFull => wire_error("DISK_FULL", "storage disk full"),
+        crate::storage::jsonl::hot::StorageError::DiskFull => {
+            wire_error("DISK_FULL", "storage disk full")
+        }
         other => wire_error("STORAGE_UNAVAILABLE", &other.to_string()),
     }
 }
@@ -1419,8 +1598,14 @@ async fn send_wire(socket: &mut WebSocket, envelope: &WireEnvelope) -> Result<()
 fn authenticate_json(bytes: &[u8], context: &TransportContext) -> Result<bool, TransportError> {
     let message = decode_client_message(bytes)
         .map_err(|error| TransportError::Protocol(error.to_string()))?;
-    let authenticated = matches!(message, ClientMessage::Hello { token } if token == context.token.as_ref());
-    if !authenticated { tracing::warn!(event = "transport.auth_rejected", "Runtime authentication rejected"); }
+    let authenticated =
+        matches!(message, ClientMessage::Hello { token } if token == context.token.as_ref());
+    if !authenticated {
+        tracing::warn!(
+            event = "transport.auth_rejected",
+            "Runtime authentication rejected"
+        );
+    }
     Ok(authenticated)
 }
 
@@ -1429,7 +1614,12 @@ fn authenticate_wire(envelope: &WireEnvelope, context: &TransportContext) -> boo
         &envelope.body,
         Some(wire_envelope::Body::Hello(hello)) if hello.token == context.token.as_ref()
     );
-    if !authenticated { tracing::warn!(event = "transport.auth_rejected", "Runtime authentication rejected"); }
+    if !authenticated {
+        tracing::warn!(
+            event = "transport.auth_rejected",
+            "Runtime authentication rejected"
+        );
+    }
     authenticated
 }
 
@@ -1601,7 +1791,10 @@ pub async fn serve_named_pipe(
     }
     if timeout(Duration::from_secs(3), async {
         while connections.join_next().await.is_some() {}
-    }).await.is_err() {
+    })
+    .await
+    .is_err()
+    {
         connections.abort_all();
     }
     Ok(())

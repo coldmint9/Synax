@@ -61,11 +61,14 @@ pub struct WireEnvelope {
 
 pub mod wire_envelope {
     use super::{
-        WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireCredit, WireError,
-        WireEventBatch, WireFinishRun, WireHealth, WireHealthResponse, WireHello, WireIssueTicket,
-        WireWorkspaceIndexCommand, WireWorkspaceIndexState, WireControlCommand, WireControlState, WireHistoryCommand, WireHistoryState, WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady, WireSessionList, WireSessionListResponse,
-        WireReplay, WireRunAdmission, WireSeedUi, WireShutdown, WireSnapshot, WireSnapshotResponse,
-        WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse, WireImportProjection, WireImportProjectionResponse, WireImportStream, WireImportStreamResponse,
+        WireAck, WireActivateRun, WireAdmitRun, WireAppendStream, WireControlCommand,
+        WireControlState, WireCredit, WireError, WireEventBatch, WireFinishRun, WireHealth,
+        WireHealthResponse, WireHello, WireHistoryCommand, WireHistoryState, WireImportProjection,
+        WireImportProjectionResponse, WireImportStream, WireImportStreamResponse, WireIssueTicket,
+        WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady,
+        WireReplay, WireRunAdmission, WireSeedUi, WireSessionList, WireSessionListResponse,
+        WireShutdown, WireSnapshot, WireSnapshotResponse, WireSubscribe, WireTicket,
+        WireUiSnapshot, WireUiSnapshotResponse, WireWorkspaceIndexCommand, WireWorkspaceIndexState,
     };
     use prost::Oneof;
 

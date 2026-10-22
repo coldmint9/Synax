@@ -249,7 +249,8 @@ impl SessionShardRouter {
         })
         .await?;
         if !admission.reused {
-            self.make_durable(Durability::Sync, &durable_session).await?;
+            self.make_durable(Durability::Sync, &durable_session)
+                .await?;
         }
         Ok(admission)
     }
@@ -269,7 +270,8 @@ impl SessionShardRouter {
         })
         .await?;
         // A retry after a failed sync must cross the barrier as well.
-        self.make_durable(Durability::Sync, &durable_session).await?;
+        self.make_durable(Durability::Sync, &durable_session)
+            .await?;
         Ok(receipt.snapshot)
     }
 
@@ -314,11 +316,20 @@ impl SessionShardRouter {
         );
         let durable_session = session_id.clone();
         let receipt = spawn_store(move || {
-            hot.finish_run(&session_id, &request_id, &run_id, &status, epoch, revision, &run_json)
+            hot.finish_run(
+                &session_id,
+                &request_id,
+                &run_id,
+                &status,
+                epoch,
+                revision,
+                &run_json,
+            )
         })
         .await?;
         // A retry after a failed sync must cross the barrier as well.
-        self.make_durable(Durability::Sync, &durable_session).await?;
+        self.make_durable(Durability::Sync, &durable_session)
+            .await?;
         Ok(receipt.snapshot)
     }
 
@@ -438,11 +449,19 @@ impl SessionShardRouter {
         let hot = self.store()?.clone();
         let durable_session = session_id.clone();
         let receipt = spawn_store(move || {
-            hot.queue_mutation(&session_id, &request_id, epoch, revision, &operation, &payload)
+            hot.queue_mutation(
+                &session_id,
+                &request_id,
+                epoch,
+                revision,
+                &operation,
+                &payload,
+            )
         })
         .await?;
         // A retry after a failed sync must cross the barrier as well.
-        self.make_durable(Durability::Sync, &durable_session).await?;
+        self.make_durable(Durability::Sync, &durable_session)
+            .await?;
         serde_json::to_vec(&receipt.queue)
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
     }
@@ -459,11 +478,19 @@ impl SessionShardRouter {
         let hot = self.store()?.clone();
         let durable_session = session_id.clone();
         let receipt = spawn_store(move || {
-            hot.control(&session_id, &request_id, epoch, revision, &operation, &payload)
+            hot.control(
+                &session_id,
+                &request_id,
+                epoch,
+                revision,
+                &operation,
+                &payload,
+            )
         })
         .await?;
         // A retry after a failed sync must cross the barrier as well.
-        self.make_durable(Durability::Sync, &durable_session).await?;
+        self.make_durable(Durability::Sync, &durable_session)
+            .await?;
         Ok(receipt)
     }
 
@@ -484,7 +511,12 @@ impl SessionShardRouter {
         let hot = self.store()?.clone();
         let session_id = session_id.into();
         spawn_store(move || {
-            hot.replay(&session_id, after, SNAPSHOT_REPLAY_EVENTS, SNAPSHOT_REPLAY_BYTES)
+            hot.replay(
+                &session_id,
+                after,
+                SNAPSHOT_REPLAY_EVENTS,
+                SNAPSHOT_REPLAY_BYTES,
+            )
         })
         .await
     }
@@ -508,18 +540,24 @@ impl SessionShardRouter {
     }
 
     /// Await durability for the operation that just committed.
-    async fn make_durable(&self, durability: Durability, session_id: &str) -> Result<(), RuntimeError> {
+    async fn make_durable(
+        &self,
+        durability: Durability,
+        session_id: &str,
+    ) -> Result<(), RuntimeError> {
         match durability {
             Durability::Sync => {
                 let hot = self.store()?.clone();
                 let session_id = session_id.to_owned();
-                spawn_store(move || hot.flush_session(&session_id).map_err(RuntimeError::from)).await
+                spawn_store(move || hot.flush_session(&session_id).map_err(RuntimeError::from))
+                    .await
             }
             Durability::GroupCommit => {
                 tokio::time::sleep(std::time::Duration::from_millis(2)).await;
                 let hot = self.store()?.clone();
                 let session_id = session_id.to_owned();
-                spawn_store(move || hot.flush_session(&session_id).map_err(RuntimeError::from)).await
+                spawn_store(move || hot.flush_session(&session_id).map_err(RuntimeError::from))
+                    .await
             }
             Durability::Ephemeral => Ok(()),
         }

@@ -23,24 +23,21 @@ describe("notifyConnectivityFailure", () => {
     });
   });
 
-  it("aggregates repeated connectivity failures into one notification", () => {
+  it("does not create a notification for connectivity failures", () => {
     notifyConnectivityFailure("网络连接失败，无法访问后端服务");
     notifyConnectivityFailure("网络连接失败，无法访问后端服务");
     notifyConnectivityFailure("网络连接失败，无法访问后端服务");
 
     const items = useNotificationStore.getState().notifications;
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe(API_CONNECTIVITY_NOTIFICATION_ID);
-    expect(items[0]?.message).toContain("3 次请求失败");
+    expect(items).toHaveLength(0);
   });
 
-  it("does not create a new notification when bump is false", () => {
+  it("keeps the compatibility arguments without creating a notification", () => {
     notifyConnectivityFailure("网络连接失败，无法访问后端服务");
     notifyConnectivityFailure("网络连接失败，无法访问后端服务", false);
 
     const items = useNotificationStore.getState().notifications;
-    expect(items).toHaveLength(1);
-    expect(items[0]?.aggregateCount).toBe(1);
+    expect(items).toHaveLength(0);
   });
 });
 
@@ -55,23 +52,20 @@ describe("handleError connectivity", () => {
     });
   });
 
-  it("routes offline errors through aggregated connectivity notification", () => {
+  it("keeps offline errors out of the notification stack", () => {
     handleError(createOfflineError());
     handleError(createOfflineError());
 
     const items = useNotificationStore.getState().notifications;
-    expect(items).toHaveLength(1);
-    expect(items[0]?.id).toBe(API_CONNECTIVITY_NOTIFICATION_ID);
-    expect(items[0]?.message).toContain("2 次请求失败");
+    expect(items).toHaveLength(0);
   });
 
-  it("aggregates fetch network TypeError failures", () => {
+  it("keeps fetch network failures out of the notification stack", () => {
     handleError(new TypeError("Failed to fetch"));
     handleError(new TypeError("Failed to fetch"));
 
     const items = useNotificationStore.getState().notifications;
-    expect(items).toHaveLength(1);
-    expect(items[0]?.message).toContain("2 次请求失败");
+    expect(items).toHaveLength(0);
     expect(useApiConnectivityStore.getState().apiReachable).toBe("degraded");
   });
 
@@ -97,7 +91,12 @@ describe("useApiConnectivityStore", () => {
 
   it("dismisses connectivity toast after recovery", () => {
     useApiConnectivityStore.setState({ apiReachable: "unreachable" });
-    notifyConnectivityFailure("offline");
+    useNotificationStore.getState().pushAggregated({
+      id: API_CONNECTIVITY_NOTIFICATION_ID,
+      type: "warning",
+      message: "offline",
+      duration: 0,
+    });
     useApiConnectivityStore.getState().markSuccess();
 
     const toast = useNotificationStore

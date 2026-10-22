@@ -5,8 +5,8 @@
 //! never across an `await`. Readers take the published `Lake` from an
 //! `ArcSwap` and never take the lock at all.
 
-pub mod load;
 pub(crate) mod checkpoint;
+pub mod load;
 mod replay;
 pub mod state;
 pub use state::Tx;
@@ -23,9 +23,7 @@ use parking_lot::Mutex;
 use super::error::JsonlResult;
 use super::file::AppendFile;
 use super::layout;
-use super::record::{
-    Coverage, IndexRecord, LineWriter, ListRecord, Record, SnapshotCond,
-};
+use super::record::{Coverage, IndexRecord, LineWriter, ListRecord, Record, SnapshotCond};
 use super::write::{Extent, Kind, Slot};
 use crate::runtime::actor::StreamEvent;
 use crate::runtime::session_types::ControlState;
@@ -136,7 +134,12 @@ pub struct Publisher {
 impl Publisher {
     pub fn open(session_dir: &std::path::Path, segment: u64, extent: Extent) -> JsonlResult<Self> {
         let dir = layout::segment_dir(&session_dir.join("events-v2"), segment);
-        let file = |prefix: &str, kind: Kind| AppendFile::open_committed(&dir.join(format!("{prefix}.000000")), extent.offsets[kind as usize]);
+        let file = |prefix: &str, kind: Kind| {
+            AppendFile::open_committed(
+                &dir.join(format!("{prefix}.000000")),
+                extent.offsets[kind as usize],
+            )
+        };
         Ok(Self {
             segment,
             controls: file("ctls", Kind::Controls)?,
@@ -172,13 +175,27 @@ impl Publisher {
 
     /// Append this segment's data and its seal. Returns the new extent.
     pub fn commit(&mut self, slots: &[Slot], seal: &[u8]) -> JsonlResult<Extent> {
-        if self.failed { return Err(super::error::JsonlError::corrupt(self.seals.path(), 0, "writer requires reopen after failed rollback")); }
+        if self.failed {
+            return Err(super::error::JsonlError::corrupt(
+                self.seals.path(),
+                0,
+                "writer requires reopen after failed rollback",
+            ));
+        }
         let before = self.extent.clone();
         // Validate the entire batch before writing. On an I/O failure discard
         // every uncommitted byte before allowing another transaction.
-        for bytes in slots.iter().map(|slot| slot.payload.as_slice()).chain(std::iter::once(seal)) {
+        for bytes in slots
+            .iter()
+            .map(|slot| slot.payload.as_slice())
+            .chain(std::iter::once(seal))
+        {
             if bytes.len() > super::seglog::MAX_FRAME {
-                return Err(super::error::JsonlError::corrupt(self.seals.path(), 0, "frame exceeds MAX_FRAME"));
+                return Err(super::error::JsonlError::corrupt(
+                    self.seals.path(),
+                    0,
+                    "frame exceeds MAX_FRAME",
+                ));
             }
         }
         let result = (|| {
@@ -196,7 +213,10 @@ impl Publisher {
         })();
         if let Err(error) = result {
             self.failed = true;
-            for kind in Kind::ALL { self.file_mut(kind).truncate(before.offsets[kind as usize])?; }
+            for kind in Kind::ALL {
+                self.file_mut(kind)
+                    .truncate(before.offsets[kind as usize])?;
+            }
             self.extent = before;
             self.failed = false;
             return Err(error);
@@ -224,7 +244,6 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-
     pub fn session_dir(&self) -> std::path::PathBuf {
         layout::session_dir(&self.root, &self.id).expect("the id was validated at open")
     }
@@ -309,16 +328,33 @@ pub fn index_row(actor: &SessionActor) -> IndexRecord {
 pub fn list_row(actor: &SessionActor) -> ListRecord {
     let mut header = actor.header.clone();
     if let Some(header) = header.as_object_mut() {
-        let pending = actor.control.permissions.iter().filter(|permission| {
-            permission["action"] == "ask" && permission["resolvedAt"].is_null()
-        }).count();
+        let pending = actor
+            .control
+            .permissions
+            .iter()
+            .filter(|permission| {
+                permission["action"] == "ask" && permission["resolvedAt"].is_null()
+            })
+            .count();
         header.insert("pendingPermissionCount".into(), serde_json::json!(pending));
-        header.insert("runtimeRecoveryRequired".into(), serde_json::json!(
-            actor.state.active_run_id.is_some() || actor.header["activeRunId"].is_string()
-            || matches!(actor.header["status"].as_str(), Some("running" | "stopping" | "queued"))
-            || actor.control.runtime_control.is_some() || !actor.control.process_leases.is_empty()
-            || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
-        ));
+        header.insert(
+            "runtimeRecoveryRequired".into(),
+            serde_json::json!(
+                actor.state.active_run_id.is_some()
+                    || actor.header["activeRunId"].is_string()
+                    || matches!(
+                        actor.header["status"].as_str(),
+                        Some("running" | "stopping" | "queued")
+                    )
+                    || actor.control.runtime_control.is_some()
+                    || !actor.control.process_leases.is_empty()
+                    || actor
+                        .control
+                        .execution_lease
+                        .as_ref()
+                        .is_some_and(|lease| !lease.closed)
+            ),
+        );
     }
     ListRecord {
         s: actor.id.clone(),
@@ -354,9 +390,7 @@ pub fn encode_seal(
             n: extent.frames[*kind as usize],
         })
         .collect();
-    Ok(writer
-        .line(&Record::Commit { c: commit, g })
-        .to_vec())
+    Ok(writer.line(&Record::Commit { c: commit, g }).to_vec())
 }
 
 impl SessionActor {
@@ -369,7 +403,11 @@ impl SessionActor {
             header: loaded.header,
             queue: loaded.queue,
             control: loaded.control,
-            projection: if projection_ready { Some(loaded.projection) } else { None },
+            projection: if projection_ready {
+                Some(loaded.projection)
+            } else {
+                None
+            },
             events: loaded.events,
             receipts: loaded.receipts,
             subscribers: Vec::new(),

@@ -80,9 +80,15 @@ export async function assertRuntimeExecutionCurrent(): Promise<void> {
 
 export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>): AsyncGenerator<T> {
   if (!context) { yield* source; return; }
+  let first = true;
   try {
     while (true) {
-      await assertExecutionContextCurrent(context);
+      // The launch path has already opened the lease, and the native Rust
+      // loop rechecks it before starting the provider request. Avoid a second
+      // synchronous control RPC on the critical first-token path; subsequent
+      // turns still revalidate before every advancement.
+      if (first) first = false;
+      else await assertExecutionContextCurrent(context);
       const result = await contexts.run(context, () => source.next());
       if (result.done) return;
       yield result.value;

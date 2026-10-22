@@ -11,13 +11,13 @@ use serde_json::{Value, json};
 use crate::runtime::actor::{ControlCommandReceipt, PendingEvent, RuntimeError, StreamEvent};
 use crate::runtime::execution::ExecutionLease;
 use crate::runtime::input_queue::QueueState;
-use crate::storage::jsonl::segment::{PValue, Projection};
 use crate::runtime::session_types::QueueMutationReceipt;
+use crate::storage::jsonl::segment::{PValue, Projection};
 
-use super::ops::{hash, parse_json, required_string, set_projection_state, value_to_bytes};
 use super::super::session::state::Tx;
 use super::super::session::{SessionActor, SessionHandle};
-use super::ops::{ensure_epoch, ensure_revision, snapshot_of};
+use super::ops::{ensure_epoch, ensure_revision, settled_status, snapshot_of};
+use super::ops::{hash, parse_json, required_string, set_projection_state, value_to_bytes};
 
 /// Control operations that answer from live state and own no receipt.
 pub const RECEIPT_FREE: [&str; 2] = ["read", "execution_check"];
@@ -29,7 +29,8 @@ fn to_value(value: &impl serde::Serialize) -> Result<Value, RuntimeError> {
 }
 
 fn from_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(value).map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
+    serde_json::from_value(value)
+        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
 }
 
 fn now_iso() -> String {
@@ -51,7 +52,9 @@ impl SessionHandle {
             || operation.len() > 64
             || payload.len() > MAX_REQUEST_BYTES
         {
-            return Err(RuntimeError::InvalidCommand("control command exceeds bounds".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "control command exceeds bounds".into(),
+            ));
         }
         let value = parse_json(payload)?;
         let mut actor = self.actor.lock();
@@ -78,10 +81,16 @@ impl SessionActor {
         let state_json = match operation {
             "execution_check" => {
                 let expected = ExecutionLease::decode(session_id, value)?;
-                expected.assert_current(self.state.active_run_id.as_deref(), self.control.execution_lease.as_ref())?;
+                expected.assert_current(
+                    self.state.active_run_id.as_deref(),
+                    self.control.execution_lease.as_ref(),
+                )?;
                 value_to_bytes(&json!({"executionLease": self.control.execution_lease}))?
             }
-            "read" => value_to_bytes(&to_value(&self.control).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?)?,
+            "read" => value_to_bytes(
+                &to_value(&self.control)
+                    .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
+            )?,
             other => {
                 return Err(RuntimeError::InvalidCommand(format!(
                     "control operation {other} is not receipt-free"
@@ -118,17 +127,107 @@ impl SessionActor {
         ensure_epoch(&self.state, epoch)?;
         ensure_revision(&self.state, revision)?;
         let mut control = self.control.clone();
-        let mut projection = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
+        let mut projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
         let now = now_iso();
         let mut entity: Option<(&'static str, Value)> = None;
-        let mut event_run_id = projection.session.get("activeRunId").and_then(PValue::as_str).unwrap_or_default().to_owned();
+        let mut event_run_id = projection
+            .session
+            .get("activeRunId")
+            .and_then(PValue::as_str)
+            .unwrap_or_default()
+            .to_owned();
         let mut epoch_next = self.state.epoch;
         let mut history_generation = self.state.history_generation;
         let mut active_run_id = self.state.active_run_id.clone();
+        let mut active_run_changed = false;
         let mut clear_queue = false;
         let event_name: &str;
 
         match operation {
+            "execution_reconcile" | "execution_fail_start" => {
+                // Conditional repair, never a blanket lease reset. The actor
+                // checks the observed identity under the same lock as commit.
+                let expected = ExecutionLease::decode(session_id, &value["executionLease"])?;
+                if operation == "execution_reconcile" {
+                    if self.state.active_run_id.as_deref() != value["activeRunId"].as_str()
+                        || !control
+                            .execution_lease
+                            .as_ref()
+                            .is_some_and(|lease| !lease.closed && lease.same_owner(&expected))
+                    {
+                        return Err(expected.superseded("recovery observation changed"));
+                    }
+                    if self.state.active_run_id.as_deref() == Some(expected.run_id.as_str()) {
+                        return Err(expected.superseded("current executor must not be recovered"));
+                    }
+                } else {
+                    if self.state.active_run_id.as_deref() != Some(expected.run_id.as_str())
+                        || projection.run_id() != Some(expected.run_id.as_str())
+                    {
+                        return Err(expected.superseded("launch was replaced or finished"));
+                    }
+                    if control
+                        .execution_lease
+                        .as_ref()
+                        .is_some_and(|lease| !lease.closed && lease.run_id == expected.run_id)
+                    {
+                        return Err(expected.superseded("an executor owns the run"));
+                    }
+                }
+                if let Some(lease) = control.execution_lease.as_mut() {
+                    lease.closed = true;
+                }
+                let status = projection.run.get("status").and_then(PValue::as_str);
+                let unowned_run = operation == "execution_fail_start"
+                    && active_run_id.as_deref() == projection.run_id()
+                    && active_run_id.is_some()
+                    && (status == Some("running") || status == Some("queued"));
+                if unowned_run {
+                    let run_id = active_run_id.clone().unwrap();
+                    let mut document = projection.run.to_json();
+                    document["status"] = json!(if operation == "execution_fail_start" {
+                        "failed"
+                    } else {
+                        "interrupted"
+                    });
+                    document["completedAt"] = json!(now);
+                    document["stopReason"] = json!(
+                        value["reason"]
+                            .as_str()
+                            .unwrap_or("Execution ended before acquiring its lease.")
+                    );
+                    let completion = crate::runtime::completion::complete(
+                        &run_id,
+                        document["status"].as_str().unwrap(),
+                        Some(document.clone()),
+                        Value::Null,
+                    )?;
+                    set_projection_state(
+                        &mut projection,
+                        document["status"].as_str().unwrap(),
+                        None,
+                        None,
+                        document["stopReason"].as_str(),
+                        &completion.completed_at,
+                    );
+                    projection
+                        .session
+                        .set("completedAt", PValue::String(completion.completed_at));
+                    entity = Some(("run", completion.document.unwrap()));
+                    event_run_id = run_id;
+                    active_run_id = None;
+                    active_run_changed = true;
+                    event_name = "run_finished";
+                } else {
+                    event_name = "execution_reconciled";
+                }
+                epoch_next = epoch_next
+                    .checked_add(1)
+                    .ok_or_else(|| RuntimeError::InvalidCommand("epoch overflow".into()))?;
+            }
             "execution_open" | "execution_close" => {
                 let mut lease = ExecutionLease::decode(session_id, value)?;
                 if projection.run_id() != Some(lease.run_id.as_str()) {
@@ -141,20 +240,7 @@ impl SessionActor {
                     if control.runtime_control.is_some() {
                         return Err(lease.superseded("execution is stopping"));
                     }
-                    if control
-                        .execution_lease
-                        .as_ref()
-                        .is_some_and(|current| !current.closed && !current.same_owner(&lease))
-                    {
-                        return Err(lease.superseded("another executor owns the run"));
-                    }
-                    if control
-                        .execution_lease
-                        .as_ref()
-                        .is_some_and(|current| current.closed && current.same_owner(&lease))
-                    {
-                        return Err(lease.superseded("closed generation cannot be reopened"));
-                    }
+                    lease.assert_openable(control.execution_lease.as_ref())?;
                 } else if !control
                     .execution_lease
                     .as_ref()
@@ -165,13 +251,25 @@ impl SessionActor {
                     lease.closed = true;
                 }
                 event_run_id = lease.run_id.clone();
-                if !projection.run.get("metadata").is_some_and(PValue::is_object) {
-                    projection.run.set("metadata", PValue::from_json(&json!({})));
+                if !projection
+                    .run
+                    .get("metadata")
+                    .is_some_and(PValue::is_object)
+                {
+                    projection
+                        .run
+                        .set("metadata", PValue::from_json(&json!({})));
                 }
                 if let PValue::Object(metadata) = &mut projection.run
                     && let Some(PValue::Object(meta)) = metadata.get_mut("metadata")
                 {
-                    meta.insert("executionLease".into(), PValue::from_json(&to_value(&lease).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?));
+                    meta.insert(
+                        "executionLease".into(),
+                        PValue::from_json(
+                            &to_value(&lease)
+                                .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
+                        ),
+                    );
                 }
                 control.execution_lease = Some(lease);
                 event_name = "run_updated";
@@ -182,25 +280,41 @@ impl SessionActor {
                 }
                 let marker = json!({"state":"stopping","historyRequestId":value["historyRequestId"],"previousStatus":projection.session.get("status").map(PValue::to_json),"reason":"Restoring history"});
                 control.runtime_control = Some(marker);
-                set_session_metadata(&mut projection, "runtimeControl", control.runtime_control.clone().unwrap_or(Value::Null));
-                set_projection_state(&mut projection, "stopping", None, None, Some("Restoring history"), &now);
+                set_session_metadata(
+                    &mut projection,
+                    "runtimeControl",
+                    control.runtime_control.clone().unwrap_or(Value::Null),
+                );
+                set_projection_state(
+                    &mut projection,
+                    "stopping",
+                    None,
+                    None,
+                    Some("Restoring history"),
+                    &now,
+                );
                 event_name = "history_restore_started";
             }
             "history_end" | "history_cancel" => {
-                let marker = control
-                    .runtime_control
-                    .as_ref()
-                    .ok_or_else(|| RuntimeError::InvalidCommand("history restore is not active".into()))?;
+                let marker = control.runtime_control.as_ref().ok_or_else(|| {
+                    RuntimeError::InvalidCommand("history restore is not active".into())
+                })?;
                 if marker["historyRequestId"] != value["historyRequestId"] {
                     return Err(RuntimeError::RequestConflict);
                 }
-                let prior = marker["previousStatus"].as_str().unwrap_or("completed").to_owned();
+                let prior = marker["previousStatus"]
+                    .as_str()
+                    .unwrap_or("completed")
+                    .to_owned();
                 if operation == "history_end" {
-                    epoch_next = epoch_next.checked_add(1).ok_or_else(|| RuntimeError::InvalidCommand("epoch overflow".into()))?;
-                    history_generation = history_generation
+                    epoch_next = epoch_next
                         .checked_add(1)
-                        .ok_or_else(|| RuntimeError::InvalidCommand("history generation overflow".into()))?;
+                        .ok_or_else(|| RuntimeError::InvalidCommand("epoch overflow".into()))?;
+                    history_generation = history_generation.checked_add(1).ok_or_else(|| {
+                        RuntimeError::InvalidCommand("history generation overflow".into())
+                    })?;
                     active_run_id = None;
+                    active_run_changed = true;
                     control.permissions.clear();
                     control.interactions.clear();
                     control.execution_lease = None;
@@ -220,13 +334,21 @@ impl SessionActor {
                     }
                     projection.session.set("completedAt", PValue::Null);
                     projection.session.set("resultSummary", PValue::Null);
-                    set_session_metadata(&mut projection, "lastHistoryRestore", value["historyRequestId"].clone());
+                    set_session_metadata(
+                        &mut projection,
+                        "lastHistoryRestore",
+                        value["historyRequestId"].clone(),
+                    );
                 }
                 control.runtime_control = None;
                 set_session_metadata(&mut projection, "runtimeControl", Value::Null);
                 set_projection_state(
                     &mut projection,
-                    if operation == "history_end" { "completed" } else { &prior },
+                    if operation == "history_end" {
+                        "completed"
+                    } else {
+                        &prior
+                    },
                     None,
                     None,
                     None,
@@ -238,8 +360,14 @@ impl SessionActor {
                 let id = value["id"]
                     .as_str()
                     .filter(|id| !id.is_empty())
-                    .ok_or_else(|| RuntimeError::InvalidCommand("permission id is required".into()))?;
-                if control.permissions.iter().any(|item| item["id"].as_str() == Some(id)) {
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCommand("permission id is required".into())
+                    })?;
+                if control
+                    .permissions
+                    .iter()
+                    .any(|item| item["id"].as_str() == Some(id))
+                {
                     return Err(RuntimeError::RequestConflict);
                 }
                 let mut item = value.clone();
@@ -267,8 +395,13 @@ impl SessionActor {
             }
             "permission_expire" => {
                 let id = required_string(value, "id")?;
-                let item = control.permissions.iter_mut().find(|item| item["id"].as_str() == Some(id))
-                    .ok_or_else(|| RuntimeError::InvalidCommand("permission was not found".into()))?;
+                let item = control
+                    .permissions
+                    .iter_mut()
+                    .find(|item| item["id"].as_str() == Some(id))
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCommand("permission was not found".into())
+                    })?;
                 item["action"] = json!("deny");
                 item["resolvedAt"] = json!(now);
                 item["resumeToken"] = Value::Null;
@@ -284,31 +417,60 @@ impl SessionActor {
                     .permissions
                     .iter_mut()
                     .find(|item| item["id"].as_str() == Some(id))
-                    .ok_or_else(|| RuntimeError::InvalidCommand("permission was not found".into()))?;
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCommand("permission was not found".into())
+                    })?;
                 if item["resolvedAt"].is_string() {
                     if item["userReply"].as_str() == Some(reply) {
                         return Err(RuntimeError::RequestConflict);
                     }
-                    return Err(RuntimeError::InvalidCommand("permission was already resolved".into()));
+                    return Err(RuntimeError::InvalidCommand(
+                        "permission was already resolved".into(),
+                    ));
                 }
                 let action = if reply == "reject" { "deny" } else { "allow" };
                 item["userReply"] = json!(reply);
                 item["action"] = json!(action);
                 item["resolvedAt"] = json!(now);
                 if let Some(message) = value["message"].as_str() {
-                    item["reason"] = json!(format!("{} {}", item["reason"].as_str().unwrap_or_default(), message));
+                    item["reason"] = json!(format!(
+                        "{} {}",
+                        item["reason"].as_str().unwrap_or_default(),
+                        message
+                    ));
                 }
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
                 let resume = item["resumeToken"].as_str();
                 if action == "allow" && resume.is_some() {
-                    set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                    set_projection_state(
+                        &mut projection,
+                        "running",
+                        Some(&event_run_id),
+                        None,
+                        None,
+                        &now,
+                    );
                     projection.session.set("completedAt", PValue::Null);
                     projection.session.set("resultSummary", PValue::Null);
                 } else {
-                    let reason = item["reason"].as_str().unwrap_or("Permission denied").to_owned();
-                    set_projection_state(&mut projection, "completed", None, None, Some(&reason), &now);
-                    projection.session.set("completedAt", PValue::String(now.clone()));
-                    projection.session.set("resultSummary", PValue::String(reason.clone()));
+                    let reason = item["reason"]
+                        .as_str()
+                        .unwrap_or("Permission denied")
+                        .to_owned();
+                    set_projection_state(
+                        &mut projection,
+                        "completed",
+                        None,
+                        None,
+                        Some(&reason),
+                        &now,
+                    );
+                    projection
+                        .session
+                        .set("completedAt", PValue::String(now.clone()));
+                    projection
+                        .session
+                        .set("resultSummary", PValue::String(reason.clone()));
                     deny_deny(&mut projection, item, &event_run_id, &reason, &now);
                 }
                 entity = Some(("permission", item.clone()));
@@ -316,7 +478,11 @@ impl SessionActor {
             }
             "interaction_request" => {
                 let id = required_string(value, "id")?;
-                if control.interactions.iter().any(|item| item["id"].as_str() == Some(id)) {
+                if control
+                    .interactions
+                    .iter()
+                    .any(|item| item["id"].as_str() == Some(id))
+                {
                     return Err(RuntimeError::RequestConflict);
                 }
                 let mut item = value.clone();
@@ -329,7 +495,9 @@ impl SessionActor {
                 control.interactions.push(item.clone());
                 entity = Some(("interaction", item.clone()));
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                let title = item["request"]["title"].as_str().unwrap_or("Input required");
+                let title = item["request"]["title"]
+                    .as_str()
+                    .unwrap_or("Input required");
                 set_projection_state(
                     &mut projection,
                     "waiting_input",
@@ -347,12 +515,16 @@ impl SessionActor {
                     .interactions
                     .iter_mut()
                     .find(|item| item["id"].as_str() == Some(id))
-                    .ok_or_else(|| RuntimeError::InvalidCommand("interaction was not found".into()))?;
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCommand("interaction was not found".into())
+                    })?;
                 if item["status"] != "pending" {
                     if item["response"] == reply {
                         return Err(RuntimeError::RequestConflict);
                     }
-                    return Err(RuntimeError::InvalidCommand("interaction was already resolved".into()));
+                    return Err(RuntimeError::InvalidCommand(
+                        "interaction was already resolved".into(),
+                    ));
                 }
                 if let Some(expected) = value["revision"].as_u64()
                     && item["revision"].as_u64() != Some(expected)
@@ -362,7 +534,11 @@ impl SessionActor {
                         actual: item["revision"].as_u64().unwrap_or_default(),
                     });
                 }
-                let status = if reply["action"] == "cancel" { "cancelled" } else { "answered" };
+                let status = if reply["action"] == "cancel" {
+                    "cancelled"
+                } else {
+                    "answered"
+                };
                 item["status"] = json!(status);
                 item["response"] = reply;
                 item["resolvedAt"] = json!(now);
@@ -376,7 +552,9 @@ impl SessionActor {
                     .interactions
                     .iter_mut()
                     .find(|item| item["id"].as_str() == Some(id))
-                    .ok_or_else(|| RuntimeError::InvalidCommand("interaction was not found".into()))?;
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCommand("interaction was not found".into())
+                    })?;
                 item["consumedAt"] = json!(now);
                 if operation == "interaction_cancel" {
                     item["status"] = json!("cancelled");
@@ -385,7 +563,14 @@ impl SessionActor {
                 entity = Some(("interaction", item.clone()));
                 event_run_id = item["runId"].as_str().unwrap_or(&event_run_id).to_owned();
                 if operation == "interaction_consume" {
-                    set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                    set_projection_state(
+                        &mut projection,
+                        "running",
+                        Some(&event_run_id),
+                        None,
+                        None,
+                        &now,
+                    );
                 }
                 event_name = if operation == "interaction_consume" {
                     "interaction_consumed"
@@ -395,27 +580,62 @@ impl SessionActor {
             }
             "stop_begin" | "stop_unconfirmed" => {
                 let run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                let control_state = if operation == "stop_begin" { "stopping" } else { "unconfirmed" };
-                control.runtime_control = Some(json!({"state":control_state,"runId":run_id,"reason":value["reason"],"updatedAt":now}));
-                set_projection_state(&mut projection, "stopping", Some(&run_id), None, value["reason"].as_str(), &now);
+                let control_state = if operation == "stop_begin" {
+                    "stopping"
+                } else {
+                    "unconfirmed"
+                };
+                control.runtime_control = Some(
+                    json!({"state":control_state,"runId":run_id,"reason":value["reason"],"updatedAt":now}),
+                );
+                set_projection_state(
+                    &mut projection,
+                    "stopping",
+                    Some(&run_id),
+                    None,
+                    value["reason"].as_str(),
+                    &now,
+                );
                 event_run_id = run_id;
                 event_name = operation;
             }
             "stop_ack" => {
                 control.runtime_control = None;
                 event_run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                set_projection_state(&mut projection, "interrupted", None, None, value["reason"].as_str(), &now);
+                set_projection_state(
+                    &mut projection,
+                    "interrupted",
+                    None,
+                    None,
+                    value["reason"].as_str(),
+                    &now,
+                );
                 event_name = "stop_acknowledged";
             }
             "resume" => {
                 control.runtime_control = None;
                 event_run_id = value["runId"].as_str().unwrap_or(&event_run_id).to_owned();
-                set_projection_state(&mut projection, "running", Some(&event_run_id), None, None, &now);
+                set_projection_state(
+                    &mut projection,
+                    "running",
+                    Some(&event_run_id),
+                    None,
+                    None,
+                    &now,
+                );
+                // Resuming republishes the run, so a cleared pointer has to
+                // come back with it; an existing pointer is never reassigned.
+                if active_run_id.is_none() && !event_run_id.is_empty() {
+                    active_run_id = Some(event_run_id.clone());
+                    active_run_changed = true;
+                }
                 event_name = "run_resumed";
             }
             "lease_open" | "lease_close" => {
                 let lease_id = required_string(value, "leaseId")?;
-                control.process_leases.retain(|item| item["leaseId"].as_str() != Some(lease_id));
+                control
+                    .process_leases
+                    .retain(|item| item["leaseId"].as_str() != Some(lease_id));
                 if operation == "lease_open" {
                     control.process_leases.push(value.clone());
                 }
@@ -423,31 +643,47 @@ impl SessionActor {
             }
             "run_patch" => {
                 let run_id = required_string(value, "runId")?;
-                let patch = value["patch"]
-                    .as_object()
-                    .ok_or_else(|| RuntimeError::InvalidCommand("run patch must be an object".into()))?;
+                let patch = value["patch"].as_object().ok_or_else(|| {
+                    RuntimeError::InvalidCommand("run patch must be an object".into())
+                })?;
                 if projection.run_id() != Some(run_id) {
-                    return Err(RuntimeError::InvalidCommand("run patch does not target the projected run".into()));
+                    return Err(RuntimeError::InvalidCommand(
+                        "run patch does not target the projected run".into(),
+                    ));
                 }
                 for key in patch.keys() {
                     if !matches!(
                         key.as_str(),
-                        "status" | "currentStep" | "completedAt" | "stopReason" | "triggerMessageId" | "metadata" | "model" | "execution"
+                        "status"
+                            | "currentStep"
+                            | "completedAt"
+                            | "stopReason"
+                            | "triggerMessageId"
+                            | "metadata"
+                            | "model"
+                            | "execution"
                     ) {
-                        return Err(RuntimeError::InvalidCommand(format!("run field cannot be patched: {key}")));
+                        return Err(RuntimeError::InvalidCommand(format!(
+                            "run field cannot be patched: {key}"
+                        )));
                     }
                 }
                 let PValue::Object(target) = &mut projection.run else {
-                    return Err(RuntimeError::InvalidCommand("projected run is not an object".into()));
+                    return Err(RuntimeError::InvalidCommand(
+                        "projected run is not an object".into(),
+                    ));
                 };
                 for (key, patch_value) in patch {
                     if key == "metadata"
                         && target.get(key).is_some_and(PValue::is_object)
                         && patch_value.is_object()
                     {
-                        if let (Some(PValue::Object(metadata)), Some(nested)) = (target.get_mut(key), patch_value.as_object()) {
+                        if let (Some(PValue::Object(metadata)), Some(nested)) =
+                            (target.get_mut(key), patch_value.as_object())
+                        {
                             for (nested_key, nested_value) in nested {
-                                metadata.insert(nested_key.clone(), PValue::from_json(nested_value));
+                                metadata
+                                    .insert(nested_key.clone(), PValue::from_json(nested_value));
                             }
                         }
                     } else {
@@ -458,35 +694,51 @@ impl SessionActor {
                 event_name = "run_updated";
             }
             "session_patch" => {
-                let patch = value["patch"]
-                    .as_object()
-                    .ok_or_else(|| RuntimeError::InvalidCommand("session patch must be an object".into()))?;
+                let patch = value["patch"].as_object().ok_or_else(|| {
+                    RuntimeError::InvalidCommand("session patch must be an object".into())
+                })?;
                 for (key, patch_value) in patch {
                     match key.as_str() {
-                        "title" | "prompt" | "contextSnapshotId" | "profileId" | "nodeId" | "reasoningEffort"
-                        | "childSessionIds" | "skillIds" | "mcpServerIds" | "permissionRules" | "pinned" | "mode"
-                        | "status" | "activeRunId" | "completedAt" | "updatedAt" | "archivedAt" | "archiveBatchId"
+                        "title" | "prompt" | "contextSnapshotId" | "profileId" | "nodeId"
+                        | "reasoningEffort" | "childSessionIds" | "skillIds" | "mcpServerIds"
+                        | "permissionRules" | "pinned" | "mode" | "status" | "activeRunId"
+                        | "completedAt" | "updatedAt" | "archivedAt" | "archiveBatchId"
                         | "resultSummary" | "blockedReason" | "pendingResumeToken" => {
-                            if key == "status" && !patch_value.as_str().is_some_and(crate::runtime::projection::is_valid_status) {
-                                return Err(RuntimeError::InvalidCommand("invalid session status patch".into()));
+                            if key == "status"
+                                && !patch_value
+                                    .as_str()
+                                    .is_some_and(crate::runtime::projection::is_valid_status)
+                            {
+                                return Err(RuntimeError::InvalidCommand(
+                                    "invalid session status patch".into(),
+                                ));
                             }
                             projection.session.set(key, PValue::from_json(patch_value));
                         }
                         "sessionMetadata" => {
-                            let source = patch_value
-                                .as_object()
-                                .ok_or_else(|| RuntimeError::InvalidCommand("sessionMetadata patch must be an object".into()))?;
+                            let source = patch_value.as_object().ok_or_else(|| {
+                                RuntimeError::InvalidCommand(
+                                    "sessionMetadata patch must be an object".into(),
+                                )
+                            })?;
                             for (nested_key, nested_value) in source {
-                                set_session_metadata(&mut projection, nested_key, nested_value.clone());
+                                set_session_metadata(
+                                    &mut projection,
+                                    nested_key,
+                                    nested_value.clone(),
+                                );
                             }
                         }
                         _ => {
-                            return Err(RuntimeError::InvalidCommand(format!("session field cannot be patched: {key}")));
+                            return Err(RuntimeError::InvalidCommand(format!(
+                                "session field cannot be patched: {key}"
+                            )));
                         }
                     }
                 }
                 if let Some(active) = patch.get("activeRunId") {
                     active_run_id = active.as_str().map(str::to_owned);
+                    active_run_changed = active_run_id != self.state.active_run_id;
                     // The event identity must describe the value written by
                     // this patch. Legacy callers can patch activeRunId before
                     // the run admission event reaches the sidecar; keeping
@@ -497,7 +749,9 @@ impl SessionActor {
                 event_name = "session_updated";
             }
             _ => {
-                return Err(RuntimeError::InvalidCommand(format!("unknown control operation: {operation}")));
+                return Err(RuntimeError::InvalidCommand(format!(
+                    "unknown control operation: {operation}"
+                )));
             }
         }
 
@@ -506,7 +760,8 @@ impl SessionActor {
             .permissions
             .retain(|item| item["action"] == "ask" && item["resolvedAt"].is_null());
         control.interactions.retain(|item| {
-            item["consumedAt"].is_null() && (item["status"] == "pending" || !item["response"].is_null())
+            item["consumedAt"].is_null()
+                && (item["status"] == "pending" || !item["response"].is_null())
         });
         if clear_queue {
             let queue = QueueState::default();
@@ -523,7 +778,8 @@ impl SessionActor {
                 "updatedAt": projection.session.get("updatedAt").map(PValue::to_json)
             }
         });
-        let mut result_state = to_value(&control).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
+        let mut result_state =
+            to_value(&control).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?;
         if let Some((field, value)) = &entity {
             payload["chunk"][*field] = value.clone();
             result_state["entity"] = value.clone();
@@ -536,13 +792,65 @@ impl SessionActor {
             payload: value_to_bytes(&payload)?,
             ephemeral: false,
         };
-        projection.apply(cursor, &event_run_id, &PendingEvent { kind: event.kind.clone(), payload: event.payload.clone() })?;
+        projection.apply(
+            cursor,
+            &event_run_id,
+            &PendingEvent {
+                kind: event.kind.clone(),
+                payload: event.payload.clone(),
+            },
+        )?;
+        // A patch that names the active run owns the durable pointer too: the
+        // projection, the receipt and `snapshot.active_run_id` must never
+        // disagree about which run is live.
+        let durable_active_run_id = if active_run_changed {
+            Some(active_run_id.clone())
+        } else if active_run_id.is_some()
+            && projection
+                .session
+                .get("activeRunId")
+                .is_none_or(PValue::is_null)
+            && projection
+                .session
+                .get("status")
+                .and_then(PValue::as_str)
+                .is_some_and(settled_status)
+        {
+            // Operations such as a denied permission settle the session
+            // without naming a run; a settled session cannot own one.
+            Some(None)
+        } else {
+            None
+        };
+        // Session patches describe the UI. An executing owner must retain its
+        // durable pointer while its terminal stream and cleanup drain; only
+        // `finish` closes that pointer and the lease together. In particular,
+        // a terminal patch cannot revoke the very executor that must finish it.
+        let durable_active_run_id = if operation == "session_patch"
+            && active_run_changed
+            && control.execution_lease.as_ref().is_some_and(|lease| {
+                !lease.closed && self.state.active_run_id.as_deref() == Some(lease.run_id.as_str())
+            }) {
+            if active_run_id.is_some() && active_run_id != self.state.active_run_id {
+                return Err(RuntimeError::SessionBusy);
+            }
+            // A terminal UI patch may clear only the projection pointer. Keep
+            // the authoritative pointer until finish closes this lease.
+            None
+        } else {
+            durable_active_run_id
+        };
+        let receipt_active_run_id = durable_active_run_id
+            .clone()
+            .unwrap_or_else(|| self.state.active_run_id.clone());
         let mut tx = Tx {
             cursor,
             revision: self.state.revision + 1,
             epoch: epoch_next,
             projection,
             control: Some(control.clone()),
+            active_run_id: durable_active_run_id,
+            producer_sequences: (epoch_next != self.state.epoch).then(Default::default),
             ..Default::default()
         };
         let result = ControlCommandReceipt {
@@ -551,7 +859,7 @@ impl SessionActor {
                 session_id: session_id.to_owned(),
                 epoch: epoch_next,
                 revision: self.state.revision + 1,
-                active_run_id,
+                active_run_id: receipt_active_run_id,
                 cursor,
                 retained_from: cursor.saturating_sub(super::super::session::EVENT_WINDOW) + 1,
             },
@@ -579,9 +887,15 @@ impl SessionActor {
 
 fn deny_deny(projection: &mut Projection, item: &Value, run_id: &str, reason: &str, now: &str) {
     if projection.run_id() == Some(run_id) {
-        projection.run.set("status", PValue::String("blocked".into()));
-        projection.run.set("completedAt", PValue::String(now.to_owned()));
-        projection.run.set("stopReason", PValue::String(reason.to_owned()));
+        projection
+            .run
+            .set("status", PValue::String("blocked".into()));
+        projection
+            .run
+            .set("completedAt", PValue::String(now.to_owned()));
+        projection
+            .run
+            .set("stopReason", PValue::String(reason.to_owned()));
         if let PValue::Object(run) = &mut projection.run {
             if let Some(PValue::Object(metadata)) = run.get_mut("metadata")
                 && let Some(PValue::Object(lease)) = metadata.get_mut("executionLease")
@@ -594,7 +908,11 @@ fn deny_deny(projection: &mut Projection, item: &Value, run_id: &str, reason: &s
     for chunk in projection.live_chunks.iter_mut() {
         let kind = chunk.get("type").and_then(PValue::as_str);
         if matches!(kind, Some("tool_call" | "tool_result"))
-            && chunk.get("toolCall").and_then(|call| call.get("id")).and_then(PValue::as_str) == tool_call_id
+            && chunk
+                .get("toolCall")
+                .and_then(|call| call.get("id"))
+                .and_then(PValue::as_str)
+                == tool_call_id
             && let Some(PValue::Object(call)) = chunk.get_mut("toolCall")
         {
             call.insert("status".into(), PValue::String("denied".into()));
@@ -605,8 +923,14 @@ fn deny_deny(projection: &mut Projection, item: &Value, run_id: &str, reason: &s
 }
 
 fn set_session_metadata(projection: &mut Projection, key: &str, value: Value) {
-    if !projection.session.get("sessionMetadata").is_some_and(PValue::is_object) {
-        projection.session.set("sessionMetadata", PValue::from_json(&json!({})));
+    if !projection
+        .session
+        .get("sessionMetadata")
+        .is_some_and(PValue::is_object)
+    {
+        projection
+            .session
+            .set("sessionMetadata", PValue::from_json(&json!({})));
     }
     if let PValue::Object(session) = &mut projection.session
         && let Some(PValue::Object(metadata)) = session.get_mut("sessionMetadata")
@@ -633,7 +957,9 @@ impl SessionActor {
             || operation.len() > 32
             || payload.len() > MAX_REQUEST_BYTES
         {
-            return Err(RuntimeError::InvalidCommand("queue command exceeds bounds".into()));
+            return Err(RuntimeError::InvalidCommand(
+                "queue command exceeds bounds".into(),
+            ));
         }
         let value = parse_json(payload)?;
         let identity = hash(&("queue.v1", operation, &value))?;
@@ -649,16 +975,25 @@ impl SessionActor {
         ensure_epoch(&self.state, epoch)?;
         ensure_revision(&self.state, revision)?;
         if operation == "consume" {
-            let run = value["runId"]
-                .as_str()
-                .ok_or_else(|| RuntimeError::InvalidCommand("consumption requires active run".into()))?;
+            let run = value["runId"].as_str().ok_or_else(|| {
+                RuntimeError::InvalidCommand("consumption requires active run".into())
+            })?;
             if self.state.active_run_id.as_deref() != Some(run) {
-                return Err(RuntimeError::InvalidCommand("input consumer is not active run".into()));
+                return Err(RuntimeError::InvalidCommand(
+                    "input consumer is not active run".into(),
+                ));
             }
         }
-        let mut projection = self.projection.clone().ok_or(RuntimeError::ProjectionMissing)?;
-        if operation == "consume" && projection.force_inject_item_id.as_deref() != value["id"].as_str() {
-            return Err(RuntimeError::InvalidCommand("forced input changed before consumption".into()));
+        let mut projection = self
+            .projection
+            .clone()
+            .ok_or(RuntimeError::ProjectionMissing)?;
+        if operation == "consume"
+            && projection.force_inject_item_id.as_deref() != value["id"].as_str()
+        {
+            return Err(RuntimeError::InvalidCommand(
+                "forced input changed before consumption".into(),
+            ));
         }
         let mut queue = projection.queue();
         let changed = queue.apply(operation, &value)?;
@@ -675,12 +1010,21 @@ impl SessionActor {
         if changed {
             tx.cursor += 1;
             tx.revision += 1;
-            let run_id = tx.projection.session.get("activeRunId").and_then(PValue::as_str).unwrap_or_default().to_owned();
+            let run_id = tx
+                .projection
+                .session
+                .get("activeRunId")
+                .and_then(PValue::as_str)
+                .unwrap_or_default()
+                .to_owned();
             let body = json!({"schema":1,
                 "chunk":{"type":"input_queue_changed","sessionId":self.id,"queueSize":queue.items.len(),"forceInjectItemId":queue.force_inject_item_id,"queueRevision":queue.revision},
                 "state":{"status":tx.projection.session.get("status").map(PValue::to_json),"activeRunId":tx.projection.session.get("activeRunId").map(PValue::to_json),"pendingResumeToken":tx.projection.session.get("pendingResumeToken").map(PValue::to_json),"blockedReason":tx.projection.session.get("blockedReason").map(PValue::to_json),"updatedAt":tx.projection.session.get("updatedAt").map(PValue::to_json)}
             });
-            let pending = PendingEvent { kind: "input_queue_changed".into(), payload: value_to_bytes(&body)? };
+            let pending = PendingEvent {
+                kind: "input_queue_changed".into(),
+                payload: value_to_bytes(&body)?,
+            };
             tx.projection.apply(tx.cursor, &run_id, &pending)?;
             let record = StreamEvent {
                 sequence: tx.cursor,
@@ -711,7 +1055,8 @@ impl SessionActor {
             "queue".into(),
             request_id.to_owned(),
             identity,
-            serde_json::to_value(&result).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
+            serde_json::to_value(&result)
+                .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
         ));
         self.write(handle, tx)?;
         Ok(result)

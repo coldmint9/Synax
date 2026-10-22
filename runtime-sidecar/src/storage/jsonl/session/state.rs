@@ -51,7 +51,9 @@ impl Tx {
             state.active_run_id = active_run_id.clone();
         }
         state.header = None;
-        if let Some(sequences) = &self.producer_sequences { state.producer_sequences = sequences.clone(); }
+        if let Some(sequences) = &self.producer_sequences {
+            state.producer_sequences = sequences.clone();
+        }
 
         state
     }
@@ -64,10 +66,13 @@ impl SessionActor {
         // The projection budget is a commit invariant: an over-budget batch
         // would make the session unreadable forever.
         tx.projection.encode()?;
-        if std::env::var("SYNAX_RUNTIME_HOT_DISK_FULL").ok().as_deref() == Some("1") { return Err(RuntimeError::DiskFull); }
+        if std::env::var("SYNAX_RUNTIME_HOT_DISK_FULL").ok().as_deref() == Some("1") {
+            return Err(RuntimeError::DiskFull);
+        }
         // A rolled segment must be opened before its first frame is written.
         if self.files.extent.frames[Kind::Seal as usize] >= super::FRAMES_PER_SEGMENT
-            || self.files.extent.offsets.iter().sum::<u64>() >= 16 * 1024 * 1024 {
+            || self.files.extent.offsets.iter().sum::<u64>() >= 16 * 1024 * 1024
+        {
             self.roll(handle)?;
         }
         let commit_id = self.commit + 1;
@@ -77,23 +82,50 @@ impl SessionActor {
 
         let mut predicted = self.projection.clone().unwrap_or_default();
         for event in &tx.events {
-            predicted.apply(event.sequence, &event.run_id, &crate::runtime::actor::PendingEvent {
-                kind: event.kind.clone(), payload: event.payload.clone(),
-            })?;
+            predicted.apply(
+                event.sequence,
+                &event.run_id,
+                &crate::runtime::actor::PendingEvent {
+                    kind: event.kind.clone(),
+                    payload: event.payload.clone(),
+                },
+            )?;
         }
-        let before = crate::storage::jsonl::delta::document(&self.state, &predicted, &self.control, &self.queue);
+        let before = crate::storage::jsonl::delta::document(
+            &self.state,
+            &predicted,
+            &self.control,
+            &self.queue,
+        );
         let retained = tx.cursor.saturating_sub(super::EVENT_WINDOW) + 1;
         let next_state = tx.state(self, retained);
         let next_control = tx.control.as_ref().unwrap_or(&self.control);
         let next_queue = tx.queue.as_ref().unwrap_or(&self.queue);
-        let after = crate::storage::jsonl::delta::document(&next_state, &tx.projection, next_control, next_queue);
+        let after = crate::storage::jsonl::delta::document(
+            &next_state,
+            &tx.projection,
+            next_control,
+            next_queue,
+        );
         let changes = crate::storage::jsonl::delta::between(&handle.root, &before, &after)?;
-        controls.push(writer.line(&Record::Delta { c: commit_id, changes }).to_vec());
+        controls.push(
+            writer
+                .line(&Record::Delta {
+                    c: commit_id,
+                    changes,
+                })
+                .to_vec(),
+        );
         for event in &tx.events {
             let mut payload: serde_json::Value = serde_json::from_slice(&event.payload)
                 .map_err(|_| RuntimeError::InvalidCommand("event payload is not JSON".into()))?;
-            if let Some(chunk) = payload.get_mut("chunk").and_then(serde_json::Value::as_object_mut) {
-                if chunk.remove("control").is_some() { payload["controlRef"] = serde_json::json!(true); }
+            if let Some(chunk) = payload
+                .get_mut("chunk")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                if chunk.remove("control").is_some() {
+                    payload["controlRef"] = serde_json::json!(true);
+                }
             }
             events.push(
                 writer
@@ -107,7 +139,12 @@ impl SessionActor {
             );
         }
         if let Some((scope, request_id, fingerprint, result)) = &tx.receipt {
-            let value = crate::storage::jsonl::delta::compact_receipt(&handle.root, result.clone(), &serde_json::to_value(next_control).map_err(|e| RuntimeError::StorageUnavailable(e.to_string()))?)?;
+            let value = crate::storage::jsonl::delta::compact_receipt(
+                &handle.root,
+                result.clone(),
+                &serde_json::to_value(next_control)
+                    .map_err(|e| RuntimeError::StorageUnavailable(e.to_string()))?,
+            )?;
             controls.push(
                 writer
                     .line(&Record::CompactReceipt(ReceiptRecord {
@@ -163,7 +200,11 @@ impl SessionActor {
             if let Some(env) = env {
                 let marker = handle.root.join(format!(".fault-{scope}-committed"));
                 if std::env::var(env).ok().as_deref() == Some("1")
-                    && std::fs::OpenOptions::new().write(true).create_new(true).open(marker).is_ok()
+                    && std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(marker)
+                        .is_ok()
                 {
                     self.files.sync()?;
                     std::process::abort();
@@ -201,7 +242,8 @@ impl SessionActor {
                 request_id,
                 StoredReceipt {
                     fingerprint,
-                    result: serde_json::to_vec(&result).map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?,
+                    result: serde_json::to_vec(&result)
+                        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?,
                     at: super::now_ms(),
                 },
             );
@@ -236,7 +278,12 @@ impl SessionActor {
         self.receipts
             .retain(|_, receipt| now_ms.saturating_sub(receipt.at) < super::RECEIPT_TTL_MS);
         while self.receipts.len() > super::RECEIPT_RING {
-            let Some(oldest) = self.receipts.iter().min_by_key(|(_, receipt)| receipt.at).map(|(key, _)| key.clone()) else {
+            let Some(oldest) = self
+                .receipts
+                .iter()
+                .min_by_key(|(_, receipt)| receipt.at)
+                .map(|(key, _)| key.clone())
+            else {
                 break;
             };
             self.receipts.remove(&oldest);
@@ -253,7 +300,10 @@ impl SessionActor {
         let next = self.files.segment + 1;
         self.files.sync()?;
         let session_dir = handle.session_dir();
-        let empty = crate::storage::jsonl::write::Extent { offsets: [0; 3], frames: [0; 3] };
+        let empty = crate::storage::jsonl::write::Extent {
+            offsets: [0; 3],
+            frames: [0; 3],
+        };
         self.files = super::Publisher::open(&session_dir, next, empty)?;
         self.publish(handle);
         Ok(())

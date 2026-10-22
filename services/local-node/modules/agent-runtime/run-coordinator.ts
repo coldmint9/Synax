@@ -485,7 +485,22 @@ export class RunCoordinator {
         "[run-coordinator] execution ended with an error",
       );
       leaseLost = isExecutionSuperseded(error);
-      if (leaseLost) return;
+      if (leaseLost) {
+        // A superseded owner must not write over its replacement. However an
+        // unsuccessful launch with no current executor must not remain running.
+        // Rust decides atomically whether this is an unowned run or a real
+        // handoff; UI metadata and this process's owner map are not authority.
+        try {
+          await runtimeFacade.controlCommand({ sessionId,
+            requestId: `execution-fail-start:${owner.runId}:${owner.context?.epoch}`,
+            operation: "execution_fail_start",
+            payload: { executionLease: owner.context, reason: message } });
+          await agentRuntimeStore.hydrateSession(sessionId, true);
+        } catch (repairError) {
+          if (!isExecutionSuperseded(repairError)) throw repairError;
+        }
+        return;
+      }
       if (!this.ownsLease(owner)) return;
       await flush();
       await agentRuntimeStore.hydrateSession(sessionId, true);

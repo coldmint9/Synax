@@ -171,13 +171,30 @@ export async function recoverRuntimeSession(
   includeCurrentHost = false,
 ): Promise<{ reviewed: number; resumable: string[] }> {
   const { runtimeFacade } = await import("./sidecar/runtime-facade.js");
-  const [snapshot, control, execution] = await Promise.all([
+  let [snapshot, control, execution] = await Promise.all([
     runtimeFacade.uiSnapshotAuthoritative(sessionId),
     runtimeFacade.controlState(sessionId) as Promise<{ runtimeControl?: unknown; processLeases?: unknown[]; executionLease?: RuntimeExecutionContext & { closed: boolean } }>,
     runtimeClient().snapshot(sessionId),
   ]);
-  const session = snapshot.session as AgentSession;
   const unchanged = { reviewed: 0, resumable: [] as string[] };
+  // A pre-fix session can retain an open lease for a different (finished) run.
+  // Check this before the same-host shortcut: these orphans arise without a
+  // restart. The conditional Rust transaction cannot touch a new valid owner.
+  if (control.executionLease && !control.executionLease.closed &&
+      control.executionLease.runId !== execution.activeRunId) {
+    await runtimeFacade.controlCommand({ sessionId,
+      requestId: `reconcile-orphan:${control.executionLease.epoch}:${execution.activeRunId ?? "idle"}`,
+      operation: "execution_reconcile",
+      payload: { executionLease: control.executionLease, activeRunId: execution.activeRunId ?? null,
+        reason: "Recovered an execution that never acquired its lease." } });
+    [snapshot, control, execution] = await Promise.all([
+      runtimeFacade.uiSnapshotAuthoritative(sessionId),
+      runtimeFacade.controlState(sessionId) as Promise<typeof control>,
+      runtimeClient().snapshot(sessionId),
+    ]);
+    if (agentRuntimeStore.tryGetSession(sessionId)) await agentRuntimeStore.hydrateSession(sessionId, true);
+  }
+  const session = snapshot.session as AgentSession;
   // A session admitted after boot belongs to this host and must not be swept
   // later by a slower background enumeration.
   if (!includeCurrentHost && control.executionLease?.hostId === hostId && !control.executionLease.closed) return unchanged;

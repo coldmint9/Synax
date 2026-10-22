@@ -39,6 +39,7 @@ import { getGlobalConfigForRuntime } from "../../../infrastructure/runtime/confi
 import { countTokens } from "../context-tokenizer.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
 import { toRuntimeError } from "../runtime-errors.js";
+import { conversationGitContextMessage } from "../conversation-git/context.js";
 
 function toolSchema(value: unknown): Record<string, unknown> {
   return z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
@@ -138,7 +139,7 @@ export class RustNativeBackend implements BackendAdapter {
         projectMemoriesSection: memories.length ? memories.map(memory => `${memory.title}: ${memory.content.slice(0, 400)}`).join("\n") : null,
         skillsSection: skills.length ? "Available skills; load selected skills before using their instructions:\n" + skills.map(skill => JSON.stringify({ id: skill.id, name: skill.label, description: skill.description })).join("\n") : null,
         selectedReferencesSection: input.referenceContext?.content,
-      }), capabilities.prompt, buildRuntimeEnvironment(sessionId, session.projectId), workRuntime.prompt(sessionId), synaxAgent.buildRuntimeStateSection(currentSession), goalEvidenceSection(currentSession, store.listToolCalls(sessionId))].filter(Boolean).join("\n\n");
+      }), capabilities.prompt, buildRuntimeEnvironment(sessionId, session.projectId), workRuntime.prompt(sessionId), synaxAgent.buildRuntimeStateSection(currentSession), goalEvidenceSection(currentSession, store.listToolCalls(sessionId)), conversationGitContextMessage(store.listMessages(sessionId), sessionId)].filter(Boolean).join("\n\n");
       if (currentSession.sessionMetadata?.latestSystemPrompt !== systemPrompt) store.updateSessionMetadata(sessionId, { latestSystemPrompt: systemPrompt });
       return { systemPrompt, tools };
       };
@@ -302,6 +303,13 @@ export class RustNativeBackend implements BackendAdapter {
             await sessionHooks.emit({ type: "step:before", sessionId, runId: run.id, stepIndex: step.index });
             step = store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata, rustBeforeHook: true } });
           }
+          // Card actions are handled by the API process while the native loop
+          // may be parked in a worker. Refresh the durable session projection
+          // before every context barrier so a newly persisted Git task anchor
+          // or receipt is visible to the next model turn. The current run and
+          // its durable tool receipts are merged by the Rust-backed store.
+          this.preparedContexts.delete(run.id);
+          await store.hydrateSession(sessionId, true);
           const savedContext = this.preparedContexts.get(run.id);
           const context = savedContext?.contextId === event.contextId ? savedContext : prepareContext(event.step);
           if (context !== savedContext) this.preparedContexts.set(run.id, { contextId: event.contextId, ...context });
@@ -351,8 +359,12 @@ export class RustNativeBackend implements BackendAdapter {
           if (!step) throw new Error("Rust restart has no persisted step.");
           text = ""; thought = ""; assistant = undefined;
           const correctingArguments = event.reason === "invalid_tool_arguments";
+          const reason = correctingArguments ? "upstream"
+            : event.reason === "rate_limit" ? "rate_limit"
+              : event.reason === "upstream" ? "upstream"
+                : "network";
           yield { type: "retry_status", runId: run.id, stepId: step.id, retry: {
-            reason: correctingArguments ? "upstream" : "network", phase: "waiting", group: 1, attempt: event.attempt ?? 1,
+            reason, phase: "waiting", group: 1, attempt: event.attempt ?? 1,
             maxRetries: event.maxRetries ?? 0, nextRetryAt: null,
             error: event.error ?? "Rust runtime recovered an interrupted model request.",
           } };

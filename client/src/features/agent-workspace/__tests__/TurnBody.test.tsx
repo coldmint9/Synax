@@ -36,17 +36,31 @@ describe("TurnBody continuous process", () => {
     expect(screen.getByText("Final answer")).toBeVisible();
   });
 
-  it("keeps live rows one line long and preserves DOM identity as calls are appended", () => {
+  it("keeps live rows closed and preserves DOM identity as calls are appended", () => {
     const first = tool("stable-one");
     const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks: [first] }} entryId="stable" isWorking />);
     const row = container.querySelector(".bui-tool")!;
     const trigger = container.querySelector(".bui-tool-trigger")!;
-    expect(trigger.tagName).not.toBe("BUTTON");
-    expect(trigger).not.toHaveAttribute("aria-expanded");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".bui-tool-details")).toBeNull();
     rerender(<TurnBody turn={{ ...emptyTurn, blocks: [first, tool("stable-two")] }} entryId="stable" isWorking />);
     expect(container.querySelector(".bui-tool")).toBe(row);
     expect(container.querySelector(".bui-tool-trigger")).toBe(trigger);
     expect(container.querySelector(".bui-tool-details")).toBeNull();
+  });
+
+  it("opens a live record by handing the window to the reader", () => {
+    const { container } = render(
+      <TurnBody turn={{ ...emptyTurn, blocks: [tool("opened-live")] }} entryId="opened-live" isWorking />,
+    );
+    const viewport = container.querySelector(".session-process-window-viewport")!;
+    expect(viewport).toHaveAttribute("data-windowed", "true");
+    fireEvent.click(container.querySelector(".bui-tool-trigger")!);
+    // The fixed one-line window cannot hold an open body, so it stops following
+    // the newest record instead of swallowing the reader's disclosure.
+    expect(viewport).not.toHaveAttribute("data-windowed");
+    expect(container.querySelector(".bui-tool-trigger")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".bui-tool-details")).toHaveTextContent("result-opened-live");
   });
 
   it("opens finished tool details on demand", () => {
@@ -110,10 +124,13 @@ describe("TurnBody continuous process", () => {
     expect(container.querySelector("[data-live]")).toBeNull();
   });
 
-  it("keeps an error visible in the summary and shows its message on expansion", () => {
+  it("keeps an error out of the summary and shows it on expansion", () => {
     const failed: TurnContentBlock = { type: "tool_call", call: { ...call("error"), status: "failed", outputSummary: "Test failed: button remains enabled" } };
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks: [failed] }} entryId="failed" />);
-    expect(container.querySelector(".session-process-trigger")).toHaveTextContent("失败");
+    const trigger = container.querySelector(".session-process-trigger")!;
+    expect(trigger).toHaveTextContent("运行了命令");
+    expect(trigger).not.toHaveTextContent("失败");
+    expect(trigger.querySelector(".bui-status")).toBeNull();
     fireEvent.click(container.querySelector(".session-process-trigger")!);
     expect(container.querySelector(".bui-tool-result")).toHaveTextContent("Test failed");
     expect(container.querySelector(".bui-tool-details")).toBeNull();

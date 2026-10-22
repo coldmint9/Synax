@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::HistoryOps;
 use super::json::{boolean, number, object, text};
 use super::wire::HistoryError;
-use super::HistoryOps;
 use crate::storage::jsonl::store::JsonlStore;
 
 fn temp_root(label: &str) -> std::path::PathBuf {
@@ -27,26 +27,64 @@ fn temp() -> Value {
 fn history_index_snapshot_preserves_cursors_and_replays_only_the_committed_tail() {
     let root = temp_root("index-checkpoint");
     let (store, ops) = open(&root);
-    ok(&ops, "s", "first", "append_entities", objects(serde_json::json!([message("a", 1, "a"), message("b", 2, "b")])));
-    let window = ok(&ops, "s", "window", "history_sync", serde_json::json!({"limit":1}));
+    ok(
+        &ops,
+        "s",
+        "first",
+        "append_entities",
+        objects(serde_json::json!([
+            message("a", 1, "a"),
+            message("b", 2, "b")
+        ])),
+    );
+    let window = ok(
+        &ops,
+        "s",
+        "window",
+        "history_sync",
+        serde_json::json!({"limit":1}),
+    );
     assert_eq!(window["messages"][0]["id"], "b");
     assert_eq!(ops.evict_idle(), 0);
     assert_eq!(ops.evict_with_policy(0, std::time::Duration::ZERO), 1);
     let directory = super::history_path(&root, "s").unwrap();
     let (snapshot, offset) = super::checkpoint::read(&directory, "s").unwrap();
     assert_eq!(snapshot.head.revision, 1);
-    ok(&ops, "s", "second", "append_entities", objects(serde_json::json!([message("c", 3, "c")])));
+    ok(
+        &ops,
+        "s",
+        "second",
+        "append_entities",
+        objects(serde_json::json!([message("c", 3, "c")])),
+    );
     // Replay directly from the persisted position before dropping the writer
     // (normal release will replace the snapshot with the newer index).
     let mut index = snapshot;
-    let end = super::replay_into(&directory.join(super::HISTORY_FILE), &mut index, false, offset).unwrap();
+    let end = super::replay_into(
+        &directory.join(super::HISTORY_FILE),
+        &mut index,
+        false,
+        offset,
+    )
+    .unwrap();
     assert!(end > offset);
-    let delta = super::sync::history_sync(&index, "s", &serde_json::json!({"since":window["historyWindow"]["syncCursor"]})).unwrap();
+    let delta = super::sync::history_sync(
+        &index,
+        "s",
+        &serde_json::json!({"since":window["historyWindow"]["syncCursor"]}),
+    )
+    .unwrap();
     assert_eq!(delta["messages"].as_array().unwrap().len(), 1);
     assert_eq!(delta["messages"][0]["id"], "c");
-    let older = super::sync::history_sync(&index, "s", &serde_json::json!({"cursor":window["historyWindow"]["olderCursor"]})).unwrap();
+    let older = super::sync::history_sync(
+        &index,
+        "s",
+        &serde_json::json!({"cursor":window["historyWindow"]["olderCursor"]}),
+    )
+    .unwrap();
     assert_eq!(older["messages"][0]["id"], "a");
-    drop(ops); drop(store);
+    drop(ops);
+    drop(store);
     let session = super::HistorySession::open(&root, "s").unwrap();
     assert_eq!(session.lock.lock().checkpoint_offset, end);
     assert_eq!(session.lock.lock().index.head.revision, 2);
@@ -63,11 +101,24 @@ fn history_index_snapshot_preserves_cursors_and_replays_only_the_committed_tail(
 fn commits_publish_the_new_query_index_to_other_sessions_without_reopening() {
     let root = temp_root("published-index");
     let (store, ops) = open(&root);
-    let latest = ok(&ops, "s", "append", "append_entities", objects(serde_json::json!([message("latest", 1, "new content")])));
-    ok(&ops, "copy", "fork", "fork", serde_json::json!({"sourceSessionId":"s"}));
+    let latest = ok(
+        &ops,
+        "s",
+        "append",
+        "append_entities",
+        objects(serde_json::json!([message("latest", 1, "new content")])),
+    );
+    ok(
+        &ops,
+        "copy",
+        "fork",
+        "fork",
+        serde_json::json!({"sourceSessionId":"s"}),
+    );
     let copied = ok(&ops, "copy", "head", "head_read", temp());
     assert_eq!(copied["objectId"], latest["objectId"]);
-    drop(ops); drop(store);
+    drop(ops);
+    drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -218,7 +269,13 @@ fn list_pages_walk_latest_first_with_revision_fencing() {
     let items: Vec<Value> = (1..=5)
         .map(|i| message(&format!("m{i}"), i, &format!("c{i}")))
         .collect();
-    ok(&ops, "s", "append", "append_entities", objects(Value::Array(items)));
+    ok(
+        &ops,
+        "s",
+        "append",
+        "append_entities",
+        objects(Value::Array(items)),
+    );
     let mut cursor = Value::Null;
     let mut order = Vec::new();
     loop {
@@ -307,57 +364,143 @@ fn list_pages_walk_latest_first_with_revision_fencing() {
 fn history_sync_is_incremental_after_the_watermark() {
     let root = temp_root("sync");
     let (store, ops) = open(&root);
-    ok(&ops, "s", "append", "append_entities", objects(Value::Array(vec![
-        message("a", 1, "old"), message("b", 2, "keep"), message("c", 3, "remove"),
-    ])));
-    let initial = ok(&ops, "s", "initial", "history_sync", with(&[("limit", number(1))]));
+    ok(
+        &ops,
+        "s",
+        "append",
+        "append_entities",
+        objects(Value::Array(vec![
+            message("a", 1, "old"),
+            message("b", 2, "keep"),
+            message("c", 3, "remove"),
+        ])),
+    );
+    let initial = ok(
+        &ops,
+        "s",
+        "initial",
+        "history_sync",
+        with(&[("limit", number(1))]),
+    );
     assert_eq!(initial["messages"][0]["id"], "c");
     let since = initial["historyWindow"]["syncCursor"].clone();
     let older_cursor = initial["historyWindow"]["olderCursor"].clone();
-    let unchanged = ok(&ops, "s", "unchanged", "history_sync", with(&[("since", since.clone())]));
+    let unchanged = ok(
+        &ops,
+        "s",
+        "unchanged",
+        "history_sync",
+        with(&[("since", since.clone())]),
+    );
     assert!(unchanged["messages"].as_array().unwrap().is_empty());
     assert_eq!(unchanged["historyWindow"]["hasMoreChanges"], false);
 
-    ok(&ops, "s", "next-turn", "append_entities", objects(Value::Array(vec![
-        message("a", 1, "updated"), tombstone("c"), message("d", 4, "new reply"),
-    ])));
-    let first = ok(&ops, "s", "first", "history_sync", with(&[
-        ("limit", number(1)), ("since", since),
-    ]));
+    ok(
+        &ops,
+        "s",
+        "next-turn",
+        "append_entities",
+        objects(Value::Array(vec![
+            message("a", 1, "updated"),
+            tombstone("c"),
+            message("d", 4, "new reply"),
+        ])),
+    );
+    let first = ok(
+        &ops,
+        "s",
+        "first",
+        "history_sync",
+        with(&[("limit", number(1)), ("since", since)]),
+    );
     assert_eq!(first["messages"][0]["content"], "updated");
     assert_eq!(first["historyWindow"]["hasMoreChanges"], true);
-    assert_eq!(first["historyWindow"]["generation"], initial["historyWindow"]["generation"]);
+    assert_eq!(
+        first["historyWindow"]["generation"],
+        initial["historyWindow"]["generation"]
+    );
 
     // Writes during pagination belong to the following refresh, not this page set.
-    ok(&ops, "s", "while-paging", "append_entities", objects(Value::Array(vec![message("e", 5, "later reply")])));
-    let second = ok(&ops, "s", "second", "history_sync", with(&[
-        ("limit", number(1)), ("since", first["historyWindow"]["syncCursor"].clone()),
-    ]));
+    ok(
+        &ops,
+        "s",
+        "while-paging",
+        "append_entities",
+        objects(Value::Array(vec![message("e", 5, "later reply")])),
+    );
+    let second = ok(
+        &ops,
+        "s",
+        "second",
+        "history_sync",
+        with(&[
+            ("limit", number(1)),
+            ("since", first["historyWindow"]["syncCursor"].clone()),
+        ]),
+    );
     assert_eq!(second["removed"][0]["id"], "c");
     assert_eq!(second["historyWindow"]["hasMoreChanges"], true);
-    let third = ok(&ops, "s", "third", "history_sync", with(&[
-        ("limit", number(1)), ("since", second["historyWindow"]["syncCursor"].clone()),
-    ]));
+    let third = ok(
+        &ops,
+        "s",
+        "third",
+        "history_sync",
+        with(&[
+            ("limit", number(1)),
+            ("since", second["historyWindow"]["syncCursor"].clone()),
+        ]),
+    );
     assert_eq!(third["messages"][0]["id"], "d");
     assert_eq!(third["historyWindow"]["hasMoreChanges"], false);
-    assert_eq!(third["historyWindow"]["revision"], first["historyWindow"]["revision"]);
-    let later = ok(&ops, "s", "later", "history_sync", with(&[
-        ("since", third["historyWindow"]["syncCursor"].clone()),
-    ]));
+    assert_eq!(
+        third["historyWindow"]["revision"],
+        first["historyWindow"]["revision"]
+    );
+    let later = ok(
+        &ops,
+        "s",
+        "later",
+        "history_sync",
+        with(&[("since", third["historyWindow"]["syncCursor"].clone())]),
+    );
     assert_eq!(later["messages"].as_array().unwrap().len(), 1);
     assert_eq!(later["messages"][0]["id"], "e");
 
     // Browsing earlier history still uses its own reverse cursor after appends.
-    let older = ok(&ops, "s", "older", "history_sync", with(&[("cursor", older_cursor)]));
+    let older = ok(
+        &ops,
+        "s",
+        "older",
+        "history_sync",
+        with(&[("cursor", older_cursor)]),
+    );
     assert_eq!(older["messages"][0]["id"], "b");
     let cursor = later["historyWindow"]["syncCursor"].clone();
     drop(ops);
     drop(store);
     let (store, reopened) = open(&root);
-    let unchanged = ok(&reopened, "s", "after-restart", "history_sync", with(&[("since", cursor.clone())]));
+    let unchanged = ok(
+        &reopened,
+        "s",
+        "after-restart",
+        "history_sync",
+        with(&[("since", cursor.clone())]),
+    );
     assert!(unchanged["messages"].as_array().unwrap().is_empty());
-    ok(&reopened, "s", "after-restart-append", "append_entities", objects(Value::Array(vec![message("f", 6, "reopened reply")])));
-    let next = ok(&reopened, "s", "after-restart-sync", "history_sync", with(&[("since", cursor)]));
+    ok(
+        &reopened,
+        "s",
+        "after-restart-append",
+        "append_entities",
+        objects(Value::Array(vec![message("f", 6, "reopened reply")])),
+    );
+    let next = ok(
+        &reopened,
+        "s",
+        "after-restart-sync",
+        "history_sync",
+        with(&[("since", cursor)]),
+    );
     assert_eq!(next["messages"][0]["id"], "f");
     drop(reopened);
     drop(store);
@@ -369,12 +512,28 @@ fn history_sync_preserves_latest_update_delete_and_recreate_order() {
     let root = temp_root("sync-updates");
     let (store, ops) = open(&root);
     let initial = ok(&ops, "s", "initial", "history_sync", temp());
-    ok(&ops, "s", "updates", "append_entities", objects(Value::Array(vec![
-        message("a", 1, "old"), message("a", 1, "new"),
-        message("b", 2, "removed"), tombstone("b"),
-        message("c", 3, "old"), tombstone("c"), message("c", 3, "recreated"),
-    ])));
-    let page = ok(&ops, "s", "sync", "history_sync", with(&[("since", initial["historyWindow"]["syncCursor"].clone())]));
+    ok(
+        &ops,
+        "s",
+        "updates",
+        "append_entities",
+        objects(Value::Array(vec![
+            message("a", 1, "old"),
+            message("a", 1, "new"),
+            message("b", 2, "removed"),
+            tombstone("b"),
+            message("c", 3, "old"),
+            tombstone("c"),
+            message("c", 3, "recreated"),
+        ])),
+    );
+    let page = ok(
+        &ops,
+        "s",
+        "sync",
+        "history_sync",
+        with(&[("since", initial["historyWindow"]["syncCursor"].clone())]),
+    );
     assert_eq!(page["messages"].as_array().unwrap().len(), 2);
     assert_eq!(page["messages"][0]["content"], "new");
     assert_eq!(page["messages"][1]["content"], "recreated");
@@ -391,13 +550,32 @@ fn history_sync_large_records_do_not_hide_other_collections() {
     let (store, ops) = open(&root);
     let large = "上下文🙂".repeat(50_000);
     let initial = ok(&ops, "s", "initial", "history_sync", temp());
-    let run = object(&[("kind", text("runtime.run")), ("value", object(&[
-        ("id", text("r")), ("sessionId", text("s")), ("status", text("completed")),
-    ]))]);
-    ok(&ops, "s", "append", "append_entities", objects(Value::Array(vec![
-        message("big-1", 1, &large), message("big-2", 2, &large), run,
-    ])));
-    for payload in [temp(), with(&[("since", initial["historyWindow"]["syncCursor"].clone())])] {
+    let run = object(&[
+        ("kind", text("runtime.run")),
+        (
+            "value",
+            object(&[
+                ("id", text("r")),
+                ("sessionId", text("s")),
+                ("status", text("completed")),
+            ]),
+        ),
+    ]);
+    ok(
+        &ops,
+        "s",
+        "append",
+        "append_entities",
+        objects(Value::Array(vec![
+            message("big-1", 1, &large),
+            message("big-2", 2, &large),
+            run,
+        ])),
+    );
+    for payload in [
+        temp(),
+        with(&[("since", initial["historyWindow"]["syncCursor"].clone())]),
+    ] {
         let page = ok(&ops, "s", "sync", "history_sync", payload);
         assert_eq!(page["messages"].as_array().unwrap().len(), 2);
         assert_eq!(page["runs"][0]["id"], "r");
@@ -416,14 +594,34 @@ fn history_sync_byte_budget_preserves_all_collection_cursors() {
     let mut entities: Vec<Value> = (0..30)
         .map(|n| message(&format!("m{n}"), n, &"x".repeat(30_000)))
         .collect();
-    entities.push(object(&[("kind", text("runtime.run")), ("value", object(&[
-        ("id", text("run")), ("sessionId", text("s")), ("status", text("completed")),
-    ]))]));
-    ok(&ops, "s", "append", "append_entities", objects(Value::Array(entities)));
+    entities.push(object(&[
+        ("kind", text("runtime.run")),
+        (
+            "value",
+            object(&[
+                ("id", text("run")),
+                ("sessionId", text("s")),
+                ("status", text("completed")),
+            ]),
+        ),
+    ]));
+    ok(
+        &ops,
+        "s",
+        "append",
+        "append_entities",
+        objects(Value::Array(entities)),
+    );
     let mut cursor = Value::Null;
     let mut ids = std::collections::HashSet::new();
     for page_number in 0..30 {
-        let page = ok(&ops, "s", "page", "history_sync", with(&[("cursor", cursor.clone())]));
+        let page = ok(
+            &ops,
+            "s",
+            "page",
+            "history_sync",
+            with(&[("cursor", cursor.clone())]),
+        );
         assert!(serde_json::to_vec(&page).unwrap().len() <= 512 * 1024);
         if page_number == 0 {
             assert_eq!(page["runs"][0]["id"], "run");
@@ -432,7 +630,9 @@ fn history_sync_byte_budget_preserves_all_collection_cursors() {
             assert!(ids.insert(item["id"].as_str().unwrap().to_owned()));
         }
         let next = page["historyWindow"]["olderCursor"].clone();
-        if next.is_null() { break; }
+        if next.is_null() {
+            break;
+        }
         assert_ne!(next, cursor);
         cursor = next;
     }
@@ -446,17 +646,45 @@ fn history_sync_byte_budget_preserves_all_collection_cursors() {
 fn history_sync_cursors_are_invalidated_after_rollback() {
     let root = temp_root("sync-rollback");
     let (store, ops) = open(&root);
-    let first = ok(&ops, "s", "first", "append_entities", objects(Value::Array(vec![message("a", 1, "keep")])));
-    ok(&ops, "s", "second", "append_entities", objects(Value::Array(vec![message("b", 2, "remove")])));
-    let page = ok(&ops, "s", "window", "history_sync", with(&[("limit", number(1))]));
-    ok(&ops, "s", "rollback", "head_switch", with(&[
-        ("objectId", first["objectId"].clone()), ("expectedRevision", head(&ops)["revision"].clone()),
-    ]));
+    let first = ok(
+        &ops,
+        "s",
+        "first",
+        "append_entities",
+        objects(Value::Array(vec![message("a", 1, "keep")])),
+    );
+    ok(
+        &ops,
+        "s",
+        "second",
+        "append_entities",
+        objects(Value::Array(vec![message("b", 2, "remove")])),
+    );
+    let page = ok(
+        &ops,
+        "s",
+        "window",
+        "history_sync",
+        with(&[("limit", number(1))]),
+    );
+    ok(
+        &ops,
+        "s",
+        "rollback",
+        "head_switch",
+        with(&[
+            ("objectId", first["objectId"].clone()),
+            ("expectedRevision", head(&ops)["revision"].clone()),
+        ]),
+    );
     for (name, token) in [
         ("since", page["historyWindow"]["syncCursor"].clone()),
         ("cursor", page["historyWindow"]["olderCursor"].clone()),
     ] {
-        assert!(matches!(call(&ops, "s", "stale", "history_sync", with(&[(name, token)])), Err(HistoryError::StaleCursor)));
+        assert!(matches!(
+            call(&ops, "s", "stale", "history_sync", with(&[(name, token)])),
+            Err(HistoryError::StaleCursor)
+        ));
     }
     let restored = ok(&ops, "s", "restored", "history_sync", temp());
     assert_eq!(restored["messages"].as_array().unwrap().len(), 1);
@@ -505,7 +733,13 @@ fn checkpoints_survive_head_switch_and_rebuild_the_index() {
         "append_entities",
         objects(Value::Array(vec![tombstone("c")])),
     );
-    assert_eq!(list(&ops, "before", temp())["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        list(&ops, "before", temp())["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     // Rollback: the head moves to the checkpoint root and the index is rebuilt.
     let rollback = with(&[
         ("objectId", first["objectId"].clone()),
@@ -591,10 +825,7 @@ fn object_value_chunk_respects_utf8_boundaries() {
             "s",
             &format!("chunk-{offset}"),
             "object_value_chunk",
-            with(&[
-                ("objectId", text(&object_id)),
-                ("offset", number(offset)),
-            ]),
+            with(&[("objectId", text(&object_id)), ("offset", number(offset))]),
         );
         let part = chunk["text"].as_str().unwrap();
         assert!(!part.is_empty());
@@ -701,16 +932,32 @@ fn unknown_operations_and_blobs_are_fenced() {
 fn legacy_transcript_is_read_only_and_overlay_keeps_all_entities() {
     let root = temp_root("legacy-overlay");
     let (store, ops) = open(&root);
-    ok(&ops, "s", "first", "append_entities", objects(Value::Array(vec![message("old", 1, "old content")])));
-    drop(ops); drop(store);
-    let dir = crate::storage::jsonl::layout::session_dir(&root, "s").unwrap().join("history");
+    ok(
+        &ops,
+        "s",
+        "first",
+        "append_entities",
+        objects(Value::Array(vec![message("old", 1, "old content")])),
+    );
+    drop(ops);
+    drop(store);
+    let dir = crate::storage::jsonl::layout::session_dir(&root, "s")
+        .unwrap()
+        .join("history");
     let legacy = dir.join("history.000000");
     std::fs::rename(dir.join(super::HISTORY_FILE), &legacy).unwrap();
     let original = std::fs::read(&legacy).unwrap();
     let (store, ops) = open(&root);
-    ok(&ops, "s", "second", "append_entities", objects(Value::Array(vec![message("new", 2, "new content")])));
+    ok(
+        &ops,
+        "s",
+        "second",
+        "append_entities",
+        objects(Value::Array(vec![message("new", 2, "new content")])),
+    );
     assert_eq!(std::fs::read(&legacy).unwrap(), original);
-    drop(ops); drop(store);
+    drop(ops);
+    drop(store);
     let (_store, ops) = open(&root);
     let page = list(&ops, "read", temp());
     assert_eq!(page["items"].as_array().unwrap().len(), 2);
@@ -722,14 +969,31 @@ fn legacy_transcript_is_read_only_and_overlay_keeps_all_entities() {
 fn delayed_observation_cannot_overwrite_a_newer_authoritative_entity() {
     let root = temp_root("observed-entity");
     let (_store, ops) = open(&root);
-    ok(&ops, "s", "owner", "append_entities", objects(Value::Array(vec![message("m", 1, "complete")])));
-    let mut observation = objects(Value::Array(vec![message("m", 1, "partial"), message("missing", 2, "preserved")]));
+    ok(
+        &ops,
+        "s",
+        "owner",
+        "append_entities",
+        objects(Value::Array(vec![message("m", 1, "complete")])),
+    );
+    let mut observation = objects(Value::Array(vec![
+        message("m", 1, "partial"),
+        message("missing", 2, "preserved"),
+    ]));
     observation["ifAbsent"] = Value::Bool(true);
     ok(&ops, "s", "observer", "append_entities", observation);
     let page = list(&ops, "read", temp());
     let items = page["items"].as_array().unwrap();
     assert_eq!(items.len(), 2);
-    assert!(items.iter().any(|item| item["id"] == "m" && item["content"] == "complete"));
-    assert!(items.iter().any(|item| item["id"] == "missing" && item["content"] == "preserved"));
+    assert!(
+        items
+            .iter()
+            .any(|item| item["id"] == "m" && item["content"] == "complete")
+    );
+    assert!(
+        items
+            .iter()
+            .any(|item| item["id"] == "missing" && item["content"] == "preserved")
+    );
     cleanup(root);
 }

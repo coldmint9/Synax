@@ -44,8 +44,11 @@ impl AppendFile {
             .map_err(JsonlError::io)?;
         if torn {
             file.set_len(len).map_err(JsonlError::io)?;
-            tracing::warn!(event = "storage.tail_recovered", retained_bytes = len,
-                "Recovered incomplete storage tail");
+            tracing::warn!(
+                event = "storage.tail_recovered",
+                retained_bytes = len,
+                "Recovered incomplete storage tail"
+            );
         }
         Ok(Self {
             path: path.to_path_buf(),
@@ -56,12 +59,27 @@ impl AppendFile {
 
     /// Open only the committed extent of a v2 file. Legacy files never use this writer.
     pub fn open_committed(path: &Path, length: u64) -> JsonlResult<Self> {
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(JsonlError::io)?; }
-        let file = OpenOptions::new().create(true).read(true).append(true).open(path).map_err(JsonlError::io)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(JsonlError::io)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)
+            .map_err(JsonlError::io)?;
         let actual = file.metadata()?.len();
-        if actual < length { return Err(JsonlError::corrupt(path, actual, "missing committed bytes")); }
-        if actual != length { file.set_len(length).map_err(JsonlError::io)?; }
-        Ok(Self { path: path.to_owned(), file: Arc::new(file), len: length })
+        if actual < length {
+            return Err(JsonlError::corrupt(path, actual, "missing committed bytes"));
+        }
+        if actual != length {
+            file.set_len(length).map_err(JsonlError::io)?;
+        }
+        Ok(Self {
+            path: path.to_owned(),
+            file: Arc::new(file),
+            len: length,
+        })
     }
 
     pub fn truncate(&mut self, length: u64) -> JsonlResult<()> {
@@ -113,8 +131,13 @@ impl AppendFile {
         buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         buf.extend_from_slice(payload);
         if let Err(error) = (&*self.file).write_all(&buf) {
-            tracing::error!(event = "storage.append_failed", error_kind = crate::logging::error_kind(&error),
-                offset = self.len, bytes = buf.len(), "Storage append failed");
+            tracing::error!(
+                event = "storage.append_failed",
+                error_kind = crate::logging::error_kind(&error),
+                offset = self.len,
+                bytes = buf.len(),
+                "Storage append failed"
+            );
             let _ = self.file.set_len(self.len);
             return Err(JsonlError::io(error));
         }
@@ -127,7 +150,11 @@ impl AppendFile {
 pub fn sync_files(files: &[Arc<File>]) -> JsonlResult<()> {
     for file in files {
         file.sync_data().map_err(|error| {
-            tracing::error!(event = "storage.sync_failed", error_kind = crate::logging::error_kind(&error), "Storage sync failed");
+            tracing::error!(
+                event = "storage.sync_failed",
+                error_kind = crate::logging::error_kind(&error),
+                "Storage sync failed"
+            );
             JsonlError::io(error)
         })?;
     }

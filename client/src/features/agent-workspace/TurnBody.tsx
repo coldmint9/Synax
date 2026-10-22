@@ -1,11 +1,15 @@
 import { lazy, Suspense, useState } from "react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
+const ConversationGitCard = lazy(() => import("./git-merge/ConversationGitCard"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
     default: module.InlineVisualization,
   })),
 );
 import type { InlineVisualizationReference } from "./visualizationTranscript";
+import type { ConversationGitReference } from "./gitMergeTranscript";
+import { useTranscriptSession } from "./SessionTranscriptContext";
+import { useAgentSessionStore } from "./state/agentSessionStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
@@ -25,6 +29,20 @@ import {
   buildTurnRenderSegments,
 } from "./toolCallUtils";
 import "./conversationFlow.css";
+
+function TranscriptGitMerge({ reference }: { reference: ConversationGitReference }) {
+  const { sessionId } = useTranscriptSession();
+  const historical = useAgentSessionStore((state) =>
+    state.sessionDetailCache[reference.sessionId]?.historyWindow?.latest === false,
+  );
+  // A child transcript must never operate on the surrounding parent's task.
+  if (sessionId && sessionId !== reference.sessionId) return null;
+  return (
+    <Suspense fallback={<div className="text-[11px] text-muted-foreground" role="status">正在加载合并任务…</div>}>
+      <ConversationGitCard reference={reference} readOnly={historical || !sessionId} />
+    </Suspense>
+  );
+}
 
 function TranscriptVisualization({
   reference,
@@ -57,6 +75,7 @@ function segmentKey(
   segment: (ReturnType<typeof buildTurnRenderSegments>)[number],
   index: number,
 ): string {
+  if (segment.type === "git_merge") return `git-merge:${segment.reference.objectId}`;
   if (segment.type === "visualization") return `visualization:${segment.reference.id}`;
   if (segment.type === "media") return `media:${segment.messageId ?? index}`;
   if (segment.type === "sources")
@@ -99,6 +118,8 @@ export function TurnContent({
   );
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
+    if (segment.type === "git_merge")
+      return <TranscriptGitMerge key={key} reference={segment.reference} />;
     if (segment.type === "visualization")
       return (
         <TranscriptVisualization
@@ -230,7 +251,7 @@ export function TurnBody({
   const messageId =
     textBlocks[textBlocks.length - 1]?.messageId ??
     turn.blocks.find(
-      (block) => block.type === "media" || block.type === "visualization",
+      (block) => block.type === "media" || block.type === "visualization" || block.type === "git_merge",
     )?.messageId;
   const checkpoint = history?.checkpoint(messageId, turn.stepId);
   // The provider may still be loading persisted checkpoints while a response
@@ -255,7 +276,7 @@ export function TurnBody({
   const hasAnswer = Boolean(
     text ||
     turn.blocks.some(
-      (block) => block.type === "media" || block.type === "visualization",
+      (block) => block.type === "media" || block.type === "visualization" || block.type === "git_merge",
     ),
   );
   return (

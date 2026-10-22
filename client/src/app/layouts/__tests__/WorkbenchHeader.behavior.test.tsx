@@ -10,6 +10,7 @@ import {
   type ProjectSummary,
 } from "../../../shared/state/shellStore";
 import { useAgentSessionStore } from "../../../features/agent-workspace/state/agentSessionStore";
+import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
 
 vi.mock("../../../shared/hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en", t: (key: string) => key }),
@@ -55,6 +56,12 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 beforeEach(() => {
   useAgentSessionStore.setState(useAgentSessionStore.getInitialState());
   useTerminalStore.setState({ open: false });
+  useApiConnectivityStore.setState({
+    browserOnline: true,
+    apiReachable: "reachable",
+    failureCount: 0,
+    lastCheckedAt: null,
+  });
   useShellStore.setState((s) => ({
     preferences: { ...s.preferences, locale: "en" },
   }));
@@ -191,6 +198,17 @@ describe("workbench action state", () => {
       "aria-pressed",
       "false",
     );
+  });
+  it("shows one red disconnected indicator in the menu when the backend is unreachable", () => {
+    useApiConnectivityStore.setState({ apiReachable: "unreachable" });
+    render(<WorkbenchHeader {...base} />, { wrapper });
+
+    expect(
+      screen.getByRole("img", { name: "Backend disconnected" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Backend disconnected" }),
+    ).toHaveClass("text-danger");
   });
   it("protects a pending removal from Escape and outside click until it settles", async () => {
     const user = userEvent.setup();

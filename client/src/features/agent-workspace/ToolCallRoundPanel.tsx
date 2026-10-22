@@ -6,6 +6,7 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { hasDisplayableReasoning } from "./activityText";
 import { ToolCallSummaryLine } from "./ToolCallSummaryLine";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
+import type { ToolFileLinks } from "./fileLink";
 
 export interface ToolRoundRow {
   key: string;
@@ -31,7 +32,13 @@ export function toolRoundRows(
     isStreaming = false,
     rememberKey,
     individual = false,
-  }: { isStreaming?: boolean; rememberKey?: string; individual?: boolean } = {},
+    fileLinks,
+  }: {
+    isStreaming?: boolean;
+    rememberKey?: string;
+    individual?: boolean;
+    fileLinks?: ToolFileLinks;
+  } = {},
 ): ToolRoundRow[] {
   const rows: ToolRoundRow[] = [];
   toolBlocks.forEach((block, index) => {
@@ -56,7 +63,7 @@ export function toolRoundRows(
       const calls = block.type === "tool_call" ? [block.call] : block.calls;
       for (const call of calls) rows.push({
         key: `call:${call.id}`,
-        node: <ToolCallSummaryLine key={call.id} call={call} rememberKey={rememberKey} />,
+        node: <ToolCallSummaryLine key={call.id} call={call} rememberKey={rememberKey} fileLinks={fileLinks} />,
       });
       return;
     }

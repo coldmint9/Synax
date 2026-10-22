@@ -132,10 +132,13 @@ describe("WorkLogEntry", () => {
       tool.call = { ...tool.call, status: "failed", outputSummary: "Permission denied\nExit code: 1" };
     }
     const { container } = render(<WorkLogEntry entry={{ ...ENTRY, id: "failed-folded-log", turns: [failed] }} />);
-    // The failure is reported by the row status; folding must not replay the
-    // error text as the preview.
+    // The failure is reported by the call rows only: the folded summary keeps
+    // a neutral label and never replays the error text as a preview.
     expect(container).not.toHaveTextContent("Permission denied");
-    expect(container.querySelector(".bui-status")).toHaveAttribute("data-state", "failed");
+    expect(container.querySelector(".session-process-trigger")).not.toHaveTextContent("Failed");
+    expect(container.querySelector(".bui-status")).toBeNull();
     expect(container.querySelector(".bui-tool-details")).toBeNull();
+    fireEvent.click(container.querySelector(".session-process-trigger")!);
+    expect(container.querySelector(".bui-tool .bui-status")).toHaveAttribute("data-state", "failed");
   });
 });

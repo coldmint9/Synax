@@ -309,7 +309,10 @@ impl Projection {
         for chunk in self.live_chunks.iter() {
             if chunk.get("type").and_then(PValue::as_str) == Some("thought_delta")
                 && chunk.get("stepId").and_then(PValue::as_str) == Some(step_id.as_str())
-                && let Some(delta) = chunk.get("delta").and_then(PValue::as_str) { thought.push_str(delta); }
+                && let Some(delta) = chunk.get("delta").and_then(PValue::as_str)
+            {
+                thought.push_str(delta);
+            }
         }
         if content.is_empty() && thought.is_empty() {
             return None;
@@ -432,7 +435,9 @@ impl Projection {
         }
         match kind {
             "execution_status" if self.run.get("id").and_then(PValue::as_str) == Some(run_id) => {
-                if let Some(execution) = chunk.get("execution") { self.run.set("execution", execution.clone()); }
+                if let Some(execution) = chunk.get("execution") {
+                    self.run.set("execution", execution.clone());
+                }
             }
             "step_started" => {
                 let step_id = chunk
@@ -498,10 +503,15 @@ impl Projection {
             }
             "tool_call" | "tool_result" if matching_step => {
                 let id = chunk.get("toolCall").and_then(|call| call.get("id"));
-                let existing = self.live_chunks.iter().position(|entry| entry.get("type") == chunk.get("type") &&
-                    entry.get("toolCall").and_then(|call| call.get("id")) == id);
-                if let Some(index) = existing { self.live_chunks.set(index, chunk.clone()); }
-                else { self.live_chunks.push_back(chunk.clone()); }
+                let existing = self.live_chunks.iter().position(|entry| {
+                    entry.get("type") == chunk.get("type")
+                        && entry.get("toolCall").and_then(|call| call.get("id")) == id
+                });
+                if let Some(index) = existing {
+                    self.live_chunks.set(index, chunk.clone());
+                } else {
+                    self.live_chunks.push_back(chunk.clone());
+                }
             }
             "message"
                 if chunk
@@ -651,7 +661,10 @@ mod tests {
             );
         }
         let bytes = persistent.encode().unwrap();
-        assert_eq!(persistent.to_json(), serde_json::to_value(&canonical).unwrap());
+        assert_eq!(
+            persistent.to_json(),
+            serde_json::to_value(&canonical).unwrap()
+        );
     }
 
     #[test]

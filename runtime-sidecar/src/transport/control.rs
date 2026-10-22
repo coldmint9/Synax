@@ -8,7 +8,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-use crate::transport::protocol::{WireEnvelope, WireError, decode_wire, encode_wire, wire_envelope};
+use crate::transport::protocol::{
+    WireEnvelope, WireError, decode_wire, encode_wire, wire_envelope,
+};
 use crate::transport::socket::{MAX_FRAME_BYTES, TransportError, read_frame, write_frame};
 
 const PER_CONNECTION: usize = 32;
@@ -54,17 +56,20 @@ where
     let (mut reader, mut writer) = tokio::io::split(stream);
     let (responses, mut replies) = mpsc::channel::<Reply>(PER_CONNECTION);
     let writer_shutdown = shutdown.clone();
-    let mut writer = tokio::spawn(async move {
-        while let Some(reply) = replies.recv().await {
-            timeout(WRITE_TIMEOUT, write_frame(&mut writer, &reply.bytes))
-                .await
-                .map_err(|_| TransportError::Protocol("control response timed out".into()))??;
-            if reply.shutdown {
-                let _ = writer_shutdown.send(true);
+    let mut writer = tokio::spawn(
+        async move {
+            while let Some(reply) = replies.recv().await {
+                timeout(WRITE_TIMEOUT, write_frame(&mut writer, &reply.bytes))
+                    .await
+                    .map_err(|_| TransportError::Protocol("control response timed out".into()))??;
+                if reply.shutdown {
+                    let _ = writer_shutdown.send(true);
+                }
             }
+            Ok::<(), TransportError>(())
         }
-        Ok::<(), TransportError>(())
-    }.in_current_span());
+        .in_current_span(),
+    );
     let local = Arc::new(Semaphore::new(PER_CONNECTION));
     let mut jobs = JoinSet::new();
     let execute = Arc::new(execute);
@@ -104,12 +109,35 @@ where
         }
         let critical = match &request.body {
             Some(wire_envelope::Body::Health(_) | wire_envelope::Body::Snapshot(_)) => true,
-            Some(wire_envelope::Body::ControlCommand(command)) => matches!(command.operation.as_str(),
-                "execution_check" | "execution_open" | "execution_close" | "stop_begin" | "stop_unconfirmed" | "resume" | "read"),
+            // Lease probes are small, frequent and already fail closed on
+            // errors. Keep them out of the 16-slot critical lane so snapshots
+            // and execution-open/close controls cannot make the first token
+            // wait behind a burst of revalidation checks.
+            Some(wire_envelope::Body::ControlCommand(command)) => matches!(
+                command.operation.as_str(),
+                "execution_open"
+                    | "execution_close"
+                    | "stop_begin"
+                    | "stop_unconfirmed"
+                    | "resume"
+                    | "read"
+            ),
             _ => false,
         };
-        let global = if critical { &budget.critical_requests } else { &budget.requests }.clone().try_acquire_owned().ok();
-        let response_budget = if critical { &budget.critical_bytes } else { &budget.response_bytes }.clone();
+        let global = if critical {
+            &budget.critical_requests
+        } else {
+            &budget.requests
+        }
+        .clone()
+        .try_acquire_owned()
+        .ok();
+        let response_budget = if critical {
+            &budget.critical_bytes
+        } else {
+            &budget.response_bytes
+        }
+        .clone();
         let responses = responses.clone();
         let execute = execute.clone();
         jobs.spawn(async move {

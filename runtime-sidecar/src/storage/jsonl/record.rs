@@ -118,7 +118,10 @@ pub struct IndexRecord {
 #[serde(tag = "t")]
 pub enum Record {
     #[serde(rename = "delta_v2")]
-    Delta { c: u64, changes: Vec<super::delta::Change> },
+    Delta {
+        c: u64,
+        changes: Vec<super::delta::Change>,
+    },
     #[serde(rename = "commit_v2")]
     Commit { c: u64, g: Vec<Coverage> },
     #[serde(rename = "receipt_v2")]
@@ -148,17 +151,17 @@ pub enum Record {
     /// Root-level row: in-memory only, never written to a session segment.
     #[serde(rename = "index")]
     Index(IndexRecord),
- /// History segment records (the history store's own file family).
- #[serde(rename = "history_object")]
- HistoryObject(crate::storage::jsonl::history::HistoryObject),
- #[serde(rename = "history_head")]
- HistoryHead(crate::storage::jsonl::history::HistoryHead),
- #[serde(rename = "history_entities")]
- HistoryEntities(crate::storage::jsonl::history::HistoryEntities),
- #[serde(rename = "history_receipt")]
- HistoryReceipt(crate::storage::jsonl::history::HistoryReceipt),
- #[serde(rename = "history_aux")]
- HistoryAux(crate::storage::jsonl::history::AuxRecord),
+    /// History segment records (the history store's own file family).
+    #[serde(rename = "history_object")]
+    HistoryObject(crate::storage::jsonl::history::HistoryObject),
+    #[serde(rename = "history_head")]
+    HistoryHead(crate::storage::jsonl::history::HistoryHead),
+    #[serde(rename = "history_entities")]
+    HistoryEntities(crate::storage::jsonl::history::HistoryEntities),
+    #[serde(rename = "history_receipt")]
+    HistoryReceipt(crate::storage::jsonl::history::HistoryReceipt),
+    #[serde(rename = "history_aux")]
+    HistoryAux(crate::storage::jsonl::history::AuxRecord),
     #[serde(rename = "history_seal")]
     HistorySeal { c: u64 },
 }

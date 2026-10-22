@@ -366,6 +366,7 @@ export class GitMrService {
     id: string,
     fileId: string,
     input: MergeFileSave,
+    expectedVersion?: number,
   ) {
     const original = await this.get(projectId, id);
     if (
@@ -379,6 +380,8 @@ export class GitMrService {
       );
     return this.store.exclusive(original.commonDir, async () => {
       const mr = await this.get(projectId, id);
+      if (expectedVersion !== undefined && mr.version !== expectedVersion)
+        throw new GitMrError("MR changed; refresh before saving.", "STALE_VERSION");
       const visible = await this.file(projectId, id, fileId);
       if (visible.revision !== input.expectedRevision)
         throw new GitMrError(
@@ -781,7 +784,7 @@ export class GitMrService {
       expectedRevision: proposal.revision,
       content: proposal.content,
       resolve: false,
-    });
+    }, version);
   }
 }
 export const gitMrService = new GitMrService(gitMrStore, async (directory) => {
