@@ -1,7 +1,8 @@
-import type { ConversationGitReference } from "../../../../services/local-node/modules/agent-runtime/conversation-git/contracts";
+import type { RemotePrReference } from "../../../../services/local-node/modules/remote-pr/contracts";
+import type { ConversationGitReference as LocalGitReference } from "../../../../services/local-node/modules/agent-runtime/conversation-git/contracts";
 import type { AgentRuntimeMessage } from "../../adapters/transport/agentRuntime";
 
-export type { ConversationGitReference };
+export type ConversationGitReference = LocalGitReference | RemotePrReference;
 
 export type GitMergeReplyPart = {
   type: "git_merge";
@@ -21,14 +22,14 @@ export function readConversationGitReference(
 ): ConversationGitReference | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const reference = value as Record<string, unknown>;
-  if (reference.schema !== "synax.git-merge" || reference.schemaVersion !== 1 ||
+  if (!["synax.git-merge", "synax.git-pr"].includes(String(reference.schema)) || reference.schemaVersion !== 1 ||
       !identifier(reference.objectId) || !identifier(reference.sessionId) ||
       reference.sessionId !== sessionId || !identifier(reference.projectId) ||
       (reference.rootId !== undefined && !identifier(reference.rootId)) ||
       typeof reference.title !== "string" || !reference.title.trim() ||
       reference.title.length > 250 || /[\u0000-\u001f\u007f]/.test(reference.title)) return null;
   return {
-    schema: "synax.git-merge",
+    schema: reference.schema as ConversationGitReference["schema"],
     schemaVersion: 1,
     objectId: reference.objectId,
     sessionId: reference.sessionId,

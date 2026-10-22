@@ -38,7 +38,6 @@ import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
 import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
 import { ChangedFilesViewport } from "./ChangedFilesViewport";
 import { SessionTodoPanel } from "./SessionTodoPanel";
-import { SessionProfilePanel } from "./SessionProfilePanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
@@ -504,12 +503,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
         key={environment.projectId}
         scope={environment.projectId}
       >
-        <DashboardPanel
-          id="runtime"
-          label={locale === "zh" ? "运行详情" : "Runtime details"}
-        >
-          <SessionProfilePanel sessionId={sessionId} />
-        </DashboardPanel>
         {repositories.map((root) => (
           <DashboardPanel
             key={root.rootId}
@@ -571,12 +564,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       key={environment?.projectId ?? projectId ?? "default"}
       scope={environment?.projectId ?? projectId ?? "default"}
     >
-      <DashboardPanel
-        id="runtime"
-        label={locale === "zh" ? "运行详情" : "Runtime details"}
-      >
-        <SessionProfilePanel sessionId={sessionId} />
-      </DashboardPanel>
       {!sessionId ? (
         <div className="ws-placeholder">{t("workspaceSelectSession")}</div>
       ) : environment && repositoryEnvironment ? (

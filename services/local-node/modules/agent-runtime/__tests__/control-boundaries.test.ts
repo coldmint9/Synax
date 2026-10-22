@@ -4,6 +4,8 @@ import { agentSessionRuntime } from "../session-runtime.js";
 import { toolRegistry } from "../tool-registry.js";
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
+import { buildSpecialistChildInput } from "../specialist-profile.js";
+import { profileService } from "../profile-service.js";
 import {
   belongsToPlanExecution,
   isGoalProof,
@@ -24,11 +26,9 @@ describe("control authority boundaries", () => {
       prompt: "Review",
       sessionMetadata: { mode: "chat" },
     });
-    const delegated = await toolRegistry.execute(
-      parent.id,
-      "subagent.delegate",
+    const child = agentSessionRuntime.create(buildSpecialistChildInput(
+      parent,
       {
-        name: "专家",
         prompt: "Read files only",
         specialist: {
           name: "Expert",
@@ -38,8 +38,9 @@ describe("control authority boundaries", () => {
           skillIds: [],
         },
       },
-    );
-    const id = (delegated.toolResult!.result as { taskId: string }).taskId;
+      profileService.getForSession(parent),
+    ));
+    const id = child.id;
     expect(
       (await toolRegistry.execute(id, "file.read", { path: "package.json" }))
         .record.status,

@@ -10,6 +10,8 @@ export function ProjectCapabilitiesSection({ projectId }: { projectId: string; s
     section === 'archive' ||
     section === 'mcpServers' ||
     section === 'computerUse' ||
+    section === 'analytics' ||
+    section === 'subagents' ||
     section === 'llmProviders'
       ? 'skill'
       : section

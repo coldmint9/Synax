@@ -18,7 +18,6 @@ import {
 import {
   forgetSessionList,
   forgetSessionsFromLists,
-  isSessionListFresh,
   recallSessionList,
   rememberSessionList,
   resetSessionListCache,
@@ -992,16 +991,22 @@ export interface AgentSessionStoreState {
     mode: AgentSessionMode,
   ) => Promise<void>;
   /**
-   * Paint a workspace's list: fetch on a first visit, reuse the remembered
-   * snapshot inside its freshness window, and reconcile it silently after.
-   * Explicit re-reads keep calling `refreshSessions`.
+   * Paint a workspace's list the first time it is opened. Every later visit
+   * reuses the remembered snapshot: the list is never reconciled on its own,
+   * rows arrive through live callbacks, and explicit actions still call
+   * `refreshSessions`.
    */
   ensureSessionsLoaded: () => Promise<void>;
-  refreshSessions: (options?: {
-    joinPending?: boolean;
-    /** Reconcile a restored snapshot without showing the list as loading. */
-    background?: boolean;
-  }) => Promise<void>;
+  refreshSessions: (options?: { joinPending?: boolean }) => Promise<void>;
+  /**
+   * Read one session by id and paint its row.
+   *
+   * Live callbacks name the session they change but a row can be missing — a
+   * session created in another window, or one outside the loaded page — and a
+   * patch-less event carries no fields at all. Reading that one session keeps
+   * the list honest without re-reading (and re-ordering) the whole page.
+   */
+  syncSessionSummary: (sessionId: string) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   resetSessionDetailForDraft: () => void;
   resetConversationHistory: (sessionId: string) => void;
@@ -1368,9 +1373,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     ensureSessionsLoaded: async () => {
       const { projectId, sessionListLoadedAt } = get();
       if (!projectId) return;
-      const loaded = sessionListLoadedAt > 0;
-      if (loaded && isSessionListFresh(sessionListLoadedAt)) return;
-      await get().refreshSessions({ joinPending: true, background: loaded });
+      // One read per workspace per session: a failed first read leaves the
+      // stamp at zero so the next mount retries.
+      if (sessionListLoadedAt > 0) return;
+      await get().refreshSessions({ joinPending: true });
     },
 
     refreshSessions: async (options) => {
@@ -1382,13 +1388,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
       const refresh = { projectId, again: false, promise: Promise.resolve() };
       activeSessionsRefresh = refresh;
-      // A restored snapshot stays on screen while it reconciles: only a real
-      // load may show the list as loading.
-      set(
-        options?.background
-          ? { sessionListError: null }
-          : { sessionListLoading: true, sessionListError: null },
-      );
+      set({ sessionListLoading: true, sessionListError: null });
       refresh.promise = (async () => {
         try {
           do {
@@ -1474,6 +1474,44 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         }
       })();
       return refresh.promise;
+    },
+
+    syncSessionSummary: async (sessionId) => {
+      if (!sessionId || isRuntimeResourceGone(sessionId)) return;
+      const targetProjectId = get().projectId;
+      if (!targetProjectId) return;
+      let session: AgentSession;
+      try {
+        ({ session } = await agentRuntimeApi.getSessionSummary(sessionId));
+      } catch {
+        // A callback about a session that is gone, or a transient read failure,
+        // must not surface as a list error.
+        return;
+      }
+      if (session.projectId !== get().projectId) {
+        // Another workspace's row: keep its remembered copy current only.
+        updateSessionListRows((row) => (row.id === session.id ? session : row));
+        return;
+      }
+      set((state) => {
+        const index = state.sessions.findIndex((item) => item.id === session.id);
+        if (index === -1)
+          return {
+            sessions: [session, ...state.sessions],
+            sessionListTotal:
+              state.sessionListTotal === null
+                ? null
+                : state.sessionListTotal + 1,
+          };
+        const live = state.sessions[index];
+        // A read must not overwrite a patch that landed later.
+        if (live === session || live.updatedAt > session.updatedAt) return {};
+        const sessions = [...state.sessions];
+        sessions[index] = session;
+        return { sessions };
+      });
+      const current = get().projectId;
+      if (current) rememberCurrentSessionList(current);
     },
 
     loadMoreSessions: async () => {
@@ -3333,7 +3371,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         });
       }
       if (!patched && typeof patch.title === "string") {
-        void get().refreshSessions();
+        // An asynchronously generated title can land for a row this page never
+        // loaded. Read that session instead of re-reading the whole list.
+        void get().syncSessionSummary(sessionId);
       }
       return patched;
     },

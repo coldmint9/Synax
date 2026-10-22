@@ -18,6 +18,8 @@ import { UpdateSettings } from "./components/UpdateSettings";
 import { SessionArchiveSettings } from "./components/SessionArchiveSettings";
 import { McpServersSection } from "./components/McpServersSection";
 import { ComputerUseGlobalSettings } from "./components/ComputerUseGlobalSettings";
+import { AnalyticsSettings } from "./components/AnalyticsSettings";
+import { SubagentSettings } from "./components/SubagentSettings";
 
 export default function GlobalSettingsPage() {
   const { globalConfig, providers, reload, updateGlobalConfig } = useConfig();
@@ -26,7 +28,7 @@ export default function GlobalSettingsPage() {
   const projectId = useShellStore(state => state.currentProjectId);
   const [params, setParams] = useSearchParams();
   const selected = params.get('section') ?? 'general';
-  const section: SettingsSection = ['archive', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse', 'llmProviders'].includes(selected) ? selected as SettingsSection : 'general';
+  const section: SettingsSection = ['archive', 'analytics', 'subagents', 'tool', 'skill', 'mcp', 'market', 'mcpServers', 'computerUse', 'llmProviders'].includes(selected) ? selected as SettingsSection : 'general';
   const select = (value: SettingsSection) => setParams(previous => { const next = new URLSearchParams(previous); next.set('section', value); return next; });
   const goToProviders = () => select('llmProviders');
 
@@ -51,8 +53,10 @@ export default function GlobalSettingsPage() {
     <ScrollArea className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
-          {section === "archive" ? (
+          {section === "subagents" ? <SubagentSettings /> : section === "archive" ? (
             <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
+          ) : section === "analytics" ? (
+            <AnalyticsSettings projectId={projectId} />
           ) : section === "llmProviders" ? (
             <div className="space-y-8">
               <LlmProviderSection

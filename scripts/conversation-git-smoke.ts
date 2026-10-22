@@ -70,6 +70,10 @@ try{
   const freePort=async()=>{const server=http.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');const port=(server.address() as {port:number}).port;await new Promise<void>(resolve=>server.close(()=>resolve()));return port;};
   const apiPort=await freePort(),webPort=await freePort();
   const env={...process.env,DATA_ROOT:dataRoot,PORT:String(apiPort),WEB_PORT:String(webPort),LOG_LEVEL:'error'};delete env.SYNAX_RUNTIME_SIDECAR_SOCKET;delete env.SYNAX_RUNTIME_SIDECAR_TOKEN;delete env.SYNAX_RUNTIME_SIDECAR_PORT;
+  if(process.argv.includes('--remote-fixture')){
+    const {installRemotePrFixture}=await import('./fixtures/install-remote-pr-fixture.js');
+    const cliDir=await installRemotePrFixture(fixture,repo);env.PATH=cliDir+path.delimiter+env.PATH;
+  }
   const logs=await fs.open(path.join(fixture,'api.log'),'a');
   const api=spawn(process.execPath,['--import','tsx','services/local-node/entrypoints/http-server.ts'],{cwd:process.cwd(),env,stdio:['ignore',logs.fd,logs.fd]});children.push(api);
   const web=spawn(process.execPath,[path.resolve('node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port',String(webPort),'--strictPort'],{cwd:path.resolve('client'),env,stdio:['ignore',logs.fd,logs.fd]});children.push(web);

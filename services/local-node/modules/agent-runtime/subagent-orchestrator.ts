@@ -9,6 +9,7 @@ import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import { outsideExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 /** A child is governed by execution progress, not a total wall-clock budget. */
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
 export const SUBAGENT_LEASE_DURATION_MS = 30_000;
@@ -217,7 +218,7 @@ export async function waitForChildSessions(
  * SubagentResult. On timeout the child is aborted and finalized; sibling work
  * is untouched. Uncooperative upstream reads cannot hold the result open.
  */
-export async function runChildToCompletion(
+export function runChildToCompletion(
   childSessionId: string,
   spec: SubagentSpec,
   opts: {
@@ -228,6 +229,17 @@ export async function runChildToCompletion(
     resume?: boolean;
   } = {},
   deps: OrchestratorDeps = defaultDeps,
+): Promise<SubagentResult> {
+  // Admission and supervision belong to the child, not the parent's execution
+  // lease. The coordinator installs the child's own context when driving it.
+  return outsideExecutionContext(() => executeChildToCompletion(childSessionId, spec, opts, deps));
+}
+
+async function executeChildToCompletion(
+  childSessionId: string,
+  spec: SubagentSpec,
+  opts: NonNullable<Parameters<typeof runChildToCompletion>[2]>,
+  deps: OrchestratorDeps,
 ): Promise<SubagentResult> {
   const existing = deps.store.tryGetSession(childSessionId);
   if (
@@ -240,6 +252,7 @@ export async function runChildToCompletion(
   const startedAt = nowIso();
   let lastProgressAt = Date.now();
   let timedOut = false;
+  let failureReason: string | undefined;
   const progressTimeoutMs = opts.progressTimeoutMs ?? SUBAGENT_PROGRESS_TIMEOUT_MS;
   const touch = (phase: string) => {
     deps.store.updateSessionMetadata?.(childSessionId, {
@@ -312,11 +325,29 @@ export async function runChildToCompletion(
     } else {
       const { runCoordinator } = await import("./run-coordinator.js");
       const requestId = `subagent:${childSessionId}:${startedAt}`;
-      await runCoordinator.submitAsync(childSessionId, opts.input ?? {}, requestId, opts.resume ? "resume" : "turn");
-      await runCoordinator.waitForSessionIdle(childSessionId);
+      controller.signal.throwIfAborted();
+      const accepted = await runCoordinator.submitAsync(childSessionId, opts.input ?? {}, requestId, opts.resume ? "continue" : "turn");
+      try {
+        // Renew progress only from real run events. A supervisor heartbeat
+        // alone must neither time out a healthy child nor keep a hung one alive.
+        for await (const _record of runCoordinator.observeRun(childSessionId, accepted.run.id, 0, controller.signal))
+          lastProgressAt = Date.now();
+        controller.signal.throwIfAborted();
+      } catch (error) {
+        controller.abort(error);
+        throw error;
+      } finally {
+        if (controller.signal.aborted)
+          await runCoordinator.interrupt(childSessionId,
+            controller.signal.reason instanceof Error ? controller.signal.reason.message : "Subagent aborted.");
+        // Do not return/release the writer until its actual executor stops.
+        await runCoordinator.waitForSessionIdle(childSessionId);
+        await deps.store.hydrateSession(childSessionId, true);
+      }
     }
     lastProgressAt = Date.now();
   } catch (err) {
+    failureReason = err instanceof Error ? err.message : String(err);
     logger.warn(
       { childSessionId, profileId: spec.profileId, err },
       "[subagent-orchestrator] child stream errored",
@@ -328,7 +359,7 @@ export async function runChildToCompletion(
     reapUnresolvableChild(
       childSessionId, timedOut, opts.timeoutMs ?? progressTimeoutMs, deps,
       controller.signal.aborted && controller.signal.reason instanceof Error
-        ? controller.signal.reason.message : undefined,
+        ? controller.signal.reason.message : failureReason,
     );
     const finalChild = deps.store.tryGetSession(childSessionId);
     const finalState = finalChild?.status === "completed"

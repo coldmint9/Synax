@@ -40,6 +40,7 @@ import type { ReasoningEffort } from "../../../shared/contracts/config";
 import { useLocale } from "../../../shared/hooks/useLocale";
 import { ComposerAttachMenu } from "./ComposerAttachMenu";
 import { ComposerModelPicker } from "./ComposerModelPicker";
+import { ComposerContextRing } from "./ComposerContextRing";
 import {
   ComposerEffortPicker,
   type ComposerReasoningEffort,
@@ -56,6 +57,7 @@ import { VideoGenerationInput } from "../../media/VideoGenerationInput";
 import { mediaJobInput, mediaOperationFor } from "../../media/mediaSubmission";
 import { apiRequest } from "../../../adapters/transport/origin";
 import type { MediaJob, ModelCapability } from "../../../shared/contracts/media-generation";
+import type { ContextUsageSnapshot } from "../../../adapters/transport/agentRuntime";
 
 export interface ComposerCommands {
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -78,6 +80,8 @@ interface Props {
   /** Optional session-only control, beside the model picker in either layout. */
   backendId?: string;
   modelControl?: ReactNode;
+  /** Persisted request-context usage shown as a ring beside the model chip. */
+  contextUsage?: ContextUsageSnapshot | null;
   modeControl?: ReactNode;
   placeholder?: string;
   /** New-session-only visual hint; never changes the textarea value. */
@@ -122,6 +126,7 @@ export function AgentComposer({
   optimizationScope,
   commands,
   modelControl,
+  contextUsage,
   backendId,
   modeControl,
   placeholder,
@@ -634,6 +639,7 @@ export function AgentComposer({
         {modeControl}
       </div>
       <div className="agent-dock-composer-settings contents">
+        <ComposerContextRing usage={contextUsage ?? null} />
         {modelControl ?? (
           <ComposerModelPicker
             backendId={backendId}
@@ -838,6 +844,7 @@ export function AgentComposer({
               className="agent-dock-composer-input min-h-[1.25rem] max-h-[1.25rem] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[14px] font-normal leading-[1.25rem] text-foreground/85 outline-none placeholder:text-muted-foreground/45"
             />
           </div>
+          <ComposerContextRing usage={contextUsage ?? null} />
           {modelControl ?? (
             <ComposerModelPicker
               backendId={backendId}

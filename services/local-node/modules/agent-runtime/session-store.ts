@@ -32,6 +32,13 @@ import {
   projectSessionUsage,
   type SessionUsageProjection,
 } from "./usage-projection.js";
+import {
+  readSessionAnalytics,
+  withCompletedRunAnalytics,
+  withStepAnalytics,
+  withToolCallAnalytics,
+  type SessionAnalytics,
+} from "./analytics-projection.js";
 import type { WorkRecord } from "./work-store.js";
 
 type Entity = { id: string; sessionId?: string | null };
@@ -363,6 +370,55 @@ export class AgentRuntimeStore {
       sessionMetadata: { ...current.sessionMetadata, ...patch },
     });
   }
+  /** Incremental runtime stats persisted on the session projection.
+   * Step/run/tool hooks fold one record at a time; readers never rescan. */
+  private sessionAnalytics(sessionId: string): SessionAnalytics | null {
+    const session = this.sessions.get(sessionId);
+    return session
+      ? readSessionAnalytics(session.sessionMetadata?.runtimeAnalytics)
+      : null;
+  }
+  private writeSessionAnalytics(
+    sessionId: string,
+    next: SessionAnalytics | null,
+  ): void {
+    if (!next) return;
+    const session = this.sessions.get(sessionId);
+    if (
+      !session ||
+      session.sessionMetadata?.archivedAt ||
+      session.sessionMetadata?.deletedAt
+    )
+      return;
+    const current = readSessionAnalytics(
+      session.sessionMetadata?.runtimeAnalytics,
+    );
+    if (current && JSON.stringify(current) === JSON.stringify(next)) return;
+    this.updateSessionMetadata(sessionId, { runtimeAnalytics: next });
+  }
+  private recordStepAnalytics(step: AgentRunStep): void {
+    const next = withStepAnalytics(
+      this.sessionAnalytics(step.sessionId),
+      step,
+    );
+    if (next) this.writeSessionAnalytics(step.sessionId, next);
+  }
+  private recordRunAnalytics(run: AgentRun): void {
+    const next = withCompletedRunAnalytics(
+      this.sessionAnalytics(run.sessionId),
+      run,
+      this.listRunSteps(run.id).length,
+    );
+    if (next) this.writeSessionAnalytics(run.sessionId, next);
+  }
+  private recordToolCallAnalytics(call: ToolCallRecord): void {
+    const current = this.sessionAnalytics(call.sessionId);
+    if (!current && !this.sessions.has(call.sessionId)) return;
+    this.writeSessionAnalytics(
+      call.sessionId,
+      withToolCallAnalytics(current, call.toolId),
+    );
+  }
   listSessionBadges(projectIds: string[]) {
     return this.listSessions({ limit: Infinity })
       .filter((s) => projectIds.includes(s.projectId))
@@ -674,11 +730,13 @@ export class AgentRuntimeStore {
   }
   updateRun(id: string, patch: Partial<AgentRun>): AgentRun {
     const current = this.getRun(id);
-    return this.appendRun({
+    const next = this.appendRun({
       ...current,
       ...patch,
       metadata: { ...current.metadata, ...patch.metadata },
     });
+    this.recordRunAnalytics(next);
+    return next;
   }
   listRuns(id: string) {
     return this.listRecords<AgentRun>("run", id).sort((a, b) =>
@@ -686,7 +744,9 @@ export class AgentRuntimeStore {
     );
   }
   appendRunStep(step: AgentRunStep) {
-    return this.saveRecord("step", step);
+    const saved = this.saveRecord("step", step);
+    this.recordStepAnalytics(saved);
+    return saved;
   }
   getRunStep(id: string) {
     return this.requireRecord<AgentRunStep>("step", id);
@@ -718,7 +778,10 @@ export class AgentRuntimeStore {
     return Math.max(0, ...this.listRunParts(id).map((p) => p.sequence)) + 1;
   }
   appendToolCall(call: ToolCallRecord) {
-    return this.saveRecord("tool_call", call);
+    const existed = this.collection("tool_call").has(call.id);
+    const saved = this.saveRecord("tool_call", call);
+    if (!existed) this.recordToolCallAnalytics(saved);
+    return saved;
   }
   updateToolCall(
     sessionId: string,

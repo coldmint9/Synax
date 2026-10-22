@@ -5,9 +5,13 @@ import type { AgentSession } from "../../../adapters/transport/agentRuntime";
  *
  * Switching workspaces used to drop the list and fetch it again, so every
  * switch painted an empty loading skeleton and waited for a round trip. A
- * workspace now keeps its last painted rows, cursor and total in memory, so a
- * return visit renders them synchronously and only reconciles in the background
- * once the snapshot is stale.
+ * workspace now keeps its last painted rows, cursor and total in memory: a
+ * return visit renders them synchronously and never re-reads the page.
+ *
+ * The list is not reconciled on its own. Rows change through the runtime's live
+ * callbacks (`session_changed` / `session_created` / `session_deleted`), which
+ * patch the exact row they name, and a session that was never loaded is read
+ * when it is opened.
  *
  * Invariants:
  * - Rows are already filtered by `isRuntimeResourceGone`, so a restored list
@@ -24,8 +28,6 @@ export interface SessionListSnapshot {
   loadedAt: number;
 }
 
-/** A return visit inside this window paints from memory without any request. */
-export const SESSION_LIST_FRESH_MS = 60_000;
 /** Workspaces remembered at once; the least recently visited one is dropped. */
 export const REMEMBERED_SESSION_LISTS = 8;
 
@@ -36,16 +38,6 @@ const snapshots = new Map<string, SessionListSnapshot>();
  * next real read is remembered again.
  */
 const purged = new Set<string>();
-
-export function isSessionListFresh(
-  loadedAt: number,
-  ttl = SESSION_LIST_FRESH_MS,
-  now = Date.now(),
-): boolean {
-  if (!Number.isFinite(loadedAt) || loadedAt <= 0) return false;
-  const age = now - loadedAt;
-  return age >= 0 && age < ttl;
-}
 
 export function rememberSessionList(
   projectId: string | null | undefined,

@@ -550,7 +550,7 @@ export type ClearInactiveSessionsBody = z.infer<
 >;
 
 export const turnReferenceSchema = z.object({
-  kind: z.enum(["skill", "mcp", "file"]),
+  kind: z.enum(["skill", "mcp", "file", "subagent"]),
   id: z.string().min(1).max(1024),
   label: z.string().max(256).optional(),
 });

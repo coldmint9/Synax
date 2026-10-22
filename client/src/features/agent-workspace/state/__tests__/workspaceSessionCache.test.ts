@@ -9,7 +9,6 @@ import {
   useAgentSessionStore,
   type SessionDetailCacheEntry,
 } from "../agentSessionStore";
-import { SESSION_LIST_FRESH_MS } from "../sessionListCache";
 
 vi.mock("../../../../adapters/transport/agentRuntime", () => ({
   agentRuntimeApi: {
@@ -18,10 +17,15 @@ vi.mock("../../../../adapters/transport/agentRuntime", () => ({
       totalCount: 0,
       countByStatus: {},
     })),
+    getSessionSummary: vi.fn(async () => ({ session: null })),
   },
 }));
 
-function row(id: string, projectId: string): AgentSession {
+function row(
+  id: string,
+  projectId: string,
+  overrides: Partial<AgentSession> = {},
+): AgentSession {
   return {
     id,
     projectId,
@@ -43,6 +47,7 @@ function row(id: string, projectId: string): AgentSession {
     activeRunId: null,
     pendingResumeToken: null,
     sessionMetadata: { mode: "chat" },
+    ...overrides,
   } as AgentSession;
 }
 
@@ -112,8 +117,6 @@ describe("workspace session cache", () => {
     await openWorkspace("beta", [row("b1", "beta")]);
 
     vi.mocked(agentRuntimeApi.listSessions).mockClear();
-    const loadedAt = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(loadedAt + SESSION_LIST_FRESH_MS / 2);
 
     useAgentSessionStore.getState().setProjectId("alpha");
 
@@ -126,7 +129,7 @@ describe("workspace session cache", () => {
     expect(agentRuntimeApi.listSessions).not.toHaveBeenCalled();
   });
 
-  it("reconciles a stale snapshot in the background without a loading list", async () => {
+  it("never re-reads a remembered list, however long the workspace was idle", async () => {
     const base = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     await openWorkspace("alpha", [row("a1", "alpha")]);
@@ -134,21 +137,43 @@ describe("workspace session cache", () => {
 
     vi.mocked(agentRuntimeApi.listSessions).mockClear();
     vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue(
-      page([row("a2", "alpha"), row("a1", "alpha")]),
+      page([row("unexpected", "alpha")]),
     );
-    clock.mockReturnValue(base + SESSION_LIST_FRESH_MS + 1);
+    // A day later the list is still the one this client painted: rows change
+    // through live callbacks, not through a re-validating read.
+    clock.mockReturnValue(base + 24 * 60 * 60 * 1000);
 
     useAgentSessionStore.getState().setProjectId("alpha");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(
       useAgentSessionStore.getState().sessions.map((session) => session.id),
     ).toEqual(["a1"]);
-
-    await vi.waitFor(() =>
-      expect(
-        useAgentSessionStore.getState().sessions.map((session) => session.id),
-      ).toEqual(["a2", "a1"]),
-    );
+    expect(agentRuntimeApi.listSessions).not.toHaveBeenCalled();
     expect(useAgentSessionStore.getState().sessionListLoading).toBe(false);
+  });
+
+  it("retries the one initial read after it failed", async () => {
+    vi.mocked(agentRuntimeApi.listSessions).mockRejectedValueOnce(
+      new Error("offline"),
+    );
+    useAgentSessionStore.getState().setProjectId("alpha");
+    await vi.waitFor(() =>
+      expect(useAgentSessionStore.getState().sessionListError).toContain(
+        "offline",
+      ),
+    );
+    expect(useAgentSessionStore.getState().sessionListLoadedAt).toBe(0);
+
+    // The workspace is already bound, so only a new mount/visit asks again.
+    vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue(
+      page([row("a1", "alpha")]),
+    );
+    await useAgentSessionStore.getState().ensureSessionsLoaded();
+    expect(
+      useAgentSessionStore.getState().sessions.map((session) => session.id),
+    ).toEqual(["a1"]);
+    expect(agentRuntimeApi.listSessions).toHaveBeenCalledTimes(2);
   });
 
   it("restores the transcript parked with the workspace", async () => {
@@ -186,6 +211,61 @@ describe("workspace session cache", () => {
 
     useAgentSessionStore.getState().setProjectId("alpha");
     expect(useAgentSessionStore.getState().sessions[0]?.status).toBe("failed");
+  });
+
+  it("paints a session a live callback names without re-reading the page", async () => {
+    await openWorkspace("alpha", [row("c1", "alpha")]);
+    vi.mocked(agentRuntimeApi.listSessions).mockClear();
+    vi.mocked(agentRuntimeApi.getSessionSummary).mockResolvedValue({
+      session: row("c2", "alpha", { updatedAt: "2026-02-01T00:00:00Z" }),
+    } as never);
+
+    await useAgentSessionStore.getState().syncSessionSummary("c2");
+
+    expect(
+      useAgentSessionStore.getState().sessions.map((session) => session.id),
+    ).toEqual(["c2", "c1"]);
+    expect(agentRuntimeApi.listSessions).not.toHaveBeenCalled();
+  });
+
+  it("updates the remembered row when the callback names another workspace", async () => {
+    await openWorkspace("alpha", [row("d1", "alpha")]);
+    await openWorkspace("beta", [row("d2", "beta")]);
+    vi.mocked(agentRuntimeApi.getSessionSummary).mockResolvedValue({
+      session: row("d1", "alpha", {
+        status: "failed",
+        updatedAt: "2026-03-01T00:00:00Z",
+      }),
+    } as never);
+
+    await useAgentSessionStore.getState().syncSessionSummary("d1");
+
+    // The workspace in view keeps its own rows.
+    expect(
+      useAgentSessionStore.getState().sessions.map((session) => session.id),
+    ).toEqual(["d2"]);
+
+    useAgentSessionStore.getState().setProjectId("alpha");
+    expect(useAgentSessionStore.getState().sessions[0]?.status).toBe("failed");
+  });
+
+  it("does not let a late read overwrite a newer live row", async () => {
+    await openWorkspace("alpha", [
+      row("e1", "alpha", { updatedAt: "2026-05-01T00:00:00Z" }),
+    ]);
+    vi.mocked(agentRuntimeApi.getSessionSummary).mockResolvedValue({
+      session: row("e1", "alpha", {
+        status: "completed",
+        updatedAt: "2026-04-01T00:00:00Z",
+      }),
+    } as never);
+
+    await useAgentSessionStore.getState().syncSessionSummary("e1");
+
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+      status: "completed",
+      updatedAt: "2026-05-01T00:00:00Z",
+    });
   });
 
   it("forgets a removed workspace instead of resurrecting its rows", async () => {

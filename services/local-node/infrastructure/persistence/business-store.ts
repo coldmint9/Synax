@@ -5,7 +5,7 @@ import { RuntimeSidecarError } from '../../modules/agent-runtime/sidecar/sidecar
 export const BUSINESS_COLLECTIONS = [
   'memories', 'skill-sources', 'skill-installs', 'skill-catalog', 'skill-preferences',
   'extension-state', 'extension-definitions', 'extension-directories', 'extension-packages',
-  'extension-sources', 'tool-grants', 'media-jobs',
+  'extension-sources', 'tool-grants', 'media-jobs', 'subagent-templates',
 ] as const;
 export type BusinessCollection = typeof BUSINESS_COLLECTIONS[number];
 interface RecordValue { key: string; revision: number; value: unknown }

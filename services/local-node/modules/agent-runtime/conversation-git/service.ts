@@ -421,7 +421,9 @@ export class ConversationGitService {
       const method = methods[input.action];
       if (!method) throw new GitMrError('Unknown merge action.', 'INVALID_ACTION', 400);
       let outcome: MergeRequest;
-      try { outcome = await this.gitMr[method](task.projectId, mr.id, input.expectedVersion); }
+      try { outcome = method === 'finalize' && input.skipChecks === true
+        ? await this.gitMr.finalize(task.projectId, mr.id, input.expectedVersion, { skipChecks: true })
+        : await this.gitMr[method](task.projectId, mr.id, input.expectedVersion); }
       catch (error) {
         if (input.action === 'cancel' && error instanceof GitMrError && error.code === 'STOPPING')
           return '已请求停止验证；等待进程退出后可取消任务，草稿将保留。';
@@ -429,7 +431,7 @@ export class ConversationGitService {
       }
       if (input.action === 'cancel' && outcome.status === 'merged')
         return `目标分支 ${mr.target} 已包含候选结果，任务已核实为合并完成。`;
-      const receipts = { prepare: '已准备隔离合并工作区。', continue: '已保存解决结果并继续合并。', checks: '验证执行已结束，请查看检查结果。', finalize: `合并完成，目标分支 ${mr.target} 已更新。`, cancel: '合并任务已取消，隔离工作区和草稿已保留。', resume: '已恢复任务，请查看当前 Git 状态。' };
+      const receipts = { prepare: '已准备隔离合并工作区。', continue: '已保存解决结果并继续合并。', checks: '验证执行已结束，请查看检查结果。', finalize: `${input.skipChecks ? '已按你的选择跳过验证；' : ''}合并完成，目标分支 ${mr.target} 已更新。`, cancel: '合并任务已取消，隔离工作区和草稿已保留。', resume: '已恢复任务，请查看当前 Git 状态。' };
       return receipts[method];
     });
   }

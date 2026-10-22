@@ -2,23 +2,59 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ConversationGitCommit } from "../../../adapters/transport/conversationGit";
 import { Button } from "../../../shared/ui/ui/Button";
+import { useGraphMotion } from "./graphMotion";
 import { layoutCommitGraph } from "./model";
 
 const rowHeight = 35;
 const laneWidth = 17;
 const pointX = (lane: number) => 12 + lane * laneWidth;
 
-/** Edges are drawn only between actual OIDs/parents supplied by Git. */
+export interface PendingMergeGraph {
+  key: string;
+  target: string;
+  sources: string[];
+  parents: string[];
+  candidateOid?: string;
+}
+/** Real history stays solid. A clearly labelled prospective merge is dashed. */
 export function CommitGraph({
   commits,
-  applying,
+  pendingMerge,
+  animate = true,
 }: {
   commits: ConversationGitCommit[];
-  applying: boolean;
+  pendingMerge?: PendingMergeGraph;
+  animate?: boolean;
 }) {
   const [all, setAll] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const rows = useMemo(() => layoutCommitGraph(commits), [commits]);
+  const pendingOid =
+    pendingMerge?.candidateOid &&
+    commits.some((commit) => commit.oid === pendingMerge.candidateOid)
+      ? pendingMerge.candidateOid
+      : pendingMerge
+        ? `pending:${pendingMerge.key}`
+        : undefined;
+  const projectedCommits = useMemo(() => {
+    if (!pendingMerge || commits.some((commit) => commit.oid === pendingOid))
+      return commits;
+    return [
+      {
+        oid: pendingOid!,
+        parents: [...new Set(pendingMerge.parents)],
+        subject: `合并 ${pendingMerge.sources.join(" + ")} → ${pendingMerge.target}`,
+        refs: [],
+        author: "",
+        date: "",
+      },
+      ...commits,
+    ];
+  }, [commits, pendingOid, pendingMerge]);
+  const rows = useMemo(
+    () => layoutCommitGraph(projectedCommits),
+    [projectedCommits],
+  );
+  const motion = useGraphMotion(Boolean(pendingMerge) && animate);
   const visible = all ? rows : rows.slice(0, 7);
   const positions = new Map(
     visible.map((row, index) => [row.commit.oid, { lane: row.lane, index }]),
@@ -30,7 +66,12 @@ export function CommitGraph({
   const renderedWidth = Math.min(width, 88);
   const detail = commits.find((commit) => commit.oid === selected);
   return (
-    <section className="conversation-git-graph" aria-label="真实提交关系">
+    <section
+      ref={motion.ref}
+      className="conversation-git-graph"
+      data-motion={motion.running ? "running" : "paused"}
+      aria-label="提交关系与待合并预览"
+    >
       <div className="conversation-git-section-label">
         <span>分支与提交</span>
         <span>
@@ -38,7 +79,7 @@ export function CommitGraph({
         </span>
       </div>
       <div
-        className={`conversation-git-graph-layout ${applying ? "is-applying" : ""}`}
+        className="conversation-git-graph-layout"
         style={{ gridTemplateColumns: `${renderedWidth}px minmax(0, 1fr)` }}
       >
         <svg
@@ -65,7 +106,7 @@ export function CommitGraph({
               return (
                 <path
                   key={`${row.commit.oid}:${parent}`}
-                  className={`conversation-git-edge lane-${from.lane % 3}`}
+                  className={`conversation-git-edge lane-${from.lane % 3}${row.commit.oid === pendingOid ? " is-pending" : ""}`}
                   d={`M ${start.x} ${start.y} C ${start.x} ${(start.y + end.y) / 2}, ${end.x} ${(start.y + end.y) / 2}, ${end.x} ${end.y}`}
                 />
               );
@@ -74,7 +115,7 @@ export function CommitGraph({
           {visible.map((row, index) => (
             <circle
               key={row.commit.oid}
-              className={`conversation-git-node lane-${row.lane % 3}`}
+              className={`conversation-git-node lane-${row.lane % 3}${row.commit.oid === pendingOid ? " is-pending" : ""}`}
               cx={pointX(row.lane)}
               cy={index * rowHeight + rowHeight / 2}
               r={index === 0 ? 4 : 3}
@@ -87,10 +128,20 @@ export function CommitGraph({
               <button
                 className="conversation-git-commit"
                 onClick={() =>
-                  setSelected(selected === commit.oid ? null : commit.oid)
+                  setSelected(
+                    commit.oid.startsWith("pending:")
+                      ? null
+                      : selected === commit.oid
+                        ? null
+                        : commit.oid,
+                  )
                 }
                 aria-expanded={selected === commit.oid}
-                title={`${commit.subject} · ${commit.oid}`}
+                title={
+                  commit.oid.startsWith("pending:")
+                    ? "待产生的合并提交；虚线表示计划关系"
+                    : `${commit.subject} · ${commit.oid}`
+                }
               >
                 <span className="conversation-git-commit-copy">
                   <strong>{commit.subject}</strong>
@@ -98,7 +149,11 @@ export function CommitGraph({
                     <small>{commit.refs.join(" · ")}</small>
                   )}
                 </span>
-                <code>{commit.oid.slice(0, 7)}</code>
+                {commit.oid === pendingOid ? (
+                  <span className="conversation-git-pending-label">待合并</span>
+                ) : (
+                  <code>{commit.oid.slice(0, 7)}</code>
+                )}
                 {selected === commit.oid ? (
                   <ChevronDown size={12} />
                 ) : (

@@ -33,7 +33,7 @@ import {
 import { files, flowReducer, initialState } from "./flow-model.js";
 import GitGraph from "./GitGraph.jsx";
 
-const stepLabels = ["分析变更", "解决冲突", "验证结果", "完成合并"];
+
 const titles = {
   scanning: "正在分析",
   conflict: "等待你的决定",
@@ -224,7 +224,7 @@ export function App() {
       response = "已确认当前两项选择，任务卡正在原位显示测试进度。";
     } else
       response =
-        "这是本地交互原型，尚未连接模型。可用示例指令：“第二个文件保留 main”“解释组合方案”“运行验证”。你也可以直接操作任务卡。";
+        "这是本地交互原型，尚未连接模型。可用示例指令：“第二个文件保留 main”“查看合并结果”“运行验证”。你也可以直接操作任务卡。";
     setMessages((prev) => [...prev, { id: Date.now(), text, response }]);
     setInput("");
     setToast("已回复 · 在当前任务卡下方查看");
@@ -519,30 +519,6 @@ export function App() {
                 </div>
                 {!collapsed && (
                   <>
-                    <ol className="step-strip" aria-label="任务进度">
-                      {stepLabels.map((label, index) => (
-                        <li
-                          key={label}
-                          className={
-                            stageStep[state.stage] > index
-                              ? "complete"
-                              : stageStep[state.stage] === index
-                                ? "current"
-                                : ""
-                          }
-                        >
-                          <span>
-                            {stageStep[state.stage] > index ? (
-                              <Check size={11} />
-                            ) : (
-                              index + 1
-                            )}
-                          </span>
-                          {label}
-                          {index < 3 && <ChevronRight size={12} />}
-                        </li>
-                      ))}
-                    </ol>
                     <div className="graph-section">
                       <div className="section-eyebrow">
                         <span>分支与提交</span>
@@ -981,10 +957,7 @@ export function App() {
                 你可以直接确认建议，也可以展开文件对比。选择会留在这段对话里。
               </p>
               <div className="suggestions">
-                <button onClick={() => send("为什么建议组合这两段逻辑？")}>
-                  <MessageSquare size={12} />
-                  解释组合方案
-                </button>
+
                 <button onClick={() => send("第二个文件保留 main")}>
                   <GitBranch size={12} />
                   第二个文件保留 main

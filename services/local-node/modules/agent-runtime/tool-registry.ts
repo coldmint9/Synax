@@ -16,11 +16,6 @@ import { mediaReadTool } from "./tools/media-read.js";
 import { mediaGenerateTool } from "./tools/media-generate.js";
 import { mediaAudioVideoTools } from "./tools/media-audio-video.js";
 import { mediaJobsTools } from "./tools/media-jobs.js";
-import {
-  contentPartsSchema,
-  type RuntimeContentPart,
-} from "./content-parts.js";
-import { bindAssets, validateAssets, sessionHasAsset } from "./media-assets.js";
 import { assertRuntimeExecutionCurrent, isExecutionSuperseded, currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { workTools } from "./tools/work-tools.js";
 import { verificationTool } from "./tools/verification.js";
@@ -30,11 +25,11 @@ import { workspaceFingerprint } from "./work-fingerprint.js";
 import { withCommandSignal } from "./tools/exec-async.js";
 import { resolvePermissionDecision, isProjectToolGrantDenied } from "./permission-policy.js";
 import {
-  specialistSpecSchema,
-  buildSpecialistChildInput,
   assertSpecialistToolAllowed,
 } from "./specialist-profile.js";
 import { controlTools } from "./control-tools.js";
+import { delegateArgsSchema, delegateSubagent } from "./subagent-delegation.js";
+import { assertSubagentToolAllowed } from "./subagent-profile.js";
 import { subagentLifecycleTools } from "./subagent-tools.js";
 import { controlToolError } from "./control-policy.js";
 import { presentationTool } from "./presentation-runtime.js";
@@ -68,7 +63,6 @@ import { hasProjectToolGrant } from "./project-tool-grants.js";
 import { workspaceRoot } from "./tools/workspace.js";
 import { invalidateSessionEnvironment } from "./session-environment.js";
 import { makeRuntimeId, nowIso } from "./runtime-ids.js";
-import { agentSessionRuntime } from "./session-runtime.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { sessionHooks } from "./session-hooks.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
@@ -86,10 +80,6 @@ import { fileWriteTool } from "./tools/file-write.js";
 import { rgTool } from "./tools/rg.js";
 import { webSearchTool } from "./tools/web-search.js";
 import {
-  buildExplorerSubagentPrompt,
-  shouldWrapExplorerDelegatePrompt,
-} from "./synax/synax-explorer-delegate.js";
-import {
   isToolMountedForSession,
   profileCanUseTool,
 } from "./tool-mount-policy.js";
@@ -102,6 +92,7 @@ import {
 import { browserTools } from "./tools/browser/browser-tools.js";
 import { designTools } from "./design-tools.js";
 import { conversationGitTools } from "./conversation-git/tools.js";
+import { remotePrTools } from "../remote-pr/tools.js";
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -151,6 +142,7 @@ export class ToolRegistry {
       ...subagentLifecycleTools,
       ...designTools,
       ...conversationGitTools,
+      ...remotePrTools,
       ...workTools,
       verificationTool,
       bashTool,
@@ -180,272 +172,12 @@ export class ToolRegistry {
     this.registerProvider(jevSessionToolProvider);
     this.registerProvider(customToolProvider);
     this.register({
-      id: "subagent.delegate",
-      label: "Run Subtask",
-      description:
-        "Delegate a focused subtask to a child agent with a clean context. Give the child a short 2-3 character name and pass it in name with the delegation (for example 林墨); short names in any style are welcome and names may repeat. Use this when a task would produce large intermediate noise (reading many files, searching, exploring) but the final useful result is just a short summary. The child runs in isolation — its intermediate steps do NOT enter your context, only the final summary returns. Do NOT delegate if: the task is simple (1-2 tool calls), you need the intermediate details for subsequent reasoning, or the task cannot be described in one focused prompt.",
-      category: "task",
-      internalGate: "task",
-      mutability: "task",
-      resumeBehavior: "auto",
-      progressiveDetails:
-        "Use a builtin profileId or define specialist: { name, role, instructions, capabilities, skillIds, writeScope? }, plus prompt, deliverable and acceptanceCriteria. specialist takes precedence over profileId. Builtin profiles: explorer, reviewer. One child level; at most 3 active children. Specialists have no shell or further delegation. Write capabilities require writeScope: concrete paths relative to the child working directory, e.g. [\"client/src\"]. A directory includes descendants; do not add /**. No absolute paths, roots (including .), .. segments, globs or symlink components. Only one specialist writer may be active; wait for it to finish before delegating another. Plan specialists cannot write files. Permissions are inherited and cannot be expanded.",
-      inputSchema: z.object({
-        name: z.string().trim().min(1).describe(
-          "Generate a short 2-3 character display name for this child when delegating (for example 林墨 or 阿柚). Short names in any language or style are welcome; names do not need to be unique. This is the child's identity, independent of its profile or specialist role.",
-        ),
-        contentParts: contentPartsSchema.optional(),
-        specialist: specialistSpecSchema.optional(),
-        deliverable: z.string().min(1).max(4000).optional(),
-        acceptanceCriteria: z
-          .array(z.string().min(1).max(1000))
-          .max(20)
-          .optional(),
-        profileId: z
-          .string()
-          .optional()
-          .describe(
-            "Builtin child profile: explorer (default) or reviewer. Ignored when specialist is supplied.",
-          ),
-        prompt: z
-          .string()
-          .min(1)
-          .describe("Non-whitespace prompt for the child agent session; specialist prompts are limited to 20,000 characters after trimming."),
-        nodeId: z
-          .string()
-          .min(1)
-          .nullable()
-          .optional()
-          .describe("Optional graph node context for the child session."),
-        thinkingMode: z
-          .enum(["fast", "standard", "deep"])
-          .optional()
-          .describe("Child session thinking mode."),
-      }),
-      execute: async (input) => {
-        const MAX_CONCURRENT_SUBTASKS = 3;
-
-        const parent = this.store.getSession(input.sessionId);
-
-        if (parent.parentSessionId) {
-          throw new AgentValidationError(
-            "Sub-agents cannot delegate further sub-agents.",
-          );
-        }
-
-        const args = input.args as {
-          name: string;
-          contentParts?: RuntimeContentPart[];
-          profileId?: string;
-          prompt: string;
-          nodeId?: string | null;
-          thinkingMode?: "fast" | "standard" | "deep";
-          specialist?: import("./specialist-profile.js").SpecialistSpec;
-          deliverable?: string;
-          acceptanceCriteria?: string[];
-        };
-        if (args.contentParts) {
-          validateAssets(args.contentParts, parent.projectId);
-          for (const part of args.contentParts)
-            if (
-              part.type !== "text" &&
-              !sessionHasAsset(parent.id, part.assetId)
-            )
-              throw new AgentValidationError(
-                "Only assets attached to the parent may be delegated.",
-              );
-        }
-        if (args.specialist && args.profileId)
-          throw new AgentValidationError(
-            "Choose specialist or profileId, not both.",
-          );
-        const profileId = args.specialist
-          ? "specialist"
-          : (args.profileId ?? "explorer");
-
-        const ALLOWED_SUBTASK_PROFILES = [
-          "explorer",
-          "reviewer",
-        ];
-        if (!args.specialist && !ALLOWED_SUBTASK_PROFILES.includes(profileId)) {
-          throw new AgentValidationError(
-            `Subtask profile must be one of: ${ALLOWED_SUBTASK_PROFILES.join(", ")}. Got "${profileId}".`,
-          );
-        }
-        if (!args.prompt?.trim())
-          throw new AgentValidationError(
-            "prompt is required for subagent.delegate.",
-          );
-
-        const childPrompt = shouldWrapExplorerDelegatePrompt(profileId)
-          ? buildExplorerSubagentPrompt(args.prompt)
-          : args.prompt.trim();
-
-        // Concurrency check: count active children of the immediate parent
-        const siblings = (parent.childSessionIds ?? [])
-          .map((id) => {
-            try {
-              return this.store.getSession(id);
-            } catch {
-              return null;
-            }
-          })
-          .filter(
-            (s) =>
-              s &&
-              [
-                "queued",
-                "running",
-                "waiting_permission",
-                "waiting_input",
-              ].includes(s.status),
-          );
-        if (siblings.length >= MAX_CONCURRENT_SUBTASKS) {
-          throw new AgentValidationError(
-            `Maximum concurrent subtasks (${MAX_CONCURRENT_SUBTASKS}) reached. Wait for existing subtasks to complete.`,
-          );
-        }
-
-        if (
-          args.specialist?.capabilities.some((c) =>
-            ["file.write", "file.patch", "file.delete"].includes(c),
-          ) &&
-          siblings.some(
-            (s) =>
-              (
-                s!.sessionMetadata?.specialist as
-                  | { writeScope?: string[] }
-                  | undefined
-              )?.writeScope?.length,
-          )
-        )
-          throw new AgentValidationError(
-            "A specialist writer is already active. Delegate writes serially.",
-          );
-        if (args.specialist?.writeScope?.length) {
-          for (const capability of args.specialist.capabilities.filter((c) =>
-            ["file.write", "file.patch", "file.delete"].includes(c),
-          ))
-            for (const scope of args.specialist.writeScope) {
-              const action = resolvePermissionDecision({
-                sessionId: parent.id,
-                category: "write",
-                internalGate: capability === "file.delete" ? "delete" : "write",
-                pattern: scope,
-                rules: parent.permissionRules,
-              }).action;
-              if (action !== "allow")
-                throw new AgentValidationError(
-                  "Writable specialists require parent write permissions already granted for their scope. Ask the user to grant them or delegate read-only and apply changes on the parent.",
-                );
-            }
-          if (
-            this.store
-              .listToolCalls(parent.id)
-              .some(
-                (c) =>
-                  c.status === "running" &&
-                  (c.mutability === "write" ||
-                    c.toolId === "bash" ||
-                    c.category === "mcp"),
-              )
-          )
-            throw new AgentValidationError(
-              "Parent workspace operation is still running. Delegate writer tasks separately.",
-            );
-        }
-        const subagentName = args.name.trim();
-        const child = agentSessionRuntime.create(
-          args.specialist
-            ? buildSpecialistChildInput(
-                parent,
-                {
-                  specialist: args.specialist,
-                  prompt: args.prompt,
-                  deliverable: args.deliverable,
-                  acceptanceCriteria: args.acceptanceCriteria,
-                  thinkingMode: args.thinkingMode,
-                },
-                this.profiles.getForSession(parent),
-              )
-            : {
-                projectId: parent.projectId,
-                sessionMetadata: {
-                  mode: parent.sessionMetadata?.mode ?? "chat",
-                },
-                mcpServerIds: parent.mcpServerIds,
-                skillIds: parent.skillIds,
-                nodeId: args.nodeId ?? parent.nodeId,
-                profileId,
-                parentSessionId: parent.id,
-                prompt: childPrompt,
-                thinkingMode: args.thinkingMode,
-              },
-        );
-        const role = args.specialist
-          ? {
-              roleName: args.specialist.role,
-              roleDescription: args.specialist.instructions,
-            }
-          : {
-              roleName:
-                {
-                  explorer: "探索员",
-                  reviewer: "审查员",
-                }[profileId] ?? "研究员",
-              roleDescription:
-                {
-                  explorer: "读取代码、搜索线索并梳理系统结构。",
-                  reviewer: "检查实现、发现风险并给出可执行的审查意见。",
-                }[profileId] ?? "根据委派任务进行分析和整理。",
-            };
-        const namedChild = this.store.updateSessionMetadata(child.id, {
-          subagentName,
-          ...role,
-        });
-        const delegationContext = [
-          "## Subagent delegation context",
-          `You are ${subagentName}.`,
-          `Your role is ${role.roleName}.`,
-          `Your role capabilities: ${role.roleDescription}`,
-          "Use this role to guide your decisions, tool choices, and final summary.",
-          "",
-          "## Delegated task",
-          childPrompt,
-        ].join("\n");
-        const contextualChild = this.store.updateSession(child.id, {
-          prompt: delegationContext,
-        });
-        if (args.contentParts) {
-          const parts: RuntimeContentPart[] = [
-            { type: "text", text: delegationContext },
-            ...args.contentParts,
-          ];
-          await bindAssets(child.id, parts);
-          this.store.updateSessionMetadata(child.id, {
-            initialContentParts: parts,
-          });
-        }
-        return {
-          result: {
-            taskId: child.id,
-            session: contextualChild,
-            summary: `Child session ${child.id} (${profileId}) created.`,
-          },
-          displaySummary: `Started ${profileId} subtask ${child.id}.`,
-          artifacts: [
-            {
-              kind: "decision",
-              title: "Subtask created",
-              summary: `Started ${profileId} child session ${child.id}.`,
-              risk: "low",
-            },
-          ],
-          followUpHints: [
-            "The parent agent blocks until this subtask completes and returns its summary.",
-          ],
-        };
-      },
+      id: "subagent.delegate", label: "Delegate to Subagent",
+      description: "Delegate a focused task to a general-purpose subagent. Automatically configure its profile or use a user-selected templateId. The tool starts the child and waits for its result before the parent continues.",
+      progressiveDetails: "Configure profile.name, description, instructions, capabilities, access, writeScope, skills, model and thinkingMode as needed. Omitted fields inherit the parent. Delegate automatically within current authorization; never ask the user to configure a role or approve an already-authorized delegation. Explicit parent restrictions still apply. Assign non-overlapping file ownership, preserve other agents' edits, and use subagent.lifecycle start for background work. Up to 5 active children; children cannot delegate.",
+      category: "task", internalGate: "task", mutability: "task", resumeBehavior: "auto",
+      inputSchema: delegateArgsSchema,
+      execute: delegateSubagent,
     });
     this.register(presentationTool);
     this.register({
@@ -549,7 +281,7 @@ export class ToolRegistry {
         (options.includeGated
           ? isToolMountedForSession(session, t)
           : !controlToolError(session, t)) &&
-        (session.profileId !== "specialist" ||
+        (!["specialist", "subagent"].includes(session.profileId) ||
           profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),
     );
@@ -775,7 +507,7 @@ export class ToolRegistry {
       } });
       return { record: recordDenied, permission: denied };
     }
-    if (decision.action === "ask" && session.profileId === "specialist") {
+    if (decision.action === "ask" && ["specialist", "subagent"].includes(session.profileId)) {
       const reason =
         "This operation needs user approval. Return the permission blocker to the primary agent; specialists never open their own approval dialog.";
       const denied = this.store.updatePermission(sessionId, decision.id, {
@@ -912,6 +644,7 @@ export class ToolRegistry {
       const policyError = controlToolError(freshSession, tool, args);
       if (policyError) throw new AgentValidationError(policyError);
       assertSpecialistToolAllowed(freshSession, tool.id, args);
+      assertSubagentToolAllowed(freshSession, tool, args);
       if (
         freshSession.profileId === "specialist" &&
         freshSession.parentSessionId

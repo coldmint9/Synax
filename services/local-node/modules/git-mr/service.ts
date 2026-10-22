@@ -447,6 +447,7 @@ export class GitMrService {
       );
   }
   private async runChecks(mr: MergeRequest) {
+    mr.skippedChecks = undefined;
     await this.current(mr);
     await this.verifyCandidate(mr);
     if (!mr.checks.length)
@@ -501,12 +502,12 @@ export class GitMrService {
       await this.runChecks(mr);
     });
   }
-  private async publish(mr: MergeRequest) {
+  private async publish(mr: MergeRequest, skipChecks = false) {
     await this.current(mr);
     await this.verifyCandidate(mr);
     await this.noOsMetadata(mr);
     if (
-      mr.checks.some(
+      !skipChecks && mr.checks.some(
         (check) =>
           !mr.checkResults.some(
             (result) =>
@@ -618,11 +619,17 @@ export class GitMrService {
     mr.status = "merged";
     await this.store.save(mr, `Merged into ${mr.target}: ${mr.candidateOid}`);
   }
-  async finalize(projectId: string, id: string, version: number) {
+  async finalize(projectId: string, id: string, version: number, options: { skipChecks?: boolean } = {}) {
     return this.mutate(projectId, id, version, async (mr) => {
-      if (mr.status !== "ready")
+      if (mr.status !== "ready" && !(options.skipChecks && mr.status === "check_failed"))
         throw new GitMrError("MR is not ready to merge.", "INVALID_STATE");
-      await this.publish(mr);
+      if (options.skipChecks) {
+        await this.current(mr);
+        await this.verifyCandidate(mr);
+        mr.skippedChecks = { tree: mr.candidateTree!, at: new Date().toISOString() };
+        await this.store.save(mr, "User explicitly skipped verification for this candidate; checks are not marked passed.");
+      }
+      await this.publish(mr, options.skipChecks === true);
     });
   }
   async cancel(projectId: string, id: string, version: number) {

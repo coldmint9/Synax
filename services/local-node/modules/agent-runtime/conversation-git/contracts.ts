@@ -57,6 +57,8 @@ export type ConversationGitCreate = Omit<MergeRequestInput, 'autoFinalize'> & { 
 export type ConversationGitActionName = 'prepare' | 'continue' | 'checks' | 'finalize' | 'cancel' | 'resume' | 'replan';
 export interface ConversationGitAction {
   action: ConversationGitActionName;
+  /** Explicit human decision; valid only with finalize. */
+  skipChecks?: boolean;
   requestId: string;
   expectedVersion: number;
   expectedTaskRevision: number;

@@ -1,4 +1,5 @@
 import "./composerModes.css";
+import ComposerGitActions from "./git-actions/ComposerGitActions";
 import { Target } from "lucide-react";
 import { NewSessionScene } from "./NewSessionScene";
 import { welcomePlaceholderDelay } from "./welcomeTyping";
@@ -38,6 +39,7 @@ import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
+import { readSessionContextUsage } from "./contextUsage";
 import {
   readLastPermissionTier,
   rememberPermissionTier,
@@ -796,6 +798,7 @@ export function SessionComposer({
       defaultExpanded={isCentered}
       providerId={providerId}
       modelId={modelId}
+      contextUsage={readSessionContextUsage(session)}
       capability={capability}
       onModelSelect={(selection) => {
         if (backendId !== "native") {
@@ -838,6 +841,27 @@ export function SessionComposer({
   );
 
   const goalMode = backendId === "native" && mode === "goal";
+
+  const gitActions = <ComposerGitActions
+    session={session}
+    projectId={projectId}
+    disabled={readingHistory || submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
+    ensureSession={async () => {
+      if (session) return session;
+      if (createdDraftRef.current) return createdDraftRef.current;
+      const created = await submitSessionDraft(projectId, {
+        message: "处理本地 Git 与远程 PR", prompt: "处理本地 Git 与远程 PR", backendId,
+        permissionTier: cliBackend ? undefined : permissionTier,
+        mode: "chat", gitWorkspace,
+      });
+      createdDraftRef.current = created;
+      return created;
+    }}
+    onOpenConversation={(id) => {
+      void refreshSessions();
+      navigate(sessionPath(projectId, id));
+    }}
+  />;
 
   const composerShell = (
     <div
@@ -956,11 +980,12 @@ export function SessionComposer({
         <NewSessionScene key={viewKey}>
           <NewSessionWelcome finish={Boolean(content)} />
           <div className="w-full min-w-0">
-            <div data-welcome-enter="">{composerShell}</div>
+            <div data-welcome-enter="">{gitActions}{composerShell}</div>
           </div>
         </NewSessionScene>
       ) : (
         <div className="relative mx-auto w-full min-w-0 max-w-3xl">
+          {gitActions}
           {statusSlot}
           {composerShell}
         </div>

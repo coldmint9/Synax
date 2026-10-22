@@ -23,6 +23,7 @@ import { makeRuntimeId, nowIso } from "./runtime-ids.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { ensureSessionRecovered } from './session-recovery.js';
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { businessStore } from "../../infrastructure/persistence/business-store.js";
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -124,9 +125,11 @@ export async function acceptRuntimeRunAuthoritative(
   }
   const permissionChangeRequested =
     input.permissionTier !== undefined || input.permissionOverrides !== undefined;
+  if (input.references?.some(ref => ref.kind === "subagent")) await businessStore.refresh(["subagent-templates"]);
+  const savedSubagents = queueItem?.referenceContext?.subagentProfiles ?? input.referenceContext?.subagentProfiles;
   const preparedReferenceContext = permissionChangeRequested
     ? undefined
-    : prepareTurnReferences(sessionId, input.references, preparedWorkDir);
+    : prepareTurnReferences(sessionId, input.references, preparedWorkDir, savedSubagents);
 
   if (preparedSession.sessionMetadata?.runtimeControl) {
     // Heal the fence before rejecting: recovery is automatic, so a stale stop
@@ -193,7 +196,7 @@ export async function acceptRuntimeRunAuthoritative(
       referenceContext:
         preparedReferenceContext && preparedWorkDir === workDir
           ? preparedReferenceContext
-          : prepareTurnReferences(sessionId, input.references, workDir),
+          : prepareTurnReferences(sessionId, input.references, workDir, savedSubagents),
       ...(model ? { model } : {}),
     },
     backendId: binding.id,

@@ -118,7 +118,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
       ) : (
         <div className="message-action-group max-w-[min(85%,42rem)]">
           <div
-            className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed text-foreground whitespace-pre-wrap shadow-sm"
+            className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm"
             style={{ fontWeight: userMessageFontWeight }}
           >
             {content}

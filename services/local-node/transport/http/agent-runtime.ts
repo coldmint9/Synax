@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { matchedRoutes } from 'hono/route';
 import { createConversationGitRoutes } from './conversation-git.js';
+import { createRemotePrRoutes } from './remote-pr.js';
 import { streamSSE } from "hono/streaming";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
@@ -136,6 +137,7 @@ import {
   projectSessionSummary,
 } from "../../modules/agent-runtime/session-projection.js";
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
+import { projectAnalytics } from "../../modules/agent-runtime/analytics-service.js";
 import { RuntimeSidecarError } from "../../modules/agent-runtime/sidecar/sidecar-client.js";
 import {
   resolveProjectWorkspaceLocation,
@@ -168,7 +170,9 @@ import {
 } from "../../modules/project-workspace.js";
 import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
 import { ensureSessionRecovered } from '../../modules/agent-runtime/session-recovery.js';
+import { subagentTemplateRoutes } from "./subagent-templates.js";
 export const agentRuntimeRoutes = new Hono();
+agentRuntimeRoutes.route("/subagent-templates", subagentTemplateRoutes);
 // Load the execution working set at the HTTP boundary, and acknowledge only
 // after all mutations have reached Rust.
 agentRuntimeRoutes.use('*', async (c, next) => {
@@ -539,6 +543,7 @@ agentRuntimeRoutes.get("/media/models", (c) => {
   }
 });
 agentRuntimeRoutes.route('/sessions/:sessionId/git-tasks', createConversationGitRoutes());
+agentRuntimeRoutes.route('/sessions/:sessionId/git-pr', createRemotePrRoutes());
 
 agentRuntimeRoutes.post("/sessions/:sessionId/media-jobs", async (c) => {
   try {
@@ -723,7 +728,7 @@ agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
 agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
-      kind: z.enum(["skill", "mcp", "file"]),
+      kind: z.enum(["skill", "mcp", "file", "subagent"]),
       q: z.string().max(256).default(""),
       sessionId: z.string().optional(),
     })
@@ -2327,6 +2332,19 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/files/restore", async (c) => {
     return c.json(
       await restoreSessionFile(c.req.param("sessionId"), parsed.data),
     );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+/** Project-wide runtime analytics from incremental, persisted aggregates.
+ * Legacy sessions are mirrored once from authoritative stats, then kept in
+ * sync by the session store's step/run/tool hooks. */
+agentRuntimeRoutes.get("/analytics", async (c) => {
+  const projectId = (c.req.query("projectId") ?? "").trim();
+  if (!projectId || projectId.length > 128)
+    return c.json({ error: "projectId is required." }, 400);
+  try {
+    return c.json(await projectAnalytics(projectId));
   } catch (error) {
     return runtimeError(c, error);
   }

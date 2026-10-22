@@ -7,7 +7,6 @@ import {
 } from "react";
 import {
   ArrowRight,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -18,7 +17,6 @@ import {
   GitMerge,
   LoaderCircle,
   Maximize2,
-  MessageSquare,
   RefreshCw,
   RotateCcw,
   X,
@@ -33,14 +31,13 @@ import { useTranscriptSession } from "../SessionTranscriptContext";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { refreshWorkspace } from "../workspaceRefresh";
 import { Button } from "../../../shared/ui/ui/Button";
+import { Checkbox } from "../../../shared/ui/ui/Toggle";
 import { Dialog, DialogPanel, DialogTitle } from "../../../shared/ui/ui/Dialog";
 import { FileViewerDialog } from "../../../shared/ui/file-viewer/FileViewerDialog";
 import { taskPresentation } from "./model";
 import { CommitGraph } from "./CommitGraph";
 import { ConflictPreview } from "./ConflictPreview";
 import "./conversationGit.css";
-
-const stepLabels = ["分析分支", "解决冲突", "验证候选", "确认合并"];
 
 function newRequestId() {
   return crypto.randomUUID();
@@ -88,6 +85,7 @@ export function ConversationGitCard({
   const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState("");
   const [confirmFinalize, setConfirmFinalize] = useState(false);
+  const [skipChecks, setSkipChecks] = useState(false);
   const generation = useRef(0);
   const loadingRequest = useRef(false);
   const activeMutation = useRef("");
@@ -281,6 +279,7 @@ export function ConversationGitCard({
       | "resume"
       | "finalize"
       | "replan",
+    skip = false,
   ) =>
     mutate(action, () =>
       conversationGitApi.action(reference.sessionId, reference.objectId, {
@@ -288,6 +287,7 @@ export function ConversationGitCard({
         requestId: newRequestId(),
         expectedVersion: mr.version,
         expectedTaskRevision: snapshot.task.revision,
+        ...(action === "finalize" && skip ? { skipChecks: true } : {}),
       }),
     );
   const openFile = async (id: string) => {
@@ -385,7 +385,7 @@ export function ConversationGitCard({
     if (!owner || readOnly) return;
     void submitInput(reference.sessionId, {
       message: `${text}\n任务对象：${reference.objectId}`,
-      prompt: `${text}\n请只修改或解释当前 Git 合并任务对象 ${reference.objectId}，不要创建新的合并任务。`,
+      prompt: `${text}\n请只修改当前 Git 合并任务对象 ${reference.objectId}，不要创建新的合并任务。`,
       messageSource: "system_injection",
     }).catch((cause) =>
       setError(cause instanceof Error ? cause.message : String(cause)),
@@ -410,7 +410,6 @@ export function ConversationGitCard({
               <code>{mr.steps.map((step) => step.branch).join(" + ")}</code>
               <ArrowRight size={12} />
               <code>{mr.target}</code>
-              <span>· v{mr.version}</span>
             </p>
           </div>
         </div>
@@ -441,29 +440,23 @@ export function ConversationGitCard({
       </header>
       {!collapsed && (
         <>
-          <ol className="conversation-git-steps" aria-label="合并任务进度">
-            {stepLabels.map((label, index) => (
-              <li
-                className={
-                  presentation.step > index
-                    ? "complete"
-                    : presentation.step === index
-                      ? "current"
-                      : ""
-                }
-                key={label}
-              >
-                <span>
-                  {presentation.step > index ? <Check size={11} /> : index + 1}
-                </span>
-                {label}
-                {index < stepLabels.length - 1 && <ChevronRight size={12} />}
-              </li>
-            ))}
-          </ol>
           <CommitGraph
             commits={snapshot.commits}
-            applying={mr.status === "applying"}
+            pendingMerge={
+              !presentation.terminal && !snapshot.stale
+                ? {
+                    key: mr.id,
+                    target: mr.target,
+                    sources: mr.steps.map((step) => step.branch),
+                    parents: [
+                      mr.targetOid,
+                      ...mr.steps.map((step) => step.oid),
+                    ],
+                    candidateOid: mr.candidateOid,
+                  }
+                : undefined
+            }
+            animate={!readOnly}
           />
           {(snapshot.stale ||
             mr.status === "conflicted" ||
@@ -613,6 +606,9 @@ export function ConversationGitCard({
               未配置验证检查。请审阅候选变更，再明确确认跳过检查后更新目标。
             </p>
           )}
+          {mr.skippedChecks && (
+            <p className="conversation-git-no-checks">已由用户明确跳过验证。</p>
+          )}
           {presentation.complete && (
             <div className="conversation-git-receipt">
               <GitMerge size={18} />
@@ -660,7 +656,7 @@ export function ConversationGitCard({
                       ? hasChecks
                         ? presentation.passed === mr.checks.length
                           ? "检查通过，等待确认合并"
-                          : "候选已准备，等待运行检查"
+                          : "候选已准备，可验证或跳过验证后合并"
                         : "候选已准备，等待跳过检查的确认"
                       : presentation.status}
             </div>
@@ -709,12 +705,15 @@ export function ConversationGitCard({
                     核验并恢复
                   </Button>
                 )}
-              {mr.status === "ready" && hasChecks && (
+              {["ready", "check_failed"].includes(mr.status) && hasChecks && (
                 <Button
                   size="sm"
                   variant="primary"
-                  disabled={!canWrite || !presentation.canFinalize}
-                  onClick={() => setConfirmFinalize(true)}
+                  disabled={!canWrite}
+                  onClick={() => {
+                    setSkipChecks(false);
+                    setConfirmFinalize(true);
+                  }}
                 >
                   <GitMerge size={13} />
                   确认更新 {mr.target}
@@ -724,7 +723,10 @@ export function ConversationGitCard({
                 <Button
                   size="sm"
                   disabled={!canWrite}
-                  onClick={() => setConfirmFinalize(true)}
+                  onClick={() => {
+                    setSkipChecks(false);
+                    setConfirmFinalize(true);
+                  }}
                 >
                   确认跳过检查
                 </Button>
@@ -745,17 +747,6 @@ export function ConversationGitCard({
                   取消
                 </Button>
               )}
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={readOnly || !!busy}
-                onClick={() =>
-                  assistantPrompt("请解释当前合并任务的冲突风险和建议")
-                }
-              >
-                <MessageSquare size={13} />
-                让助手解释
-              </Button>
             </div>
           </footer>
           {error && (
@@ -783,8 +774,7 @@ export function ConversationGitCard({
       <div className="conversation-git-caption">
         <span>
           <i />
-          {readOnly ? "历史回看 · 只读" : "同一任务对象"} · 版本{" "}
-          {snapshot.task.revision}
+          {readOnly ? "历史回看 · 只读" : "当前合并任务"}
           {snapshot.task.previousMrIds.length > 0 &&
             ` · 已重新分析 ${snapshot.task.previousMrIds.length} 次`}
         </span>
@@ -836,14 +826,23 @@ export function ConversationGitCard({
               将候选提交 <code>{mr.candidateOid?.slice(0, 12)}</code> 更新到本地{" "}
               <strong>{mr.target}</strong>。服务端会再次检查分支版本与候选树。
             </p>
+            {hasChecks && !presentation.canFinalize && (
+              <label className="conversation-git-skip-confirm">
+                <Checkbox checked={skipChecks} onChange={setSkipChecks} />
+                跳过验证检查，我已审阅候选改动
+              </label>
+            )}
             <div>
               <Button onClick={() => setConfirmFinalize(false)}>
                 返回检查
               </Button>
               <Button
                 variant="primary"
-                disabled={!canWrite}
-                onClick={() => doAction("finalize")}
+                disabled={
+                  !canWrite ||
+                  (hasChecks && !presentation.canFinalize && !skipChecks)
+                }
+                onClick={() => doAction("finalize", skipChecks)}
               >
                 确认更新本地 {mr.target}
               </Button>

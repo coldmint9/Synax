@@ -67,7 +67,9 @@ pub(crate) fn composition(input: &ProviderRequest) -> Result<Composition, Contex
         estimator: "o200k-json-estimate".into(),
     };
     for message in &input.prompt {
-        let count = tokens(&serde_json::to_string(message)?) + 4;
+        // This is a text estimate. Media billing depends on the provider; raw
+        // attachment bytes/URLs must never be tokenized as conversation text.
+        let count = tokens(&serde_json::to_string(&without_attachments(message))?) + 4;
         if message["role"] == "system" {
             result.system += count;
         } else {
@@ -98,6 +100,57 @@ pub(crate) enum ContextAction {
     Compact(Compaction),
 }
 
+fn is_attachment(value: &Value) -> bool {
+    matches!(
+        value.get("type").and_then(Value::as_str),
+        Some(
+            "image"
+                | "file"
+                | "document"
+                | "audio"
+                | "video"
+                | "attachment"
+                | "image_url"
+                | "input_image"
+                | "output_image"
+                | "input_file"
+                | "input_audio"
+                | "image-data"
+                | "file-data"
+                | "file-url"
+        )
+    )
+}
+
+fn contains_attachment(value: &Value) -> bool {
+    if is_attachment(value) {
+        return true;
+    }
+    match value {
+        Value::Array(items) => items.iter().any(contains_attachment),
+        Value::Object(fields) => fields.values().any(contains_attachment),
+        _ => false,
+    }
+}
+
+/// Only the accounting projection changes. The original provider message is
+/// retained byte-for-byte, including nested tool media and native replay data.
+fn without_attachments(value: &Value) -> Value {
+    if is_attachment(value) {
+        return json!({"type":"retained-attachment"});
+    }
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(without_attachments).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| (key.clone(), without_attachments(value)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 fn has_tool_result(message: &Value) -> bool {
     message["role"] == "tool"
         || message["content"].as_array().is_some_and(|parts| {
@@ -111,9 +164,9 @@ fn pinned(message: &Value) -> bool {
         || (message["role"] == "user" && !has_tool_result(message))
         || message.pointer("/metadata/pinned").and_then(Value::as_bool) == Some(true)
 }
-fn safe_cut(prompt: &[Value], max: usize) -> usize {
+fn safe_cuts(prompt: &[Value], max: usize) -> Vec<usize> {
     let mut pending = HashSet::new();
-    let mut cut = 0;
+    let mut cuts = Vec::new();
     for (index, message) in prompt.iter().take(max).enumerate() {
         if let Some(parts) = message["content"].as_array() {
             for part in parts {
@@ -143,10 +196,37 @@ fn safe_cut(prompt: &[Value], max: usize) -> usize {
             }
         }
         if pending.is_empty() {
-            cut = index + 1;
+            cuts.push(index + 1);
         }
     }
-    cut
+    cuts
+}
+
+fn safe_cut(prompt: &[Value], max: usize) -> usize {
+    safe_cuts(prompt, max).last().copied().unwrap_or(0)
+}
+
+fn partition_prefix(prefix: &[Value]) -> (Vec<Value>, Vec<Value>) {
+    let mut retained = Vec::new();
+    let mut compressible = Vec::new();
+    let mut start = 0;
+    for end in safe_cuts(prefix, prefix.len()) {
+        let exchange = &prefix[start..end];
+        // Preserve the whole exchange when a result carries media, so its call
+        // and any sibling results remain replayable after compaction.
+        let target = if exchange
+            .iter()
+            .any(|message| pinned(message) || contains_attachment(message))
+        {
+            &mut retained
+        } else {
+            &mut compressible
+        };
+        target.extend_from_slice(exchange);
+        start = end;
+    }
+    retained.extend_from_slice(&prefix[start..]);
+    (retained, compressible)
 }
 
 pub(crate) fn plan(
@@ -167,18 +247,14 @@ pub(crate) fn plan(
             .saturating_sub(policy.keep_recent_messages),
     );
     let prefix = &input.prompt[..cut];
-    if !prefix.iter().any(|message| !pinned(message)) {
+    let (retained, compressible) = partition_prefix(prefix);
+    if compressible.is_empty() {
         return if measured.total <= budget {
             Ok(ContextAction::Ready(measured))
         } else {
             Err("context_blocked: required instructions, user input, tools and recent exchanges exceed the input budget".into())
         };
     }
-    let retained = prefix
-        .iter()
-        .filter(|message| pinned(message))
-        .cloned()
-        .collect::<Vec<_>>();
     let suffix = input.prompt[cut..].to_vec();
     let mut required = input.clone();
     required.prompt = retained.iter().chain(&suffix).cloned().collect();
@@ -189,13 +265,13 @@ pub(crate) fn plan(
         return Err("context_blocked: required context leaves no space for a checkpoint".into());
     }
     Ok(ContextAction::Compact(Compaction {
-        source: serde_json::to_string(prefix)?,
+        source: serde_json::to_string(&compressible)?,
         offset: 0,
         summary: String::new(),
         retained,
         suffix,
         original_tokens: measured.total,
-        message_count: prefix.len(),
+        message_count: compressible.len(),
         summary_tokens: available.min(12_000).min((budget / 5).max(64)),
         chunk: 0,
         attempt: 0,
@@ -344,5 +420,146 @@ mod tests {
         assert!(
             composition(&request).unwrap().total + compact.summary_tokens <= policy.context_limit
         );
+    }
+
+    #[test]
+    fn attachment_payload_size_never_triggers_text_compaction() {
+        let policy = ContextPolicy {
+            context_limit: 1500,
+            output_reserve: 128,
+            keep_recent_messages: 2,
+        };
+        for kind in [
+            "image",
+            "file",
+            "document",
+            "audio",
+            "video",
+            "input_image",
+            "input_file",
+        ] {
+            let make = |payload: &str| {
+                input(vec![
+                    json!({"role":"user","content":[
+                        {"type":"text","text":"Inspect this attachment."},
+                        {"type":kind,"data":payload,"mediaType":"application/octet-stream"}
+                    ]}),
+                    json!({"role":"assistant","content":"Earlier response."}),
+                    json!({"role":"user","content":"Continue."}),
+                    json!({"role":"assistant","content":"Checking."}),
+                ])
+            };
+            let small = make("AQID");
+            let large = make(&"attachment-base64-payload".repeat(20_000));
+            assert_eq!(
+                composition(&small).unwrap().total,
+                composition(&large).unwrap().total,
+                "{kind}"
+            );
+            assert!(
+                matches!(plan(&large, &policy).unwrap(), ContextAction::Ready(_)),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_excludes_attachments_and_retains_complete_media_exchanges() {
+        let system = json!({"role":"system","content":"Required rules."});
+        let user = json!({"role":"user","content":[
+            {"type":"text","text":"Original attachment instructions."},
+            {"type":"image","image":"USER_IMAGE_SECRET"},
+            {"type":"file","data":"USER_FILE_SECRET","filename":"report.pdf"}
+        ]});
+        let calls = json!({"role":"assistant","content":[
+            {"type":"tool-call","toolCallId":"media","toolName":"read","input":{}},
+            {"type":"tool-call","toolCallId":"sibling","toolName":"read","input":{}}
+        ]});
+        let media = json!({"role":"tool","content":[{"type":"tool-result","toolCallId":"media","output":{
+            "type":"content","value":[{"type":"text","text":"Media result description."},
+                {"type":"image","image":"TOOL_IMAGE_SECRET"}]
+        }}]});
+        let sibling = json!({"role":"tool","content":[{"type":"tool-result","toolCallId":"sibling","output":"Sibling result."}]});
+        let native = json!({"role":"assistant","content":[{"type":"text","text":"Generated media."}],
+            "rigMessage":{"role":"assistant","content":[{"type":"file","data":"NATIVE_FILE_SECRET"}]}});
+        let source = input(vec![
+            system.clone(),
+            user.clone(),
+            json!({"role":"assistant","content":"Earlier textual evidence. ".repeat(3000)}),
+            calls.clone(),
+            media.clone(),
+            sibling.clone(),
+            native.clone(),
+            json!({"role":"user","content":"Continue."}),
+            json!({"role":"assistant","content":"Checking."}),
+        ]);
+        let original = source.prompt.clone();
+        let policy = ContextPolicy {
+            context_limit: 3000,
+            output_reserve: 128,
+            keep_recent_messages: 2,
+        };
+        let ContextAction::Compact(mut compact) = plan(&source, &policy).unwrap() else {
+            panic!("expected text compaction");
+        };
+        assert_eq!(compact.message_count, 1);
+        assert!(compact.source.contains("Earlier textual evidence."));
+        let (request, _) = compact.request(&source, &policy).unwrap();
+        let summary_input = serde_json::to_string(&request.prompt).unwrap();
+        for secret in [
+            "USER_IMAGE_SECRET",
+            "USER_FILE_SECRET",
+            "TOOL_IMAGE_SECRET",
+            "NATIVE_FILE_SECRET",
+            "Original attachment instructions.",
+        ] {
+            assert!(!compact.source.contains(secret));
+            assert!(!summary_input.contains(secret));
+        }
+        compact.summary = "Earlier textual evidence, summarized.".into();
+        let (prompt, _) = compact.complete(&source, &policy).unwrap();
+        assert_eq!(&prompt[..6], &[system, user, calls, media, sibling, native]);
+        assert_eq!(&prompt[prompt.len() - 2..], &original[original.len() - 2..]);
+        assert_eq!(source.prompt, original);
+    }
+
+    #[test]
+    fn nested_tool_and_native_media_are_not_text_tokens() {
+        let make = |payload: &str| {
+            input(vec![
+                json!({"role":"tool","content":[{"type":"tool-result","toolCallId":"a","output":{
+                    "type":"content","value":[{"type":"text","text":"Evidence"},{"type":"file","data":{"type":"data","data":payload}}]
+                }}]}),
+                json!({"role":"assistant","rigMessage":{"content":[{"type":"image","source":{"type":"base64","data":payload}}]}}),
+            ])
+        };
+        assert_eq!(
+            composition(&make("AQID")).unwrap().total,
+            composition(&make(&"binary-payload".repeat(10_000)))
+                .unwrap()
+                .total
+        );
+    }
+
+    #[test]
+    fn never_compresses_required_media_exchanges_to_force_a_fit() {
+        let source = input(vec![
+            json!({"role":"assistant","content":[{"type":"tool_use","id":"a","name":"read","input":{}}]}),
+            json!({"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":[
+                {"type":"text","text":"Required attachment context. ".repeat(3000)},
+                {"type":"document","source":{"type":"base64","data":"FILE_SECRET"}}
+            ]}]}),
+            json!({"role":"user","content":"Continue."}),
+            json!({"role":"assistant","content":"Checking."}),
+        ]);
+        let policy = ContextPolicy {
+            context_limit: 1500,
+            output_reserve: 128,
+            keep_recent_messages: 2,
+        };
+        match plan(&source, &policy) {
+            Err(error) => assert!(error.to_string().contains("context_blocked")),
+            Ok(_) => panic!("required attachment context must not be summarized"),
+        }
     }
 }

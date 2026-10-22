@@ -3709,7 +3709,13 @@ input[type="radio"] {
    setting (default 14px); the global #app scale keeps all UI text in sync. */
 :root {
   --agent-chat-font-size: 14px;
+  /* A prompt or a reply is the lane's content; a call record is its annotation.
+     Message ink therefore sits well above the dimmed activity record (dark:
+     #797979, ~4.2:1 on the canvas), so a short reply never reads like another
+     work-log line. Light mode already carries its contrast in --foreground. */
+  --message-ink: var(--foreground);
 }
+.dark { --message-ink: #e9e7e1; }
 .agent-conversation-copy {
   font-family: var(--font-interface);
   font-size: var(--agent-chat-font-size, 14px) !important;
@@ -3815,6 +3821,7 @@ input[type="radio"] {
   text-rendering: optimizeLegibility;
 }
 .session-user-message {
+  color: var(--message-ink, var(--foreground));
   overflow-wrap: anywhere;
   font-weight: 450;
   letter-spacing: -0.012em;

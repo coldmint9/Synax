@@ -2098,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "synax-runtime-sidecar"
-version = "2.7.2"
+version = "2.9.0"
 dependencies = [
  "arc-swap",
  "async-stream",

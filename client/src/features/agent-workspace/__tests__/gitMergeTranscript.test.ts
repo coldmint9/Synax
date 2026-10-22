@@ -33,6 +33,13 @@ const cards = (entries: ReturnType<typeof buildConversationTimeline>) => entries
 );
 
 describe("native Git task transcript", () => {
+  it("renders persisted remote PR references with the same stable transcript contract", () => {
+    const remote = { ...reference, schema: "synax.git-pr" as const };
+    const messageWithPr = { ...message, metadata: { source: "git_merge_task", gitMergeTask: remote } };
+    expect(gitMergeReplyParts(messageWithPr)).toEqual([{ type: "git_merge", reference: remote, messageId: message.id }]);
+    expect(previewTimelineMessage(messageWithPr).metadata.gitMergeTask).toEqual(remote);
+  });
+
   it("renders validated metadata as a content segment, independently of tool disclosures", () => {
     const blocks = buildInterleavedTurns([step], [], [message])[0].blocks;
     expect(blocks.map((block) => block.type)).toEqual(["git_merge"]);

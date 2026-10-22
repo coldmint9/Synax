@@ -215,7 +215,7 @@ describe("conversation Git task", () => {
     expect(
       await screen.findByRole("button", { name: "开始分析" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "让助手解释" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "让助手解释" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始分析" }));
     expect(conversationGitApi.action).not.toHaveBeenCalled();
   });
@@ -251,7 +251,11 @@ describe("conversation Git task", () => {
     ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "确认更新 main" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "确认更新 main" }));
+    expect(screen.getByRole("button", { name: "确认更新本地 main" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "跳过验证检查，我已审阅候选改动" }));
+    expect(screen.getByRole("button", { name: "确认更新本地 main" })).toBeEnabled();
     expect(screen.getByText("0/1 通过")).toBeInTheDocument();
   });
   it("renders stale recovery without offering publish", async () => {
@@ -315,16 +319,24 @@ describe("conversation Git task", () => {
     );
     expect(conversationGitApi.get).toHaveBeenCalledTimes(2);
   });
-  it("asks the assistant in the owning session with the stable task ID", async () => {
+  it("omits revision chrome, explanatory assistant actions and the stepper", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "让助手解释" }));
-    expect(store.submitOrEnqueueSessionInput).toHaveBeenCalledWith(
-      "session-a",
-      expect.objectContaining({
-        message: expect.stringContaining("task-1"),
-        prompt: expect.stringContaining("不要创建新的合并任务"),
-      }),
-    );
+    await screen.findByRole("button", { name: "开始分析" });
+    expect(screen.queryByRole("button", { name: "让助手解释" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "合并任务进度" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/· v7|版本 2/)).not.toBeInTheDocument();
+    expect(store.submitOrEnqueueSessionInput).not.toHaveBeenCalled();
+  });
+  it("sends an explicit verification bypass only after the user selects it", async () => {
+    const value = snapshot("check_failed");
+    value.mr.checks = [{ id: "unit", executable: "node", args: ["test"], timeoutMs: 1000 }];
+    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
+    vi.mocked(conversationGitApi.action).mockResolvedValue(snapshot("merged"));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "确认更新 main" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "跳过验证检查，我已审阅候选改动" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认更新本地 main" }));
+    await waitFor(() => expect(conversationGitApi.action).toHaveBeenCalledWith("session-a", "task-1", expect.objectContaining({ action: "finalize", skipChecks: true, expectedVersion: 7, expectedTaskRevision: 2 })));
   });
   it("keeps one renderer and state while opening and closing focus view", async () => {
     mount();
@@ -412,10 +424,7 @@ describe("conversation Git task", () => {
     );
     expect(conversationGitApi.saveFile).not.toHaveBeenCalled();
     expect(await screen.findByText(/建议已保存为草稿/)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "当前结果" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await waitFor(() => expect(screen.getByRole("tab", { name: "当前结果" })).toHaveAttribute("aria-selected", "true"));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "确认此结果" })).toBeEnabled(),
     );

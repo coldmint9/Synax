@@ -10,6 +10,8 @@ import {
 } from "./subagent-orchestrator.js";
 import { nowIso } from "./runtime-ids.js";
 import { interruptAgentSessionsAndWait } from "./agent-stream-proxy.js";
+import { createConfiguredSubagent } from "./subagent-delegation.js";
+import { subagentStartFields } from "./subagent-config.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 
 const activeRuns = new Set<string>();
@@ -28,7 +30,7 @@ const lifecycleActions = [
   "close",
 ] as const;
 
-const startOnlyFields = ["prompt", "profileId", "name", "thinkingMode"] as const;
+const startOnlyFields = ["prompt", "profile", "templateId", "name", "deliverable", "acceptanceCriteria"] as const;
 const childOnlyFields = ["childSessionId", "timeoutMs", "message", "reason"] as const;
 
 /**
@@ -44,18 +46,8 @@ const lifecycleArgsSchema = z
     action: z
       .enum(lifecycleActions)
       .describe("Lifecycle action to perform on a subagent."),
-    prompt: z.string().trim().min(1).max(100_000).optional().describe(
-      "start only, required there: task prompt for the new child session.",
-    ),
-    profileId: z.enum(["explorer", "reviewer"]).optional().describe(
-      "start only: builtin child profile; explorer when omitted.",
-    ),
-    name: z.string().trim().min(1).max(200).optional().describe(
-      "start only: optional display name for the child session; prefer a short 2-3 character name.",
-    ),
-    thinkingMode: z.enum(["fast", "standard", "deep"]).optional().describe(
-      "start only: optional thinking mode for the child.",
-    ),
+    ...subagentStartFields,
+    prompt: subagentStartFields.prompt.optional(),
     childSessionId: z.string().min(1).max(64).optional().describe(
       "Required for every action except start and list; use the childSessionId returned by start or list.",
     ),
@@ -165,44 +157,13 @@ async function waitForChild(
   return childView(childSessionId, parentSessionId);
 }
 
-function startChild(input: ToolExecutionInput, args: LifecycleArgs) {
-  if (!args.prompt) throw new AgentValidationError("prompt is required to start a subagent.");
-  const profileId = args.profileId ?? "explorer";
-  const parent = agentRuntimeStore.getSession(input.sessionId);
-  if (parent.parentSessionId)
-    throw new AgentValidationError("Only a primary agent can control subagent lifecycles.");
-  if (["stopping", "paused", "interrupted", "cancelled"].includes(parent.status))
-    throw new AgentValidationError("A stopped primary session cannot start a subagent.");
-  const activeChildren = (parent.childSessionIds ?? [])
-    .map((id) => agentRuntimeStore.tryGetSession(id))
-    .filter((child) => child && !terminalStatuses.has(child.status));
-  if (activeChildren.length >= 5)
-    throw new AgentValidationError("Maximum concurrent subagents (5) reached.");
-
-  const child = agentSessionRuntime.create({
-    projectId: parent.projectId,
-    sessionMetadata: { mode: parent.sessionMetadata?.mode ?? "chat", subagentName: args.name ?? null },
-    mcpServerIds: parent.mcpServerIds,
-    skillIds: parent.skillIds,
-    nodeId: parent.nodeId,
-    profileId,
-    parentSessionId: parent.id,
-    prompt: args.prompt,
-    thinkingMode: args.thinkingMode,
-  });
-  const spec: SubagentSpec = {
-    profileId,
-    prompt: args.prompt,
-    nodeId: parent.nodeId,
-    thinkingMode: args.thinkingMode,
-    label: args.name,
-  };
-  agentRuntimeStore.updateSessionMetadata(child.id, {
-    subagentTask: { state: "queued", phase: "queued", startedAt: nowIso() },
-  });
+async function startChild(input: ToolExecutionInput, args: LifecycleArgs) {
+  const { action: _action, childSessionId: _child, timeoutMs: _timeout, message: _message, reason: _reason, ...start } = args;
+  if (!start.prompt) throw new AgentValidationError("prompt is required to start a subagent.");
+  const { child, spec } = await createConfiguredSubagent(input, { ...start, prompt: start.prompt });
   activeRuns.add(child.id);
   void runChildToCompletion(child.id, spec).catch(() => undefined).finally(() => activeRuns.delete(child.id));
-  return childView(child.id, parent.id);
+  return childView(child.id, input.sessionId);
 }
 
 export const subagentLifecycleTool: RegisteredTool = {
@@ -211,7 +172,7 @@ export const subagentLifecycleTool: RegisteredTool = {
   description:
     "Control the full lifecycle of a subagent owned by the current primary agent: start, list, inspect, wait, message, pause, resume, cancel, close, or terminate. Lifecycle actions are limited to direct child sessions. start requires prompt; every action except start and list requires childSessionId; message requires message.",
   progressiveDetails:
-    "Use start for asynchronous work when the parent should continue; profileId, name and thinkingMode apply to start only. Use the childSessionId returned by start or list for every later action, and pass timeoutMs only for wait. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input.",
+    "Use start for asynchronous work when the parent should continue; profile, templateId, name, deliverable and acceptanceCriteria apply to start only; profile configures the same general-purpose subagent as subagent.delegate. Use the childSessionId returned by start or list for every later action, and pass timeoutMs only for wait. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input.",
   category: "task",
   internalGate: "task",
   mutability: "task",
@@ -220,7 +181,7 @@ export const subagentLifecycleTool: RegisteredTool = {
   async execute(input) {
     const args = lifecycleArgsSchema.parse(input.args);
     if (args.action === "start")
-      return result(startChild(input, args), "Started asynchronous subagent.");
+      return result(await startChild(input, args), "Started asynchronous subagent.");
     if (args.action === "list") {
       const parent = agentRuntimeStore.getSession(input.sessionId);
       if (parent.parentSessionId)

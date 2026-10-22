@@ -15,6 +15,7 @@
 .session-flow-entry, .session-activity-group { min-width: 0; }
 .session-flow-entry.session-answer-region { margin: 0; padding: 0; border: 0; }
 .session-conversation-flow .session-answer-region > .agent-conversation-copy {
+  color: var(--message-ink);
   line-height: 1.65;
   letter-spacing: 0;
 }

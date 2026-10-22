@@ -40,6 +40,7 @@ import { countTokens } from "../context-tokenizer.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
 import { toRuntimeError } from "../runtime-errors.js";
 import { conversationGitContextMessage } from "../conversation-git/context.js";
+import { contextUsageSnapshot } from "../analytics-projection.js";
 
 function toolSchema(value: unknown): Record<string, unknown> {
   return z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
@@ -342,8 +343,14 @@ export class RustNativeBackend implements BackendAdapter {
           emitSessionLive(sessionId, { type: "context_compacted", stepId: step?.id ?? "",
             originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0 });
         } else if (event.type === "context-composition") {
-          if (step && event.composition) store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,
-            contextComposition: event.composition } });
+          if (step && event.composition) {
+            store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,
+              contextComposition: event.composition } });
+            // Incremental, persisted context usage for the composer ring and
+            // analytics; the request composition is measured only once here.
+            const usageSnapshot = contextUsageSnapshot(event.composition, step.id, contextLimit);
+            if (usageSnapshot) store.updateSessionMetadata(sessionId, { contextUsage: usageSnapshot });
+          }
         } else if (event.type === "step-started") {
           const existing = store.listRunSteps(run.id).find(item => item.index === event.step);
           step = existing ?? store.appendRunStep({ id: makeRuntimeId("stp"), sessionId, runId: run.id, index: event.step!,

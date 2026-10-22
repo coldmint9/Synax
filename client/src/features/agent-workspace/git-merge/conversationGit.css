@@ -109,56 +109,6 @@
   background: var(--theme-surface-secondary);
   color: var(--theme-text);
 }
-.conversation-git-steps {
-  display: flex;
-  list-style: none;
-  margin: 0;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--git-card-line);
-  background: var(--theme-surface-secondary);
-}
-.conversation-git-steps li {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex: 1;
-  color: var(--git-card-muted);
-  font-size: 10px;
-  white-space: nowrap;
-}
-.conversation-git-steps li:last-child {
-  flex: 0 0 auto;
-}
-.conversation-git-steps li > span {
-  width: 17px;
-  height: 17px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid var(--git-card-line);
-  background: var(--git-card-surface);
-  font-size: 9px;
-}
-.conversation-git-steps li.complete {
-  color: var(--theme-success);
-}
-.conversation-git-steps li.complete > span {
-  background: var(--theme-accent-soft);
-  border-color: transparent;
-}
-.conversation-git-steps li.current {
-  font-weight: 600;
-  color: var(--theme-text);
-}
-.conversation-git-steps li.current > span {
-  background: var(--git-card-accent);
-  border-color: var(--git-card-accent);
-  color: var(--theme-accent-foreground);
-}
-.conversation-git-steps li > svg {
-  margin-left: auto;
-  color: var(--git-card-muted);
-}
 .conversation-git-graph {
   padding: 13px 16px;
   border-bottom: 1px solid var(--git-card-line);
@@ -541,15 +491,6 @@
   .conversation-git-status {
     font-size: 9px;
   }
-  .conversation-git-steps {
-    padding-inline: 10px;
-  }
-  .conversation-git-steps li {
-    font-size: 9px;
-  }
-  .conversation-git-steps li > svg {
-    width: 9px;
-  }
   .conversation-git-graph,
   .conversation-git-files,
   .conversation-git-checks {
@@ -648,10 +589,6 @@
 }
 .conversation-git-expand-history {
   margin: 8px 0 0 38px;
-}
-.conversation-git-graph-layout.is-applying
-  .conversation-git-node:first-of-type {
-  animation: conversation-git-node-pulse 1s ease-in-out infinite;
 }
 @keyframes conversation-git-node-pulse {
   50% {
@@ -875,10 +812,6 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .conversation-git-graph-layout.is-applying
-    .conversation-git-node:first-of-type {
-    animation: none;
-  }
 }
 .conversation-git-receipt {
   display: flex;
@@ -929,4 +862,42 @@
 }
 .conversation-git-events li span {
   color: var(--theme-text);
+}
+
+.conversation-git-edge.is-pending {
+  stroke-dasharray: 4 5;
+  animation: conversation-git-pending-flow 1.8s linear infinite;
+  animation-play-state: paused;
+}
+.conversation-git-graph[data-motion="running"]
+  .conversation-git-edge.is-pending {
+  animation-play-state: running;
+}
+.conversation-git-node.is-pending {
+  fill: var(--surface);
+  stroke: var(--theme-accent);
+  stroke-width: 1.6;
+  stroke-dasharray: 2 2;
+}
+.conversation-git-pending-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--theme-accent);
+}
+.conversation-git-skip-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+@keyframes conversation-git-pending-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-git-edge.is-pending {
+    animation: none;
+  }
 }

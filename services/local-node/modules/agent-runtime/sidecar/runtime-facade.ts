@@ -1035,6 +1035,10 @@ export class RuntimeFacade {
     const cacheSamples = new CacheUsageAccumulator();
     let pendingCacheSamples = 0;
     let contextComposition: ContextComposition | null = null;
+    const modelBreakdown: Record<
+      string,
+      { steps: number; input: number; output: number; total: number }
+    > = {};
     const addUsage = (
       target: ReturnType<typeof zeroTotals>,
       targetCoverage: ReturnType<typeof zeroCoverage>,
@@ -1087,6 +1091,25 @@ export class RuntimeFacade {
       for (const group of groups) {
         addUsage(usage[group], coverage[group], normalized);
         addUsage(usage.steps[group], coverage.steps[group], normalized);
+      }
+      // Only this session's own steps feed its incremental analytics mirror;
+      // project totals aggregate every session projection instead.
+      if (isSelf) {
+        const model = step.model?.trim() || "unknown";
+        const entry = (modelBreakdown[model] ??= {
+          steps: 0,
+          input: 0,
+          output: 0,
+          total: 0,
+        });
+        entry.steps += 1;
+        if (normalized?.normalization.input.status === "known") {
+          const input = normalized.normalization.input.value ?? 0;
+          const output = normalized.normalization.output.value ?? 0;
+          entry.input += input;
+          entry.output += output;
+          entry.total += input + output;
+        }
       }
       if (isSelf && contextUsage?.normalization.input.status === "known") {
         contextInput = contextUsage.normalization.input.value ?? null;
@@ -1177,6 +1200,23 @@ export class RuntimeFacade {
         String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
       )[0];
     const completedRuns = root.runs.filter((run) => run.status === "completed");
+    const lastTerminalStep = [...root.steps]
+      .filter((step) =>
+        ["completed", "failed", "cancelled", "interrupted"].includes(
+          step.status,
+        ),
+      )
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+      .at(-1);
+    const lastCompletedRun = [...completedRuns]
+      .sort((a, b) =>
+        String(a.completedAt ?? "").localeCompare(String(b.completedAt ?? "")),
+      )
+      .at(-1);
+    const completedRunSteps = completedRuns.reduce(
+      (sum, run) => sum + root.steps.filter((step) => step.runId === run.id).length,
+      0,
+    );
     const averageSteps = completedRuns.length
       ? completedRuns.reduce(
           (sum, run) =>
@@ -1184,6 +1224,11 @@ export class RuntimeFacade {
           0,
         ) / completedRuns.length
       : null;
+    const toolBreakdown: Record<string, number> = {};
+    for (const tool of root.tools)
+      if (typeof tool.toolId === "string" && tool.toolId.trim())
+        toolBreakdown[tool.toolId] =
+          (toolBreakdown[tool.toolId] ?? 0) + 1;
     const input = contextInput ?? 0;
     const contextLimit =
       typeof configuredContextLimit === "number" && configuredContextLimit > 0
@@ -1205,8 +1250,14 @@ export class RuntimeFacade {
             }
           : null,
       roundCount: root.steps.length,
+      completedRunCount: completedRuns.length,
+      completedRunSteps,
+      lastStepId: lastTerminalStep?.id ?? null,
+      lastCompletedRunId: lastCompletedRun?.id ?? null,
       averageStepsPerCompletedRun: averageSteps,
       contextComposition,
+      modelBreakdown,
+      toolBreakdown,
       context: {
         inputTokens: contextInput,
         source: contextInput === null ? null : "provider",

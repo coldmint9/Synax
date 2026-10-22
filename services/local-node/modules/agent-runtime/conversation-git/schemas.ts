@@ -18,10 +18,11 @@ export const conversationGitInputSchema = z.object({
 export const conversationGitCreateSchema = conversationGitInputSchema.extend({ requestId: id });
 export const conversationGitActionSchema = z.object({
   action: z.enum(['prepare', 'continue', 'checks', 'finalize', 'cancel', 'resume', 'replan']),
+  skipChecks: z.boolean().optional(),
   requestId: id,
   expectedVersion: z.number().int().positive(),
   expectedTaskRevision: z.number().int().positive(),
-}).strict();
+}).strict().refine(value => value.skipChecks !== true || value.action === 'finalize', 'Skipping checks requires an explicit finalize action.');
 export const conversationGitSaveSchema = z.object({
   requestId: id,
   expectedVersion: z.number().int().positive(),

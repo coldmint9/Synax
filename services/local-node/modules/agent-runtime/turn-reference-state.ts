@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { StructuredToolCall } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
+import type { CustomSubagent } from "./subagent-config.js";
 
 export interface TurnReference {
-  kind: "skill" | "mcp" | "file";
+  kind: "skill" | "mcp" | "file" | "subagent";
   id: string;
   label?: string;
 }
@@ -11,6 +12,7 @@ export interface TurnReference {
 /** Picker metadata is not part of the submitted turn reference. */
 export interface TurnReferenceOption extends TurnReference {
   recent?: boolean;
+  description?: string;
 }
 
 export interface TurnReferenceContext {
@@ -18,6 +20,8 @@ export interface TurnReferenceContext {
   content: string;
   skillIds: string[];
   mcpServerIds: string[];
+  /** Immutable user-selected profiles travel with queued input and replay. */
+  subagentProfiles?: CustomSubagent[];
 }
 
 /** References belong to the active user turn, never to the session's permanent tool configuration. */

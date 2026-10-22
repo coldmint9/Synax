@@ -224,6 +224,19 @@ describe('conversation merge service with real isolated Git operations', { timeo
     expect(appendMessage).toHaveBeenCalledTimes(writes);
   });
 
+  it('skips configured verification only on explicit finalize and records the bypass without fake passes', async () => {
+    let snapshot = await create({ checks: [{ id: 'failing', executable: process.execPath, args: ['-e', 'process.exit(1)'], timeoutMs: 5000 }] });
+    snapshot = await act(snapshot, 'prepare');
+    await expect(act(snapshot, 'finalize')).rejects.toMatchObject({ code: 'CHECKS_REQUIRED' });
+    snapshot = await get(snapshot);
+    snapshot = await service.action('session', snapshot.task.id, { action: 'finalize', skipChecks: true, requestId: request(), expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision });
+    expect(snapshot.mr.status).toBe('merged');
+    expect(snapshot.mr.checkResults).toEqual([]);
+    expect(snapshot.mr.skippedChecks?.tree).toBe(snapshot.mr.candidateTree);
+    expect(snapshot.messages.at(-1)?.content).toContain('跳过验证');
+    expect(git('rev-parse', 'integration')).toBe(snapshot.mr.candidateOid);
+  });
+
   it('resolves real conflicts, applies suggestions only on accept, checks and finalizes once', async () => {
     source('feature/b', 'a.ts', 'export const a = 2;\n');
     const before = git('rev-parse', 'integration');

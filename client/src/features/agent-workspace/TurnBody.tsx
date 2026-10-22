@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
+const RemotePrCard = lazy(() => import("./git-actions/RemotePrCard"));
 const ConversationGitCard = lazy(() => import("./git-merge/ConversationGitCard"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
@@ -39,7 +40,7 @@ function TranscriptGitMerge({ reference }: { reference: ConversationGitReference
   if (sessionId && sessionId !== reference.sessionId) return null;
   return (
     <Suspense fallback={<div className="text-[11px] text-muted-foreground" role="status">正在加载合并任务…</div>}>
-      <ConversationGitCard reference={reference} readOnly={historical || !sessionId} />
+      {reference.schema === "synax.git-pr" ? <RemotePrCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} readOnly={historical || !sessionId} />}
     </Suspense>
   );
 }

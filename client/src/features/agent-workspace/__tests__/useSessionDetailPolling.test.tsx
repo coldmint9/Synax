@@ -65,7 +65,7 @@ function dispatchVisibility(state: DocumentVisibilityState) {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
-/** Server-side session status returned by subsequent listSessions calls. */
+/** Server-side session status the poller reads through `getSessionSummary`. */
 let serverStatus: AgentSessionStatus = "running";
 
 function primeStore(status: AgentSessionStatus = "running") {
@@ -91,8 +91,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   setVisibility("visible");
   useApiConnectivityStore.setState({ apiReachable: "reachable" });
-  vi.spyOn(api, "listSessions").mockImplementation(async () => ({
-    items: [makeSession("s1", serverStatus)],
+  vi.spyOn(api, "getSessionSummary").mockImplementation(async () => ({
+    session: makeSession("s1", serverStatus),
   }));
   vi.spyOn(api, "getSessionStats").mockResolvedValue(stats());
   vi.spyOn(api, "getSessionTodos").mockResolvedValue({ items: [] });
@@ -125,11 +125,11 @@ afterEach(() => {
 });
 
 describe("useSessionDetailPolling", () => {
-  it("refreshes the session list and detail immediately on activation", async () => {
+  it("refreshes the open session row and detail immediately on activation", async () => {
     renderHook(() => useSessionDetailPolling());
     await flush();
 
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
     expect(api.getSessionStats).toHaveBeenCalledTimes(1);
     expect(api.listPermissions).toHaveBeenCalledTimes(1);
   });
@@ -142,18 +142,18 @@ describe("useSessionDetailPolling", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(3);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(3);
   });
 
   it("does not start a new cycle while the awaited refresh is still in flight", async () => {
-    let resolveList!: (value: { items: AgentSession[] }) => void;
-    vi.mocked(api.listSessions).mockReturnValueOnce(
+    let resolveList!: (value: { session: AgentSession }) => void;
+    vi.mocked(api.getSessionSummary).mockReturnValueOnce(
       new Promise((r) => {
         resolveList = r;
       }),
@@ -161,29 +161,29 @@ describe("useSessionDetailPolling", () => {
 
     renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
 
-    // Several intervals elapse while listSessions is unresolved: no tick may start.
+    // Several intervals elapse while the row read is unresolved: no tick may start.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
     expect(api.getSessionStats).toHaveBeenCalledTimes(1);
 
-    resolveList({ items: [makeSession("s1", "running")] });
+    resolveList({ session: makeSession("s1", "running") });
     await flush();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
   });
 
   it("pauses while the document is hidden and refreshes immediately when visible again", async () => {
     renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
 
     act(() => {
       dispatchVisibility("hidden");
@@ -193,7 +193,7 @@ describe("useSessionDetailPolling", () => {
     });
     await flush();
     // No background polling happened.
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
     expect(api.getSessionStats).toHaveBeenCalledTimes(1);
 
     act(() => {
@@ -201,7 +201,7 @@ describe("useSessionDetailPolling", () => {
     });
     await flush();
     // Resume is immediate: no timer advance needed.
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
     expect(api.getSessionStats).toHaveBeenCalledTimes(2);
 
     // Regular cadence resumes afterwards.
@@ -209,7 +209,7 @@ describe("useSessionDetailPolling", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(3);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(3);
   });
 
   it("performs no network work when mounted while the document is hidden", async () => {
@@ -220,35 +220,35 @@ describe("useSessionDetailPolling", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     });
     await flush();
-    expect(api.listSessions).not.toHaveBeenCalled();
+    expect(api.getSessionSummary).not.toHaveBeenCalled();
     expect(api.getSessionStats).not.toHaveBeenCalled();
 
     act(() => {
       dispatchVisibility("visible");
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
   });
 
   it("stops once the session reaches a terminal status, keeping the final refresh", async () => {
     renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
 
     serverStatus = "completed";
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    // The tick that observed completion still refreshed both list and detail.
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    // The tick that observed completion still refreshed the row and detail.
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
     expect(api.getSessionStats).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
     expect(api.getSessionStats).toHaveBeenCalledTimes(2);
   });
 
@@ -263,34 +263,34 @@ describe("useSessionDetailPolling", () => {
     await flush();
     expect(api.listPermissions).toHaveBeenCalledTimes(1);
     expect(api.getSessionStats).toHaveBeenCalledTimes(3);
-    expect(api.listSessions).toHaveBeenCalledTimes(3);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(3);
   });
 
   it("does not poll without an active selection or while unreachable", async () => {
     primeStore("completed");
     const { unmount } = renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).not.toHaveBeenCalled();
+    expect(api.getSessionSummary).not.toHaveBeenCalled();
     unmount();
 
     primeStore("running");
     useApiConnectivityStore.setState({ apiReachable: "unreachable" });
     renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).not.toHaveBeenCalled();
+    expect(api.getSessionSummary).not.toHaveBeenCalled();
   });
 
   it("stops scheduling after unmount", async () => {
     const { unmount } = renderHook(() => useSessionDetailPolling());
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
 
     unmount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_MS * 3);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(1);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -313,7 +313,7 @@ describe("useSessionDetailPolling", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
     });
     await flush();
-    expect(api.listSessions).toHaveBeenCalledTimes(2);
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
     expect(api.listRuns).toHaveBeenCalledTimes(1);
 
     resolveRuns({ items: [] });

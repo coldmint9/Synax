@@ -171,6 +171,10 @@ export interface AgentSessionMetadata extends Record<string, unknown> {
     | (AgentPlan & { revision: number; status: "draft" | "approved" | "saved" })
     | null;
   goal?: AgentGoalState | null;
+  /** Latest measured request context; persisted once per request by the runtime. */
+  contextUsage?: ContextUsageSnapshot | null;
+  /** Incrementally maintained per-session runtime analytics. */
+  runtimeAnalytics?: SessionAnalytics | null;
 }
 
 export interface AgentInteractionReply {
@@ -562,6 +566,106 @@ export interface SessionStats {
   activeSubAgentCount: number;
 }
 
+/** Persisted, incrementally updated request-context snapshot. */
+export interface ContextUsageSnapshot {
+  version: 1;
+  stepId: string;
+  total: number;
+  limit: number | null;
+  composition: ContextComposition;
+  measuredAt: string;
+}
+
+export interface SessionAnalyticsUsage {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  requests: number;
+  recorded: number;
+  missing: number;
+}
+
+export interface SessionAnalytics {
+  version: 1;
+  updatedAt: string;
+  steps: number;
+  completedRuns: number;
+  completedRunSteps: number;
+  toolCalls: number;
+  toolCounts: Record<string, number>;
+  usage: SessionAnalyticsUsage;
+  models: Record<
+    string,
+    { steps: number; input: number; output: number; total: number }
+  >;
+  lastStepId: string | null;
+  lastCompletedRunId: string | null;
+}
+
+export interface ProjectAnalyticsSession {
+  id: string;
+  parentSessionId: string | null;
+  title: string;
+  status: AgentSessionStatus;
+  updatedAt: string;
+  model: string | null;
+  context: {
+    total: number;
+    limit: number | null;
+    percent: number | null;
+    composition: ContextComposition;
+    measuredAt: string;
+  } | null;
+  analytics: SessionAnalytics | null;
+}
+
+export interface ProjectAnalytics {
+  projectId: string;
+  generatedAt: string;
+  /** Legacy sessions still waiting for their one-time mirror. */
+  pendingBackfill: number;
+  sessions: ProjectAnalyticsSession[];
+  totals: {
+    sessions: number;
+    activeSessions: number;
+    steps: number;
+    completedRuns: number;
+    toolCalls: number;
+    tokens: { input: number; output: number; total: number };
+    cache: {
+      inputTokens: number;
+      cacheReadTokens: number;
+      ratio: number | null;
+    };
+    context: {
+      totalTokens: number;
+      windowTokens: number;
+      percent: number | null;
+      measuredSessions: number;
+    };
+    composition: {
+      messages: number;
+      tools: number;
+      mcp: number;
+      skills: number;
+      system: number;
+      total: number;
+    };
+  };
+  models: Array<{
+    model: string;
+    sessions: number;
+    steps: number;
+    input: number;
+    output: number;
+    total: number;
+  }>;
+  tools: Array<{ toolId: string; calls: number }>;
+}
+
 export interface TodoItem {
   id: string;
   label: string;
@@ -787,12 +891,13 @@ export interface SessionCapabilities {
 }
 
 export interface TurnReference {
-  kind: "skill" | "mcp" | "file";
+  kind: "skill" | "mcp" | "file" | "subagent";
   id: string;
   label?: string;
 }
 
 export interface TurnReferenceOption extends TurnReference {
+  description?: string;
   recent?: boolean;
 }
 
@@ -1344,6 +1449,11 @@ export const agentRuntimeApi = {
     ),
   getSessionStats: (sessionId: string) =>
     request<SessionStats>(`/sessions/${encodeURIComponent(sessionId)}/stats`, { silent: true }),
+  getProjectAnalytics: (projectId: string) =>
+    request<ProjectAnalytics>(
+      `/analytics?projectId=${encodeURIComponent(projectId)}`,
+      { silent: true },
+    ),
   getSessionTodos: (sessionId: string) =>
     request<{ items: TodoItem[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/todos`,
